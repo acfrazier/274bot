@@ -6745,6 +6745,94 @@ fn a_held_then_failed_saved_setting_changes_nothing_and_fails_at_its_setting() {
     }
 }
 
+/// A save whose COMMIT ended in a disk error that the database could not
+/// settle may be stored (plan §4.2). Headless sees it as unknown, never as
+/// not saved: for every saved setting, the setting's failure, the command's
+/// failure detail and the setting event all say the outcome is unknown, and
+/// nothing is applied from the save.
+#[test]
+fn a_save_of_unknown_outcome_fails_at_its_setting_as_unknown_never_as_not_saved() {
+    for case in saved_settings() {
+        let mut d = driver(&format!("s3-unknown-{}", case.name), &["alice"]);
+        d.poll();
+        d.session_mut().watch_setting_events(true);
+        let service = d
+            .session()
+            .local_state()
+            .expect("the driver binds the process service");
+        service.set_write_unknown_for_test(std::sync::Arc::new(|| true));
+        (case.stage)(&mut d);
+        let request = d
+            .submit(case.command, Targets::Application)
+            .expect("admitted")
+            .request();
+        let terminal = settled_app(&mut d, request).expect("settled");
+        assert!(
+            matches!(
+                terminal,
+                Settlement::Failed(CommandFailure::Failed(
+                    crate::command::FailureKind::WriteFailed
+                ))
+            ),
+            "{}: one failed terminal: {terminal:?}",
+            case.name
+        );
+        d.poll();
+        // The Quester source is process-wide state that other tests leave
+        // set; this test's save never applies anything, and its text is the
+        // same for every setting.
+        assert!(
+            case.name == "quester" || (case.unchanged)(&d),
+            "{}: nothing applies from a save of unknown outcome",
+            case.name
+        );
+        let failure = d
+            .session()
+            .setting_failure(case.setting)
+            .unwrap_or_else(|| panic!("{}: the failure stays at its setting", case.name))
+            .to_owned();
+        assert!(
+            failure.starts_with("Save outcome unknown: "),
+            "{}: {failure}",
+            case.name
+        );
+        assert!(
+            failure.contains("outcome is unknown") && failure.contains("it was not retried"),
+            "{}: the reason stays: {failure}",
+            case.name
+        );
+        assert!(
+            !failure.to_lowercase().contains("not saved"),
+            "{}: {failure}",
+            case.name
+        );
+        // The command's detail is bounded (the full reason is in the setting
+        // and its event): what the operator must know comes first.
+        let detail = d
+            .session()
+            .command_failure(request)
+            .unwrap_or_else(|| panic!("{}: the command carries the reason", case.name));
+        assert!(
+            detail.contains(": save outcome unknown: ")
+                && !detail.to_lowercase().contains("not saved"),
+            "{}: {detail}",
+            case.name
+        );
+        let (events, incomplete) = d.session_mut().take_setting_events();
+        assert!(!incomplete, "{}", case.name);
+        assert!(
+            events.iter().any(|event| {
+                event.state() == crate::SettingEventState::Failed
+                    && event
+                        .error()
+                        .is_some_and(|error| error.contains("outcome is unknown"))
+            }),
+            "{}: the failed event says it: {events:?}",
+            case.name
+        );
+    }
+}
+
 /// The saved session file is a durable choice and a sink: nothing opens
 /// while the write is pending or after it failed, and the file opens from
 /// the durable value.

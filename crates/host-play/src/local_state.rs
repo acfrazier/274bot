@@ -189,6 +189,11 @@ pub type WriteStall = Arc<dyn Fn() + Send + Sync>;
 /// ([`LocalStateService::set_write_fault_for_test`]).
 #[cfg(any(test, feature = "test-support"))]
 pub type WriteFault = Arc<dyn Fn() -> bool + Send + Sync>;
+/// A test's decision, at the start of each preference save, to settle it as
+/// a save whose outcome is unknown
+/// ([`LocalStateService::set_write_unknown_for_test`]).
+#[cfg(any(test, feature = "test-support"))]
+pub type WriteUnknown = Arc<dyn Fn() -> bool + Send + Sync>;
 /// A test's stall before the writer starts a store hydration or readback.
 #[cfg(any(test, feature = "test-support"))]
 pub type ReadStall = Arc<dyn Fn() + Send + Sync>;
@@ -426,7 +431,13 @@ struct Shared {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PreferenceWatchPoll {
     Pending,
-    Settled(WriteSettlement, Option<Arc<str>>),
+    Settled {
+        settlement: WriteSettlement,
+        detail: Option<Arc<str>>,
+        /// The save's COMMIT may have reached the disk and the database
+        /// could not settle it (plan §4.2).
+        outcome_unknown: bool,
+    },
     Missing,
 }
 
@@ -436,6 +447,22 @@ struct PreferenceWatch {
     /// The bounded cause a failed request carries beyond its neutral code
     /// (a deadline reached while waiting for the WAL, a refused database).
     detail: Option<Arc<str>>,
+    /// The failed save's COMMIT ended in a disk error that could not be
+    /// settled: whether it reached the disk is unknown (plan §4.2).
+    outcome_unknown: bool,
+}
+
+impl PreferenceWatch {
+    /// What this watch settled as, once it has.
+    fn settled(&self) -> Option<PreferenceWatchPoll> {
+        self.settlement
+            .clone()
+            .map(|settlement| PreferenceWatchPoll::Settled {
+                settlement,
+                detail: self.detail.clone(),
+                outcome_unknown: self.outcome_unknown,
+            })
+    }
 }
 
 /// The idle TRUNCATE checkpoint the writer owes the preferences WAL.
@@ -507,6 +534,10 @@ struct State {
     /// A test's refusing disk: asked after the stall of each file write.
     #[cfg(any(test, feature = "test-support"))]
     write_fault: Option<WriteFault>,
+    /// A test's disk whose COMMIT ends in a disk error that cannot be
+    /// settled: asked after the fault of each preference save.
+    #[cfg(any(test, feature = "test-support"))]
+    write_unknown: Option<WriteUnknown>,
     /// A test stall before a worker read, installed before open queues hydration.
     #[cfg(any(test, feature = "test-support"))]
     read_stall: Option<ReadStall>,
@@ -1085,15 +1116,14 @@ impl LocalStateService {
 
     pub(super) fn poll_preference_watch(&self, request: RequestId) -> PreferenceWatchPoll {
         let mut state = self.shared.state.lock();
-        match state.preference_watches.get(&request).and_then(|watch| {
-            watch
-                .settlement
-                .clone()
-                .map(|settlement| (settlement, watch.detail.clone()))
-        }) {
-            Some((settlement, detail)) => {
+        match state
+            .preference_watches
+            .get(&request)
+            .and_then(PreferenceWatch::settled)
+        {
+            Some(settled) => {
                 state.preference_watches.remove(&request);
-                PreferenceWatchPoll::Settled(settlement, detail)
+                settled
             }
             None if state.preference_watches.contains_key(&request) => PreferenceWatchPoll::Pending,
             None => PreferenceWatchPoll::Missing,
@@ -1119,15 +1149,14 @@ impl LocalStateService {
         let deadline = Instant::now() + wait;
         let mut state = self.shared.state.lock();
         loop {
-            match state.preference_watches.get(&request).and_then(|watch| {
-                watch
-                    .settlement
-                    .clone()
-                    .map(|settlement| (settlement, watch.detail.clone()))
-            }) {
-                Some((settlement, detail)) => {
+            match state
+                .preference_watches
+                .get(&request)
+                .and_then(PreferenceWatch::settled)
+            {
+                Some(settled) => {
                     state.preference_watches.remove(&request);
-                    return PreferenceWatchPoll::Settled(settlement, detail);
+                    return settled;
                 }
                 None if !state.preference_watches.contains_key(&request) => {
                     return PreferenceWatchPoll::Missing;
@@ -1228,6 +1257,7 @@ impl LocalStateService {
                 settlement: None,
                 queued_bytes,
                 detail: None,
+                outcome_unknown: false,
             },
         );
         state.requests.insert(request, key);
@@ -1441,6 +1471,17 @@ impl LocalStateService {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_write_fault_for_test(&self, fault: WriteFault) {
         self.shared.state.lock().write_fault = Some(fault);
+    }
+
+    /// Test-support seam for front-end tests: `unknown` runs on the writer
+    /// thread at the start of each preference save, after the fault; when it
+    /// returns true that save settles as one whose COMMIT ended in a disk
+    /// error that the database could not settle (`Failed(Io)`, its outcome
+    /// unknown, plan §4.2), exactly as the writer settles it, and nothing is
+    /// written.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_write_unknown_for_test(&self, unknown: WriteUnknown) {
+        self.shared.state.lock().write_unknown = Some(unknown);
     }
 
     /// Install the database seams (a stall inside a real SQL statement, a
@@ -3609,6 +3650,25 @@ impl Shared {
                 self.finish(&key, queued, io_failure(domain), false);
                 return None;
             }
+            let unknown = self.state.lock().write_unknown.clone();
+            if unknown.is_some_and(|unknown| unknown()) {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Warn,
+                    "local state: {domain} write outcome unknown (test fault) path={}",
+                    self.root.database_file().display()
+                );
+                self.finish_unresolved(
+                    &key,
+                    queued,
+                    io_failure(domain),
+                    sql::unresolved_detail(
+                        &"disk I/O error (test fault)",
+                        Some("the test's fault"),
+                    ),
+                );
+                return None;
+            }
         }
         // Work selected before the shutdown bound that has not begun its
         // transaction when the bound passes is cancelled; its terminal is
@@ -3711,6 +3771,14 @@ impl Shared {
                     self.state.lock().adopt_durable(adoption);
                 }
                 self.finish_with_detail(&key, queued, Settlement::Failed(code), detail);
+                None
+            }
+            Ok(sql::Commit::Unresolved { detail, observed }) => {
+                if let Some(observed) = observed {
+                    let adoption = self.adoption(observed);
+                    self.state.lock().adopt_durable(adoption);
+                }
+                self.finish_unresolved(&key, queued, io_failure(domain), detail);
                 None
             }
             Ok(sql::Commit::Abandoned) => {
@@ -3858,6 +3926,31 @@ impl Shared {
         settlement: WriteSettlement,
         detail: Option<Arc<str>>,
     ) {
+        self.finish_detailed(key, queued, settlement, detail, false);
+    }
+
+    /// [`Self::finish_with_detail`] for a save whose COMMIT ended in a disk
+    /// error that the database could not settle: its watch keeps that, so a
+    /// front end says its outcome is unknown and never that it was not saved
+    /// (plan §4.2).
+    fn finish_unresolved(
+        &self,
+        key: &StoreKey,
+        queued: &Queued,
+        settlement: WriteSettlement,
+        detail: Arc<str>,
+    ) {
+        self.finish_detailed(key, queued, settlement, Some(detail), true);
+    }
+
+    fn finish_detailed(
+        &self,
+        key: &StoreKey,
+        queued: &Queued,
+        settlement: WriteSettlement,
+        detail: Option<Arc<str>>,
+        outcome_unknown: bool,
+    ) {
         if let Some(detail) = detail {
             if let Some(watch) = self
                 .state
@@ -3866,6 +3959,7 @@ impl Shared {
                 .get_mut(&queued.request)
             {
                 watch.detail = Some(detail);
+                watch.outcome_unknown = outcome_unknown;
             }
         }
         self.finish(key, queued, settlement, false);

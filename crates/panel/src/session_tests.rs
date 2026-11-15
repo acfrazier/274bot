@@ -11587,6 +11587,75 @@ fn settings_feedback_held_then_failed_presentation_choices_revert_to_the_durable
     );
 }
 
+/// A save whose COMMIT ended in a disk error that the database could not
+/// settle may be stored (plan §4.2). The panel says its outcome is unknown,
+/// at a panel-owned setting and at a setting the core owns, and never says
+/// that it was not saved. The reason stays, and the saved values show again.
+#[test]
+fn settings_feedback_a_save_of_unknown_outcome_shows_as_unknown_not_as_not_saved() {
+    use frontend_core::command::DrawSwitch;
+    let _iso = IsolatedStores::enter("panel-s3-unknown");
+    let saved = crate::ui_state::PanelUiState {
+        show_parameters_rail: true,
+        ..Default::default()
+    };
+    seed_ui_state(&saved);
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    s.watch_setting_events();
+    let capture = s.draw_shown(DrawSwitch::CaptureInput);
+    s.core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .set_write_unknown_for_test(Arc::new(|| true));
+
+    s.persist_panel_member(
+        &["show_parameters_rail"],
+        Some(serde_json::Value::Bool(false)),
+    )
+    .unwrap();
+    s.set_capture(!capture);
+    settle_panel_writes(&mut s);
+
+    let member = s
+        .panel_member_error(&["show_parameters_rail"])
+        .expect("the failure shows at the panel-owned setting")
+        .to_owned();
+    assert!(
+        member.starts_with("Preferences save outcome unknown: "),
+        "{member}"
+    );
+    assert!(
+        member.contains("outcome is unknown") && member.contains("it was not retried"),
+        "the reason stays: {member}"
+    );
+    assert!(!member.to_lowercase().contains("not saved"), "{member}");
+    let owned = s
+        .core
+        .setting_failure(frontend_core::Setting::Draw(DrawSwitch::CaptureInput))
+        .expect("the failure shows at the core-owned setting")
+        .to_owned();
+    assert!(owned.starts_with("Save outcome unknown: "), "{owned}");
+    assert!(
+        owned.contains("outcome is unknown") && owned.contains("it was not retried"),
+        "the reason stays: {owned}"
+    );
+    assert!(!owned.to_lowercase().contains("not saved"), "{owned}");
+    assert!(s.ui.show_parameters_rail, "the saved value shows again");
+    assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), capture);
+    let (events, incomplete) = s.take_panel_setting_events();
+    assert!(!incomplete);
+    assert!(
+        events.iter().any(|event| {
+            event.state() == frontend_core::SettingEventState::Failed
+                && event
+                    .error()
+                    .is_some_and(|error| error.contains("outcome is unknown"))
+        }),
+        "the failed event says it: {events:?}"
+    );
+}
+
 /// A typed Quest Paths folder survives any number of refresh frames, whether
 /// or not another process saved in between, and a held operational choice
 /// keeps showing the operator's choice across them.

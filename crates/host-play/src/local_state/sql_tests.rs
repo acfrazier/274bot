@@ -1912,7 +1912,8 @@ fn commit_outcomes_follow_their_own_rules_and_settle_once() {
                 "{fault:?}: a committed save's terminal line is its audit"
             );
         } else {
-            let error = result.unwrap_err().to_string();
+            let failure = result.unwrap_err();
+            let error = failure.to_string();
             assert!(
                 matches!(
                     service.request_state(request),
@@ -1939,9 +1940,16 @@ fn commit_outcomes_follow_their_own_rules_and_settle_once() {
             );
             match fault {
                 sql::CommitFault::IoErrWithoutCommit => {
-                    assert!(error.contains("outcome is unknown"), "{error}")
+                    assert!(error.contains("outcome is unknown"), "{error}");
+                    assert!(failure.outcome_unknown(), "{fault:?}: flagged unknown");
                 }
-                _ => assert!(error.contains("refused the commit"), "{error}"),
+                _ => {
+                    assert!(error.contains("refused the commit"), "{error}");
+                    assert!(
+                        !failure.outcome_unknown(),
+                        "{fault:?}: a refused commit is known"
+                    );
+                }
             }
         }
         assert_eq!(
@@ -2079,16 +2087,25 @@ fn an_uncertain_commit_whose_reconnect_fails_stays_unknown_and_is_not_replayed()
             panic!("queued");
         };
         let request = update.request_id();
-        let error = update
+        let failure = update
             .wait(WAIT)
             .expect("settles")
-            .expect_err("a save of unknown outcome is not reported done")
-            .to_string();
+            .expect_err("a save of unknown outcome is not reported done");
+        let error = failure.to_string();
         job_done_rx
             .recv_timeout(WAIT)
             .unwrap_or_else(|_| panic!("{case}: the writer job never completed"));
 
         assert!(error.contains("outcome is unknown"), "{case}: {error}");
+        assert!(failure.outcome_unknown(), "{case}: flagged unknown");
+        assert_eq!(
+            failure.code(),
+            Some(ErrorCode::Failed {
+                domain: LocalStateDomain::Preferences,
+                reason: FailureReason::Io,
+            }),
+            "{case}: the neutral code is the store I/O failure"
+        );
         assert!(
             error.contains("could not be reopened to check it"),
             "{case}: {error}"
@@ -2124,6 +2141,49 @@ fn an_uncertain_commit_whose_reconnect_fails_stays_unknown_and_is_not_replayed()
         assert_eq!(snapshot.version().get(), after.head, "{case}");
         assert_eq!(snapshot.document()["n"], json!(5), "{case}");
     }
+}
+
+/// The front-end test seam of an unknown outcome settles a save the way the
+/// writer settles an unresolved COMMIT: `Failed(Io)`, flagged unknown, with
+/// the writer's own wording, and nothing written. A later save, with the
+/// seam off, is saved.
+#[test]
+fn the_front_end_seam_of_an_unknown_outcome_settles_like_an_unresolved_commit() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("t53s4-seam-unknown");
+    let root = root_of(&scratch);
+    let service = open(&scratch);
+    let preferences = service.preferences();
+    ready(&preferences);
+    let unknown = Arc::new(AtomicBool::new(true));
+    let asked = Arc::clone(&unknown);
+    service.set_write_unknown_for_test(Arc::new(move || asked.load(Ordering::SeqCst)));
+    let before = head(&root);
+
+    let Update::Queued(mut update) = preferences.begin_set("n", json!(1)).unwrap() else {
+        panic!("queued");
+    };
+    let failure = update
+        .wait(WAIT)
+        .expect("settles")
+        .expect_err("a save of unknown outcome is not reported done");
+    let error = failure.to_string();
+    assert!(failure.outcome_unknown(), "{error}");
+    assert_eq!(
+        failure.code(),
+        Some(ErrorCode::Failed {
+            domain: LocalStateDomain::Preferences,
+            reason: FailureReason::Io,
+        })
+    );
+    assert!(error.contains("outcome is unknown"), "{error}");
+    assert!(error.contains("it was not retried"), "{error}");
+    assert!(!error.contains("not saved"), "{error}");
+    assert_eq!(head(&root), before, "the seam writes nothing");
+
+    unknown.store(false, Ordering::SeqCst);
+    save(&preferences, "n", json!(2)).unwrap();
+    assert_eq!(stored_document(&root)["n"], json!(2));
 }
 
 #[test]
@@ -4246,8 +4306,14 @@ fn commit_fault_jobs(service: &Arc<LocalStateService>, root: &StateRoot) -> Vec<
             );
             assert_eq!((audit_lines, terminal_lines), (1, 0), "{label}: one audit");
         } else {
-            let error = result.unwrap_err().to_string();
+            let failure = result.unwrap_err();
+            let error = failure.to_string();
             assert!(error.contains(fragment), "{label}: {error}");
+            assert_eq!(
+                failure.outcome_unknown(),
+                event == "commit-uncertain-lost",
+                "{label}: only the unresolved COMMIT is flagged unknown"
+            );
             assert!(
                 matches!(
                     service.request_state(request),

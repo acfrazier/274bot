@@ -5942,6 +5942,75 @@ fn settings_feedback_tui_row_shows_saving_then_the_failure_then_clears_on_retry(
     }
 }
 
+/// A save whose COMMIT ended in a disk error that the database could not
+/// settle may be stored (plan §4.2): the settings popup says on the row that
+/// the outcome is unknown, never "Not saved". The saved choice shows again,
+/// and the retry is the action that resolves the failure.
+#[test]
+fn settings_feedback_tui_row_shows_an_unknown_outcome_as_unknown_not_as_not_saved() {
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-s3-row-unknown");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    session.preferences.reload().unwrap();
+    app.restore_preferences(session.preferences.share());
+    open_settings(&mut session, &mut app);
+    app.settings_state.row = 12;
+    let unknown = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let asked = Arc::clone(&unknown);
+    session
+        .core
+        .local_state_for_test()
+        .expect("the TUI binds the process state service")
+        .set_write_unknown_for_test(Arc::new(move || {
+            asked.load(std::sync::atomic::Ordering::SeqCst)
+        }));
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let failure = loop {
+        session.pump(&mut app);
+        match app.setting_feedback(frontend_core::Setting::MapBake) {
+            Some(SettingFeedback::Failed(text)) => break text.clone(),
+            shown => assert!(
+                Instant::now() < deadline,
+                "the failure never showed on the row: {shown:?}"
+            ),
+        }
+        std::thread::yield_now();
+    };
+    let text = failure.as_str();
+    assert!(text.starts_with("Save outcome unknown: "), "{text}");
+    assert!(
+        text.contains("outcome is unknown") && text.contains("it was not retried"),
+        "the reason stays: {text}"
+    );
+    assert!(!text.to_lowercase().contains("not saved"), "{text}");
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            words.contains("map bake: ask") && words.contains("Save outcome unknown:"),
+            "{width}x{height}: the row says the outcome is unknown: {words}"
+        );
+        assert!(
+            !words.contains("Not saved:"),
+            "{width}x{height}: nothing says it was not saved: {words}"
+        );
+    }
+    assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Ask);
+
+    // The retry resolves the failure; the durable value then shows.
+    unknown.store(false, std::sync::atomic::Ordering::SeqCst);
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    session.pump(&mut app);
+    settle_preferences(&mut session, &mut app);
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            words.contains("map bake: always") && !words.contains("unknown:"),
+            "{width}x{height}: the saved choice shows: {words}"
+        );
+    }
+}
+
 /// A real file-lock timeout leaves the saved grant unchanged. A second
 /// operator action after the lock is released must reach durable storage.
 #[test]

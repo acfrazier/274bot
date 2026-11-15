@@ -34,7 +34,7 @@ use frontend_core::launch::{
     ProfileEnv, ProfileError, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockStage,
     ValidatedProfile,
 };
-use frontend_core::prefs::{PreferencePatch, UiPreferences, Update};
+use frontend_core::prefs::{PreferenceError, PreferencePatch, UiPreferences, Update};
 #[cfg(feature = "js")]
 use frontend_core::scripts::{CardSource, SchemaRef};
 use frontend_core::scripts::{LoadoutForm, PaintFrame, ScriptChoice, ScriptRunState};
@@ -2277,7 +2277,7 @@ impl Session {
                         durable_effects.push(effect);
                     }
                 }
-                Err(error) => self.fail_panel_members(&write.members, &error.to_string()),
+                Err(error) => self.fail_panel_members(&write.members, &error),
             }
         }
         for effect in durable_effects {
@@ -2505,9 +2505,8 @@ impl Session {
         let patch = match PreferencePatch::member(path, value) {
             Ok(patch) => patch,
             Err(error) => {
-                let message = error.to_string();
-                self.fail_panel_members(std::slice::from_ref(&member), &message);
-                return Err(message);
+                self.fail_panel_members(std::slice::from_ref(&member), &error);
+                return Err(error.to_string());
             }
         };
         if patch.is_empty() {
@@ -2539,9 +2538,8 @@ impl Session {
                 Ok(PanelSubmit::Pending(request))
             }
             Err(error) => {
-                let message = error.to_string();
-                self.fail_panel_members(std::slice::from_ref(&member), &message);
-                Err(message)
+                self.fail_panel_members(std::slice::from_ref(&member), &error);
+                Err(error.to_string())
             }
         }
     }
@@ -2560,7 +2558,7 @@ impl Session {
                     owner: FeedbackOwner::Panel,
                 };
                 let message = error.to_string();
-                self.set_preference_write_error(&member, &message, Instant::now());
+                self.set_preference_write_error(&member, &message, false, Instant::now());
                 self.note_panel_setting(
                     &member,
                     frontend_core::SettingEventState::Failed,
@@ -2743,17 +2741,18 @@ impl Session {
     /// request still pending) again, and the failure stays at the setting
     /// until a later write of it lands or the error timeout passes. Every
     /// request has its own outcome, whatever the others carried.
-    fn fail_panel_members(&mut self, members: &[PanelPreferenceMember], error: &str) {
+    fn fail_panel_members(&mut self, members: &[PanelPreferenceMember], error: &PreferenceError) {
         let now = Instant::now();
+        let text = error.to_string();
         for member in members {
             self.launch_previews.settle(member.request);
             self.pending_panel_members
                 .retain(|pending| pending.request != member.request);
-            self.set_preference_write_error(member, error, now);
+            self.set_preference_write_error(member, &text, error.outcome_unknown(), now);
             self.note_panel_setting(
                 member,
                 frontend_core::SettingEventState::Failed,
-                Some(error),
+                Some(&text),
             );
         }
         self.rebase_panel_members();
@@ -2805,14 +2804,23 @@ impl Session {
         }
     }
 
+    /// Show the failure of a panel-owned write at its setting. A save whose
+    /// outcome is unknown (its COMMIT ended in a disk error that the
+    /// database could not settle, plan §4.2) may be stored: it is worded as
+    /// unknown, never as not saved.
     fn set_preference_write_error(
         &mut self,
         member: &PanelPreferenceMember,
         error: &str,
+        outcome_unknown: bool,
         now: Instant,
     ) {
         let request = member.request;
-        let text = format!("Preferences not saved: {error}");
+        let text = if outcome_unknown {
+            format!("Preferences save outcome unknown: {error}")
+        } else {
+            format!("Preferences not saved: {error}")
+        };
         match self
             .preference_write_errors
             .iter_mut()

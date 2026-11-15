@@ -287,6 +287,15 @@ pub(super) enum Commit<S> {
         detail: Option<Arc<str>>,
         observed: Option<Durable>,
     },
+    /// The COMMIT ended in a disk error and the database could not settle
+    /// it (it reopened and held no row of the save, or it could not be
+    /// reopened): the save may or may not be stored. It is neither retried
+    /// nor said not to be saved, and settles `Failed(Io)` with its outcome
+    /// flagged unknown (plan §4.2).
+    Unresolved {
+        detail: Arc<str>,
+        observed: Option<Durable>,
+    },
     /// The shutdown bound passed before this save's transaction began (the
     /// begun boundary of [`Db::commit`]): nothing was written, and the
     /// request is already settled cancelled.
@@ -736,16 +745,8 @@ impl Db {
                         }
                         Ok(false) => {
                             self.point("commit-uncertain-lost");
-                            return Ok(Commit::Declined {
-                                code: ErrorCode::Failed {
-                                    domain: LocalStateDomain::Preferences,
-                                    reason: FailureReason::Io,
-                                },
-                                detail: Some(unknown_outcome(
-                                    &error,
-                                    "it was not retried, and the preferences show what the \
-                                     database holds",
-                                )),
+                            return Ok(Commit::Unresolved {
+                                detail: unresolved_detail(&error, None),
                                 observed,
                             });
                         }
@@ -762,19 +763,8 @@ impl Db {
                                 SqlFailure::Wait(cause) => cause.reason(),
                                 SqlFailure::Refused { detail, .. } => detail.trim_end_matches('.'),
                             };
-                            return Ok(Commit::Declined {
-                                code: ErrorCode::Failed {
-                                    domain: LocalStateDomain::Preferences,
-                                    reason: FailureReason::Io,
-                                },
-                                detail: Some(unknown_outcome(
-                                    &error,
-                                    &format!(
-                                        "it was not retried, and the database could not be \
-                                         reopened to check it ({cause}); the preferences show \
-                                         what the database holds once it opens"
-                                    ),
-                                )),
+                            return Ok(Commit::Unresolved {
+                                detail: unresolved_detail(&error, Some(cause)),
                                 observed,
                             });
                         }
@@ -2701,8 +2691,20 @@ fn statement_failure(error: &rusqlite::Error) -> ErrorCode {
 
 /// What a save says when the disk error at its COMMIT left its outcome
 /// unknown (plan §4.2): the COMMIT may have reached the disk, so the save is
-/// never said not to be saved, and never retried. `then` says what follows.
-fn unknown_outcome(error: &rusqlite::Error, then: &str) -> Arc<str> {
+/// never said not to be saved, and never retried. `reopening` is why the
+/// database could not be reopened to look for the save's row, or `None` when
+/// it reopened and held none.
+pub(super) fn unresolved_detail(
+    error: &dyn std::fmt::Display,
+    reopening: Option<&str>,
+) -> Arc<str> {
+    let then = match reopening {
+        None => "it was not retried, and the preferences show what the database holds".to_owned(),
+        Some(cause) => format!(
+            "it was not retried, and the database could not be reopened to check it \
+             ({cause}); the preferences show what the database holds once it opens"
+        ),
+    };
     Arc::from(format!(
         "the save's outcome is unknown after a disk error at COMMIT ({error}); {then}"
     ))

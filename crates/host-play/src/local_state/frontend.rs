@@ -103,6 +103,19 @@ pub enum PreferenceError {
         /// The bounded diagnostic cause.
         cause: Arc<str>,
     },
+    /// A save whose COMMIT ended in a disk error that the database could not
+    /// settle (it could not be reopened, or held no row of the save): it may
+    /// or may not be stored, and it was not retried (plan §4.2). The neutral
+    /// code is the `Failed(Io)` of any store I/O failure.
+    #[error("preferences at {path}: {cause}")]
+    Unresolved {
+        /// The preference key or file path associated with this error.
+        path: Arc<str>,
+        /// The bounded diagnostic cause.
+        cause: Arc<str>,
+        /// The neutral service code.
+        code: ErrorCode,
+    },
 }
 
 impl PreferenceError {
@@ -163,7 +176,8 @@ impl PreferenceError {
             Self::Store { path, .. }
             | Self::Cancelled { path, .. }
             | Self::ResultNotRetained { path, .. }
-            | Self::Other { path, .. } => path,
+            | Self::Other { path, .. }
+            | Self::Unresolved { path, .. } => path,
         }
     }
 
@@ -173,16 +187,25 @@ impl PreferenceError {
             Self::Store { cause, .. }
             | Self::Cancelled { cause, .. }
             | Self::ResultNotRetained { cause, .. }
-            | Self::Other { cause, .. } => cause,
+            | Self::Other { cause, .. }
+            | Self::Unresolved { cause, .. } => cause,
         }
     }
 
     /// The neutral service code, when the failure came from the store.
     pub fn code(&self) -> Option<ErrorCode> {
         match self {
-            Self::Store { code, .. } => Some(*code),
+            Self::Store { code, .. } | Self::Unresolved { code, .. } => Some(*code),
             Self::Cancelled { .. } | Self::ResultNotRetained { .. } | Self::Other { .. } => None,
         }
+    }
+
+    /// Whether the save's outcome is unknown: its COMMIT ended in a disk
+    /// error that the database could not settle, so the save may or may not
+    /// be stored (plan §4.2). Such a save is neither done nor "not saved": a
+    /// front end words it as unknown.
+    pub fn outcome_unknown(&self) -> bool {
+        matches!(self, Self::Unresolved { .. })
     }
 
     /// Whether this store was refused for a pre-0.2.8 saved-data shape.
@@ -211,7 +234,7 @@ impl PreferenceError {
 #[cfg(test)]
 mod preference_error_tests {
     use super::PreferenceError;
-    use api::local_state::{ErrorCode, LocalStateDomain};
+    use api::local_state::{ErrorCode, FailureReason, LocalStateDomain};
     use std::sync::Arc;
 
     #[test]
@@ -282,6 +305,44 @@ mod preference_error_tests {
             missing.to_string(),
             "preferences at panel-ui.json: the request's terminal result is no longer retained"
         );
+    }
+
+    /// A save whose COMMIT could not be settled is its own variant: the
+    /// front ends word it from the flag, never from the cause's text, and
+    /// the neutral code stays the store I/O failure of any disk error.
+    #[test]
+    fn an_unresolved_save_is_flagged_unknown_and_keeps_the_neutral_io_code() {
+        let code = ErrorCode::Failed {
+            domain: LocalStateDomain::Preferences,
+            reason: FailureReason::Io,
+        };
+        let unresolved = PreferenceError::Unresolved {
+            path: Arc::from("state.sqlite3"),
+            cause: Arc::from("the save's outcome is unknown after a disk error at COMMIT (x)"),
+            code,
+        };
+        let refused = PreferenceError::from_code("state.sqlite3", code);
+
+        assert!(unresolved.outcome_unknown());
+        assert!(!refused.outcome_unknown());
+        assert_eq!(unresolved.code(), Some(code));
+        assert_eq!(unresolved.code(), refused.code());
+        assert_eq!(unresolved.path(), "state.sqlite3");
+        assert_eq!(
+            unresolved.cause(),
+            "the save's outcome is unknown after a disk error at COMMIT (x)"
+        );
+        assert_eq!(
+            unresolved.to_string(),
+            "preferences at state.sqlite3: the save's outcome is unknown after a disk error at COMMIT (x)"
+        );
+        for other in [
+            PreferenceError::cancelled("p", "c"),
+            PreferenceError::result_not_retained("p"),
+            PreferenceError::caused("p", "c"),
+        ] {
+            assert!(!other.outcome_unknown(), "{other}");
+        }
     }
 }
 
@@ -845,20 +906,34 @@ impl Preferences {
         match poll {
             PreferenceWatchPoll::Pending => None,
             PreferenceWatchPoll::Missing => Some(Err(PreferenceError::result_not_retained(path()))),
-            PreferenceWatchPoll::Settled(Settlement::Completed(_), _) => Some(Ok(())),
-            PreferenceWatchPoll::Settled(Settlement::Failed(code), detail) => {
-                Some(Err(match detail {
-                    Some(cause) => PreferenceError::Store {
-                        path: Arc::from(path()),
-                        cause,
-                        code,
-                    },
-                    None => PreferenceError::from_code(path(), code),
-                }))
-            }
-            PreferenceWatchPoll::Settled(Settlement::Cancelled(cancellation), _) => Some(Err(
-                PreferenceError::cancelled(path(), format!("request cancelled ({cancellation:?})")),
-            )),
+            PreferenceWatchPoll::Settled {
+                settlement: Settlement::Completed(_),
+                ..
+            } => Some(Ok(())),
+            PreferenceWatchPoll::Settled {
+                settlement: Settlement::Failed(code),
+                detail,
+                outcome_unknown,
+            } => Some(Err(match detail {
+                Some(cause) if outcome_unknown => PreferenceError::Unresolved {
+                    path: Arc::from(path()),
+                    cause,
+                    code,
+                },
+                Some(cause) => PreferenceError::Store {
+                    path: Arc::from(path()),
+                    cause,
+                    code,
+                },
+                None => PreferenceError::from_code(path(), code),
+            })),
+            PreferenceWatchPoll::Settled {
+                settlement: Settlement::Cancelled(cancellation),
+                ..
+            } => Some(Err(PreferenceError::cancelled(
+                path(),
+                format!("request cancelled ({cancellation:?})"),
+            ))),
         }
     }
 

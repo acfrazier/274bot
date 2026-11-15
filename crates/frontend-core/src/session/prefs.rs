@@ -716,7 +716,7 @@ impl<Io> OperatorSession<Io> {
                 }
                 Err(error) => {
                     self.settings
-                        .fail(watch.setting, format!("Not saved: {error}"), now);
+                        .fail(watch.setting, save_failure_text(None, &error), now);
                     self.note_setting_failed(watch.setting, &error);
                     // A reorder whose write failed shows the stored order
                     // again, unless a newer reorder is still pending: it
@@ -731,7 +731,13 @@ impl<Io> OperatorSession<Io> {
                     }
                     (
                         Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
-                        Some(format!("{}: {error}", watch.what)),
+                        // The detail is bounded: what the operator must know
+                        // (the save may be stored) comes before the cause.
+                        Some(if error.outcome_unknown() {
+                            format!("{}: save outcome unknown: {error}", watch.what)
+                        } else {
+                            format!("{}: {error}", watch.what)
+                        }),
                     )
                 }
             };
@@ -1096,6 +1102,23 @@ fn write_refused(text: String) -> Applied {
 
 fn not_accepted(what: &str, error: &crate::prefs::PreferenceError) -> Applied {
     write_refused(format!("{what}: {error}"))
+}
+
+/// What a setting shows for a save that failed. A save whose COMMIT ended in
+/// a disk error that the database could not settle may be stored, so it is
+/// neither "not saved" nor retried: it says its outcome is unknown (plan
+/// §4.2). `subject` names what the save was for when the setting has no row
+/// of its own.
+pub(super) fn save_failure_text(
+    subject: Option<&str>,
+    error: &crate::prefs::PreferenceError,
+) -> String {
+    match (subject, error.outcome_unknown()) {
+        (None, false) => format!("Not saved: {error}"),
+        (None, true) => format!("Save outcome unknown: {error}"),
+        (Some(subject), false) => format!("{subject} not saved: {error}"),
+        (Some(subject), true) => format!("{subject} save outcome unknown: {error}"),
+    }
 }
 #[cfg(test)]
 mod setting_event_outcome_tests {

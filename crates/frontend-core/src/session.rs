@@ -1724,7 +1724,7 @@ impl<Io> OperatorSession<Io> {
 
     fn fail_order_write(&mut self, error: &crate::prefs::PreferenceError, was_pending: bool) {
         order_write_failed(error);
-        let text = format!("Load order not saved: {error}");
+        let text = prefs::save_failure_text(Some("Load order"), error);
         let event_error = self
             .commands
             .watching_setting_events()
@@ -4184,13 +4184,22 @@ fn record_transitions(
     }
 }
 
-/// Log a saved Load order write that failed outside a command.
+/// Log a saved Load order write that failed outside a command. A save whose
+/// outcome is unknown is not logged as unwritten (plan §4.2).
 fn order_write_failed(error: &crate::prefs::PreferenceError) {
-    host_log!(
-        Category::Lifecycle,
-        Level::Warn,
-        "profile order: the saved Load order was not written: {error}"
-    );
+    if error.outcome_unknown() {
+        host_log!(
+            Category::Lifecycle,
+            Level::Warn,
+            "profile order: the saved Load order write ended with an unknown outcome: {error}"
+        );
+    } else {
+        host_log!(
+            Category::Lifecycle,
+            Level::Warn,
+            "profile order: the saved Load order was not written: {error}"
+        );
+    }
 }
 
 #[cfg(test)]

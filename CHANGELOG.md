@@ -106,12 +106,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   hints, loadouts, the vault and every other file keep working. Fix the file
   (or remove it to start empty) and the next read imports it.
 - When a save's database commit ends with a disk error, 274bot looks for that
-  commit again after reopening the database. If it cannot reopen it in that
-  moment, the setting now says that the outcome of the save is unknown and
-  that it was not retried, with the reason, instead of retrying the save or
-  saying it was not saved. The preferences then show what the database holds.
-  The `state/preserved-<time>` directory that a recovery creates is now
-  owner-only from the start, as the files in it are.
+  commit again after reopening the database. If it cannot reopen the database
+  in that moment, or finds no record of the commit, the setting shows "Save
+  outcome unknown: …" (in the panel's own settings "Preferences save outcome
+  unknown: …", for the Load order "Load order save outcome unknown: …") with
+  the reason, and says that the save was not retried. It does not retry the
+  save and does not say it was not saved. The preferences then show what the
+  database holds. The `state/preserved-<time>` directory that a recovery
+  creates is now owner-only from the start, as the files in it are.
 - A save that waits for another 274bot process now says why under "Saving…"
   (panel) or on the message line (terminal app), and if it cannot finish within
   5 seconds the setting shows the reason, for example "Not saved: … another
