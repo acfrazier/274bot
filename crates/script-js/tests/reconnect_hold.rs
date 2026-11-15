@@ -10,7 +10,7 @@ use script::interact::InteractReq;
 use script::native::snapshot_source::{ChatLineInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -32,7 +32,7 @@ fn tick(iso: &LoadIsolate, snap: &SnapshotInput<'_>) {
 }
 
 fn value(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
-    iso.probe(expr).unwrap()
+    iso.probe(expr).expect("read reconnect-hold probe result")
 }
 
 fn wait_for_execution(iso: &LoadIsolate, message: &str) {
@@ -138,7 +138,7 @@ export default class T extends LoopingBot {
     use script::native::HostEffect;
 
     fn bank_tick(slot: &mut bank_slot::BankSlot, snap: &SnapshotInput<'_>) {
-        slot.tick_from_input(snap.tick, snap, NativeFactsInput::default());
+        slot.tick_from_input(snap.tick, snap, &NativeFactsInput::default());
     }
 
     let mut iso = bank_slot::BankSlot::new(
@@ -242,7 +242,7 @@ export default class T extends LoopingBot {
     snap.tick = 5;
     snap.here = Some(tile(3250, 3250));
     let mut native = GameSnapshot::new();
-    bank_slot::update_native_snapshot(&mut native, &snap, NativeFactsInput::default(), None);
+    bank_slot::update_native_snapshot(&mut native, &snap, &NativeFactsInput::default(), None);
     native.seed_scene(SceneView {
         available: true,
         base_x: 3250,
@@ -252,7 +252,7 @@ export default class T extends LoopingBot {
         height: 1,
         collision_flags: vec![0, 0],
     });
-    iso.tick(5, &snap, NativeFactsInput::default(), &native);
+    iso.tick(5, &snap, &NativeFactsInput::default(), &native);
     let opens = iso.take_actions();
     assert_eq!(opens.len(), 1, "exactly one chest open follows the relog");
     assert!(matches!(
@@ -348,7 +348,7 @@ export default class T extends LoopingBot {{
         let mut actions = Vec::new();
         for tick in 1..=4 {
             snap.tick = tick;
-            slot.tick_from_input(tick, &snap, native);
+            slot.tick_from_input(tick, &snap, &native);
             actions.extend(slot.take_actions());
             if !actions.is_empty() {
                 break;
@@ -379,12 +379,12 @@ export default class T extends LoopingBot {{
         snap.bank_side = &[];
         snap.hold = true;
         snap.tick += 1;
-        slot.tick_from_input(snap.tick, &snap, Default::default());
+        slot.tick_from_input(snap.tick, &snap, &Default::default());
         assert_eq!(slot.probe("__settled").unwrap(), 0);
         snap.hold = false;
         for _ in 0..4 {
             snap.tick += 1;
-            slot.tick_from_input(snap.tick, &snap, Default::default());
+            slot.tick_from_input(snap.tick, &snap, &Default::default());
             assert!(
                 slot.take_actions().is_empty(),
                 "{call}: no old verb is replayed"
@@ -438,7 +438,7 @@ export default class T extends LoopingBot {
     );
     let mut snap = ingame_snapshot();
     snap.here = Some(tile(3222, 3222));
-    slot.tick_from_input(1, &snap, Default::default());
+    slot.tick_from_input(1, &snap, &Default::default());
     let actions = slot.take_actions();
     assert!(matches!(actions.as_slice(), [action] if matches!(action.effect, HostEffect::Walk(_))));
     let old = actions[0].authority();
@@ -446,7 +446,7 @@ export default class T extends LoopingBot {
     assert!(!old.live());
     for tick in 2..=5 {
         snap.tick = tick;
-        slot.tick_from_input(tick, &snap, Default::default());
+        slot.tick_from_input(tick, &snap, &Default::default());
         assert!(
             slot.take_actions().is_empty(),
             "a non-kept opening must not resume"

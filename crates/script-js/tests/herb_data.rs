@@ -14,12 +14,13 @@ mod local_game_data;
 fn scratch(name: &str) -> PathBuf {
     let dir =
         std::env::temp_dir().join(format!("274bot-herb-data-{}-{}", std::process::id(), name));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create herb-data test scratch directory");
     dir
 }
 
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R274)
+        .expect("load revision 274 herb-data test data")
 }
 
 fn spawn_from_card_folder(

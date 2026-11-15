@@ -121,7 +121,8 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn posted ground-interaction isolate");
     let take = ["Take".to_string()];
     let ground = [
         ground_row(1053, "Coins", &take),
@@ -133,7 +134,8 @@ export default class T extends LoopingBot {
     iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
     iso.on_game_tick(1);
     assert_eq!(
-        iso.probe("__probe").unwrap(),
+        iso.probe("__probe")
+            .expect("read posted ground-interaction results"),
         serde_json::json!([true, true, true])
     );
     let reqs = iso.drain_interacts();
@@ -156,12 +158,17 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn cold ground-request isolate");
     iso.on_game_tick(1);
-    assert_eq!(iso.probe("__probe").unwrap(), true);
+    assert_eq!(
+        iso.probe("__probe")
+            .expect("read cold ground-request result"),
+        true
+    );
     assert_eq!(
         iso.probe("new Function('o', 'return %HasFastProperties(o)')(__cold_ground_request)")
-            .unwrap(),
+            .expect("read cold ground-request property result"),
         true,
         "native cold request creation must create fast properties without JS warming"
     );
@@ -177,17 +184,22 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn posted Input.takeObj isolate");
     let take = ["Take".to_string()];
     let ground = [ground_row(1053, "Coins", &take)];
     let mut snap = base_snapshot();
     snap.ground = &ground;
     iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
     iso.on_game_tick(1);
-    assert_eq!(iso.probe("__probe").unwrap(), true);
+    assert_eq!(
+        iso.probe("__probe")
+            .expect("read posted Input.takeObj result"),
+        true
+    );
     assert_eq!(
         iso.probe("new Function('o', 'return %HasFastProperties(o)')(__cold_input_request)")
-            .unwrap(),
+            .expect("read posted Input.takeObj property result"),
         true,
         "cold Input.takeObj binding request must have fast properties"
     );
@@ -229,20 +241,23 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn retained Input.takeObj isolate");
     let take = ["Take".to_string()];
     let ground = [ground_row(1053, "Coins", &take)];
     let mut snap = base_snapshot();
     snap.ground = &ground;
     iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
     assert_eq!(
-        iso.probe("globalThis.__request_count = 1").unwrap(),
+        iso.probe("globalThis.__request_count = 1")
+            .expect("start retained Input.takeObj warm-up"),
         serde_json::json!(1)
     );
     for tick in 1..=WARM_TICKS as u64 {
         iso.on_game_tick(tick);
         assert_eq!(
-            iso.probe("__probe").unwrap(),
+            iso.probe("__probe")
+                .expect("read retained Input.takeObj warm-up tick"),
             serde_json::json!(tick),
             "the warm-up completes each request tick"
         );
@@ -253,12 +268,14 @@ export default class T extends LoopingBot {
         );
     }
     assert_eq!(
-        iso.probe("__kept.length").unwrap(),
+        iso.probe("__kept.length")
+            .expect("read warm-up retained request count"),
         serde_json::json!(1),
         "warm-up exercises the retained-request path"
     );
     assert_eq!(
-        iso.probe("globalThis.__kept.length = 0").unwrap(),
+        iso.probe("globalThis.__kept.length = 0")
+            .expect("clear warm-up retained request count"),
         serde_json::json!(0),
         "discard the warm-up request before the baseline"
     );
@@ -267,14 +284,15 @@ export default class T extends LoopingBot {
         .expect("collect the warmed isolate heap before materializing requests");
     assert_eq!(
         iso.probe(&format!("globalThis.__request_count = {REQUESTS}"))
-            .unwrap(),
+            .expect("start retained Input.takeObj measurement"),
         serde_json::json!(REQUESTS)
     );
     for request in 1..=REQUESTS as u64 {
         let tick = WARM_TICKS as u64 + request;
         iso.on_game_tick(tick);
         assert_eq!(
-            iso.probe("__probe").unwrap(),
+            iso.probe("__probe")
+                .expect("read materialized Input.takeObj tick"),
             serde_json::json!(tick),
             "the script completes one request tick"
         );
@@ -285,7 +303,8 @@ export default class T extends LoopingBot {
         );
     }
     assert_eq!(
-        iso.probe("__kept.length").unwrap(),
+        iso.probe("__kept.length")
+            .expect("read materialized Input.takeObj retained count"),
         serde_json::json!(REQUESTS),
         "Input.takeObj retains every materialized request"
     );
@@ -362,14 +381,19 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn missing-action ground isolate");
     let actions = ["Examine".to_string()];
     let ground = [ground_row(1053, "Coins", &actions)];
     let mut snap = base_snapshot();
     snap.ground = &ground;
     iso.post_snapshot(script_js::wire::encode_snapshot(&snap));
     iso.on_game_tick(1);
-    assert_eq!(iso.probe("__probe").unwrap(), false);
+    assert_eq!(
+        iso.probe("__probe")
+            .expect("read missing-action ground result"),
+        false
+    );
     assert!(
         iso.drain_interacts().is_empty(),
         "unavailable action queues nothing"

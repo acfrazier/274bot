@@ -5,11 +5,19 @@ use script_js::{LoadIsolate, LoadShape};
 /// One NativeTick v2 card, ticked once with no posted page: the method reads
 /// no snapshot, so nothing here posts one.
 fn probe(src: &str) -> serde_json::Value {
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![])
+        .expect("spawn clue-pack test isolate");
     iso.on_game_tick(1);
-    let value = iso.probe("globalThis.__probe").unwrap();
+    let value = iso
+        .probe("globalThis.__probe")
+        .expect("read clue-pack probe result");
     iso.join();
-    serde_json::from_str(value.as_str().unwrap()).unwrap()
+    serde_json::from_str(
+        value
+            .as_str()
+            .expect("clue-pack probe result is a JSON string"),
+    )
+    .expect("parse clue-pack probe result")
 }
 
 #[test]

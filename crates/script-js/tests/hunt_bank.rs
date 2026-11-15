@@ -428,7 +428,7 @@ fn heal_closes_before_eat_and_a_bite_reopens_for_food() {
     let step = reach_open(token, &proj, obs.clone());
     assert_eq!(kind(&step), "close", "eat must not run while open: {step}");
     assert_ne!(kind(&step), "held");
-    let mut closed = obs.clone();
+    let mut closed = obs;
     closed.bank_open = false;
     closed.bank_loaded = false;
     closed.bank.clear();
@@ -485,7 +485,7 @@ fn changed_generation_is_not_a_deposit_and_close_queued_is_not_done() {
     assert_eq!(kind(&step), "deposit", "{step}");
     assert_eq!(step["name"], "Bones");
     assert!(step.get("count").is_none(), "{step}");
-    let mut stale = open_loaded(obs.clone());
+    let mut stale = open_loaded(obs);
     stale.bank_generation = 99;
     stale.bank_op_result = true;
     stale.bank_op_result_seq = 8;
@@ -631,7 +631,7 @@ export async function tick(api) {
                     level: 0,
                 },
             ),
-            script::native::snapshot_source::NativeFactsInput::default(),
+            &script::native::snapshot_source::NativeFactsInput::default(),
         );
     }
     // Inside the lair, the caller's own leave runs; a failed leave ends
@@ -740,7 +740,7 @@ export async function tick(api) {
     let mut sent = None;
     for tick in 1..=8 {
         snapshot.tick = tick;
-        slot.tick_from_input(tick, &snapshot, NativeFactsInput::default());
+        slot.tick_from_input(tick, &snapshot, &NativeFactsInput::default());
         let mut actions = slot.take_actions();
         if !actions.is_empty() {
             assert_eq!(actions.len(), 1, "one native booth attempt");
@@ -776,7 +776,7 @@ export async function tick(api) {
     std::thread::sleep(std::time::Duration::from_millis(5_100));
     for next in tick + 1..=tick + 8 {
         snapshot.tick = next;
-        slot.tick_from_input(next, &snapshot, NativeFactsInput::default());
+        slot.tick_from_input(next, &snapshot, &NativeFactsInput::default());
         assert!(
             slot.take_actions().is_empty(),
             "a failed opener is not retried"
@@ -1004,7 +1004,7 @@ impl TripSim {
         obs.inv = slotted(true);
         if self.open {
             obs = open_loaded(obs);
-            obs.bank = self.bank.clone();
+            obs.bank.clone_from(&self.bank);
             obs.bank_side = slotted(false);
         }
         obs.bank_op_result = self.seq > 1;

@@ -18,7 +18,7 @@ const REVISIONS: [ClientRevision; 2] = [ClientRevision::R274, ClientRevision::R2
 fn spawn(src: &str, data: &Data) -> LoadIsolate {
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::CompatClass, vec![], data.clone())
-            .unwrap();
+            .expect("spawn gather-gas-set isolate");
     assert_eq!(
         iso.probe("1").unwrap_or_else(|error| {
             panic!(
@@ -34,8 +34,13 @@ fn spawn(src: &str, data: &Data) -> LoadIsolate {
 
 fn tick(iso: &LoadIsolate, n: u64) -> Value {
     iso.on_game_tick(n);
-    let raw = iso.probe("globalThis.__probe").unwrap();
-    serde_json::from_str(raw.as_str().unwrap()).unwrap()
+    let raw = iso
+        .probe("globalThis.__probe")
+        .expect("read gathered gas probe result");
+    let text = raw
+        .as_str()
+        .expect("gathered gas probe result is a JSON string");
+    serde_json::from_str(text).expect("parse gathered gas probe JSON")
 }
 
 /// One tick of a script whose `loop` stores `JSON.stringify(<expr>)` as the probe.

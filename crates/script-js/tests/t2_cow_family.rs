@@ -301,7 +301,7 @@ fn bound_named_bank_facts_override_fallbacks_and_keep_destination_identity() {
         expected[0],
         "the fixture must prove that Al Kharid ignores a different bound stand"
     );
-    let isolate = load(Some(data), banks.clone());
+    let isolate = load(Some(data), banks);
 
     assert_eq!(
         probe(&isolate, "__cow.bankConstants.map(__cow.xyz)"),

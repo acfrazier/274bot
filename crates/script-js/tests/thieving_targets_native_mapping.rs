@@ -13,7 +13,7 @@ use {
     script_js::wire::{encode_snapshot, encode_snapshot_delta, SnapshotFingerprint},
 };
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -332,7 +332,8 @@ export default class T extends LoopingBot {
 "#;
 
 fn spawn() -> LoadIsolate {
-    LoadIsolate::spawn(SRC.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(SRC.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn thieving-target mapping isolate")
 }
 
 fn all_bool(value: &serde_json::Value) -> bool {
@@ -601,7 +602,8 @@ export default class T extends LoopingBot {{
 }}
 "#
     );
-    let iso = LoadIsolate::spawn_with_game_data(src, LoadShape::CompatClass, vec![], data).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src, LoadShape::CompatClass, vec![], data)
+        .expect("spawn thieving target interaction isolate");
     let stats = [StatInput {
         index: 17,
         name: "thieving",
@@ -639,9 +641,9 @@ export default class T extends LoopingBot {{
     iso.on_game_tick(1);
     let accepted = iso
         .probe("__accepted")
-        .unwrap()
+        .expect("read NPC interaction acceptance")
         .as_bool()
-        .expect("Npc.interact result");
+        .expect("NPC interaction acceptance is boolean");
     let ops = iso.drain_interacts();
     iso.join();
     (accepted, ops)

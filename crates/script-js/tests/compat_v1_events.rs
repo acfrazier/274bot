@@ -1,6 +1,6 @@
 //! Compat v1 Events census contracts and removal coverage.
 
-mod common;
+pub mod common;
 
 use script::native::snapshot_source::{SnapshotInput, StatInput};
 use script_js::{LoadIsolate, LoadShape};

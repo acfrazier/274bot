@@ -2,10 +2,6 @@
 //!
 //! Intentional fixture variants (`base_snapshot`, seeds, `scene_state`, …) stay
 //! in each test file; only byte-identical scaffolding is centralized here.
-#![expect(
-    dead_code,
-    reason = "Shared across integration-test binaries; each binary uses only its needed helper subset"
-)]
 
 use script::native::snapshot_source::{ReachViewInput, SnapshotInput, StatInput, TileInput};
 use script_js::LoadIsolate;

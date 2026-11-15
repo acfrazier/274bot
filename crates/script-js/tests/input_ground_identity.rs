@@ -119,10 +119,13 @@ fn run(expression: &str, ground: &[SceneEntityInput<'_>]) -> (serde_json::Value,
            loop() {{ globalThis.__probe = {expression}; }}\n\
          }}"
     );
-    let iso = LoadIsolate::spawn(source, LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(source, LoadShape::CompatClass, vec![])
+        .expect("spawn input ground-identity isolate");
     iso.post_snapshot(encode_snapshot(&snapshot(ground)));
     iso.on_game_tick(1);
-    let probe = iso.probe("__probe").unwrap();
+    let probe = iso
+        .probe("__probe")
+        .expect("read input ground-identity probe result");
     let requests = iso.drain_interacts();
     iso.join();
     (probe, requests)

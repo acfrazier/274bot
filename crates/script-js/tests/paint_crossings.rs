@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use script_js::LoadIsolate;
 
-mod common;
+pub mod common;
 
 /// Wrap `rustyscript.functions` and the tape's direct global so every
 /// `__rs2b0t_canvas*` call increments a global counter. Returns whether the
@@ -52,7 +52,8 @@ fn spawn(src: &str) -> LoadIsolate {
 fn spawn_counting(src: &str) -> LoadIsolate {
     let iso = spawn(src);
     assert_eq!(
-        iso.probe(INSTALL_COUNTER).unwrap(),
+        iso.probe(INSTALL_COUNTER)
+            .expect("read paint installation counter"),
         serde_json::Value::Bool(true),
         "counting proxy installed"
     );

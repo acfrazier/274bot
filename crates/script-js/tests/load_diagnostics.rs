@@ -41,7 +41,7 @@ fn scratch(name: &str) -> PathBuf {
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create load-diagnostics scratch directory");
     dir
 }
 
@@ -56,9 +56,9 @@ fn write(dir: &Path, rel: &str, src: &str) -> PathBuf {
         .split('/')
         .fold(dir.to_path_buf(), |path, part| path.join(part));
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+        std::fs::create_dir_all(parent).expect("create source-fixture parent directory");
     }
-    std::fs::write(&path, src).unwrap();
+    std::fs::write(&path, src).expect("write source fixture");
     path
 }
 
@@ -75,12 +75,8 @@ fn cooperative_card_preparation_matches_the_changed_real_source() {
     let dir = scratch("cooperative-card");
     let mut js = library(&dir);
     let path = write(&dir, "changed.ts", GOOD);
-    let previous = js
-        .load(&path)
-        .expect("load the original card")
-        .sha256
-        .clone();
-    std::fs::write(&path, GOOD_V2).unwrap();
+    let previous = js.load(&path).expect("load the original card").sha256;
+    std::fs::write(&path, GOOD_V2).expect("update card source fixture");
     let snapshot = std::sync::Arc::new(
         js.card_preparation_snapshot(ScriptSource::File, &path.to_string_lossy(), None)
             .expect("capture a changed card"),
@@ -91,7 +87,7 @@ fn cooperative_card_preparation_matches_the_changed_real_source() {
         snapshot.scratch_bytes(),
         snapshot.result_bytes(),
     )
-    .unwrap();
+    .expect("build cooperative preparation input");
     let candidate = script::preparation::submit_cooperative(
         script::preparation::PreparationKind::Card,
         api::identity::Scope::Process,
@@ -164,15 +160,15 @@ fn cooperative_force_prepare_warms_an_unchanged_card() {
 
 fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
     let scripts = root.join("src/bot/scripts");
-    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::create_dir_all(&scripts).expect("create fake catalog script directory");
     let mut index =
         String::from("import { ScriptRegistry } from '../runtime/ScriptRegistry.js';\n");
     for (name, src) in bots {
         let folder = name.replace(' ', "");
         index.push_str(&format!("import {folder} from './{folder}/{folder}.js';\n"));
         let d = scripts.join(&folder);
-        std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join(format!("{folder}.ts")), src).unwrap();
+        std::fs::create_dir_all(&d).expect("create fake card directory");
+        std::fs::write(d.join(format!("{folder}.ts")), src).expect("write fake card source");
     }
     for (name, _) in bots {
         let folder = name.replace(' ', "");
@@ -180,7 +176,7 @@ fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
             "ScriptRegistry.register({{ name: '{name}', description: '{name}', category: 'Test', create: () => new {folder}() }});\n"
         ));
     }
-    std::fs::write(scripts.join("index.ts"), index).unwrap();
+    std::fs::write(scripts.join("index.ts"), index).expect("write fake catalog index");
 }
 
 fn selected_validation_context() -> Option<(
@@ -239,7 +235,8 @@ fn validate_cards(
     let _guard = VALIDATION_TEST_LOCK
         .lock()
         .expect("validation test lock poisoned");
-    let batch = LoadIsolate::validate_prepared_batch(cards, game_data, named_banks).unwrap();
+    let batch = LoadIsolate::validate_prepared_batch(cards, game_data, named_banks)
+        .expect("validate prepared test cards");
     let until = Instant::now() + Duration::from_secs(45);
     loop {
         match batch.try_recv() {
@@ -266,7 +263,7 @@ fn prepare_catalogue(js: &JsLibrary, root: &Path) -> script_js::CatalogPreparati
         snapshot.scratch_bytes(),
         snapshot.result_bytes(),
     )
-    .unwrap();
+    .expect("build catalogue preparation input");
     script::preparation::submit_cooperative(
         script::preparation::PreparationKind::Catalogue,
         api::identity::Scope::Process,

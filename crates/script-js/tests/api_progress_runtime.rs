@@ -120,22 +120,26 @@ fn post_snapshot(iso: &LoadIsolate, tick: u64, api_progress: Option<&ProgressPag
 fn tick(iso: &LoadIsolate, tick: u64, api_progress: Option<&ProgressPage>) {
     post_snapshot(iso, tick, api_progress);
     iso.on_game_tick(tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso.probe("true").expect("probe progress API tick");
 }
 
 fn isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(BASE_SCRIPT.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(BASE_SCRIPT.into(), LoadShape::NativeTick, vec![])
+        .expect("spawn progress API isolate");
     tick(&iso, 1, None);
     iso
 }
+
 fn journal_isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(JOURNAL_SCRIPT.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(JOURNAL_SCRIPT.into(), LoadShape::NativeTick, vec![])
+        .expect("spawn journal API isolate");
     tick(&iso, 1, None);
     iso
 }
 
 fn dragon_isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(DRAGON_SCRIPT.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(DRAGON_SCRIPT.into(), LoadShape::NativeTick, vec![])
+        .expect("spawn Dragon Slayer API isolate");
     tick(&iso, 1, None);
     iso
 }
@@ -154,7 +158,10 @@ fn begin(iso: &LoadIsolate, label: &str, args: &str) {
           return true;
         }})()"#
     );
-    assert_eq!(iso.probe(&expression).unwrap(), true);
+    assert_eq!(
+        iso.probe(&expression).expect("begin progress request"),
+        true
+    );
 }
 fn begin_journal(iso: &LoadIsolate, label: &str, args: &str) {
     let expression = format!(
@@ -170,17 +177,17 @@ fn begin_journal(iso: &LoadIsolate, label: &str, args: &str) {
           return true;
         }})()"#
     );
-    assert_eq!(iso.probe(&expression).unwrap(), true);
+    assert_eq!(iso.probe(&expression).expect("begin journal request"), true);
 }
 
 fn forward_queued_controls(iso: &LoadIsolate) {
-    let current_tick = iso.probe("__api.tick").unwrap();
+    let current_tick = iso.probe("__api.tick").expect("read progress API tick");
     let current_tick = current_tick
         .as_f64()
         .unwrap_or_else(|| panic!("non-numeric API tick: {current_tick}"))
         as u64;
     iso.on_game_tick(current_tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso.probe("true").expect("probe forwarded API tick");
 }
 
 fn begin_and_take_read(iso: &LoadIsolate, label: &str) -> (u64, String) {
@@ -200,18 +207,22 @@ fn take_single_read(requests: &[InteractReq]) -> (u64, String) {
         })
         .collect();
     assert_eq!(reads.len(), 1, "expected one progress-read in {requests:?}");
-    reads.into_iter().next().unwrap()
+    reads
+        .into_iter()
+        .next()
+        .expect("one progress-read request was checked")
 }
 
 fn result(iso: &LoadIsolate, label: &str) -> serde_json::Value {
-    iso.probe(&format!("globalThis.__{label}Result")).unwrap()
+    iso.probe(&format!("globalThis.__{label}Result"))
+        .expect("read progress result")
 }
 
 fn settles(iso: &LoadIsolate, label: &str) -> u64 {
     iso.probe(&format!("globalThis.__{label}Settles"))
-        .unwrap()
+        .expect("read progress settlement count")
         .as_u64()
-        .unwrap()
+        .expect("progress settlement count is an unsigned integer")
 }
 
 fn done_page(token: u64) -> ProgressPage {
@@ -456,7 +467,11 @@ fn begin_dragon_read(iso: &LoadIsolate, label: &str) -> u64 {
           return true;
         }})()"#
     );
-    assert_eq!(iso.probe(&expression).unwrap(), true);
+    assert_eq!(
+        iso.probe(&expression)
+            .expect("begin Dragon Slayer progress request"),
+        true
+    );
     forward_queued_controls(iso);
     let requests = iso.drain_interacts();
     assert_eq!(requests.len(), 1, "one native call: {requests:?}");

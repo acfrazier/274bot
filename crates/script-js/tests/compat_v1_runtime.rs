@@ -12,7 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn compatibility runtime test isolate")
 }
 
 fn bot(imports: &str, body: &str) -> String {
@@ -47,7 +48,7 @@ export default class T extends LoopingBot {{
 fn run(src: &str, expr: &str) -> serde_json::Value {
     let iso = spawn(src);
     iso.on_game_tick(1);
-    let value = iso.probe(expr).unwrap();
+    let value = iso.probe(expr).expect("read compatibility runtime probe");
     iso.join();
     value
 }
@@ -69,7 +70,9 @@ fn run_with_context(
     let iso = spawn(src);
     iso.bind_runtime_context(context);
     iso.on_game_tick(1);
-    let value = iso.probe(expr).unwrap();
+    let value = iso
+        .probe(expr)
+        .expect("read compatibility runtime context probe");
     iso.join();
     value
 }
@@ -102,7 +105,7 @@ impl LocalStatePort for RuntimeSettingsPort {
         Ok(self
             .values
             .lock()
-            .unwrap()
+            .expect("runtime settings test mutex is not poisoned")
             .get(&(namespace.to_owned(), key.to_owned()))
             .cloned())
     }
@@ -112,13 +115,16 @@ impl LocalStatePort for RuntimeSettingsPort {
         let DomainEdit::ScriptRuntimeSettings(edit) = edit else {
             return SubmitReceipt::Refused(ErrorCode::Busy { domain });
         };
-        self.values.lock().unwrap().insert(
-            (edit.namespace().to_owned(), edit.key().to_owned()),
-            edit.raw().to_owned(),
-        );
+        self.values
+            .lock()
+            .expect("runtime settings test mutex is not poisoned")
+            .insert(
+                (edit.namespace().to_owned(), edit.key().to_owned()),
+                edit.raw().to_owned(),
+            );
         let raw = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
         SubmitReceipt::Accepted {
-            request: RequestId::isolate(raw).unwrap(),
+            request: RequestId::isolate(raw).expect("construct runtime settings request ID"),
         }
     }
 
@@ -139,17 +145,20 @@ fn runtime_settings_state() -> Arc<SlotState> {
     let port = Arc::new(RuntimeSettingsPort::default());
     Arc::new(SlotState::new(
         port,
-        AccountKey::try_new("local-289", "runtime").unwrap(),
-        ContentScope::try_new(api::selected::ClientRevision::R289, "compat-runtime").unwrap(),
+        AccountKey::try_new("local-289", "runtime").expect("construct test account key"),
+        ContentScope::try_new(api::selected::ClientRevision::R289, "compat-runtime")
+            .expect("construct test content scope"),
     ))
 }
 
 fn run_with_local_state(src: &str, expr: &str, state: Arc<SlotState>) -> serde_json::Value {
     let iso =
         LoadIsolate::spawn_with_local_state(src.to_string(), LoadShape::CompatClass, vec![], state)
-            .unwrap();
+            .expect("spawn compatibility local-state isolate");
     iso.on_game_tick(1);
-    let value = iso.probe(expr).unwrap();
+    let value = iso
+        .probe(expr)
+        .expect("read compatibility local-state probe");
     iso.join();
     value
 }
@@ -403,7 +412,8 @@ fn assert_export_removed(module: &str, name: &str) {
         );
     }
     let src = bot(&format!("import {{ {name} }} from '{module}';"), "");
-    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![])
+        .expect("spawn isolate for removed compatibility export");
     let deadline = Instant::now() + Duration::from_secs(10);
     let error = loop {
         match iso.poll_ready() {

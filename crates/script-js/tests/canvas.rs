@@ -6,7 +6,7 @@ use script::canvas::{self, CanvasOp, PathSeg};
 use script::paint::ScriptPaint;
 use script_js::LoadIsolate;
 
-mod common;
+pub mod common;
 
 fn tick_paint(iso: &LoadIsolate, n: u64) -> std::sync::Arc<ScriptPaint> {
     iso.on_game_tick(n);

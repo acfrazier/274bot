@@ -28,7 +28,7 @@ fn example(name: &str) -> PathBuf {
 
 fn scratch() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-bone-burier-v2-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create bone-burier scratch directory");
     dir
 }
 
@@ -40,7 +40,7 @@ fn spawn_banking(source: String) -> LoadIsolate {
     });
     let isolate =
         LoadIsolate::spawn_with_execution(source, LoadShape::NativeTick, vec![], execution)
-            .unwrap();
+            .expect("spawn bone-burier test isolate");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         match isolate.poll_ready() {
@@ -149,6 +149,10 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
     }
 }
 
+#[expect(
+    clippy::large_types_passed_by_value,
+    reason = "the wire encoder accepts NativeFactsInput by value"
+)]
 fn post_tick(iso: &LoadIsolate, snap: SnapshotInput<'_>, facts: NativeFactsInput<'_>, tick: u64) {
     iso.post_snapshot(script_js::wire::encode_snapshot_with_native(&snap, facts));
     iso.on_game_tick(tick);

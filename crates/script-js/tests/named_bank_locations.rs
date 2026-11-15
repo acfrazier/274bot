@@ -116,10 +116,14 @@ export default class T extends LoopingBot { loop() {} }
 "#;
 
 fn catalog() -> NamedBankFacts {
-    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("load revision 289 bank-location test data");
     resolve(
         bank_catalog().expect("local bank catalog"),
-        &data.bank_placements().unwrap().rows,
+        &data
+            .bank_placements()
+            .expect("load revision 289 bank placements")
+            .rows,
         |_| true,
     )
 }
@@ -136,12 +140,12 @@ fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) 
     snapshot.stats = &stats;
     iso.post_snapshot(
         &snapshot,
-        NativeFactsInput {
+        &NativeFactsInput {
             quest_statuses: Some(quests),
             ..Default::default()
         },
     );
-    iso.probe("true").unwrap();
+    iso.probe("true").expect("complete bank-slot snapshot post");
 }
 
 #[test]
@@ -327,7 +331,7 @@ export default class T extends LoopingBot {{
             ..Default::default()
         };
 
-        slot.tick_from_input(1, &snapshot, native);
+        slot.tick_from_input(1, &snapshot, &native);
         let mut actions = slot.take_actions();
         assert_eq!(actions.len(), 1, "{call}: expected native bank pick");
         let pick = actions.pop().unwrap();
@@ -366,7 +370,7 @@ export default class T extends LoopingBot {{
             },
         );
         snapshot.tick = 2;
-        slot.tick_from_input(2, &snapshot, native);
+        slot.tick_from_input(2, &snapshot, &native);
         assert!(
             slot.take_actions().is_empty(),
             "{call}: a stale native selection must not start a walk"
@@ -385,7 +389,7 @@ export default class T extends LoopingBot {{
             },
         );
         snapshot.tick = 3;
-        slot.tick_from_input(3, &snapshot, native);
+        slot.tick_from_input(3, &snapshot, &native);
         let mut actions = slot.take_actions();
         assert_eq!(actions.len(), 1, "{call}: expected walk to selected access");
         let walk = actions.pop().unwrap();
@@ -462,7 +466,7 @@ export default class T extends LoopingBot {{
             angle: 0,
         }];
         snapshot.npcs = &npcs;
-        slot.tick_from_input(4, &snapshot, native);
+        slot.tick_from_input(4, &snapshot, &native);
         let mut actions = slot.take_actions();
         assert_eq!(actions.len(), 1, "{call}: expected teller interaction");
         let interaction = actions.pop().unwrap();
@@ -496,7 +500,7 @@ export default class T extends LoopingBot {{
         }];
         snapshot.chat_open = true;
         snapshot.chat_options = &choices;
-        slot.tick_from_input(5, &snapshot, native);
+        slot.tick_from_input(5, &snapshot, &native);
         assert!(
             slot.take_actions().is_empty(),
             "absent npcAccess.choose must not select an unrelated first option"
@@ -513,7 +517,7 @@ export default class T extends LoopingBot {{
         snapshot.bank_generation = 1;
         native.side_modal_id = Some(700);
         native.bank_snapshot_generation = Some(0);
-        slot.tick_from_input(6, &snapshot, native);
+        slot.tick_from_input(6, &snapshot, &native);
         assert!(
             slot.take_actions().is_empty(),
             "{call}: open bank is not loaded yet"
@@ -538,7 +542,7 @@ export default class T extends LoopingBot {{
         native.bank_snapshot_generation = Some(1);
         for tick in 7..=9 {
             snapshot.tick = tick;
-            slot.tick_from_input(tick, &snapshot, native);
+            slot.tick_from_input(tick, &snapshot, &native);
             assert!(
                 slot.take_actions().is_empty(),
                 "{call}: empty held inventory must not create a transfer action"

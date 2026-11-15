@@ -131,18 +131,19 @@ fn tick_with_last(
 ) -> SnapshotFingerprint {
     let fingerprint = post_snapshot(iso, tick, api_combat, api_combat_outcome, last);
     iso.on_game_tick(tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso.probe("true").expect("settle API combat tick");
     fingerprint
 }
 
 fn isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(BASE_SCRIPT.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(BASE_SCRIPT.into(), LoadShape::NativeTick, vec![])
+        .expect("spawn API combat runtime isolate");
     tick(&iso, 1, None, None);
     iso
 }
 
 fn begin(iso: &LoadIsolate, label: &str, request: &serde_json::Value) {
-    let request = serde_json::to_string(request).unwrap();
+    let request = serde_json::to_string(request).expect("serialize API combat request");
     let expression = format!(
         r#"(() => {{
           globalThis.__{label}Result = null;
@@ -156,7 +157,10 @@ fn begin(iso: &LoadIsolate, label: &str, request: &serde_json::Value) {
           return true;
         }})()"#
     );
-    assert_eq!(iso.probe(&expression).unwrap(), true);
+    assert_eq!(
+        iso.probe(&expression).expect("start API combat request"),
+        true
+    );
 }
 
 fn call_raw(iso: &LoadIsolate, label: &str, args_src: &str) {
@@ -173,17 +177,23 @@ fn call_raw(iso: &LoadIsolate, label: &str, args_src: &str) {
           return true;
         }})()"#
     );
-    assert_eq!(iso.probe(&expression).unwrap(), true);
+    assert_eq!(
+        iso.probe(&expression)
+            .expect("start raw API combat request"),
+        true
+    );
 }
 
 fn forward_queued_controls(iso: &LoadIsolate) {
-    let current_tick = iso.probe("__api.tick").unwrap();
+    let current_tick = iso.probe("__api.tick").expect("read current API tick");
     let current_tick = current_tick
         .as_f64()
         .unwrap_or_else(|| panic!("non-numeric API tick: {current_tick}"))
         as u64;
     iso.on_game_tick(current_tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso
+        .probe("true")
+        .expect("settle queued API combat controls");
 }
 
 fn begin_and_take_fight(
@@ -209,7 +219,10 @@ fn take_single_fight(requests: &[InteractReq]) -> (u64, Arc<CombatSessionRequest
         })
         .collect();
     assert_eq!(fights.len(), 1, "expected one combat-fight in {requests:?}");
-    fights.into_iter().next().unwrap()
+    fights
+        .into_iter()
+        .next()
+        .expect("one combat-fight follows the length assertion")
 }
 
 fn clear_page() -> CombatPage {
@@ -221,14 +234,15 @@ fn clear_page() -> CombatPage {
 }
 
 fn result(iso: &LoadIsolate, label: &str) -> serde_json::Value {
-    iso.probe(&format!("globalThis.__{label}Result")).unwrap()
+    iso.probe(&format!("globalThis.__{label}Result"))
+        .expect("read API combat result")
 }
 
 fn settles(iso: &LoadIsolate, label: &str) -> u64 {
     iso.probe(&format!("globalThis.__{label}Settles"))
-        .unwrap()
+        .expect("read API combat settle count")
         .as_u64()
-        .unwrap()
+        .expect("API combat settle count is an unsigned integer")
 }
 
 fn combat_status() -> Arc<ScriptStatus> {

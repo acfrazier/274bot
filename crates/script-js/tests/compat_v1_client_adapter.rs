@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-mod common;
+pub mod common;
 
 const INDEX_D_TS: &str = include_str!("../compat-js/index.d.ts");
 const MODULES_JSON: &str = include_str!("../compat-js/modules.json");
@@ -694,10 +694,13 @@ fn bot(imports: &str, body: &str) -> String {
 }
 
 fn run(src: &str, expr: &str) -> Value {
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn compatibility client-adapter isolate");
     iso.on_game_tick(1);
     let _ = iso.probe("true");
-    let value = iso.probe(expr).unwrap();
+    let value = iso
+        .probe(expr)
+        .expect("read compatibility client-adapter result");
     iso.join();
     value
 }
@@ -721,7 +724,8 @@ fn assert_export_removed(name: &str) {
         &format!("import {{ {name} }} from '../../adapter/ClientAdapter.js';"),
         "",
     );
-    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![])
+        .expect("spawn removed-export compatibility isolate");
     let deadline = Instant::now() + Duration::from_secs(10);
     let error = loop {
         match iso.poll_ready() {

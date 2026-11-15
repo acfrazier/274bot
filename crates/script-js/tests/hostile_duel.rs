@@ -4,7 +4,7 @@ use script::native::snapshot_source::{
 };
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -126,23 +126,26 @@ fn npc_row<'a>(
 }
 
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R274)
+        .expect("load revision 274 hostile-duel test data")
 }
 
 fn data_289() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("load revision 289 hostile-duel test data")
 }
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data())
-        .unwrap()
+        .expect("spawn hostile-duel compatibility isolate")
 }
 
 fn probe_loop(iso: &LoadIsolate, snap: &SnapshotInput<'_>) -> serde_json::Value {
     post_snapshot_input(iso, snap);
     iso.on_game_tick(1);
     let _ = iso.probe("true");
-    iso.probe("__probe").unwrap()
+    iso.probe("__probe")
+        .expect("read hostile-duel probe result")
 }
 
 #[test]
