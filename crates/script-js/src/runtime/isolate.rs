@@ -14,8 +14,8 @@ pub use validation::{
     ValidationError, MAX_VALIDATION_BATCH_CARDS,
 };
 
+use teardown::Teardown;
 pub use teardown::TeardownProof;
-use teardown::{TeardownPhase, TeardownState};
 use thread::isolate_main;
 #[cfg(test)]
 use thread::{stamp_mouse_gesture_identities, MouseGestureIdentities};
@@ -439,7 +439,7 @@ pub struct LoadIsolate {
     in_flight: Mutex<Option<(u64, u64, Instant)>>,
     /// Shared Stop/`onStop` phase. Join, Drop, and the isolate thread
     /// serialize tick-unwind vs hook vs Done under this mutex.
-    teardown: std::sync::Arc<Mutex<TeardownState>>,
+    teardown: std::sync::Arc<Mutex<Teardown>>,
     /// Per-isolate invoke/finish/worker evidence. Clone before Drop.
     proof: TeardownProof,
     /// Test seam: the host watchdog never interrupts a slow execution.
@@ -504,7 +504,7 @@ struct FrameDispatch {
 }
 
 struct FrameWatchdog {
-    teardown: Arc<Mutex<TeardownState>>,
+    teardown: Arc<Mutex<Teardown>>,
     terminate: Arc<OnceLock<v8::IsolateHandle>>,
     logs: Arc<Mutex<Vec<String>>>,
     ready: Arc<std::sync::atomic::AtomicBool>,
@@ -564,34 +564,8 @@ impl FrameWatchdog {
     }
 }
 
-fn fire_execution_interrupt_shared(
-    teardown: &Arc<Mutex<TeardownState>>,
-    terminate: Option<&v8::IsolateHandle>,
-    execution_id: u64,
-    owner: teardown::ExecutionInterrupt,
-) -> bool {
-    let mut state = teardown
-        .lock()
-        .expect("isolate teardown state mutex is not poisoned");
-    if state.phase != TeardownPhase::Running
-        || !state.execution_active
-        || state.execution_id != execution_id
-        || state.execution_interrupt.is_some()
-    {
-        return false;
-    }
-    state.execution_interrupt = Some(teardown::InterruptedExecution {
-        owner,
-        consumed: matches!(owner, teardown::ExecutionInterrupt::NoDeadline(_)),
-    });
-    if let Some(handle) = terminate {
-        handle.terminate_execution();
-    }
-    true
-}
-
 fn register_execution_deadline(
-    teardown: &Arc<Mutex<TeardownState>>,
+    teardown: &Arc<Mutex<Teardown>>,
     handle: v8::IsolateHandle,
     id: u64,
     owner: teardown::ExecutionInterrupt,
@@ -616,52 +590,18 @@ fn register_execution_deadline(
 }
 
 fn arm_active_execution_deadline_shared(
-    teardown: &Arc<Mutex<TeardownState>>,
+    teardown: &Arc<Mutex<Teardown>>,
     terminate: Option<&v8::IsolateHandle>,
     logs: &Mutex<Vec<String>>,
     owner: teardown::ExecutionInterrupt,
 ) {
-    let deadline = {
-        let mut state = teardown
-            .lock()
-            .expect("isolate teardown state mutex is not poisoned");
-        let (Some(started), Some(handle)) = (state.execution_started, terminate) else {
-            return;
-        };
-        if state.phase != TeardownPhase::Running
-            || !state.execution_active
-            || state.execution_interrupt.is_some()
-        {
-            return;
-        }
-        if owner != teardown::ExecutionInterrupt::Watchdog
-            || state.execution_deadline_owner.is_none()
-        {
-            state.execution_deadline_owner = Some(owner);
-        }
-        if state.execution_deadline_armed {
-            return;
-        }
-        state.execution_deadline_armed = true;
-        (
-            state.execution_id,
-            started + EXECUTION_WATCHDOG_HORIZON,
-            handle.clone(),
-        )
+    let Some(handle) = terminate else {
+        return;
     };
-    let (id, at, handle) = deadline;
-    let registration = register_execution_deadline(teardown, handle, id, owner, at);
-    if let Err(error) = registration {
-        let reason = match error {
-            LoadIsolateError::SupervisorCapacity => teardown::DeadlineRefusal::Capacity,
-            _ => teardown::DeadlineRefusal::Stopped,
-        };
-        fire_execution_interrupt_shared(
-            teardown,
-            terminate,
-            id,
-            teardown::ExecutionInterrupt::NoDeadline(reason),
-        );
+    let armed = teardown::arm_active_execution_deadline(teardown, handle, owner, |id, at| {
+        register_execution_deadline(teardown, handle.clone(), id, owner, at)
+    });
+    if let Err(error) = armed {
         logs.lock()
             .expect("isolate log mutex is not poisoned")
             .push(error.to_string());
@@ -669,58 +609,39 @@ fn arm_active_execution_deadline_shared(
 }
 
 fn interrupt_slow_execution_shared(
-    teardown: &Arc<Mutex<TeardownState>>,
+    teardown: &Arc<Mutex<Teardown>>,
     terminate: Option<&v8::IsolateHandle>,
     logs: &Mutex<Vec<String>>,
     ready: bool,
 ) {
-    if !ready {
-        return;
-    }
-    let active = {
-        let state = teardown
-            .lock()
-            .expect("isolate teardown state mutex is not poisoned");
-        match (
-            state.phase,
-            state.execution_active,
-            state.execution_interrupt,
-            state.execution_started,
-        ) {
-            (TeardownPhase::Running, true, None, Some(started)) => {
-                Some((state.execution_id, state.execution_tick, started.elapsed()))
-            }
-            _ => None,
-        }
-    };
-    let Some((execution_id, tick, elapsed)) = active else {
-        return;
-    };
-    if elapsed <= EXECUTION_WATCHDOG_HORIZON {
-        arm_active_execution_deadline_shared(
+    match teardown::watchdog_look(teardown, ready, Instant::now()) {
+        None => {}
+        Some(teardown::WatchdogLook::Within) => arm_active_execution_deadline_shared(
             teardown,
             terminate,
             logs,
             teardown::ExecutionInterrupt::Watchdog,
-        );
-        return;
-    }
-    if fire_execution_interrupt_shared(
-        teardown,
-        terminate,
-        execution_id,
-        teardown::ExecutionInterrupt::Watchdog,
-    ) {
-        let line = if tick == RECOVERY_ANCHOR_TICK {
-            format!("interrupted slow recoveryAnchor ({elapsed:?})")
-        } else if tick == FRAME_CALLBACK_TICK {
-            format!("interrupted slow client-frame callback ({elapsed:?})")
-        } else {
-            format!("interrupted slow tick {tick} ({elapsed:?})")
-        };
-        logs.lock()
-            .expect("isolate log mutex is not poisoned")
-            .push(line);
+        ),
+        Some(teardown::WatchdogLook::Past { id, tick, elapsed }) => {
+            let fired = teardown::fire_execution_interrupt(
+                teardown,
+                terminate,
+                id,
+                teardown::ExecutionInterrupt::Watchdog,
+            );
+            if fired {
+                let line = if tick == RECOVERY_ANCHOR_TICK {
+                    format!("interrupted slow recoveryAnchor ({elapsed:?})")
+                } else if tick == FRAME_CALLBACK_TICK {
+                    format!("interrupted slow client-frame callback ({elapsed:?})")
+                } else {
+                    format!("interrupted slow tick {tick} ({elapsed:?})")
+                };
+                logs.lock()
+                    .expect("isolate log mutex is not poisoned")
+                    .push(line);
+            }
+        }
     }
 }
 
@@ -956,7 +877,7 @@ impl LoadIsolate {
             std::sync::Arc::new(crate::compat::quest_journal::CompatJournalLease::default())
         });
         let thread_compat_journal = compat_journal.clone();
-        let teardown = std::sync::Arc::new(Mutex::new(TeardownState::new()));
+        let teardown = std::sync::Arc::new(Mutex::new(Teardown::new()));
         let thread_teardown = teardown.clone();
         let proof = TeardownProof::new();
         let thread_proof = proof.inner.clone();
@@ -1517,15 +1438,11 @@ impl LoadIsolate {
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         self.interrupt_slow_execution(ready);
-        {
-            let mut st = self
-                .teardown
-                .lock()
-                .expect("isolate teardown state mutex is not poisoned");
-            if st.phase == TeardownPhase::Running {
-                st.pause_requested = true;
-            }
-        }
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .state
+            .request_pause();
         self.arm_active_execution_deadline(teardown::ExecutionInterrupt::Pause);
         self.send(IsolateCmd::Pause);
     }
@@ -1546,7 +1463,8 @@ impl LoadIsolate {
         self.teardown
             .lock()
             .expect("isolate teardown state mutex is not poisoned")
-            .pause_requested = false;
+            .state
+            .clear_pause();
         self.send(IsolateCmd::Resume);
     }
 
@@ -1710,7 +1628,9 @@ impl LoadIsolate {
         self.teardown
             .lock()
             .expect("isolate teardown state mutex is not poisoned")
-            .execution_active
+            .state
+            .execution()
+            .is_some()
     }
 
     /// Monotonic identity and activity of the latest interruptible execution.
@@ -1722,7 +1642,7 @@ impl LoadIsolate {
             .teardown
             .lock()
             .expect("isolate teardown state mutex is not poisoned");
-        (st.execution_id, st.execution_active)
+        (st.executions, st.state.execution().is_some())
     }
 
     /// Number of per-tick diagnostics still awaiting their matching
@@ -2152,7 +2072,7 @@ impl LoadIsolate {
                     // interrupted even if it never returns to send Ready.
                     let _ = self.terminate.set(handle);
                     let st = lock_after_isolate_failure(&self.teardown);
-                    if st.phase == TeardownPhase::UnwindingTick {
+                    if st.state.is_unwinding() {
                         // Serialized with Hook entry: join can never fire
                         // this startup/tick interrupt after onStop begins.
                         self.fire_terminate();
@@ -2212,13 +2132,7 @@ impl LoadIsolate {
 
     /// Terminate setup/tick failure while it is still before Hook.
     fn fire_before_hook(&self) {
-        let st = lock_after_isolate_failure(&self.teardown);
-        if matches!(
-            st.phase,
-            TeardownPhase::Running | TeardownPhase::UnwindingTick
-        ) {
-            self.fire_terminate();
-        }
+        teardown::terminate_before_hook(&self.teardown, self.terminate.get());
     }
 
     /// Transfer Stop and actual join custody to the one process supervisor.
@@ -2230,15 +2144,7 @@ impl LoadIsolate {
     fn retire(self, invoke_hook: bool, validation: bool, done: Sender<Vec<String>>) {
         self.revoke_compat_journal();
         self.send(IsolateCmd::Stop { invoke_hook });
-        {
-            let mut st = lock_after_isolate_failure(&self.teardown);
-            if st.phase == TeardownPhase::Running {
-                st.phase = TeardownPhase::UnwindingTick;
-            }
-            if st.phase == TeardownPhase::UnwindingTick {
-                self.fire_terminate();
-            }
-        }
+        teardown::begin_stop(&self.teardown, self.terminate.get());
         supervisor::get()
             .expect("isolate creation initialized the supervisor")
             .retire(self, done, validation);
@@ -2258,13 +2164,11 @@ impl LoadIsolate {
     }
 
     fn teardown_blocks_dispatch(&self) -> bool {
-        matches!(
-            self.teardown
-                .lock()
-                .expect("isolate teardown state mutex is not poisoned")
-                .phase,
-            TeardownPhase::Hook | TeardownPhase::Done
-        )
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .state
+            .blocks_dispatch()
     }
 
     /// Fold completed ticks and thread log lines into local state.
@@ -2519,12 +2423,7 @@ impl Drop for LoadIsolate {
         self.revoke_compat_journal();
         // Revoke the handle's authority even if its owner omitted join.
         // A live thread remains charged to the supervisor until real exit.
-        {
-            let mut st = lock_after_isolate_failure(&self.teardown);
-            if st.phase != TeardownPhase::Done {
-                st.phase = TeardownPhase::Done;
-            }
-        }
+        teardown::revoke(&self.teardown);
         let _ = self.poll_ready();
         self.send(IsolateCmd::Stop { invoke_hook: false });
         self.fire_terminate();
