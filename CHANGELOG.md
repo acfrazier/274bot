@@ -13,6 +13,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   An unrequested observer adds no per-tick allocations. Varbit observations
   are available in every scenario build without an optional feature.
 
+### Scenario runner
+
+- `ObserveMenu` checks exact menu operations and structured targets without
+  sending input; the unarmed observer path allocates nothing.
+- The revision-377 attachment live check requires Hans by NPC type and never
+  substitutes another nearby Talk-to NPC.
+- A revision-377 live menu cell checks real trade and duel requests, a packed
+  loc Examine target, and a world player's slot through the read-only observer.
+
 ### Breaking changes
 
 - 274bot no longer checks that game data, navigation packs and map files
@@ -29,6 +38,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Developer tools
 
+- The seat model also checks who owns a random event, the host Guardian or the
+  running script. Run `seat-model --ownership` for its three profiles. The host
+  tests replay the model's traces against the Guardian. When a slot has no
+  script claim source, the Guardian now hands any script claim back to itself at
+  once.
+- The Quester rocky-elevation live oracle counts actual scenario-worker polls.
+  Recovered client entity cycles no longer cause a false late-drain failure.
 - A generated game data file that fails to decode now names the file and says
   to regenerate it with `python3 tools/local-data/build.py`.
 - Revision 377 stage-1 shop extraction resolves keeper configs by section name
@@ -62,6 +78,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Gatherer tick cells wear the oak fixture's axe, cover fishing-spot moves
   with spare logs, and judge cycles without a chance XP requirement. Startup
   counts player-tile movement on native and replacement routes.
+
+### Native acquisition
+
+- Native shop acquisition walks an initially blocked route, then retries a
+  timed-out Trade with the keeper's current index so the server can path the
+  player. After a Trade, only a fresh "I can't reach that!" starts a walk.
+  As in Dialogue, the first refusal gets one recovery walk. A later refusal
+  gets a walk only when the keeper moved, and that walk spends one replan
+  from the NPC's wander range. One open sends at most 3 Trades and no Trade
+  after the last one. The final error gives the keeper's tiles and route and
+  names the walk that failed.
+- A purchase close starts a fresh shop-open attempt. The buy machine cannot
+  loop forever inside one tick.
 
 ### Panel and terminal app
 

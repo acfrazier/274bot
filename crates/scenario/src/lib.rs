@@ -595,6 +595,9 @@ pub enum StepKind {
     /// The receive status is Unknown; a matching caller-supplied witness is
     /// required for the equality proof. This step sends no client action.
     ObserveVarbit { id: i32 },
+    /// Read the current menu's typed operation and target entries while this
+    /// step is armed. It accepts an immutable client view and sends nothing.
+    ObserveMenu,
     /// Host starts the catalog isolate (`script_start_load`) or compiled
     /// card (`start_compiled`) once when the live pump sees this step.
     /// No-op on the client. File cards wait a one-game-tick arm; compiled

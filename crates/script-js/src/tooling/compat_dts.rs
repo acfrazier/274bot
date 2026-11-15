@@ -149,6 +149,7 @@ fn is_barrel(specifier: &str) -> bool {
 
 fn parse_js(specifier: &str, source: &str, media: MediaType) -> Option<ParsedSource> {
     let url = deno_ast::ModuleSpecifier::parse(&format!("file://{specifier}")).ok()?;
+    let (source, _) = crate::library::ast::strip_bom(source);
     deno_ast::parse_program(ParseParams {
         specifier: url,
         text: source.into(),

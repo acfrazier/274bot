@@ -11,7 +11,6 @@ use api::obj_names::ObjNames;
 use api::snapshot::{varbit_value, VarbitObservation, VarbitUnavailable};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use client::config::Cache;
 use nav_executor::{TravelOptions, TravelOutcome, Traveller};
 use nav_planner::router::{FindOptions, Route};
 use nav_planner::world::NavWorld;
@@ -1359,7 +1358,7 @@ impl ScenarioRunner {
                 ));
                 return;
             }
-            let arm_holds = match self.holds_with_varbit_cache(arm, &client.cache) {
+            let arm_holds = match self.holds_with_client(arm, client) {
                 Ok(holds) => holds,
                 Err(unavailable) => {
                     self.finish_unavailable(&format!(
@@ -1510,8 +1509,7 @@ impl ScenarioRunner {
                     return;
                 }
             }
-            let proof_holds = match self.holds_with_varbit_cache(self.scenario.proof, &client.cache)
-            {
+            let proof_holds = match self.holds_with_client(self.scenario.proof, client) {
                 Ok(holds) => holds,
                 Err(unavailable) => {
                     self.finish_unavailable(&format!(
@@ -1763,35 +1761,55 @@ impl ScenarioRunner {
         }
     }
 
-    fn holds_with_varbit_cache(
-        &self,
-        proof: Proof,
-        cache: &Cache,
-    ) -> Result<bool, VarbitUnavailable> {
-        match proof {
-            Proof::VarbitEquals {
-                id,
-                value,
-                observed_base_varp,
-            } => {
-                if self.on_stop_script() && !self.script_idle {
-                    return Ok(false);
-                }
-                let result = varbit_value(&self.snapshot, cache, id)?;
-                let observed = match result.observation {
-                    VarbitObservation::Unknown {
-                        base_varp,
-                        base_value,
-                    } => {
-                        let witness = observed_base_varp
-                            .ok_or(VarbitUnavailable::UnobservedBaseVarp { id, base_varp })?;
-                        witness.varp_id == base_varp && witness.value == base_value
-                    }
-                };
-                Ok(observed && result.value == value)
-            }
-            other => Ok(self.holds(other)),
+    /// Whether the current or just-completed step requested menu observation.
+    fn menu_observation_armed(&self) -> bool {
+        match self.phase {
+            Phase::Running => matches!(self.current_step().kind, StepKind::ObserveMenu),
+            Phase::Proving => self
+                .scenario
+                .steps
+                .last()
+                .is_some_and(|step| matches!(step.kind, StepKind::ObserveMenu)),
+            _ => false,
         }
+    }
+
+    /// Client-backed proofs require their named observation step. Other proofs
+    /// retain the allocation-free snapshot and host-receipt checks.
+    fn holds_with_client(&self, proof: Proof, client: &Client) -> Result<bool, VarbitUnavailable> {
+        if let Proof::VarbitEquals {
+            id,
+            value,
+            observed_base_varp,
+        } = proof
+        {
+            if self.on_stop_script() && !self.script_idle {
+                return Ok(false);
+            }
+            let result = varbit_value(&self.snapshot, &client.cache, id)?;
+            let observed = match result.observation {
+                VarbitObservation::Unknown {
+                    base_varp,
+                    base_value,
+                } => {
+                    let witness = observed_base_varp
+                        .ok_or(VarbitUnavailable::UnobservedBaseVarp { id, base_varp })?;
+                    witness.varp_id == base_varp && witness.value == base_value
+                }
+            };
+            return Ok(observed && result.value == value);
+        }
+        let query = match (self.menu_observation_armed(), proof) {
+            (true, Proof::MenuHasEntry { operation, target }) => {
+                Some(api::snapshot::MenuEntryQuery { operation, target })
+            }
+            _ => None,
+        };
+        let menu_holds = api::query::menu_has_entry(client, query);
+        if matches!(proof, Proof::MenuHasEntry { .. }) {
+            return Ok(menu_holds);
+        }
+        Ok(self.holds(proof))
     }
 
     /// Restart the style watch's budget at each completed pre-style trip and
@@ -2459,8 +2477,9 @@ impl ScenarioRunner {
             | StepKind::ObserveStallCombat { .. }
             | StepKind::ObserveStyleAcrossLootTrips { .. }
             | StepKind::ObserveCombatAcrossBankReturns { .. }
-            | StepKind::ObserveRandomEvent { .. } => Ok("no-send"),
-            StepKind::ObserveVarbit { .. } => Ok("no-send"),
+            | StepKind::ObserveRandomEvent { .. }
+            | StepKind::ObserveVarbit { .. }
+            | StepKind::ObserveMenu => Ok("no-send"),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
                 if client.ingame && !self.relog_logout_sent {

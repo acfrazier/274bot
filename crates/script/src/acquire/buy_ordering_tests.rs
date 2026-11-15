@@ -233,6 +233,13 @@ fn npc_row(index: usize, npc_type: usize, distance: i32) -> NpcView {
     }
 }
 
+fn place_npc(npc: &mut NpcView, tile: WorldTile) {
+    npc.tile = tile;
+    npc.network = tile;
+    npc.x = tile.x;
+    npc.z = tile.z;
+}
+
 fn request(qty: i32) -> BuyRequest {
     BuyRequest {
         npc_id: 123,
@@ -243,16 +250,27 @@ fn request(qty: i32) -> BuyRequest {
     }
 }
 
+fn start_machine_for_npc(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    npc_id: i32,
+    qty: i32,
+) -> crate::native::ActionHandle<BuyMachine> {
+    let mut buy_request = request(qty);
+    buy_request.npc_id = npc_id;
+    with_tick(snapshot, ledger, 1, |tick| {
+        tick.actions
+            .begin::<BuyMachine>(buy_request, &mut tick.cx)
+            .unwrap()
+    })
+}
+
 fn start_machine(
     snapshot: &GameSnapshot,
     ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
     qty: i32,
 ) -> crate::native::ActionHandle<BuyMachine> {
-    with_tick(snapshot, ledger, 1, |tick| {
-        tick.actions
-            .begin::<BuyMachine>(request(qty), &mut tick.cx)
-            .unwrap()
-    })
+    start_machine_for_npc(snapshot, ledger, 123, qty)
 }
 
 fn poll_machine(
@@ -345,11 +363,15 @@ fn drain_button(
     tick: u64,
     chunk: i32,
 ) {
-    assert!(matches!(
-        last_request(ledger),
-        InteractReq::ShopButton { kind, name, id, chunk: got, .. }
-            if kind == "buy" && name == "Pot" && *id == 4 && *got == chunk
-    ));
+    assert!(
+        matches!(
+            last_request(ledger),
+            InteractReq::ShopButton { kind, name, id, chunk: got, .. }
+                if kind == "buy" && name == "Pot" && *id == 4 && *got == chunk
+        ),
+        "expected buy button for Pot, got {:?}",
+        last_request(ledger)
+    );
     drain_interaction(ledger, log, tick);
 }
 
@@ -423,7 +445,7 @@ fn same_named_wrong_type_is_never_traded_and_exact_keeper_index_survives_recover
     drain_button(&mut ledger, &mut log, 3, 5);
 
     client.apply_if_close();
-    let recovery_npcs = vec![npc_row(8, 123, 1), npc_row(7, 123, 8), npc_row(3, 124, 0)];
+    let recovery_npcs = vec![npc_row(8, 123, 1), npc_row(7, 123, 1), npc_row(3, 124, 0)];
     let closed = snapshot(&client, Vec::new(), recovery_npcs);
     assert!(poll_machine(&closed, &handle, &mut ledger, 4).is_pending());
     drain_trade(&mut ledger, &mut log, 4, 7);
@@ -527,7 +549,7 @@ fn a_fresh_unreachable_trade_reply_retries_without_waiting_for_a_shop_page() {
         return;
     }
     let mut client = client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 1);
@@ -568,7 +590,7 @@ fn rejected_reconciliation_trade_does_not_settle_or_repeat_the_buy() {
         return;
     }
     let (_listener, mut client) = attached_client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 5);
@@ -622,7 +644,7 @@ fn explicit_trade_rejections_keep_the_original_three_attempt_limit() {
         return;
     }
     let client = client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 1);
@@ -646,7 +668,8 @@ fn explicit_trade_rejections_keep_the_original_three_attempt_limit() {
             assert!(matches!(
                 result,
                 Poll::Ready(Err(ActionError::Failed(message)))
-                    if message.as_ref() == "no usable shop after 3 Trade attempts"
+                    if message.as_ref()
+                        == "shop did not open. Last detail: no usable shop after 3 Trade attempts"
             ));
         }
     }
@@ -657,26 +680,23 @@ fn explicit_trade_rejections_keep_the_original_three_attempt_limit() {
 }
 
 #[test]
-fn a_late_engine_rejection_ends_the_unanswered_trade_without_a_late_page() {
+fn a_late_engine_rejection_ends_the_retry_without_a_late_page() {
     if !api::test_support::game_data_available() {
         return;
     }
     let client = client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 1);
     let mut log = ActionLog::default();
     assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
     drain_trade(&mut ledger, &mut log, 2, 7);
+
     let expired = 3 + shop_open::OPEN_CAP_TICKS;
     assert!(poll_machine(&closed, &handle, &mut ledger, expired).is_pending());
-    assert_no_queued_action(&ledger);
-    assert_eq!(
-        log.trades,
-        [7],
-        "a timeout alone cannot authorize another Trade"
-    );
+    drain_trade(&mut ledger, &mut log, expired, 7);
+    assert_eq!(log.trades, [7, 7]);
 
     let mut rejected = snapshot(&client, Vec::new(), npcs);
     rejected.seed_chat_lines(vec![ChatLineView {
@@ -687,19 +707,751 @@ fn a_late_engine_rejection_ends_the_unanswered_trade_without_a_late_page() {
     }]);
     assert!(poll_machine(&rejected, &handle, &mut ledger, expired + 1).is_pending());
     drain_trade(&mut ledger, &mut log, expired + 1, 7);
-    assert_eq!(log.trades, [7, 7]);
+    assert_eq!(log.trades, [7, 7, 7]);
     assert_eq!(log.closes, 0);
     assert!(log.buttons.is_empty());
     drop(handle);
 }
 
 #[test]
-fn late_trade_page_is_closed_and_counted_before_retry_trade() {
+fn no_answer_retries_three_trades_then_reports_that_the_shop_did_not_open() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let closed = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 1)]);
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    let second_trade = 2 + shop_open::OPEN_CAP_TICKS + 1;
+    assert!(poll_machine(&closed, &handle, &mut ledger, second_trade).is_pending());
+    drain_trade(&mut ledger, &mut log, second_trade, 7);
+    let third_trade = second_trade + shop_open::OPEN_CAP_TICKS + 1;
+    assert!(poll_machine(&closed, &handle, &mut ledger, third_trade).is_pending());
+    drain_trade(&mut ledger, &mut log, third_trade, 7);
+
+    let final_timeout = third_trade + shop_open::OPEN_CAP_TICKS + 1;
+    let Poll::Ready(Err(ActionError::Failed(message))) =
+        poll_machine(&closed, &handle, &mut ledger, final_timeout)
+    else {
+        panic!("the exhausted open budget must fail");
+    };
+    assert!(message.contains("shop did not open"), "{message}");
+    assert!(
+        message.contains("no usable shop after 3 Trade attempts"),
+        "{message}"
+    );
+    assert_eq!(log.trades, [7, 7, 7]);
+    assert_eq!(log.closes, 0, "a shop that never opened is not closed");
+    assert!(log.buttons.is_empty());
+    drop(handle);
+}
+
+#[test]
+fn a_diagonal_arrival_sends_trade_and_opens_the_shop() {
+    use crate::native::WalkEnd;
+    use crate::quester::families::tests::{local_player, post_walk_receipt, with_tick_reach};
+
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let diagonal_tile = WorldTile {
+        x: 3201,
+        z: 3201,
+        level: 0,
+    };
+    let mut keeper = npc_row(7, 576, 1);
+    place_npc(&mut keeper, diagonal_tile);
+    let mut before = snapshot(&client, Vec::new(), vec![keeper.clone()]);
+    before.seed_local_player(local_player(origin));
+    let mut blocked_reach = reach_from(origin);
+    blocked_reach.step.fill(0);
+    let mut ledger = None;
+    let handle = start_machine_for_npc(&before, &mut ledger, 576, 1);
+    let mut log = ActionLog::default();
+
+    assert!(
+        with_tick_reach(&before, &blocked_reach, &mut ledger, 2, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx),)
+        .is_pending()
+    );
+    let walk = ledger.as_ref().unwrap().outbox.last().unwrap();
+    let HostEffect::Walk(request) = &walk.effect else {
+        panic!("the closed route requires the initial walk");
+    };
+    assert_eq!(request.target, diagonal_tile);
+    let walk_request_id = walk.request_id.get();
+    assert_eq!(
+        post_walk_receipt(&mut ledger, 3, WalkEnd::Arrived, None),
+        walk_request_id
+    );
+
+    let mut arrived = snapshot(&client, Vec::new(), vec![keeper]);
+    arrived.seed_local_player(local_player(origin));
+    let arrival_reach = reach_from(origin);
+    assert!(
+        with_tick_reach(&arrived, &arrival_reach, &mut ledger, 3, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx),)
+        .is_pending()
+    );
+    drain_trade(&mut ledger, &mut log, 3, 7);
+    assert_eq!(
+        log.trades,
+        [7],
+        "the server handles the final diagonal path"
+    );
+
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 4).is_pending());
+    drain_button(&mut ledger, &mut log, 4, 1);
+    assert_eq!(log.trades, [7]);
+    drop(handle);
+}
+
+fn cant_reach(sequence: i32) -> ChatLineView {
+    ChatLineView {
+        type_: 0,
+        username: None,
+        text: "I can't reach that!".to_owned(),
+        sequence,
+    }
+}
+
+/// Walk requests the machine has queued so far.
+fn walk_targets(ledger: &Option<Box<crate::native::ledger::Ledger>>) -> Vec<WorldTile> {
+    ledger
+        .as_ref()
+        .unwrap()
+        .outbox
+        .iter()
+        .filter_map(|entry| match &entry.effect {
+            HostEffect::Walk(request) => Some(request.target),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Review r3 finding 3: a keeper with wander range 0 has no wander replan,
+/// but its first refusal still gets the one recovery walk
+/// (`dialogue.rs:885-899`). Its second refusal after it moved fails with
+/// text that says no replan was allowed, not "after all approach retries".
+#[test]
+fn a_zero_range_keeper_gets_the_recovery_walk_and_no_wander_replan() {
+    use crate::native::WalkEnd;
+    use crate::quester::families::tests::{local_player, post_walk_receipt};
+
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let keeper = npc_row(7, 520, 3);
+    let mut closed = snapshot(&client, Vec::new(), vec![keeper.clone()]);
+    closed.seed_local_player(local_player(origin));
+    let mut config_ledger = None;
+    let budgets = with_tick(&closed, &mut config_ledger, 1, |tick| {
+        (
+            crate::quester::families::dialogue::npc_approach_replan_budget(&tick.cx, 576),
+            crate::quester::families::dialogue::npc_approach_replan_budget(&tick.cx, 520),
+        )
+    });
+    assert_eq!(budgets, (120, 0));
+
+    let mut ledger = None;
+    let handle = start_machine_for_npc(&closed, &mut ledger, 520, 1);
+    let mut log = ActionLog::default();
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+
+    let mut rejected = snapshot(&client, Vec::new(), vec![keeper]);
+    rejected.seed_local_player(local_player(origin));
+    rejected.seed_chat_lines(vec![cant_reach(1)]);
+    let first = poll_machine(&rejected, &handle, &mut ledger, 3);
+    assert!(
+        first.is_pending(),
+        "the first refusal gets the recovery walk: {first:?}"
+    );
+    let first_target = WorldTile {
+        x: 3203,
+        z: 3200,
+        level: 0,
+    };
+    assert_eq!(walk_targets(&ledger), [first_target]);
+    post_walk_receipt(&mut ledger, 4, WalkEnd::Arrived, None);
+
+    let moved_tile = WorldTile {
+        x: 3205,
+        z: 3200,
+        level: 0,
+    };
+    let mut moved_keeper = npc_row(7, 520, 5);
+    place_npc(&mut moved_keeper, moved_tile);
+    let mut moved = snapshot(&client, Vec::new(), vec![moved_keeper.clone()]);
+    moved.seed_local_player(local_player(origin));
+    moved.seed_chat_lines(vec![cant_reach(1)]);
+    assert!(poll_machine(&moved, &handle, &mut ledger, 4).is_pending());
+    drain_trade(&mut ledger, &mut log, 4, 7);
+
+    let mut refused_again = snapshot(&client, Vec::new(), vec![moved_keeper]);
+    refused_again.seed_local_player(local_player(origin));
+    refused_again.seed_chat_lines(vec![cant_reach(1), cant_reach(2)]);
+    let Poll::Ready(Err(ActionError::Failed(message))) =
+        poll_machine(&refused_again, &handle, &mut ledger, 5)
+    else {
+        panic!("a zero-range keeper that moved has no wander replan");
+    };
+    assert!(
+        message.contains("shop did not open. Last detail:"),
+        "{message}"
+    );
+    assert!(
+        !message.contains("after all approach retries"),
+        "no approach retry ran: {message}"
+    );
+    assert!(
+        message.contains("from (3203, 3200, level 0) to (3205, 3200, level 0)"),
+        "{message}"
+    );
+    assert!(message.contains("route Unknown(5)"), "{message}");
+    assert!(
+        message.contains("wander range allows 0 in all"),
+        "{message}"
+    );
+    assert_eq!(log.trades, [7, 7]);
+    assert_eq!(walk_targets(&ledger), [first_target]);
+    assert!(log.buttons.is_empty());
+    drop(handle);
+}
+
+#[test]
+fn a_timeout_retries_trade_even_when_the_local_route_is_unreachable() {
+    use crate::quester::families::tests::{local_player, with_tick_reach};
+
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let mut initial = snapshot(&client, Vec::new(), vec![npc_row(7, 576, 1)]);
+    initial.seed_local_player(local_player(origin));
+    let initial_reach = reach_from(origin);
+    let mut ledger = None;
+    let handle = start_machine_for_npc(&initial, &mut ledger, 576, 1);
+    let mut log = ActionLog::default();
+    assert!(
+        with_tick_reach(&initial, &initial_reach, &mut ledger, 2, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx),)
+        .is_pending()
+    );
+    drain_trade(&mut ledger, &mut log, 2, 7);
+
+    let moved_tile = WorldTile {
+        x: 3205,
+        z: 3201,
+        level: 0,
+    };
+    let mut moved_keeper = npc_row(7, 576, 5);
+    place_npc(&mut moved_keeper, moved_tile);
+    let mut moved = snapshot(&client, Vec::new(), vec![moved_keeper]);
+    moved.seed_local_player(local_player(origin));
+    let mut blocked_reach = reach_from(origin);
+    blocked_reach.step.fill(0);
+    let retry_tick = 2 + shop_open::OPEN_CAP_TICKS + 1;
+    assert!(
+        with_tick_reach(&moved, &blocked_reach, &mut ledger, retry_tick, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx),)
+        .is_pending()
+    );
+    drain_trade(&mut ledger, &mut log, retry_tick, 7);
+    assert_eq!(log.trades, [7, 7]);
+    drop(handle);
+}
+
+#[test]
+fn a_moving_keeper_is_retried_then_walked_to_after_a_fresh_refusal() {
+    use crate::native::WalkEnd;
+    use crate::quester::families::tests::{local_player, post_walk_receipt, with_tick_reach};
+
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let mut initial = snapshot(&client, Vec::new(), vec![npc_row(7, 576, 1)]);
+    initial.seed_local_player(local_player(origin));
+    let initial_reach = reach_from(origin);
+    let mut ledger = None;
+    let handle = start_machine_for_npc(&initial, &mut ledger, 576, 1);
+    let mut log = ActionLog::default();
+    assert!(
+        with_tick_reach(&initial, &initial_reach, &mut ledger, 2, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx),)
+        .is_pending()
+    );
+    drain_trade(&mut ledger, &mut log, 2, 7);
+
+    let moved_tile = WorldTile {
+        x: 3205,
+        z: 3201,
+        level: 0,
+    };
+    let mut moved_keeper = npc_row(7, 576, 5);
+    place_npc(&mut moved_keeper, moved_tile);
+    let mut moved = snapshot(&client, Vec::new(), vec![moved_keeper.clone()]);
+    moved.seed_local_player(local_player(origin));
+    let moved_reach = reach_from(origin);
+    let retry_tick = 2 + shop_open::OPEN_CAP_TICKS + 1;
+    assert!(
+        with_tick_reach(&moved, &moved_reach, &mut ledger, retry_tick, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx),)
+        .is_pending()
+    );
+    drain_trade(&mut ledger, &mut log, retry_tick, 7);
+    assert_eq!(
+        log.trades,
+        [7, 7],
+        "a timeout retries Trade to the keeper's current index"
+    );
+
+    let mut rejected = snapshot(&client, Vec::new(), vec![moved_keeper.clone()]);
+    rejected.seed_local_player(local_player(origin));
+    rejected.seed_chat_lines(vec![ChatLineView {
+        type_: 0,
+        username: None,
+        text: "I can't reach that!".to_owned(),
+        sequence: 1,
+    }]);
+    assert!(with_tick_reach(
+        &rejected,
+        &moved_reach,
+        &mut ledger,
+        retry_tick + 1,
+        |tick| tick.actions.poll(&handle, &mut tick.cx),
+    )
+    .is_pending());
+    let walk = ledger.as_ref().unwrap().outbox.last().unwrap();
+    let HostEffect::Walk(request) = &walk.effect else {
+        panic!("the fresh engine refusal authorizes a walk");
+    };
+    assert_eq!(request.target, moved_tile);
+    let walk_request_id = walk.request_id.get();
+    assert_eq!(
+        post_walk_receipt(&mut ledger, retry_tick + 2, WalkEnd::Arrived, None),
+        walk_request_id
+    );
+
+    let arrived_tile = WorldTile {
+        x: moved_tile.x - 1,
+        ..moved_tile
+    };
+    let mut arrived = snapshot(&client, Vec::new(), vec![moved_keeper]);
+    arrived.seed_local_player(local_player(arrived_tile));
+    let arrived_reach = reach_from(arrived_tile);
+    assert!(with_tick_reach(
+        &arrived,
+        &arrived_reach,
+        &mut ledger,
+        retry_tick + 2,
+        |tick| tick.actions.poll(&handle, &mut tick.cx),
+    )
+    .is_pending());
+    drain_trade(&mut ledger, &mut log, retry_tick + 2, 7);
+    assert_eq!(log.trades, [7, 7, 7]);
+
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, retry_tick + 3).is_pending());
+    drain_button(&mut ledger, &mut log, retry_tick + 3, 1);
+    assert_eq!(log.trades, [7, 7, 7]);
+    drop(handle);
+}
+
+/// Harry (npc 576) a few steps from the player, with an open local route.
+fn harry_at(client: &Client, tile: WorldTile, origin: WorldTile, chat: &[i32]) -> GameSnapshot {
+    use crate::quester::families::tests::local_player;
+    let mut keeper = npc_row(7, 576, tile.x - origin.x);
+    place_npc(&mut keeper, tile);
+    let mut snap = snapshot(client, Vec::new(), vec![keeper]);
+    snap.seed_local_player(local_player(origin));
+    if !chat.is_empty() {
+        snap.seed_chat_lines(chat.iter().copied().map(cant_reach).collect());
+    }
+    snap
+}
+
+/// Review r3 probe D: a still keeper that answers every Trade with a fresh
+/// "I can't reach that!" while each walk arrives. The first refusal gets the
+/// one recovery walk; the second, at the unchanged tile, ends the open. One
+/// open stays within OPEN_ATTEMPTS Trades and the walk bound of
+/// `BuyMachine::adapt`.
+#[test]
+fn a_still_keeper_that_refuses_every_trade_ends_the_open_within_its_bound() {
+    use crate::native::WalkEnd;
+    use crate::quester::families::tests::{post_walk_receipt, with_tick_reach};
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let keeper_tile = WorldTile {
+        x: 3205,
+        z: 3201,
+        level: 0,
+    };
+    let reach = reach_from(origin);
+    let mut ledger = None;
+    let handle = start_machine_for_npc(
+        &harry_at(&client, keeper_tile, origin, &[]),
+        &mut ledger,
+        576,
+        1,
+    );
+    let mut log = ActionLog::default();
+    let mut refusals = Vec::new();
+    let mut posted_walk: Option<u64> = None;
+    let mut walks = 0;
+    let mut tick = 2;
+    let message = loop {
+        let snap = harry_at(&client, keeper_tile, origin, &refusals);
+        match with_tick_reach(&snap, &reach, &mut ledger, tick, |t| {
+            t.actions.poll(&handle, &mut t.cx)
+        }) {
+            Poll::Ready(Err(ActionError::Failed(message))) => break message,
+            Poll::Ready(other) => panic!("unexpected end {other:?}"),
+            Poll::Pending => {}
+        }
+        let last = ledger.as_ref().unwrap().outbox.last().map(|entry| {
+            (
+                matches!(&entry.effect, HostEffect::Walk(_)),
+                entry.request_id.get(),
+            )
+        });
+        match last {
+            Some((false, _)) => {
+                drain_trade(&mut ledger, &mut log, tick, 7);
+                refusals.push(i32::try_from(log.trades.len()).unwrap());
+            }
+            Some((true, id)) if posted_walk != Some(id) => {
+                walks += 1;
+                post_walk_receipt(&mut ledger, tick + 1, WalkEnd::Arrived, None);
+                posted_walk = Some(id);
+            }
+            _ => {}
+        }
+        tick += 1;
+        assert!(
+            log.trades.len() <= shop_open::OPEN_ATTEMPTS as usize && tick < 40,
+            "still opening after {} Trades and {walks} walks at tick {tick}",
+            log.trades.len()
+        );
+    };
+    assert!(
+        message.contains("shop did not open. Last detail:"),
+        "{message}"
+    );
+    assert!(
+        message.contains(
+            "after the recovery walk; the keeper did not move from (3205, 3201, level 0)"
+        ),
+        "{message}"
+    );
+    assert_eq!(log.trades, [7, 7], "{message}");
+    assert_eq!(walks, 1, "{message}");
+    drop(handle);
+}
+
+/// Review r3 probe C: two timeouts while the local route is closed. Each
+/// timeout sends a Trade in place of the core's walk, so no walk goes out
+/// and the failure text never claims one. The third Trade is the last.
+#[test]
+fn timeouts_on_a_closed_local_route_send_every_trade_and_claim_no_walk() {
+    use crate::quester::families::tests::{local_player, with_tick_reach};
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let mut initial = snapshot(&client, Vec::new(), vec![npc_row(7, 576, 1)]);
+    initial.seed_local_player(local_player(origin));
+    let initial_reach = reach_from(origin);
+    let mut ledger = None;
+    let handle = start_machine_for_npc(&initial, &mut ledger, 576, 1);
+    let mut log = ActionLog::default();
+    assert!(
+        with_tick_reach(&initial, &initial_reach, &mut ledger, 2, |tick| tick
+            .actions
+            .poll(&handle, &mut tick.cx))
+        .is_pending()
+    );
+    drain_trade(&mut ledger, &mut log, 2, 7);
+
+    let moved_tile = WorldTile {
+        x: 3205,
+        z: 3201,
+        level: 0,
+    };
+    let mut moved_keeper = npc_row(7, 576, 5);
+    place_npc(&mut moved_keeper, moved_tile);
+    let mut moved = snapshot(&client, Vec::new(), vec![moved_keeper]);
+    moved.seed_local_player(local_player(origin));
+    let mut blocked_reach = reach_from(origin);
+    blocked_reach.step.fill(0);
+    let mut tick = 2;
+    for _ in 0..2 {
+        tick += shop_open::OPEN_CAP_TICKS + 1;
+        let result = with_tick_reach(&moved, &blocked_reach, &mut ledger, tick, |native| {
+            native.actions.poll(&handle, &mut native.cx)
+        });
+        assert!(result.is_pending(), "a Trade is left: {result:?}");
+        drain_trade(&mut ledger, &mut log, tick, 7);
+    }
+    assert_eq!(log.trades, [7, 7, 7]);
+
+    tick += shop_open::OPEN_CAP_TICKS + 1;
+    let Poll::Ready(Err(ActionError::Failed(message))) =
+        with_tick_reach(&moved, &blocked_reach, &mut ledger, tick, |native| {
+            native.actions.poll(&handle, &mut native.cx)
+        })
+    else {
+        panic!("the spent Trades end the open");
+    };
+    assert!(
+        message.contains("no usable shop after 3 Trade attempts"),
+        "{message}"
+    );
+    assert!(!message.contains("walk"), "no walk was sent: {message}");
+    assert!(walk_targets(&ledger).is_empty());
+    drop(handle);
+}
+
+/// Review r3 finding 1: a keeper that moves before each refusal. The first
+/// refusal gets the free recovery walk, the second spends one wander replan,
+/// and the third spends the last Trade: no walk and no fourth Trade follow.
+#[test]
+fn a_moving_keeper_spends_one_wander_replan_and_no_trade_follows_the_last_attempt() {
+    use crate::native::WalkEnd;
+    use crate::quester::families::tests::{post_walk_receipt, with_tick_reach};
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let tile = |x| WorldTile {
+        x,
+        z: 3201,
+        level: 0,
+    };
+    let reach = reach_from(origin);
+    let mut ledger = None;
+    let handle = start_machine_for_npc(
+        &harry_at(&client, tile(3205), origin, &[]),
+        &mut ledger,
+        576,
+        1,
+    );
+    let mut log = ActionLog::default();
+    let step = |snap: GameSnapshot, ledger: &mut Option<_>, tick| {
+        with_tick_reach(&snap, &reach, ledger, tick, |native| {
+            native.actions.poll(&handle, &mut native.cx)
+        })
+    };
+
+    assert!(step(harry_at(&client, tile(3205), origin, &[]), &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    assert!(step(harry_at(&client, tile(3205), origin, &[1]), &mut ledger, 3).is_pending());
+    assert_eq!(
+        walk_targets(&ledger),
+        [tile(3205)],
+        "the free recovery walk"
+    );
+    post_walk_receipt(&mut ledger, 4, WalkEnd::Arrived, None);
+    assert!(step(harry_at(&client, tile(3205), origin, &[1]), &mut ledger, 4).is_pending());
+    drain_trade(&mut ledger, &mut log, 4, 7);
+
+    assert!(step(
+        harry_at(&client, tile(3206), origin, &[1, 2]),
+        &mut ledger,
+        5
+    )
+    .is_pending());
+    assert_eq!(
+        walk_targets(&ledger),
+        [tile(3205), tile(3206)],
+        "the keeper moved: one wander replan"
+    );
+    assert_eq!(
+        handle.inspect(|machine| machine.approach_replans_left),
+        Some(119)
+    );
+    post_walk_receipt(&mut ledger, 6, WalkEnd::Arrived, None);
+    assert!(step(
+        harry_at(&client, tile(3206), origin, &[1, 2]),
+        &mut ledger,
+        6
+    )
+    .is_pending());
+    drain_trade(&mut ledger, &mut log, 6, 7);
+    assert_eq!(log.trades, [7, 7, 7]);
+
+    let Poll::Ready(Err(ActionError::Failed(message))) = step(
+        harry_at(&client, tile(3207), origin, &[1, 2, 3]),
+        &mut ledger,
+        7,
+    ) else {
+        panic!("the third refusal spends the last Trade");
+    };
+    assert!(
+        message.contains("no usable shop after 3 Trade attempts"),
+        "{message}"
+    );
+    assert_eq!(walk_targets(&ledger), [tile(3205), tile(3206)]);
+    assert_eq!(log.trades, [7, 7, 7]);
+    drop(handle);
+}
+
+/// Review r3 finding 3: a recovery walk to a keeper that the local route
+/// can reach fails. The text names the recovery walk, not an unreachable
+/// keeper.
+#[test]
+fn a_failed_recovery_walk_names_the_refusal_not_an_unreachable_keeper() {
+    use crate::native::WalkEnd;
+    use crate::quester::families::tests::{post_walk_receipt, with_tick_reach};
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let client = client_with_shop(false);
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let keeper_tile = WorldTile {
+        x: 3205,
+        z: 3201,
+        level: 0,
+    };
+    let reach = reach_from(origin);
+    let mut ledger = None;
+    let handle = start_machine_for_npc(
+        &harry_at(&client, keeper_tile, origin, &[]),
+        &mut ledger,
+        576,
+        1,
+    );
+    let mut log = ActionLog::default();
+    let step = |snap: GameSnapshot, ledger: &mut Option<_>, tick| {
+        with_tick_reach(&snap, &reach, ledger, tick, |native| {
+            native.actions.poll(&handle, &mut native.cx)
+        })
+    };
+    assert!(step(harry_at(&client, keeper_tile, origin, &[]), &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    assert!(step(harry_at(&client, keeper_tile, origin, &[1]), &mut ledger, 3).is_pending());
+    assert_eq!(walk_targets(&ledger), [keeper_tile]);
+    post_walk_receipt(
+        &mut ledger,
+        4,
+        WalkEnd::Refused,
+        Some("the gate stayed shut"),
+    );
+    let Poll::Ready(Err(ActionError::Failed(message))) =
+        step(harry_at(&client, keeper_tile, origin, &[1]), &mut ledger, 4)
+    else {
+        panic!("a refused walk is terminal");
+    };
+    assert!(
+        message.contains("the recovery walk to the keeper at (3205, 3201, level 0)"),
+        "{message}"
+    );
+    assert!(
+        !message.contains("unreachable keeper"),
+        "the keeper is reachable: {message}"
+    );
+    assert_eq!(log.trades, [7]);
+    drop(handle);
+}
+
+#[test]
+fn an_opened_shop_still_uses_the_final_close_barrier() {
     if !api::test_support::game_data_available() {
         return;
     }
     let (_listener, mut client) = attached_client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let closed = snapshot(&client, Vec::new(), vec![npc_row(7, 123, 2)]);
+    let mut ledger = None;
+    let handle = start_machine(&closed, &mut ledger, 1);
+    let mut log = ActionLog::default();
+
+    assert!(poll_machine(&closed, &handle, &mut ledger, 2).is_pending());
+    drain_trade(&mut ledger, &mut log, 2, 7);
+    open_shop(&mut client);
+    let page = snapshot(&client, Vec::new(), Vec::new());
+    assert!(poll_machine(&page, &handle, &mut ledger, 3).is_pending());
+    drain_button(&mut ledger, &mut log, 3, 1);
+
+    let bought = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    assert!(poll_machine(&bought, &handle, &mut ledger, 4).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, 4);
+    client.apply_if_close();
+    let counted_close = snapshot(&client, vec![item(4, "Pot", 1)], Vec::new());
+    let Poll::Ready(Ok(receipt)) = poll_machine(&counted_close, &handle, &mut ledger, 5) else {
+        panic!("an opened shop must finish after its counted close");
+    };
+    assert_eq!(receipt.held, 1);
+    assert_eq!(receipt.bought, 1);
+    assert_eq!(log.trades, [7]);
+    assert_eq!(log.buttons, [1]);
+    assert_eq!(log.closes, 1);
+    drop(handle);
+}
+
+#[test]
+fn a_late_page_after_an_open_retry_reconciles_before_buying_more() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (_listener, mut client) = attached_client_with_shop(false);
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 15);
@@ -714,69 +1466,50 @@ fn late_trade_page_is_closed_and_counted_before_retry_trade() {
 
     client.apply_if_close();
     let closed = snapshot(&client, Vec::new(), npcs.clone());
+    // This frame has no modal roots. The tick budget stops a phase that does
+    // not advance, so the Trade assertion below fails instead of hanging.
     assert!(poll_machine(&closed, &handle, &mut ledger, 4).is_pending());
     drain_trade(&mut ledger, &mut log, 4, 7);
     let first_recovery_trade = 4;
     let deadline = first_recovery_trade + shop_open::OPEN_CAP_TICKS;
 
-    for tick in 5..=deadline + 1 {
+    for tick in 5..=deadline {
         assert!(poll_machine(&closed, &handle, &mut ledger, tick).is_pending());
         assert_no_queued_action(&ledger);
-        assert_eq!(log.trades, [7, 7], "no overlapping Trade at tick {tick}");
+        assert_eq!(
+            log.trades,
+            [7, 7],
+            "no retry before the Trade deadline at {tick}"
+        );
     }
+    assert!(poll_machine(&closed, &handle, &mut ledger, deadline + 1).is_pending());
+    drain_trade(&mut ledger, &mut log, deadline + 1, 7);
+    assert_eq!(log.trades, [7, 7, 7]);
 
-    // A later raw close still cannot end the first recovery Trade.
+    // A raw close cannot end the unanswered retry Trade.
     client.apply_if_close();
     let closed_again = snapshot(&client, Vec::new(), npcs.clone());
     assert!(poll_machine(&closed_again, &handle, &mut ledger, deadline + 2).is_pending());
     assert_no_queued_action(&ledger);
-    assert_eq!(log.trades, [7, 7]);
+    assert_eq!(log.trades, [7, 7, 7]);
 
     open_shop(&mut client);
     let late_page = snapshot(&client, vec![item(4, "Pot", 10)], npcs.clone());
     assert!(poll_machine(&late_page, &handle, &mut ledger, deadline + 3).is_pending());
     assert_eq!(handle.inspect(|machine| machine.bought), Some(10));
-    assert_eq!(
-        handle.inspect(|machine| machine.pending.is_none()),
-        Some(true)
-    );
-    close_with_api(&mut client, &mut ledger, &mut log, deadline + 3);
+    drain_button(&mut ledger, &mut log, deadline + 3, 5);
     assert_eq!(
         log.buttons,
-        [10],
-        "the late page is reconciled before another buy"
+        [10, 5],
+        "the late page reconciles the first purchase before buying the remainder"
     );
 
-    let locally_closed = snapshot(&client, vec![item(4, "Pot", 10)], npcs.clone());
-    assert!(poll_machine(&locally_closed, &handle, &mut ledger, deadline + 4).is_pending());
-    assert_no_queued_action(&ledger);
-    assert_eq!(log.trades, [7, 7]);
-
+    let full_pack = snapshot(&client, vec![item(4, "Pot", 15)], npcs.clone());
+    assert!(poll_machine(&full_pack, &handle, &mut ledger, deadline + 4).is_pending());
+    close_with_api(&mut client, &mut ledger, &mut log, deadline + 4);
     client.apply_if_close();
-    let counted_close = snapshot(&client, vec![item(4, "Pot", 10)], npcs.clone());
-    assert!(poll_machine(&counted_close, &handle, &mut ledger, deadline + 5).is_pending());
-    drain_trade(&mut ledger, &mut log, deadline + 5, 7);
-    assert_eq!(log.trades, [7, 7, 7]);
-
-    open_shop(&mut client);
-    let same_tick_page = snapshot(&client, vec![item(4, "Pot", 10)], Vec::new());
-    assert!(poll_machine(&same_tick_page, &handle, &mut ledger, deadline + 5).is_pending());
-    assert_no_queued_action(&ledger);
-    assert_eq!(log.buttons, [10]);
-
-    let replacement_page = snapshot(&client, vec![item(4, "Pot", 10)], Vec::new());
-    assert!(poll_machine(&replacement_page, &handle, &mut ledger, deadline + 6).is_pending());
-    drain_button(&mut ledger, &mut log, deadline + 6, 5);
-    assert_eq!(log.buttons, [10, 5]);
-
-    let full_pack = snapshot(&client, vec![item(4, "Pot", 15)], Vec::new());
-    assert!(poll_machine(&full_pack, &handle, &mut ledger, deadline + 7).is_pending());
-    close_with_api(&mut client, &mut ledger, &mut log, deadline + 7);
-    let no_server_close = snapshot(&client, vec![item(4, "Pot", 15)], Vec::new());
-    assert!(poll_machine(&no_server_close, &handle, &mut ledger, deadline + 8).is_pending());
-    client.apply_if_close();
-    let final_close = snapshot(&client, vec![item(4, "Pot", 15)], Vec::new());
-    let Poll::Ready(Ok(receipt)) = poll_machine(&final_close, &handle, &mut ledger, deadline + 9)
+    let final_close = snapshot(&client, vec![item(4, "Pot", 15)], npcs.clone());
+    let Poll::Ready(Ok(receipt)) = poll_machine(&final_close, &handle, &mut ledger, deadline + 5)
     else {
         panic!("the final close barrier should produce a receipt");
     };
@@ -795,7 +1528,7 @@ enum RemainingModal {
 
 fn foreign_close_case(remaining: Option<RemainingModal>) {
     let (_listener, mut client) = attached_client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 1);
@@ -902,7 +1635,7 @@ fn close_and_open_in_one_observation_cannot_bypass_a_new_trade_page() {
         return;
     }
     let (_listener, mut client) = attached_client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 1);
@@ -950,7 +1683,7 @@ fn close_and_open_in_one_observation_cannot_bypass_a_new_trade_page() {
 
 fn partial_refusal_case(refusal_first: bool) {
     let (_listener, mut client) = attached_client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 5);
@@ -1027,7 +1760,7 @@ fn full_pack_evidence_before_split_roundtrip_page_is_counted_once() {
         return;
     }
     let (_listener, mut client) = attached_client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 1);
@@ -1088,7 +1821,7 @@ fn two_unanswered_dispatches_need_fresh_pages_and_the_last_close_barrier() {
         return;
     }
     let (_listener, mut client) = attached_client_with_shop(false);
-    let npcs = vec![npc_row(7, 123, 2)];
+    let npcs = vec![npc_row(7, 123, 1)];
     let closed = snapshot(&client, Vec::new(), npcs.clone());
     let mut ledger = None;
     let handle = start_machine(&closed, &mut ledger, 1);
@@ -1702,7 +2435,7 @@ fn shop_keeper_walk_replans_after_a_failed_approach() {
     );
 
     let target = WorldTile {
-        x: 3200,
+        x: 3199,
         z: 3200,
         level: 0,
     };

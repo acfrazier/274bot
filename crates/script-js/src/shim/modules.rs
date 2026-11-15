@@ -634,6 +634,7 @@ fn module_edges(
     referrer: &deno_ast::ModuleSpecifier,
     modules: &[Module],
 ) -> Option<ModuleEdges> {
+    let (source, _) = crate::library::ast::strip_bom(source);
     let parsed = deno_ast::parse_module(ParseParams {
         specifier: referrer.clone(),
         text: source.into(),
@@ -1012,6 +1013,22 @@ pub fn remap_catalog_imports(source: &str) -> String {
 #[cfg(test)]
 mod wave_three_tests {
     use super::*;
+
+    #[test]
+    fn bom_source_keeps_static_module_edges() {
+        const ENTRY: &str = "/rs2b0t/bot/scripts/bot/bom-entry.js";
+        const SIBLING: &str = "/rs2b0t/bot/scripts/bot/bom-sibling.js";
+        let source = "\u{feff}import './bom-sibling.js'; export * from './bom-sibling.js';";
+        let modules = [
+            Module::new(ENTRY, source),
+            Module::new(SIBLING, "export const value = 1;"),
+        ];
+        let referrer = module_specifier(Path::new(ENTRY)).expect("absolute module URL");
+
+        let edges = module_edges(source, &referrer, &modules).expect("BOM source parses");
+        assert_eq!(edges.imports, [1, 1]);
+        assert!(!edges.has_unknown_dependency);
+    }
 
     const THIEVER_IMPORTS: &str = r#"import '../../api/combat/food.js';
 import '../../api/tasks/Anchor.js';

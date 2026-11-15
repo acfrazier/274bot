@@ -92,6 +92,14 @@ impl host::RandomClaimSource for ScriptRandomClaims {
         let slot = slot.lock().ok()?;
         slot.current_random_claim(event)
     }
+
+    /// A missing slot is no runtime: a claim made under one returns to Host.
+    fn runtime(&mut self) -> Option<host::ClaimRuntime> {
+        let slot = script_slot(&self.scripts, &self.name)?;
+        let slot = slot.lock().ok()?;
+        let (incarnation, run) = slot.random_claim_runtime();
+        Some(host::ClaimRuntime::new(incarnation, run))
+    }
 }
 
 /// Snapshot families whose new evidence can settle a parked machine.

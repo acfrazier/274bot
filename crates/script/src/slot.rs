@@ -4687,6 +4687,14 @@ impl SlotScript {
         self.state
     }
 
+    /// The runtime that answers random-event claims: the slot incarnation and
+    /// its runtime generation. Start, Stop, slot replacement and watchdog
+    /// replacement change it; Pause and Resume keep it. The host compares it
+    /// with the runtime a claim was made under.
+    pub fn random_claim_runtime(&self) -> (u64, u64) {
+        (self.incarnation, self.runtime_generation)
+    }
+
     /// Inactive slots return the event to Host. Running Load scripts publish
     /// current ignore membership; running compiled scripts retain their edge claim.
     pub fn current_random_claim(&self, ev: &DetectedRandom) -> Option<RandomClaim> {
