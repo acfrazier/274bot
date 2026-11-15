@@ -4,10 +4,6 @@ version.workspace = true
 edition = "2021"
 publish = false
 
-[features]
-default = ["varbit-observation"]
-varbit-observation = []
-
 [dependencies]
 api = { path = "../api" }
 client = { workspace = true }

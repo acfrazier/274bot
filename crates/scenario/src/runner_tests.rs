@@ -1,11 +1,8 @@
 use super::*;
-#[cfg(feature = "varbit-observation")]
 use crate::proof::ObservedVarpWitness;
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfTypeMut};
-#[cfg(feature = "varbit-observation")]
 use client::config::runtime_377::{CacheFields377, InterfaceFields377, VarpFields377};
-#[cfg(feature = "varbit-observation")]
 use client::config::CacheRevision377;
 use client::config::IfType;
 use client::dash3d::ClientPlayer;
@@ -5220,7 +5217,6 @@ fn ground_item_absence_proof_bounds_ids_area_level_and_loaded_player() {
     assert!(!proof.check(&runner.snapshot, None));
 }
 
-#[cfg(feature = "varbit-observation")]
 fn varbit_observation_scenario(
     id: i32,
     value: i32,
@@ -5254,7 +5250,6 @@ fn varbit_observation_scenario(
     }
 }
 
-#[cfg(feature = "varbit-observation")]
 fn install_varbit_fixture(client: &mut Client, raw_value: i32, transmit: bool) {
     let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
     cache.varbits.push(Default::default());
@@ -5290,7 +5285,6 @@ fn install_varbit_fixture(client: &mut Client, raw_value: i32, transmit: bool) {
     client.bump_gens(ServerProt::VARP_SMALL);
 }
 
-#[cfg(feature = "varbit-observation")]
 #[test]
 fn varbit_observer_is_no_send_and_runner_replacement_reads_fresh_state() {
     let mut client = seeded_client();
@@ -5359,7 +5353,6 @@ fn varbit_observer_is_no_send_and_runner_replacement_reads_fresh_state() {
         "missing observation must not send"
     );
 }
-#[cfg(feature = "varbit-observation")]
 #[test]
 fn unknown_zero_needs_a_matching_witness_even_when_metadata_says_private() {
     let mut client = seeded_client();
@@ -5443,7 +5436,6 @@ fn unknown_zero_needs_a_matching_witness_even_when_metadata_says_private() {
     );
 }
 
-#[cfg(feature = "varbit-observation")]
 #[test]
 fn enabled_but_unrequested_varbit_observer_allocates_nothing_per_tick() {
     let mut client = seeded_client();

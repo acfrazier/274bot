@@ -164,10 +164,8 @@ pub(crate) fn client_377_scenario() -> Scenario {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "varbit-observation")]
     use api::snapshot::{varbit_value, VarbitObservation, VarbitValue};
     use client::client::{ClientConfig, ClientNpc};
-    #[cfg(feature = "varbit-observation")]
     use client::config::runtime_377::VarpFields377;
     use client::config::runtime_377::{CacheFields377, InterfaceFields377, NpcFields377};
     use client::config::{Cache, CacheRevision377, IfType, IfTypeMut, NpcType};
@@ -412,7 +410,6 @@ mod tests {
         assert_eq!(client.out.pos, after_retry);
         assert_eq!(runner.status(), RunnerStatus::Passed);
     }
-    #[cfg(feature = "varbit-observation")]
     #[test]
     fn selected_377_snapshot_reads_the_cache_varbit_definition() {
         let mut client = scene_client(ClientRevision::R377);

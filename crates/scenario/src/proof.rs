@@ -13,7 +13,6 @@ use nav_planner::tile::{chebyshev, Tile};
 /// Caller-supplied evidence that a base varp was received in this session.
 /// The caller owns provenance and required freshness, such as a receipt after
 /// an action starts. The runner only matches the index and current base value.
-#[cfg(feature = "varbit-observation")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ObservedVarpWitness {
     /// The base-varp index named by the selected varbit definition.
@@ -176,7 +175,6 @@ pub enum Proof {
     /// per-index receive receipt, so the base observation is Unknown. The
     /// proof remains false unless `observed_base_varp` witnesses the selected
     /// definition's base-varp index and current value.
-    #[cfg(feature = "varbit-observation")]
     VarbitEquals {
         id: i32,
         value: i32,
@@ -484,7 +482,6 @@ impl Proof {
             Proof::SideTabAvailable { index } => format!("side_tab({index})_available"),
             Proof::Varp { id, min } => format!("varp({id})>={min}"),
             Proof::VarpExact { id, value } => format!("varp({id})=={value}"),
-            #[cfg(feature = "varbit-observation")]
             Proof::VarbitEquals { id, value, .. } => format!("varbit({id})=={value}"),
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
             Proof::StatAtMost { id, max } => format!("stat({id})<={max}"),
@@ -891,7 +888,6 @@ impl Proof {
                 .iter()
                 .find(|v| v.index == *id)
                 .is_some_and(|v| v.value == *value),
-            #[cfg(feature = "varbit-observation")]
             Proof::VarbitEquals { .. } => false,
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
