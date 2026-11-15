@@ -21,6 +21,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Developer tools
 
+- The seat model also checks who owns a random event, the host Guardian or the
+  running script. Run `seat-model --ownership` for its three profiles. The host
+  tests replay the model's traces against the Guardian. When a slot has no
+  script claim source, the Guardian now hands any script claim back to itself at
+  once.
 - A generated game data file that fails to decode now names the file and says
   to regenerate it with `python3 tools/local-data/build.py`.
 - Revision 377 stage-1 shop extraction resolves keeper configs by section name

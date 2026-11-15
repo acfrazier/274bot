@@ -31820,6 +31820,9 @@ mod script_progress;
 #[path = "script_hold_conformance_tests.rs"]
 mod script_hold_conformance;
 
+#[path = "guardian_seat_conformance_tests.rs"]
+mod guardian_seat_conformance;
+
 #[cfg(test)]
 mod read_journal_tests {
     use super::*;

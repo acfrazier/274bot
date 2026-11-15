@@ -1,3 +1,7 @@
+use seat_model::guardian::{
+    GUARDIAN_PROFILES, GuardianExploration, GuardianMutation, GuardianProfile,
+    explore_guardian_profile, guardian_profile,
+};
 use seat_model::{
     Bounds, Exploration, ExploreLimits, Profile, explore_profile_with_limits, explore_with_limits,
     profile as find_profile, profiles,
@@ -6,6 +10,9 @@ use std::process::ExitCode;
 
 enum Selection {
     Profiles,
+    /// Every C6 ownership profile.
+    Ownership,
+    OwnershipNamed(GuardianProfile),
     Named(Profile),
     Legacy {
         name: &'static str,
@@ -55,6 +62,27 @@ fn main() -> ExitCode {
                 cli.limits,
             );
             if report(profile.name(), &result) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Selection::Ownership => {
+            println!("ownership_profile_count={}", GUARDIAN_PROFILES.len());
+            let mut passed = true;
+            for profile in GUARDIAN_PROFILES {
+                let result = explore_guardian_profile(profile, GuardianMutation::None, cli.limits);
+                passed &= report_guardian(profile.name(), &result);
+            }
+            if passed {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Selection::OwnershipNamed(profile) => {
+            let result = explore_guardian_profile(profile, GuardianMutation::None, cli.limits);
+            if report_guardian(profile.name(), &result) {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
@@ -146,9 +174,58 @@ fn report(name: &str, result: &Exploration) -> bool {
     }
 }
 
+fn peak_rss() -> String {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status.lines().find_map(|line| {
+                line.strip_prefix("VmHWM:")?
+                    .split_whitespace()
+                    .next()?
+                    .parse::<usize>()
+                    .ok()
+            })
+        })
+        .map_or_else(|| "unavailable".to_owned(), |kib| kib.to_string())
+}
+
+fn report_guardian(name: &str, result: &GuardianExploration) -> bool {
+    println!(
+        "profile={name} bounds={:?} horizon={} state_cap={} frontier_cap={} byte_cap={}",
+        result.bounds, result.horizon, result.state_cap, result.frontier_cap, result.byte_cap
+    );
+    println!(
+        "states={} transitions={} max_frontier={} depth_reached={} estimated_peak_bytes={} elapsed_seconds={:.6}",
+        result.states,
+        result.transitions,
+        result.max_frontier,
+        result.depth_reached,
+        result.estimated_peak_bytes,
+        result.elapsed.as_secs_f64()
+    );
+    println!("peak_rss_kib={}", peak_rss());
+    if let Some(cap) = result.cap_reached {
+        eprintln!("CAP-REACHED {cap:?}");
+        false
+    } else if let Some((failure, path)) = &result.failure {
+        eprintln!("FAIL {}: {}", failure.name, failure.detail);
+        if !path.is_empty() {
+            eprintln!("{path:#?}");
+        }
+        false
+    } else if result.complete {
+        println!("PASS: the state graph closed inside the horizon");
+        true
+    } else {
+        eprintln!("FAIL: exploration did not complete");
+        false
+    }
+}
+
 fn parse_args() -> Result<Cli, String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut all_profiles = false;
+    let mut ownership = false;
     let mut selected_profile = None;
     let mut closure = false;
     let mut positional_horizon = None;
@@ -159,6 +236,7 @@ fn parse_args() -> Result<Cli, String> {
     while index < args.len() {
         match args[index].as_str() {
             "--profiles" => all_profiles = true,
+            "--ownership" => ownership = true,
             "--profile" => {
                 index += 1;
                 selected_profile = Some(
@@ -199,18 +277,28 @@ fn parse_args() -> Result<Cli, String> {
     }
 
     let selector_count = (if all_profiles { 1 } else { 0 })
+        + (if ownership { 1 } else { 0 })
         + (if selected_profile.is_some() { 1 } else { 0 })
         + (if closure { 1 } else { 0 })
         + (if positional_horizon.is_some() { 1 } else { 0 });
     if selector_count > 1 {
-        return Err("choose only one of --profiles, --profile, --closure, or a horizon".to_owned());
+        return Err(
+            "choose only one of --profiles, --ownership, --profile, --closure, or a horizon"
+                .to_owned(),
+        );
     }
 
     let selection = if all_profiles {
         Selection::Profiles
+    } else if ownership {
+        Selection::Ownership
     } else if let Some(name) = selected_profile {
-        let profile = find_profile(&name).ok_or_else(|| format!("unknown profile {name:?}"))?;
-        Selection::Named(profile)
+        if let Some(profile) = guardian_profile(&name) {
+            Selection::OwnershipNamed(profile)
+        } else {
+            let profile = find_profile(&name).ok_or_else(|| format!("unknown profile {name:?}"))?;
+            Selection::Named(profile)
+        }
     } else if closure {
         if !explicit_state_cap {
             return Err("--closure requires an explicit --state-cap".to_owned());
@@ -247,6 +335,6 @@ fn parse_limit(args: &[String], index: usize, option: &str) -> Result<usize, Str
 }
 
 fn usage() -> &'static str {
-    "usage: seat-model [--profiles | --profile NAME | [transition-horizon] | --closure] \
+    "usage: seat-model [--profiles | --ownership | --profile NAME | [transition-horizon] | --closure] \
      [--state-cap N] [--frontier-cap N] [--byte-cap N]"
 }
