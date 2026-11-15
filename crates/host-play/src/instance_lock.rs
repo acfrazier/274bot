@@ -16,7 +16,10 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use crate::local_state::RootUse;
 
 /// Which frontend holds `~/.274bot`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,16 +70,32 @@ impl InstanceHolder {
     }
 }
 
-/// Exclusive lock held for the process lifetime.
+/// The instance lock held for the process lifetime. The exclusive probe
+/// that took it tells this process no other instance holds the root; it is
+/// then held **shared**, as the root-use lease of the state database (T5.3
+/// §4.3): another instance's exclusive probe still sees it, a maintenance
+/// command (export, recovery) is refused while it is held, and the
+/// process's local-state service shares this one descriptor.
 #[derive(Debug)]
 pub struct InstanceLock {
-    _file: File,
+    _file: Arc<File>,
+}
+
+impl InstanceLock {
+    /// The root-use lease over this lock's descriptor, for the process
+    /// service of the same root.
+    pub fn root_use(&self) -> RootUse {
+        RootUse::from_locked(Arc::clone(&self._file))
+    }
 }
 
 impl Drop for InstanceLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(instance_holder_path());
-        let _ = self._file.unlock();
+        // The service may still hold the lease: the last holder unlocks.
+        if Arc::strong_count(&self._file) == 1 {
+            let _ = self._file.unlock();
+        }
     }
 }
 
@@ -103,6 +122,14 @@ impl InstancePermit {
 
     pub fn locked(lock: InstanceLock) -> Self {
         Self::Locked(lock)
+    }
+
+    /// The held lock's root-use lease, when this permit holds the lock.
+    pub fn root_use(&self) -> Option<RootUse> {
+        match self {
+            Self::Locked(lock) => Some(lock.root_use()),
+            Self::SkipLock => None,
+        }
     }
 }
 
@@ -174,12 +201,35 @@ pub fn try_acquire_instance_lock(kind: InstanceKind) -> io::Result<InstanceLockR
         .open(&path)?;
     match file.try_lock() {
         Ok(()) => {
+            // Held shared from here: the probe above proved no other
+            // instance; the shared hold keeps the next probe contested and
+            // admits this process's database users.
+            if let Err(error) = share(&file) {
+                let _ = file.unlock();
+                return match error {
+                    TryLockError::WouldBlock => {
+                        Ok(InstanceLockResult::Contested(read_holder_retry()))
+                    }
+                    TryLockError::Error(error) => Err(error),
+                };
+            }
             write_holder(kind)?;
-            Ok(InstanceLockResult::Acquired(InstanceLock { _file: file }))
+            Ok(InstanceLockResult::Acquired(InstanceLock {
+                _file: Arc::new(file),
+            }))
         }
         Err(TryLockError::WouldBlock) => Ok(InstanceLockResult::Contested(read_holder_retry())),
         Err(TryLockError::Error(e)) => Err(e),
     }
+}
+
+/// Turn the exclusive hold into a shared one. `flock` converts in place;
+/// Windows keeps an exclusive range lock beside a new shared one, so the
+/// exclusive lock is released first.
+fn share(file: &File) -> Result<(), TryLockError> {
+    #[cfg(windows)]
+    file.unlock().map_err(TryLockError::Error)?;
+    file.try_lock_shared()
 }
 
 const MARKER_WAIT: Duration = Duration::from_millis(500);
@@ -466,20 +516,21 @@ mod tests {
 
     fn spawn_holder(mode: &str, home: &std::path::Path) -> HolderProc {
         let exe = std::env::current_exe().unwrap();
-        let mut child = Command::new(exe)
-            .args([
-                "--ignored",
-                "--exact",
-                "--nocapture",
-                "instance_lock::tests::hold_instance_lock_until_stdin_closes",
-            ])
-            .env("274BOT_LOCK_HOLDER", mode)
-            .env("HOME", home)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap();
+        let mut child = crate::test_process::spawn(
+            Command::new(exe)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "--nocapture",
+                    "instance_lock::tests::hold_instance_lock_until_stdin_closes",
+                ])
+                .env("274BOT_LOCK_HOLDER", mode)
+                .env("HOME", home)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit()),
+        )
+        .unwrap();
         let stdout = child.stdout.take().unwrap();
         let (ready_tx, ready_rx) = mpsc::channel();
         let reader = std::thread::spawn(move || {

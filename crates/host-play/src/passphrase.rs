@@ -529,7 +529,8 @@ mod tests {
                     Ok(())
                 });
             }
-            let spawned = Reaped(command.spawn().expect("spawn the terminal child"));
+            let spawned =
+                Reaped(crate::test_process::spawn(&mut command).expect("spawn the terminal child"));
             drop(command);
             drop(slave);
             let master = std::fs::File::from(master);
@@ -691,12 +692,13 @@ mod tests {
 
         /// A child whose stdin is a pipe, never a terminal.
         fn piped(mode: &str, input: &[u8]) -> String {
-            let mut spawned = child(mode)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
+            let mut spawned = crate::test_process::spawn(
+                child(mode)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped()),
+            )
+            .unwrap();
             // A child that never reads stdin (for example `no-flag`) can exit
             // before this write finishes. That closes the read end, so the
             // write fails with `BrokenPipe`; the bytes it did not read are

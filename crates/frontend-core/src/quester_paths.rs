@@ -591,13 +591,37 @@ mod tests {
 
     impl TempStore {
         fn new() -> Self {
+            let dir = Self::scratch_dir();
+            std::fs::create_dir_all(&dir).unwrap();
+            Self::open(dir)
+        }
+
+        /// A store whose state root holds `legacy` as its `panel-ui.json`,
+        /// written privately before the service opens the root (the first
+        /// open imports it); ready once the import is published.
+        fn with_legacy(legacy: &[u8]) -> Self {
+            let dir = Self::scratch_dir();
+            vault::create_private_dir(&dir).unwrap();
+            vault::write_private_file(&dir.join("panel-ui.json"), legacy).unwrap();
+            let store = Self::open(dir);
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while !store.preferences.ready() {
+                assert!(Instant::now() < deadline, "preferences never opened");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            store
+        }
+
+        fn scratch_dir() -> PathBuf {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
-            let dir = std::env::temp_dir().join(format!(
+            std::env::temp_dir().join(format!(
                 "frontend-core-quester-paths-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&dir).unwrap();
+            ))
+        }
+
+        fn open(dir: PathBuf) -> Self {
             Self {
                 preferences: Preferences::new(
                     LocalStateService::open_process(StateRoot::new(dir.clone())).preferences(),
@@ -708,14 +732,9 @@ mod tests {
 
     #[test]
     fn changed_preferences_round_trip_without_replacing_unrelated_values() {
-        let store = TempStore::new();
-        let path = store.prefs().path();
-        vault::write_private_file(
-            &path,
+        let store = TempStore::with_legacy(
             br#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"custom":"preserve"},"quester_paths":{"enabled":false,"folder":"old","future":"preserve"}}"#,
-        )
-        .unwrap();
-        store.prefs().reload().unwrap();
+        );
         let before = QuesterPathsView::read(store.prefs());
         let after = QuesterPathsView {
             enabled: true,
@@ -729,8 +748,7 @@ mod tests {
         ))
         .unwrap();
 
-        let saved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let saved = store.prefs().reload().unwrap();
         assert_eq!(saved["unrelated"]["keep"], true);
         assert_eq!(saved["nav"]["show_nav_path"], true);
         assert_eq!(saved["nav"]["custom"], "preserve");

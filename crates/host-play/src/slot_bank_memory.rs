@@ -768,6 +768,7 @@ mod tests {
     /// while the process local-state writer is held.
     #[test]
     fn the_close_edge_tick_returns_while_the_writer_is_stalled() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-close-stalled");
         let memory: SharedBankMemory = Arc::default();
         let slot = state.slot(Arc::clone(&memory));
@@ -838,6 +839,7 @@ mod tests {
     /// generations 3 with 4 while generation 2 is in flight.
     #[test]
     fn quick_closes_publish_in_order_and_a_queued_document_is_superseded() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-quick-closes");
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
@@ -879,6 +881,7 @@ mod tests {
 
     #[test]
     fn the_exit_save_reaches_the_disk_before_the_slot_leaves() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-exit-save");
         let slot = Arc::new(state.slot(Arc::default()));
         let path = state.hint_path();
@@ -909,6 +912,7 @@ mod tests {
 
     #[test]
     fn the_exit_wait_is_bounded_when_the_writer_stalls() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-exit-bounded");
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
@@ -948,6 +952,7 @@ mod tests {
 
     #[test]
     fn a_failed_save_keeps_the_rows_pending_for_the_next_save_point() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-failed-save");
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
@@ -994,6 +999,7 @@ mod tests {
 
     #[test]
     fn an_exit_retry_at_the_same_generation_waits_for_its_own_attempt() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-exit-retry");
         let slot = Arc::new(state.slot(Arc::default()));
         let path = state.hint_path();
@@ -1061,6 +1067,7 @@ mod tests {
 
     #[test]
     fn fixture_open_withdraw_close_saves_once_into_the_pinned_home() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-fixture");
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
@@ -1104,6 +1111,7 @@ mod tests {
 
     #[test]
     fn idle_frames_take_no_write_and_allocate_nothing() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-idle");
         let slot = state.slot(Arc::default());
         let mut snapshot = GameSnapshot::new();
@@ -1135,6 +1143,7 @@ mod tests {
 
     #[test]
     fn boundary_precedence_keeps_a_known_memory_and_loads_an_unknown_one() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-boundary");
         let slot = state.slot(Arc::default());
         write_hint(&state, "alice", &[(COINS, 7)], 100);
@@ -1164,6 +1173,7 @@ mod tests {
 
     #[test]
     fn a_rejected_file_leaves_the_memory_unknown_and_login_unaffected() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-rejected");
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
@@ -1174,6 +1184,7 @@ mod tests {
 
     #[test]
     fn without_a_hint_file_the_memory_lives_for_the_process() {
+        let _state_lease = crate::test_process::state();
         let slot = SlotBankMemory::new(Arc::new(RwLock::new(BankMemory::default())), None);
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_bank_observation(BANK_COM, 1, Some(vec![bank_row(COINS, 5, 0)]), Vec::new());
@@ -1188,6 +1199,7 @@ mod tests {
 
     #[test]
     fn play_bank_rows_copies_the_memory_with_its_origin() {
+        let _state_lease = crate::test_process::state();
         let mut play = offline_play();
         assert_eq!(
             play.bank_rows("ghost"),
@@ -1215,6 +1227,7 @@ mod tests {
 
     #[test]
     fn an_invalid_login_name_gets_no_hint_and_stays_unknown() {
+        let _state_lease = crate::test_process::state();
         let scratch = IsolatedEnv::enter("bank-hints-invalid-name");
         assert!(AccountKey::try_new(PROFILE, "ab3456789xyz1").is_err());
         let slot = SlotBankMemory::new(Arc::new(RwLock::new(BankMemory::default())), None);
@@ -1237,6 +1250,7 @@ mod tests {
 
     #[test]
     fn alias_spellings_share_one_memory_and_one_generation_counter() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-alias");
         let mut play = offline_play();
         let (first, second) = {
@@ -1316,6 +1330,7 @@ mod tests {
 
     #[test]
     fn the_memory_key_is_the_login_identity_or_the_refused_spelling() {
+        let _state_lease = crate::test_process::state();
         assert_eq!(memory_key("Alice Smith"), "alice_smith");
         assert_eq!(memory_key(" alice smith"), "alice_smith");
         assert_eq!(memory_key("_ab3456789xy"), "ab3456789xy");
@@ -1350,6 +1365,7 @@ mod tests {
 
     #[test]
     fn restarts_after_a_timed_out_exit_keep_order_and_one_writer_thread() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-restart-order");
         let memory: SharedBankMemory = Arc::default();
         let mut snapshot = GameSnapshot::new();
@@ -1429,6 +1445,7 @@ mod tests {
 
     #[test]
     fn a_burst_of_closes_publishes_the_newest_once_in_order() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-burst");
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
@@ -1486,6 +1503,7 @@ mod tests {
 
     #[test]
     fn per_bot_memory_is_a_header_plus_one_reserved_table() {
+        let _state_lease = crate::test_process::state();
         use std::mem::size_of;
         let memory = size_of::<BankMemory>();
         let cell = size_of::<RwLock<BankMemory>>();
@@ -1548,6 +1566,7 @@ mod tests {
     /// commit: the exit save writes it.
     #[test]
     fn a_superseded_save_marks_nothing_and_a_failed_replacement_stays_dirty() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-superseded-then-failed");
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
@@ -1597,6 +1616,7 @@ mod tests {
     /// as not on disk (it used to read as saved once the store was quiet).
     #[test]
     fn an_exit_superseded_by_a_failing_replacement_is_not_reported_saved() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-exit-replacement-fails");
         let memory: SharedBankMemory = Arc::default();
         let leaving = Arc::new(state.slot(Arc::clone(&memory)));
@@ -1635,6 +1655,7 @@ mod tests {
     /// cancelled.
     #[test]
     fn a_save_still_queued_when_the_slot_and_service_go_is_finished() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-exit-then-drop");
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
@@ -1699,6 +1720,7 @@ mod tests {
     /// the rows stay dirty for the next save point.
     #[test]
     fn a_settlement_the_service_forgot_is_dropped_and_the_rows_stay_pending() {
+        let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-forgotten");
         let slot = state.slot(Arc::default());
         // Hundreds of writes follow; what this checks is not durability, so

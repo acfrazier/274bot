@@ -275,7 +275,7 @@ impl Session {
         let Some(selection) = self.scripts.browse_selection().map(ScriptChoice::duplicate) else {
             return;
         };
-        self.error = None;
+        self.clear_message();
         self.script_sel = Some(selection.duplicate());
         if let Some(profile) = self.focused_name() {
             self.submit_script_command(

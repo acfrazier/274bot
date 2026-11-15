@@ -6,7 +6,9 @@
 //! and publish it by an atomic name operation, so a reader never sees a torn
 //! file, no other writer's temp can be confused with this one, and the umask
 //! cannot widen the mode. [`read_private_file`] is the matching reader for
-//! state that later decides what the host loads or runs.
+//! state that later decides what the host loads or runs. [`check_private_path`]
+//! judges a path's type, owner and mode from its metadata alone, for a file a
+//! database connection holds open.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -367,8 +369,7 @@ fn ensure_private_dir(dir: &Path) -> io::Result<()> {
         .recursive(true)
         .mode(0o700)
         .create(dir)?;
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    let euid = unsafe { libc::geteuid() };
+    let euid = current_euid();
     let handle = File::open(dir).ok();
     let mut meta = match &handle {
         Some(handle) => handle.metadata()?,
@@ -386,7 +387,7 @@ fn ensure_private_dir(dir: &Path) -> io::Result<()> {
             }
         }
     }
-    match dir_verdict(&facts_of(&meta), euid) {
+    match dir_verdict(dir, &facts_of(&meta), euid) {
         Ok(()) => Ok(()),
         Err(reason) => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -449,13 +450,15 @@ fn tightened_dir_mode(facts: &DirFacts, euid: u32) -> Option<u32> {
 /// (group/other write), unless it is sticky, where they can only touch their
 /// own entries.
 #[cfg(unix)]
-fn dir_verdict(facts: &DirFacts, euid: u32) -> Result<(), String> {
+fn dir_verdict(path: &Path, facts: &DirFacts, euid: u32) -> Result<(), String> {
     if !facts.is_dir {
         return Err("is not a directory".into());
     }
     if facts.owner != euid && facts.owner != 0 {
         return Err(format!(
-            "is owned by another user (uid {}); refusing to keep private state in it",
+            "is owned by another user (uid {}, this process runs as uid {euid}); refusing to \
+             keep private state in it. chmod does not change ownership: restore ownership of \
+             the directory to the intended user, or use a correctly owned copy",
             facts.owner
         ));
     }
@@ -463,11 +466,71 @@ fn dir_verdict(facts: &DirFacts, euid: u32) -> Result<(), String> {
     if facts.mode & 0o022 != 0 && !sticky {
         return Err(format!(
             "is writable by other users (mode {:04o}); they could replace the file \
-             while it is being written. Run `chmod go-w` on it",
-            facts.mode & 0o7777
+             while it is being written. If you own the directory, run `chmod go-w {}`",
+            facts.mode & 0o7777,
+            path.display()
         ));
     }
     Ok(())
+}
+
+/// What kind of path [`check_private_path`] judges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivateKind {
+    /// A regular file that holds private state.
+    File,
+    /// A directory that holds private state.
+    Dir,
+}
+
+/// Judges the path's type, owner and mode from its metadata alone, without
+/// ever opening it: `symlink_metadata` is the only call made. A caller that
+/// keeps a database connection open on the path uses this for the live files,
+/// because opening and closing a descriptor beside SQLite cancels its POSIX
+/// advisory locks.
+///
+/// A missing path is [`io::ErrorKind::NotFound`]. A refusal is
+/// [`io::ErrorKind::PermissionDenied`] with the message `"{path}: {reason}"`.
+/// On Unix a file is refused when it is a symlink or not a regular file, when
+/// its owner is neither the current user nor root, or when group or others can
+/// write it. A directory is refused when it is not a directory (a symlink is
+/// not one here), is foreign-owned, or is group/other-writable and not sticky.
+/// Group/other read bits alone are accepted, and nothing is changed on disk.
+/// Windows has no mode bits here, so only the type is checked.
+pub fn check_private_path(path: &Path, kind: PrivateKind) -> io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    #[cfg(unix)]
+    let verdict = {
+        let euid = current_euid();
+        match kind {
+            PrivateKind::File => {
+                match store_file_verdict(path, &store_facts_of(&meta), euid, u64::MAX) {
+                    Verdict::Refuse(reason) => Err(reason),
+                    Verdict::Accept | Verdict::Tighten => Ok(()),
+                }
+            }
+            PrivateKind::Dir => dir_verdict(path, &facts_of(&meta), euid),
+        }
+    };
+    #[cfg(not(unix))]
+    let verdict = match kind {
+        PrivateKind::File if !meta.is_file() => Err("is not a regular file"),
+        PrivateKind::Dir if !meta.is_dir() => Err("is not a directory"),
+        _ => Ok(()),
+    };
+    verdict.map_err(|reason| {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{}: {reason}", path.display()),
+        )
+    })
+}
+
+/// The effective user id the owner rule compares against.
+#[cfg(unix)]
+fn current_euid() -> u32 {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
 }
 
 /// Reads a persisted state file whose contents later decide what the host
@@ -489,17 +552,7 @@ pub fn read_private_file(path: &Path, max_bytes: u64) -> io::Result<String> {
     let file = open_for_check(path)?;
     let meta = file.metadata()?;
     #[cfg(unix)]
-    match store_file_verdict(
-        &StoreFacts {
-            is_file: meta.is_file(),
-            mode: meta.mode(),
-            owner: meta.uid(),
-            len: meta.len(),
-        },
-        // SAFETY: geteuid has no preconditions and cannot fail.
-        unsafe { libc::geteuid() },
-        max_bytes,
-    ) {
+    match store_file_verdict(path, &store_facts_of(&meta), current_euid(), max_bytes) {
         Verdict::Accept => {}
         // Only group/other read bits: the state is not secret, so a failed
         // tighten (read-only mount) does not stop the read.
@@ -581,6 +634,16 @@ struct StoreFacts {
 }
 
 #[cfg(unix)]
+fn store_facts_of(meta: &fs::Metadata) -> StoreFacts {
+    StoreFacts {
+        is_file: meta.is_file(),
+        mode: meta.mode(),
+        owner: meta.uid(),
+        len: meta.len(),
+    }
+}
+
+#[cfg(unix)]
 #[derive(Debug, PartialEq, Eq)]
 enum Verdict {
     Accept,
@@ -589,21 +652,24 @@ enum Verdict {
 }
 
 #[cfg(unix)]
-fn store_file_verdict(facts: &StoreFacts, euid: u32, max_bytes: u64) -> Verdict {
+fn store_file_verdict(path: &Path, facts: &StoreFacts, euid: u32, max_bytes: u64) -> Verdict {
     if !facts.is_file {
         return Verdict::Refuse("is not a regular file".into());
     }
     if facts.owner != euid && facts.owner != 0 {
         return Verdict::Refuse(format!(
-            "is owned by another user (uid {}); refusing state it may have written",
+            "is owned by another user (uid {}, this process runs as uid {euid}); refusing \
+             state it may have written. chmod does not change ownership: restore ownership \
+             of the file to the intended user, or use a correctly owned copy",
             facts.owner
         ));
     }
     if facts.mode & 0o022 != 0 {
         return Verdict::Refuse(format!(
             "is writable by other users (mode {:04o}); refusing state they may have \
-             written. If you wrote it, run `chmod 600` on it",
-            facts.mode & 0o7777
+             written. If you own the file, run `chmod 600 {}`",
+            facts.mode & 0o7777,
+            path.display()
         ));
     }
     if facts.len > max_bytes {
@@ -879,15 +945,18 @@ mod tests {
         // Somebody else's directory is never chmodded, and is refused.
         for owner in [0, 502] {
             assert_eq!(tightened_dir_mode(&facts(0o40775, owner), 501), None);
-            let refusal = dir_verdict(&facts(0o40775, owner), 501).unwrap_err();
+            let refusal =
+                dir_verdict(Path::new("/state/dir"), &facts(0o40775, owner), 501).unwrap_err();
             assert!(
                 refusal.contains("another user") || refusal.contains("chmod go-w"),
                 "{refusal}"
             );
         }
-        assert!(dir_verdict(&facts(0o41777, 502), 501)
-            .unwrap_err()
-            .contains("another user"));
+        assert!(
+            dir_verdict(Path::new("/state/dir"), &facts(0o41777, 502), 501)
+                .unwrap_err()
+                .contains("another user")
+        );
     }
 
     #[test]
@@ -911,9 +980,10 @@ mod tests {
             mode: 0o700,
             owner,
         };
-        assert!(dir_verdict(&facts(501), 501).is_ok());
-        assert!(dir_verdict(&facts(0), 501).is_ok());
-        assert!(dir_verdict(&facts(502), 501)
+        let path = Path::new("/state/dir");
+        assert!(dir_verdict(path, &facts(501), 501).is_ok());
+        assert!(dir_verdict(path, &facts(0), 501).is_ok());
+        assert!(dir_verdict(path, &facts(502), 501)
             .unwrap_err()
             .contains("another user"));
     }
@@ -1041,12 +1111,220 @@ mod tests {
             owner,
             len: 1,
         };
-        assert_eq!(store_file_verdict(&facts(501), 501, 10), Verdict::Accept);
-        assert_eq!(store_file_verdict(&facts(0), 501, 10), Verdict::Accept);
+        let path = Path::new("/state/store.json");
+        assert_eq!(
+            store_file_verdict(path, &facts(501), 501, 10),
+            Verdict::Accept
+        );
+        assert_eq!(
+            store_file_verdict(path, &facts(0), 501, 10),
+            Verdict::Accept
+        );
         assert!(matches!(
-            store_file_verdict(&facts(502), 501, 10),
+            store_file_verdict(path, &facts(502), 501, 10),
             Verdict::Refuse(reason) if reason.contains("another user")
         ));
+    }
+
+    #[test]
+    fn a_foreign_owned_file_names_both_uids_and_says_chmod_is_not_the_fix() {
+        let facts = StoreFacts {
+            is_file: true,
+            mode: 0o600,
+            owner: 502,
+            len: 1,
+        };
+        let Verdict::Refuse(reason) =
+            store_file_verdict(Path::new("/state/store.json"), &facts, 501, 10)
+        else {
+            panic!("a foreign owner is refused");
+        };
+        assert!(reason.contains("uid 502"), "{reason}");
+        assert!(reason.contains("uid 501"), "{reason}");
+        assert!(
+            reason.contains("chmod does not change ownership"),
+            "{reason}"
+        );
+        assert!(reason.contains("restore ownership"), "{reason}");
+        assert!(reason.contains("correctly owned copy"), "{reason}");
+        assert!(!reason.contains("chmod 600"), "no chmod advice: {reason}");
+    }
+
+    #[test]
+    fn a_foreign_owned_directory_names_both_uids_and_says_chmod_is_not_the_fix() {
+        let facts = DirFacts {
+            is_dir: true,
+            mode: 0o40700,
+            owner: 502,
+        };
+        let reason = dir_verdict(Path::new("/state/dir"), &facts, 501).unwrap_err();
+        assert!(reason.contains("uid 502"), "{reason}");
+        assert!(reason.contains("uid 501"), "{reason}");
+        assert!(
+            reason.contains("chmod does not change ownership"),
+            "{reason}"
+        );
+        assert!(reason.contains("restore ownership"), "{reason}");
+        assert!(reason.contains("correctly owned copy"), "{reason}");
+        assert!(!reason.contains("chmod go-w"), "no chmod advice: {reason}");
+    }
+
+    #[test]
+    fn unsafe_write_bits_name_the_actual_path_in_the_chmod_remedy() {
+        let file = StoreFacts {
+            is_file: true,
+            mode: 0o100664,
+            owner: 501,
+            len: 1,
+        };
+        let Verdict::Refuse(reason) =
+            store_file_verdict(Path::new("/state/panel-ui.json"), &file, 501, 10)
+        else {
+            panic!("a group-writable file is refused");
+        };
+        assert!(reason.contains("mode 0664"), "{reason}");
+        assert!(
+            reason.contains("`chmod 600 /state/panel-ui.json`"),
+            "{reason}"
+        );
+
+        let dir = DirFacts {
+            is_dir: true,
+            mode: 0o40775,
+            owner: 501,
+        };
+        let reason = dir_verdict(Path::new("/state/.274bot"), &dir, 501).unwrap_err();
+        assert!(reason.contains("mode 0775"), "{reason}");
+        assert!(reason.contains("`chmod go-w /state/.274bot`"), "{reason}");
+    }
+
+    fn write_with_mode(path: &Path, mode: u32) {
+        fs::write(path, "{}").unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[test]
+    fn check_private_path_accepts_owner_only_and_group_other_readable_files() {
+        let dir = scratch("check-file-ok");
+        for mode in [0o600, 0o644] {
+            let path = dir.join(format!("state-{mode:o}"));
+            write_with_mode(&path, mode);
+
+            check_private_path(&path, PrivateKind::File).unwrap();
+
+            assert_eq!(mode_of(&path), mode, "the check changes nothing on disk");
+        }
+    }
+
+    #[test]
+    fn check_private_path_refuses_write_bits_and_names_the_chmod_fix() {
+        let dir = scratch("check-file-write");
+        for mode in [0o664, 0o666, 0o622] {
+            let path = dir.join(format!("state-{mode:o}"));
+            write_with_mode(&path, mode);
+
+            let error = check_private_path(&path, PrivateKind::File).unwrap_err();
+
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{mode:o}");
+            let text = error.to_string();
+            assert!(text.starts_with(&format!("{}: ", path.display())), "{text}");
+            assert!(
+                text.contains(&format!("`chmod 600 {}`", path.display())),
+                "{text}"
+            );
+            assert_eq!(mode_of(&path), mode, "a refused file is left untouched");
+        }
+    }
+
+    #[test]
+    fn check_private_path_refuses_a_symlink_and_a_directory_given_as_a_file() {
+        let dir = scratch("check-file-type");
+        let target = dir.join("real");
+        write_with_mode(&target, 0o600);
+        let link = dir.join("link");
+        symlink(&target, &link).unwrap();
+
+        for path in [&link, &dir] {
+            let error = check_private_path(path, PrivateKind::File).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{path:?}");
+            assert!(
+                error.to_string().contains("not a regular file"),
+                "{path:?}: {error}"
+            );
+        }
+        // A symlink is not a directory here either.
+        let dir_link = dir.join("dir-link");
+        symlink(&dir, &dir_link).unwrap();
+        let error = check_private_path(&dir_link, PrivateKind::Dir).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("not a directory"), "{error}");
+        let error = check_private_path(&target, PrivateKind::Dir).unwrap_err();
+        assert!(error.to_string().contains("not a directory"), "{error}");
+    }
+
+    #[test]
+    fn check_private_path_passes_a_missing_path_through_as_not_found() {
+        let dir = scratch("check-missing");
+        for kind in [PrivateKind::File, PrivateKind::Dir] {
+            let error = check_private_path(&dir.join("absent"), kind).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::NotFound, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn check_private_path_judges_directories_by_write_bits_unless_sticky() {
+        let base = scratch("check-dir");
+        let dir = base.join("state");
+        fs::create_dir(&dir).unwrap();
+        let set = |mode: u32| fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+
+        for mode in [0o700, 0o755, 0o1777] {
+            set(mode);
+            check_private_path(&dir, PrivateKind::Dir).unwrap();
+            assert_eq!(mode_of(&dir), mode, "the check changes nothing on disk");
+        }
+        set(0o775);
+        let error = check_private_path(&dir, PrivateKind::Dir).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("`chmod go-w {}`", dir.display())),
+            "{error}"
+        );
+        assert_eq!(
+            mode_of(&dir),
+            0o775,
+            "a refused directory is left untouched"
+        );
+    }
+
+    /// The check never opens the path. A FIFO with no writer blocks a plain
+    /// read-only `open`, and a file or directory with mode 0 cannot be opened
+    /// by its owner at all. (The descriptor table is counted in
+    /// `tests/check_private_path_opens_nothing.rs`, which owns its process.)
+    #[test]
+    fn check_private_path_never_opens_the_path() {
+        let dir = scratch("check-no-open");
+        let fifo = dir.join("pipe");
+        let c_path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        // SAFETY: c_path is a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        let unreadable = dir.join("unreadable");
+        write_with_mode(&unreadable, 0o000);
+        let sealed = dir.join("sealed");
+        fs::create_dir(&sealed).unwrap();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let error = check_private_path(&fifo, PrivateKind::File).unwrap_err();
+        check_private_path(&unreadable, PrivateKind::File)
+            .expect("a mode-0 file is judged from metadata, not opened");
+        check_private_path(&sealed, PrivateKind::Dir)
+            .expect("a mode-0 directory is judged from metadata, not opened");
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("not a regular file"), "{error}");
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
     }
 }
 

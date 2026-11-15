@@ -47,6 +47,67 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The TUI keeps every Quester start-zone row reachable with PageUp and
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
 
+### Preferences and saved state
+
+- Preferences now live in a SQLite database, `.274bot/state/state.sqlite3`
+  (with its `-wal` and `-shm` files), instead of `panel-ui.json`. The first
+  start of this version imports the whole `panel-ui.json`, members it does not
+  know included, and renames the file to `panel-ui.json.migrated` as evidence.
+  The panel and the terminal app share the one database, also when both run on
+  one home. A save no longer rewrites a JSON file: each save is one database
+  commit at a new version, and the log keeps one line per save that names what
+  changed.
+- Before running 0.2.5 in the same home, stop all 274bot processes, then run
+  `panel-play state preferences export --same-root` or
+  `tui-play state preferences export --same-root`. Without the export, 0.2.5
+  shows default preferences, because the import renamed `panel-ui.json`. Stop
+  0.2.5 before you start this version again: it imports a changed exported file
+  once; an unchanged one does not replace the saved preferences. If a stop or
+  crash interrupted the export, the next start of this version completes it
+  from its staged file, or refuses with the command to run again. A
+  `panel-ui.json` that changed without an export (an older version or another
+  program wrote it) is refused with the file untouched and both ways out named:
+  move it away, or recover from it.
+- A `panel-ui.json` that is not valid JSON is kept as
+  `panel-ui.json.corrupt-<time>` and preferences start from defaults, once. A
+  file that is too large (as written, or once stored: a compact file with very
+  many short members can grow past the limit), holds a member a preference
+  cannot hold, or that
+  other users can write is not imported: the panel, the terminal app and the
+  headless result say why and what to do, and nothing is saved over it, also
+  when the unreadable file is a changed export or the `--source` of a
+  recovery. A changed export that is not valid JSON is kept as a copy and
+  preferences start from defaults, once. A
+  damaged database is never replaced by a JSON file. Two new commands recover
+  from one, after you stop all 274bot processes:
+  `panel-play state preferences recover --source "/absolute/path/private.json"`
+  and `panel-play state preferences recover --defaults` (the same with
+  `tui-play`). Recovery first keeps a private copy of the whole database set in
+  `state/preserved-<time>`, then starts a new preference history; `--defaults`
+  discards the saved preferences. The commands refuse while another 274bot of
+  this version uses the home. A database written with another page size is
+  refused with the same advice as a newer one.
+- A save that waits for another 274bot process now says why under "Saving…"
+  (panel) or on the message line (terminal app), and if it cannot finish within
+  5 seconds the setting shows the reason, for example "Not saved: … another
+  274bot process is saving preferences." A save that is already inside its
+  database transaction when 274bot is closed keeps that transaction's own
+  outcome (saved, or not saved) and is never reported as cancelled.
+- The Debug tab saves a pinned command and the recent commands separately. A
+  pin that failed to save is no longer saved when you send a command, and a
+  recent command that failed to save is no longer saved when you pin one.
+- A script library file (`js-scripts.json`) or a preferences store that 274bot
+  refuses at startup now shows in the panel error banner, the terminal app's
+  message line and the headless result, with the file and the reason. Before,
+  the library refusal was only printed to the console, or ignored when
+  headless. When a state file is writable by other users, the message says to
+  run `chmod 600 <the file>` if you own it; when another user owns it, it names
+  both user ids and says that a mode change does not fix ownership. While the
+  preferences stay refused, the panel's Nav config and General config and the
+  terminal app's settings popup show the whole reason and what to do, instead
+  of "Loading preferences…", and a setting you change shows the same reason
+  beside it. The panel banner keeps the refusal when a profile loads.
+
 ### Scripts
 
 - The catalog script AccountLeveler now loads. It imports four rs2b0t modules

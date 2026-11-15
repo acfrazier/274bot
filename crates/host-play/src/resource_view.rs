@@ -200,32 +200,42 @@ mod tests {
         .preferences()
     }
 
+    /// `bytes` as the legacy `panel-ui.json`, written privately before the
+    /// service opens (the first open imports it).
+    fn legacy(scratch: &script::IsolatedEnv, bytes: &[u8]) -> std::path::PathBuf {
+        let path = scratch.home.join(".274bot").join("panel-ui.json");
+        vault::create_private_dir(path.parent().unwrap()).unwrap();
+        vault::write_private_file(&path, bytes).unwrap();
+        path
+    }
+
     #[test]
     fn persist_merges_ack_into_panel_ui_json() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("ack-json");
+        legacy(&scratch, br#"{"last_focus":"alice"}"#);
         let preferences = preferences(&scratch);
-        let path = preferences.path();
-        vault::write_private_file(&path, br#"{"last_focus":"alice"}"#).unwrap();
+        preferences.reload().unwrap();
         assert!(!background_bots_acked(&preferences));
         persist_background_bots_ack(&preferences).unwrap();
         assert!(background_bots_acked(&preferences));
         persist_background_bots_ack(&preferences).unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(v["last_focus"], "alice");
-        assert_eq!(v["background_bots_ack"], true);
+        let saved = preferences.reload().unwrap();
+        assert_eq!(saved["last_focus"], "alice");
+        assert_eq!(saved["background_bots_ack"], true);
     }
 
-    /// T5.2 r4: a corrupt preferences file is moved aside, byte for byte,
-    /// to `panel-ui.json.corrupt-<time>` (the pre-T5.2 recovery, now under
-    /// the file's lock and flushed), and the acknowledgement is saved in
-    /// fresh preferences.
+    /// T5.2 r4, T5.3: a corrupt legacy preferences file is kept, byte for
+    /// byte, in `panel-ui.json.corrupt-<time>` when the database first
+    /// opens, and the acknowledgement is saved in fresh preferences.
     #[test]
     fn persist_moves_a_corrupt_panel_ui_aside_before_writing() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("ack-corrupt");
-        let preferences = preferences(&scratch);
-        let path = preferences.path();
         let corrupt = b"{not valid json";
-        vault::write_private_file(&path, corrupt).unwrap();
+        let path = legacy(&scratch, corrupt);
+        let preferences = preferences(&scratch);
+        preferences.reload().unwrap();
 
         persist_background_bots_ack(&preferences).unwrap();
 
@@ -246,16 +256,17 @@ mod tests {
 
     #[test]
     fn persist_fails_when_parent_is_a_file() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("ack-parent-file");
+        std::fs::write(scratch.home.join(".274bot"), b"not-a-dir").unwrap();
         let preferences = preferences(&scratch);
-        let parent = preferences.path().parent().unwrap().to_path_buf();
-        std::fs::write(&parent, b"not-a-dir").unwrap();
         assert!(persist_background_bots_ack(&preferences).is_err());
         assert!(!background_bots_acked(&preferences));
     }
 
     #[test]
     fn persist_fails_when_panel_ui_path_is_a_directory() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("ack-path-dir");
         let preferences = preferences(&scratch);
         std::fs::create_dir_all(preferences.path()).unwrap();

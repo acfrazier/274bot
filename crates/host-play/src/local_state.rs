@@ -54,8 +54,9 @@
 //!   write, after the bytes and their directory entries are durable and
 //!   read back; one `terminal` line per accepted write that ends any other
 //!   way (failed, conflicted, cancelled). A repair the service makes on its
-//!   own (a malformed preferences or script-settings file moved aside) has one
-//!   info audit line of its own and a warning for the operator.
+//!   own (a malformed legacy preferences file kept aside at import, a
+//!   malformed script-settings file moved aside) has one info audit line of
+//!   its own and a warning for the operator.
 //! - **Budget:** at most [`MAX_BANK_STORES`] bank-hint identities and the
 //!   bounded script-settings identities are held; a new identity evicts the
 //!   least recently used idle store of its domain, or is refused `Busy`.
@@ -72,6 +73,17 @@
 //! version writes guard this process's own races, and the write
 //! precondition (the file's content digest, checked under the lock and
 //! again before the rename) guards against other writers.
+//!
+//! **Preferences (T5.3)** live in the state database
+//! `<root>/state/state.sqlite3` (the private `sql` module), opened, read, written and
+//! checkpointed only on the writer thread. Their versions are allocated
+//! inside each write transaction from the database's own sequence (the
+//! service clock follows them), so two processes never commit one version.
+//! No SQL job waits for a lock: a held guard, `SQLITE_BUSY` or a full WAL
+//! puts the job back with a delayed retry (1 ms doubling to 50 ms), and a
+//! save that has not finished 5 s after its first attempt settles `Busy`
+//! with its cause. Bank, loadout and Start jobs always run before the next
+//! preference retry or checkpoint.
 //!
 //! **Residual window.** A writer that does not take the lock (a text
 //! editor, a build older than T5.2 r3) is caught by the checks, except in
@@ -112,6 +124,9 @@ use script::local_state::{SlotState, StatePort};
 
 mod files;
 mod frontend;
+mod maintenance;
+mod root_use;
+mod sql;
 
 pub(crate) use files::hint_has_pre_0_2_8_shape;
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
@@ -124,6 +139,21 @@ pub use frontend::{
     PreferenceError, PreferencePatch, PreferenceSnapshot, Preferences, QueuedUpdate,
     ServiceLoadouts, Update,
 };
+pub use maintenance::{
+    maintenance_command, maintenance_help, parse_maintenance, run_preferences_maintenance,
+    MaintenanceAction, MaintenanceError,
+};
+pub use root_use::RootUse;
+pub use sql::Frontend;
+
+/// How long one preference save may keep being retried (a contended
+/// guard, `SQLITE_BUSY`, a full WAL) from its first attempt before it
+/// settles `Busy` with its cause. It replaces the old file lock's wait.
+const PREFERENCE_DEADLINE: Duration = Duration::from_secs(5);
+/// The first and the largest delay between two attempts of a requeued
+/// preference job: the old file lock's retry intervals, without sleeping.
+const RETRY_FIRST: Duration = Duration::from_millis(1);
+const RETRY_MAX: Duration = Duration::from_millis(50);
 
 /// How many edits of one operator store (loadouts, preferences) may wait
 /// behind the one in flight.
@@ -204,6 +234,11 @@ fn emit_local_notice(
         hook(level, &line.to_string());
     }
 }
+/// A test's witness of each complete writer job: its class and the whole
+/// time the writer spent on it, from selection to the settled outcome
+/// (cache, typed view, audit and terminal included).
+#[cfg(test)]
+pub(crate) type JobHook = Arc<dyn Fn(&'static str, Duration) + Send + Sync>;
 
 /// What one `Play` composes for its slots (§21 §4.2): the process service,
 /// the launch profile's namespace every account keys under, and the
@@ -391,13 +426,36 @@ struct Shared {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PreferenceWatchPoll {
     Pending,
-    Settled(WriteSettlement),
+    Settled(WriteSettlement, Option<Arc<str>>),
     Missing,
 }
 
 struct PreferenceWatch {
     settlement: Option<WriteSettlement>,
     queued_bytes: usize,
+    /// The bounded cause a failed request carries beyond its neutral code
+    /// (a deadline reached while waiting for the WAL, a refused database).
+    detail: Option<Arc<str>>,
+}
+
+/// The idle TRUNCATE checkpoint the writer owes the preferences WAL.
+#[derive(Default)]
+struct Truncate {
+    /// A commit left `F >= W / 2`, or a save waits for room in the WAL.
+    due: bool,
+    /// When a busy attempt may run again.
+    retry_at: Option<Instant>,
+    backoff: Duration,
+    /// Completed resets and busy attempts, for tests and measurements.
+    resets: u64,
+    busy: u64,
+}
+
+/// What the writer thread's database is opened with.
+#[derive(Default)]
+struct DbSeed {
+    frontend: Frontend,
+    root_use: Option<RootUse>,
 }
 
 #[derive(Default)]
@@ -412,6 +470,19 @@ struct State {
     preference_queue_bytes: usize,
     /// The default document/view is prepared before the writer starts.
     preference_default: files::PreferenceProjection,
+    /// Why the preference job at the front is waiting, while it is.
+    preference_wait: Option<sql::WaitCause>,
+    /// Only the single preferences readback can ask for a SQL retry.
+    /// Account hint stores never carry this process-owned state.
+    preference_readback_retry: Retry,
+    /// The idle WAL reset the writer owes.
+    truncate: Truncate,
+    /// Taken by the writer thread when it starts.
+    db_seed: Option<DbSeed>,
+    /// A test's seams inside the database (a stall in a real SQL call, a
+    /// COMMIT outcome), copied to the writer's database before each job.
+    #[cfg(test)]
+    sql_seams: sql::Seams,
     /// The last version issued, by any store.
     clock: Option<StoreVersion>,
     /// Orders readbacks and writes (FIFO across stores) and stamps store
@@ -457,6 +528,8 @@ struct Hooks {
     notice: Option<NoticeHook>,
     #[cfg(test)]
     read_refusal: Option<NoticeHook>,
+    #[cfg(test)]
+    job: Option<JobHook>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -476,9 +549,6 @@ struct Store {
     readback_seq: u64,
     /// How many readbacks have completed: a bounded wait follows it.
     readbacks: u64,
-    /// A save asked for the next readback: a preferences file whose
-    /// content is malformed is quarantined by it ([`Shared::read_repairing`]).
-    recover: bool,
     /// Accepted edits not yet taken by the writer thread.
     queue: VecDeque<Queued>,
     /// The writer thread holds this store's edit.
@@ -555,7 +625,9 @@ struct InFlight {
     terminal: Terminal,
     setting: Option<PendingRuntimeSetting>,
     /// The writer passed its last check and is renaming the bytes into
-    /// place: past the shutdown bound it is left to finish.
+    /// place, or its SQL transaction has begun: past the shutdown bound it
+    /// is left to its own outcome (commit, rollback or uncertain
+    /// resolution) and settles when that is known.
     publishing: bool,
 }
 
@@ -664,6 +736,38 @@ struct Queued {
     external: u64,
     /// What the edit may add to the file, for the budget.
     growth: Growth,
+    /// The retry state of a preference save the database asked to wait:
+    /// when its first attempt ran (its deadline counts from there), when it
+    /// may run again, and the next delay.
+    retry: Retry,
+}
+
+#[derive(Default, Clone, Copy)]
+struct Retry {
+    first: Option<Instant>,
+    at: Option<Instant>,
+    backoff: Duration,
+}
+
+impl Retry {
+    /// Schedule the next attempt after `now`: 1 ms, doubling, at most 50 ms.
+    fn delay(&mut self, now: Instant) {
+        self.backoff = if self.backoff.is_zero() {
+            RETRY_FIRST
+        } else {
+            (self.backoff * 2).min(RETRY_MAX)
+        };
+        self.at = Some(now + self.backoff);
+    }
+
+    fn due(&self, now: Instant) -> bool {
+        self.at.is_none_or(|at| at <= now)
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        self.first
+            .is_some_and(|first| now.saturating_duration_since(first) >= PREFERENCE_DEADLINE)
+    }
 }
 
 impl Queued {
@@ -695,6 +799,8 @@ struct Settled {
 enum Job {
     Readback(StoreKey),
     Write(StoreKey, Queued),
+    /// The idle TRUNCATE of the preferences WAL.
+    Checkpoint,
 }
 
 impl LocalStateService {
@@ -715,13 +821,16 @@ impl LocalStateService {
         root: StateRoot,
         domains: &[LocalStateDomain],
         minter: Arc<RequestIdMinter>,
-        state: State,
+        mut state: State,
     ) -> Arc<Self> {
         let mut open = [false; 5];
         for domain in domains {
             open[domain_index(*domain)] = true;
         }
-        let preference_path: Arc<str> = Arc::from(root.preferences_file().display().to_string());
+        if state.db_seed.is_none() {
+            state.db_seed = Some(DbSeed::default());
+        }
+        let preference_path: Arc<str> = Arc::from(root.database_file().display().to_string());
         let preference_not_ready = PreferenceError::from_cached(
             Arc::clone(&preference_path),
             Arc::from("preference document is not ready yet"),
@@ -797,7 +906,24 @@ impl LocalStateService {
     /// to the frontend's `Play` ([`crate::Play::adopt_local_state`]), so one
     /// process has one writer for these files.
     pub fn open_process(root: StateRoot) -> Arc<Self> {
-        Self::open(
+        Self::open_process_with(root, Frontend::Headless, None)
+    }
+
+    /// [`Self::open_process`] for a shipped `frontend` (its refusals name
+    /// that binary's maintenance commands), holding `root_use` (the
+    /// instance permit's lease of this root, so the process keeps one
+    /// descriptor for it) when the permit holds one. Without it the
+    /// database takes its own shared lease when it first opens.
+    pub fn open_process_with(
+        root: StateRoot,
+        frontend: Frontend,
+        root_use: Option<RootUse>,
+    ) -> Arc<Self> {
+        let state = State {
+            db_seed: Some(DbSeed { frontend, root_use }),
+            ..State::default()
+        };
+        Self::open_with_state(
             root,
             &[
                 LocalStateDomain::Preferences,
@@ -806,6 +932,7 @@ impl LocalStateService {
                 LocalStateDomain::ScriptRuntimeSettings,
             ],
             Arc::new(RequestIdMinter::new()),
+            state,
         )
     }
 
@@ -958,19 +1085,31 @@ impl LocalStateService {
 
     pub(super) fn poll_preference_watch(&self, request: RequestId) -> PreferenceWatchPoll {
         let mut state = self.shared.state.lock();
-        match state
-            .preference_watches
-            .get(&request)
-            .and_then(|watch| watch.settlement.clone())
-        {
-            Some(settlement) => {
+        match state.preference_watches.get(&request).and_then(|watch| {
+            watch
+                .settlement
+                .clone()
+                .map(|settlement| (settlement, watch.detail.clone()))
+        }) {
+            Some((settlement, detail)) => {
                 state.preference_watches.remove(&request);
-                PreferenceWatchPoll::Settled(settlement)
+                PreferenceWatchPoll::Settled(settlement, detail)
             }
             None if state.preference_watches.contains_key(&request) => PreferenceWatchPoll::Pending,
             None => PreferenceWatchPoll::Missing,
         }
     }
+
+    /// Why the preference save at the front of the queue is waiting, while
+    /// it is: what a pending setting shows (plan §4.4).
+    pub(super) fn preference_wait(&self) -> Option<&'static str> {
+        self.shared
+            .state
+            .lock()
+            .preference_wait
+            .map(sql::WaitCause::text)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn wait_preference_watch(
         &self,
@@ -980,14 +1119,15 @@ impl LocalStateService {
         let deadline = Instant::now() + wait;
         let mut state = self.shared.state.lock();
         loop {
-            match state
-                .preference_watches
-                .get(&request)
-                .and_then(|watch| watch.settlement.clone())
-            {
-                Some(settlement) => {
+            match state.preference_watches.get(&request).and_then(|watch| {
+                watch
+                    .settlement
+                    .clone()
+                    .map(|settlement| (settlement, watch.detail.clone()))
+            }) {
+                Some((settlement, detail)) => {
                     state.preference_watches.remove(&request);
-                    return PreferenceWatchPoll::Settled(settlement);
+                    return PreferenceWatchPoll::Settled(settlement, detail);
                 }
                 None if !state.preference_watches.contains_key(&request) => {
                     return PreferenceWatchPoll::Missing;
@@ -1006,51 +1146,61 @@ impl LocalStateService {
         }
     }
 
+    /// Accept one preference patch for the writer. A refusal names its
+    /// code, and its cause when the store is refused (the path, the cause
+    /// and the remedy the refusal recorded), so the setting that tried to
+    /// save shows why, not only the code.
     pub(super) fn enqueue_preference_patch(
         &self,
         identity: &DomainIdentity,
         patch: PreferencePatch,
-    ) -> Result<RequestId, ErrorCode> {
+    ) -> Result<RequestId, (ErrorCode, Option<Arc<str>>)> {
         let domain = LocalStateDomain::Preferences;
         let key = StoreKey::Preferences;
         if !self.is_open(domain) {
-            return Err(ErrorCode::NotReady { domain });
+            return Err((ErrorCode::NotReady { domain }, None));
         }
         let mut state = self.shared.state.lock();
         if state.shutdown || state.preference_watches.len() >= PREFERENCE_WATCH_CAP {
-            return Err(ErrorCode::Busy { domain });
+            return Err((ErrorCode::Busy { domain }, None));
         }
         if state
             .preference_queue_bytes
             .saturating_add(patch.encoded_bytes)
             > files::MAX_PREFERENCES_BYTES as usize
         {
-            return Err(ErrorCode::Validation {
-                domain,
-                reason: ValidationReason::TooLong,
-            });
+            return Err((
+                ErrorCode::Validation {
+                    domain,
+                    reason: ValidationReason::TooLong,
+                },
+                None,
+            ));
         }
         let store = state
             .stores
             .get(&key)
-            .ok_or(ErrorCode::NotReady { domain })?;
+            .ok_or((ErrorCode::NotReady { domain }, None))?;
         if store.queue.len() >= OPERATOR_QUEUE_CAP {
-            return Err(ErrorCode::Busy { domain });
+            return Err((ErrorCode::Busy { domain }, None));
         }
         if let FileState::Rejected(rejection) = &store.file {
-            return Err(ErrorCode::Failed {
-                domain,
-                reason: rejection.reason,
-            });
+            return Err((
+                ErrorCode::Failed {
+                    domain,
+                    reason: rejection.reason,
+                },
+                Some(Arc::clone(&rejection.detail)),
+            ));
         }
         if !self.shared.start_writer(&mut state) {
-            return Err(ErrorCode::Busy { domain });
+            return Err((ErrorCode::Busy { domain }, None));
         }
         let request = self
             .shared
             .minter
             .mint()
-            .map_err(|_| ErrorCode::Busy { domain })?;
+            .map_err(|_| (ErrorCode::Busy { domain }, None))?;
         let seq = state.next_seq();
         let accepted_at = state.clock.unwrap_or(StoreVersion::INITIAL);
         let queued_bytes = patch.encoded_bytes;
@@ -1069,6 +1219,7 @@ impl LocalStateService {
             accepted_at,
             external,
             growth: Growth::default(),
+            retry: Retry::default(),
         });
         state.preference_queue_bytes += queued_bytes;
         state.preference_watches.insert(
@@ -1076,6 +1227,7 @@ impl LocalStateService {
             PreferenceWatch {
                 settlement: None,
                 queued_bytes,
+                detail: None,
             },
         );
         state.requests.insert(request, key);
@@ -1134,35 +1286,24 @@ impl LocalStateService {
         identity: &DomainIdentity,
         timeout: Duration,
     ) -> Result<(DomainLease, bool), ErrorCode> {
-        let ticket = self.start_readback(identity, false)?;
+        let ticket = self.start_readback(identity)?;
         self.finish_readback(identity, ticket, Some(Instant::now() + timeout))
             .unwrap_or(Err(ErrorCode::NotReady {
                 domain: identity.domain(),
             }))
     }
 
-    /// Queue a re-read of `identity`'s file and return what
+    /// Queue a re-read of `identity`'s store and return what
     /// [`Self::finish_readback`] waits for: a read that began after this
-    /// call. With `recover`, the read is a save's (a preferences update
-    /// about to write): the one read that quarantines a preferences file
-    /// whose content is malformed and starts fresh preferences (the
-    /// recovery the old shared writer made on a save). A read for anything
-    /// else refuses such a file, so its readers fail closed until a save
-    /// recovers it.
+    /// call.
     pub(crate) fn start_readback(
         &self,
         identity: &DomainIdentity,
-        recover: bool,
     ) -> Result<ReadbackTicket, ErrorCode> {
         let key = self.store_key(identity)?;
         let domain = identity.domain();
         let mut state = self.shared.state.lock();
         state.admit(&key)?;
-        if recover {
-            if let Some(store) = state.stores.get_mut(&key) {
-                store.recover = true;
-            }
-        }
         let Some(target) = self.shared.request_readback(&mut state, &key) else {
             return Err(ErrorCode::NotReady { domain });
         };
@@ -1302,6 +1443,112 @@ impl LocalStateService {
         self.shared.state.lock().write_fault = Some(fault);
     }
 
+    /// Install the database seams (a stall inside a real SQL statement, a
+    /// COMMIT outcome, named import points), from the writer's next job.
+    #[cfg(test)]
+    pub(crate) fn set_sql_seams_for_test(&self, seams: sql::Seams) {
+        self.shared.state.lock().sql_seams = seams;
+    }
+
+    /// Completed and busy idle WAL resets, and whether one is owed.
+    #[cfg(test)]
+    pub(crate) fn truncate_counts_for_test(&self) -> (u64, u64, bool) {
+        let state = self.shared.state.lock();
+        (
+            state.truncate.resets,
+            state.truncate.busy,
+            state.truncate.due,
+        )
+    }
+
+    /// Open the process stores with database seams installed before the
+    /// first hydration (and an optional read stall before it).
+    #[cfg(test)]
+    pub(crate) fn open_process_with_seams_for_test(
+        root: StateRoot,
+        seams: sql::Seams,
+        read_stall: Option<ReadStall>,
+    ) -> Arc<Self> {
+        let state = State {
+            sql_seams: seams,
+            read_stall,
+            ..State::default()
+        };
+        Self::open_with_state(
+            root,
+            &[
+                LocalStateDomain::Preferences,
+                LocalStateDomain::LoadoutsReferences,
+                LocalStateDomain::BankHints,
+            ],
+            Arc::new(RequestIdMinter::new()),
+            state,
+        )
+    }
+
+    /// Open the process stores with `hook` already watching the writer, so
+    /// the first hydration (open, schema, epoch, import) is a measured job.
+    #[cfg(test)]
+    pub(crate) fn open_process_timed_for_test(root: StateRoot, hook: JobHook) -> Arc<Self> {
+        let state = State {
+            hooks: Hooks {
+                job: Some(hook),
+                ..Hooks::default()
+            },
+            ..State::default()
+        };
+        Self::open_with_state(
+            root,
+            &[
+                LocalStateDomain::Preferences,
+                LocalStateDomain::LoadoutsReferences,
+                LocalStateDomain::BankHints,
+            ],
+            Arc::new(RequestIdMinter::new()),
+            state,
+        )
+    }
+
+    /// Open the process stores with `hook` already receiving every notice,
+    /// the first hydration's included.
+    #[cfg(test)]
+    pub(crate) fn open_process_noticed_for_test(root: StateRoot, hook: NoticeHook) -> Arc<Self> {
+        let state = State {
+            hooks: Hooks {
+                notice: Some(hook),
+                ..Hooks::default()
+            },
+            ..State::default()
+        };
+        Self::open_with_state(
+            root,
+            &[
+                LocalStateDomain::Preferences,
+                LocalStateDomain::LoadoutsReferences,
+                LocalStateDomain::BankHints,
+            ],
+            Arc::new(RequestIdMinter::new()),
+            state,
+        )
+    }
+
+    /// Open the process stores with `stall` run inside a real SQL statement
+    /// on the writer (the first hydration holds there; T5.3 §9.5).
+    #[cfg(test)]
+    pub(crate) fn open_process_with_sql_stall_for_test(
+        root: StateRoot,
+        stall: Arc<dyn Fn() + Send + Sync>,
+    ) -> Arc<Self> {
+        Self::open_process_with_seams_for_test(
+            root,
+            sql::Seams {
+                stall_in_sql: Some(stall),
+                ..sql::Seams::default()
+            },
+            None,
+        )
+    }
+
     /// Make a hydrated preference lease stale without waiting for a clock tick.
     #[cfg(test)]
     pub(crate) fn expire_preference_cache_for_test(&self) {
@@ -1398,6 +1645,24 @@ impl LocalStateService {
     #[cfg(test)]
     pub(crate) fn set_shutdown_timeout(&self, timeout: Duration) {
         self.shared.state.lock().shutdown_timeout = Some(timeout);
+    }
+
+    /// Witness every complete writer job with its class and total time.
+    #[cfg(test)]
+    pub(crate) fn set_job_hook_for_test(&self, hook: JobHook) {
+        self.shared.state.lock().hooks.job = Some(hook);
+    }
+
+    /// How many preference saves are queued and whether one is in flight.
+    #[cfg(test)]
+    pub(crate) fn preference_occupancy_for_test(&self) -> (usize, bool) {
+        let state = self.shared.state.lock();
+        state
+            .stores
+            .get(&StoreKey::Preferences)
+            .map_or((0, false), |store| {
+                (store.queue.len(), store.in_flight.is_some())
+            })
     }
 
     /// The settlement ledger, readable after the last handle is dropped.
@@ -1626,6 +1891,7 @@ impl LocalStatePort for LocalStateService {
             accepted_at,
             external,
             growth,
+            retry: Retry::default(),
         });
         state.requests.insert(request, key.clone());
         if cold_runtime_settings {
@@ -1700,19 +1966,19 @@ impl Drop for LocalStateService {
             }
             return;
         }
-        // Past the bound: every accepted write the writer has not begun to
-        // rename into place gets its terminal now, each with its own line;
-        // the writer publishes nothing more. One being renamed is left to
-        // settle when it finishes (or is lost unacknowledged with the
-        // process).
+        // Past the bound: every accepted write the writer has not begun
+        // (to rename into place, or to run its SQL transaction) gets its
+        // terminal now, each with its own line; the writer begins nothing
+        // more. One already begun is left to its own outcome and settles
+        // when that is known (or is lost unacknowledged with the process).
         let (cancelled, publishing) = self.shared.abandon();
         self.shared.settled.notify_all();
         host_log!(
             Category::Lifecycle,
             Level::Warn,
             "local state: shutdown bound of {timeout:?} passed; {cancelled} accepted write(s) \
-             settled cancelled, {publishing} still being renamed into place settle when they \
-             finish"
+             settled cancelled, {publishing} already begun (a rename or an SQL transaction) \
+             settle when they finish"
         );
     }
 }
@@ -2219,6 +2485,91 @@ impl State {
             store.external += 1;
         }
         store.file = file;
+    }
+
+    /// A readback of `key` completed: count it, and run the next one when
+    /// it was asked for again while this one ran.
+    fn readback_done(&mut self, key: &StoreKey) {
+        let seq = self.next_seq();
+        if let Some(store) = self.stores.get_mut(key) {
+            store.readbacks += 1;
+            store.readback = match store.readback {
+                Readback::InFlightAgain => {
+                    store.readback_seq = seq;
+                    Readback::Queued
+                }
+                _ => Readback::Idle,
+            };
+        }
+    }
+
+    /// The clock follows every durable version the database allocated, so
+    /// a later version of any store is never one already used.
+    fn observe_version(&mut self, version: StoreVersion) {
+        if self.clock.is_none_or(|clock| clock < version) {
+            self.clock = Some(version);
+        }
+    }
+
+    /// Take what the preferences database holds into the store at its own
+    /// durable version. A version this service did not hold is an outside
+    /// change (another process's commit, an import), counted once.
+    fn adopt_durable(&mut self, durable: sql::Durable) {
+        self.observe_version(durable.version);
+        let Some(store) = self.stores.get_mut(&StoreKey::Preferences) else {
+            return;
+        };
+        if let FileState::Read(cached) = &mut store.file {
+            if cached.version == durable.version {
+                cached.refreshed_at = Instant::now();
+                return;
+            }
+        }
+        let known = matches!(store.file, FileState::Read(_));
+        let (rows, _) = files::preference_rows(&durable.projection.document);
+        if known {
+            store.external += 1;
+            host_log!(
+                Category::Lifecycle,
+                Level::Info,
+                "local state: preferences changed outside this service, now {}",
+                durable.version
+            );
+        }
+        store.file = FileState::Read(Cached {
+            version: durable.version,
+            at: DurableTimestamp::now(),
+            snapshot: LeaseSnapshot::preferences(rows),
+            preferences: Some(durable.projection),
+            refreshed_at: Instant::now(),
+            digest: Some(durable.digest),
+            durable: true,
+            written_len: durable.len,
+            rewrite: Rewrite::Lossless,
+        });
+    }
+
+    /// The database refused the preferences: no lease and no save until a
+    /// later open accepts it. Logged once per distinct cause.
+    fn reject_preferences(&mut self, reason: FailureReason, detail: Arc<str>) {
+        let Some(store) = self.stores.get_mut(&StoreKey::Preferences) else {
+            return;
+        };
+        if let FileState::Rejected(rejection) = &store.file {
+            if rejection.detail == detail {
+                return;
+            }
+        }
+        host_log!(
+            Category::Lifecycle,
+            Level::Warn,
+            "local state: preferences refused: {detail}; they are neither leased nor saved until \
+             the database opens cleanly"
+        );
+        if matches!(store.file, FileState::Read(_)) {
+            store.external += 1;
+        }
+        store.file = FileState::Rejected(Rejection { reason, detail });
     }
 }
 
@@ -2810,24 +3161,31 @@ impl Shared {
         }
     }
 
-    /// The writer thread: take the next readback or write of any store,
-    /// do its I/O with no lock held, record the outcome, and park when
-    /// nothing is queued. A job that panics is contained: its request
-    /// fails and the store reads its file again. Once the service is
-    /// dropped, only hydration needed by accepted writes continues;
-    /// the thread exits when every accepted write settles.
+    /// The writer thread: take the next readback, write or checkpoint of
+    /// any store, do its I/O with no lock held, record the outcome, and
+    /// park when nothing is due (until the earliest delayed retry, if one
+    /// is waiting). The preferences database lives here, on this thread
+    /// only. A job that panics is contained: its request fails and the
+    /// store reads again. Once the service is dropped, only hydration
+    /// needed by accepted writes continues; the thread exits when every
+    /// accepted write settles. The database closes with the thread, with
+    /// close-time checkpoints off.
     fn run(self: Arc<Self>) {
+        let seed = self.state.lock().db_seed.take().unwrap_or_default();
+        let mut db = sql::Db::new(self.root.clone(), seed.frontend, seed.root_use);
         let mut after_shutdown = 0usize;
         loop {
             let (job, stopping) = {
                 let mut state = self.state.lock();
                 loop {
-                    if let Some(job) = take_job(&mut state) {
-                        break (job, state.shutdown);
-                    }
-                    if state.shutdown {
+                    let next = match take_job(&mut state, Instant::now()) {
+                        Ok(job) => break (job, state.shutdown),
+                        Err(next) => next,
+                    };
+                    if state.shutdown && next.is_none() {
                         state.writer = WriterPhase::Exited;
                         drop(state);
+                        drop(db);
                         self.settled.notify_all();
                         if after_shutdown > 0 {
                             host_log!(
@@ -2838,20 +3196,200 @@ impl Shared {
                         }
                         return;
                     }
-                    self.wake.wait(&mut state);
+                    match next {
+                        Some(at) => {
+                            self.wake.wait_until(&mut state, at);
+                        }
+                        None => self.wake.wait(&mut state),
+                    }
                 }
             };
             if stopping && matches!(job, Job::Write(..)) {
                 after_shutdown += 1;
             }
+            if self.skip_after_abandon(&job) {
+                self.settled.notify_all();
+                continue;
+            }
+            #[cfg(test)]
+            {
+                db.seams = self.state.lock().sql_seams.clone();
+            }
+            #[cfg(test)]
+            let (job_started, class) = (Instant::now(), job_class(&job));
             let outcome = panic::catch_unwind(AssertUnwindSafe(|| match &job {
-                Job::Readback(key) => self.readback(key),
-                Job::Write(key, queued) => self.write(key, queued),
+                Job::Readback(StoreKey::Preferences) => self.readback_preferences(&mut db),
+                Job::Readback(key) => {
+                    self.readback(key);
+                    None
+                }
+                Job::Write(StoreKey::Preferences, queued) => {
+                    self.write_preferences(&mut db, queued)
+                }
+                Job::Write(key, queued) => {
+                    self.write(key, queued);
+                    None
+                }
+                Job::Checkpoint => self.checkpoint(&mut db),
             }));
-            if let Err(payload) = outcome {
-                self.contain(&job, payload.as_ref());
+            match outcome {
+                Ok(None) => {
+                    if matches!(job, Job::Write(StoreKey::Preferences, _)) {
+                        self.state.lock().preference_wait = None;
+                    }
+                }
+                Ok(Some(cause)) => self.requeue(job, cause),
+                Err(payload) => self.contain(&job, payload.as_ref()),
+            }
+            #[cfg(test)]
+            {
+                let hook = self.state.lock().hooks.job.clone();
+                if let Some(hook) = hook {
+                    hook(class, job_started.elapsed());
+                }
             }
             self.settled.notify_all();
+        }
+    }
+
+    /// A preferences job the shutdown bound overtook before it began:
+    /// hydration and the idle checkpoint start no SQL once the service is
+    /// abandoned (a save is cancelled at its own begun boundary).
+    fn skip_after_abandon(&self, job: &Job) -> bool {
+        let mut state = self.state.lock();
+        if !state.abandoned {
+            return false;
+        }
+        match job {
+            Job::Readback(StoreKey::Preferences) => {
+                state.readback_done(&StoreKey::Preferences);
+            }
+            Job::Checkpoint => state.truncate.due = false,
+            Job::Readback(_) | Job::Write(..) => return false,
+        }
+        true
+    }
+
+    /// A database job asked to wait: put it back with its next delayed
+    /// retry, or settle a save whose deadline passed with the wait's cause.
+    fn requeue(&self, job: Job, cause: sql::WaitCause) {
+        let now = Instant::now();
+        let mut state = self.state.lock();
+        if cause == sql::WaitCause::Wal {
+            state.truncate.due = true;
+        }
+        match job {
+            Job::Readback(key) => {
+                let expired_writes = {
+                    let State {
+                        stores,
+                        preference_readback_retry,
+                        ..
+                    } = &mut *state;
+                    let Some(store) = stores.get_mut(&key) else {
+                        return;
+                    };
+                    store.readback = Readback::Queued;
+                    let first = *preference_readback_retry.first.get_or_insert(now);
+                    preference_readback_retry.delay(now);
+                    // Saves accepted over a store that cannot open within
+                    // their deadline settle `Busy` with the cause; the open
+                    // keeps being retried.
+                    if matches!(store.file, FileState::Cold)
+                        && now.saturating_duration_since(first) >= PREFERENCE_DEADLINE
+                    {
+                        store
+                            .queue
+                            .drain(..)
+                            .map(|queued| queued.terminal())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                };
+                state.preference_wait = Some(cause);
+                self.settle_waited(&mut state, &key, expired_writes, cause);
+            }
+            Job::Write(key, mut queued) => {
+                let terminal = queued.terminal();
+                if let Some(store) = state.stores.get_mut(&key) {
+                    store.in_flight = None;
+                }
+                if state.abandoned {
+                    drop(state);
+                    self.finish_terminal(
+                        &key,
+                        terminal,
+                        Settlement::Cancelled(Cancellation::Shutdown),
+                    );
+                    return;
+                }
+                if queued.retry.expired(now) {
+                    state.preference_wait = None;
+                    self.settle_waited(&mut state, &key, vec![terminal], cause);
+                    return;
+                }
+                queued.retry.delay(now);
+                state.preference_wait = Some(cause);
+                if let Some(store) = state.stores.get_mut(&key) {
+                    store.queue.push_front(queued);
+                }
+            }
+            Job::Checkpoint => {
+                state.truncate.busy += 1;
+                state.truncate.backoff = if state.truncate.backoff.is_zero() {
+                    RETRY_FIRST
+                } else {
+                    (state.truncate.backoff * 2).min(RETRY_MAX)
+                };
+                state.truncate.retry_at = Some(now + state.truncate.backoff);
+            }
+        }
+    }
+
+    /// Settle `terminals` `Busy`, each carrying the wait's cause for its
+    /// setting, with their terminal lines.
+    fn settle_waited(
+        &self,
+        state: &mut parking_lot::MutexGuard<'_, State>,
+        key: &StoreKey,
+        terminals: Vec<Terminal>,
+        cause: sql::WaitCause,
+    ) {
+        let settlement = Settlement::Failed(ErrorCode::Busy {
+            domain: key.domain(),
+        });
+        let detail: Arc<str> = Arc::from(cause.text());
+        let mut settled = Vec::new();
+        for terminal in terminals {
+            if let Some(watch) = state.preference_watches.get_mut(&terminal.request) {
+                watch.detail = Some(Arc::clone(&detail));
+            }
+            if state.settle(key, terminal.request, settlement.clone(), None) {
+                settled.push(terminal);
+            }
+        }
+        parking_lot::MutexGuard::unlocked(state, || {
+            host_log!(
+                Category::Lifecycle,
+                Level::Warn,
+                "local state: preferences save reached its {PREFERENCE_DEADLINE:?} deadline: {}",
+                cause.text()
+            );
+            for terminal in &settled {
+                self.terminal(terminal, &settlement, None);
+            }
+        });
+    }
+
+    /// Settle one request with its terminal line, outside the lock.
+    fn finish_terminal(&self, key: &StoreKey, terminal: Terminal, settlement: WriteSettlement) {
+        if self
+            .state
+            .lock()
+            .settle(key, terminal.request, settlement.clone(), None)
+        {
+            self.terminal(&terminal, &settlement, None);
         }
     }
 
@@ -2912,39 +3450,371 @@ impl Shared {
                     self.terminal(terminal, &settlement, None);
                 }
             }
+            Job::Checkpoint => {
+                state.truncate.due = false;
+                drop(state);
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Error,
+                    "local state: the preferences WAL checkpoint panicked: {message}"
+                );
+            }
         }
     }
 
     fn readback(&self, key: &StoreKey) {
-        let recover = self
-            .state
-            .lock()
-            .stores
-            .get_mut(key)
-            .is_some_and(|store| std::mem::take(&mut store.recover));
         let read_at = DurableTimestamp::now();
-        let read = self.read_repairing(key, read_at, recover, None);
+        let read = self.read_repairing(key, read_at, false, None);
         let path = key.path(&self.root);
         let mut state = self.state.lock();
         state.adopt(key, read, read_at, &path);
-        let seq = state.next_seq();
-        if let Some(store) = state.stores.get_mut(key) {
-            store.readbacks += 1;
-            store.readback = match store.readback {
-                Readback::InFlightAgain => {
-                    store.readback_seq = seq;
-                    Readback::Queued
+        state.readback_done(key);
+    }
+
+    /// Hydrate the preferences from the database (open, schema, epoch,
+    /// legacy import) or, once open, follow another connection's commit
+    /// (`PRAGMA data_version`). `Some` when the database asked to wait.
+    fn readback_preferences(&self, db: &mut sql::Db) -> Option<sql::WaitCause> {
+        let key = StoreKey::Preferences;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            let read_stall = self.state.lock().read_stall.clone();
+            if let Some(stall) = read_stall {
+                stall();
+            }
+        }
+        let (clock, settled) = {
+            let state = self.state.lock();
+            let settled = state
+                .stores
+                .get(&key)
+                .is_some_and(|store| matches!(store.file, FileState::Read(_)));
+            (state.clock, settled)
+        };
+        let read = if settled && db.is_open() {
+            db.refresh()
+        } else {
+            db.hydrate(clock).map(|hydrated| {
+                for (level, line) in hydrated.notices {
+                    self.notice(level, format_args!("{line}"));
                 }
-                _ => Readback::Idle,
+                Some(hydrated.durable)
+            })
+        };
+        let mut state = self.state.lock();
+        match read {
+            Err(sql::SqlFailure::Wait(cause)) => {
+                drop(state);
+                return Some(cause);
+            }
+            Ok(None) => {
+                if let Some(FileState::Read(cached)) =
+                    state.stores.get_mut(&key).map(|store| &mut store.file)
+                {
+                    cached.refreshed_at = Instant::now();
+                }
+            }
+            Ok(Some(durable)) => state.adopt_durable(durable),
+            Err(sql::SqlFailure::Refused { reason, detail }) => {
+                state.reject_preferences(reason, detail);
+            }
+        }
+        state.preference_wait = None;
+        state.preference_readback_retry = Retry::default();
+        state.readback_done(&key);
+        None
+    }
+
+    /// One preference save through the database (plan §4.2–§4.5): the
+    /// worker decides the edit against the durable document read inside
+    /// the write transaction, at a version allocated there. `Some` when the
+    /// database asked to wait: the caller requeues the save.
+    fn write_preferences(&self, db: &mut sql::Db, queued: &Queued) -> Option<sql::WaitCause> {
+        let key = StoreKey::Preferences;
+        let domain = key.domain();
+        let request = queued.request;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            let stall = self.state.lock().write_stall.clone();
+            if let Some(stall) = stall {
+                stall();
+            }
+            let fault = self.state.lock().write_fault.clone();
+            if fault.is_some_and(|fault| fault()) {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Warn,
+                    "local state: {domain} write failed (test fault) path={}",
+                    self.root.database_file().display()
+                );
+                self.finish(&key, queued, io_failure(domain), false);
+                return None;
+            }
+        }
+        // Work selected before the shutdown bound that has not begun its
+        // transaction when the bound passes is cancelled; its terminal is
+        // already out.
+        if self.state.lock().abandoned {
+            self.finish(
+                &key,
+                queued,
+                Settlement::Cancelled(Cancellation::Shutdown),
+                false,
+            );
+            return None;
+        }
+        let (known, external, clock) = {
+            let state = self.state.lock();
+            let Some(store) = state.stores.get(&key) else {
+                drop(state);
+                self.finish(&key, queued, dirty(domain), false);
+                return None;
             };
+            let known = match &store.file {
+                FileState::Read(cached) => sql::Durable {
+                    version: cached.version,
+                    projection: cached
+                        .preferences
+                        .clone()
+                        .unwrap_or_else(|| state.preference_default.clone()),
+                    digest: cached.digest.unwrap_or_default(),
+                    len: cached.written_len,
+                },
+                FileState::Rejected(rejection) => {
+                    let settlement = Settlement::Failed(ErrorCode::Failed {
+                        domain,
+                        reason: rejection.reason,
+                    });
+                    let detail = Arc::clone(&rejection.detail);
+                    drop(state);
+                    self.finish_with_detail(&key, queued, settlement, Some(detail));
+                    return None;
+                }
+                FileState::Cold => {
+                    drop(state);
+                    self.finish(&key, queued, dirty(domain), false);
+                    return None;
+                }
+            };
+            (known, store.external, state.clock)
+        };
+        let known_version = known.version;
+        let committed = db.commit(
+            request,
+            clock,
+            Some(&known),
+            || self.begin_sql_write(&key),
+            |durable| {
+                let external_now = if durable.version == known_version {
+                    external
+                } else {
+                    external + 1
+                };
+                let file = DecisionFile::Read(CachedDecision {
+                    version: durable.version,
+                    snapshot: None,
+                    preferences: Some(durable.projection.clone()),
+                    digest: Some(durable.digest),
+                    durable: true,
+                    written_len: durable.len,
+                    rewrite: Rewrite::Lossless,
+                });
+                decide(&key, &file, external_now, queued).map_err(|settlement| match settlement {
+                    Settlement::Failed(code) => code,
+                    Settlement::Completed(_) | Settlement::Cancelled(_) => ErrorCode::Failed {
+                        domain,
+                        reason: FailureReason::Dirty,
+                    },
+                })
+            },
+        );
+        match committed {
+            Err(sql::SqlFailure::Wait(cause)) => Some(cause),
+            Err(sql::SqlFailure::Refused { reason, detail }) => {
+                self.state
+                    .lock()
+                    .reject_preferences(reason, Arc::clone(&detail));
+                self.finish_with_detail(
+                    &key,
+                    queued,
+                    Settlement::Failed(ErrorCode::Failed { domain, reason }),
+                    Some(detail),
+                );
+                None
+            }
+            Ok(sql::Commit::Declined {
+                code,
+                detail,
+                observed,
+            }) => {
+                if let Some(observed) = observed {
+                    self.state.lock().adopt_durable(observed);
+                }
+                self.finish_with_detail(&key, queued, Settlement::Failed(code), detail);
+                None
+            }
+            Ok(sql::Commit::Abandoned) => {
+                self.finish(
+                    &key,
+                    queued,
+                    Settlement::Cancelled(Cancellation::Shutdown),
+                    false,
+                );
+                None
+            }
+            Ok(sql::Commit::Unchanged { staged, observed }) => {
+                if let Some(observed) = observed {
+                    self.state.lock().adopt_durable(observed);
+                }
+                self.finish(
+                    &key,
+                    queued,
+                    Settlement::Completed(DurableReceipt::new(
+                        queued.intent.identity().clone(),
+                        staged.previous,
+                        DurableTimestamp::now(),
+                        Some(request),
+                    )),
+                    false,
+                );
+                None
+            }
+            Ok(sql::Commit::Committed {
+                staged,
+                durable,
+                observed,
+                truncate_due,
+                recovered,
+            }) => {
+                let version = durable.version;
+                {
+                    let mut state = self.state.lock();
+                    state.observe_version(version);
+                    if truncate_due {
+                        state.truncate.due = true;
+                    }
+                    if let Some(store) = state.stores.get_mut(&key) {
+                        if observed.is_some() {
+                            store.external += 1;
+                        }
+                        store.file = FileState::Read(Cached {
+                            version,
+                            at: staged.at,
+                            snapshot: staged.snapshot,
+                            preferences: staged.preferences,
+                            refreshed_at: Instant::now(),
+                            digest: Some(durable.digest),
+                            durable: true,
+                            written_len: durable.len,
+                            rewrite: Rewrite::Lossless,
+                        });
+                    }
+                }
+                let now = DurableTimestamp::now();
+                let identity = queued.intent.identity().clone();
+                if let Some(audit) = &staged.audit {
+                    let audit_record = AuditCommit::after_commit(
+                        identity.clone(),
+                        staged.action,
+                        staged.previous,
+                        version,
+                        AuditOrigin::Submitted { request },
+                        now,
+                    );
+                    if recovered {
+                        host_log!(
+                            Category::Lifecycle,
+                            Level::Info,
+                            "local state: recovered commit epoch={} request={} after an uncertain \
+                             COMMIT; it is durable at {version}",
+                            db.epoch().unwrap_or_default(),
+                            request.get()
+                        );
+                    }
+                    self.audit(audit_record, audit);
+                }
+                self.finish(
+                    &key,
+                    queued,
+                    Settlement::Completed(DurableReceipt::new(
+                        identity,
+                        version,
+                        now,
+                        Some(request),
+                    )),
+                    true,
+                );
+                None
+            }
         }
     }
 
-    /// Read `key`'s file. On a save-path read, malformed preferences or
-    /// script-settings content is quarantined under the file's lock and started
-    /// fresh ([`Self::quarantine_preferences`],
-    /// [`Self::quarantine_script_runtime_settings`]). Every other refusal, including an
-    /// unsupported saved format, stands and leaves the file unchanged.
+    /// The idle TRUNCATE checkpoint: `Some` when it must be tried again.
+    fn checkpoint(&self, db: &mut sql::Db) -> Option<sql::WaitCause> {
+        if !db.is_open() {
+            self.state.lock().truncate.due = false;
+            return None;
+        }
+        match db.truncate() {
+            Ok(truncated) if !truncated.busy => {
+                let mut state = self.state.lock();
+                state.truncate = Truncate {
+                    resets: state.truncate.resets + 1,
+                    busy: state.truncate.busy,
+                    ..Truncate::default()
+                };
+                drop(state);
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Debug,
+                    "local state: preferences WAL reset (log={} checkpointed={} bytes={})",
+                    truncated.log,
+                    truncated.checkpointed,
+                    truncated.wal_bytes
+                );
+                None
+            }
+            Ok(_) => Some(sql::WaitCause::Busy),
+            Err(sql::SqlFailure::Wait(cause)) => Some(cause),
+            Err(sql::SqlFailure::Refused { detail, .. }) => {
+                self.state.lock().truncate.due = false;
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Warn,
+                    "local state: the preferences WAL checkpoint failed: {detail}"
+                );
+                None
+            }
+        }
+    }
+
+    /// [`Self::finish`] for a failed request whose cause goes beyond its
+    /// neutral code.
+    fn finish_with_detail(
+        &self,
+        key: &StoreKey,
+        queued: &Queued,
+        settlement: WriteSettlement,
+        detail: Option<Arc<str>>,
+    ) {
+        if let Some(detail) = detail {
+            if let Some(watch) = self
+                .state
+                .lock()
+                .preference_watches
+                .get_mut(&queued.request)
+            {
+                watch.detail = Some(detail);
+            }
+        }
+        self.finish(key, queued, settlement, false);
+    }
+
+    /// Read `key`'s file. On a save-path read, malformed script-settings
+    /// content is quarantined under the file's lock and started fresh
+    /// ([`Self::quarantine_script_runtime_settings`]). Every other refusal,
+    /// including an unsupported saved format, stands and leaves the file
+    /// unchanged. Preferences are read from the database, never here.
     fn read_repairing(
         &self,
         key: &StoreKey,
@@ -2962,7 +3832,7 @@ impl Shared {
         let read = files::read(key, &self.root, read_at);
         if !matches!(
             (key, &read),
-            (StoreKey::Preferences | StoreKey::ScriptRuntimeSettings { .. }, Err(error))
+            (StoreKey::ScriptRuntimeSettings { .. }, Err(error))
                 if recover && error.is_malformed()
         ) {
             return read;
@@ -2989,12 +3859,7 @@ impl Shared {
                 }
             }
         };
-        let repaired = match key {
-            StoreKey::ScriptRuntimeSettings { .. } => {
-                self.quarantine_script_runtime_settings(key, &path)
-            }
-            _ => self.quarantine_preferences(&path),
-        };
+        let repaired = self.quarantine_script_runtime_settings(key, &path);
         match repaired {
             Ok(()) => files::read(key, &self.root, read_at),
             Err(error) => {
@@ -3009,66 +3874,6 @@ impl Shared {
                 read
             }
         }
-    }
-
-    /// Under the preferences file's lock: if `path` still holds malformed
-    /// content, keep its exact bytes in a new `<file>.corrupt-<time>`
-    /// beside it (flushed, and its directory entry flushed), then replace
-    /// the file with fresh, empty preferences, but only while it still
-    /// holds those bytes. Tells the operator (a warning) and audits the
-    /// quarantine (one info line naming both paths). A failure before the
-    /// copy is on disk leaves the file as it is.
-    fn quarantine_preferences(&self, path: &Path) -> std::io::Result<()> {
-        let Some(bytes) = files::corrupt_preferences(path)? else {
-            // Repaired or removed meanwhile: read it as it is.
-            return Ok(());
-        };
-        let quarantined = files::quarantine_copy(path, &bytes, "corrupt")?;
-        if let Some(dir) = path.parent() {
-            self.sync_dirs(&[dir.to_path_buf()])?;
-        }
-        let corrupt = files::digest(&bytes);
-        let fresh =
-            files::preferences_bytes(&serde_json::Map::new()).map_err(std::io::Error::other)?;
-        self.publish(path, &fresh, || {
-            let now = files::corrupt_preferences(path)?;
-            if now.as_deref().map(files::digest) == Some(corrupt) {
-                Ok(())
-            } else {
-                Err(std::io::Error::other(
-                    "the file changed while it was being moved aside",
-                ))
-            }
-        })
-        .map_err(|error| {
-            std::io::Error::new(
-                error.kind(),
-                format!(
-                    "a copy is kept in {}, but the file was not replaced: {error}",
-                    quarantined.display()
-                ),
-            )
-        })?;
-        self.notice(
-            Level::Warn,
-            format_args!(
-                "local state: preferences file {} was not valid preferences JSON; its bytes are \
-                 kept in {} and fresh preferences were started",
-                path.display(),
-                quarantined.display()
-            ),
-        );
-        self.notice(
-            Level::Info,
-            format_args!(
-                "audit domain={} action=preferences-quarantine path={} quarantined={} at={}",
-                LocalStateDomain::Preferences,
-                path.display(),
-                quarantined.display(),
-                DurableTimestamp::now().unix_seconds()
-            ),
-        );
-        Ok(())
     }
 
     /// Under the runtime settings file's lock: retain malformed content
@@ -3440,6 +4245,28 @@ impl Shared {
         Ok(())
     }
 
+    /// The atomic abandonment/begun boundary of a preference save's SQL
+    /// transaction, called once the transaction has begun and before
+    /// anything is written. Under the state lock it either sees the
+    /// service abandoned (`false`: the save is rolled back and stays
+    /// cancelled) or marks the in-flight request begun (`true`): from then
+    /// on `abandon` leaves it to its own outcome, so a cancelled request
+    /// never commits and a committed one never reports cancellation.
+    fn begin_sql_write(&self, key: &StoreKey) -> bool {
+        let mut state = self.state.lock();
+        if state.abandoned {
+            return false;
+        }
+        if let Some(in_flight) = state
+            .stores
+            .get_mut(key)
+            .and_then(|store| store.in_flight.as_mut())
+        {
+            in_flight.publishing = true;
+        }
+        true
+    }
+
     /// A writer that does not take the lock changed the file during this
     /// write (which holds `lock`): take what it left into the store (an
     /// outside change at a new version) and settle the write as the
@@ -3617,6 +4444,31 @@ fn io_failure(domain: LocalStateDomain) -> WriteSettlement {
         domain,
         reason: FailureReason::Io,
     })
+}
+
+fn dirty(domain: LocalStateDomain) -> WriteSettlement {
+    Settlement::Failed(ErrorCode::Failed {
+        domain,
+        reason: FailureReason::Dirty,
+    })
+}
+
+impl sql::Staging for Staged {
+    fn unchanged(&self) -> bool {
+        self.unchanged
+    }
+
+    fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    fn projection(&self) -> files::PreferenceProjection {
+        self.preferences.clone().unwrap_or_default()
+    }
+
+    fn set_version(&mut self, version: StoreVersion) {
+        self.version = version;
+    }
 }
 
 /// Decide `queued` against a worker-owned copy of the latest file state.
@@ -3952,39 +4804,113 @@ fn schema_failure(domain: LocalStateDomain) -> WriteSettlement {
     })
 }
 
-/// The next job: the oldest queued readback, else the oldest queued write
-/// of any store with nothing in flight. During shutdown only a cold store
-/// with accepted writes retains its hydration demand.
-fn take_job(state: &mut State) -> Option<Job> {
+/// The next job, or (as `Err`) when the earliest delayed retry falls due.
+///
+/// File stores first: the oldest queued readback, else the oldest queued
+/// write of any file store with nothing in flight. Bank, loadout/Start and
+/// exit-save jobs are never behind a preference retry or a checkpoint
+/// (plan §4.4), and keep their FIFO order. Then the preferences: a due
+/// readback, else a due save, else the idle TRUNCATE checkpoint, which
+/// runs only while no file-store job is queued. During shutdown only a
+/// cold store with accepted writes retains its hydration demand.
+fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
     if state.shutdown {
-        for store in state.stores.values_mut() {
+        let State {
+            stores,
+            preference_readback_retry,
+            ..
+        } = &mut *state;
+        for (key, store) in stores {
             let needed_by_write = matches!(store.file, FileState::Cold) && !store.queue.is_empty();
             if store.readback != Readback::Idle && !needed_by_write {
                 store.readback = Readback::Idle;
                 store.readbacks += 1;
+                if matches!(key, StoreKey::Preferences) {
+                    preference_readback_retry.at = None;
+                }
             }
         }
     }
+    let files_only = |key: &StoreKey| !matches!(key, StoreKey::Preferences);
     if let Some(key) = state
         .stores
         .iter()
-        .filter(|(_, store)| store.readback == Readback::Queued)
+        .filter(|(key, store)| files_only(key) && store.readback == Readback::Queued)
         .min_by_key(|(_, store)| store.readback_seq)
         .map(|(key, _)| key.clone())
     {
         let store = state.stores.get_mut(&key).expect("found above");
         store.readback = Readback::InFlight;
-        return Some(Job::Readback(key));
+        return Ok(Job::Readback(key));
     }
-    let key = state
+    if let Some(key) = state
         .stores
         .iter()
-        .filter(|(_, store)| store.in_flight.is_none() && !matches!(store.file, FileState::Cold))
+        .filter(|(key, store)| {
+            files_only(key) && store.in_flight.is_none() && !matches!(store.file, FileState::Cold)
+        })
         .filter_map(|(key, store)| store.queue.front().map(|queued| (key, queued.seq)))
         .min_by_key(|(_, seq)| *seq)
-        .map(|(key, _)| key.clone())?;
-    let store = state.stores.get_mut(&key).expect("found above");
-    let queued = store.queue.pop_front().expect("found above");
+        .map(|(key, _)| key.clone())
+    {
+        return Ok(take_write(state, key, now));
+    }
+    let mut next: Option<Instant> = None;
+    let mut later = |at: Option<Instant>| {
+        if let Some(at) = at {
+            next = Some(next.map_or(at, |next| next.min(at)));
+        }
+    };
+    if let Some(store) = state.stores.get_mut(&StoreKey::Preferences) {
+        if store.readback == Readback::Queued {
+            if state.preference_readback_retry.due(now) {
+                store.readback = Readback::InFlight;
+                return Ok(Job::Readback(StoreKey::Preferences));
+            }
+            later(state.preference_readback_retry.at);
+        }
+        if store.in_flight.is_none() && !matches!(store.file, FileState::Cold) {
+            if let Some(front) = store.queue.front() {
+                if front.retry.due(now) {
+                    return Ok(take_write(state, StoreKey::Preferences, now));
+                }
+                later(front.retry.at);
+            }
+        }
+    }
+    if state.truncate.due && !state.shutdown {
+        if state.truncate.retry_at.is_none_or(|at| at <= now) {
+            return Ok(Job::Checkpoint);
+        }
+        later(state.truncate.retry_at);
+    }
+    Err(next)
+}
+
+/// The class a complete writer job is measured under (the occupancy gate,
+/// plan §4.4): preference open or refresh, preference save, the idle
+/// TRUNCATE, and the file stores' readbacks and writes (bank hints, exit
+/// saves, loadouts and the Start readback).
+#[cfg(test)]
+fn job_class(job: &Job) -> &'static str {
+    match job {
+        Job::Readback(StoreKey::Preferences) => "pref-readback",
+        Job::Write(StoreKey::Preferences, _) => "pref-save",
+        Job::Checkpoint => "wal-truncate",
+        Job::Readback(_) => "file-readback",
+        Job::Write(..) => "file-write",
+    }
+}
+
+/// Take the front write of `key` into flight; a preference save's deadline
+/// starts at its first attempt.
+fn take_write(state: &mut State, key: StoreKey, now: Instant) -> Job {
+    let store = state
+        .stores
+        .get_mut(&key)
+        .expect("the caller found the store");
+    let mut queued = store.queue.pop_front().expect("the caller found a write");
+    queued.retry.first.get_or_insert(now);
     let setting = match &queued.intent {
         WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit)) => Some(PendingRuntimeSetting {
             namespace: edit.namespace().to_string(),
@@ -3998,7 +4924,7 @@ fn take_job(state: &mut State) -> Option<Job> {
         setting,
         publishing: false,
     });
-    Some(Job::Write(key, queued))
+    Job::Write(key, queued)
 }
 
 fn lease_of(identity: &DomainIdentity, cached: &Cached) -> Result<DomainLease, ErrorCode> {
@@ -4048,3 +4974,24 @@ const fn domain_index(domain: LocalStateDomain) -> usize {
 #[cfg(test)]
 #[path = "local_state_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "local_state/sql_tests.rs"]
+mod sql_tests;
+
+#[cfg(test)]
+#[path = "local_state/occupancy_tests.rs"]
+mod occupancy_tests;
+
+#[cfg(all(test, target_pointer_width = "64"))]
+mod preference_memory_tests {
+    use super::*;
+
+    #[test]
+    fn preference_retry_does_not_grow_account_store_buckets() {
+        // A bank-hint account repeats this bucket (536 bytes as measured on
+        // this tree). SQL readback retry belongs to the one process state,
+        // not to every account and every spare HashMap bucket.
+        assert_eq!(std::mem::size_of::<(StoreKey, Store)>(), 536);
+    }
+}

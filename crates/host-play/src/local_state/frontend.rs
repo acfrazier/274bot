@@ -44,6 +44,12 @@ pub const FRONTEND_TIMEOUT: Duration = Duration::from_secs(5);
 /// again (without waiting), and a later read sees the result.
 pub const PREFERENCES_FRESHNESS: Duration = Duration::from_secs(1);
 
+/// How long the fixture-only [`Preferences::reload`] waits for the first
+/// readback, which opens the database. A bound against a hang, not a
+/// timing assertion: test and test-support only.
+#[cfg(any(test, feature = "test-support"))]
+pub const FIXTURE_READBACK_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// How many times an update reads and merges again after another writer
 /// changed the file under it.
 #[cfg(any(test, feature = "test-support"))]
@@ -326,8 +332,29 @@ fn encoded_json_len(value: &Value) -> Result<usize, serde_json::Error> {
 
 #[cfg(test)]
 mod patch_encoding_tests {
-    use super::{encoded_json_len, PreferencePatch};
+    use super::{encoded_json_len, PatchMember, PreferencePatch};
     use serde_json::json;
+
+    /// Plan §9.2: the real retained queue entry and its size on this target.
+    /// The plan's capacity arithmetic used the 48-byte `PreferenceChange`
+    /// row; an accepted save holds `PatchMember`s (a member path and its
+    /// value) until the writer takes it. Recorded, not a budget.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn the_retained_queue_entry_sizes_are_recorded() {
+        let change = std::mem::size_of::<api::local_state::PreferenceChange>();
+        let member = std::mem::size_of::<PatchMember>();
+        let patch = std::mem::size_of::<PreferencePatch>();
+        eprintln!(
+            "T53_SIZE_OF PreferenceChange={change} PatchMember={member} PreferencePatch={patch}"
+        );
+        assert_eq!(change, 48, "two three-word string fields");
+        assert_eq!(
+            member, 96,
+            "a Vec<String> path (24) and an Option<Value> (72: serde_json's preserve_order map)"
+        );
+        assert_eq!(patch, 32, "the member Vec and its encoded length");
+    }
 
     #[test]
     fn encoded_json_len_matches_serializer_output() {
@@ -713,9 +740,16 @@ impl Preferences {
         &self.shared.identity
     }
 
-    /// The file behind the store, for messages.
+    /// The state database behind the store, for messages.
     pub fn path(&self) -> PathBuf {
-        self.service().root().preferences_file()
+        self.service().root().database_file()
+    }
+
+    /// Why the next save is waiting, while it is (another process holds
+    /// the guard or the write lock, or a reader keeps the WAL from its
+    /// reset): what a pending setting shows next to its "saving" state.
+    pub fn wait_cause(&self) -> Option<&'static str> {
+        self.shared.service.preference_wait()
     }
 
     /// The cached immutable document. Cold and refused stores fail immediately;
@@ -769,7 +803,14 @@ impl Preferences {
             .shared
             .service
             .enqueue_preference_patch(&self.shared.identity, patch)
-            .map_err(|code| PreferenceError::from_code(self.path().display().to_string(), code))?;
+            .map_err(|(code, detail)| match detail {
+                Some(cause) => PreferenceError::Store {
+                    path: Arc::from(self.path().display().to_string()),
+                    cause,
+                    code,
+                },
+                None => PreferenceError::from_code(self.path().display().to_string(), code),
+            })?;
         Ok(Update::Queued(QueuedUpdate::service(self.clone(), request)))
     }
 
@@ -804,11 +845,18 @@ impl Preferences {
         match poll {
             PreferenceWatchPoll::Pending => None,
             PreferenceWatchPoll::Missing => Some(Err(PreferenceError::result_not_retained(path()))),
-            PreferenceWatchPoll::Settled(Settlement::Completed(_)) => Some(Ok(())),
-            PreferenceWatchPoll::Settled(Settlement::Failed(code)) => {
-                Some(Err(PreferenceError::from_code(path(), code)))
+            PreferenceWatchPoll::Settled(Settlement::Completed(_), _) => Some(Ok(())),
+            PreferenceWatchPoll::Settled(Settlement::Failed(code), detail) => {
+                Some(Err(match detail {
+                    Some(cause) => PreferenceError::Store {
+                        path: Arc::from(path()),
+                        cause,
+                        code,
+                    },
+                    None => PreferenceError::from_code(path(), code),
+                }))
             }
-            PreferenceWatchPoll::Settled(Settlement::Cancelled(cancellation)) => Some(Err(
+            PreferenceWatchPoll::Settled(Settlement::Cancelled(cancellation), _) => Some(Err(
                 PreferenceError::cancelled(path(), format!("request cancelled ({cancellation:?})")),
             )),
         }
@@ -820,11 +868,17 @@ impl Preferences {
     }
 
     /// Read the file again and wait. Available to test fixtures and
-    /// test-support callers only.
+    /// test-support callers only. While the preferences are still cold the
+    /// readback opens the database, which a loaded CI host can delay past
+    /// [`FRONTEND_TIMEOUT`]; that first wait is [`FIXTURE_READBACK_TIMEOUT`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn reload(&self) -> io::Result<Arc<Map<String, Value>>> {
+        let wait = match self.snapshot() {
+            Err(error) if error.is_not_ready() => FIXTURE_READBACK_TIMEOUT,
+            _ => FRONTEND_TIMEOUT,
+        };
         let shared = &*self.shared;
-        let read = shared.service.readback(&shared.identity, FRONTEND_TIMEOUT);
+        let read = shared.service.readback(&shared.identity, wait);
         shared.held.lock().read_at = Some(Instant::now());
         let (lease, _) = read.map_err(|code| self.error(code))?;
         self.adopt(&lease)
@@ -867,7 +921,7 @@ impl Preferences {
         let ticket = self
             .shared
             .service
-            .start_readback(&self.shared.identity, true)
+            .start_readback(&self.shared.identity)
             .map_err(|code| self.error(code))?;
         Ok(UpdateRun {
             merge,
@@ -921,7 +975,7 @@ impl Preferences {
                             if run.reads == UPDATE_ATTEMPTS {
                                 return Some(Err(self.error(code)));
                             }
-                            match shared.service.start_readback(&shared.identity, true) {
+                            match shared.service.start_readback(&shared.identity) {
                                 Ok(ticket) => {
                                     run.reads += 1;
                                     run.stage = Stage::Reading(ticket);

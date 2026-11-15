@@ -633,6 +633,10 @@ pub struct TuiApp {
     /// What the popup and the notices show beside a saved setting: pending
     /// or the retained failure (copied from the core each pump).
     pub(crate) setting_feedback: Vec<(frontend_core::Setting, SettingFeedback)>,
+    /// Why the preferences did not load (path, cause, remedy) while they
+    /// are refused (copied from the core each pump): the settings popup
+    /// shows it in full, where the one-line message would cut it.
+    pub(crate) preferences_refused: Option<String>,
     preferences_adopted: bool,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
@@ -792,6 +796,7 @@ impl TuiApp {
             shared_preferences: None,
             pending: PendingSettings::default(),
             setting_feedback: Vec::new(),
+            preferences_refused: None,
             preferences_adopted: false,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),

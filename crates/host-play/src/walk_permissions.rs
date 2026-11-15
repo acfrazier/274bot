@@ -961,6 +961,7 @@ mod tests {
 
     #[test]
     fn selection_query_construction_does_not_acquire_nav_mutex() {
+        let _state_lease = crate::test_process::state();
         use std::sync::mpsc;
         use std::time::Duration;
 
@@ -989,6 +990,7 @@ mod tests {
 
     #[test]
     fn native_admission_prefers_callback_permissions_and_keeps_mirror_fallback() {
+        let _state_lease = crate::test_process::state();
         let previous = WalkPermissions {
             allow_danger_zones: true,
             ..Default::default()
@@ -1020,6 +1022,7 @@ mod tests {
 
     #[test]
     fn native_permission_truth_table_and_manual_fetch_isolation() {
+        let _state_lease = crate::test_process::state();
         for (global, script, inherited) in [
             (false, false, false),
             (false, true, true),
@@ -1173,14 +1176,19 @@ mod tests {
         let (entered_tx, entered_rx) = mpsc::sync_channel(1);
         let (release_tx, release_rx) = mpsc::channel();
         let release_rx = Mutex::new(release_rx);
-        let read_stall: super::super::local_state::ReadStall = Arc::new(move || {
-            let _ = entered_tx.send(());
-            let _ = release_rx.lock().unwrap().recv();
+        let first = std::sync::atomic::AtomicBool::new(true);
+        // T5.3 S4: the writer is held inside a real SQL statement of the
+        // first preferences hydration, not before the job is dispatched.
+        let sql_stall: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = entered_tx.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
         });
         let service =
-            super::super::local_state::LocalStateService::open_process_with_read_stall_for_test(
+            super::super::local_state::LocalStateService::open_process_with_sql_stall_for_test(
                 super::super::local_state::StateRoot::new(scratch.home.join(".274bot")),
-                read_stall,
+                sql_stall,
             );
         let held = HeldGate {
             release: Some(release_tx),
@@ -1188,7 +1196,7 @@ mod tests {
         };
         entered_rx
             .recv_timeout(Duration::from_secs(5))
-            .expect("loadouts hydration is held; preferences hydration queues behind it");
+            .expect("the writer is held inside a SQL statement of the first hydration");
         let preferences = service.preferences();
         (service, preferences, held)
     }
@@ -1264,6 +1272,7 @@ mod tests {
     }
     #[test]
     fn compiled_options_finishes_before_stale_readback_behind_held_write() {
+        let _state_lease = crate::test_process::state();
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::mpsc;
         use std::time::Duration;
@@ -1398,6 +1407,7 @@ mod tests {
 
     #[test]
     fn walk_globals_read_finishes_before_cold_hydration_release() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("walk-globals-read-cold");
         let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
         assert!(completes_before_release(&mut held, move || {
@@ -1409,6 +1419,7 @@ mod tests {
 
     #[test]
     fn play_walk_globals_finishes_before_cold_hydration_release() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("play-walk-globals-cold");
         let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
         let options = super::super::PlayOptions {
@@ -1436,6 +1447,7 @@ mod tests {
 
     #[test]
     fn native_admission_finishes_before_cold_hydration_release() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("native-admission-cold");
         let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
         let navs = Arc::new(Mutex::new(HashMap::from([(
@@ -1463,6 +1475,7 @@ mod tests {
 
     #[test]
     fn compiled_options_finishes_before_cold_hydration_release() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("compiled-options-cold");
         let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
         let navs = Arc::new(Mutex::new(HashMap::from([(
@@ -1513,6 +1526,7 @@ mod tests {
 
     #[test]
     fn durable_globals_update_cached_native_and_manual_admissions() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("walk-globals-reread");
         let preferences = preferences(&scratch);
         let bot = super::super::NavBot {
@@ -1559,6 +1573,7 @@ mod tests {
 
     #[test]
     fn isolate_booleans_do_not_inherit_native_globals() {
+        let _state_lease = crate::test_process::state();
         let navs = Arc::new(Mutex::new(HashMap::from([(
             "isolate".into(),
             super::super::NavBot {
@@ -1591,9 +1606,9 @@ mod tests {
     }
     #[test]
     fn walk_globals_round_trip_default_absent_old_file_and_saved_middle() {
+        let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("walk-globals-round-trip");
         let preferences = preferences(&scratch);
-        let path = preferences.path();
         preferences.reload().unwrap();
 
         let defaults = WalkGlobals::default();
@@ -1611,47 +1626,56 @@ mod tests {
         );
         assert_eq!(WalkGlobals::read(&preferences).unwrap(), defaults);
 
-        // A file an older build (or the other frontend's process) wrote.
-        vault::write_private_file(&path, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
-        preferences.reload().unwrap();
-        assert_eq!(WalkGlobals::read(&preferences).unwrap(), defaults);
+        // A file an older build wrote, imported by the first open of a root.
+        let legacy = |case: &str, bytes: &[u8]| {
+            let root =
+                super::super::local_state::StateRoot::new(scratch.home.join(case).join(".274bot"));
+            vault::create_private_dir(root.path()).unwrap();
+            vault::write_private_file(&root.preferences_file(), bytes).unwrap();
+            super::super::local_state::LocalStateService::open_process(root).preferences()
+        };
+        let older = legacy("older", br#"{"nav":{"allow_danger_zones":false}}"#);
+        older.reload().unwrap();
+        assert_eq!(WalkGlobals::read(&older).unwrap(), defaults);
 
-        // The saved middle level stays intact and does not rewrite the file.
+        // The saved middle level stays intact and the import does not change it.
         let middle = br#"{"nav":{"allow_danger_zones":false,"survivable_routing":true}}"#;
-        vault::write_private_file(&path, middle).unwrap();
-        preferences.reload().unwrap();
-        let saved_middle = WalkGlobals::read(&preferences).unwrap();
+        let middle_prefs = legacy("middle", middle);
+        let middle_doc = middle_prefs.reload().unwrap();
+        let saved_middle = WalkGlobals::read(&middle_prefs).unwrap();
         assert!(!saved_middle.allow_danger_zones);
         assert!(saved_middle.survivable_routing);
         assert_eq!(saved_middle.danger_level(), DangerLevel::WhenSurvivable);
-        assert_eq!(std::fs::read(&path).unwrap(), middle);
+        assert_eq!(
+            serde_json::Value::Object((*middle_doc).clone()),
+            serde_json::from_slice::<serde_json::Value>(middle).unwrap()
+        );
 
         // Always wins when both stored booleans are true.
-        vault::write_private_file(
-            &path,
+        let both_prefs = legacy(
+            "both",
             br#"{"nav":{"allow_danger_zones":true,"survivable_routing":true}}"#,
-        )
-        .unwrap();
-        preferences.reload().unwrap();
-        let both = WalkGlobals::read(&preferences).unwrap();
+        );
+        both_prefs.reload().unwrap();
+        let both = WalkGlobals::read(&both_prefs).unwrap();
         assert!(both.allow_danger_zones && both.survivable_routing);
         assert_eq!(both.danger_level(), DangerLevel::Always);
 
         // The older Always pair still reads as Always.
-        vault::write_private_file(
-            &path,
+        let always_prefs = legacy(
+            "always",
             br#"{"nav":{"allow_danger_zones":true,"survivable_routing":false}}"#,
-        )
-        .unwrap();
-        preferences.reload().unwrap();
+        );
+        always_prefs.reload().unwrap();
         assert_eq!(
-            WalkGlobals::read(&preferences).unwrap().danger_level(),
+            WalkGlobals::read(&always_prefs).unwrap().danger_level(),
             DangerLevel::Always
         );
 
-        vault::write_private_file(&path, b"{malformed").unwrap();
-        assert!(preferences.reload().is_err());
-        assert!(WalkGlobals::read(&preferences).is_err());
+        // A `nav` that is not a typed walk view fails closed.
+        let malformed = legacy("malformed", br#"{"nav":{"allow_teleports":"yes"}}"#);
+        malformed.reload().unwrap();
+        assert!(WalkGlobals::read(&malformed).is_err());
         assert_eq!(
             WalkGlobals::fail_closed(),
             WalkGlobals {
@@ -1712,6 +1736,7 @@ mod tests {
 
     #[test]
     fn complete_danger_precedence_table_is_tested_independently_of_net_activation() {
+        let _state_lease = crate::test_process::state();
         for level in [
             DangerLevel::Never,
             DangerLevel::WhenSurvivable,

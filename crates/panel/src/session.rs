@@ -1820,7 +1820,7 @@ impl Session {
         // the operator preferences and loadouts for everything below, and
         // the Play this session starts adopts it too.
         let mut core = OperatorSession::open(instance);
-        core.open_process_state();
+        core.open_process_state(frontend_core::prefs::StateFrontend::Panel);
         let preferences = core
             .preferences()
             .expect("the session's local state was bound just now");
@@ -1845,11 +1845,12 @@ impl Session {
         // Loaded now through the service. A file it refused leaves the form
         // empty with the reason, which the Loadouts window shows as its status.
         let loadouts = LoadoutForm::operator_of(&core);
-        // A missing library store is a first run; library restore failures
-        // remain visible while script-settings load failures stop startup.
+        // A missing library store is a first run; a refused or corrupt one is
+        // said out loud (and nothing is saved over a refused one): logged
+        // once and shown on the banner by `follow_core_preferences`.
+        // Script-settings load failures stop startup.
         if let Some(error) = library_error {
-            eprintln!("panel: {error}");
-            process_log(Level::Error, &error);
+            core.report_library_error(error);
         }
         Ok(Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
@@ -2080,12 +2081,16 @@ impl Session {
     /// every accepted write by its request and lets every lent model follow
     /// the latest durable snapshot ([`OperatorSession::poll_preferences`]),
     /// calling back through the surface when a saved draw switch changes;
-    /// the panel's own mirrors, drafts and capture devices then follow.
+    /// the panel's own mirrors, drafts and capture devices then follow. A
+    /// startup refusal (the script library store, the preferences store)
+    /// shows on the banner with its path and cause, and leaves it when the
+    /// refusal clears.
     fn follow_core_preferences(&mut self) {
         {
             let (core, mut surface) = self.core_and_surface();
             core.poll_preferences(&mut surface);
         }
+        self.core.project_startup_error(&mut self.error);
         self.settle_setting_drafts();
         self.sync_capture_devices();
     }
@@ -2313,6 +2318,13 @@ impl Session {
 
     pub(crate) fn panel_preferences_ready(&self) -> bool {
         self.preferences_ready
+    }
+
+    /// Why the preferences did not load (their path, the cause and the
+    /// remedy), while they are refused: the settings windows show it where
+    /// they would show "Loading preferences…".
+    pub(crate) fn preferences_refused(&self) -> Option<&str> {
+        self.core.preference_error()
     }
 
     #[cfg(test)]
@@ -2986,12 +2998,24 @@ impl Session {
 
     /// The panel's side of a newly bound profile: walk-map and Debug state
     /// from the previous binding are released and the nav bindings follow
-    /// the new profile.
+    /// the new profile; the banner drops an earlier action's message
+    /// ([`Self::clear_message`]).
     fn on_profile_installed(&mut self) {
         self.release_walk_map();
         crate::picker::bind_profile_nav(self.launcher.bound());
         self.release_debug_catalog();
-        self.error = None;
+        self.clear_message();
+    }
+
+    /// Drop the banner's message when startup moves on (a profile
+    /// preparation or validation starts, the vault unlocks, a profile is
+    /// bound) or an action succeeds, unless it is a startup refusal that
+    /// still stands (the preferences or the script library store): neither
+    /// fixes it, and it is projected once.
+    pub(crate) fn clear_message(&mut self) {
+        if self.error.as_deref() != self.core.startup_error() {
+            self.error = None;
+        }
     }
 
     /// Bind `template` as a finished preparation would (tests).
@@ -3207,7 +3231,7 @@ impl Session {
         };
         match self.core.command_failure(submitted.request()) {
             None => {
-                self.error = None;
+                self.clear_message();
                 self.vault_reset_open = false;
                 self.vault_reset_understood = false;
                 true
@@ -3253,7 +3277,7 @@ impl Session {
         }
         match self.start_play(path, pass) {
             Ok(()) => {
-                self.error = None;
+                self.clear_message();
                 true
             }
             Err((stage, msg)) => {
@@ -4809,7 +4833,7 @@ impl Session {
     fn apply_result(&mut self, result: Result<(), String>) -> bool {
         match result {
             Ok(()) => {
-                self.error = None;
+                self.clear_message();
                 true
             }
             Err(error) => {
@@ -4932,7 +4956,7 @@ impl Session {
     /// Choose the Game pane's memory mode for its next login. Durable-only
     /// like [`Self::set_focused_raster`] ([`Self::apply_lowmem_choice`]).
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
-        self.error = None;
+        self.clear_message();
         let effect = LaunchEffect::Lowmem {
             lowmem,
             profile: self.focused_name(),
@@ -5136,14 +5160,14 @@ impl Session {
                 if submitted.operation().is_some() =>
             {
                 self.cancel_startup_focus_for_removed_profile(name);
-                self.error = None;
+                self.clear_message();
                 true
             }
             Some(api::identity::Settlement::Completed(
                 frontend_core::command::Completion::Done,
             )) => {
                 self.cancel_startup_focus_for_removed_profile(name);
-                self.error = None;
+                self.clear_message();
                 true
             }
             _ => false,
@@ -5723,7 +5747,7 @@ impl Session {
             });
         if applied {
             self.route_gen = self.route_gen.wrapping_add(1);
-            self.error = None;
+            self.clear_message();
         } else {
             // The member's own reason (`not logged in`), else the generic text.
             self.error = Some(
@@ -5901,7 +5925,7 @@ impl Session {
                 })
             });
         if applied {
-            self.error = None;
+            self.clear_message();
         } else {
             self.error = Some(
                 self.core
@@ -6118,7 +6142,7 @@ impl Session {
             return;
         };
         match self.script_start_focused(&name) {
-            Ok(()) => self.error = None,
+            Ok(()) => self.clear_message(),
             Err(e) => self.error = Some(format!("script: {e}")),
         }
     }

@@ -190,7 +190,7 @@ impl Session {
                     let _ = self.persist_panel_serializable(&["script_catalog_last_dir"], &root);
                     self.ui.script_catalog_last_dir = Some(root);
                     self.rs2b0t_catalog_open = false;
-                    self.error = None;
+                    self.clear_message();
                 }
             }
             for (name, message) in self.scripts.take_start_failures() {

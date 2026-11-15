@@ -43,6 +43,9 @@ const NOTICES_ABOVE_AND_BELOW: &str = "↕ more notices above (PgUp) and below (
 /// Drawn on the popup's bottom border when the popup leaves no line for any
 /// notice under the rows.
 const NOTICES_CUT: &str = " not every notice fits: make the terminal taller ";
+/// The lead of the refusal notice while the preferences are refused: no
+/// row's value is a saved one, and no change saves.
+pub const PREFERENCES_NOT_LOADED: &str = "Preferences not loaded; nothing here is saved:";
 
 /// Lamp skills the popup cycles, in display order.
 pub const LAMP_SKILLS: [&str; 7] = [
@@ -177,6 +180,10 @@ pub struct SettingsPane<'a> {
     /// What the core shows beside each saved setting: pending, or the
     /// retained failure (copied from the core each pump).
     pub feedback: &'a [(Setting, SettingFeedback)],
+    /// Why the preferences did not load (path, cause, remedy) while they
+    /// are refused: drawn in red as the last notice, so the rows' values
+    /// are not mistaken for saved ones.
+    pub preferences_refused: Option<&'a str>,
 }
 
 impl<'a> SettingsPane<'a> {
@@ -195,6 +202,7 @@ impl<'a> SettingsPane<'a> {
             notice: None,
             memory: None,
             feedback: &[],
+            preferences_refused: None,
             pause_script_on_manual_walk_abort: None,
             pvp_start_fights: None,
             script_scope_notice_ack: None,
@@ -720,11 +728,15 @@ impl Widget for SettingsPane<'_> {
         let path_notice_height = self
             .quester_paths_notice
             .map_or(0, |notice| wrapped_rows(notice, columns));
+        let refused_height = self.preferences_refused.map_or(0, |refusal| {
+            wrapped_rows(PREFERENCES_NOT_LOADED, columns) + wrapped_rows(refusal, columns)
+        });
         let height = (block_heights.iter().sum::<u16>()
             + memory_height
             + scope_height
             + notice_height
             + path_notice_height
+            + refused_height
             + 2)
         .min(area.height - 1);
         let popup = Rect {
@@ -746,7 +758,8 @@ impl Widget for SettingsPane<'_> {
         // window of them (its newest lines, at the bottom, first) under a
         // sign that says which part is hidden and the key that shows it.
         // PageUp and PageDown scroll that window. Nothing is cut silently.
-        let footer_need = memory_height + scope_height + notice_height + path_notice_height;
+        let footer_need =
+            memory_height + scope_height + notice_height + path_notice_height + refused_height;
         let footer_height = footer_need.min(inner.height.saturating_sub(2));
         let notices_cut = footer_need > footer_height;
         // The sign takes the area's first line when the area has a line for
@@ -919,6 +932,11 @@ impl Widget for SettingsPane<'_> {
                 Color::Green
             };
             notices.text(buf, notice, Style::default().fg(color));
+        }
+        if let Some(refusal) = self.preferences_refused {
+            let red = Style::default().fg(Color::Red);
+            notices.text(buf, PREFERENCES_NOT_LOADED, red);
+            notices.text(buf, refusal, red);
         }
     }
 }

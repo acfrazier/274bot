@@ -107,30 +107,63 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// A scratch state root, and the preferences of a service opened on it.
-    fn scratch(label: &str) -> (PathBuf, Preferences) {
+    /// A private scratch state root: where a legacy `panel-ui.json` is
+    /// written before any service opens the root.
+    fn root(label: &str) -> PathBuf {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
             "274bot-frontend-nav-prefs-{}-{label}-{id}",
             std::process::id()
         ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let preferences = Preferences::new(
-            LocalStateService::open_process(StateRoot::new(dir.clone())).preferences(),
-        );
+        vault::create_private_dir(&dir).unwrap();
+        dir
+    }
+
+    /// The preferences of a process service opened on `dir`; the first
+    /// open imports a legacy `panel-ui.json` already there.
+    fn open(dir: &std::path::Path) -> Preferences {
+        Preferences::new(
+            LocalStateService::open_process(StateRoot::new(dir.to_path_buf())).preferences(),
+        )
+    }
+
+    /// Wait until the service published its first readable document.
+    fn ready(prefs: &Preferences) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while !prefs.ready() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "preferences never opened"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// A scratch state root, and the preferences of a service opened on it.
+    fn scratch(label: &str) -> (PathBuf, Preferences) {
+        let dir = root(label);
+        let preferences = open(&dir);
+        ready(&preferences);
+        (dir, preferences)
+    }
+
+    /// A scratch state root holding `legacy` as its `panel-ui.json`, and the
+    /// preferences of the service that imported it.
+    fn scratch_with_legacy(label: &str, legacy: &[u8]) -> (PathBuf, Preferences) {
+        let dir = root(label);
+        vault::write_private_file(&dir.join("panel-ui.json"), legacy).unwrap();
+        let preferences = open(&dir);
+        ready(&preferences);
         (dir, preferences)
     }
 
     #[test]
     fn legacy_and_default_values_and_cross_surface_writes_preserve_other_preferences() {
-        let (dir, prefs) = scratch("roundtrip");
-        vault::write_private_file(
-            &prefs.path(),
+        let (dir, prefs) = scratch_with_legacy(
+            "roundtrip",
             br#"{"last_focus":"alice","capture":false,"nav":{"show_special_areas":false,"custom":{"keep":7}}}"#,
-        )
-        .unwrap();
-        prefs.reload().unwrap();
+        );
 
         assert!(!nav_preference(&prefs, NavPreference::ShowSpecialAreas).unwrap());
         assert!(nav_preference(&prefs, NavPreference::PauseScriptOnManualWalkAbort).unwrap());
@@ -172,8 +205,7 @@ mod tests {
         ))
         .unwrap();
 
-        let saved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
+        let saved = prefs.reload().unwrap();
         assert_eq!(saved["last_focus"], "alice");
         assert_eq!(saved["capture"], false);
         assert_eq!(saved["nav"]["custom"]["keep"], 7);
@@ -187,9 +219,8 @@ mod tests {
         assert_eq!(saved["nav"]["allow_quest_start"], true);
         assert_eq!(saved["nav"]["script_scope_notice_ack"], true);
 
-        let (missing_dir, missing) = scratch("legacy");
-        vault::write_private_file(&missing.path(), br#"{"last_focus":"bob","nav":{}}"#).unwrap();
-        missing.reload().unwrap();
+        let (missing_dir, missing) =
+            scratch_with_legacy("legacy", br#"{"last_focus":"bob","nav":{}}"#);
         assert!(nav_preference(&missing, NavPreference::PauseScriptOnManualWalkAbort).unwrap());
         for preference in [
             NavPreference::AllowPrereqDialogue,
@@ -234,12 +265,19 @@ mod tests {
     }
 
     #[test]
-    fn danger_preference_fails_closed_for_malformed_files() {
-        let (dir, prefs) = scratch("malformed-danger");
-        vault::write_private_file(&prefs.path(), b"{malformed").unwrap();
+    fn danger_preference_fails_closed_for_a_refused_preferences_store() {
+        let dir = root("refused-danger");
+        let legacy = dir.join("panel-ui.json");
+        let oversize = vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1];
+        vault::write_private_file(&legacy, &oversize).unwrap();
+        let prefs = open(&dir);
         assert!(prefs.reload().is_err());
         assert!(nav_preference(&prefs, NavPreference::AllowDangerZones).is_err());
-        assert_eq!(std::fs::read(prefs.path()).unwrap(), b"{malformed");
+        assert_eq!(
+            std::fs::read(&legacy).unwrap(),
+            oversize,
+            "a refused source is left untouched"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -804,57 +804,68 @@ fn durable_peer_changes_refresh_picker_danger_and_clear_one_shot() {
     let world = open_world(3, 3);
 
     super::note_closed();
+    {
+        let mut session = Session::new();
+        session.ui.nav.allow_danger_zones = false;
+        session.walkto_open = true;
+        let peer = crate::test_support::thread_preferences();
+        peer_sets_danger_zones(&peer, &session, false);
+        picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+        let checkbox = super::last_picker_layout().route_zones_rect;
+        assert_ne!(checkbox, [[0.0, 0.0], [0.0, 0.0]]);
+        let checkbox = [
+            (checkbox[0][0] + checkbox[1][0]) * 0.5,
+            (checkbox[0][1] + checkbox[1][1]) * 0.5,
+        ];
+
+        session.route_through_zones = true;
+        peer_sets_danger_zones(&peer, &session, true);
+        picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+        assert_eq!(
+            super::last_picker_layout().route_zones_rect,
+            [[0.0, 0.0], [0.0, 0.0]],
+            "the latest durable global replaces the one-shot checkbox"
+        );
+        assert!(
+            !session.route_through_zones,
+            "global-on consumes the one-shot"
+        );
+        picker_click_frame(&mut ctx, &mut session, &world, checkbox, true);
+        picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
+        assert!(
+            !session.route_through_zones,
+            "the hidden checkbox cannot grant danger"
+        );
+
+        peer_sets_danger_zones(&peer, &session, false);
+        picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
+        assert_ne!(
+            super::last_picker_layout().route_zones_rect,
+            [[0.0, 0.0], [0.0, 0.0]],
+            "a peer turning the global off restores the one-shot control"
+        );
+        assert!(!session.ui.nav.allow_danger_zones);
+    }
+
+    // A damaged state database is refused when the next session opens it.
+    let database = crate::test_support::thread_state_root().database_file();
+    for suffix in ["-wal", "-shm"] {
+        let mut side = database.clone().into_os_string();
+        side.push(suffix);
+        let _ = std::fs::remove_file(side);
+    }
+    std::fs::write(&database, b"this is not an SQLite database").unwrap();
     let mut session = Session::new();
-    session.ui.nav.allow_danger_zones = false;
     session.walkto_open = true;
-    let peer = crate::test_support::thread_preferences();
-    peer_sets_danger_zones(&peer, &session, false);
-    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
-    let checkbox = super::last_picker_layout().route_zones_rect;
-    assert_ne!(checkbox, [[0.0, 0.0], [0.0, 0.0]]);
-    let checkbox = [
-        (checkbox[0][0] + checkbox[1][0]) * 0.5,
-        (checkbox[0][1] + checkbox[1][1]) * 0.5,
-    ];
-
-    session.route_through_zones = true;
-    peer_sets_danger_zones(&peer, &session, true);
-    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
-    assert_eq!(
-        super::last_picker_layout().route_zones_rect,
-        [[0.0, 0.0], [0.0, 0.0]],
-        "the latest durable global replaces the one-shot checkbox"
-    );
-    assert!(
-        !session.route_through_zones,
-        "global-on consumes the one-shot"
-    );
-    picker_click_frame(&mut ctx, &mut session, &world, checkbox, true);
-    picker_click_frame(&mut ctx, &mut session, &world, checkbox, false);
-    assert!(
-        !session.route_through_zones,
-        "the hidden checkbox cannot grant danger"
-    );
-
-    peer_sets_danger_zones(&peer, &session, false);
-    picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
-    assert_ne!(
-        super::last_picker_layout().route_zones_rect,
-        [[0.0, 0.0], [0.0, 0.0]],
-        "a peer turning the global off restores the one-shot control"
-    );
-    assert!(!session.ui.nav.allow_danger_zones);
-
-    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
     session
         .preferences
         .reload()
-        .expect_err("corrupt preferences are refused");
+        .expect_err("a damaged database is refused");
     picker_click_frame(&mut ctx, &mut session, &world, [0.0, 0.0], false);
     assert_ne!(
         super::last_picker_layout().route_zones_rect,
         [[0.0, 0.0], [0.0, 0.0]],
-        "corrupt preferences fail closed and show the guarded one-shot control"
+        "refused preferences fail closed and show the guarded one-shot control"
     );
     assert!(!session.ui.nav.allow_danger_zones);
 }

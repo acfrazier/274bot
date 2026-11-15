@@ -538,7 +538,7 @@ fn drive_startup(
         if startup.prepare_pending.is_none() {
             match state.session.profile_preparation() {
                 Ok(preparation) => {
-                    state.session.error = None;
+                    state.session.clear_message();
                     state.session.set_profile_preparing(true);
                     startup.prepare_pending = Some(preparation);
                 }
@@ -588,7 +588,7 @@ fn drive_startup(
         let fatal = boot_failure_is_fatal(&boot);
         match state.session.template_for_validation() {
             Ok(template) => {
-                state.session.error = None;
+                state.session.clear_message();
                 state.session.set_profile_preparing(true);
                 startup.validate_pending = Some(ProfileValidatePending {
                     boot,
@@ -3565,7 +3565,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                             if let Err(e) = session.import_rs2b0t_catalog(&cwd) {
                                 session.error = Some(e);
                             } else {
-                                session.error = None;
+                                session.clear_message();
                             }
                         }
                         ui.same_line();
@@ -3788,11 +3788,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
-            if !session.panel_preferences_ready() {
-                ui.text_disabled("Loading preferences…");
-            } else if session.preferences_pending() {
-                ui.text_disabled("Saving preferences…");
-            }
+            preferences_state_line(ui, session);
             let previous_nav = session.ui.nav.clone();
             let mut nav = previous_nav.clone();
             let mut changed = false;
@@ -3889,7 +3885,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                             .as_deref()
                             .is_some_and(|error| error.starts_with("Nav config: "))
                         {
-                            session.error = None;
+                            session.clear_message();
                         }
                         session.refresh_walk_permissions();
                     }
@@ -5305,7 +5301,7 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
 pub(crate) fn setting_feedback_line(ui: &Ui, session: &Session, setting: Setting) {
     match session.core.setting_status(setting) {
         SettingStatus::Saved => {}
-        SettingStatus::Pending => ui.text_disabled("Saving…"),
+        SettingStatus::Pending => saving_line(ui, session),
         SettingStatus::Failed(text) => {
             let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.error_rgba());
             ui.text_wrapped(text);
@@ -5320,11 +5316,20 @@ pub(crate) fn setting_feedback_line(ui: &Ui, session: &Session, setting: Setting
 /// failure; it leaves by itself after the error timeout.
 pub(crate) fn panel_member_feedback_line(ui: &Ui, session: &Session, prefix: &[&str]) {
     if session.panel_member_pending(prefix) {
-        ui.text_disabled("Saving…");
+        saving_line(ui, session);
     }
     if let Some(text) = session.panel_member_error(prefix) {
         let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.error_rgba());
         ui.text_wrapped(text);
+    }
+}
+
+/// "Saving…", and on a second line why the save is waiting while it is (a
+/// reader holding the preferences WAL, another process's lock).
+fn saving_line(ui: &Ui, session: &Session) {
+    ui.text_disabled("Saving…");
+    if let Some(cause) = session.core.preference_wait_cause() {
+        ui.text_wrapped(cause);
     }
 }
 
@@ -5455,12 +5460,23 @@ fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
     edited
 }
 
-fn global_config_section(ui: &Ui, session: &mut Session) {
-    if !session.panel_preferences_ready() {
+/// The preferences' state at the top of a settings window: why they did
+/// not load (path, cause, remedy) while they are refused, else
+/// "Loading preferences…" until they are read, else "Saving
+/// preferences…" while a save is in flight.
+fn preferences_state_line(ui: &Ui, session: &Session) {
+    if let Some(refusal) = session.preferences_refused() {
+        ui.text_colored(session.ui.chrome.error_rgba(), "Preferences not loaded:");
+        ui.text_wrapped(refusal);
+    } else if !session.panel_preferences_ready() {
         ui.text_disabled("Loading preferences…");
     } else if session.preferences_pending() {
         ui.text_disabled("Saving preferences…");
     }
+}
+
+fn global_config_section(ui: &Ui, session: &mut Session) {
+    preferences_state_line(ui, session);
     if let Some(error) = session.panel_preference_write_error() {
         ui.text_colored(session.ui.chrome.error_rgba(), "Preference save failed:");
         ui.text_wrapped(error);

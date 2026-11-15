@@ -7772,18 +7772,19 @@ mod tests {
         let root = temp_root("stress-process");
         let mut children = Vec::new();
         for index in 0..2u8 {
-            let child = Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "map_cache::tests::different_key_stress_child",
-                    "--nocapture",
-                ])
-                .env(STRESS_CHILD_ENV, index.to_string())
-                .env("274BOT_MAP_CACHE_STRESS_ROOT", root.path())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
+            let child = crate::test_process::spawn(
+                Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "map_cache::tests::different_key_stress_child",
+                        "--nocapture",
+                    ])
+                    .env(STRESS_CHILD_ENV, index.to_string())
+                    .env("274BOT_MAP_CACHE_STRESS_ROOT", root.path())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped()),
+            )
+            .unwrap();
             children.push(child);
         }
         let outputs: Vec<_> = children
@@ -7879,13 +7880,14 @@ mod tests {
     }
 
     fn spawn_test_child(test: &str, env: (&str, &Path)) -> std::process::Child {
-        Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", test, "--nocapture"])
-            .env(env.0, env.1)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()
+        crate::test_process::spawn(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test, "--nocapture"])
+                .env(env.0, env.1)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .unwrap()
     }
 
     fn assert_children_succeeded(children: Vec<std::process::Child>) {
@@ -8134,17 +8136,18 @@ mod tests {
     fn publish_lock_excludes_other_process() {
         let root = temp_root("lock-process");
         let lock_path = root.path().join("process.publish.lock");
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "map_cache::tests::publish_lock_child",
-                "--nocapture",
-            ])
-            .env(LOCK_CHILD_ENV, &lock_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = crate::test_process::spawn(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "map_cache::tests::publish_lock_child",
+                    "--nocapture",
+                ])
+                .env(LOCK_CHILD_ENV, &lock_path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped()),
+        )
+        .unwrap();
         let stdout = child.stdout.take().unwrap();
         let mut reader = BufReader::new(stdout);
         let mut output = String::new();

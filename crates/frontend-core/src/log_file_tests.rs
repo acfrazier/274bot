@@ -27,29 +27,40 @@ fn read(path: &Path) -> String {
 }
 
 /// The preferences of a process service opened at the state root `dir`.
-fn preferences(dir: &Path) -> crate::prefs::UiPreferences {
-    crate::prefs::UiPreferences::open_for_test(dir.to_path_buf())
+/// Ready once the service has opened the store (a fresh root, or its
+/// legacy `panel-ui.json` imported).
+fn open_ready(dir: &Path) -> crate::prefs::UiPreferences {
+    let preferences = crate::prefs::UiPreferences::open_for_test(dir.to_path_buf());
+    wait_for(|| preferences.ready());
+    preferences
+}
+
+/// A legacy `panel-ui.json` privately written into the state root `dir`
+/// before any service opens it: the first open imports it.
+fn write_legacy(dir: &Path, bytes: &[u8]) {
+    vault::create_private_dir(dir).unwrap();
+    vault::write_private_file(&dir.join("panel-ui.json"), bytes).unwrap();
 }
 
 #[test]
 fn the_session_file_is_off_unless_the_preference_says_on() {
+    let fresh = scratch("pref-fresh");
+    let preferences = open_ready(&fresh);
+    assert!(!session_log_setting(&preferences), "no saved prefs: off");
+    let _ = std::fs::remove_dir_all(&fresh);
+
     let dir = scratch("pref");
-    let preferences = preferences(&dir);
-    let prefs = preferences.path();
-    assert!(!session_log_setting(&preferences), "no prefs file: off");
-    std::fs::create_dir_all(&dir).unwrap();
     // A 0.1.8.1 prefs file has no such key.
-    vault::write_private_file(
-        &prefs,
+    write_legacy(
+        &dir,
         br#"{"last_focus":"alice","collapsed":{},"background_bots_ack":true}"#,
-    )
-    .unwrap();
-    preferences.reload().unwrap();
+    );
+    let preferences = open_ready(&dir);
     assert!(!session_log_setting(&preferences), "absent key: off");
 
     crate::prefs::settled_for_test(persist_session_log_setting(&preferences, true)).unwrap();
     assert!(session_log_setting(&preferences));
-    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
+    let value = preferences.reload().unwrap();
     assert_eq!(value["last_focus"], "alice", "other keys survive");
     assert_eq!(value["background_bots_ack"], true);
     crate::prefs::settled_for_test(persist_session_log_setting(&preferences, false)).unwrap();
@@ -57,16 +68,23 @@ fn the_session_file_is_off_unless_the_preference_says_on() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A peer process's preference transaction holds the shared lock: the
-/// service's write waits for it, then merges from the peer's newer
-/// document instead of overwriting it.
+/// A peer process's preference save holds the preferences guard: the
+/// service's write waits for it (pending, retrying without waiting), then
+/// decides against the durable document the peer left, instead of
+/// overwriting it.
 #[test]
 fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     let dir = scratch("peer-nav-lock");
-    std::fs::create_dir_all(&dir).unwrap();
-    let preferences = preferences(&dir);
-    let prefs = preferences.path();
-    vault::write_private_file(&prefs, br#"{"nav":{"allow_danger_zones":false}}"#).unwrap();
+    write_legacy(&dir, br#"{"nav":{"allow_danger_zones":false}}"#);
+    // The peer process (a second service over the same root) grants it.
+    let peer = open_ready(&dir);
+    let preferences = open_ready(&dir);
+    crate::nav_prefs::write_nav_preference_for_test(
+        &peer,
+        crate::nav_prefs::NavPreference::AllowDangerZones,
+        true,
+    )
+    .unwrap();
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -86,21 +104,24 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
     started_rx.recv().unwrap();
     let admitted = done_rx
         .recv_timeout(Duration::from_secs(4))
-        .expect("async admission finishes while the peer holds the file lock")
+        .expect("async admission finishes while the peer holds the guard")
         .unwrap();
     let crate::prefs::Update::Queued(mut watch) = admitted else {
         panic!("the locked save must remain pending");
     };
-    assert!(watch.poll().is_none(), "the lock must prevent durability");
-    let held: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
-    assert!(held.get(SESSION_LOG_KEY).is_none());
-    // The lock represents the peer's transaction. Publish its grant before
-    // releasing it, so the log writer must merge from this newer document.
-    vault::write_private_file(&prefs, br#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
+    assert!(watch.poll().is_none(), "the guard must prevent durability");
+    assert!(
+        preferences
+            .document()
+            .unwrap()
+            .get(SESSION_LOG_KEY)
+            .is_none(),
+        "nothing of the held save is durable"
+    );
     lock.unlock().unwrap();
     writer.join().unwrap();
     crate::prefs::settled_for_test(Ok(crate::prefs::Update::Queued(watch))).unwrap();
-    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
+    let saved = preferences.reload().unwrap();
     assert_eq!(saved["nav"]["allow_danger_zones"], true);
     assert_eq!(saved[SESSION_LOG_KEY], true);
     std::fs::remove_dir_all(dir).unwrap();

@@ -221,14 +221,16 @@ fn iteration_advances_a_pending_removal(mode: Loop) {
 
 scenario!(pending_removal, iteration_advances_a_pending_removal);
 
-/// The saved manual-walk pause, once the preferences file holds one.
+/// The saved manual-walk pause, once the preferences hold one.
 fn saved_pause(rig: &Rig) -> Option<bool> {
-    let bytes = std::fs::read(rig.session.preferences.path()).ok()?;
-    let saved: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    saved["nav"]["pause_script_on_manual_walk_abort"].as_bool()
+    let document = rig.session.preferences.document().ok()?;
+    document
+        .get("nav")?
+        .get("pause_script_on_manual_walk_abort")?
+        .as_bool()
 }
 
-/// Iterations until the preferences file holds `want`. A write the disk
+/// Iterations until the saved preferences hold `want`. A write the disk
 /// holds past the bounded wait stays queued and the following iterations
 /// settle it; [`HANG_GUARD`] only ends a test whose writer hung.
 fn iterate_until_saved(rig: &mut Rig, want: bool) {
@@ -396,6 +398,16 @@ fn the_whole_headed_frame_adds_no_allocation_growth_across_100_unchanged_iterati
     let (session, _arm) = session_with_alice();
     publish(&session, true);
     let mut rig = Rig::new(Loop::Headed, session);
+    // The database opens on the writer thread: the first snapshot is adopted
+    // before the counted iterations, not inside them.
+    let ready_by = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !rig.session.preferences.ready() {
+        assert!(
+            std::time::Instant::now() < ready_by,
+            "the preferences never opened"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     // Warm: the first projection builds, log lines and terminal buffers
     // settle before the counted iterations.
     for _ in 0..16 {

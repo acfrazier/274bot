@@ -18,6 +18,10 @@ pub(crate) mod map_play_fixture;
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
 
+/// The failure text of a save the held `<root>/panel-ui.json.lock` guard
+/// refused: the neutral Busy code with its cause (another 274bot process).
+pub(crate) const HELD_GUARD_CAUSE: &str = "another 274bot process is saving preferences";
+
 /// Process- and test-unique scratch directory removed even when a test unwinds.
 pub(crate) struct TestDir {
     path: PathBuf,
@@ -31,7 +35,7 @@ impl TestDir {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).unwrap();
+        create_private_dirs(&path).unwrap();
         Self { path }
     }
 }
@@ -86,16 +90,54 @@ pub(crate) fn thread_state_root() -> StateRoot {
 }
 
 /// A process service opened on `dir` itself, a scratch state root: its
-/// files (`panel-ui.json`, `loadouts.json`) sit directly in `dir`.
+/// files (`state/state.sqlite3`, `loadouts.json`) sit in `dir`.
 pub(crate) fn scratch_service(dir: &Path) -> Arc<LocalStateService> {
     LocalStateService::open_process(StateRoot::new(dir.to_path_buf()))
 }
 
-/// Write a private-state fixture, usually a preferences file, with mode
-/// 0600 whatever the process umask. A plain write creates the file 0664
-/// under umask 0002, and the product reader refuses a group- or
-/// world-writable preferences file. The panel has no `vault` dependency,
-/// so the mode is set here, before any read.
+/// A scratch state root whose legacy `panel-ui.json` holds `legacy`, and
+/// the preferences of a service opened on it: the first open imports (or
+/// refuses) the file. The service stops before the directory goes.
+pub(crate) fn scratch_with_legacy(
+    label: &str,
+    legacy: impl AsRef<[u8]>,
+) -> (TestDir, frontend_core::UiPreferences) {
+    let dir = TestDir::new(label);
+    write_private_fixture(dir.join("panel-ui.json"), legacy).unwrap();
+    let preferences = frontend_core::UiPreferences::of_service_for_test(&scratch_service(&dir));
+    (dir, preferences)
+}
+
+/// The state root `preferences` belongs to (`<root>/state/state.sqlite3`).
+pub(crate) fn preferences_root(preferences: &frontend_core::UiPreferences) -> PathBuf {
+    preferences
+        .path()
+        .parent()
+        .and_then(Path::parent)
+        .expect("the preferences database sits two levels under its root")
+        .to_path_buf()
+}
+
+/// Create `path` and its missing parents with mode 0700 whatever the
+/// process umask: the state root's directories are private.
+pub(crate) fn create_private_dirs(path: &Path) -> std::io::Result<()> {
+    let mut dirs = std::fs::DirBuilder::new();
+    dirs.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        dirs.mode(0o700);
+    }
+    dirs.create(path)
+}
+
+/// Write a private-state fixture, such as a legacy `panel-ui.json`, with
+/// mode 0600 (parent directories 0700) whatever the process umask. A plain
+/// write creates the file 0664 under umask 0002, and the product refuses a
+/// group- or world-writable legacy preferences file. The panel has no
+/// `vault` dependency, so the mode is set here. The legacy file is read
+/// once, at the first open of its state root: write it before the service
+/// opens.
 pub(crate) fn write_private_fixture(
     path: impl AsRef<Path>,
     bytes: impl AsRef<[u8]>,
@@ -105,7 +147,7 @@ pub(crate) fn write_private_fixture(
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
-        std::fs::create_dir_all(parent)?;
+        create_private_dirs(parent)?;
     }
     std::fs::write(path, bytes)?;
     #[cfg(unix)]
@@ -127,45 +169,35 @@ pub(crate) fn thread_preferences() -> frontend_core::UiPreferences {
     ))
 }
 
-/// Hold the real `panel-ui.json.lock` beside `preferences`' file, as a
-/// second program does: each preference write waits the writer's bounded
-/// lock wait and then fails busy. Dropping the file releases the lock.
+/// Hold the real `<root>/panel-ui.json.lock` guard of `preferences`' root,
+/// as a second program does: each preference write keeps retrying without
+/// waiting on it and fails busy five seconds after its first attempt.
+/// Dropping the file releases the lock.
 pub(crate) fn hold_preferences_lock(preferences: &frontend_core::UiPreferences) -> std::fs::File {
-    let file_path = preferences.path();
-    if let Some(parent) = file_path.parent() {
-        let mut dirs = std::fs::DirBuilder::new();
-        dirs.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            dirs.mode(0o700);
-        }
-        dirs.create(parent).expect("create the state directory");
-    }
-    let mut path = file_path.into_os_string();
-    path.push(".lock");
+    let root = preferences_root(preferences);
+    create_private_dirs(&root).expect("create the state directory");
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(path)
+        .open(root.join("panel-ui.json.lock"))
         .expect("open the preferences lock");
     file.lock().expect("hold the preferences lock");
     file
 }
 
-/// The preferences file of `preferences` as it is on disk now (empty when
-/// it does not exist): what a relaunch would read.
+/// The durable preferences document of `preferences` as a fresh read sees
+/// it (empty before anything is saved): what a relaunch would read. The
+/// database is the store; `panel-ui.json` is only a legacy import source.
 pub(crate) fn preferences_on_disk(
     preferences: &frontend_core::UiPreferences,
 ) -> serde_json::Map<String, serde_json::Value> {
-    let path = preferences.path();
-    match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).expect("the preferences file is JSON"),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
-        Err(error) => panic!("read {}: {error}", path.display()),
-    }
+    preferences
+        .reload()
+        .expect("the preferences re-read")
+        .as_ref()
+        .clone()
 }
 /// The two bounded waits the frontend reports as text, for a call site
 /// that has already stringified its error: the write stayed queued past

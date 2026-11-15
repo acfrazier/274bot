@@ -1,8 +1,13 @@
 //! The current files behind the state service (T5.2): the operator's
-//! `loadouts.json` and `panel-ui.json` preferences, and one
-//! `bank-hints/<profile>/<account>.json` per account.
+//! `loadouts.json`, and one `bank-hints/<profile>/<account>.json` per
+//! account, and the script runtime settings file.
 //! Each backend reads and writes the shared saved format used by 0.2.8 and
-//! 0.2.9, whichever release wrote the bytes.
+//! 0.2.9, whichever release wrote the bytes. Since T5.3 the preferences live
+//! in the state database (`super::sql`); this module keeps their shared codec
+//! (rows, the canonical document bytes, the typed walk projection), the
+//! legacy `panel-ui.json` reader's malformed-bytes path
+//! ([`corrupt_preferences`]) and the preferences guard
+//! (`panel-ui.json.lock`, [`try_lock_for_write`]).
 //!
 //! No backend touches `HOME` or any default path: every path is derived
 //! from the explicit [`StateRoot`] and the durable identity.
@@ -10,17 +15,18 @@
 //! What a read refuses is never treated as an absent file: a refused file is
 //! a [`ReadError`], and the service keeps it refused (no lease, no write)
 //! until a later read accepts it.
-//! A preferences or runtime settings file whose content is malformed (not
-//! JSON, or JSON that is not an object) is quarantined on a save-path read
-//! and a fresh document is started ([`corrupt_preferences`],
-//! [`corrupt_script_runtime_settings`]); every other refusal leaves the file
-//! unchanged. Duplicate loadout names are refused rather than renamed apart.
+//! A legacy preferences file (the first import) or a runtime settings file
+//! whose content is malformed (not JSON, or JSON that is not an object) is
+//! quarantined and a fresh document is started
+//! ([`corrupt_preferences`], [`corrupt_script_runtime_settings`]); every
+//! other refusal leaves the file unchanged. Duplicate loadout names are
+//! refused rather than renamed apart.
 //! A hint document from before schema 1 is refused as a whole, never
 //! rewritten or partially loaded. The service logs each changed refusal with
 //! its file path.
 //! A file whose content the service cannot represent whole (a hint field it
-//! does not know, a loadout row it cannot write back as read, a preference or
-//! setting it cannot hold as a row) is read but never rewritten
+//! does not know, a loadout row it cannot write back as read, a setting it
+//! cannot hold as a row) is read but never rewritten
 //! ([`Rewrite::Refused`]). Preferences and runtime settings use lossless
 //! representability, so an unknown member is held and written back.
 //! What a write publishes is durable before it is acknowledged: the bytes
@@ -80,6 +86,24 @@ impl StateRoot {
     /// and the TUI share.
     pub fn preferences_file(&self) -> PathBuf {
         self.0.join("panel-ui.json")
+    }
+
+    /// `<root>/state`: the private directory of the state database.
+    pub fn state_dir(&self) -> PathBuf {
+        self.0.join("state")
+    }
+
+    /// `<root>/state/state.sqlite3`: the one state database of this root
+    /// (T5.3: the operator preferences). SQLite keeps its `-wal` and
+    /// `-shm` files beside it.
+    pub fn database_file(&self) -> PathBuf {
+        self.state_dir().join("state.sqlite3")
+    }
+
+    /// `<root>/instance.lock`: the root-use lease every new-version user
+    /// holds shared, and an explicit maintenance command exclusive.
+    pub fn instance_lock_file(&self) -> PathBuf {
+        self.0.join("instance.lock")
     }
 
     /// `<root>/bank-hints/<profile>/<account>.json`: the account's hint
@@ -584,11 +608,19 @@ fn script_runtime_settings_identity(
 
 /// Read `key`'s current file under `root`: `Ok(None)` when there is no
 /// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file.
+/// Preferences are never read here: they live in the state database
+/// (`sql`), and `panel-ui.json` is only its legacy import source.
 pub(super) fn read(
     key: &StoreKey,
     root: &StateRoot,
     read_at: DurableTimestamp,
 ) -> Result<Option<ReadDocument>, ReadError> {
+    if matches!(key, StoreKey::Preferences) {
+        return Err(ReadError::Io(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "preferences are read from the state database",
+        )));
+    }
     let path = key.path(root);
     let max = max_bytes(key);
     let raw = match read_private_file(&path, max) {
@@ -614,28 +646,7 @@ pub(super) fn read(
                 rewrite,
             }))
         }
-        StoreKey::Preferences => {
-            let Value::Object(document) = serde_json::from_str(&raw)? else {
-                return Err(ReadError::NotAnObject);
-            };
-            let projection = project_preferences(document);
-            let (rows, unrepresentable) = preference_rows(&projection.document);
-            Ok(Some(ReadDocument {
-                snapshot: LeaseSnapshot::preferences(rows),
-                preferences: Some(projection),
-                at: read_at,
-                digest,
-                written_len: raw.len(),
-                rewrite: if unrepresentable == 0 {
-                    Rewrite::Lossless
-                } else {
-                    Rewrite::Refused {
-                        unreadable: unrepresentable,
-                        lossy: 0,
-                    }
-                },
-            }))
-        }
+        StoreKey::Preferences => Err(ReadError::NotAnObject),
         StoreKey::BankHint {
             profile,
             account,
@@ -1360,6 +1371,29 @@ pub(super) fn lock_for_write(
         }
         std::thread::sleep(wait.min(deadline - now));
         wait = (wait * 2).min(Duration::from_millis(50));
+    }
+}
+
+/// Take `path`'s [`WriteLock`] without waiting: `Ok(None)` while another
+/// writer holds it. The preferences database uses this as its product
+/// guard (T5.3 §4.3): a contended guard requeues the job, never sleeps on
+/// the writer thread. The directory is created (`0o700`) when missing.
+pub(super) fn try_lock_for_write(path: &Path) -> io::Result<Option<WriteLock>> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        vault::create_private_dir(parent)?;
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(lock_path(path))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(WriteLock { _file: file })),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(error)) => Err(error),
     }
 }
 
