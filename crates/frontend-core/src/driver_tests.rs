@@ -1060,14 +1060,17 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = scratch("pvp-setting");
     let mut d = driver_in(&dir, &["pvp1-alice"]);
-    let lines_with = |filter: &str, needle: &str| -> Vec<String> {
+    // The process ring holds 500 lines and every test of this binary writes to
+    // it, so an older line can leave it between two reads. The lines of one
+    // write are the ones with an order stamp above the stamp taken before it.
+    let lines_after = |filter: &str, needle: &str, stamp: u64| -> Vec<(u64, String)> {
         let mut view = LogView::new(LogScope::Process);
         view.edit_filter(|f| f.set_text(filter));
         global().refresh(&mut view);
         view.rows()
             .iter()
-            .map(|row| row.message().to_owned())
-            .filter(|line| line.contains(needle))
+            .filter(|row| row.seq() > stamp && row.message().contains(needle))
+            .map(|row| (row.seq(), row.message().to_owned()))
             .collect()
     };
     assert_eq!(
@@ -1075,7 +1078,9 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         Some(false),
         "off until the operator turns it on"
     );
-    let audit_before = lines_with("pvp.start_fights", "pvp.start_fights").len();
+    let audit_stamp = lines_after("pvp.start_fights", "pvp.start_fights", 0)
+        .last()
+        .map_or(0, |(seq, _)| *seq);
 
     let on = d
         .submit(
@@ -1088,16 +1093,12 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         preferences_file(&d)["pvp"]["start_fights"],
         serde_json::Value::Bool(true)
     );
-    let audit = lines_with("pvp.start_fights", "pvp.start_fights");
-    assert_eq!(
-        audit.len() - audit_before,
-        1,
-        "one write, one audit line: {audit:?}"
-    );
-    assert!(
-        audit.last().is_some_and(|line| line.contains("true")),
-        "{audit:?}"
-    );
+    let audit: Vec<String> = lines_after("pvp.start_fights", "pvp.start_fights", audit_stamp)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(audit.len(), 1, "one write, one audit line: {audit:?}");
+    assert!(audit[0].contains("true"), "{audit:?}");
     assert!(
         crate::pvp_prefs::pvp_start_fights(&d.session().preferences().expect("bound"))
             .expect("the projection is ready"),
@@ -1116,7 +1117,10 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         "pvp-v1 test: no preferences store in this mode",
     );
     assert_eq!(d.session().refusals(), before + 1);
-    let refusal = lines_with("command refused: SetPvpStartFights", "pvp-v1 test");
+    let refusal: Vec<String> = lines_after("command refused: SetPvpStartFights", "pvp-v1 test", 0)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
     assert_eq!(refusal.len(), 1, "{refusal:?}");
 }
 
