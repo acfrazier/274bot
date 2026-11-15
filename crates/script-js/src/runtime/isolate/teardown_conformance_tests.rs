@@ -155,7 +155,7 @@ impl Replay {
         let had = |event: Event| events.contains(&event);
         match action {
             Action::Advance => self.now += 1,
-            Action::Enter(kind) => {
+            Action::Enter(kind) | Action::EnterBusy(kind) => {
                 let accepted = match kind {
                     Kind::Tick => begin_interruptible_execution(
                         &self.teardown,
@@ -175,6 +175,11 @@ impl Replay {
                 ensure(accepted == want, || {
                     format!("{kind:?} entry: code accepted={accepted}, model accepted={want}")
                 })?;
+                if matches!(action, Action::EnterBusy(_)) {
+                    ensure(had(Event::EntryRefusedActive), || {
+                        "an entry during an eval: the model does not refuse it".into()
+                    })?;
+                }
             }
             Action::EnterCheck(_) | Action::EnterCommit => {
                 return Err("a mutation-only action in a head trace".into());
@@ -240,6 +245,12 @@ impl Replay {
                 let entered = enter_teardown_hook(&self.teardown, now);
                 ensure(entered == had(Event::HookEntered), || {
                     format!("hook entry: code entered={entered}")
+                })?;
+            }
+            Action::TryHook => {
+                let entered = enter_teardown_hook(&self.teardown, now);
+                ensure(!entered && had(Event::HookRefusedActive), || {
+                    format!("hook entry during an eval: code entered={entered}")
                 })?;
             }
             Action::HookGuard => {

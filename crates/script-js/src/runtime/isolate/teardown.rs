@@ -441,7 +441,6 @@ pub(super) struct Teardown {
     /// Producer evidence generation. Independent of native input identity
     /// and execution lifecycle; shared only to publish the host's delta key.
     pub(super) snapshot_evidence_sequence: u64,
-    /// Isolate-scoped test seam for the shared supervisor.
     /// Isolate-scoped test seam: sleep after the deadline owner is armed
     /// and before getter/body, without a process-global switch.
     pub(super) hook_entry_delay: Option<Duration>,

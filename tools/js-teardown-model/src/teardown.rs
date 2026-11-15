@@ -235,9 +235,16 @@ pub enum Action {
     Enter(Kind),
     EnterCheck(Kind),
     EnterCommit,
+    /// An entry attempted while an eval is active (`begin_execution`).
+    EnterBusy(Kind),
+    /// The Stop path attempts to enter the hook while an eval is active.
+    TryHook,
     Deliver,
     ArmWatchdog,
-    Register { by: Who, refuse: bool },
+    Register {
+        by: Who,
+        refuse: bool,
+    },
     FireRefused(Who),
     Finish,
     FinishClear,
@@ -246,7 +253,9 @@ pub enum Action {
     EnterHook,
     HookGuard,
     HookCancel,
-    HookRegister { refuse: bool },
+    HookRegister {
+        refuse: bool,
+    },
     HookDone,
     Complete,
     CancelAfter,
@@ -276,6 +285,8 @@ impl Action {
                 format!("isolate thread: reads Pause for a {k:?} entry, outside the lock")
             }
             Action::EnterCommit => "isolate thread: commits the entry it checked".into(),
+            Action::EnterBusy(k) => format!("isolate thread: tries a {k:?} entry during an eval"),
+            Action::TryHook => "isolate thread: tries enter_teardown_hook during an eval".into(),
             Action::Deliver => "V8: delivers the pending termination to the running code".into(),
             Action::ArmWatchdog => "isolate thread: arm_execution_watchdog (lifecycle hook)".into(),
             Action::Register { by, refuse } => format!(
@@ -469,6 +480,8 @@ pub enum Event {
     EntryAccepted(Kind),
     EntryRefusedPause(Kind),
     EntryRefusedPhase,
+    /// An entry while an eval is active.
+    EntryRefusedActive,
     Armed(Owner),
     Refused,
     NoDeadlineCut,
@@ -477,8 +490,12 @@ pub enum Event {
     DeadlineStale,
     DeadlinePauseResumed,
     PauseSet,
-    Delivered { consumed: bool },
-    FinishCut { consumed: bool },
+    Delivered {
+        consumed: bool,
+    },
+    FinishCut {
+        consumed: bool,
+    },
     FinishPending,
     FinishPlain,
     StopUnwinds,
@@ -486,6 +503,8 @@ pub enum Event {
     StopLate,
     HookEntered,
     HookRefusedEntry,
+    /// The hook entry while an eval is active.
+    HookRefusedActive,
     HookSkipped,
     HookRan,
     HookDeadlineFired,
@@ -709,12 +728,24 @@ impl Teardown {
         match *action {
             Action::Advance => s.now += 1,
             Action::Enter(kind) => {
-                if s.phase != Phase::Running || s.exec.is_some() {
+                if s.phase != Phase::Running {
                     ev.push(Event::EntryRefusedPhase);
+                } else if s.exec.is_some() {
+                    ev.push(Event::EntryRefusedActive);
                 } else if kind.honors_pause() && s.pause {
                     ev.push(Event::EntryRefusedPause(kind));
                 } else {
                     self.accept_entry(&mut s, kind, &mut ev)?;
+                }
+            }
+            Action::EnterBusy(_) => {
+                if s.exec.is_some() {
+                    ev.push(Event::EntryRefusedActive);
+                }
+            }
+            Action::TryHook => {
+                if s.exec.is_some() {
+                    ev.push(Event::HookRefusedActive);
                 }
             }
             Action::EnterCheck(kind) => {
@@ -1224,6 +1255,20 @@ impl Teardown {
             }
             Thread::EnterCommit(_) => out.push(Action::EnterCommit),
             Thread::InExec => {
+                // Attempts the thread's own loop never makes while it runs
+                // an eval: the guards of `begin_execution` and `enter_hook`
+                // must still refuse.
+                let kinds: &[Kind] = if b.frames {
+                    &[Kind::Tick, Kind::Frame, Kind::Lifecycle]
+                } else {
+                    &[Kind::Tick]
+                };
+                for kind in kinds {
+                    out.push(Action::EnterBusy(*kind));
+                }
+                if b.script_stop {
+                    out.push(Action::TryHook);
+                }
                 if s.flag != 0 {
                     out.push(Action::Deliver);
                 }

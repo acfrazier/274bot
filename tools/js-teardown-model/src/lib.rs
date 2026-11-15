@@ -235,10 +235,11 @@ pub fn teardown_goal_traces(
 
 /// The events whose shortest traces the conformance tests drive: each rule of
 /// the protocol, at the step where it decides.
-pub const TEARDOWN_GOALS: [teardown::Event; 22] = [
+pub const TEARDOWN_GOALS: [teardown::Event; 24] = [
     teardown::Event::EntryAccepted(teardown::Kind::Tick),
     teardown::Event::EntryRefusedPause(teardown::Kind::Tick),
     teardown::Event::EntryRefusedPhase,
+    teardown::Event::EntryRefusedActive,
     teardown::Event::Armed(teardown::Owner::Watchdog),
     teardown::Event::Armed(teardown::Owner::Pause),
     teardown::Event::Armed(teardown::Owner::Reset),
@@ -257,5 +258,6 @@ pub const TEARDOWN_GOALS: [teardown::Event; 22] = [
     teardown::Event::HookDeadlineFired,
     teardown::Event::HookDeadlineStale,
     teardown::Event::HookRefusedEntry,
+    teardown::Event::HookRefusedActive,
     teardown::Event::DropKeptHook,
 ];

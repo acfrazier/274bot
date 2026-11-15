@@ -58,6 +58,8 @@ with a provenance: the set of requests that armed it.
 | Model action | Product function |
 |---|---|
 | `Enter(kind)` | `begin_interruptible_execution`, `begin_frame_execution`, `begin_lifecycle_hook_execution` |
+| `EnterBusy(kind)` | the same three functions, called while an eval is active: the guard in `TeardownState::begin_execution` must refuse. The product's thread never makes this call; the action keeps the guard under conformance |
+| `TryHook` | `enter_teardown_hook` while an eval is active: `TeardownState::enter_hook` must refuse (`HookRefusal::ExecutionActive`). Same reason as `EnterBusy` |
 | `Poll`, `Pause` (first step), `Look` | `watchdog_look`, then `begin_arm` or `fire_execution_interrupt` (`interrupt_slow_execution_shared`, `isolate.rs`) |
 | `PauseSet`, `PauseArm`, `Resume`, `Reset` | `TeardownState::request_pause`, `begin_arm(Pause)`, `clear_pause`, `begin_arm(SessionReset)` |
 | `ArmWatchdog` | `begin_arm(Watchdog)` (`arm_execution_watchdog`, `thread.rs`, lifecycle hooks) |
@@ -177,6 +179,8 @@ Release build, one core: the largest profile (`full`) takes about 7 s and an
 estimated 640 MB. The unit test lane runs every profile but `clock` and
 `full`; those two run in the nightly (`nightly.sh`, a 16 GB scope per
 profile) and with `JS_TEARDOWN_MODEL_FULL=1 cargo test -p js-teardown-model`.
+`systemd/` holds the nightly's user unit and timer for chardonnay (the install
+steps are in the unit's header); nothing installs them.
 
 Tests: `cargo test -p js-teardown-model`.
 
@@ -204,8 +208,8 @@ live cells cover those.
 
 ## When the protocol changes
 
-1. Change the transition in the product and the matching one in `model.rs` or
-   `retire.rs`; the comments name the function.
+1. Change the transition in the product and the matching one in `src/teardown.rs`
+   or `src/retire.rs`; the comments name the function.
 2. If an invariant changes, change it here and say why in the commit.
 3. Run the profiles and the conformance tests. A new finding is a product
    defect, a model defect or a known limit; add a `Mutation` for it.
