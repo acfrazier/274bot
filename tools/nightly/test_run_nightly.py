@@ -1425,6 +1425,7 @@ class CellsFileTests(unittest.TestCase):
             mock.patch.object(rn, "ROOT", root),
             mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
             mock.patch.object(rn, "JOB", "main"),
+            mock.patch.object(rn, "FRESH_TREES", False),
             mock.patch.object(rn, "update_tree", fake_update_tree),
             mock.patch.object(rn, "log", lambda _message: None),
         ]
@@ -1799,6 +1800,7 @@ class BuildFailureTests(unittest.TestCase):
             mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
             mock.patch.object(rn, "STEPS", ["tui"]),
             mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+            mock.patch.object(rn, "FRESH_TREES", False),
             mock.patch.object(rn, "update_tree", fake_update_tree),
             mock.patch.object(rn, "build", failing_build),
             mock.patch.object(rn, "guard_disk", lambda _branch, _primary: None),
@@ -1850,6 +1852,7 @@ class BuildFailureTests(unittest.TestCase):
             mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
             mock.patch.object(rn, "STEPS", ["tui"]),
             mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+            mock.patch.object(rn, "FRESH_TREES", False),
             mock.patch.object(rn, "update_tree", fake_update_tree),
             mock.patch.object(rn, "build", empty_build),
             mock.patch.object(rn, "guard_disk", lambda _branch, _primary: None),
@@ -2749,6 +2752,7 @@ class LatencyRunBranchTests(unittest.TestCase):
         patches = [
             mock.patch.object(rn, "ROOT", root),
             mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+            mock.patch.object(rn, "FRESH_TREES", False),
             mock.patch.object(rn, "update_tree", fake_update_tree),
             mock.patch.object(rn, "log", lambda _message: None),
         ]
@@ -3131,6 +3135,7 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
             patches = [
                 mock.patch.object(rn, "ROOT", root),
                 mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+                mock.patch.object(rn, "FRESH_TREES", False),
                 mock.patch.object(rn, "update_tree", fake_update_tree),
                 mock.patch.object(rn, "log", lambda _message: None),
             ]
