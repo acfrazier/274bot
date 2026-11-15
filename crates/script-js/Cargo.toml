@@ -334,3 +334,6 @@ name = "load_picker"
 
 [[example]]
 name = "catalog_inventory"
+
+[lints]
+workspace = true
