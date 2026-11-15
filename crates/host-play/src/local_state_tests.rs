@@ -2637,6 +2637,18 @@ fn siblings(path: &std::path::Path) -> Vec<String> {
     found
 }
 
+/// Every name in `path`'s directory, sorted: unlike [`siblings`], nothing
+/// is left out, so an assertion here names the writer's lock when it is
+/// there instead of quietly excusing it.
+fn directory_entries(path: &std::path::Path) -> Vec<String> {
+    let mut found: Vec<String> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    found.sort();
+    found
+}
+
 /// A preferences service on its own root under `scratch`.
 fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
     let root = StateRoot::new(scratch.home.join(case).join(".274bot"));
@@ -2647,6 +2659,29 @@ fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
         Arc::new(RequestIdMinter::new()),
     )
     .preferences()
+}
+
+/// A preferences service on its own root with its read-refusal notices
+/// captured, for a file written before the service opens.
+fn preferences_with_notices(scratch: &IsolatedEnv, case: &str) -> (Preferences, NoticeLines) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let state = State {
+        hooks: Hooks {
+            read_refusal: Some(Arc::new(move |level, line| {
+                sink.lock().unwrap().push((level, line.to_string()));
+            })),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let service = LocalStateService::open_with_state(
+        StateRoot::new(scratch.home.join(case).join(".274bot")),
+        &[LocalStateDomain::Preferences],
+        Arc::new(RequestIdMinter::new()),
+        state,
+    );
+    (service.preferences(), seen)
 }
 
 /// A runtime settings service and its account/content-bound file.
@@ -2854,7 +2889,10 @@ fn quarantine_copy_flushes_its_candidate() {
 /// next save moves it aside to `panel-ui.json.corrupt-<time>` holding
 /// exactly its bytes, flushed with its directory entry before the file is
 /// replaced with fresh preferences, and then lands; the operator is told
-/// (a warning) and one info audit line names the quarantine.
+/// (a warning) and one info audit line names the quarantine. A file that
+/// is also truncated and names a field twice is the truncated one first:
+/// it is refused as not JSON, not as the duplicate, and quarantined the
+/// same way.
 #[test]
 fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh() {
     let scratch = IsolatedEnv::enter("local-state-r4-preferences-quarantine");
@@ -2862,6 +2900,11 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
         ("not-json", b"{not valid json".to_vec()),
         ("not-utf8", vec![b'{', 0xff, 0xfe, b'}']),
         ("not-an-object", b"[1, 2, 3]".to_vec()),
+        ("duplicate-and-truncated", br#"{"a":1,"a":"#.to_vec()),
+        (
+            "duplicate-in-a-non-object-root",
+            br#"[{"a":1,"a":2}]"#.to_vec(),
+        ),
     ] {
         let preferences = preferences_at(&scratch, case);
         let path = preferences.path();
@@ -2893,7 +2936,11 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
             bytes,
             "{case}: reads keep it"
         );
-        assert_eq!(siblings(&path), ["panel-ui.json"], "{case}");
+        assert_eq!(
+            directory_entries(&path),
+            ["panel-ui.json"],
+            "{case}: a read writes nothing, not even the writer's lock"
+        );
         assert!(
             order.lock().unwrap().is_empty(),
             "{case}: reads write nothing"
@@ -2910,8 +2957,14 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
             "{case}: the save lands in fresh preferences"
         );
         assert_eq!(preferences.value("map_bake").unwrap(), "always");
-        let found = siblings(&path);
-        assert_eq!(found.len(), 2, "{case}: {found:?}");
+        let found = directory_entries(&path);
+        assert_eq!(
+            found.len(),
+            3,
+            "{case}: {found:?}: the document, its quarantine copy and the writer's lock, \
+             which a landed save leaves"
+        );
+        assert_eq!(found[2], "panel-ui.json.lock", "{case}: {found:?}");
         assert!(
             found[1].starts_with("panel-ui.json.corrupt-"),
             "{case}: {found:?}"
@@ -3114,6 +3167,311 @@ fn preferences_refused_for_permissions_are_never_quarantined() {
         assert_eq!(siblings(&path), ["panel-ui.json"], "mode {mode:o}");
         assert!(notices.lock().unwrap().is_empty(), "mode {mode:o}");
     }
+}
+
+/// FU:15 (S3a): a preferences file that names a field twice in one
+/// object — at the top level or inside a nested object — is refused
+/// whole instead of read keeping one of the two values: reads and saves
+/// refuse with the field, the object it sits in and the remedy, every
+/// byte stays, nothing appears beside the file, and the operator's
+/// warning names the file and the cause.
+#[test]
+fn a_preferences_file_with_a_duplicate_field_is_refused_and_kept() {
+    let scratch = IsolatedEnv::enter("local-state-s3a-preferences-duplicate");
+    for (case, bytes, field, object) in [
+        (
+            "top-level",
+            br#"{"last_focus":"alice","last_focus":"bob"}"#.to_vec(),
+            "last_focus",
+            "the top level",
+        ),
+        (
+            "nested",
+            br#"{"nav":{"allow_teleports":true,"allow_teleports":false}}"#.to_vec(),
+            "allow_teleports",
+            r#"the object "nav""#,
+        ),
+    ] {
+        let (preferences, notices) = preferences_with_notices(&scratch, case);
+        let path = preferences.path();
+        write_private(&path, &bytes);
+        let cause = format!(
+            "field {field:?} is named twice in {object}; edit the file to remove one of them"
+        );
+        assert!(
+            matches!(
+                preferences
+                    .service()
+                    .readback_lease(&identity(LocalStateDomain::Preferences, "alice"), WAIT),
+                Err(ErrorCode::Failed {
+                    domain: LocalStateDomain::Preferences,
+                    reason: FailureReason::Schema
+                })
+            ),
+            "{case}: {notices:?}"
+        );
+        let error = preferences.document().unwrap_err();
+        assert_eq!(error.path(), path.display().to_string(), "{case}");
+        assert_eq!(error.cause(), cause, "{case}");
+        assert_eq!(
+            error.code(),
+            Some(ErrorCode::Failed {
+                domain: LocalStateDomain::Preferences,
+                reason: FailureReason::Schema,
+            }),
+            "{case}"
+        );
+        assert!(preferences.reload().is_err(), "{case}: reads refuse it");
+        assert!(
+            preferences
+                .set("map_bake", serde_json::json!("always"))
+                .is_err(),
+            "{case}: a save refuses it"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            bytes,
+            "{case}: every byte stays"
+        );
+        assert_eq!(
+            directory_entries(&path),
+            ["panel-ui.json"],
+            "{case}: nothing is written beside it: no quarantine copy, no staging file, \
+             not even the writer's lock, because the save refuses at submission"
+        );
+        let notices = notices.lock().unwrap().clone();
+        assert_eq!(notices.len(), 1, "{case}: {notices:?}");
+        assert_eq!(notices[0].0, Level::Warn, "{case}: the operator's notice");
+        assert!(
+            notices[0]
+                .1
+                .contains(&format!("preferences file refused path={}", path.display())),
+            "{case}: {notices:?}"
+        );
+        assert!(notices[0].1.contains(&cause), "{case}: {notices:?}");
+        drop(preferences);
+    }
+}
+
+/// FU:15 (S3a): a preferences file without duplicate fields loads with
+/// exactly the values a plain `serde_json` read held before, and the
+/// same field name in two different objects (`future.same` and
+/// `future.other.same`, one `name` per element of `layout`) is not a
+/// duplicate.
+#[test]
+fn a_preferences_file_without_duplicate_fields_loads_as_before() {
+    let scratch = IsolatedEnv::enter("local-state-s3a-preferences-valid");
+    let preferences = preferences_at(&scratch, "valid");
+    let path = preferences.path();
+    let bytes = br#"{
+        "last_focus": "alice",
+        "nav": {"allow_teleports": true},
+        "pvp": {"start_fights": true},
+        "layout": [{"name": "mine"}, {"name": "yours"}],
+        "future": {"same": 1, "other": {"same": 2}}
+    }"#
+    .to_vec();
+    write_private(&path, &bytes);
+    // The expected document is what the fixture holds, decided before
+    // anything reads the file: a read that rewrote the file and cached the
+    // rewritten document could not satisfy this comparison.
+    let expected: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(&bytes).unwrap();
+    let lease = preferences
+        .service()
+        .readback_lease(&identity(LocalStateDomain::Preferences, "alice"), WAIT)
+        .unwrap();
+    assert!(lease.is_some(), "the file loads");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        bytes,
+        "the read keeps every byte of the file it read"
+    );
+    assert_eq!(
+        directory_entries(&path),
+        ["panel-ui.json"],
+        "a read writes nothing, not even the writer's lock"
+    );
+    assert_eq!(*preferences.document().unwrap(), expected);
+    assert_eq!(preferences.value("last_focus").unwrap(), "alice");
+    assert!(preferences.walk_globals().unwrap().allow_teleports);
+    assert!(preferences.pvp_globals().unwrap().start_fights);
+}
+
+/// One save queued before its store's first read finishes: `bytes` are
+/// written, the service is opened with its first read held, a
+/// single-member save is queued, the read is released, and the request's
+/// terminal is waited out. Returns the terminal, the file's path and the
+/// notices seen from the service's opening.
+fn queued_cold_save(
+    scratch: &IsolatedEnv,
+    case: &str,
+    bytes: &[u8],
+    key: &str,
+    value: serde_json::Value,
+) -> (Result<(), PreferenceError>, std::path::PathBuf, NoticeLines) {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = AtomicBool::new(true);
+    let refused = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&refused);
+    let service = LocalStateService::open_with_state(
+        StateRoot::new(scratch.home.join(case).join(".274bot")),
+        &[LocalStateDomain::Preferences],
+        Arc::new(RequestIdMinter::new()),
+        State {
+            read_stall: Some(Arc::new(move || {
+                if first.swap(false, Ordering::SeqCst) {
+                    entered_tx.send(()).unwrap();
+                    release_rx.lock().unwrap().recv().unwrap();
+                }
+            })),
+            hooks: Hooks {
+                read_refusal: Some(Arc::new(move |level, line| {
+                    sink.lock().unwrap().push((level, line.to_string()));
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    let preferences = service.preferences();
+    write_private(&preferences.path(), bytes);
+    entered_rx
+        .recv_timeout(WAIT)
+        .expect("the worker is held in its first read");
+    let Update::Queued(mut watch) = preferences.begin_set(key, value).unwrap() else {
+        panic!("the save is queued before the first read finishes");
+    };
+    release_tx.send(()).unwrap();
+    let settled = watch.wait(WAIT).expect("the request settles");
+    let path = preferences.path();
+    drop(preferences);
+    drop(service);
+    (settled, path, refused)
+}
+
+/// FU:15 (S3a): a save queued before the first read finishes reads the
+/// file under the writer's lock and is refused there. The lock file it
+/// opens first is the writer's own, never-removed lock (`WriteLock` in
+/// `local_state/files.rs`), which a valid save leaves too — so the
+/// refused cold save must leave exactly the files a valid cold save
+/// leaves: the document's bytes, the lock, nothing else — no quarantine
+/// copy, no default document — with the refusal's cause and the
+/// operator's warning.
+#[test]
+fn a_refused_cold_save_leaves_the_files_a_valid_save_leaves() {
+    let scratch = IsolatedEnv::enter("local-state-s3a-cold-save");
+    let refused_bytes = br#"{"last_focus":"alice","last_focus":"bob"}"#.to_vec();
+    let (settled, path, notices) = queued_cold_save(
+        &scratch,
+        "refused",
+        &refused_bytes,
+        "map_bake",
+        serde_json::json!("always"),
+    );
+    let error = settled.expect_err("the refused file is never saved over");
+    // The queued result carries the bounded failure code; the refusal's
+    // own cause and remedy reach the operator through the warning below.
+    assert_eq!(
+        error.code(),
+        Some(ErrorCode::Failed {
+            domain: LocalStateDomain::Preferences,
+            reason: FailureReason::Schema,
+        }),
+        "{error:?}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        refused_bytes,
+        "every byte of the refused file stays"
+    );
+    assert!(
+        notices
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(level, line)| *level == Level::Warn
+                && line.contains("preferences file refused")
+                && line.contains(path.display().to_string().as_str())
+                && line.contains("is named twice")),
+        "{:?}",
+        notices.lock().unwrap()
+    );
+    let refused_files = directory_entries(&path);
+
+    let (settled, path, _) = queued_cold_save(
+        &scratch,
+        "valid",
+        br#"{"last_focus":"alice"}"#,
+        "map_bake",
+        serde_json::json!("always"),
+    );
+    settled.expect("the valid save lands");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "last_focus": "alice",
+            "map_bake": "always",
+        }))
+        .unwrap(),
+        "the valid save wrote the merged document"
+    );
+    let valid_files = directory_entries(&path);
+    assert_eq!(
+        valid_files,
+        ["panel-ui.json", "panel-ui.json.lock"],
+        "a valid cold save leaves the document and the writer's never-removed lock"
+    );
+    assert_eq!(
+        refused_files, valid_files,
+        "the refused cold save leaves exactly the files a valid save leaves"
+    );
+}
+
+/// FU:15 (S3a): the duplicate-field check costs no more than the parse it
+/// checks. This document — a 768 KiB first field name and 120 object
+/// levels, the shape the round-1 review measured, where the checked
+/// reader's peak was 188,772,239 bytes against the plain reader's 829,271
+/// — holds a value's position as a chain of the parsing frames' own
+/// segments, so no path text is built while the document parses and every
+/// field name is still owned exactly once. The bound: the checked parse's
+/// peak is the plain `serde_json` read's peak plus one small step for the
+/// parser's own bookkeeping, never a copy of the path per level.
+#[test]
+fn a_deep_document_parses_within_the_plain_reader_s_peak_allocation() {
+    let mut raw = String::new();
+    raw.push_str("{\"");
+    raw.push_str(&"k".repeat(768 * 1024));
+    raw.push_str("\":");
+    for level in 0..120 {
+        raw.push('{');
+        raw.push_str(&format!("\"{level}\":"));
+    }
+    raw.push('1');
+    raw.push_str(&"}".repeat(121));
+    assert!(raw.len() > 786_000, "the document is the reviewed shape");
+    let plain = allocation_counter::measure(|| {
+        drop(std::hint::black_box(
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap(),
+        ));
+    });
+    let checked = allocation_counter::measure(|| {
+        drop(std::hint::black_box(
+            files::object_without_duplicate_fields(&raw).unwrap(),
+        ));
+    });
+    assert_eq!(
+        checked.bytes_current, 0,
+        "the checked parse leaves nothing allocated"
+    );
+    assert!(
+        checked.bytes_max <= plain.bytes_max + 64 * 1024,
+        "peak {} bytes against the plain read's {}",
+        checked.bytes_max,
+        plain.bytes_max
+    );
 }
 
 /// A refused loadouts file stays byte-for-byte intact and is never renamed,

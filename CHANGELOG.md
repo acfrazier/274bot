@@ -28,6 +28,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - 377 trail challenge answers now fail generation when the decoded value
   disagrees with the final selected content parameter.
 
+### Saved state
+
+- A `panel-ui.json` that names a field twice in the same object (a hand
+  edit can do this) is now refused instead of read keeping the last of
+  the two values. Settings from it fail closed with a message naming the
+  file, the field and the object it sits in and asking you to edit the
+  file to remove one of them; preference saves refuse too, so the file's
+  bytes stay as they are and neither a `.corrupt-` copy nor fresh
+  preferences replace it. A file whose content does not parse at all —
+  say, one truncated in the middle of the repeated field — is still the
+  unreadable file: the next save moves it aside and starts fresh,
+  whatever fields it also names.
+
 ### Game client
 
 - On revision 274, the Report abuse form accepts a player's name and shows the
