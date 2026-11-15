@@ -141,6 +141,7 @@ pub fn resolve_api_family(source: &str) -> Result<(LoadShape, ApiFamily), String
 fn parse_declared_api_version_ast(source: &str) -> Result<Option<u32>, VersionDiag> {
     use deno_ast::swc::ast::{Decl, ModuleDecl, ModuleItem, Pat, VarDeclKind};
     use deno_ast::ProgramRef;
+    let (source, _) = super::ast::strip_bom(source);
 
     let specifier = deno_ast::ModuleSpecifier::parse("file:///bot.ts")
         .map_err(|_| VersionDiag::Malformed("specifier"))?;
@@ -261,6 +262,7 @@ fn unwrap_ts_assertion(expr: &deno_ast::swc::ast::Expr) -> &deno_ast::swc::ast::
 /// Plain JS passes through unchanged in behaviour. A parse failure means
 /// the source is not readable TypeScript/JavaScript.
 pub fn transpile_ts(source: &str) -> Result<String, String> {
+    let (source, _) = super::ast::strip_bom(source);
     let specifier = deno_ast::ModuleSpecifier::parse("file:///bot.ts")
         .map_err(|e| format!("ts specifier: {e}"))?;
     let parsed = deno_ast::parse_module(deno_ast::ParseParams {
@@ -422,7 +424,7 @@ fn strip_relative_prefix(spec: &str) -> &str {
     p
 }
 
-fn specifier_remaps_to_shim(spec: &str) -> bool {
+pub(crate) fn specifier_remaps_to_shim(spec: &str) -> bool {
     {
         let js = specifier_js(spec);
         let suffix = if let Some(rest) = js.strip_prefix("#/bot/") {
@@ -439,6 +441,10 @@ fn specifier_remaps_to_shim(spec: &str) -> bool {
                 .is_some_and(|url| url.ends_with(&suffix) || url.ends_with(&format!("/{suffix}")))
         })
     }
+}
+
+pub(crate) fn is_host_shim_specifier(spec: &str) -> bool {
+    spec == "@rs2b0t/api" || specifier_remaps_to_shim(spec)
 }
 
 fn specifier_is_ok(spec: &str) -> bool {
@@ -1204,6 +1210,12 @@ mod tests {
     use super::*;
     use script::identity::{card_identity_id, file_identity};
 
+    #[test]
+    fn transpile_ts_parses_a_bom_prefixed_source() {
+        let emitted = transpile_ts("\u{feff}const value: number = 1;").unwrap();
+        assert!(emitted.contains("const value = 1"), "{emitted}");
+        assert!(!emitted.starts_with('\u{feff}'));
+    }
     /// `WalkDestinations` is a served compatibility module (wave 3 walking),
     /// so WalkTo's `../../api/map/WalkDestinations.js` import resolves to the
     /// shim for every card and the upstream file is never loaded as a sibling

@@ -371,6 +371,7 @@ fn squire_stage_5_room_portrait() {
             }))
         }),
         squire_wait_tick_observer(),
+        None,
     )
     .unwrap();
 }

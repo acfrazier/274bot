@@ -10,8 +10,14 @@ use std::sync::Arc;
 #[test]
 #[cfg(target_pointer_width = "64")]
 fn guardian_per_bot_state_stays_inline_and_small() {
-    // Bounded box outcomes and the retained failure add 8 inline bytes to the 936-byte Guardian.
-    assert_eq!(std::mem::size_of::<Guardian>(), 944);
+    // The base Guardian is 944 bytes. The one `ActiveEvent` replaces the
+    // ownership cells and carries the family state of the work in flight
+    // (box, maze, mime, lamp redemption, flee, lost-tool recovery, plant
+    // probe, Ent latch) in one variant at a time, where the Guardian held
+    // each as a separate cell; the detector history and the episode key
+    // (session, family, generation) stay beside it. Together they take 240
+    // bytes less inline, with the test-only `last_inputs` record counted in.
+    assert_eq!(std::mem::size_of::<Guardian>(), 704);
 }
 
 fn cfg() -> ClientConfig {
@@ -1698,7 +1704,7 @@ fn evade_without_selected_content_detects_attacker_without_action_or_hold() {
         "unknown range must not issue a flee"
     );
     assert!(
-        !guardian.acting,
+        !guardian.acting(),
         "unknown range must not claim the action latch"
     );
     let state = guardian
@@ -5781,7 +5787,7 @@ fn maze_touches_the_shrine_and_the_hold_lifts_off_square() {
     let mut g = Guardian::new();
     let mut solve = maze::MazeSolve::new(vec![]);
     solve.phase = maze::MazePhase::Touch { pass: 0 };
-    g.maze = Some(solve);
+    g.maze_mut().solve = Some(solve);
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();
@@ -5898,3 +5904,5 @@ fn mime_return_reward_page_releases_guardian_before_inventory_tab_restoration() 
     assert!(!guardian.tick(&mut driver, &snap, &settings, 3, None).hold);
 }
 include!("random_ent_regressions.rs");
+
+include!("random_owner_tests.rs");

@@ -4105,7 +4105,7 @@ fn client_frame_kicks_guardian_after_drain() {
     let mut sends = 0u32;
     Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
     assert!(
-        slot.guardian.in_flight,
+        slot.guardian.in_flight(),
         "client_frame must run the guardian on a dialog NPC"
     );
     assert!(

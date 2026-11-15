@@ -28,6 +28,26 @@ use vault::{ProfileSettings, RandomEventPolicy};
 // `host::RandomClaim` / `host::DetectedRandom` / `host::RandomKind` here).
 pub use api::random::{DetectedRandom, RandomClaim, RandomKind};
 
+/// The identity of the script runtime that answers random-event claims. The
+/// claim source mints it from its own runtime bookkeeping; the host only keeps
+/// the identity a claim was made under and compares it with the current one.
+/// A runtime that stopped, failed or was replaced no longer owns its claim
+/// (design 3.3: "Script Pause, Stop, failure, replacement, or disappearance
+/// returns an ordinary script claim within one observation tick").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimRuntime {
+    slot: u64,
+    run: u64,
+}
+
+impl ClaimRuntime {
+    /// `slot` names the slot's script incarnation and `run` the runtime in
+    /// it. Equal pairs are the same runtime.
+    pub const fn new(slot: u64, run: u64) -> Self {
+        Self { slot, run }
+    }
+}
+
 /// Script claims have a rising-edge callback and optional live membership.
 /// Refreshing membership must not invoke a compiled script's callback.
 pub trait RandomClaimSource {
@@ -36,6 +56,13 @@ pub trait RandomClaimSource {
     /// `None` preserves the rising-edge claim. Load supplies its cached
     /// `ignoredRandoms()` membership without executing script code.
     fn current_claim(&mut self, _event: &DetectedRandom) -> Option<RandomClaim> {
+        None
+    }
+
+    /// The runtime that answers claims now; `None` when no runtime does (or
+    /// the source has no runtime identity, like a fixed callback). A claim
+    /// made under another runtime returns to the host without a callback.
+    fn runtime(&mut self) -> Option<ClaimRuntime> {
         None
     }
 }
@@ -941,7 +968,7 @@ fn is_trapped(kind: RandomKind) -> bool {
 /// exposes no owner or spawn generation, so every available structural field
 /// that matters to this interaction is revalidated before each step.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PlantActor {
+pub(crate) struct PlantActor {
     slot: usize,
     type_id: Option<usize>,
     name: String,

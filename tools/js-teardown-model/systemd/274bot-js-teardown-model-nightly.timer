@@ -1,0 +1,14 @@
+# Linux nightly host (user unit): start 274bot-js-teardown-model-nightly.service at 03:15
+# local time, after the 02:30 hold-model nightly on the same host. A missed run
+# is not made up at boot: the largest profile needs about 640 MB.
+# Install: ~/.config/systemd/user/274bot-js-teardown-model-nightly.timer
+[Unit]
+Description=274bot js-teardown-model nightly profile runs at 03:15
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=false
+Unit=274bot-js-teardown-model-nightly.service
+
+[Install]
+WantedBy=timers.target

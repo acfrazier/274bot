@@ -1,7 +1,38 @@
 // Generated from host verb tables — do not edit by hand.
-// Regen: cargo test -p script-js --test host_js regen_host_js -- --ignored
-// NativeTick Load is planned for a later release. JS API v2 is NativeApi (explicit export const apiVersion = 2).
+// NativeTick Load uses a checked `manifest` export.
 // Not a clone of rs2b0t-api.
+
+export type ScriptManifestCapability = 'host-packet-protocol';
+export type ScriptManifestSettingType = 'boolean' | 'number' | 'string' | 'string[]' | 'tile';
+export interface ScriptManifestTile {
+x: number;
+z: number;
+level: number;
+}
+export interface ScriptManifestSetting {
+type: ScriptManifestSettingType;
+default: boolean | number | string | readonly string[] | ScriptManifestTile;
+label?: string;
+min?: number;
+max?: number;
+options?: readonly string[];
+optionLabels?: Readonly<Record<string, string>>;
+group?: string;
+showIf?: { key: string; anyOf: readonly string[] };
+optionsFrom?: 'loadouts' | 'named-banks';
+help?: string;
+}
+export interface ScriptManifest {
+apiVersion: 2;
+name: string;
+version: string;
+author: string;
+description: string;
+category: string;
+tags: readonly string[];
+settings: Readonly<Record<string, ScriptManifestSetting>>;
+capabilities: readonly ScriptManifestCapability[];
+}
 
 /** Readonly raw i32 flags. at requires a finite integer index in [0, length). Negative and non-integers are undefined. */
 export interface CollisionFlagsView {
