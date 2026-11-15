@@ -556,3 +556,73 @@ fn a_content_window_runs_through_the_toggle_and_the_claim() {
     let out = state.publication();
     assert!(out.hold && out.acting && out.ours, "{}", state.describe());
 }
+
+/// A hostile actor that stays engaged while another event wins the detector
+/// keeps its identity and its budget: the clock runs through the overlap, and
+/// the returning actor whose budget ran out is detect-only (round-3 review
+/// probe `retained-evade-combat-probe.rs`). An actor with budget left is the
+/// host's flee again, with that budget and not a fresh one.
+#[test]
+fn a_retained_hostile_actor_keeps_its_budget_across_an_overlap() {
+    let profile = GuardianProfile::Ownership;
+    let wait = profile.bounds().wait as usize;
+    let overlap = GuardianStep::Overlap {
+        family: Family::Trap,
+        forced_host: false,
+    };
+    // The budget runs out during the overlap.
+    let mut spent = vec![appear(Family::Evade), tick(), overlap.clone()];
+    spent.extend(std::iter::repeat_n(tick(), wait));
+    spent.extend([GuardianStep::Return, tick()]);
+    let state = run_guardian_trace(profile, GuardianMutation::None, &spent).unwrap();
+    assert_eq!(state.event_id(), Some(0), "the same actor returns");
+    let out = state.publication();
+    assert!(
+        !out.ours && !out.hold && !out.acting,
+        "{}",
+        state.describe()
+    );
+    let caught =
+        run_guardian_trace(profile, GuardianMutation::RetainedClockLost, &spent).unwrap_err();
+    assert_eq!(caught.1.name, "actor-budget");
+    assert_eq!(caught.0, spent.len() - 1, "caught at the return's pass");
+    // A budget of four: two ticks of the overlap leave one tick after the
+    // first observation of the return, which publishes the actor ours; the
+    // next pass spends the budget. A fresh budget would run four more.
+    let nightly = GuardianProfile::Nightly;
+    assert_eq!(nightly.bounds().wait, 4);
+    let left = [
+        appear(Family::Evade),
+        tick(),
+        overlap,
+        tick(),
+        tick(),
+        GuardianStep::Return,
+    ];
+    let mut steps = left.to_vec();
+    steps.push(tick());
+    let state = run_guardian_trace(nightly, GuardianMutation::None, &steps).unwrap();
+    assert_eq!(state.retained_id(), None);
+    assert!(state.publication().ours, "{}", state.describe());
+    steps.push(tick());
+    let state = run_guardian_trace(nightly, GuardianMutation::None, &steps).unwrap();
+    let out = state.publication();
+    assert!(!out.ours && !out.hold, "{}", state.describe());
+    let caught =
+        run_guardian_trace(nightly, GuardianMutation::RetainedClockLost, &steps).unwrap_err();
+    assert_eq!(caught.1.name, "actor-budget");
+    // A retained actor observed gone does not come back.
+    let mut gone = left[..4].to_vec();
+    gone.extend([GuardianStep::RetainedGone, tick()]);
+    let state = run_guardian_trace(nightly, GuardianMutation::None, &gone).unwrap();
+    assert_eq!((state.event_id(), state.retained_id()), (Some(1), None));
+    assert!(
+        run_guardian_trace(
+            nightly,
+            GuardianMutation::None,
+            &[gone, vec![GuardianStep::Return]].concat()
+        )
+        .is_err(),
+        "nothing is retained to return"
+    );
+}

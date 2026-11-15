@@ -113,6 +113,8 @@ struct Rig {
     dirty: bool,
     /// The slot session the current Guardian was made for.
     session: u32,
+    /// The event slot of the hostile actor the model retains.
+    retained: Option<usize>,
 }
 
 impl Rig {
@@ -140,6 +142,7 @@ impl Rig {
         plant_player(&mut self.c, "Test", 0, 0);
         self.snap = GameSnapshot::new();
         self.session = 0;
+        self.retained = None;
         self.g = Guardian::new();
         self.drv = FakeDriver::default();
         self.settings = ProfileSettings::default();
@@ -199,6 +202,7 @@ impl Rig {
             unpublished: false,
             dirty: false,
             session: 0,
+            retained: None,
         }
     }
 
@@ -280,6 +284,11 @@ trait Fixture {
     fn ent_only(&self) -> bool {
         false
     }
+    /// The event moves the player to its own area (a teleport trap), out of
+    /// a hostile actor's chase range.
+    fn moves_player(&self) -> bool {
+        false
+    }
     fn install(&self, rig: &mut Rig, id: u8, forced_host: bool);
     fn remove(&self, rig: &mut Rig);
     fn chat_close(&self, _rig: &mut Rig) {}
@@ -337,6 +346,36 @@ const EVENT_SLOTS: [usize; 2] = [0, 1];
 const ENT_SLOT: usize = 8;
 const FISHING_SLOT: usize = 9;
 
+/// Remove the event-slot NPCs named `names` and keep every other one: a
+/// retained hostile actor in the other event slot stays when an overlapping
+/// event ends.
+fn remove_named(c: &mut Client, names: &[&str]) {
+    let slots: Vec<usize> = EVENT_SLOTS
+        .into_iter()
+        .filter(|&slot| {
+            c.npc
+                .get(slot)
+                .and_then(Option::as_ref)
+                .and_then(|npc| npc.r#type)
+                .and_then(|id| c.cache.npcs.get(id))
+                .is_some_and(|npc| names.contains(&npc.name.as_str()))
+        })
+        .collect();
+    remove_npcs(c, &slots);
+}
+
+/// The hostile actor between two swings: it no longer faces the player but
+/// keeps its combat state (the inter-swing snapshot of
+/// `random_tests.rs`'s chase regression). The raw detector does not select
+/// it, and the Guardian keeps it as an engaged, retained actor. The test
+/// client never advances `loop_cycle`, so the combat state lasts the trace.
+fn between_swings(rig: &mut Rig, slot: usize) {
+    let cycle = rig.c.loop_cycle;
+    let npc = rig.c.npc[slot].as_mut().expect("the retained actor");
+    npc.entity.face_entity = -1;
+    npc.entity.combat_cycle = cycle + 300;
+}
+
 // --- The families -----------------------------------------------------------
 
 struct DialogFx;
@@ -363,7 +402,7 @@ impl Fixture for DialogFx {
         open_chat(&mut rig.c);
     }
     fn remove(&self, rig: &mut Rig) {
-        remove_npcs(&mut rig.c, &EVENT_SLOTS);
+        remove_named(&mut rig.c, &["Genie", "Mysterious old man"]);
     }
     fn chat_close(&self, rig: &mut Rig) {
         close_chat(&mut rig.c);
@@ -476,6 +515,9 @@ impl Fixture for MazeFx {
     fn distinct_signatures(&self) -> bool {
         false
     }
+    fn moves_player(&self) -> bool {
+        true
+    }
     fn install(&self, rig: &mut Rig, _id: u8, _forced: bool) {
         plant_player(&mut rig.c, "Test", 2891, 4555);
     }
@@ -499,12 +541,16 @@ impl Fixture for MimeFx {
     fn distinct_signatures(&self) -> bool {
         false
     }
-    fn install(&self, rig: &mut Rig, _id: u8, _forced: bool) {
+    fn moves_player(&self) -> bool {
+        true
+    }
+    fn install(&self, rig: &mut Rig, id: u8, _forced: bool) {
         plant_player(&mut rig.c, "Test", 31 * 64, 74 * 64);
-        put_npc(&mut rig.c, 0, |c| plant_npc(c, 0, "Mime", -1, None));
+        let slot = usize::from(id);
+        put_npc(&mut rig.c, slot, |c| plant_npc(c, slot, "Mime", -1, None));
     }
     fn remove(&self, rig: &mut Rig) {
-        remove_npcs(&mut rig.c, &[0]);
+        remove_named(&mut rig.c, &["Mime"]);
         plant_player(&mut rig.c, "Test", 3222, 3222);
     }
 }
@@ -578,13 +624,14 @@ impl Fixture for PickFx {
     fn distinct_signatures(&self) -> bool {
         false
     }
-    fn install(&self, rig: &mut Rig, _id: u8, _forced: bool) {
-        put_npc(&mut rig.c, 0, |c| {
-            plant_npc_with_op(c, 0, "Strange plant", -1, Some("Pick Test!"), "Pick");
+    fn install(&self, rig: &mut Rig, id: u8, _forced: bool) {
+        let slot = usize::from(id);
+        put_npc(&mut rig.c, slot, |c| {
+            plant_npc_with_op(c, slot, "Strange plant", -1, Some("Pick Test!"), "Pick");
         });
     }
     fn remove(&self, rig: &mut Rig) {
-        remove_npcs(&mut rig.c, &[0]);
+        remove_named(&mut rig.c, &["Strange plant"]);
     }
 }
 
@@ -747,6 +794,7 @@ fn bounds_for(fx: &dyn Fixture) -> GuardianBounds {
         sessions: 2,
         ent: false,
         window: false,
+        retain: false,
         ent_hold: ENT_HOLD_TICKS,
     }
 }
@@ -809,7 +857,9 @@ fn deliver_late_results(rig: &mut Rig) {
 /// Apply one model step to the real Guardian. A fresh `Tick` runs one pass on a
 /// new observed game tick; `Frame` runs one on the same one. `cur` is the
 /// fixture that raised the event now standing; `Replace` removes it and raises
-/// `next` in its place. The Ent guard's steps plant and remove an Ent.
+/// `next` in its place. `Overlap` keeps the hostile actor standing between two
+/// swings and raises `next` beside it; `Return` removes `next` again. The Ent
+/// guard's steps plant and remove an Ent.
 fn drive(
     cur: &dyn Fixture,
     next: &dyn Fixture,
@@ -832,6 +882,22 @@ fn drive(
             next.install(rig, id, *forced_host);
         }
         GuardianStep::Disappear => cur.remove(rig),
+        GuardianStep::Overlap { forced_host, .. } => {
+            rig.dirty = true;
+            let slot = usize::from(model.retained_id().expect("the model retains the actor"));
+            between_swings(rig, slot);
+            rig.retained = Some(slot);
+            next.install(rig, id, *forced_host);
+        }
+        GuardianStep::Return => {
+            rig.retained = None;
+            cur.remove(rig);
+        }
+        GuardianStep::RetainedGone => {
+            let slot = rig.retained.take().expect("a retained actor");
+            // Observed removal: its slot now shows another NPC.
+            put_npc(&mut rig.c, slot, |c| plant_npc(c, slot, "Man", -1, None));
+        }
         GuardianStep::EntAppear => {
             rig.dirty = true;
             EntFx.install(rig, 0, false);
@@ -851,6 +917,9 @@ fn drive(
         GuardianStep::SetEnabled(enabled) => rig.settings.random_events = *enabled,
         GuardianStep::SessionReplace => {
             rig.session += 1;
+            // The new Guardian tracks no actor; the retained one stays in the
+            // world, unseen by its raw detector.
+            rig.retained = None;
             rig.g = Guardian::in_session(rig.session);
             rig.snap = GameSnapshot::new();
             rig.unpublished = true;
@@ -904,9 +973,11 @@ fn inputs_of(rig: &Rig, status: &RandomStatus) -> ModelInputs {
         dialog_in_flight: rig.g.in_flight(),
         solver_in_flight: rig.g.acting(),
         guard: active.is_some_and(|active| active.guard),
-        // Detected but not worked: the family gave up on it or the host parked
-        // it, which the model calls stalled.
-        stalled: rig.g.family().released() || (status.kind.is_some() && !inputs.detected_ours),
+        // The active event's family gave up on its episode: the model's stall.
+        // A detect-only event is `detected == false` and releases nothing: a
+        // dialog handle in flight beside a returning actor whose budget is
+        // spent still holds.
+        stalled: rig.g.family().released(),
         trapped: inputs.trapped,
     }
 }
@@ -1067,8 +1138,10 @@ fn replay_with(
                 .unwrap_or_else(|v| panic!("{}: the model fails {v:?} at {step:?}", first.name()));
         }
         drive(cur, second, rig, &model, step);
-        if matches!(step, GuardianStep::Replace { .. }) {
-            cur = second;
+        match step {
+            GuardianStep::Replace { .. } | GuardianStep::Overlap { .. } => cur = second,
+            GuardianStep::Return => cur = first,
+            _ => {}
         }
         done.push(step.clone());
         check_real(rig, step, &done);
@@ -1861,10 +1934,11 @@ fn overlap_traces(a: &dyn Fixture, b: &dyn Fixture) -> Vec<Vec<GuardianStep>> {
 }
 
 /// An event of one family replaced by an event of another, for every ordered
-/// pair of the ten event families. The model's `Replace` is the overlap: the
-/// old episode ends (or, for a dialog, finishes its handle) and the new one is
-/// the host's or a script's, never masked by the old. A family that needs
-/// detector history (lost gear) gets it before the trace.
+/// pair of the ten event families. The model's `Replace` removes the first
+/// event: the old episode ends (or, for a dialog, finishes its handle) and the
+/// new one is the host's or a script's, never masked by the old. A family that
+/// needs detector history (lost gear) gets it before the trace. An overlap
+/// that keeps the first actor is `a_retained_hostile_actor_overlapped_by_every_family_follows_the_model`.
 #[test]
 fn an_event_replaced_by_another_family_follows_the_model() {
     let fixtures = event_fixtures();
@@ -1891,6 +1965,196 @@ fn an_event_replaced_by_another_family_follows_the_model() {
     if data_available() {
         assert_eq!(pairs, 90, "every ordered pair of the ten event families");
     }
+}
+
+fn overlap_with(fx: &dyn Fixture) -> GuardianStep {
+    GuardianStep::Overlap {
+        family: fx.family(),
+        forced_host: false,
+    }
+}
+
+/// A hostile actor of `a` overlapped by an event of `b` while it stays
+/// engaged, and the same actor again when the overlap ends: with budget left,
+/// with the budget spent during the overlap (the round-3 review
+/// counterexample) or before it, under a script claim, when the actor is
+/// observed gone, and across a session replacement.
+///
+/// A trap that moves the player (maze, mime) takes the player out of the
+/// actor's chase range, which the content counts as outward progress
+/// (`Npc.ts:77-85,661-670`), so the real no-progress clock does not run during
+/// it; the model's clock is the no-progress worst case. Its traces return the
+/// actor before the model's budget runs out, or after it ran out before the
+/// overlap.
+fn retained_traces(a: &dyn Fixture, b: &dyn Fixture) -> Vec<Vec<GuardianStep>> {
+    let bound = usize::from(a.bound());
+    let ending = [GuardianStep::Return, tick(), tick()];
+    let mut left = vec![appear(a), tick(), tick(), overlap_with(b), tick(), tick()];
+    left.extend(ending.clone());
+    let mut before = vec![appear(a)];
+    before.extend(std::iter::repeat_n(tick(), bound + 1));
+    before.extend([overlap_with(b), tick(), tick()]);
+    before.extend(ending.clone());
+    let mut traces = vec![
+        left,
+        before,
+        vec![
+            GuardianStep::ScriptStart {
+                wants: true,
+                live: false,
+            },
+            appear(a),
+            tick(),
+            overlap_with(b),
+            tick(),
+            GuardianStep::Return,
+            tick(),
+            tick(),
+        ],
+        vec![
+            appear(a),
+            tick(),
+            overlap_with(b),
+            tick(),
+            GuardianStep::RetainedGone,
+            tick(),
+            GuardianStep::Disappear,
+            tick(),
+        ],
+        vec![
+            appear(a),
+            tick(),
+            overlap_with(b),
+            tick(),
+            GuardianStep::SessionReplace,
+            tick(),
+            tick(),
+            GuardianStep::Disappear,
+            tick(),
+        ],
+    ];
+    if !b.moves_player() {
+        let mut during = vec![appear(a)];
+        during.extend(std::iter::repeat_n(tick(), bound - 1));
+        during.extend([overlap_with(b), tick(), tick()]);
+        during.extend(ending);
+        traces.push(during);
+    }
+    traces
+}
+
+/// A hostile actor that stays engaged while an event of each other family wins
+/// the detector keeps its identity and its escape clock: the model's `Overlap`
+/// and `Return` against the real Guardian's retained actor.
+#[test]
+fn a_retained_hostile_actor_overlapped_by_every_family_follows_the_model() {
+    if !data_available() {
+        return;
+    }
+    let fixtures = event_fixtures();
+    let a = &EvadeFx;
+    let mut rig = Rig::new(real_data());
+    let mut families = 0;
+    for b in &fixtures {
+        if b.name() == a.name() {
+            continue;
+        }
+        families += 1;
+        for steps in retained_traces(a, b.as_ref()) {
+            for fx in &fixtures {
+                fx.remove(&mut rig);
+            }
+            clear_inv(&mut rig.c);
+            rig.dirty = false;
+            rig.reset_pair(a, b.as_ref());
+            replay_mixed(&mut rig, a, b.as_ref(), &steps, true);
+        }
+    }
+    assert_eq!(families, 9, "the hostile actor against every other family");
+}
+
+/// Round-3 review probe (`review-r3-sol/retained-evade-combat-probe.rs`): the
+/// River troll stays in its slot between two swings while a held Strange box
+/// wins the detector. Its original escape budget runs out during the box, and
+/// the returning troll is detect-only. The model maps the box to `Overlap` and
+/// its end to `Return`: the same actor with its clock, not a new one.
+#[test]
+fn review_retained_evade_budget_survives_a_box_overlap_with_combat_evidence() {
+    if !data_available() {
+        return;
+    }
+    let mut rig = Rig::new(real_data());
+    let mut model = model_for(&EvadeFx);
+    let mut trace = Vec::new();
+    let mut advance = |rig: &mut Rig, model: &mut GuardianState, step: GuardianStep| {
+        model.apply(&step).expect("enabled model step");
+        model.check().expect("chosen model invariants");
+        trace.push(step.clone());
+        if matches!(step, GuardianStep::Tick { .. }) {
+            rig.pass(true);
+        }
+        assert_same(model, rig, &step, &trace);
+    };
+    EvadeFx.install(&mut rig, 0, false);
+    advance(&mut rig, &mut model, appear(&EvadeFx));
+    for _ in 0..8 {
+        advance(&mut rig, &mut model, tick());
+    }
+    // Existing production regressions use this inter-swing snapshot: no face
+    // target but retained combat evidence. The actor remains engaged for the
+    // Guardian's fallback, and the box now wins the raw detector.
+    between_swings(&mut rig, 0);
+    BoxFx.install(&mut rig, 1, false);
+    advance(&mut rig, &mut model, overlap_with(&BoxFx));
+    advance(&mut rig, &mut model, tick());
+    advance(&mut rig, &mut model, tick());
+    assert_eq!(rig.last.kind, Some(RandomKind::Box));
+    assert!(rig.g.evade.as_ref().expect("the retained troll").gave_up);
+    assert_eq!(model.retained_id(), Some(0));
+    BoxFx.remove(&mut rig);
+    // The detector again selects the same retained troll.
+    advance(&mut rig, &mut model, GuardianStep::Return);
+    advance(&mut rig, &mut model, tick());
+    assert_eq!(rig.last.kind, Some(RandomKind::Evade));
+    assert_eq!(model.event_id(), Some(0), "the same actor returns");
+    assert!(!rig.last.ours && !model.publication().ours);
+}
+
+/// The round-3 defect seeded back into the model (`RetainedClockLost`: the
+/// returning actor opens a fresh budget). Replayed against the real Guardian,
+/// the comparison catches it; with the model's invariants on, its
+/// `actor-budget` invariant catches it first.
+#[test]
+fn a_model_that_loses_the_retained_clock_fails_the_replay() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    if !data_available() {
+        return;
+    }
+    let steps = retained_traces(&EvadeFx, &BoxFx)
+        .pop()
+        .expect("the budget runs out during the overlap");
+    let mut rig = Rig::new(real_data());
+    for (check_model, expected) in [(false, "vs real"), (true, "actor-budget")] {
+        rig.reset_pair(&EvadeFx, &BoxFx);
+        let failure = catch_unwind(AssertUnwindSafe(|| {
+            replay_with(
+                &mut rig,
+                &EvadeFx,
+                &BoxFx,
+                &steps,
+                GuardianMutation::RetainedClockLost,
+                check_model,
+            );
+        }))
+        .expect_err("the seeded model must fail");
+        let message = failure
+            .downcast_ref::<String>()
+            .expect("a formatted panic message");
+        assert!(message.contains(expected), "{expected}: {message}");
+    }
+    // The unseeded model replays the same trace.
+    rig.reset_pair(&EvadeFx, &BoxFx);
+    replay_mixed(&mut rig, &EvadeFx, &BoxFx, &steps, true);
 }
 
 /// The Ent guard overlapping an event of each family: the guard first or the

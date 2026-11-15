@@ -49,6 +49,12 @@ pub enum Family {
     /// `macro_events.rs2:36`). A stun blocks the walk at the server
     /// (`movecheck.rs2:1-6`) and spends nothing. A spent budget makes the
     /// episode detect-only for any owner until the actor is gone.
+    ///
+    /// The budget belongs to the actor, not to the selection. An actor that
+    /// stays engaged while another event wins the detector is retained with
+    /// its identity, and its clock keeps running through the overlap; when
+    /// the overlap ends it is the event again with the budget it has left
+    /// (`GuardianStep::Overlap`, `GuardianStep::Return`).
     Evade,
     /// A trap square: the hold follows the detection while the host walks out;
     /// a bounded number of solver ticks gives the visit up.
@@ -68,12 +74,6 @@ impl Family {
     /// One operation in flight and a bounded wait for its outcome.
     fn is_solver(self) -> bool {
         matches!(self, Self::Solver | Self::Evade | Self::Window)
-    }
-
-    /// The family's wait is the content's clock of the episode, not the
-    /// host's passes.
-    fn has_clock(self) -> bool {
-        matches!(self, Self::Evade | Self::Window)
     }
 }
 
@@ -151,11 +151,17 @@ pub enum GuardianMutation {
     /// it (round-2 review probe: a compiled script that never claims the event
     /// keeps its predecessor's `Handle`).
     ClaimKeptAcrossRuntime,
+    /// A retained hostile actor loses its identity and its clock across an
+    /// overlapping event: on its return it opens a fresh budget (round-3
+    /// review probe `retained-evade-combat-probe.rs`: the actor's original
+    /// budget ran out during the overlap, and the real Guardian publishes it
+    /// detect-only).
+    RetainedClockLost,
 }
 
 impl GuardianMutation {
     /// Every mutation, with the invariant that must catch it.
-    pub const ALL: [(Self, &'static str); 25] = [
+    pub const ALL: [(Self, &'static str); 26] = [
         (Self::StuckGathererHold, "toggle-off-publishes"),
         (Self::StalledHolds, "stalled-hold"),
         (Self::FleeInterrupted, "wait-early"),
@@ -190,6 +196,7 @@ impl GuardianMutation {
         (Self::DuplicateOpOnReclaim, "duplicate-op"),
         (Self::SuccessorCallbackReplay, "duplicate-callback"),
         (Self::ClaimKeptAcrossRuntime, "stale-runtime"),
+        (Self::RetainedClockLost, "actor-budget"),
     ];
 }
 
@@ -209,6 +216,11 @@ pub struct GuardianBounds {
     /// leaves it out to stay inside the profile caps: its publications are a
     /// solver's, and `c6-ownership` explores it.
     pub window: bool,
+    /// The alphabet carries the retained-actor overlap (`Overlap`, `Return`,
+    /// `RetainedGone`). The seat composition leaves it out to stay inside
+    /// the profile caps: a returning actor's publications are an Evade's, and
+    /// `c6-ownership` and the nightly profile explore it.
+    pub retain: bool,
     /// Fresh ticks the Ent guard may hold (the content gives an Ent 60
     /// ticks; profiles bound it like a wait).
     pub ent_hold: u8,
@@ -252,12 +264,17 @@ struct Active {
     stale: bool,
 }
 
-/// The content clock of the observed episode of a clock family: fresh ticks
-/// since its first observation that spend it (`spent`), and whether one of
-/// them was a tick the server blocked (`blocked`, only under the
-/// `FleeInterrupted` mutation). It is the Guardian's tracking of the world,
-/// not host work. `rearmed`: the operator's toggle-off re-armed a spent
-/// Window, and the next host begin opens a new window.
+/// A content clock of a clock family: fresh ticks since the first observation
+/// that spend it (`spent`), and whether one of them was a tick the server
+/// blocked (`blocked`, only under the `FleeInterrupted` mutation). It is the
+/// Guardian's tracking of the world, not host work. `rearmed`: the operator's
+/// toggle-off re-armed a spent Window, and the next host begin opens a new
+/// window.
+///
+/// The Guardian keeps one clock per clock family: a hostile actor's escape
+/// clock (the observed actor's, or the retained one's while another event is
+/// current) and the observed Window's. A lost tool can overlap a retained
+/// actor, so the two never share one clock.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct EpisodeClock {
     id: u8,
@@ -270,6 +287,30 @@ impl EpisodeClock {
     /// The spent ticks that could make progress.
     fn unblocked(self) -> u8 {
         self.spent.saturating_sub(u8::from(self.blocked))
+    }
+
+    /// One fresh tick of the clock of episode `id`. The first observation
+    /// opens it; a tick that `counts` spends it, up to `limit`; `blocked`
+    /// marks a counted tick the server blocked.
+    fn advance(previous: Option<Self>, id: u8, counts: bool, blocked: bool, limit: u8) -> Self {
+        match previous {
+            Some(clock) if clock.id == id => Self {
+                id,
+                spent: if counts {
+                    clock.spent.saturating_add(1).min(limit)
+                } else {
+                    clock.spent
+                },
+                blocked: clock.blocked || (counts && blocked),
+                rearmed: clock.rearmed,
+            },
+            _ => Self {
+                id,
+                spent: 0,
+                blocked: false,
+                rearmed: false,
+            },
+        }
     }
 }
 
@@ -353,6 +394,21 @@ pub enum GuardianStep {
         blocked: bool,
     },
     Frame,
+    /// Another event wins the detector while the hostile actor that is the
+    /// event stays engaged (it keeps its combat state between swings): the
+    /// Guardian retains that actor, with its identity and its escape clock.
+    /// The other event is a new episode. The real Guardian tracks one hostile
+    /// actor, so the other event is never an Evade.
+    Overlap {
+        family: Family,
+        forced_host: bool,
+    },
+    /// The overlapping event ends, and the retained actor is the event
+    /// again: the same episode, with the budget it has left.
+    Return,
+    /// The retained actor is observed gone while the overlapping event
+    /// stands.
+    RetainedGone,
     /// An Ent stands in the world. It is host work with no detected event.
     EntAppear,
     /// The Ent is gone (the tree reverted).
@@ -372,6 +428,10 @@ pub struct GuardianState {
     /// The event as the last fresh pass saw it: a repeated frame polls the
     /// same snapshot and cannot see a later change.
     observed: Option<Event>,
+    /// A hostile actor the Guardian retains while another event is the
+    /// detected one (the real `Guardian::evade` track). It is never the
+    /// detected event; `Return` makes it that again.
+    retained: Option<Event>,
     /// An Ent stands in the world, and as the last fresh pass saw it.
     ent_world: bool,
     ent_observed: bool,
@@ -385,9 +445,16 @@ pub struct GuardianState {
     last_sig: Option<u8>,
     knocks: u8,
     active: Option<Active>,
-    clock: Option<EpisodeClock>,
+    /// The escape clock of the observed or retained hostile actor.
+    evade_clock: Option<EpisodeClock>,
+    /// The content window of the observed Window episode.
+    window_clock: Option<EpisodeClock>,
     ent: EntLatch,
     stale_hold: bool,
+    /// Monitor: the fresh ticks that could progress since this session first
+    /// observed the hostile actor that is the event or is retained. It is
+    /// the spec of the actor's budget, kept apart from the Guardian's clock.
+    actor_budget: Option<EpisodeClock>,
     // What the last pass published.
     out: Publication,
     emitted: bool,
@@ -408,6 +475,7 @@ impl GuardianState {
             enabled: true,
             event: None,
             observed: None,
+            retained: None,
             ent_world: false,
             ent_observed: false,
             script: Script::Stopped,
@@ -419,9 +487,11 @@ impl GuardianState {
             last_sig: None,
             knocks: 0,
             active: None,
-            clock: None,
+            evade_clock: None,
+            window_clock: None,
             ent: EntLatch::Absent,
             stale_hold: false,
+            actor_budget: None,
             out: Publication::default(),
             emitted: false,
             resolved_now: false,
@@ -489,6 +559,11 @@ impl GuardianState {
     /// The episode id of the detected event.
     pub fn event_id(&self) -> Option<u8> {
         self.event.map(|event| event.id)
+    }
+
+    /// The episode id of the retained hostile actor.
+    pub fn retained_id(&self) -> Option<u8> {
+        self.retained.map(|event| event.id)
     }
 
     fn owner(&self) -> Owner {
@@ -609,12 +684,54 @@ impl GuardianState {
                     forced_host: *forced_host,
                 });
                 self.next_id += 1;
+                // The Guardian tracks one hostile actor: a new attacker's
+                // track takes the place of a retained one.
+                if *family == Family::Evade {
+                    self.retained = None;
+                }
             }
             GuardianStep::Disappear => {
                 if self.event.is_none() {
                     return Err("no event".into());
                 }
+                if self.retained.is_some() {
+                    return Err("the overlap ends with the retained actor's return".into());
+                }
                 self.event = None;
+            }
+            GuardianStep::Overlap {
+                family,
+                forced_host,
+            } => {
+                // The Guardian retains an actor it has tracked: one a fresh
+                // pass of this session observed as the event.
+                let Some(actor) = self
+                    .event
+                    .filter(|event| event.family == Family::Evade && self.observed == Some(*event))
+                else {
+                    return Err("no observed hostile actor to retain".into());
+                };
+                if *family == Family::Evade || self.next_id >= self.bounds.ids {
+                    return Err("the other event is an Evade or the ids are spent".into());
+                }
+                self.retained = Some(actor);
+                self.event = Some(Event {
+                    id: self.next_id,
+                    family: *family,
+                    forced_host: *forced_host,
+                });
+                self.next_id += 1;
+            }
+            GuardianStep::Return => {
+                let Some(actor) = self.retained.take() else {
+                    return Err("no retained actor".into());
+                };
+                self.event = Some(actor);
+            }
+            GuardianStep::RetainedGone => {
+                if self.retained.take().is_none() {
+                    return Err("no retained actor".into());
+                }
             }
             GuardianStep::ScriptStart { wants, live } => {
                 if self.script != Script::Stopped {
@@ -680,11 +797,16 @@ impl GuardianState {
                 self.chat_open = false;
                 // The new session's snapshot has not seen the world yet, and
                 // the new Guardian has tracked nothing: no signature, no
-                // callback, no clock.
+                // callback, no clock, no retained actor. A retained actor no
+                // longer faces the player, so the raw detector of the new
+                // Guardian does not see it.
                 self.observed = None;
+                self.retained = None;
                 self.last_sig = None;
                 self.knocks = 0;
-                self.clock = None;
+                self.evade_clock = None;
+                self.window_clock = None;
+                self.actor_budget = None;
                 self.ent_observed = false;
                 self.ent = EntLatch::Absent;
             }
@@ -1021,7 +1143,7 @@ impl GuardianState {
                 if let Some(active) = self.active.as_mut() {
                     active.phase = Phase::Idle;
                 }
-                if let Some(clock) = self.clock.as_mut() {
+                if let Some(clock) = self.window_clock.as_mut() {
                     clock.rearmed = true;
                 }
                 self.settle();
@@ -1215,15 +1337,22 @@ impl GuardianState {
     }
 
     /// The host begins the work of `event`. A spent Evade budget is not
-    /// begun again. A Window keeps the loss's first observation: a host that
-    /// begins after it closed finds no head to wait for and lets go at once,
-    /// unless the operator re-armed it.
+    /// begun again: the episode is detect-only (a returning retained actor
+    /// whose budget ran out while another episode's work was in place gets
+    /// its stall here). A Window keeps the loss's first observation: a host
+    /// that begins after it closed finds no head to wait for and lets go at
+    /// once, unless the operator re-armed it.
     fn begin(&mut self, event: Event) {
         if self.evade_exhausted() {
+            let unblocked = self.evade_clock.map_or(0, EpisodeClock::unblocked);
+            self.exhaust(event, unblocked);
             return;
         }
         if event.family == Family::Window
-            && let Some(clock) = self.clock.as_mut().filter(|clock| clock.id == event.id)
+            && let Some(clock) = self
+                .window_clock
+                .as_mut()
+                .filter(|clock| clock.id == event.id)
             && clock.rearmed
         {
             clock.spent = 0;
@@ -1238,43 +1367,34 @@ impl GuardianState {
         }
     }
 
-    /// The content clock of the observed episode of a clock family. It runs on
-    /// every fresh tick after the first observation, whoever owns the event
-    /// and whatever the toggle says. A spent Evade budget releases the
-    /// episode for any owner.
+    /// The content clocks. They run on every fresh tick after the first
+    /// observation, whoever owns the event and whatever the toggle says. The
+    /// escape clock follows the hostile actor through an overlap: the observed
+    /// actor's, or the retained one's while another event is the detected
+    /// one. A spent Evade budget releases the observed episode for any owner.
     fn content_clock(&mut self, blocked: bool) {
-        let Some(event) = self.observed.filter(|event| event.family.has_clock()) else {
-            self.clock = None;
-            return;
-        };
         let limit = self.bounds.wait;
-        let clock = match self.clock {
-            Some(clock) if clock.id == event.id => {
-                let window = event.family == Family::Window;
-                let counts =
-                    !blocked || window || self.mutation == GuardianMutation::FleeInterrupted;
-                EpisodeClock {
-                    id: event.id,
-                    spent: if counts {
-                        clock.spent.saturating_add(1).min(limit)
-                    } else {
-                        clock.spent
-                    },
-                    blocked: clock.blocked || (counts && blocked && !window),
-                    rearmed: clock.rearmed,
-                }
-            }
-            // The first observation of the episode.
-            _ => EpisodeClock {
-                id: event.id,
-                spent: 0,
-                blocked: false,
-                rearmed: false,
-            },
-        };
-        self.clock = Some(clock);
-        if self.evade_exhausted() {
-            self.exhaust(event, clock.unblocked());
+        let counts = !blocked || self.mutation == GuardianMutation::FleeInterrupted;
+        let observed_actor = self.observed.filter(|event| event.family == Family::Evade);
+        let retained = self
+            .retained
+            .filter(|_| self.mutation != GuardianMutation::RetainedClockLost);
+        self.evade_clock = observed_actor
+            .or(retained)
+            .map(|actor| EpisodeClock::advance(self.evade_clock, actor.id, counts, blocked, limit));
+        // The spec of the same actor's budget, whatever the Guardian keeps.
+        self.actor_budget = observed_actor.or(self.retained).map(|actor| {
+            EpisodeClock::advance(self.actor_budget, actor.id, !blocked, false, limit)
+        });
+        self.window_clock = self
+            .observed
+            .filter(|event| event.family == Family::Window)
+            .map(|window| EpisodeClock::advance(self.window_clock, window.id, true, false, limit));
+        if let Some(actor) = observed_actor
+            && self.evade_exhausted()
+        {
+            let unblocked = self.evade_clock.map_or(0, EpisodeClock::unblocked);
+            self.exhaust(actor, unblocked);
         }
     }
 
@@ -1283,14 +1403,14 @@ impl GuardianState {
         self.observed.is_some_and(|event| {
             event.family == Family::Evade
                 && self
-                    .clock
+                    .evade_clock
                     .is_some_and(|clock| clock.id == event.id && clock.spent >= self.bounds.wait)
         })
     }
 
     /// The Window of episode `id` has closed.
     fn window_closed(&self, id: u8) -> bool {
-        self.clock
+        self.window_clock
             .is_some_and(|clock| clock.id == id && clock.spent >= self.bounds.wait)
     }
 
@@ -1503,6 +1623,24 @@ impl GuardianState {
             }
         }
         if self.settled {
+            // Spec: the escape budget belongs to the actor. An actor whose
+            // budget this session has spent, also while it was retained under
+            // another event, is never published as ours.
+            if self.out.ours
+                && let Some(budget) = self.actor_budget
+                && budget.spent >= self.bounds.wait
+                && self
+                    .observed
+                    .is_some_and(|event| event.family == Family::Evade && event.id == budget.id)
+            {
+                return fail(
+                    "actor-budget",
+                    format!(
+                        "hostile actor {} spent its budget of {} ticks but is published ours",
+                        budget.id, self.bounds.wait
+                    ),
+                );
+            }
             if self.script != Script::Running && self.out.claim_script {
                 return fail(
                     "owner-without-script",
@@ -1557,15 +1695,18 @@ impl GuardianState {
 
     pub fn describe(&self) -> String {
         format!(
-            "event={:?} ent={:?}/{:?} script={:?} enabled={} session={} active={:?} clock={:?} out={:?} knocks={}",
+            "event={:?} retained={:?} ent={:?}/{:?} script={:?} enabled={} session={} active={:?} evade_clock={:?} window_clock={:?} actor_budget={:?} out={:?} knocks={}",
             self.event,
+            self.retained,
             self.ent_world,
             self.ent,
             self.script,
             self.enabled,
             self.session,
             self.active,
-            self.clock,
+            self.evade_clock,
+            self.window_clock,
+            self.actor_budget,
             self.out,
             self.knocks
         )
@@ -1602,6 +1743,17 @@ fn alphabet(state: &GuardianState) -> Vec<GuardianStep> {
         });
     }
     out.push(GuardianStep::Disappear);
+    if state.bounds.retain {
+        for &(family, forced_host) in families.iter().chain(window) {
+            if family != Family::Evade {
+                out.push(GuardianStep::Overlap {
+                    family,
+                    forced_host,
+                });
+            }
+        }
+        out.extend([GuardianStep::Return, GuardianStep::RetainedGone]);
+    }
     for wants in [false, true] {
         for live in [false, true] {
             out.push(GuardianStep::ScriptStart { wants, live });
@@ -1684,6 +1836,7 @@ impl GuardianProfile {
                 sessions: 2,
                 ent: false,
                 window: true,
+                retain: true,
                 ent_hold: 2,
             },
             Self::OwnershipSeat => GuardianBounds {
@@ -1692,6 +1845,7 @@ impl GuardianProfile {
                 sessions: 2,
                 ent: false,
                 window: false,
+                retain: false,
                 ent_hold: 2,
             },
             Self::OwnershipEnt => GuardianBounds {
@@ -1700,6 +1854,7 @@ impl GuardianProfile {
                 sessions: 2,
                 ent: true,
                 window: false,
+                retain: false,
                 ent_hold: 2,
             },
             Self::Nightly => GuardianBounds {
@@ -1708,6 +1863,7 @@ impl GuardianProfile {
                 sessions: 3,
                 ent: false,
                 window: true,
+                retain: true,
                 ent_hold: 4,
             },
         }

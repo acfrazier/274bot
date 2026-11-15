@@ -262,6 +262,7 @@ fn bounds() -> GuardianBounds {
         sessions: 1,
         ent: false,
         window: false,
+        retain: false,
         ent_hold: 2,
     }
 }
