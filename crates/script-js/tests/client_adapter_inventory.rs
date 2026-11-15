@@ -135,6 +135,7 @@ fn tick_probe(
 ) -> serde_json::Value {
     post_snapshot_input(iso, snap);
     iso.on_game_tick(tick);
+    let _ = iso.probe("true");
     iso.probe(expr).expect("read client adapter probe result")
 }
 

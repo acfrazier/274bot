@@ -974,12 +974,8 @@ mod tests {
         }
     }
 
-    #[expect(
-        clippy::large_types_passed_by_value,
-        reason = "forward the owned input to the value-taking wire encoder without copying it"
-    )]
-    fn observe(input: SnapshotInput<'_>, native: NativeFactsInput<'_>) {
-        let bytes = encode_snapshot_with_native(&input, native);
+    fn observe(input: &SnapshotInput<'_>, native: &NativeFactsInput<'_>) {
+        let bytes = encode_snapshot_with_native(input, *native);
         let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         on_snapshot(&snap);
     }
@@ -1103,8 +1099,8 @@ mod tests {
         on_reset();
         let a = begin();
         observe(
-            empty_input(1),
-            facts(
+            &empty_input(1),
+            &facts(
                 // Any id but A's: the shared token counter is process-wide, so a fixed id can collide.
                 terminal(4, a.wrapping_add(1), true, "", &[]),
                 RouteInspectTerminalInput::default(),
@@ -1126,8 +1122,8 @@ mod tests {
         let b = begin();
         let hop_a = hop("Captain Barnaby", 381);
         observe(
-            empty_input(2),
-            facts(
+            &empty_input(2),
+            &facts(
                 terminal(1, a, true, "", std::slice::from_ref(&hop_a)),
                 RouteInspectTerminalInput::default(),
                 b,
@@ -1143,8 +1139,8 @@ mod tests {
         assert!(!settled(b), "begin(C) must not stale running B");
         let hop_b = hop("Seaman Thresnor", 378);
         observe(
-            empty_input(3),
-            facts(
+            &empty_input(3),
+            &facts(
                 terminal(2, b, true, "", std::slice::from_ref(&hop_b)),
                 terminal(1, a, true, "", std::slice::from_ref(&hop_a)),
                 0,
@@ -1166,8 +1162,8 @@ mod tests {
         let b = begin();
         let c = begin();
         observe(
-            empty_input(2),
-            facts(
+            &empty_input(2),
+            &facts(
                 terminal(1, b, false, "stale", &[]),
                 RouteInspectTerminalInput::default(),
                 a,
@@ -1191,8 +1187,8 @@ mod tests {
         let hop_a = hop("Captain Barnaby", 381);
         let hop_c = hop("Seaman Thresnor", 378);
         observe(
-            empty_input(2),
-            facts(
+            &empty_input(2),
+            &facts(
                 terminal(2, c, true, "", std::slice::from_ref(&hop_c)),
                 terminal(1, a, true, "", std::slice::from_ref(&hop_a)),
                 0,
@@ -1209,8 +1205,8 @@ mod tests {
             json!({ "x": 2698, "z": 3206, "level": 0 })
         );
         observe(
-            empty_input(3),
-            facts(
+            &empty_input(3),
+            &facts(
                 terminal(3, 9, false, "NoPath", &[]),
                 terminal(2, c, true, "", std::slice::from_ref(&hop_c)),
                 0,
@@ -1269,8 +1265,8 @@ mod tests {
         on_reset();
         let leftover = hop("Captain Barnaby", 381);
         observe(
-            empty_input(1),
-            facts(
+            &empty_input(1),
+            &facts(
                 terminal(4, 4, true, "", std::slice::from_ref(&leftover)),
                 RouteInspectTerminalInput::default(),
                 0,
@@ -1335,8 +1331,8 @@ mod tests {
         on_reset();
         let token = begin();
         observe(
-            empty_input(2),
-            NativeFactsInput {
+            &empty_input(2),
+            &NativeFactsInput {
                 walk_outcome_seq: 1,
                 walk_outcome_request_id: token,
                 walk_outcome_failed: true,
@@ -1351,8 +1347,8 @@ mod tests {
         on_reset();
         let hop_a = hop("Captain Barnaby", 381);
         observe(
-            empty_input(1),
-            facts(
+            &empty_input(1),
+            &facts(
                 terminal(2, 11, true, "", std::slice::from_ref(&hop_a)),
                 terminal(1, 10, true, "", &[]),
                 0,
@@ -1367,8 +1363,8 @@ mod tests {
         assert_eq!(first.1, 1);
         assert!(take_pending_ack().is_none());
         observe(
-            empty_input(2),
-            facts(
+            &empty_input(2),
+            &facts(
                 terminal(2, 11, true, "", std::slice::from_ref(&hop_a)),
                 terminal(1, 10, true, "", &[]),
                 0,
@@ -1495,8 +1491,8 @@ mod tests {
         on_reset();
         let token = begin();
         observe(
-            empty_input(1),
-            facts_with(
+            &empty_input(1),
+            &facts_with(
                 RouteInspectTerminalInput::default(),
                 RouteInspectTerminalInput::default(),
                 0,
@@ -1519,8 +1515,8 @@ mod tests {
     fn last_seen_unobserved_full_stales_begin_without_queue() {
         on_reset();
         observe(
-            empty_input(1),
-            facts_with(
+            &empty_input(1),
+            &facts_with(
                 terminal(2, 11, false, "NoPath", &[]),
                 terminal(1, 10, false, "NoPath", &[]),
                 0,

@@ -389,12 +389,8 @@ mod tests {
         }
     }
 
-    #[expect(
-        clippy::large_types_passed_by_value,
-        reason = "forward the owned input to the value-taking wire encoder without copying it"
-    )]
-    fn observe(input: SnapshotInput<'_>, native: NativeFactsInput<'_>) {
-        let bytes = encode_snapshot_with_native(&input, native);
+    fn observe(input: &SnapshotInput<'_>, native: &NativeFactsInput<'_>) {
+        let bytes = encode_snapshot_with_native(input, *native);
         let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         post(&snap);
     }
@@ -463,7 +459,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 1, token, 2820, 3556, 0, 1, false));
+        observe(&input, &fail_native(1, 1, token, 2820, 3556, 0, 1, false));
         assert!(settled(token));
         assert!(!value(token));
     }
@@ -508,7 +504,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(failed, fail_native(1, 1, token, 2820, 3556, 0, 1, false));
+        observe(&failed, &fail_native(1, 1, token, 2820, 3556, 0, 1, false));
 
         let mut arrived = empty_input(3);
         arrived.here = Some(TileInput {
@@ -516,7 +512,7 @@ mod tests {
             z: 3556,
             level: 0,
         });
-        observe(arrived, NativeFactsInput::default());
+        observe(&arrived, &NativeFactsInput::default());
 
         assert!(settled(token));
         assert!(
@@ -535,7 +531,7 @@ mod tests {
             z: 3556,
             level: 0,
         });
-        observe(input, NativeFactsInput::default());
+        observe(&input, &NativeFactsInput::default());
         assert!(settled(token));
         assert!(value(token));
     }
@@ -550,7 +546,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, NativeFactsInput::default());
+        observe(&input, &NativeFactsInput::default());
         assert!(!settled(token));
         assert!(!value(token));
     }
@@ -565,7 +561,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 1, 1, 3200, 3200, 0, 1, false));
+        observe(&input, &fail_native(1, 1, 1, 3200, 3200, 0, 1, false));
         assert!(!settled(token));
     }
 
@@ -578,7 +574,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(4, 4, 4, 2820, 3556, 0, 1, false));
+        observe(&input, &fail_native(4, 4, 4, 2820, 3556, 0, 1, false));
         let token = begin(2820, 3556, 0, 1, false);
         assert!(
             !settled(token),
@@ -597,7 +593,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 1, first, 2820, 3556, 0, 1, false));
+        observe(&input, &fail_native(1, 1, first, 2820, 3556, 0, 1, false));
         assert!(!settled(first));
         assert!(!settled(second));
         assert!(!value(first));
@@ -615,7 +611,7 @@ mod tests {
             z: 3556,
             level: 0,
         });
-        observe(input, fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
+        observe(&input, &fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
         assert!(!settled(token));
         assert!(!value(token));
     }
@@ -630,7 +626,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(later, fail_native(2, 5, 5, 2820, 3556, 0, 1, false));
+        observe(&later, &fail_native(2, 5, 5, 2820, 3556, 0, 1, false));
         assert!(
             !settled(token),
             "late same-target NoPath for a different request id must not settle"
@@ -641,7 +637,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(newer, fail_native(3, 6, token, 2820, 3556, 0, 1, false));
+        observe(&newer, &fail_native(3, 6, token, 2820, 3556, 0, 1, false));
         assert!(settled(token));
         assert!(!value(token));
     }
@@ -656,7 +652,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 0, 0, 2820, 3556, 0, 1, false));
+        observe(&input, &fail_native(1, 0, 0, 2820, 3556, 0, 1, false));
         assert!(
             !settled(token),
             "request id 0 is not a correlated isolate wait"
@@ -688,7 +684,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(input, fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
+        observe(&input, &fail_native(1, 1, 1, 2820, 3556, 0, 1, false));
         let token = begin(2820, 3556, 0, 1, false);
         assert!(
             !settled(token),
@@ -706,7 +702,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(prior, fail_native(1, 1, first, 2820, 3556, 0, 1, false));
+        observe(&prior, &fail_native(1, 1, first, 2820, 3556, 0, 1, false));
         on_reset();
         let second = begin(2820, 3556, 0, 1, false);
         assert_ne!(
@@ -719,7 +715,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(late, fail_native(2, 1, first, 2820, 3556, 0, 1, false));
+        observe(&late, &fail_native(2, 1, first, 2820, 3556, 0, 1, false));
         assert!(
             !settled(second),
             "late old-worker request id must not settle a post-reset wait"
@@ -730,7 +726,10 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(matched, fail_native(3, 2, second, 2820, 3556, 0, 1, false));
+        observe(
+            &matched,
+            &fail_native(3, 2, second, 2820, 3556, 0, 1, false),
+        );
         assert!(settled(second));
         assert!(!value(second));
     }
@@ -745,7 +744,7 @@ mod tests {
             z: 3555,
             level: 0,
         });
-        observe(failed, fail_native(1, 1, first, 2820, 3556, 0, 1, false));
+        observe(&failed, &fail_native(1, 1, first, 2820, 3556, 0, 1, false));
 
         let second = begin(2820, 3556, 0, 1, false);
         assert_ne!(second, first);
@@ -765,7 +764,7 @@ mod tests {
             z: 3556,
             level: 1,
         });
-        observe(input, NativeFactsInput::default());
+        observe(&input, &NativeFactsInput::default());
         assert!(!settled(token));
     }
 
@@ -791,18 +790,14 @@ mod tests {
     }
 
     fn observe_at(tick: u64, here: WorldTile, view: &api::query::ReachQueryView) {
-        observe_at_with(tick, here, view, NativeFactsInput::default());
+        observe_at_with(tick, here, view, &NativeFactsInput::default());
     }
 
-    #[expect(
-        clippy::large_types_passed_by_value,
-        reason = "forward the owned input to the value-taking wire encoder without copying it"
-    )]
     fn observe_at_with(
         tick: u64,
         here: WorldTile,
         view: &api::query::ReachQueryView,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
     ) {
         let mut input = empty_input(tick);
         input.here = Some(TileInput {
@@ -826,7 +821,7 @@ mod tests {
             canlight: &view.canlight,
             stamp: tick,
         };
-        observe(input, native);
+        observe(&input, native);
     }
 
     #[test]
@@ -908,7 +903,7 @@ mod tests {
         observe_at(2, approach, &view);
         let mut animation_only = route_end_native(1, token, 3);
         animation_only.self_anim = Some(390);
-        observe_at_with(3, approach, &view, animation_only);
+        observe_at_with(3, approach, &view, &animation_only);
         assert!(
             !settled(token),
             "legacy animation bytes cannot establish stationary motion"
@@ -931,14 +926,14 @@ mod tests {
             local_player_moving: Some(true),
             ..route_end_native(1, token, 3)
         };
-        observe_at_with(3, approach, &view, moving);
+        observe_at_with(3, approach, &view, &moving);
         assert!(!settled(token), "a route terminal during motion is pending");
 
         let stationary = NativeFactsInput {
             local_player_moving: Some(false),
             ..route_end_native(1, token, 3)
         };
-        observe_at_with(4, approach, &view, stationary);
+        observe_at_with(4, approach, &view, &stationary);
         assert!(settled(token), "the stationary route end settles the wait");
         assert!(value(token), "frozen 'closest' returns true");
     }
@@ -953,15 +948,15 @@ mod tests {
             level: 0,
         };
         let view = walled_view(approach);
-        observe_at_with(2, approach, &view, route_end_native(1, token + 1, 12));
+        observe_at_with(2, approach, &view, &route_end_native(1, token + 1, 12));
         assert!(!settled(token), "another request's route end");
-        observe_at_with(3, approach, &view, route_end_native(2, token, 11));
+        observe_at_with(3, approach, &view, &route_end_native(2, token, 11));
         assert!(!settled(token), "same id, another radius");
 
         let mut failed = route_end_native(3, token, 12);
         failed.walk_outcome_failed = true;
-        observe_at_with(4, approach, &view, failed);
-        observe_at_with(5, approach, &view, route_end_native(4, token, 12));
+        observe_at_with(4, approach, &view, &failed);
+        observe_at_with(5, approach, &view, &route_end_native(4, token, 12));
         assert!(settled(token));
         assert!(!value(token), "a matched failure stays failed");
     }
@@ -975,12 +970,12 @@ mod tests {
 
         let mut resumed = empty_input(2);
         resumed.user_move_intent_seq = 1;
-        observe(resumed, NativeFactsInput::default());
+        observe(&resumed, &NativeFactsInput::default());
         assert!(!settled(token), "the paused-period intent was rebaselined");
 
         let mut moved_again = empty_input(3);
         moved_again.user_move_intent_seq = 2;
-        observe(moved_again, NativeFactsInput::default());
+        observe(&moved_again, &NativeFactsInput::default());
         assert!(settled(token));
         assert!(!value(token));
     }
@@ -1003,7 +998,7 @@ mod tests {
             walk_outcome_radius: 1,
             ..NativeFactsInput::default()
         };
-        observe(input, outcome);
+        observe(&input, &outcome);
         assert!(settled(token));
         assert!(!value(token));
     }

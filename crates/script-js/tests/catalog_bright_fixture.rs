@@ -25,6 +25,7 @@ fn scratch(name: &str) -> PathBuf {
         std::process::id(),
         name
     ));
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create catalog fixture scratch directory");
     dir
 }
