@@ -821,6 +821,90 @@ fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
     assert_eq!(slot.state(), RunState::Idle);
 }
 
+fn grinch_slot_started_under_hold(incarnation: u64) -> SlotScript {
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(incarnation);
+    // The previous frame's guardian hold stands when the card installs: the
+    // host observes the lifecycle (install, arm) before it applies this
+    // frame's hold (`script_observe.rs`).
+    slot.seat_guardian_hold(true);
+    slot.start_compiled(
+        "account",
+        crate::CompiledId("Grinch"),
+        Arc::new(SettingsBag::new()),
+        selected(),
+        Arc::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(settle(&mut slot), StartOutcome::Ready);
+    slot
+}
+
+#[test]
+fn compiled_install_under_the_guardian_hold_waits_and_is_admitted_on_release() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut slot = grinch_slot_started_under_hold(102_431);
+    assert_eq!(slot.state(), RunState::Running);
+    assert!(slot.seat.as_ref().expect("armed seat").held());
+    assert_eq!(
+        slot.seat_compiled_owner, None,
+        "a held seat admits no compiled owner"
+    );
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Running);
+    assert_eq!(slot.seat_compiled_owner, None, "the hold still stands");
+
+    slot.seat_guardian_hold(false);
+    let owner = slot.seat_compiled_owner.expect("owner admitted on release");
+    let seat = slot.seat.as_ref().expect("Grinch execution seat");
+    assert!(!seat.held());
+    assert_eq!(seat.session(), Some(owner));
+    assert_eq!(seat.foreground(), Some(owner));
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Running);
+    slot.stop();
+    assert_eq!(slot.state(), RunState::Idle);
+}
+
+#[test]
+fn compiled_install_under_the_guardian_hold_is_admitted_by_the_next_session_alignment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut slot = grinch_slot_started_under_hold(102_432);
+    let session = api::identity::SessionKey::new(
+        api::identity::SlotKey::from_incarnation(102_432).unwrap(),
+        slot.native_run().expect("compiled run").session,
+    );
+    slot.align_seat_session(Some(session));
+    assert_eq!(slot.seat_compiled_owner, None, "the hold still stands");
+    slot.seat_guardian_hold(false);
+    slot.align_seat_session(Some(session));
+    assert!(slot.seat_compiled_owner.is_some());
+    slot.stop();
+}
+
+#[test]
+fn stop_while_the_compiled_owner_waits_for_the_hold_cleans_up() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut slot = grinch_slot_started_under_hold(102_433);
+    assert_eq!(slot.seat_compiled_owner, None);
+    slot.stop();
+    assert_eq!(slot.state(), RunState::Idle);
+    assert!(slot.seat.is_none(), "Stop reaps the held seat");
+    assert_eq!(slot.seat_compiled_owner, None);
+    assert!(!slot.has_instance());
+    // The release after Stop has nothing to admit.
+    slot.seat_guardian_hold(false);
+    assert_eq!(slot.seat_compiled_owner, None);
+    assert!(slot.seat.is_none());
+}
+
 #[test]
 fn grinch_inventory_blocked_error_retains_its_native_stop_reason() {
     if !api::test_support::game_data_available() {
