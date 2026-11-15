@@ -163,7 +163,9 @@ impl Drop for TickLoopFinish {
 /// claimed the active execution. Pause intent alone blocks only the next
 /// execution; healthy in-budget work already running is allowed to finish.
 pub(super) fn machines_halted(teardown: &Mutex<TeardownState>) -> bool {
-    let st = teardown.lock().expect("isolate teardown state mutex is not poisoned");
+    let st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     st.phase != TeardownPhase::Running || st.execution_interrupt.is_some()
 }
 
@@ -173,7 +175,9 @@ fn begin_execution(
     generation: u64,
     honor_pause: bool,
 ) -> bool {
-    let mut st = teardown.lock().expect("isolate teardown state mutex is not poisoned");
+    let mut st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     if st.phase != TeardownPhase::Running || (honor_pause && st.pause_requested) {
         return false;
     }
@@ -223,7 +227,9 @@ pub(super) fn finish_interruptible_execution(
     runtime: &mut Runtime,
     teardown: &Mutex<TeardownState>,
 ) -> Option<InterruptedExecution> {
-    let mut st = teardown.lock().expect("isolate teardown state mutex is not poisoned");
+    let mut st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     st.execution_active = false;
     st.execution_started = None;
     st.execution_deadline_armed = false;
@@ -237,7 +243,9 @@ pub(super) fn finish_interruptible_execution(
 }
 
 pub(super) fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>>) -> bool {
-    let mut st = teardown.lock().expect("isolate teardown state mutex is not poisoned");
+    let mut st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     match st.phase {
         TeardownPhase::Hook | TeardownPhase::Done => false,
         TeardownPhase::Running | TeardownPhase::UnwindingTick => {
@@ -254,7 +262,9 @@ pub(super) fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>
 }
 
 pub(super) fn finish_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>>) {
-    let mut st = teardown.lock().expect("isolate teardown state mutex is not poisoned");
+    let mut st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     st.phase = TeardownPhase::Done;
 }
 
@@ -276,7 +286,11 @@ pub(super) fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
 pub(super) fn take_hook_entry_delay(
     teardown: &std::sync::Arc<Mutex<TeardownState>>,
 ) -> Option<Duration> {
-    teardown.lock().expect("isolate teardown state mutex is not poisoned").hook_entry_delay.take()
+    teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned")
+        .hook_entry_delay
+        .take()
 }
 
 /// Register the hook's one absolute deadline on the process supervisor.
@@ -286,7 +300,9 @@ pub(super) fn arm_hook_deadline(
     teardown: &std::sync::Arc<Mutex<TeardownState>>,
 ) -> bool {
     let deadline = {
-        let st = teardown.lock().expect("isolate teardown state mutex is not poisoned");
+        let st = teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned");
         if st.phase != TeardownPhase::Hook || st.fail_hook_registration {
             return false;
         }

@@ -570,7 +570,9 @@ fn fire_execution_interrupt_shared(
     execution_id: u64,
     owner: teardown::ExecutionInterrupt,
 ) -> bool {
-    let mut state = teardown.lock().expect("isolate teardown state mutex is not poisoned");
+    let mut state = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     if state.phase != TeardownPhase::Running
         || !state.execution_active
         || state.execution_id != execution_id
@@ -596,7 +598,10 @@ fn register_execution_deadline(
     at: Instant,
 ) -> Result<(), LoadIsolateError> {
     #[cfg(any(test, feature = "test-hooks"))]
-    let injected = teardown.lock().expect("isolate teardown state mutex is not poisoned").fail_execution_registration;
+    let injected = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned")
+        .fail_execution_registration;
     #[cfg(not(any(test, feature = "test-hooks")))]
     let injected: Option<teardown::DeadlineRefusal> = None;
     if let Some(reason) = injected {
@@ -617,7 +622,9 @@ fn arm_active_execution_deadline_shared(
     owner: teardown::ExecutionInterrupt,
 ) {
     let deadline = {
-        let mut state = teardown.lock().expect("isolate teardown state mutex is not poisoned");
+        let mut state = teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned");
         let (Some(started), Some(handle)) = (state.execution_started, terminate) else {
             return;
         };
@@ -655,7 +662,9 @@ fn arm_active_execution_deadline_shared(
             id,
             teardown::ExecutionInterrupt::NoDeadline(reason),
         );
-        logs.lock().expect("isolate log mutex is not poisoned").push(error.to_string());
+        logs.lock()
+            .expect("isolate log mutex is not poisoned")
+            .push(error.to_string());
     }
 }
 
@@ -669,7 +678,9 @@ fn interrupt_slow_execution_shared(
         return;
     }
     let active = {
-        let state = teardown.lock().expect("isolate teardown state mutex is not poisoned");
+        let state = teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned");
         match (
             state.phase,
             state.execution_active,
@@ -707,7 +718,9 @@ fn interrupt_slow_execution_shared(
         } else {
             format!("interrupted slow tick {tick} ({elapsed:?})")
         };
-        logs.lock().expect("isolate log mutex is not poisoned").push(line);
+        logs.lock()
+            .expect("isolate log mutex is not poisoned")
+            .push(line);
     }
 }
 
@@ -740,7 +753,10 @@ impl GameplayFactory {
         )
     }
 
-    #[expect(clippy::too_many_arguments, reason = "The slot's per-run inputs and local state stay explicit at isolate creation")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The slot's per-run inputs and local state stay explicit at isolate creation"
+    )]
     pub(crate) fn spawn_with_content_and_state(
         js: String,
         card_name: std::sync::Arc<str>,
@@ -1245,14 +1261,20 @@ impl LoadIsolate {
     /// Record a producer delta that carries changed evidence.
     pub(crate) fn record_snapshot_evidence_change(&self, changed: bool) {
         if changed {
-            let mut state = self.teardown.lock().expect("isolate teardown state mutex is not poisoned");
+            let mut state = self
+                .teardown
+                .lock()
+                .expect("isolate teardown state mutex is not poisoned");
             state.snapshot_evidence_sequence = state.snapshot_evidence_sequence.wrapping_add(1);
         }
     }
 
     /// Current producer evidence generation, independent of native identity.
     pub(crate) fn snapshot_evidence_sequence(&self) -> u64 {
-        self.teardown.lock().expect("isolate teardown state mutex is not poisoned").snapshot_evidence_sequence
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .snapshot_evidence_sequence
     }
 
     fn dispatch_tick(
@@ -1291,7 +1313,11 @@ impl LoadIsolate {
             self.interrupt_slow_execution(ready);
         }
         if !backlogged {
-            *self.in_flight.lock().expect("in-flight tick mutex is not poisoned") = Some((generation, snap_tick, Instant::now()));
+            *self
+                .in_flight
+                .lock()
+                .expect("in-flight tick mutex is not poisoned") =
+                Some((generation, snap_tick, Instant::now()));
         }
         if backlogged {
             return false;
@@ -1350,7 +1376,9 @@ impl LoadIsolate {
         let (lock, cv) = &*entered;
         let mut seen = lock.lock().expect("test block gate mutex is not poisoned");
         while !*seen {
-            let (next, timeout) = cv.wait_timeout(seen, Duration::from_secs(10)).expect("test block gate mutex is not poisoned");
+            let (next, timeout) = cv
+                .wait_timeout(seen, Duration::from_secs(10))
+                .expect("test block gate mutex is not poisoned");
             seen = next;
             assert!(
                 !timeout.timed_out(),
@@ -1390,7 +1418,10 @@ impl LoadIsolate {
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn executed_seat_pages_for_test(&self) -> u64 {
-        self.teardown.lock().expect("isolate teardown state mutex is not poisoned").executed_seat_pages
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .executed_seat_pages
     }
 
     /// The producer evidence generation of the posted pages: changed seat
@@ -1487,7 +1518,10 @@ impl LoadIsolate {
         self.pump_logs();
         self.interrupt_slow_execution(ready);
         {
-            let mut st = self.teardown.lock().expect("isolate teardown state mutex is not poisoned");
+            let mut st = self
+                .teardown
+                .lock()
+                .expect("isolate teardown state mutex is not poisoned");
             if st.phase == TeardownPhase::Running {
                 st.pause_requested = true;
             }
@@ -1509,7 +1543,10 @@ impl LoadIsolate {
 
     /// Re-arm tick dispatch after [`LoadIsolate::pause`].
     pub fn resume(&self) {
-        self.teardown.lock().expect("isolate teardown state mutex is not poisoned").pause_requested = false;
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .pause_requested = false;
         self.send(IsolateCmd::Resume);
     }
 
@@ -1560,7 +1597,11 @@ impl LoadIsolate {
             .work_generation
             .load(std::sync::atomic::Ordering::Acquire);
         self.interrupt_slow_execution(ready);
-        *self.in_flight.lock().expect("in-flight tick mutex is not poisoned") = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
+        *self
+            .in_flight
+            .lock()
+            .expect("in-flight tick mutex is not poisoned") =
+            Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
         self.send(IsolateCmd::RecoveryAnchor { generation });
     }
 
@@ -1582,19 +1623,26 @@ impl LoadIsolate {
     /// instance) fail closed to `[]`. No probe round-trip.
     pub fn ignored_randoms(&self) -> Vec<String> {
         self.pump_logs();
-        self.ignored_randoms.lock().expect("ignored randoms mutex is not poisoned").clone()
+        self.ignored_randoms
+            .lock()
+            .expect("ignored randoms mutex is not poisoned")
+            .clone()
     }
 
     /// Match the host knock against the cache without cloning its list. This
     /// mirrors `RandomEvents.isIgnored`: Unicode lowercase, no whitespace trim.
     pub(crate) fn ignores_random(&self, name: &str) -> bool {
         self.pump_logs();
-        self.ignored_randoms.lock().expect("ignored randoms mutex is not poisoned").iter().any(|ignored| {
-            ignored
-                .chars()
-                .flat_map(char::to_lowercase)
-                .eq(name.chars().flat_map(char::to_lowercase))
-        })
+        self.ignored_randoms
+            .lock()
+            .expect("ignored randoms mutex is not poisoned")
+            .iter()
+            .any(|ignored| {
+                ignored
+                    .chars()
+                    .flat_map(char::to_lowercase)
+                    .eq(name.chars().flat_map(char::to_lowercase))
+            })
     }
 
     /// Drain the isolate's log lines (tick errors, slow/interrupted
@@ -1615,7 +1663,12 @@ impl LoadIsolate {
     /// [`Self::pump_logs`] pass. User-authored log lines never enter this
     /// queue.
     pub(crate) fn drain_tick_outcomes(&self) -> Vec<TickOutcome> {
-        std::mem::take(&mut *self.tick_outcomes.lock().expect("tick outcomes mutex is not poisoned"))
+        std::mem::take(
+            &mut *self
+                .tick_outcomes
+                .lock()
+                .expect("tick outcomes mutex is not poisoned"),
+        )
     }
 
     /// Cached terminal state, refreshed by the regular log drain.
@@ -1639,7 +1692,10 @@ impl LoadIsolate {
     /// Cached ScriptRunner.stop receipt. Reading it never drains logs.
     pub fn script_stop_receipt(&self) -> Option<ScriptStopReceipt> {
         self.pump_logs();
-        self.script_stop.lock().expect("script stop mutex is not poisoned").clone()
+        self.script_stop
+            .lock()
+            .expect("script stop mutex is not poisoned")
+            .clone()
     }
 
     /// Per-isolate teardown evidence. Clone before `join`/`Drop`.
@@ -1651,7 +1707,10 @@ impl LoadIsolate {
     /// Whether the isolate thread owns the current interruptible tick phase.
     #[doc(hidden)]
     pub fn execution_active(&self) -> bool {
-        self.teardown.lock().expect("isolate teardown state mutex is not poisoned").execution_active
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .execution_active
     }
 
     /// Monotonic identity and activity of the latest interruptible execution.
@@ -1659,7 +1718,10 @@ impl LoadIsolate {
     /// executions too short to sample while active.
     #[doc(hidden)]
     pub fn execution_sequence(&self) -> (u64, bool) {
-        let st = self.teardown.lock().expect("isolate teardown state mutex is not poisoned");
+        let st = self
+            .teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned");
         (st.execution_id, st.execution_active)
     }
 
@@ -1668,27 +1730,39 @@ impl LoadIsolate {
     #[doc(hidden)]
     pub fn pending_tick_error_count(&self) -> usize {
         self.pump_logs();
-        self.tick_errors.lock().expect("tick errors mutex is not poisoned").len()
+        self.tick_errors
+            .lock()
+            .expect("tick errors mutex is not poisoned")
+            .len()
     }
 
     /// Isolate-scoped seam: delay after the shared deadline is armed and
     /// before getter/body. Proves a late completion cannot cancel it.
     #[doc(hidden)]
     pub fn delay_onstop_after_deadline_arm(&self, delay: Duration) {
-        self.teardown.lock().expect("isolate teardown state mutex is not poisoned").hook_entry_delay = Some(delay);
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .hook_entry_delay = Some(delay);
     }
 
     /// Isolate-scoped seam: refuse supervisor hook registration.
     #[doc(hidden)]
     pub fn fail_onstop_deadline_registration(&self) {
-        self.teardown.lock().expect("isolate teardown state mutex is not poisoned").fail_hook_registration = true;
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .fail_hook_registration = true;
     }
 
     /// Isolate-scoped deadline refusal seam for capacity/stopped diagnostics.
     #[doc(hidden)]
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn fail_execution_deadline_registration(&self, stopped: bool) {
-        self.teardown.lock().expect("isolate teardown state mutex is not poisoned").fail_execution_registration = Some(if stopped {
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .fail_execution_registration = Some(if stopped {
             teardown::DeadlineRefusal::Stopped
         } else {
             teardown::DeadlineRefusal::Capacity
@@ -1699,18 +1773,36 @@ impl LoadIsolate {
     /// retaining a bounded hook deadline.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn set_onstop_timeout_for_test(&self, timeout: Duration) {
-        self.teardown.lock().expect("isolate teardown state mutex is not poisoned").test_hook_timeout = Some(timeout);
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .test_hook_timeout = Some(timeout);
     }
 
     /// Drain current-generation interactions and any AbortWalk releases
     /// retained across a kept reconnect. Prior-session gameplay is discarded.
     pub fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {
         self.pump_logs();
-        let mut interacts = std::mem::take(&mut *self.interacts.lock().expect("interaction queue mutex is not poisoned"));
-        if self.held_fence.lock().expect("held fence mutex is not poisoned").is_none() {
+        let mut interacts = std::mem::take(
+            &mut *self
+                .interacts
+                .lock()
+                .expect("interaction queue mutex is not poisoned"),
+        );
+        if self
+            .held_fence
+            .lock()
+            .expect("held fence mutex is not poisoned")
+            .is_none()
+        {
             self.holding_releases
                 .store(false, std::sync::atomic::Ordering::Release);
-            let mut releases = std::mem::take(&mut *self.held_releases.lock().expect("held releases mutex is not poisoned"));
+            let mut releases = std::mem::take(
+                &mut *self
+                    .held_releases
+                    .lock()
+                    .expect("held releases mutex is not poisoned"),
+            );
             releases.append(&mut interacts);
             interacts = releases;
         }
@@ -1728,13 +1820,20 @@ impl LoadIsolate {
     /// suffix after an interrupted host-side dispatch.
     pub fn drain_seat_batches(&self) -> Vec<QueuedSeatBatch> {
         self.pump_logs();
-        self.seat_batches.lock().expect("seat batch queue mutex is not poisoned").drain(..).collect()
+        self.seat_batches
+            .lock()
+            .expect("seat batch queue mutex is not poisoned")
+            .drain(..)
+            .collect()
     }
 
     #[cfg(feature = "test-hooks")]
     pub fn seat_batch_backlog(&self) -> usize {
         self.pump_logs();
-        self.seat_batches.lock().expect("seat batch queue mutex is not poisoned").len()
+        self.seat_batches
+            .lock()
+            .expect("seat batch queue mutex is not poisoned")
+            .len()
     }
 
     /// Return the number of queued batches retained by the guardian fold.
@@ -1753,7 +1852,10 @@ impl LoadIsolate {
     /// afterward. Generation and per-batch walk stamps are never rewritten.
     pub(crate) fn restore_seat_batches(&self, mut drained: Vec<QueuedSeatBatch>) {
         self.pump_logs();
-        let mut queued = self.seat_batches.lock().expect("seat batch queue mutex is not poisoned");
+        let mut queued = self
+            .seat_batches
+            .lock()
+            .expect("seat batch queue mutex is not poisoned");
         drained.extend(queued.drain(..));
         *queued = drained.into();
     }
@@ -1771,7 +1873,10 @@ impl LoadIsolate {
     /// afterward. Used when an operator Pause wins the host's final
     /// dispatch fence: no verb is lost, and Resume observes original order.
     pub(crate) fn restore_interacts_stamped(&self, mut drained: Vec<QueuedInteract>) {
-        let mut queued = self.interacts.lock().expect("interaction queue mutex is not poisoned");
+        let mut queued = self
+            .interacts
+            .lock()
+            .expect("interaction queue mutex is not poisoned");
         drained.append(&mut queued);
         *queued = drained;
     }
@@ -1790,7 +1895,12 @@ impl LoadIsolate {
     /// batch. Game interacts stay on [`LoadIsolate::drain_interacts`].
     pub fn drain_lifecycle(&self) -> Vec<script::interact::InteractReq> {
         self.pump_logs();
-        std::mem::take(&mut *self.lifecycle.lock().expect("lifecycle mutex is not poisoned"))
+        std::mem::take(
+            &mut *self
+                .lifecycle
+                .lock()
+                .expect("lifecycle mutex is not poisoned"),
+        )
     }
 
     /// The session ended deliberately (operator logout, Stop, or removal):
@@ -1881,10 +1991,20 @@ impl LoadIsolate {
         // Fold output sent under the ended generation: a kept reconnect
         // retains AbortWalk releases only; gameplay rows are discarded.
         self.pump_logs();
-        let had_active_error = self.tick_outcome_error_generation.lock().expect("tick outcome error generation mutex is not poisoned").is_some();
+        let had_active_error = self
+            .tick_outcome_error_generation
+            .lock()
+            .expect("tick outcome error generation mutex is not poisoned")
+            .is_some();
         let (generation, undelivered_walks) = {
-            let mut interacts = self.interacts.lock().expect("interaction queue mutex is not poisoned");
-            let mut seat_batches = self.seat_batches.lock().expect("seat batch queue mutex is not poisoned");
+            let mut interacts = self
+                .interacts
+                .lock()
+                .expect("interaction queue mutex is not poisoned");
+            let mut seat_batches = self
+                .seat_batches
+                .lock()
+                .expect("seat batch queue mutex is not poisoned");
             let undelivered_walks: Vec<_> = if keep_work {
                 interacts
                     .iter()
@@ -1909,7 +2029,10 @@ impl LoadIsolate {
                 std::sync::atomic::Ordering::Release,
             );
             {
-                let mut held = self.held_releases.lock().expect("held releases mutex is not poisoned");
+                let mut held = self
+                    .held_releases
+                    .lock()
+                    .expect("held releases mutex is not poisoned");
                 if keep_work {
                     hold_walk_releases(&mut held, interacts.drain(..));
                     for batch in seat_batches.drain(..) {
@@ -1929,18 +2052,33 @@ impl LoadIsolate {
             }
             self.holding_releases
                 .store(keep_work, std::sync::atomic::Ordering::Release);
-            *self.held_fence.lock().expect("held fence mutex is not poisoned") = keep_work.then_some(generation);
+            *self
+                .held_fence
+                .lock()
+                .expect("held fence mutex is not poisoned") = keep_work.then_some(generation);
             interacts.clear();
-            self.lifecycle.lock().expect("lifecycle mutex is not poisoned").clear();
+            self.lifecycle
+                .lock()
+                .expect("lifecycle mutex is not poisoned")
+                .clear();
             (generation, undelivered_walks)
         };
         if let Some(lease) = &self.compat_journal {
             lease.set_host_generation(generation);
         }
-        self.tick_errors.lock().expect("tick errors mutex is not poisoned").clear();
-        *self.tick_outcome_error_generation.lock().expect("tick outcome error generation mutex is not poisoned") =
+        self.tick_errors
+            .lock()
+            .expect("tick errors mutex is not poisoned")
+            .clear();
+        *self
+            .tick_outcome_error_generation
+            .lock()
+            .expect("tick outcome error generation mutex is not poisoned") =
             had_active_error.then_some(generation);
-        self.tick_outcomes.lock().expect("tick outcomes mutex is not poisoned").clear();
+        self.tick_outcomes
+            .lock()
+            .expect("tick outcomes mutex is not poisoned")
+            .clear();
         {
             // Re-stamp the held frame with the new generation: an overlay that
             // captured the pre-reset generation no longer matches it, so a
@@ -1956,7 +2094,10 @@ impl LoadIsolate {
                 *slot = Some(std::sync::Arc::new(restamped));
             }
         }
-        *self.in_flight.lock().expect("in-flight tick mutex is not poisoned") = None;
+        *self
+            .in_flight
+            .lock()
+            .expect("in-flight tick mutex is not poisoned") = None;
         self.send(IsolateCmd::ResetSession {
             keep_work,
             generation,
@@ -1972,7 +2113,10 @@ impl LoadIsolate {
     /// round-trip — the host reads this every frame.
     pub fn paint(&self) -> Option<std::sync::Arc<script::paint::ScriptPaint>> {
         self.pump_logs();
-        self.paint.lock().expect("paint mutex is not poisoned").clone()
+        self.paint
+            .lock()
+            .expect("paint mutex is not poisoned")
+            .clone()
     }
 
     /// Resolve setup without blocking. Called from the slot's per-frame
@@ -2115,7 +2259,10 @@ impl LoadIsolate {
 
     fn teardown_blocks_dispatch(&self) -> bool {
         matches!(
-            self.teardown.lock().expect("isolate teardown state mutex is not poisoned").phase,
+            self.teardown
+                .lock()
+                .expect("isolate teardown state mutex is not poisoned")
+                .phase,
             TeardownPhase::Hook | TeardownPhase::Done
         )
     }
