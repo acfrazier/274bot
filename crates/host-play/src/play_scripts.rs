@@ -561,6 +561,26 @@ impl ScriptStartHandle {
         })
     }
 
+    /// The generation `name`'s latest accepted Start runs under, readable as
+    /// soon as Start returns (a compiled run installs it when preparation
+    /// settles). `None` without a slot or when a retiring worker poisoned its
+    /// lock.
+    pub fn started_generation(&self, name: &str) -> Option<u64> {
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().ok().map(|slot| slot.control_key().1))
+    }
+
+    /// `name`'s failure reason when a run at or after `generation` ended
+    /// Failed ([`script::SlotScript::failed_lifecycle_since`]). The receipt is
+    /// read in place: only a failure copies its reason.
+    pub fn failure_since(&self, name: &str, generation: u64) -> Option<String> {
+        script_slot(&self.scripts, name).and_then(|slot| {
+            slot.lock()
+                .ok()
+                .and_then(|slot| slot.failed_lifecycle_since(generation).map(str::to_string))
+        })
+    }
+
     /// Stop from a slot-thread pump, revoking both script and navigation work.
     pub fn stop(&self, name: &str) -> Result<(), String> {
         let slot = script_slot(&self.scripts, name).ok_or_else(|| format!("no slot: {name}"))?;
@@ -601,6 +621,31 @@ impl ScriptStartHandle {
         let slot = script_slot(&self.scripts, name)?;
         let slot = slot.lock().ok()?;
         Some((slot.runtime_generation(), slot.native_run()))
+    }
+
+    /// Run one observed game tick on `name`'s slot with no client
+    /// connection, through the same `SlotScript::on_game_tick` the slot
+    /// thread calls. Test-only, beside [`Self::start_test_script`].
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn tick_test_script(&self, name: &str, tick: u64, driver: &mut dyn api::interact::Driver) {
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            return;
+        };
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver,
+            tick,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
     }
 
     /// `name`'s latest recorded paint frame (the frame its status row

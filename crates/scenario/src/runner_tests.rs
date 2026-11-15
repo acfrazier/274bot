@@ -2249,6 +2249,256 @@ fn compiled_start_script_fails_with_the_rejection_reason() {
     }
 }
 
+/// The nightly queue's shape: Start the compiled card, then watch a quest
+/// completion for far longer than a failed script lets the run live.
+fn queue_watch_scenario() -> Scenario {
+    Scenario {
+        name: "queue-watch",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![
+            Step {
+                name: "start the compiled card",
+                kind: StepKind::StartScript,
+                wait: wait(Proof::ScriptRunning, 50),
+            },
+            Step {
+                name: "watch the queued Imp Catcher completion",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: wait(
+                    Proof::QuestDone {
+                        name: "Imp Catcher",
+                    },
+                    24_000,
+                ),
+            },
+        ],
+        proof: Proof::QuestDone {
+            name: "Imp Catcher",
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            deadline: Duration::from_secs(7200),
+            ..ScenarioSettings::default()
+        },
+    }
+}
+
+/// A runner whose Start has settled and that now waits on the final watch.
+fn queue_watch_runner() -> (ScenarioRunner, Client) {
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(queue_watch_scenario());
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert!(runner.on_start_script());
+    runner.observe_script_running();
+    assert_running_for_game_ticks(&mut runner, &mut c, 4, "no quest completes");
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    (runner, c)
+}
+
+#[test]
+fn a_failed_script_fails_the_pending_final_watch_with_its_own_reason() {
+    let (mut runner, _c) = queue_watch_runner();
+    let reason = "search_result=Refusal; NoWayOut: ends inside Lesser demon (L82); resolve the condition, then start the Quester again";
+    runner.fail_script("alice", reason);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!(
+            "a failed script must fail the run, got {:?}",
+            runner.status()
+        );
+    };
+    assert!(message.contains(reason), "{message}");
+    assert!(
+        message.contains(
+            "step 2 (watch the queued Imp Catcher completion): the script on alice failed"
+        ),
+        "{message}"
+    );
+    assert_eq!(
+        runner.evidence().map(|evidence| evidence.outcome),
+        Some("FAIL")
+    );
+}
+
+#[test]
+fn a_script_failure_before_the_script_started_does_not_end_the_run() {
+    let mut scenario = queue_watch_scenario();
+    scenario.steps.insert(
+        0,
+        Step {
+            name: "prepare the account",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: wait(Proof::Stat { id: 16, min: 999 }, 10_000),
+        },
+    );
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.fail_script("alice", "before the seed");
+    assert_eq!(runner.status(), RunnerStatus::Seeding);
+    assert_running_for_game_ticks(&mut runner, &mut c, 3, "the preparation step waits");
+    assert!(!runner.wants_script_failure());
+    runner.fail_script("alice", "before Start");
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 3 });
+}
+
+#[test]
+fn a_script_failure_after_the_verdict_changes_nothing() {
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(start_script_scenario());
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert!(!runner.wants_script_failure());
+    runner.fail_script("alice", "after the proof");
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+/// A pass gate that names the script on `bob` once it is set to fail, and
+/// counts how often the runner looks.
+struct GateProbe {
+    failed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    looks: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl GateProbe {
+    fn new(failed: bool) -> Self {
+        Self {
+            failed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(failed)),
+            looks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
+
+    fn gate(&self) -> PassGate {
+        use std::sync::atomic::Ordering::SeqCst;
+        let failed = std::sync::Arc::clone(&self.failed);
+        let looks = std::sync::Arc::clone(&self.looks);
+        Box::new(move || {
+            looks.fetch_add(1, SeqCst);
+            failed
+                .load(SeqCst)
+                .then(|| ("bob".to_owned(), "the queue blocked".to_owned()))
+        })
+    }
+
+    fn fail(&self) {
+        self.failed.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn looks(&self) -> usize {
+        self.looks.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[test]
+fn a_pass_gate_that_names_a_failed_script_turns_the_pass_into_a_failure() {
+    let probe = GateProbe::new(true);
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(start_script_scenario());
+    runner.set_scene_settle(Duration::ZERO);
+    runner.set_pass_gate(Some(probe.gate()));
+    assert!(runner.has_pass_gate());
+    runner.tick(&mut c);
+    runner.tick(&mut c);
+
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!(
+            "a failed script must turn the PASS into a failure, got {:?}",
+            runner.status()
+        );
+    };
+    assert!(
+        message.contains("the script on bob failed: the queue blocked"),
+        "{message}"
+    );
+    assert_eq!(
+        runner.evidence().map(|evidence| evidence.outcome),
+        Some("FAIL")
+    );
+    assert_eq!(probe.looks(), 1, "the runner looks once, at the verdict");
+}
+
+#[test]
+fn a_pass_gate_that_names_no_script_leaves_the_pass() {
+    let probe = GateProbe::new(false);
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(start_script_scenario());
+    runner.set_scene_settle(Duration::ZERO);
+    runner.set_pass_gate(Some(probe.gate()));
+    runner.tick(&mut c);
+    runner.tick(&mut c);
+
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert_eq!(
+        runner.evidence().map(|evidence| evidence.outcome),
+        Some("PASS")
+    );
+    assert_eq!(probe.looks(), 1, "the runner looks once, at the verdict");
+}
+
+#[test]
+fn a_pass_gate_is_not_asked_when_the_run_fails() {
+    let probe = GateProbe::new(false);
+    let mut runner = ScenarioRunner::new(start_script_scenario());
+    runner.set_pass_gate(Some(probe.gate()));
+    runner.fail_start("the card was rejected");
+
+    assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+    assert_eq!(probe.looks(), 0);
+
+    runner.set_pass_gate(None);
+    assert!(!runner.has_pass_gate());
+}
+
+#[test]
+fn a_script_failure_during_the_world_speed_cleanup_turns_the_pass_into_a_failure() {
+    let probe = GateProbe::new(false);
+    let mut runner = ScenarioRunner::new(fast_speed_scenario(
+        Proof::WorldSpeedChanged { ms: 300 },
+        10,
+    ));
+    runner.set_scene_settle(Duration::ZERO);
+    runner.set_pass_gate(Some(probe.gate()));
+    let mut client = seeded_client();
+
+    runner.tick(&mut client);
+    push_system_chat(&mut client, "World speed was changed to 300ms");
+    runner.tick(&mut client);
+    runner.tick(&mut client);
+    assert!(contains_outgoing_ascii(&client, "speed 600"));
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "the PASS waits for the world speed to be restored"
+    );
+    assert_eq!(probe.looks(), 0, "the proof alone publishes nothing");
+
+    // The script fails while the world speed is restored, after the proof and
+    // before the PASS is recorded.
+    probe.fail();
+    push_system_chat(&mut client, "World speed was changed to 600ms");
+    runner.tick(&mut client);
+
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!(
+            "a failure before the PASS is recorded must fail the run, got {:?}",
+            runner.status()
+        );
+    };
+    assert!(
+        message.contains("the script on bob failed: the queue blocked"),
+        "{message}"
+    );
+    assert_eq!(probe.looks(), 1);
+}
+
 #[test]
 fn shot_step_with_the_default_sink_is_a_noop_and_passes() {
     // The headless twin leaves the default (no-op) sink: a Shot step
