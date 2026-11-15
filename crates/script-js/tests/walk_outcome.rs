@@ -146,7 +146,10 @@ fn park_walk(iso: &LoadIsolate) -> u64 {
     // WalkNear left on the producer wire before any outcome snapshot is posted.
     iso.post_snapshot(encode_snapshot(&base_snapshot(1, far())));
     iso.on_game_tick(1);
-    assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("__rs_ok").expect("probe parked walk result"),
+        serde_json::Value::Null
+    );
     let drained = iso.drain_interacts();
     let request_id = match &drained[..] {
         [InteractReq::WalkNear {
@@ -425,8 +428,14 @@ export default class T extends LoopingBot {
 fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {
     iso.post_snapshot(encode_snapshot(&base_snapshot(1, far())));
     iso.on_game_tick(1);
-    assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
-    assert_eq!(iso.probe("__rs_b").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("__rs_a").expect("probe first parked walk"),
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        iso.probe("__rs_b").expect("probe second parked walk"),
+        serde_json::Value::Null
+    );
     let drained = iso.drain_interacts();
     match &drained[..] {
         [InteractReq::WalkNear {
@@ -625,7 +634,7 @@ fn park_walk_to(iso: &LoadIsolate, here: TileInput, expect_walk_near: bool) -> u
     iso.post_snapshot(encode_snapshot(&base_snapshot(1, here)));
     iso.on_game_tick(1);
     assert_eq!(
-        iso.probe("__rs_ok").unwrap(),
+        iso.probe("__rs_ok").expect("probe queued native route"),
         serde_json::Value::Null,
         "queued native route is not arrival"
     );

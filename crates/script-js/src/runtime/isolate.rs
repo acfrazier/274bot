@@ -14,8 +14,8 @@ pub use validation::{
     ValidationError, MAX_VALIDATION_BATCH_CARDS,
 };
 
+use teardown::Teardown;
 pub use teardown::TeardownProof;
-use teardown::{TeardownPhase, TeardownState};
 use thread::isolate_main;
 #[cfg(test)]
 use thread::{stamp_mouse_gesture_identities, MouseGestureIdentities};
@@ -439,7 +439,7 @@ pub struct LoadIsolate {
     in_flight: Mutex<Option<(u64, u64, Instant)>>,
     /// Shared Stop/`onStop` phase. Join, Drop, and the isolate thread
     /// serialize tick-unwind vs hook vs Done under this mutex.
-    teardown: std::sync::Arc<Mutex<TeardownState>>,
+    teardown: std::sync::Arc<Mutex<Teardown>>,
     /// Per-isolate invoke/finish/worker evidence. Clone before Drop.
     proof: TeardownProof,
     /// Test seam: the host watchdog never interrupts a slow execution.
@@ -471,7 +471,7 @@ pub struct ThreadBlock {
 impl Drop for ThreadBlock {
     fn drop(&mut self) {
         let (lock, cv) = &*self.gate;
-        *lock.lock().unwrap() = true;
+        *lock.lock().expect("test thread gate mutex is not poisoned") = true;
         cv.notify_all();
     }
 }
@@ -504,7 +504,7 @@ struct FrameDispatch {
 }
 
 struct FrameWatchdog {
-    teardown: Arc<Mutex<TeardownState>>,
+    teardown: Arc<Mutex<Teardown>>,
     terminate: Arc<OnceLock<v8::IsolateHandle>>,
     logs: Arc<Mutex<Vec<String>>>,
     ready: Arc<std::sync::atomic::AtomicBool>,
@@ -564,39 +564,18 @@ impl FrameWatchdog {
     }
 }
 
-fn fire_execution_interrupt_shared(
-    teardown: &Arc<Mutex<TeardownState>>,
-    terminate: Option<&v8::IsolateHandle>,
-    execution_id: u64,
-    owner: teardown::ExecutionInterrupt,
-) -> bool {
-    let mut state = teardown.lock().unwrap();
-    if state.phase != TeardownPhase::Running
-        || !state.execution_active
-        || state.execution_id != execution_id
-        || state.execution_interrupt.is_some()
-    {
-        return false;
-    }
-    state.execution_interrupt = Some(teardown::InterruptedExecution {
-        owner,
-        consumed: matches!(owner, teardown::ExecutionInterrupt::NoDeadline(_)),
-    });
-    if let Some(handle) = terminate {
-        handle.terminate_execution();
-    }
-    true
-}
-
 fn register_execution_deadline(
-    teardown: &Arc<Mutex<TeardownState>>,
+    teardown: &Arc<Mutex<Teardown>>,
     handle: v8::IsolateHandle,
     id: u64,
     owner: teardown::ExecutionInterrupt,
     at: Instant,
 ) -> Result<(), LoadIsolateError> {
     #[cfg(any(test, feature = "test-hooks"))]
-    let injected = teardown.lock().unwrap().fail_execution_registration;
+    let injected = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned")
+        .fail_execution_registration;
     #[cfg(not(any(test, feature = "test-hooks")))]
     let injected: Option<teardown::DeadlineRefusal> = None;
     if let Some(reason) = injected {
@@ -611,103 +590,58 @@ fn register_execution_deadline(
 }
 
 fn arm_active_execution_deadline_shared(
-    teardown: &Arc<Mutex<TeardownState>>,
+    teardown: &Arc<Mutex<Teardown>>,
     terminate: Option<&v8::IsolateHandle>,
     logs: &Mutex<Vec<String>>,
     owner: teardown::ExecutionInterrupt,
 ) {
-    let deadline = {
-        let mut state = teardown.lock().unwrap();
-        let (Some(started), Some(handle)) = (state.execution_started, terminate) else {
-            return;
-        };
-        if state.phase != TeardownPhase::Running
-            || !state.execution_active
-            || state.execution_interrupt.is_some()
-        {
-            return;
-        }
-        if owner != teardown::ExecutionInterrupt::Watchdog
-            || state.execution_deadline_owner.is_none()
-        {
-            state.execution_deadline_owner = Some(owner);
-        }
-        if state.execution_deadline_armed {
-            return;
-        }
-        state.execution_deadline_armed = true;
-        (
-            state.execution_id,
-            started + EXECUTION_WATCHDOG_HORIZON,
-            handle.clone(),
-        )
+    let Some(handle) = terminate else {
+        return;
     };
-    let (id, at, handle) = deadline;
-    let registration = register_execution_deadline(teardown, handle, id, owner, at);
-    if let Err(error) = registration {
-        let reason = match error {
-            LoadIsolateError::SupervisorCapacity => teardown::DeadlineRefusal::Capacity,
-            _ => teardown::DeadlineRefusal::Stopped,
-        };
-        fire_execution_interrupt_shared(
-            teardown,
-            terminate,
-            id,
-            teardown::ExecutionInterrupt::NoDeadline(reason),
-        );
-        logs.lock().unwrap().push(error.to_string());
+    let armed = teardown::arm_active_execution_deadline(teardown, handle, owner, |id, at| {
+        register_execution_deadline(teardown, handle.clone(), id, owner, at)
+    });
+    if let Err(error) = armed {
+        logs.lock()
+            .expect("isolate log mutex is not poisoned")
+            .push(error.to_string());
     }
 }
 
 fn interrupt_slow_execution_shared(
-    teardown: &Arc<Mutex<TeardownState>>,
+    teardown: &Arc<Mutex<Teardown>>,
     terminate: Option<&v8::IsolateHandle>,
     logs: &Mutex<Vec<String>>,
     ready: bool,
 ) {
-    if !ready {
-        return;
-    }
-    let active = {
-        let state = teardown.lock().unwrap();
-        match (
-            state.phase,
-            state.execution_active,
-            state.execution_interrupt,
-            state.execution_started,
-        ) {
-            (TeardownPhase::Running, true, None, Some(started)) => {
-                Some((state.execution_id, state.execution_tick, started.elapsed()))
-            }
-            _ => None,
-        }
-    };
-    let Some((execution_id, tick, elapsed)) = active else {
-        return;
-    };
-    if elapsed <= EXECUTION_WATCHDOG_HORIZON {
-        arm_active_execution_deadline_shared(
+    match teardown::watchdog_look(teardown, ready, Instant::now()) {
+        None => {}
+        Some(teardown::WatchdogLook::Within) => arm_active_execution_deadline_shared(
             teardown,
             terminate,
             logs,
             teardown::ExecutionInterrupt::Watchdog,
-        );
-        return;
-    }
-    if fire_execution_interrupt_shared(
-        teardown,
-        terminate,
-        execution_id,
-        teardown::ExecutionInterrupt::Watchdog,
-    ) {
-        let line = if tick == RECOVERY_ANCHOR_TICK {
-            format!("interrupted slow recoveryAnchor ({elapsed:?})")
-        } else if tick == FRAME_CALLBACK_TICK {
-            format!("interrupted slow client-frame callback ({elapsed:?})")
-        } else {
-            format!("interrupted slow tick {tick} ({elapsed:?})")
-        };
-        logs.lock().unwrap().push(line);
+        ),
+        Some(teardown::WatchdogLook::Past { id, tick, elapsed }) => {
+            let fired = teardown::fire_execution_interrupt(
+                teardown,
+                terminate,
+                id,
+                teardown::ExecutionInterrupt::Watchdog,
+            );
+            if fired {
+                let line = if tick == RECOVERY_ANCHOR_TICK {
+                    format!("interrupted slow recoveryAnchor ({elapsed:?})")
+                } else if tick == FRAME_CALLBACK_TICK {
+                    format!("interrupted slow client-frame callback ({elapsed:?})")
+                } else {
+                    format!("interrupted slow tick {tick} ({elapsed:?})")
+                };
+                logs.lock()
+                    .expect("isolate log mutex is not poisoned")
+                    .push(line);
+            }
+        }
     }
 }
 
@@ -740,7 +674,10 @@ impl GameplayFactory {
         )
     }
 
-    #[allow(clippy::too_many_arguments)] // the slot's per-run inputs plus its local state
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The slot's per-run inputs and local state stay explicit at isolate creation"
+    )]
     pub(crate) fn spawn_with_content_and_state(
         js: String,
         card_name: std::sync::Arc<str>,
@@ -940,7 +877,7 @@ impl LoadIsolate {
             std::sync::Arc::new(crate::compat::quest_journal::CompatJournalLease::default())
         });
         let thread_compat_journal = compat_journal.clone();
-        let teardown = std::sync::Arc::new(Mutex::new(TeardownState::new()));
+        let teardown = std::sync::Arc::new(Mutex::new(Teardown::new()));
         let thread_teardown = teardown.clone();
         let proof = TeardownProof::new();
         let thread_proof = proof.inner.clone();
@@ -1245,14 +1182,20 @@ impl LoadIsolate {
     /// Record a producer delta that carries changed evidence.
     pub(crate) fn record_snapshot_evidence_change(&self, changed: bool) {
         if changed {
-            let mut state = self.teardown.lock().unwrap();
+            let mut state = self
+                .teardown
+                .lock()
+                .expect("isolate teardown state mutex is not poisoned");
             state.snapshot_evidence_sequence = state.snapshot_evidence_sequence.wrapping_add(1);
         }
     }
 
     /// Current producer evidence generation, independent of native identity.
     pub(crate) fn snapshot_evidence_sequence(&self) -> u64 {
-        self.teardown.lock().unwrap().snapshot_evidence_sequence
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .snapshot_evidence_sequence
     }
 
     fn dispatch_tick(
@@ -1291,7 +1234,11 @@ impl LoadIsolate {
             self.interrupt_slow_execution(ready);
         }
         if !backlogged {
-            *self.in_flight.lock().unwrap() = Some((generation, snap_tick, Instant::now()));
+            *self
+                .in_flight
+                .lock()
+                .expect("in-flight tick mutex is not poisoned") =
+                Some((generation, snap_tick, Instant::now()));
         }
         if backlogged {
             return false;
@@ -1348,9 +1295,11 @@ impl LoadIsolate {
             entered: std::sync::Arc::clone(&entered),
         });
         let (lock, cv) = &*entered;
-        let mut seen = lock.lock().unwrap();
+        let mut seen = lock.lock().expect("test block gate mutex is not poisoned");
         while !*seen {
-            let (next, timeout) = cv.wait_timeout(seen, Duration::from_secs(10)).unwrap();
+            let (next, timeout) = cv
+                .wait_timeout(seen, Duration::from_secs(10))
+                .expect("test block gate mutex is not poisoned");
             seen = next;
             assert!(
                 !timeout.timed_out(),
@@ -1390,7 +1339,10 @@ impl LoadIsolate {
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn executed_seat_pages_for_test(&self) -> u64 {
-        self.teardown.lock().unwrap().executed_seat_pages
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .executed_seat_pages
     }
 
     /// The producer evidence generation of the posted pages: changed seat
@@ -1469,8 +1421,8 @@ impl LoadIsolate {
         use std::sync::atomic::Ordering::Relaxed;
         serde_json::json!({"dispatched":self.dispatched.load(Relaxed),
             "last_completed_tick":self.last_completed.load(Relaxed),
-            "paint":self.paint.lock().unwrap().as_ref().map(|p|serde_json::json!({"title":p.title,"lines":p.lines})),
-            "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(_,tick,t)|(*tick,t.elapsed().as_millis()))})
+            "paint":self.paint.lock().expect("paint mutex is not poisoned").as_ref().map(|p|serde_json::json!({"title":p.title,"lines":p.lines})),
+            "in_flight":self.in_flight.lock().expect("in-flight tick mutex is not poisoned").as_ref().map(|(_,tick,t)|(*tick,t.elapsed().as_millis()))})
     }
 
     /// Bind the slot-owned lifecycle and activity projection to this isolate.
@@ -1486,12 +1438,11 @@ impl LoadIsolate {
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         self.interrupt_slow_execution(ready);
-        {
-            let mut st = self.teardown.lock().unwrap();
-            if st.phase == TeardownPhase::Running {
-                st.pause_requested = true;
-            }
-        }
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .state
+            .request_pause();
         self.arm_active_execution_deadline(teardown::ExecutionInterrupt::Pause);
         self.send(IsolateCmd::Pause);
     }
@@ -1509,7 +1460,11 @@ impl LoadIsolate {
 
     /// Re-arm tick dispatch after [`LoadIsolate::pause`].
     pub fn resume(&self) {
-        self.teardown.lock().unwrap().pause_requested = false;
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .state
+            .clear_pause();
         self.send(IsolateCmd::Resume);
     }
 
@@ -1560,7 +1515,11 @@ impl LoadIsolate {
             .work_generation
             .load(std::sync::atomic::Ordering::Acquire);
         self.interrupt_slow_execution(ready);
-        *self.in_flight.lock().unwrap() = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
+        *self
+            .in_flight
+            .lock()
+            .expect("in-flight tick mutex is not poisoned") =
+            Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
         self.send(IsolateCmd::RecoveryAnchor { generation });
     }
 
@@ -1582,26 +1541,33 @@ impl LoadIsolate {
     /// instance) fail closed to `[]`. No probe round-trip.
     pub fn ignored_randoms(&self) -> Vec<String> {
         self.pump_logs();
-        self.ignored_randoms.lock().unwrap().clone()
+        self.ignored_randoms
+            .lock()
+            .expect("ignored randoms mutex is not poisoned")
+            .clone()
     }
 
     /// Match the host knock against the cache without cloning its list. This
     /// mirrors `RandomEvents.isIgnored`: Unicode lowercase, no whitespace trim.
     pub(crate) fn ignores_random(&self, name: &str) -> bool {
         self.pump_logs();
-        self.ignored_randoms.lock().unwrap().iter().any(|ignored| {
-            ignored
-                .chars()
-                .flat_map(char::to_lowercase)
-                .eq(name.chars().flat_map(char::to_lowercase))
-        })
+        self.ignored_randoms
+            .lock()
+            .expect("ignored randoms mutex is not poisoned")
+            .iter()
+            .any(|ignored| {
+                ignored
+                    .chars()
+                    .flat_map(char::to_lowercase)
+                    .eq(name.chars().flat_map(char::to_lowercase))
+            })
     }
 
     /// Drain the isolate's log lines (tick errors, slow/interrupted
     /// ticks).
     pub fn drain_logs(&self) -> Vec<String> {
         self.pump_logs();
-        std::mem::take(&mut *self.logs.lock().unwrap())
+        std::mem::take(&mut *self.logs.lock().expect("isolate log mutex is not poisoned"))
     }
     /// Consume the isolate's one cut notification. Only the owning slot calls
     /// this; a standalone isolate remains stopped at the cut continuation.
@@ -1615,7 +1581,12 @@ impl LoadIsolate {
     /// [`Self::pump_logs`] pass. User-authored log lines never enter this
     /// queue.
     pub(crate) fn drain_tick_outcomes(&self) -> Vec<TickOutcome> {
-        std::mem::take(&mut *self.tick_outcomes.lock().unwrap())
+        std::mem::take(
+            &mut *self
+                .tick_outcomes
+                .lock()
+                .expect("tick outcomes mutex is not poisoned"),
+        )
     }
 
     /// Cached terminal state, refreshed by the regular log drain.
@@ -1639,7 +1610,10 @@ impl LoadIsolate {
     /// Cached ScriptRunner.stop receipt. Reading it never drains logs.
     pub fn script_stop_receipt(&self) -> Option<ScriptStopReceipt> {
         self.pump_logs();
-        self.script_stop.lock().unwrap().clone()
+        self.script_stop
+            .lock()
+            .expect("script stop mutex is not poisoned")
+            .clone()
     }
 
     /// Per-isolate teardown evidence. Clone before `join`/`Drop`.
@@ -1651,7 +1625,12 @@ impl LoadIsolate {
     /// Whether the isolate thread owns the current interruptible tick phase.
     #[doc(hidden)]
     pub fn execution_active(&self) -> bool {
-        self.teardown.lock().unwrap().execution_active
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .state
+            .execution()
+            .is_some()
     }
 
     /// Monotonic identity and activity of the latest interruptible execution.
@@ -1659,8 +1638,11 @@ impl LoadIsolate {
     /// executions too short to sample while active.
     #[doc(hidden)]
     pub fn execution_sequence(&self) -> (u64, bool) {
-        let st = self.teardown.lock().unwrap();
-        (st.execution_id, st.execution_active)
+        let st = self
+            .teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned");
+        (st.executions, st.state.execution().is_some())
     }
 
     /// Number of per-tick diagnostics still awaiting their matching
@@ -1668,27 +1650,39 @@ impl LoadIsolate {
     #[doc(hidden)]
     pub fn pending_tick_error_count(&self) -> usize {
         self.pump_logs();
-        self.tick_errors.lock().unwrap().len()
+        self.tick_errors
+            .lock()
+            .expect("tick errors mutex is not poisoned")
+            .len()
     }
 
     /// Isolate-scoped seam: delay after the shared deadline is armed and
     /// before getter/body. Proves a late completion cannot cancel it.
     #[doc(hidden)]
     pub fn delay_onstop_after_deadline_arm(&self, delay: Duration) {
-        self.teardown.lock().unwrap().hook_entry_delay = Some(delay);
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .hook_entry_delay = Some(delay);
     }
 
     /// Isolate-scoped seam: refuse supervisor hook registration.
     #[doc(hidden)]
     pub fn fail_onstop_deadline_registration(&self) {
-        self.teardown.lock().unwrap().fail_hook_registration = true;
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .fail_hook_registration = true;
     }
 
     /// Isolate-scoped deadline refusal seam for capacity/stopped diagnostics.
     #[doc(hidden)]
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn fail_execution_deadline_registration(&self, stopped: bool) {
-        self.teardown.lock().unwrap().fail_execution_registration = Some(if stopped {
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .fail_execution_registration = Some(if stopped {
             teardown::DeadlineRefusal::Stopped
         } else {
             teardown::DeadlineRefusal::Capacity
@@ -1699,18 +1693,36 @@ impl LoadIsolate {
     /// retaining a bounded hook deadline.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn set_onstop_timeout_for_test(&self, timeout: Duration) {
-        self.teardown.lock().unwrap().test_hook_timeout = Some(timeout);
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .test_hook_timeout = Some(timeout);
     }
 
     /// Drain current-generation interactions and any AbortWalk releases
     /// retained across a kept reconnect. Prior-session gameplay is discarded.
     pub fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {
         self.pump_logs();
-        let mut interacts = std::mem::take(&mut *self.interacts.lock().unwrap());
-        if self.held_fence.lock().unwrap().is_none() {
+        let mut interacts = std::mem::take(
+            &mut *self
+                .interacts
+                .lock()
+                .expect("interaction queue mutex is not poisoned"),
+        );
+        if self
+            .held_fence
+            .lock()
+            .expect("held fence mutex is not poisoned")
+            .is_none()
+        {
             self.holding_releases
                 .store(false, std::sync::atomic::Ordering::Release);
-            let mut releases = std::mem::take(&mut *self.held_releases.lock().unwrap());
+            let mut releases = std::mem::take(
+                &mut *self
+                    .held_releases
+                    .lock()
+                    .expect("held releases mutex is not poisoned"),
+            );
             releases.append(&mut interacts);
             interacts = releases;
         }
@@ -1728,13 +1740,20 @@ impl LoadIsolate {
     /// suffix after an interrupted host-side dispatch.
     pub fn drain_seat_batches(&self) -> Vec<QueuedSeatBatch> {
         self.pump_logs();
-        self.seat_batches.lock().unwrap().drain(..).collect()
+        self.seat_batches
+            .lock()
+            .expect("seat batch queue mutex is not poisoned")
+            .drain(..)
+            .collect()
     }
 
     #[cfg(feature = "test-hooks")]
     pub fn seat_batch_backlog(&self) -> usize {
         self.pump_logs();
-        self.seat_batches.lock().unwrap().len()
+        self.seat_batches
+            .lock()
+            .expect("seat batch queue mutex is not poisoned")
+            .len()
     }
 
     /// Return the number of queued batches retained by the guardian fold.
@@ -1743,7 +1762,7 @@ impl LoadIsolate {
         self.pump_logs();
         self.seat_batches
             .lock()
-            .unwrap()
+            .expect("seat batch queue mutex is not poisoned")
             .iter()
             .filter(|batch| batch.held_fold)
             .count()
@@ -1753,7 +1772,10 @@ impl LoadIsolate {
     /// afterward. Generation and per-batch walk stamps are never rewritten.
     pub(crate) fn restore_seat_batches(&self, mut drained: Vec<QueuedSeatBatch>) {
         self.pump_logs();
-        let mut queued = self.seat_batches.lock().unwrap();
+        let mut queued = self
+            .seat_batches
+            .lock()
+            .expect("seat batch queue mutex is not poisoned");
         drained.extend(queued.drain(..));
         *queued = drained.into();
     }
@@ -1771,7 +1793,10 @@ impl LoadIsolate {
     /// afterward. Used when an operator Pause wins the host's final
     /// dispatch fence: no verb is lost, and Resume observes original order.
     pub(crate) fn restore_interacts_stamped(&self, mut drained: Vec<QueuedInteract>) {
-        let mut queued = self.interacts.lock().unwrap();
+        let mut queued = self
+            .interacts
+            .lock()
+            .expect("interaction queue mutex is not poisoned");
         drained.append(&mut queued);
         *queued = drained;
     }
@@ -1781,7 +1806,7 @@ impl LoadIsolate {
         self.pump_logs();
         self.interacts
             .lock()
-            .unwrap()
+            .expect("interaction queue mutex is not poisoned")
             .retain(|queued| !matches!(&queued.req, script::interact::InteractReq::Mouse { .. }));
     }
 
@@ -1790,7 +1815,12 @@ impl LoadIsolate {
     /// batch. Game interacts stay on [`LoadIsolate::drain_interacts`].
     pub fn drain_lifecycle(&self) -> Vec<script::interact::InteractReq> {
         self.pump_logs();
-        std::mem::take(&mut *self.lifecycle.lock().unwrap())
+        std::mem::take(
+            &mut *self
+                .lifecycle
+                .lock()
+                .expect("lifecycle mutex is not poisoned"),
+        )
     }
 
     /// The session ended deliberately (operator logout, Stop, or removal):
@@ -1881,10 +1911,20 @@ impl LoadIsolate {
         // Fold output sent under the ended generation: a kept reconnect
         // retains AbortWalk releases only; gameplay rows are discarded.
         self.pump_logs();
-        let had_active_error = self.tick_outcome_error_generation.lock().unwrap().is_some();
+        let had_active_error = self
+            .tick_outcome_error_generation
+            .lock()
+            .expect("tick outcome error generation mutex is not poisoned")
+            .is_some();
         let (generation, undelivered_walks) = {
-            let mut interacts = self.interacts.lock().unwrap();
-            let mut seat_batches = self.seat_batches.lock().unwrap();
+            let mut interacts = self
+                .interacts
+                .lock()
+                .expect("interaction queue mutex is not poisoned");
+            let mut seat_batches = self
+                .seat_batches
+                .lock()
+                .expect("seat batch queue mutex is not poisoned");
             let undelivered_walks: Vec<_> = if keep_work {
                 interacts
                     .iter()
@@ -1909,7 +1949,10 @@ impl LoadIsolate {
                 std::sync::atomic::Ordering::Release,
             );
             {
-                let mut held = self.held_releases.lock().unwrap();
+                let mut held = self
+                    .held_releases
+                    .lock()
+                    .expect("held releases mutex is not poisoned");
                 if keep_work {
                     hold_walk_releases(&mut held, interacts.drain(..));
                     for batch in seat_batches.drain(..) {
@@ -1929,18 +1972,33 @@ impl LoadIsolate {
             }
             self.holding_releases
                 .store(keep_work, std::sync::atomic::Ordering::Release);
-            *self.held_fence.lock().unwrap() = keep_work.then_some(generation);
+            *self
+                .held_fence
+                .lock()
+                .expect("held fence mutex is not poisoned") = keep_work.then_some(generation);
             interacts.clear();
-            self.lifecycle.lock().unwrap().clear();
+            self.lifecycle
+                .lock()
+                .expect("lifecycle mutex is not poisoned")
+                .clear();
             (generation, undelivered_walks)
         };
         if let Some(lease) = &self.compat_journal {
             lease.set_host_generation(generation);
         }
-        self.tick_errors.lock().unwrap().clear();
-        *self.tick_outcome_error_generation.lock().unwrap() =
+        self.tick_errors
+            .lock()
+            .expect("tick errors mutex is not poisoned")
+            .clear();
+        *self
+            .tick_outcome_error_generation
+            .lock()
+            .expect("tick outcome error generation mutex is not poisoned") =
             had_active_error.then_some(generation);
-        self.tick_outcomes.lock().unwrap().clear();
+        self.tick_outcomes
+            .lock()
+            .expect("tick outcomes mutex is not poisoned")
+            .clear();
         {
             // Re-stamp the held frame with the new generation: an overlay that
             // captured the pre-reset generation no longer matches it, so a
@@ -1949,14 +2007,17 @@ impl LoadIsolate {
             let generation = self
                 .paint_generation
                 .load(std::sync::atomic::Ordering::Acquire);
-            let mut slot = self.paint.lock().unwrap();
+            let mut slot = self.paint.lock().expect("paint mutex is not poisoned");
             if let Some(paint) = slot.as_ref().filter(|p| p.generation != generation) {
                 let mut restamped = (**paint).clone();
                 restamped.generation = generation;
                 *slot = Some(std::sync::Arc::new(restamped));
             }
         }
-        *self.in_flight.lock().unwrap() = None;
+        *self
+            .in_flight
+            .lock()
+            .expect("in-flight tick mutex is not poisoned") = None;
         self.send(IsolateCmd::ResetSession {
             keep_work,
             generation,
@@ -1972,7 +2033,10 @@ impl LoadIsolate {
     /// round-trip — the host reads this every frame.
     pub fn paint(&self) -> Option<std::sync::Arc<script::paint::ScriptPaint>> {
         self.pump_logs();
-        self.paint.lock().unwrap().clone()
+        self.paint
+            .lock()
+            .expect("paint mutex is not poisoned")
+            .clone()
     }
 
     /// Resolve setup without blocking. Called from the slot's per-frame
@@ -2008,7 +2072,7 @@ impl LoadIsolate {
                     // interrupted even if it never returns to send Ready.
                     let _ = self.terminate.set(handle);
                     let st = lock_after_isolate_failure(&self.teardown);
-                    if st.phase == TeardownPhase::UnwindingTick {
+                    if st.state.is_unwinding() {
                         // Serialized with Hook entry: join can never fire
                         // this startup/tick interrupt after onStop begins.
                         self.fire_terminate();
@@ -2068,13 +2132,7 @@ impl LoadIsolate {
 
     /// Terminate setup/tick failure while it is still before Hook.
     fn fire_before_hook(&self) {
-        let st = lock_after_isolate_failure(&self.teardown);
-        if matches!(
-            st.phase,
-            TeardownPhase::Running | TeardownPhase::UnwindingTick
-        ) {
-            self.fire_terminate();
-        }
+        teardown::terminate_before_hook(&self.teardown, self.terminate.get());
     }
 
     /// Transfer Stop and actual join custody to the one process supervisor.
@@ -2086,15 +2144,7 @@ impl LoadIsolate {
     fn retire(self, invoke_hook: bool, validation: bool, done: Sender<Vec<String>>) {
         self.revoke_compat_journal();
         self.send(IsolateCmd::Stop { invoke_hook });
-        {
-            let mut st = lock_after_isolate_failure(&self.teardown);
-            if st.phase == TeardownPhase::Running {
-                st.phase = TeardownPhase::UnwindingTick;
-            }
-            if st.phase == TeardownPhase::UnwindingTick {
-                self.fire_terminate();
-            }
-        }
+        teardown::begin_stop(&self.teardown, self.terminate.get());
         supervisor::get()
             .expect("isolate creation initialized the supervisor")
             .retire(self, done, validation);
@@ -2114,10 +2164,11 @@ impl LoadIsolate {
     }
 
     fn teardown_blocks_dispatch(&self) -> bool {
-        matches!(
-            self.teardown.lock().unwrap().phase,
-            TeardownPhase::Hook | TeardownPhase::Done
-        )
+        self.teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .state
+            .blocks_dispatch()
     }
 
     /// Fold completed ticks and thread log lines into local state.
@@ -2372,12 +2423,7 @@ impl Drop for LoadIsolate {
         self.revoke_compat_journal();
         // Revoke the handle's authority even if its owner omitted join.
         // A live thread remains charged to the supervisor until real exit.
-        {
-            let mut st = lock_after_isolate_failure(&self.teardown);
-            if st.phase != TeardownPhase::Done {
-                st.phase = TeardownPhase::Done;
-            }
-        }
+        teardown::revoke(&self.teardown);
         let _ = self.poll_ready();
         self.send(IsolateCmd::Stop { invoke_hook: false });
         self.fire_terminate();

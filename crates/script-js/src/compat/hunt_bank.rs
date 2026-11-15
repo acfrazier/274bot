@@ -1176,7 +1176,7 @@ fn key_arm(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
             let name = if plan.key_name.is_empty() {
                 "key".to_string()
             } else {
-                plan.key_name.clone()
+                plan.key_name
             };
             Some(emit_log(
                 rt,
@@ -1205,7 +1205,7 @@ fn key_arm(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
             let name = if plan.key_name.is_empty() {
                 row.name.clone()
             } else {
-                plan.key_name.clone()
+                plan.key_name
             };
             rt.status(format!("withdrawing the {name}"));
             Some(emit_withdraw(
@@ -1652,7 +1652,7 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         heal_finished(rt, &obs);
         return None;
     };
-    rt.eat_name = row.name.clone();
+    rt.eat_name.clone_from(&row.name);
     rt.eat_id = row.id;
     rt.heal_attempts += 1;
     rt.heal_ticks = 0;

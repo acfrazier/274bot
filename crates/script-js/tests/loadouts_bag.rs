@@ -5,7 +5,7 @@ use {script::SettingDef, script_js::LoadIsolate, script_js::LoadShape};
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -271,7 +271,7 @@ export default class T extends LoopingBot {
         bank_snapshot_generation: Some(4),
         ..Default::default()
     };
-    ready.post_snapshot(&snap, native);
+    ready.post_snapshot(&snap, &native);
     ready.tick_posted(1);
     assert_eq!(ready.probe("__queued").unwrap(), true);
     assert_eq!(ready.probe("__qty").unwrap(), 10);
@@ -279,7 +279,7 @@ export default class T extends LoopingBot {
     let mut actions = Vec::new();
     for tick in 2..=4 {
         snap.tick = tick;
-        ready.tick_from_input(tick, &snap, native);
+        ready.tick_from_input(tick, &snap, &native);
         actions.extend(
             ready
                 .take_actions()

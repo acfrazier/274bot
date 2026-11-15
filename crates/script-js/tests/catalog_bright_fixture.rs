@@ -13,7 +13,7 @@ use script::ScriptKind;
 use script_js::{CacheMeta, JsLibrary, LoadIsolate};
 use {script::ScriptSource, script_js::JsCache};
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -26,7 +26,7 @@ fn scratch(name: &str) -> PathBuf {
         name
     ));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create catalog fixture scratch directory");
     dir
 }
 
@@ -45,14 +45,18 @@ import type { DangerZoneRect } from '../../event/webwalk/data/dangerZones.js';
 const _zone: DangerZoneRect = { minX: 0, maxX: 1, minZ: 0, maxZ: 1 };
 export default class TypeOnly extends LoopingBot { loop() { bestMeleeWeapon([], { attack: 1 }); } }
 "#;
-    std::fs::create_dir_all(scripts.join("CookBot")).unwrap();
-    std::fs::create_dir_all(scripts.join("Woodcutter")).unwrap();
-    std::fs::create_dir_all(scripts.join("HerbCard")).unwrap();
-    std::fs::create_dir_all(scripts.join("TypeOnly")).unwrap();
-    std::fs::write(scripts.join("CookBot/CookBot.ts"), body).unwrap();
-    std::fs::write(scripts.join("Woodcutter/Woodcutter.ts"), body).unwrap();
-    std::fs::write(scripts.join("HerbCard/HerbCard.ts"), herbs_card).unwrap();
-    std::fs::write(scripts.join("TypeOnly/TypeOnly.ts"), type_only).unwrap();
+    std::fs::create_dir_all(scripts.join("CookBot")).expect("create CookBot fixture directory");
+    std::fs::create_dir_all(scripts.join("Woodcutter"))
+        .expect("create Woodcutter fixture directory");
+    std::fs::create_dir_all(scripts.join("HerbCard")).expect("create HerbCard fixture directory");
+    std::fs::create_dir_all(scripts.join("TypeOnly")).expect("create TypeOnly fixture directory");
+    std::fs::write(scripts.join("CookBot/CookBot.ts"), body).expect("write CookBot fixture script");
+    std::fs::write(scripts.join("Woodcutter/Woodcutter.ts"), body)
+        .expect("write Woodcutter fixture script");
+    std::fs::write(scripts.join("HerbCard/HerbCard.ts"), herbs_card)
+        .expect("write HerbCard fixture script");
+    std::fs::write(scripts.join("TypeOnly/TypeOnly.ts"), type_only)
+        .expect("write TypeOnly fixture script");
     std::fs::write(
         scripts.join("index.ts"),
         r#"
@@ -66,7 +70,7 @@ ScriptRegistry.register({ name: 'HerbCard', create: () => new HerbCard() });
 ScriptRegistry.register({ name: 'TypeOnly', create: () => new TypeOnly() });
 "#,
     )
-    .unwrap();
+    .expect("write catalog fixture index");
 }
 
 fn register_fixture(dir: &Path) -> JsLibrary {

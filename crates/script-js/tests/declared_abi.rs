@@ -656,6 +656,10 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
     let graph: serde_json::Value =
         serde_json::from_str(include_str!("../compat-js/family-predecessors.json"))
             .expect("generated family predecessors");
+    assert_eq!(
+        graph["base_predecessors"],
+        serde_json::json!(["F0", "T1.3b", "T2.1"])
+    );
     assert_eq!(contract["endpoint"], "T2.1");
     assert_eq!(contract["activation_state"], "partially-activated");
     assert_eq!(
@@ -783,7 +787,7 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
         let predecessors = family["predecessors"]
             .as_array()
             .expect("family predecessors");
-        for required in ["F0", "T1.3", "T2.1"] {
+        for required in ["F0", "T1.3b", "T2.1"] {
             assert!(
                 predecessors.iter().any(|row| row == required),
                 "family {id} is missing predecessor {required}"
@@ -806,7 +810,7 @@ fn t2_1_abi_contract_covers_exports_families_and_visible_debt() {
             .map(|row| row.as_str().expect("canonical predecessor"))
             .collect();
         let expected_canonical: Vec<_> = if id == "bank" {
-            vec!["F0", "T1.3", "T2.2", "T5.1"]
+            vec!["F0", "T1.3b", "T2.2", "T5.1"]
         } else {
             predecessors
                 .iter()

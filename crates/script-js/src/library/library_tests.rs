@@ -439,7 +439,7 @@ fn refresh_and_ensure_js_refuse_unresolvable_setting_spreads_without_mutating_ca
     let mut library = library(&dir);
     let loaded = library.load(&path).expect("valid schema loads");
     let prior_schema = loaded.settings_schema.clone();
-    let prior_hash = loaded.sha256.clone();
+    let prior_hash = loaded.sha256;
 
     std::fs::write(&path, bad).unwrap();
     let refresh_error = library

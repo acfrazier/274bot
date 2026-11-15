@@ -42,3 +42,6 @@ allocation-counter = "0.8.1"
 api = { path = "../api", features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 tungstenite = "0.24"
+# The checked model of Guardian event ownership; the conformance tests drive
+# the real Guardian with its traces (`src/random_owner_tests.rs`).
+seat-model = { path = "../../tools/seat-model" }

@@ -1,7 +1,7 @@
 //! COMPAT-FINISH-029 Game state family: native spell-on-NPC dispatch and the
 //! removed compat-only autoRetaliate alias.
 
-mod common;
+pub mod common;
 
 use api::identity::ExecutionId;
 use api::script_contract::ChildOrigin;

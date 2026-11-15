@@ -2,7 +2,7 @@
 //! press the posted Continue, then true once the chat modal changes or the
 //! page offers Continue again; false with no Continue or on the 3 s timeout.
 
-mod common;
+pub mod common;
 
 use script::interact::InteractReq;
 use script::native::snapshot_source::{
@@ -49,7 +49,8 @@ fn post_tick(iso: &LoadIsolate, snap: &mut SnapshotInput<'_>, tick: u64) {
 }
 
 fn start(modal: i32) -> (LoadIsolate, SnapshotInput<'static>) {
-    let iso = LoadIsolate::spawn(SRC.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(SRC.into(), LoadShape::CompatClass, vec![])
+        .expect("spawn dialog-continuation isolate");
     let mut snap = common::ingame_snapshot();
     page(&mut snap, modal, true);
     post_tick(&iso, &mut snap, 1);

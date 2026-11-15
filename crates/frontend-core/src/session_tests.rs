@@ -1488,6 +1488,90 @@ fn random_event_policy_persists_and_mirrors_after_durable_write() {
 }
 
 #[test]
+fn legacy_0_2_9_ignore_reaches_the_draft_and_running_arm_as_flee() {
+    // Written by 0.2.9.1's own writer: three `ignore` entries, one `fight`,
+    // one `flee`, and two events with no entry. See the vault fixture.
+    const LEGACY: &[u8] = include_bytes!("../../vault/tests/fixtures/legacy-0.2.9-policies.vault");
+    const LEGACY_PASS: &str = "v11c-legacy-fixture";
+
+    let path = vault_path("legacy-0.2.9-ignore");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, LEGACY).unwrap();
+
+    let mut s = OperatorSession::<u32>::new(InstancePermit::SkipLock);
+    s.set_spawn_workers(false);
+    crate::test_support::VaultFixture::unlock(&path, LEGACY_PASS)
+        .start_session(&mut s, empty_play());
+
+    // The typed settings convert at the vault boundary, before any draft.
+    let view = s
+        .vault()
+        .unwrap()
+        .get("alice")
+        .map(crate::ProfileView::new)
+        .unwrap();
+    assert_eq!(
+        view.random_event_policy("river troll"),
+        crate::GuardianPolicy::Flee,
+        "a 0.2.9 ignore reads as Flee"
+    );
+    assert_eq!(
+        view.random_event_policy("swarm"),
+        crate::GuardianPolicy::Fight,
+        "a saved Fight stays Fight"
+    );
+    assert_eq!(
+        view.random_event_policy("tree spirit"),
+        crate::GuardianPolicy::Flee,
+        "a missing entry keeps the default"
+    );
+
+    // A draft built from those settings carries Flee, not a third choice.
+    let draft = view.draft();
+    assert_eq!(
+        draft.settings().random_event_policy("river troll"),
+        crate::GuardianPolicy::Flee
+    );
+    assert_eq!(
+        draft.settings().random_event_policy("swarm"),
+        crate::GuardianPolicy::Fight
+    );
+
+    // Runtime publication: the loaded arm mirrors the converted values.
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let alice = arm(&s, "alice");
+    {
+        let published = alice.random_event_policies.lock().unwrap();
+        assert_eq!(
+            published.get("river troll"),
+            Some(&vault::RandomEventPolicy::Flee)
+        );
+        assert_eq!(
+            published.get("swarm"),
+            Some(&vault::RandomEventPolicy::Fight)
+        );
+        assert_eq!(published.len(), 5, "every stored key is published");
+    }
+
+    // The next ordinary settings save writes canonical values.
+    s.set_random_settings("alice", false, "strength", true)
+        .unwrap();
+    s.flush_writes();
+    let saved = Vault::unlock(&path, LEGACY_PASS).unwrap();
+    let saved_settings = &saved.get("alice").unwrap().settings;
+    assert_eq!(
+        saved_settings.random_event_policy("river troll"),
+        vault::RandomEventPolicy::Flee
+    );
+    assert_eq!(
+        saved_settings.random_event_policy("swarm"),
+        vault::RandomEventPolicy::Fight
+    );
+    assert_eq!(saved_settings.random_event_policies.len(), 5);
+}
+
+#[test]
 fn survival_mirror_reaches_running_slot_within_one_frame() {
     let name = "survival-mirror-alice";
     let mut s = session("survival-mirror", &[(name, 1, false)]);

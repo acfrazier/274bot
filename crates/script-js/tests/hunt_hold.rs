@@ -516,7 +516,7 @@ fn pause_hold_does_not_elapse_return_ms() {
     hunt_fight::set_observation(obs_at(off_anchor()));
     let token = begin();
     let p = proj(json!({}));
-    assert_eq!(call("next", token, p.clone(), None)["kind"], "status");
+    assert_eq!(call("next", token, p, None)["kind"], "status");
     let before = hold_deadline_remaining_ms(token).unwrap_or(0);
     assert!(before > 50_000, "{before}");
     hunt_fight::on_pause();
@@ -702,7 +702,7 @@ export default class T extends LoopingBot {{
         LoadShape::CompatClass,
         vec![],
     )
-    .unwrap();
+    .expect("spawn legacy hunting task isolate");
     iso.post_snapshot(script_js::wire::encode_snapshot(&empty_snapshot(1, here)));
     iso.on_game_tick(1);
     let status = iso.probe("globalThis.__status").unwrap_or(Value::Null);

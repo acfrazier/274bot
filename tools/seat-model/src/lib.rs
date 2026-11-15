@@ -6,6 +6,7 @@
 use std::fmt::Write;
 
 mod explorer;
+pub mod guardian;
 mod monitor;
 pub use explorer::*;
 use monitor::Monitor;

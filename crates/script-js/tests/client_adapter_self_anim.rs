@@ -4,7 +4,7 @@
 //! animating, and `lightFire` (`api/firemaking/LightFire.ts:36-39`) does not
 //! count a walk as the fire starting.
 
-mod common;
+pub mod common;
 
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};

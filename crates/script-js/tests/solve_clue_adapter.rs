@@ -316,10 +316,11 @@ fn scene_loc<'a>(
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let data = api::game_data::for_revision(ClientRevision::R274)
+        .expect("load revision 274 clue-adapter test data");
     let iso =
         LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
-            .unwrap();
+            .expect("spawn solve-clue compatibility isolate");
     // `spawn` returns before V8 setup; the queued snapshot/tick/probe would
     // otherwise share one 10 s probe budget with setup itself. Under parallel
     // heavy validation setup alone can exceed it, so `tick(1)`'s probe times
@@ -360,14 +361,15 @@ fn walk_to(x: i32, z: i32, level: i32) -> InteractReq {
 }
 
 fn json(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
-    let raw = iso.probe(expr).unwrap();
-    serde_json::from_str(raw.as_str().expect("probe JSON string")).unwrap()
+    let raw = iso.probe(expr).expect("read solve-clue JSON probe result");
+    serde_json::from_str(raw.as_str().expect("probe JSON string"))
+        .expect("parse solve-clue probe JSON")
 }
 
 /// The probe's own scalar text: a `String(...)` expression reads back as the
 /// string it produced, anything else as its JSON text.
 fn probe_text(iso: &LoadIsolate, expr: &str) -> String {
-    match iso.probe(expr).unwrap() {
+    match iso.probe(expr).expect("read solve-clue text probe result") {
         serde_json::Value::String(text) => text,
         value => value.to_string(),
     }

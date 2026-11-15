@@ -9908,6 +9908,118 @@ fn t23_bank_observe(
     wrote
 }
 
+/// One real host observer frame with the guardian's hold as given. The
+/// observer runs the slot's lifecycle (install, arm) before it applies this
+/// frame's guardian hold, so a card that installs on a frame inside a hold
+/// meets the previous frame's hold.
+#[cfg(feature = "js")]
+fn guardian_observe_frame(
+    client: &mut Client,
+    scripts: &ScriptWall,
+    cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    tick: u64,
+    guardian_hold: bool,
+) {
+    let _ = super::script_observe_cached_with_channels(
+        client,
+        "alice",
+        true,
+        true,
+        true,
+        tick,
+        None,
+        None,
+        None,
+        None::<&GameSnapshot>,
+        None,
+        None,
+        None,
+        scripts,
+        cheats,
+        navs,
+        &None,
+        guardian_hold,
+        guardian_hold,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        super::script_channels::BrokerWorld::Local,
+        None,
+        None,
+        None,
+        None,
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn a_compiled_card_that_installs_under_the_guardian_hold_waits_for_the_release() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut client = bank_client_289();
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let (navs, _) = empty_nav();
+    let slot = script_slot_or_insert(&scripts, "alice");
+
+    // The Guardian's hold stands before the operator presses Start.
+    guardian_observe_frame(&mut client, &scripts, &cheats, &navs, 1, true);
+    slot.lock()
+        .unwrap()
+        .start_compiled(
+            "alice",
+            script::CompiledId("Grinch"),
+            Arc::new(script::native::SettingsBag::new()),
+            api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .expect("R289 game data"),
+            Arc::default(),
+            None,
+        )
+        .expect("compiled Grinch start");
+    // Preparation finishes on a worker; the observer installs it on the
+    // first frame after, inside the hold. Before the fix this panicked.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut tick = 2;
+    while slot.lock().unwrap().state() != script::slot::RunState::Running {
+        assert!(Instant::now() < deadline, "Grinch preparation timed out");
+        guardian_observe_frame(&mut client, &scripts, &cheats, &navs, tick, true);
+        tick += 1;
+        std::thread::yield_now();
+    }
+    for _ in 0..3 {
+        guardian_observe_frame(&mut client, &scripts, &cheats, &navs, tick, true);
+        tick += 1;
+    }
+    {
+        let slot = slot.lock().unwrap();
+        let seat = slot.seat_for_test().expect("armed compiled seat");
+        assert!(seat.held(), "the guardian still holds the seat");
+        assert_eq!(seat.session(), None, "no owner is admitted while held");
+        assert_eq!(slot.state(), script::slot::RunState::Running);
+    }
+
+    guardian_observe_frame(&mut client, &scripts, &cheats, &navs, tick, false);
+    {
+        let slot = slot.lock().unwrap();
+        let seat = slot.seat_for_test().expect("armed compiled seat");
+        assert!(!seat.held());
+        assert!(
+            seat.session().is_some(),
+            "the owner is admitted on the first frame after the release"
+        );
+        assert_eq!(slot.state(), script::slot::RunState::Running);
+    }
+    slot.lock().unwrap().stop();
+    assert_eq!(slot.lock().unwrap().state(), script::slot::RunState::Idle);
+}
+
 fn t23_bank_assert_button_packet(
     client: &Client,
     start: usize,
@@ -31708,6 +31820,9 @@ mod script_progress;
 #[cfg(feature = "js")]
 #[path = "script_hold_conformance_tests.rs"]
 mod script_hold_conformance;
+
+#[path = "guardian_seat_conformance_tests.rs"]
+mod guardian_seat_conformance;
 
 #[cfg(test)]
 mod read_journal_tests {

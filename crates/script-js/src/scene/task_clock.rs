@@ -192,7 +192,11 @@ mod tests {
     #[test]
     fn bound_reached_stays_true_when_already_due_while_frozen() {
         let mut clock = InstantTaskClock::new();
-        clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+        clock.deadline = Some(
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("test clock deadline is in the past"),
+        );
         clock.set_freeze(true, false);
         assert!(clock.bound_reached());
     }

@@ -10,9 +10,11 @@
 //!   [`OPEN_SLACK_TICKS`], capped at [`OPEN_CAP_TICKS`]. Without one (no live
 //!   reach view) it is [`OPEN_CAP_TICKS`]. "I can't reach that!" or a
 //!   session change ends it at once. A new Trade follows only an ended
-//!   attempt, at most [`OPEN_ATTEMPTS`] in all.
+//!   attempt, at most [`OPEN_ATTEMPTS`] in all: the core sends no Trade
+//!   once they are spent, after a walk too.
 //! - An unreachable keeper (a closed door) is walked to once by the
-//!   adapter's nav walk, then checked again.
+//!   adapter's nav walk, then checked again. The walk counts only when the
+//!   adapter reports that it ended ([`OpenCore::walked`]).
 //! - The shop is open only when a usable stock page shows on a tick after
 //!   the Trade.
 
@@ -400,7 +402,7 @@ impl OpenCore {
                 self.state = State::Idle;
                 self.attempts_left = self.attempts_left.saturating_sub(1);
                 if self.attempts_left == 0 {
-                    return Decision::Failed(Arc::from("no usable shop after 3 Trade attempts"));
+                    return Self::exhausted();
                 }
             }
         }
@@ -410,7 +412,21 @@ impl OpenCore {
         self.next(keeper())
     }
 
+    /// Trades this open may still send.
+    pub fn trades_left(&self) -> u32 {
+        self.attempts_left
+    }
+
+    fn exhausted() -> Decision {
+        Decision::Failed(Arc::from(format!(
+            "no usable shop after {OPEN_ATTEMPTS} Trade attempts"
+        )))
+    }
+
     fn next(&mut self, keeper: Option<Keeper>) -> Decision {
+        if self.attempts_left == 0 {
+            return Self::exhausted();
+        }
         let Some(keeper) = keeper else {
             return Decision::Failed(Arc::from("the keeper is gone"));
         };
@@ -419,7 +435,6 @@ impl OpenCore {
                 "the keeper is still unreachable after the walk to it",
             )),
             KeeperRoute::Unreachable => {
-                self.walked = true;
                 self.state = State::Walking;
                 Decision::Walk(keeper.tile)
             }
@@ -449,10 +464,13 @@ impl OpenCore {
         }
     }
 
-    /// The adapter's walk to the keeper ended. An arrival continues on the
+    /// The adapter's walk to the keeper ended. Only this report marks the
+    /// keeper as walked to: an adapter that sends a Trade in place of a
+    /// [`Decision::Walk`] has walked nowhere. An arrival continues on the
     /// same tick with a fresh keeper read. A failed walk fails the open with
     /// [`Self::walk_failed`]'s stable message.
     pub fn walked(&mut self, arrived: bool, keeper: impl FnOnce() -> Option<Keeper>) -> Decision {
+        self.walked = true;
         if !arrived {
             return Self::walk_failed(None);
         }
@@ -634,6 +652,50 @@ mod tests {
         let mut failed = OpenCore::default();
         let _ = run(&mut failed, &facts(1), KeeperRoute::Unreachable);
         assert!(matches!(failed.walked(false, || None), Decision::Failed(_)));
+    }
+
+    /// Review r3 finding 2: an adapter that sends a Trade in place of the
+    /// core's walk has walked nowhere. The next ended attempt on a closed
+    /// route asks for the walk again instead of failing as walked.
+    #[test]
+    fn a_walk_replaced_by_a_trade_is_not_counted_as_walked() {
+        let mut core = OpenCore::default();
+        let blocked = keeper(KeeperRoute::Unreachable);
+        assert_eq!(
+            core.tick(&facts(1), || Some(blocked.clone())),
+            Decision::Walk(blocked.tile)
+        );
+        core.traded(&facts(1), &blocked);
+        let expired = 2 + OPEN_CAP_TICKS;
+        assert_eq!(
+            core.tick(&facts(expired), || Some(blocked.clone())),
+            Decision::Walk(blocked.tile)
+        );
+    }
+
+    /// Review r3 finding 1: the Trade bound holds after a walk. Once every
+    /// attempt has ended, a walk that the adapter reports does not lead to
+    /// another Trade.
+    #[test]
+    fn no_trade_follows_a_walk_once_the_attempts_are_spent() {
+        let mut core = OpenCore::default();
+        let route = KeeperRoute::Steps(3);
+        let mut tick = 1;
+        let mut trades = 0;
+        loop {
+            match run(&mut core, &facts(tick), route) {
+                Decision::Trade(_) => trades += 1,
+                Decision::Wait => {}
+                Decision::Failed(_) => break,
+                other => panic!("unexpected {other:?}"),
+            }
+            tick += 1;
+        }
+        assert_eq!(trades, OPEN_ATTEMPTS);
+        assert!(matches!(
+            core.walked(true, || Some(keeper(route))),
+            Decision::Failed(_)
+        ));
     }
 
     #[test]

@@ -6769,7 +6769,7 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
 }
 
 #[test]
-fn settings_popup_shows_unavailable_policy_refusal() {
+fn settings_popup_refuses_fight_with_the_shared_notice() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     lifecycle_vault("settings-policy-refusal").start_session(&mut session.core, empty_play());
@@ -6783,18 +6783,119 @@ fn settings_popup_shows_unavailable_policy_refusal() {
     dispatch(&mut session, &mut app, open);
     session.pump(&mut app);
     app.settings_state.row = 4;
+
+    // The saved default draws as Flee, and no Ignore choice is drawn.
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, "event policy: Flee").is_some(),
+            "{w}x{h}: the saved default draws"
+        );
+        assert!(
+            cell_of(&screen, "Ignore").is_none(),
+            "{w}x{h}: no Ignore choice draws"
+        );
+    }
+
     let before = session.core.refusals();
     let refused = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     dispatch(&mut session, &mut app, refused);
 
     assert_eq!(
         app.error.as_deref(),
-        Some("Fight and Ignore are unavailable; the Guardian treats saved choices as Flee.")
+        Some(frontend_core::GUARDIAN_FIGHT_UNAVAILABLE),
+        "the shared unavailable notice is what the operator sees"
     );
     assert_eq!(
         session.core.refusals(),
         before + 1,
         "the refused policy is logged at the command boundary"
+    );
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, "msg: Fight is not available yet").is_some(),
+            "{w}x{h}: the shared notice is on the message line"
+        );
+        assert!(
+            cell_of(&screen, "Ignore").is_none(),
+            "{w}x{h}: the notice no longer names Ignore"
+        );
+    }
+}
+
+#[test]
+fn settings_popup_shows_a_saved_fight_and_resets_it_to_flee() {
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    lifecycle_vault("settings-policy-saved-fight").start_session(&mut session.core, empty_play());
+    session.core.fleet_mut().add("alice");
+    select(&mut session, "alice");
+    // Save Fight through the real command path.
+    session
+        .core
+        .stage_guardian(frontend_core::GuardianEdit::policy(
+            "river troll",
+            frontend_core::GuardianPolicy::Fight,
+        ));
+    session
+        .core
+        .submit_detached(OperatorCommand::SetGuardian, Targets::Profile("alice"))
+        .unwrap()
+        .operation()
+        .expect("the policy write opened an operation");
+    session.core.flush_writes();
+
+    let mut app = TuiApp::new("tui");
+    session.names = vec!["alice".into()];
+    session.last_focused = Some("alice".into());
+    let open = app.run_command(crate::commands::Command::Settings);
+    dispatch(&mut session, &mut app, open);
+    session.pump(&mut app);
+    app.settings_state.row = 4;
+
+    // A previously saved Fight stays visible and stays saved.
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, "event policy: Fight (not available yet)").is_some(),
+            "{w}x{h}: a saved Fight stays visible"
+        );
+        assert!(
+            cell_of(&screen, "saved Fight is treated as Flee").is_some(),
+            "{w}x{h}: the row explains the saved Fight"
+        );
+        assert!(
+            cell_of(&screen, "Ignore").is_none(),
+            "{w}x{h}: no Ignore choice draws"
+        );
+    }
+
+    // Enter on the saved Fight applies the supported Flee reset and saves it.
+    let changed = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, changed);
+    session.pump(&mut app);
+    session.core.flush_writes();
+
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, "event policy: Flee").is_some(),
+            "{w}x{h}: the supported reset draws"
+        );
+        assert!(
+            cell_of(&screen, "Ignore").is_none(),
+            "{w}x{h}: no Ignore choice draws"
+        );
+    }
+    assert_eq!(
+        session
+            .core
+            .profile("alice")
+            .unwrap()
+            .random_event_policy("river troll"),
+        frontend_core::GuardianPolicy::Flee,
+        "the next save writes Flee"
     );
 }
 

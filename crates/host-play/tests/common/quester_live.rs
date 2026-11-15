@@ -355,6 +355,8 @@ impl LiveProfileControl {
 pub type ObservePair = Box<dyn FnMut([&GameSnapshot; 2]) -> Result<Option<Value>, String> + Send>;
 /// A receipt emitted by a cell-specific observer during live polling.
 pub type ObserveTick = Box<dyn FnMut(&GameSnapshot, Option<&ScriptStatus>) -> Option<Value> + Send>;
+/// A worker callback after publishing its snapshot and before scenario dispatch.
+pub type ObserveClientPoll = Box<dyn FnMut(&GameSnapshot) + Send>;
 
 /// One live cell.
 pub struct Cell {
@@ -854,6 +856,7 @@ struct ActorShared {
     observe_start: Option<ObserveStart>,
     start_receipt: Option<Value>,
     observe_tick: Option<ObserveTick>,
+    observe_client_poll: Option<ObserveClientPoll>,
     tick_observations: Vec<Value>,
     tick_mean: TickMean,
     /// `{stage, tick}` at each observed stage change, in observed game ticks.
@@ -1269,7 +1272,7 @@ pub fn run(cell: Cell) -> Result<Value, String> {
         cell,
         None,
         None,
-        None,
+        (None, None),
         false,
         FamilyBlockedPolicy::Reject,
         None,
@@ -1282,7 +1285,7 @@ pub fn run_quester_path(cell: Cell) -> Result<Value, String> {
         cell,
         None,
         None,
-        None,
+        (None, None),
         true,
         FamilyBlockedPolicy::Reject,
         None,
@@ -1295,7 +1298,7 @@ pub fn run_family(cell: Cell, start: StartFamily, observe: ObserveFamily) -> Res
         cell,
         Some(start),
         Some(observe),
-        None,
+        (None, None),
         false,
         FamilyBlockedPolicy::Reject,
         None,
@@ -1313,7 +1316,7 @@ pub fn run_family_expected_blocked(
         cell,
         Some(start),
         Some(observe),
-        None,
+        (None, None),
         false,
         FamilyBlockedPolicy::Observe,
         None,
@@ -1331,7 +1334,7 @@ pub fn run_family_with_profile_control(
         cell,
         Some(start),
         Some(observe),
-        None,
+        (None, None),
         false,
         FamilyBlockedPolicy::Reject,
         Some(profile_control),
@@ -1343,12 +1346,13 @@ pub fn run_observed(
     cell: Cell,
     observe: ObserveFamily,
     observe_tick: ObserveTick,
+    observe_client_poll: Option<ObserveClientPoll>,
 ) -> Result<Value, String> {
     run_inner(
         cell,
         None,
         Some(observe),
-        Some(observe_tick),
+        (Some(observe_tick), observe_client_poll),
         false,
         FamilyBlockedPolicy::Reject,
         None,
@@ -1359,7 +1363,7 @@ fn run_inner(
     cell: Cell,
     start_family: Option<StartFamily>,
     observe_family: Option<ObserveFamily>,
-    observe_tick: Option<ObserveTick>,
+    observers: (Option<ObserveTick>, Option<ObserveClientPoll>),
     quester_path: bool,
     blocked_policy: FamilyBlockedPolicy,
     profile_control: Option<LiveProfileControl>,
@@ -1392,7 +1396,7 @@ fn run_inner(
         RunPlan::Single(mode),
         start_family,
         observe_family,
-        observe_tick,
+        observers,
         quester_path,
         (blocked_policy, profile_control, None),
     )
@@ -1430,7 +1434,7 @@ pub fn run_pair(pair: PairCell) -> Result<Value, String> {
         RunPlan::Pair(mode),
         None,
         None,
-        None,
+        (None, None),
         false,
         (FamilyBlockedPolicy::Reject, None, None),
     )
@@ -1469,7 +1473,7 @@ pub fn run_pair_observed(pair: PairCell, observe: ObservePair) -> Result<Value, 
         RunPlan::Pair(mode),
         None,
         None,
-        None,
+        (None, None),
         false,
         (FamilyBlockedPolicy::Reject, None, Some(observe)),
     )
@@ -1484,7 +1488,7 @@ fn run_cells(
     mode: RunPlan,
     mut start_family: Option<StartFamily>,
     mut observe_family: Option<ObserveFamily>,
-    mut observe_tick: Option<ObserveTick>,
+    observers: (Option<ObserveTick>, Option<ObserveClientPoll>),
     quester_path: bool,
     controls: (
         FamilyBlockedPolicy,
@@ -1493,6 +1497,7 @@ fn run_cells(
     ),
 ) -> Result<Value, String> {
     let (blocked_policy, mut profile_control, mut observe_pair) = controls;
+    let (mut observe_tick, mut observe_client_poll) = observers;
     #[cfg(feature = "js")]
     script_js::install_cards().map_err(|error| error.to_string())?;
     if cells.len() != if mode.is_pair() { 2 } else { 1 } {
@@ -1690,6 +1695,7 @@ fn run_cells(
             observe_start: cell.observe_start,
             start_receipt: None,
             observe_tick: observe_tick.take(),
+            observe_client_poll: observe_client_poll.take(),
             tick_observations: Vec::new(),
             tick_mean: TickMean::default(),
             stage_ticks: Vec::new(),
@@ -1795,6 +1801,9 @@ fn run_cells(
             let actor = &mut actors[index];
             let drain = actor.pump.drain_client(client);
             host::publish_snapshot(&mut actor.snapshot, client, drain);
+            if let Some(observe) = actor.observe_client_poll.as_mut() {
+                observe(&actor.snapshot);
+            }
             let game_tick = actor.snapshot.tick();
             if actor.starts > 0
                 && actor.observed_tick_rate.last.map(|(tick, _)| tick) != Some(game_tick)

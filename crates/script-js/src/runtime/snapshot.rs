@@ -1730,7 +1730,10 @@ fn collision_object<'s>(
     )
 }
 
-#[allow(clippy::too_many_arguments)] // mirrors collision plane fields into one V8 object
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Mirror collision plane fields directly into one V8 object"
+)]
 fn collision_from_parts<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     available: bool,
@@ -1829,6 +1832,9 @@ fn collision_flags_view<'s>(
             let dest = ptr.as_ptr() as *mut u8;
             for (i, flag) in flags.into_iter().flat_map(|flags| flags.iter()).enumerate() {
                 let bytes = flag.to_le_bytes();
+                // SAFETY: `nbytes` allocates four bytes per backing-store flag, and
+                // each loop iteration writes exactly four bytes for one flag.
+                // The destination range is therefore within the V8 backing store.
                 unsafe {
                     std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest.add(i * 4), 4);
                 }

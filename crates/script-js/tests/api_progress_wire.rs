@@ -1,4 +1,4 @@
-mod common;
+pub mod common;
 
 use api::quest_progress::{EvidenceStamp, ProgressFlag};
 use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};

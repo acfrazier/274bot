@@ -20,14 +20,18 @@ mod local_fact_catalogs;
 mod local_game_data;
 
 fn data() -> Arc<SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("load revision 289 cooking-location test data")
 }
 
 /// The full bank roster, every bank reachable.
 fn roster() -> NamedBankFacts {
     resolve(
         bank_catalog().expect("local bank catalog"),
-        &data().bank_placements().unwrap().rows,
+        &data()
+            .bank_placements()
+            .expect("load revision 289 bank placements")
+            .rows,
         |_| true,
     )
 }
@@ -47,7 +51,7 @@ fn spawn_with(
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    spawn_with(src, Some(data()), roster()).unwrap()
+    spawn_with(src, Some(data()), roster()).expect("spawn cook-location test isolate")
 }
 
 const SRC: &str = r#"
@@ -117,7 +121,7 @@ export default class T extends LoopingBot {
 "#;
 
 fn probe(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
-    iso.probe(expr).unwrap()
+    iso.probe(expr).expect("read cook-location probe result")
 }
 
 #[test]

@@ -15,7 +15,7 @@ memory-profile = []
 [dependencies]
 api = { path = "../api" }
 # JavaScript parsing for import scans and TS -> JS stripping of catalog sources.
-deno_ast = { version = "=0.49.0", features = ["transpiling"] }
+deno_ast = { version = "=0.49.0", features = ["scopes", "transpiling"] }
 deno_core = { version = "=0.355.0" }
 # Isolate IPC wire format (schema: `crates/script-js/schema/isolate.fbs`);
 # Rust bindings are checked-in pinned `flatc` output, so builds need no generator.
@@ -47,6 +47,10 @@ script-js = { path = ".", default-features = false, features = ["test-hooks"] }
 # The checked model of the auto-run hold; the compat lease conformance test
 # drives the real lease with its traces.
 hold-model = { path = "../../tools/hold-model" }
+# The checked model of the isolate's teardown protocol and retirement
+# registry; the conformance tests in `runtime/isolate` drive the real
+# functions with its traces.
+js-teardown-model = { path = "../../tools/js-teardown-model" }
 
 [[test]]
 name = "v8_platform"
@@ -334,3 +338,6 @@ name = "load_picker"
 
 [[example]]
 name = "catalog_inventory"
+
+[lints]
+workspace = true

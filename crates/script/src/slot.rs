@@ -880,17 +880,11 @@ impl SlotScript {
                 isolate.align_execution(ExecutionId::first(run));
             }
         }
-        if self.seat_compiled_owner.is_none() {
-            if let Some(run) = self.compiled.as_ref() {
-                let key = run.run;
-                let card = run.config.card();
-                self.admit_compiled_owner(key, card);
-            }
-        }
         self.seat_session_held = false;
         if let Some(seat) = &mut self.seat {
             seat.hold(self.guardian_held);
         }
+        self.admit_waiting_compiled_owner();
         self.flush_held_walk_terminal();
         if let Some(run) = self.seat.as_ref().map(|seat| seat.run()) {
             self.seat_fence.arm(ExecutionId::first(run));
@@ -918,6 +912,7 @@ impl SlotScript {
             self.native_runtime.clear_note_progress();
             self.discard_seat_gameplay_delivery();
         } else {
+            self.admit_waiting_compiled_owner();
             self.flush_held_walk_terminal();
         }
     }
@@ -1174,8 +1169,30 @@ impl SlotScript {
         self.admit_compiled_owner(run, card);
     }
 
+    /// Admit the owner of a compiled run that waited for a hold to release.
+    /// A seat that is held (the Guardian's `SessionHeld`, or no ready session)
+    /// keeps a Start in its producer's custody (`Admission::Deferred`,
+    /// `tools/seat-model`: no Start step is enabled while held). The compiled
+    /// run installs at once and its owner is admitted here, on the first
+    /// frame the seat is not held.
+    fn admit_waiting_compiled_owner(&mut self) {
+        if self.seat_compiled_owner.is_some() {
+            return;
+        }
+        let Some(run) = self.compiled.as_ref() else {
+            return;
+        };
+        let (key, card) = (run.run, run.config.card());
+        self.admit_compiled_owner(key, card);
+    }
+
     fn admit_compiled_owner(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {
         if run.slot_key().is_none() {
+            return;
+        }
+        if self.seat.as_ref().is_some_and(|seat| seat.held()) {
+            // Held: the owner waits (see `admit_waiting_compiled_owner`).
+            // No request id is minted for a Start the seat cannot take.
             return;
         }
         let kind = crate::registry::compiled_card(card).map(|card| card.native_kind);
@@ -4668,6 +4685,14 @@ impl SlotScript {
 
     pub fn state(&self) -> RunState {
         self.state
+    }
+
+    /// The runtime that answers random-event claims: the slot incarnation and
+    /// its runtime generation. Start, Stop, slot replacement and watchdog
+    /// replacement change it; Pause and Resume keep it. The host compares it
+    /// with the runtime a claim was made under.
+    pub fn random_claim_runtime(&self) -> (u64, u64) {
+        (self.incarnation, self.runtime_generation)
     }
 
     /// Inactive slots return the event to Host. Running Load scripts publish

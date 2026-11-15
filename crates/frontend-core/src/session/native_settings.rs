@@ -180,6 +180,13 @@ impl<Io> OperatorSession<Io> {
         COPY_IN_FLIGHT.saturating_sub(self.preparations.len() + self.deliveries.len())
     }
 
+    /// Test support: the free native save slots a fleet settings copy may
+    /// start now.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn native_copy_room_for_test(&self) -> usize {
+        self.native_copy_room()
+    }
+
     pub(super) fn queue_native_delivery(
         &mut self,
         op: OperationId,

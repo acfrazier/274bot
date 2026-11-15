@@ -1733,7 +1733,7 @@ fn retained_node_cost(state_heap: usize) -> usize {
         .saturating_add(128)
 }
 
-fn state_heap_bytes(state: &State) -> usize {
+pub(crate) fn state_heap_bytes(state: &State) -> usize {
     let mut bytes = 0usize;
     bytes = add_vec_bytes::<Entry>(bytes, &state.entries);
     bytes = add_vec_bytes(bytes, &state.pending);

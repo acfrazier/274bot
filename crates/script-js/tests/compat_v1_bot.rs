@@ -1,6 +1,6 @@
 //! Compat v1 Bot census contracts and the native TreeBot traversal.
 
-mod common;
+pub mod common;
 
 use script_js::{LoadIsolate, LoadShape, Ready};
 use serde_json::{json, Value};

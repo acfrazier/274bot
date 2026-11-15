@@ -68,6 +68,20 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
+/// The three tests below build 100-bot worlds and read process-wide state:
+/// one shared `WorkService` worker pool and one process log, and each sets
+/// the process environment's `NAV_PACK`. Run beside each other they stretch
+/// one another's frames and saturate the pool the other test's asynchronous
+/// native preparations use. One at a time keeps every measurement to its own
+/// work; the file's own binary already keeps other crates' tests out.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn live() -> isize {
     LIVE.with(Cell::get)
 }
@@ -83,6 +97,17 @@ fn poll_events(d: &mut HeadlessDriver, polls: usize) -> usize {
         d.poll();
     }
     events() - before
+}
+
+/// The copy queue's own waiting state: targets still queued for room, and
+/// free native save slots. A copy waits only while targets remain queued and
+/// every save slot is taken; the frame that starts any of them is the
+/// copy's own work, not a waiting frame.
+fn copy_waiting(d: &HeadlessDriver) -> (usize, usize) {
+    (
+        d.models().scripts().copy_queue_waiting_for_test(),
+        d.session().native_copy_room_for_test(),
+    )
 }
 
 const PASSPHRASE: &str = "test-passphrase-01";
@@ -185,6 +210,7 @@ fn settle_writes(d: &mut HeadlessDriver) {
 /// per-bot copy.
 #[test]
 fn a_100_target_plan_and_copy_hold_one_bounded_snapshot() {
+    let _serial = serial();
     const PLAN_CEILING: isize = 16 * 1024;
     const COPY_CEILING: isize = 56 * 1024;
     let mut d = driver("bounded");
@@ -283,6 +309,7 @@ fn a_100_target_plan_and_copy_hold_one_bounded_snapshot() {
 /// watcher list is filtered in place, the slot rows are not copied).
 #[test]
 fn a_100_bot_world_switch_holds_bounded_state_and_quiet_frames_grow_nothing() {
+    let _serial = serial();
     const PLAN_CEILING: isize = 16 * 1024;
     const RUNNING_CEILING: isize = 460 * 1024;
     const FRAME_CEILING: isize = 0;
@@ -379,11 +406,22 @@ fn a_100_bot_world_switch_holds_bounded_state_and_quiet_frames_grow_nothing() {
 /// Review F4-SOL-3: while a paced settings copy waits for room (the 48
 /// saves in flight are held), its queue is not copied each frame: a frame
 /// makes no more allocation calls than a frame with no copy at all.
+///
+/// "Waits" is the queue's own state, not a length of time: targets remain
+/// queued for room and every native save slot is taken. The window below
+/// measures a frame only while that state holds at both ends of it; the
+/// first frame that starts any of the queue ends the window and is not
+/// measured, because it is the copy's own work (a frame that lets 20 ms of
+/// native preparation pass copies the rest of the queue, about 19,000
+/// calls). A window cut short is reported as short, never as an allocation
+/// regression; the serial guard keeps the sibling 100-bot tests from
+/// stretching frames and from saturating the shared worker pool.
 #[test]
 fn a_full_copy_queue_allocates_nothing_while_it_waits() {
     if !api::test_support::game_data_available() {
         return;
     }
+    let _serial = serial();
     let mut d = driver("copy-queue");
     // A native card's settings copy reads the revision's script data.
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
@@ -429,15 +467,52 @@ fn a_full_copy_queue_allocates_nothing_while_it_waits() {
         .expect("copy report")
         .pending();
     assert_eq!(waiting, BOTS - 1, "every target waits while saves are held");
-    let waiting_events = poll_events(&mut d, 20);
+    // The window is the queue's waiting state, not a number of frames: a
+    // frame is measured only while targets remain queued and no save slot
+    // is free at both ends of it. The first frame that starts any of the
+    // queue ends it: those allocations are the copy's own work. Frames
+    // measured before that still count. A window that ends before any frame
+    // is measured fails as too short: a pass that measured nothing would
+    // hide a real per-frame allocation.
+    let mut waiting_events = 0;
+    let mut waiting_frames = 0;
+    let mut ended_early = false;
+    for _ in 0..20 {
+        let (queued_before, room_before) = copy_waiting(&d);
+        if queued_before == 0 || room_before != 0 {
+            ended_early = true;
+            break;
+        }
+        let before = events();
+        d.poll();
+        let (queued_after, room_after) = copy_waiting(&d);
+        if queued_after != queued_before || room_after != 0 {
+            ended_early = true;
+            break;
+        }
+        waiting_events += events() - before;
+        waiting_frames += 1;
+    }
     drop(held);
     eprintln!(
         "FLEET-COPY-QUEUE alloc_calls_20_quiet={baseline_events} \
-         alloc_calls_20_waiting={waiting_events}"
+         waiting_frames={waiting_frames} alloc_calls_waiting={waiting_events} \
+         window_ended_early={ended_early}"
+    );
+    if ended_early {
+        eprintln!(
+            "FLEET-COPY-QUEUE window too short: the copy left its waiting state \
+             after {waiting_frames} measured frames"
+        );
+    }
+    assert!(
+        waiting_frames > 0,
+        "window too short: the copy left its waiting state before any frame was \
+         measured, so this run proves nothing about the waiting path"
     );
     assert!(
         waiting_events <= baseline_events,
-        "{waiting_events} allocation calls over 20 frames while the copy queue waited, \
-         {baseline_events} with none"
+        "{waiting_events} allocation calls over {waiting_frames} frames while the copy \
+         queue waited, {baseline_events} over 20 with none"
     );
 }

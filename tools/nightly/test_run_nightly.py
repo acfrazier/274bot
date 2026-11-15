@@ -1034,14 +1034,14 @@ class LaneEnvironmentTests(unittest.TestCase):
             with mock.patch.object(rn, "REVISION", "289"):
                 with self.assertRaisesRegex(
                         RuntimeError,
-                        f"local-data generator omitted required output: {pack}"):
+                        f"local-data generator omitted required output: {re.escape(str(pack))}"):
                     rn.lane_asset_env(tree)
                 pack.parent.mkdir(parents=True)
                 pack.write_bytes(b"pack")
                 flags = pack.with_suffix(".navflags")
                 with self.assertRaisesRegex(
                         RuntimeError,
-                        f"local-data generator omitted required output: {flags}"):
+                        f"local-data generator omitted required output: {re.escape(str(flags))}"):
                     rn.lane_asset_env(tree)
 
     def test_post_adr_missing_exact_revision_root_uses_exact_root_diagnostic(self):
@@ -1424,6 +1424,8 @@ class CellsFileTests(unittest.TestCase):
         patches = [
             mock.patch.object(rn, "ROOT", root),
             mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+            mock.patch.object(rn, "JOB", "main"),
+            mock.patch.object(rn, "FRESH_TREES", False),
             mock.patch.object(rn, "update_tree", fake_update_tree),
             mock.patch.object(rn, "log", lambda _message: None),
         ]
@@ -1513,8 +1515,12 @@ class LocalDataRunnerTests(unittest.TestCase):
             def fake_run(args, *, cwd, env, log_to, timeout):
                 self.assertEqual(args, [sys.executable, "tools/local-data/build.py"])
                 self.assertEqual(cwd, tree)
-                self.assertTrue(env["GAME_DATA_274_ENGINE"].endswith("/274/engine"))
-                self.assertTrue(env["GAME_DATA_289_CONTENT"].endswith("/289/content"))
+                self.assertEqual(
+                    Path(env["GAME_DATA_274_ENGINE"]).resolve(),
+                    Path(inputs["NIGHTLY_GAME_DATA_274_ENGINE"]).resolve())
+                self.assertEqual(
+                    Path(env["GAME_DATA_289_CONTENT"]).resolve(),
+                    Path(inputs["NIGHTLY_GAME_DATA_289_CONTENT"]).resolve())
                 self.assertTrue(timeout > 0)
                 output = cwd / generated
                 output.parent.mkdir(parents=True, exist_ok=True)
@@ -1794,6 +1800,7 @@ class BuildFailureTests(unittest.TestCase):
             mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
             mock.patch.object(rn, "STEPS", ["tui"]),
             mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+            mock.patch.object(rn, "FRESH_TREES", False),
             mock.patch.object(rn, "update_tree", fake_update_tree),
             mock.patch.object(rn, "build", failing_build),
             mock.patch.object(rn, "guard_disk", lambda _branch, _primary: None),
@@ -1845,6 +1852,7 @@ class BuildFailureTests(unittest.TestCase):
             mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
             mock.patch.object(rn, "STEPS", ["tui"]),
             mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+            mock.patch.object(rn, "FRESH_TREES", False),
             mock.patch.object(rn, "update_tree", fake_update_tree),
             mock.patch.object(rn, "build", empty_build),
             mock.patch.object(rn, "guard_disk", lambda _branch, _primary: None),
@@ -2744,6 +2752,7 @@ class LatencyRunBranchTests(unittest.TestCase):
         patches = [
             mock.patch.object(rn, "ROOT", root),
             mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+            mock.patch.object(rn, "FRESH_TREES", False),
             mock.patch.object(rn, "update_tree", fake_update_tree),
             mock.patch.object(rn, "log", lambda _message: None),
         ]
@@ -3126,6 +3135,7 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
             patches = [
                 mock.patch.object(rn, "ROOT", root),
                 mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+                mock.patch.object(rn, "FRESH_TREES", False),
                 mock.patch.object(rn, "update_tree", fake_update_tree),
                 mock.patch.object(rn, "log", lambda _message: None),
             ]

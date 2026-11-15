@@ -96,7 +96,6 @@ mod compat {
     }
 
     #[derive(Debug, PartialEq, Eq)]
-    #[allow(clippy::enum_variant_names)] // Wait* names encode the phase predicate
     enum Phase {
         MakeX,
         /// Anvil Make-N sent; waiting the main modal identity to leave `before`.
@@ -647,7 +646,11 @@ mod compat {
 
         fn expired() -> InstantTaskClock {
             let mut clock = InstantTaskClock::new();
-            clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+            clock.deadline = Some(
+                Instant::now()
+                    .checked_sub(Duration::from_millis(1))
+                    .expect("test deadline is in the past"),
+            );
             clock
         }
 

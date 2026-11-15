@@ -149,6 +149,7 @@ fn is_barrel(specifier: &str) -> bool {
 
 fn parse_js(specifier: &str, source: &str, media: MediaType) -> Option<ParsedSource> {
     let url = deno_ast::ModuleSpecifier::parse(&format!("file://{specifier}")).ok()?;
+    let (source, _) = crate::library::ast::strip_bom(source);
     deno_ast::parse_program(ParseParams {
         specifier: url,
         text: source.into(),
@@ -3032,7 +3033,10 @@ fn rewrite_quoted_star_imports(body: &str, from_dir: &str) -> String {
                 }
             }
         }
-        let ch = body[i..].chars().next().unwrap();
+        let ch = body[i..]
+            .chars()
+            .next()
+            .expect("body contains a character at this UTF-8 byte offset");
         out.push(ch);
         i += ch.len_utf8();
     }

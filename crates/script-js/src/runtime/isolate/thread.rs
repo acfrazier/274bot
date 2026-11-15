@@ -179,7 +179,10 @@ impl Drop for RuntimeLifetime {
 
 /// The isolate thread: create the Runtime, wire the module, hand the
 /// thread-safe isolate handle back, then run the tick loop.
-#[allow(clippy::too_many_arguments)] // channel endpoints plus optional diagnostics
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep channel endpoints and optional diagnostics explicit at isolate-thread entry"
+)]
 pub(super) fn isolate_main(
     source: String,
     card_name: std::sync::Arc<str>,
@@ -196,7 +199,7 @@ pub(super) fn isolate_main(
     walking_ownership: std::sync::Arc<crate::machine::WalkingOwnership>,
     compat_journal: Option<std::sync::Arc<crate::compat::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    teardown: std::sync::Arc<Mutex<TeardownState>>,
+    teardown: std::sync::Arc<Mutex<Teardown>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     frame_ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -240,8 +243,10 @@ pub(super) fn isolate_main(
     let _ = terminate_cell.set(setup_handle.clone());
     let setup_failed = setup.send(SetupMessage::Interrupt(terminate)).is_err();
     {
-        let st = teardown.lock().unwrap();
-        if setup_failed || st.phase != TeardownPhase::Running {
+        let st = teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned");
+        if setup_failed || st.state.is_stopping() {
             setup_handle.terminate_execution();
         }
     }
@@ -334,7 +339,7 @@ fn deliver_native_events(
     out: &Sender<ThreadMsg>,
     n: u64,
     generation: u64,
-    teardown: &Mutex<TeardownState>,
+    teardown: &Mutex<Teardown>,
 ) {
     if events.is_empty() {
         return;
@@ -474,7 +479,7 @@ fn take_tick_output(
     n: u64,
     generation: u64,
     facts: bool,
-    teardown: &Mutex<TeardownState>,
+    teardown: &Mutex<Teardown>,
 ) -> TickRows {
     match call_interruptible(runtime, teardown, |runtime| {
         runtime.call_function_immediate::<TickOutput>(
@@ -715,7 +720,7 @@ fn drain_event_loop(
     out: &Sender<ThreadMsg>,
     n: u64,
     generation: u64,
-    teardown: &Mutex<TeardownState>,
+    teardown: &Mutex<Teardown>,
 ) {
     if let Err(e) = call_interruptible(runtime, teardown, |runtime| {
         runtime.block_on_event_loop(
@@ -740,7 +745,7 @@ fn pump_event_loop(
     out: &Sender<ThreadMsg>,
     n: u64,
     generation: u64,
-    teardown: &Mutex<TeardownState>,
+    teardown: &Mutex<Teardown>,
 ) {
     if let Err(e) = call_interruptible(runtime, teardown, |runtime| {
         runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
@@ -782,7 +787,10 @@ impl<'de> serde::Deserialize<'de> for PaintRecord {
 /// Finish the tick's one paint/readback pass and forward changed host facts.
 /// Arguments are the explicit tick identity plus the isolate-owned caches;
 /// keeping them borrowed avoids rebuilding an aggregate on every tick.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep borrowed tick inputs explicit instead of rebuilding an aggregate every tick"
+)]
 fn finish_tick(
     runtime: &mut Runtime,
     out: &Sender<ThreadMsg>,
@@ -791,7 +799,7 @@ fn finish_tick(
     run_paint: bool,
     script_paint: bool,
     suppress_user_callbacks: bool,
-    teardown: &Mutex<TeardownState>,
+    teardown: &Mutex<Teardown>,
     last_paint: &mut Option<std::sync::Arc<script::paint::ScriptPaint>>,
     paint_generation: &std::sync::atomic::AtomicU64,
     last_ignored: &mut Vec<String>,
@@ -937,7 +945,7 @@ type Settle = rustyscript::js_value::Promise<Option<String>>;
 /// request and this call remains uncut.
 fn call_interruptible<T, E>(
     runtime: &mut Runtime,
-    teardown: &Mutex<TeardownState>,
+    teardown: &Mutex<Teardown>,
     call: impl FnOnce(&mut Runtime) -> Result<T, E>,
 ) -> Result<T, E> {
     let result = crate::materialize::lineage_v8::enter_root(runtime, call);
@@ -945,15 +953,9 @@ fn call_interruptible<T, E>(
         .deno_runtime()
         .v8_isolate()
         .is_execution_terminating();
-    let interrupted = teardown.lock().unwrap().execution_interrupt.is_some();
-    let consumed_here = interrupted
-        && (direct_termination
-            || crate::materialize::lineage_v8::eval::<()>(runtime, "void 0").is_ok());
-    if consumed_here {
-        if let Some(interrupt) = &mut teardown.lock().unwrap().execution_interrupt {
-            interrupt.consumed = true;
-        }
-    }
+    note_interrupt_consumed(teardown, || {
+        direct_termination || crate::materialize::lineage_v8::eval::<()>(runtime, "void 0").is_ok()
+    });
     result
 }
 
@@ -1079,51 +1081,21 @@ fn report_interrupted_execution(
 
 fn arm_execution_watchdog(
     runtime: &mut Runtime,
-    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    teardown: &std::sync::Arc<Mutex<Teardown>>,
     out: &Sender<ThreadMsg>,
 ) {
-    let (id, at) = {
-        let mut state = teardown.lock().unwrap();
-        let Some(started) = state.execution_started else {
-            return;
-        };
-        if state.phase != TeardownPhase::Running
-            || !state.execution_active
-            || state.execution_interrupt.is_some()
-            || state.execution_deadline_armed
-        {
-            return;
-        }
-        if state.execution_deadline_owner.is_none() {
-            state.execution_deadline_owner = Some(ExecutionInterrupt::Watchdog);
-        }
-        state.execution_deadline_armed = true;
-        (state.execution_id, started + EXECUTION_WATCHDOG_HORIZON)
-    };
     let handle = runtime.deno_runtime().v8_isolate().thread_safe_handle();
-    if let Err(error) = super::register_execution_deadline(
-        teardown,
-        handle.clone(),
-        id,
-        ExecutionInterrupt::Watchdog,
-        at,
-    ) {
-        let reason = match error {
-            super::LoadIsolateError::SupervisorCapacity => DeadlineRefusal::Capacity,
-            _ => DeadlineRefusal::Stopped,
-        };
-        let mut state = teardown.lock().unwrap();
-        if state.phase == TeardownPhase::Running
-            && state.execution_active
-            && state.execution_id == id
-            && state.execution_interrupt.is_none()
-        {
-            state.execution_interrupt = Some(InterruptedExecution {
-                owner: ExecutionInterrupt::NoDeadline(reason),
-                consumed: true,
-            });
-            handle.terminate_execution();
-        }
+    let armed =
+        arm_active_execution_deadline(teardown, &handle, ExecutionInterrupt::Watchdog, |id, at| {
+            super::register_execution_deadline(
+                teardown,
+                handle.clone(),
+                id,
+                ExecutionInterrupt::Watchdog,
+                at,
+            )
+        });
+    if let Err(error) = armed {
         let _ = out.send(ThreadMsg::Log(error.to_string()));
     }
 }
@@ -1155,13 +1127,13 @@ fn report_interrupted_lifecycle_hook(
 
 fn fire_compat_lifecycle_hook(
     runtime: &mut Runtime,
-    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    teardown: &std::sync::Arc<Mutex<Teardown>>,
     out: &Sender<ThreadMsg>,
     generation: u64,
     hook: &str,
     function: &str,
 ) {
-    if !begin_lifecycle_hook_execution(teardown, generation) {
+    if !begin_lifecycle_hook_execution(teardown, generation, Instant::now()) {
         return;
     }
     arm_execution_watchdog(runtime, teardown, out);
@@ -1185,7 +1157,7 @@ fn fire_compat_lifecycle_hook(
     }
 }
 
-fn fire_tick_listeners(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
+fn fire_tick_listeners(runtime: &mut Runtime, teardown: &Mutex<Teardown>) {
     let _ = call_interruptible(runtime, teardown, |runtime| {
         crate::runtime::bindings::event_callbacks::emit_no_args(
             runtime,
@@ -1198,13 +1170,18 @@ fn fire_tick_listeners(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
 
 fn fire_frame_listeners(
     runtime: &mut Runtime,
-    teardown: &Mutex<TeardownState>,
+    teardown: &Mutex<Teardown>,
     out: &Sender<ThreadMsg>,
     frame_interest: &std::sync::atomic::AtomicUsize,
     generation: u64,
 ) {
     if frame_interest.load(std::sync::atomic::Ordering::Acquire) == 0
-        || !begin_frame_execution(teardown, super::FRAME_CALLBACK_TICK, generation)
+        || !begin_frame_execution(
+            teardown,
+            super::FRAME_CALLBACK_TICK,
+            generation,
+            Instant::now(),
+        )
     {
         return;
     }
@@ -1242,7 +1219,10 @@ fn fire_frame_listeners(
 /// next one — at most one `loop()` start per tick. A settling `onStart`
 /// is re-polled after the pump so the first `loop()` follows a successful
 /// one at once; after a failed one it starts on the next tick.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep phase inputs explicit so the tick's ordered phases stay visible"
+)]
 fn run_tick_phases(
     runtime: &mut Runtime,
     runner: &mut Runner,
@@ -1253,7 +1233,7 @@ fn run_tick_phases(
     out: &Sender<ThreadMsg>,
     loop_settled: &mut bool,
     iteration_completed: &mut bool,
-    teardown: &Mutex<TeardownState>,
+    teardown: &Mutex<Teardown>,
 ) -> Result<(), rustyscript::Error> {
     let settled = runner.poll(runtime, out, n, generation);
     *iteration_completed |= settled;
@@ -1447,7 +1427,7 @@ fn stop_on_script_request(
     n: u64,
     generation: u64,
     reason: String,
-    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+    teardown: &std::sync::Arc<Mutex<Teardown>>,
     proof: &std::sync::Arc<TeardownProofInner>,
 ) {
     let _ = out.send(ThreadMsg::ScriptStopped { tick: n, reason });
@@ -1560,7 +1540,10 @@ const CHANNEL_EVENTS_MAX: usize = 64;
 /// generation. The window runs past snapshots: the host posts one before
 /// every tick, so stopping at the first non-Tick would skip nothing. Every
 /// other drained command then runs in its queued order.
-#[allow(clippy::too_many_arguments)] // isolate loop owns queues, gens, teardown, and mode flags
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The isolate loop owns queues, generations, teardown, and mode flags"
+)]
 fn tick_loop(
     mut runtime: Runtime,
     cmds: CmdQueue,
@@ -1568,7 +1551,7 @@ fn tick_loop(
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     compat_journal: Option<std::sync::Arc<crate::compat::quest_journal::CompatJournalLease>>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    teardown: std::sync::Arc<Mutex<TeardownState>>,
+    teardown: std::sync::Arc<Mutex<Teardown>>,
     frame_interest: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     frame_ack_tx: std::sync::mpsc::SyncSender<()>,
     proof: std::sync::Arc<TeardownProofInner>,
@@ -1831,7 +1814,7 @@ fn tick_loop(
                 // Pause intent and execution entry share a lock: either Pause
                 // terminates this active eval or this queued tick never enters
                 // V8. Stop uses the same phase gate.
-                if !begin_interruptible_execution(&teardown, n, generation) {
+                if !begin_interruptible_execution(&teardown, n, generation, Instant::now()) {
                     let _ = out.send(ThreadMsg::Completed {
                         tick: n,
                         generation,
@@ -2792,7 +2775,12 @@ fn tick_loop(
                     });
                     continue;
                 }
-                if !begin_interruptible_execution(&teardown, RECOVERY_ANCHOR_TICK, generation) {
+                if !begin_interruptible_execution(
+                    &teardown,
+                    RECOVERY_ANCHOR_TICK,
+                    generation,
+                    Instant::now(),
+                ) {
                     let _ = out.send(ThreadMsg::InFlightDone {
                         generation,
                         tick: RECOVERY_ANCHOR_TICK,
@@ -2859,13 +2847,15 @@ fn tick_loop(
             IsolateCmd::TestBlock { release, entered } => {
                 {
                     let (lock, cv) = &*entered;
-                    *lock.lock().unwrap() = true;
+                    *lock.lock().expect("test thread gate mutex is not poisoned") = true;
                     cv.notify_all();
                 }
                 let (lock, cv) = &*release;
-                let mut open = lock.lock().unwrap();
+                let mut open = lock.lock().expect("test thread gate mutex is not poisoned");
                 while !*open {
-                    open = cv.wait(open).unwrap();
+                    open = cv
+                        .wait(open)
+                        .expect("test thread gate mutex is not poisoned");
                 }
             }
             IsolateCmd::Stop { invoke_hook } => {

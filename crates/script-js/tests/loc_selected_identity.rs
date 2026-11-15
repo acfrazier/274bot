@@ -134,7 +134,8 @@ export default class T extends LoopingBot {
 
 fn flax_pick(wall_first: bool) -> Vec<InteractReq> {
     let src = PICK;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn selected-location identity isolate");
     let none: [String; 0] = [];
     let pick = ["Pick".to_string()];
     let wall = loc_row(980, None, 2737, 3440, &none);
@@ -148,7 +149,9 @@ fn flax_pick(wall_first: bool) -> Vec<InteractReq> {
     snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    let probe = iso.probe("__probe").unwrap();
+    let probe = iso
+        .probe("__probe")
+        .expect("read selected-location identity result");
     assert_eq!(probe, true, "selected flax Pick must queue");
     let reqs = iso.drain_interacts();
     iso.join();

@@ -2,7 +2,7 @@
 //! tick our swing began, bury during the cooldown, and report a burial only
 //! once the backpack drops a slot within three ticks.
 
-mod common;
+pub mod common;
 
 use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};

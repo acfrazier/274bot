@@ -12,7 +12,7 @@ use {
     script_js::wire::{encode_snapshot, encode_snapshot_with_native},
 };
 
-mod common;
+pub mod common;
 use common::FRESH_STATS;
 
 const CARD: &str = r#"

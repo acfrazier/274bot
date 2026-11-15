@@ -34,7 +34,7 @@ pub(crate) fn dragon_sites() -> Value {
         "bank": tile(2946, 3369),
         "escapeTeleportId": "falador",
         "walkOut": tile(2884, 3398),
-        "boxes": [blue_box.clone()],
+        "boxes": [blue_box],
     });
     let mut taverley_black = taverley_blue.clone();
     merge(

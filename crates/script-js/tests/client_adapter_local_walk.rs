@@ -10,7 +10,7 @@ use script::native::snapshot_source::{
 };
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 use common::post_snapshot_input;
 
 fn base_snapshot<'a>(here: TileInput) -> SnapshotInput<'a> {
@@ -153,7 +153,8 @@ fn post_with_client_adapter(iso: &LoadIsolate, snap: &SnapshotInput<'_>, base_x:
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn client-adapter local-walk isolate")
 }
 
 fn probe_src(body: &str) -> String {

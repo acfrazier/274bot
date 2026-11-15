@@ -3,7 +3,7 @@
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -54,7 +54,7 @@ export default class Probe extends LoopingBot {
         banks,
     );
     let mut snapshot = common::ingame_snapshot();
-    slot.tick_from_input(1, &snapshot, Default::default());
+    slot.tick_from_input(1, &snapshot, &Default::default());
     let mut actions = slot.take_actions();
     assert_eq!(
         actions.len(),
@@ -99,7 +99,7 @@ export default class Probe extends LoopingBot {
                 }),
             },
         );
-        slot.tick_from_input(tick, &snapshot, Default::default());
+        slot.tick_from_input(tick, &snapshot, &Default::default());
         let actual = slot.probe("typeof picked === 'undefined' ? null : [picked.name, picked.tile.x, picked.tile.z, picked.tile.level]").unwrap();
         if tick == 2 {
             assert_eq!(
@@ -173,7 +173,7 @@ export function tick(api) {
         banks,
     );
     let mut snapshot = common::ingame_snapshot();
-    slot.tick_from_input(1, &snapshot, Default::default());
+    slot.tick_from_input(1, &snapshot, &Default::default());
     assert_eq!(
         slot.probe("globalThis.__rs2b0t_host.snapshot.bank_selection")
             .unwrap(),
@@ -210,7 +210,7 @@ export function tick(api) {
         },
     );
     snapshot.tick = 2;
-    slot.tick_from_input(2, &snapshot, Default::default());
+    slot.tick_from_input(2, &snapshot, &Default::default());
     let publication = slot
         .probe("globalThis.__rs2b0t_host.snapshot.bank_selection")
         .unwrap();
@@ -297,7 +297,7 @@ export function tick(api) {
         banks,
     );
     let mut snapshot = common::ingame_snapshot();
-    slot.tick_from_input(1, &snapshot, Default::default());
+    slot.tick_from_input(1, &snapshot, &Default::default());
     let mut actions = slot.take_actions();
     assert_eq!(actions.len(), 1);
     let old = actions.pop().unwrap();
@@ -305,7 +305,7 @@ export function tick(api) {
 
     slot.probe("globalThis.replace = true").unwrap();
     snapshot.tick = 2;
-    slot.tick_from_input(2, &snapshot, Default::default());
+    slot.tick_from_input(2, &snapshot, &Default::default());
     let mut actions = slot.take_actions();
     assert_eq!(
         actions.len(),
@@ -348,7 +348,7 @@ export function tick(api) {
         };
     complete(&mut slot, &old, 3, 0);
     snapshot.tick = 3;
-    slot.tick_from_input(3, &snapshot, Default::default());
+    slot.tick_from_input(3, &snapshot, &Default::default());
     assert_eq!(
         slot.probe("globalThis.results[1] ?? null").unwrap(),
         serde_json::Value::Null
@@ -362,7 +362,7 @@ export function tick(api) {
 
     complete(&mut slot, &current, 4, 1);
     snapshot.tick = 4;
-    slot.tick_from_input(4, &snapshot, Default::default());
+    slot.tick_from_input(4, &snapshot, &Default::default());
     let publication = slot
         .probe("globalThis.__rs2b0t_host.snapshot.bank_selection")
         .unwrap();
@@ -380,7 +380,7 @@ export function tick(api) {
     );
     complete(&mut slot, &old, 5, 0);
     snapshot.tick = 5;
-    slot.tick_from_input(5, &snapshot, Default::default());
+    slot.tick_from_input(5, &snapshot, &Default::default());
     assert_eq!(
         slot.probe("globalThis.__rs2b0t_host.snapshot.bank_selection")
             .unwrap(),

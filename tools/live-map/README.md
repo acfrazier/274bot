@@ -61,6 +61,14 @@ for 16 more observed game ticks. R289 content sets this combat lockout in
 frames or wall-clock seconds. A fixed 30-second deadline bounds the whole
 shutdown, including Stop. A forced worker close is not a clean logout.
 
+Gatherer cells keep the original cell error when final evidence capture or
+clean logout also fails. All errors appear in the test result. A successful
+cell still requires successful capture and clean logout.
+The capture needs the slot's frame callback. A missing engine can prevent
+that callback from running, so a capture timeout alone does not identify a
+banking failure. Check the selected host and both engine ports before a run.
+An engine source directory does not mean that its service is running.
+
 
 ## Runner receipt cells
 
@@ -84,6 +92,17 @@ It proves formatting, not a headed frame.
 variables as the Cook cell. It seeds only the account's knife, two logs and
 Fletching level, and writes the account witness under `LIVE_EVIDENCE_DIR`.
 It passes on 30 new arrow shafts, two consumed logs and 10 Fletching XP.
+
+`host.menu-377-hans-live` requires Hans (NPC type 0) in the loaded Lumbridge
+scene. It fails rather than selecting a different Talk-to NPC.
+`host.menu-377-trade-duel-loc-live` uses two fresh accounts and the same 377
+resource variables. Supply `PARITY_2C_SERVED_IDENTITY` as a JSON file with
+the engine/content heads and served CRC identity. The cell labels its own
+tutorial and position seeds, then sends Trade with and Challenge through
+normal mouse menus. It checks both chat accepts against raw client rows,
+Crate 356 at (3380,3268,0), and the other player's Trade with slot. Its
+queries and `ObserveMenu` runner must agree. The account JSON and JSONL
+witnesses are written under `LIVE_EVIDENCE_DIR`; the cell computes PASS.
 
 ## Quarantined map cells
 
