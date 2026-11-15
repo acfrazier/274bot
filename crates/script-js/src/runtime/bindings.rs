@@ -802,6 +802,8 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("progress methods v8: {e}"))?;
     crate::materialize::quest_facts_v8::install(runtime)
         .map_err(|e| format!("quest facts v8: {e}"))?;
+    crate::materialize::quest_records_v8::install(runtime)
+        .map_err(|e| format!("quest records v8: {e}"))?;
     crate::materialize::clue_facts_v8::install(runtime)
         .map_err(|e| format!("clue facts v8: {e}"))?;
     crate::materialize::clue_logic_v8::install(runtime)

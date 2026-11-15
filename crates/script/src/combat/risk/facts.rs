@@ -68,6 +68,7 @@ impl KindRisk {
     const FORCEMULTI: u8 = 1 << 1;
     const AP: u8 = 1 << 2;
     const HAZARD: u8 = 1 << 3;
+    const ON_HIT_ONLY: u8 = 1 << 4;
 
     /// Build a compact fact for synthetic fixtures and focused callers.
     #[allow(clippy::too_many_arguments)]
@@ -158,6 +159,7 @@ impl KindRisk {
             row.ap_attack,
             false,
         )
+        .with_on_hit_only(row.combat_vars_on_hit)
     }
 
     /// Static unsupported classes apply in either world. Poison pulses remain
@@ -183,6 +185,22 @@ impl KindRisk {
 
     pub const fn hazard(self) -> bool {
         self.flags & Self::HAZARD != 0
+    }
+
+    /// The attack records combat variables only on a hit, so single-way
+    /// combat does not stop a second attacker after the first one misses.
+    pub const fn on_hit_only(self) -> bool {
+        self.flags & Self::ON_HIT_ONLY != 0
+    }
+
+    /// The same fact with the on-hit-only flag set.
+    pub const fn with_on_hit_only(mut self, on_hit_only: bool) -> Self {
+        if on_hit_only {
+            self.flags |= Self::ON_HIT_ONLY;
+        } else {
+            self.flags &= !Self::ON_HIT_ONLY;
+        }
+        self
     }
 
     fn missing_facts() -> Self {
@@ -539,6 +557,7 @@ mod tests {
             attackrate: Some(4),
             bespoke: false,
             counter_protect: false,
+            combat_vars_on_hit: false,
             poison_severity: Some(0),
             forcemulti: false,
             combat_transform: None,
@@ -1066,5 +1085,35 @@ mod tests {
         assert_eq!(checkpoints, rows.len());
         assert_eq!(cooperative.npcs.as_ref(), synchronous.npcs.as_ref());
         assert_eq!(cooperative.poison_unknown_v, synchronous.poison_unknown_v);
+    }
+
+    /// Loar Shadow (`shadeshadow_level1`) and Loar Shade (`shade_level1`):
+    /// content `mortton_shades.rs2` wakes the shadow as the shade, and the
+    /// shade rolls the shared melee attack with strength 30, attack 45, no
+    /// bonuses and the default 4-tick rate. Old: both were `MissingFacts`.
+    #[test]
+    fn loar_shadow_and_shade_have_shared_melee_facts_that_record_on_hit_only() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let combat = combat();
+        let tables = RiskTables::build(&combat);
+        let selected = combat.selected();
+        for config in ["shadeshadow_level1", "shade_level1"] {
+            let id = selected.npc_by_config(config).unwrap().id;
+            let fact = tables.npc(id).unwrap();
+            assert_eq!(fact.unknown, UnknownKind::Known, "{config}");
+            assert!(fact.shared_attack(), "{config}");
+            assert!(fact.on_hit_only(), "{config}");
+            assert!(!fact.forcemulti(), "{config}");
+            assert_eq!(fact.style, Style::Melee, "{config}");
+            assert_eq!(fact.rate, 4, "{config}");
+            assert_eq!(fact.max_hit, 4, "{config}");
+            assert_eq!(fact.attack_roll, (45 + 9) * 64, "{config}");
+        }
+        let knight = selected.npc_by_config("aggressive_black_knight").unwrap();
+        let fact = tables.npc(knight.id).unwrap();
+        assert!(fact.shared_attack() && !fact.on_hit_only());
+        assert_eq!((fact.max_hit, fact.rate), (4, 5));
     }
 }

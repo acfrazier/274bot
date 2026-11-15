@@ -11,8 +11,12 @@ pub struct CompiledSettingsRecord {
 }
 
 impl CompiledSettingsRecord {
-    /// Reads only the current envelope; entries without it are invalid.
+    /// An empty pre-envelope native entry is the schema-1 legacy form.
+    /// Malformed envelopes are never interpreted as an empty settings bag.
     pub fn view(entry: &Map<String, Value>) -> Result<(u16, &Map<String, Value>), VaultError> {
+        if entry.is_empty() {
+            return Ok((1, entry));
+        }
         if entry.len() != 2 {
             return Err(VaultError::InvalidCompiledSettingsEnvelope);
         }
@@ -54,11 +58,8 @@ mod tests {
 
     #[test]
     fn envelope_view_preserves_versions_and_rejects_lossy_fallbacks() {
-        let empty = Map::new();
-        assert!(matches!(
-            CompiledSettingsRecord::view(&empty),
-            Err(VaultError::InvalidCompiledSettingsEnvelope)
-        ));
+        let legacy = Map::new();
+        assert_eq!(CompiledSettingsRecord::view(&legacy).unwrap(), (1, &legacy));
         let future = serde_json::json!({"schema_version": 2, "values": {"partner": ""}});
         let (version, values) = CompiledSettingsRecord::view(future.as_object().unwrap()).unwrap();
         assert_eq!(version, 2);

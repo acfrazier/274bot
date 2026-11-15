@@ -21,15 +21,15 @@ use std::collections::HashSet;
 
 use api::bank_memory::{BankMemory, Origin};
 use api::snapshot::WorldTile;
-use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
-use crate::named_banks::{is_access_tile, AccessReach, Footprint};
+use crate::named_banks::{AccessReach, Footprint};
 use crate::pack::BankStand;
 use crate::router::{
     find_blocking_zones, find_first_with_avoid_budgets, find_with_avoid, AvoidRect, FindOptions,
     MissingReq, MissingReqView, MissingRequirements, RouteError, FIRST_TARGET_BUDGET, NODE_BUDGET,
 };
+use crate::service_pick::{service_access_tiles, Sides};
 use crate::transport::TransportGraph;
 use crate::world_state::WorldState;
 use crate::zones::ZoneKey;
@@ -109,6 +109,35 @@ pub use planning::PlanningRowsCursor;
 /// any of their booths or tellers.
 pub const SAME_BANK: i32 = 12;
 
+fn bank_enabled_by_preferences(
+    stand: &BankStand,
+    preferences: api::named_banks::BankPreferences,
+) -> bool {
+    let crate::pack::BankAccess::Npc { name, .. } = &stand.access else {
+        return true;
+    };
+    let Ok(catalog) = api::named_banks::bank_catalog() else {
+        // A real world's bank facts cannot bind without its local catalog.
+        return true;
+    };
+    catalog
+        .iter()
+        .filter(|definition| {
+            definition.setting.is_some()
+                && definition.tile.level == stand.tile.level
+                && definition
+                    .tile
+                    .x
+                    .abs_diff(stand.tile.x)
+                    .max(definition.tile.z.abs_diff(stand.tile.z))
+                    <= SAME_BANK as u32
+                && definition
+                    .npc
+                    .is_some_and(|npc| npc.name.eq_ignore_ascii_case(name))
+        })
+        .all(|definition| definition.enabled_by_preferences(preferences))
+}
+
 /// An account's bank rows as the host hands them to a planner: the memory's
 /// `(obj id, count)` rows with the origin they came from
 /// (design-bank-snapshot §1.2, §2.4). `Unknown` with no rows is the
@@ -157,54 +186,24 @@ pub fn planning_rows<'a, M: MissingRequirementsView + ?Sized>(
     Cow::Owned(cursor.take_rows().expect("the overlay cursor completed"))
 }
 
-/// The standable tiles `stand` is used from, by the access rule the C1
-/// named-bank stands also use ([`is_access_tile`] over the stand's one-tile
-/// [`Footprint`]): standable and never the stand's own tile. BankBudget's
-/// reach is [`AccessReach::InLine`] (east/west/north/south of the stand), not
-/// the named stands' diagonals: its Open tries a teller first, and a teller
-/// across a booth answers only in line. A tile walled off from the stand
-/// ([`wall_between`]) is not an access: Falador East's bankers stand
-/// against the bank's south wall, and the Bank op from the street behind it
-/// never opens the bank. Booth loc tiles are not standable
-/// and most teller spawns sit in the bankers' aisle, so the stand tile
-/// itself is never a walk target.
+/// The standable tiles `stand` is used from by the shared service-footprint
+/// access rule. BankBudget uses in-line reach: its Open tries a teller first,
+/// and a teller across a booth answers only a player in line with the counter.
 pub fn bank_access_tiles<'a>(
     collision: &'a WorldCollision,
     stand: &BankStand,
 ) -> impl Iterator<Item = WorldTile> + 'a {
-    let at = stand.tile;
-    Footprint::tile(at).access_tiles(AccessReach::InLine, move |tile| {
-        collision.standable(tile) && !wall_between(collision, tile, at)
-    })
+    service_access_tiles(
+        collision,
+        Footprint::tile(stand.tile),
+        AccessReach::InLine,
+        Sides::ALL,
+    )
 }
 
 /// Whether `tile` is one of `stand`'s [`bank_access_tiles`].
 pub fn is_bank_access(collision: &WorldCollision, stand: &BankStand, tile: WorldTile) -> bool {
-    is_access_tile(
-        tile,
-        &[Footprint::tile(stand.tile)],
-        AccessReach::InLine,
-        &|tile| collision.standable(tile) && !wall_between(collision, tile, stand.tile),
-    )
-}
-
-/// Whether a wall stands on the shared edge of the in-line neighbours `a`
-/// and `b`: the `W_*` face of either tile toward the other in the packed
-/// walk word (the client stamps a wall on both). `false` for tiles that are
-/// not in-line neighbours on one level.
-fn wall_between(collision: &WorldCollision, a: WorldTile, b: WorldTile) -> bool {
-    if a.level != b.level {
-        return false;
-    }
-    let (a_face, b_face) = match (b.x - a.x, b.z - a.z) {
-        (0, 1) => (CollisionFlag::W_N, CollisionFlag::W_S),
-        (0, -1) => (CollisionFlag::W_S, CollisionFlag::W_N),
-        (1, 0) => (CollisionFlag::W_E, CollisionFlag::W_W),
-        (-1, 0) => (CollisionFlag::W_W, CollisionFlag::W_E),
-        _ => return false,
-    };
-    collision.walkable_word(a.x, a.z, a.level) & a_face as u32 != 0
-        || collision.walkable_word(b.x, b.z, b.level) & b_face as u32 != 0
+    bank_access_tiles(collision, stand).any(|access| access == tile)
 }
 
 /// The access tile BankBudget walks to: the nearest stand (same level,
@@ -218,17 +217,7 @@ pub fn nearest_bank_access(
     stands
         .iter()
         .flat_map(|stand| bank_access_tiles(collision, stand).map(move |tile| (stand, tile)))
-        .min_by_key(|(stand, tile)| {
-            (
-                i32::from(stand.tile.level != from.level),
-                (stand.tile.x - from.x)
-                    .abs()
-                    .max((stand.tile.z - from.z).abs()),
-                (tile.x - from.x).abs().max((tile.z - from.z).abs()),
-                tile.x,
-                tile.z,
-            )
-        })
+        .min_by_key(|(stand, tile)| crate::service_pick::air_rank(from, stand.tile, 1, 1, *tile))
         .map(|(_, tile)| tile)
 }
 
@@ -369,7 +358,7 @@ fn plan_bank_fetch_with_budgets<M: MissingRequirementsView + ?Sized>(
     avoid: &[AvoidRect],
     goal_budgets: (usize, usize),
 ) -> Result<BankFetch, BankFetchError> {
-    let mut cursor = BankFetchCursor::new();
+    let mut cursor = BankFetchCursor::new().with_preferences(options.bank_preferences);
     while !cursor.advance(missing, state, bank, stands, from, collision) {}
     let strict = FindOptions {
         allow_bank_fetch: false,

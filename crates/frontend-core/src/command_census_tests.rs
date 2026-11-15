@@ -88,6 +88,7 @@ const CORE: &[(&str, Decision)] = &[
     ("fleet.rs::Fleet::latch_logout", Row(C::Logout)),
     ("fleet.rs::Fleet::clear_latch", Row(C::Login)),
     // fleet.rs: the fleet view model over the staged filter/order.
+    ("brief.rs::notice_line", Excluded(FORMAT)),
     ("fleet.rs::contains_ci", Excluded(FORMAT)),
     ("fleet.rs::state_label", Excluded(FORMAT)),
     (
@@ -530,6 +531,10 @@ const CORE: &[(&str, Decision)] = &[
         "scripts/mod.rs::Scripts::show_load_failures",
         Excluded("presentation: shows the library's load failures on the banner once a Start is accepted"),
     ),
+    (
+        "scripts/mod.rs::Scripts::publish_load_failures",
+        Excluded("presentation: logs the library's new load failures once and returns the banner line"),
+    ),
     ("scripts/mod.rs::Scripts::take_start_failures", Excluded(RESULT)),
     (
         "scripts/reload.rs::Scripts::request_transpile",
@@ -576,6 +581,7 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("harness inject bag; no operator decision"),
     ),
     ("scripts/mod.rs::Scripts::poll", Excluded(PUMP)),
+    ("scripts/mod.rs::Scripts::poll_with_profile", Excluded(PUMP)),
     // scripts/parameter_edit.rs: the parameter editor.
     (
         "scripts/parameter_edit.rs::parse_parameter_text",
@@ -810,11 +816,8 @@ const CORE: &[(&str, Decision)] = &[
     ("walk_map.rs::validate_walk_search", Excluded(FORMAT)),
     ("walk_map.rs::walk_teleport_authorized", Excluded(FORMAT)),
     // walk_permissions.rs
-    ("walk_permissions.rs::danger_routing_held", Excluded(FORMAT)),
-    ("walk_permissions.rs::danger_routing_label", Excluded(FORMAT)),
+    ("walk_permissions.rs::danger_routing_tooltip", Excluded(FORMAT)),
     ("walk_permissions.rs::manual_walk_may_follow", Excluded(FORMAT)),
-    ("walk_permissions.rs::survivable_routing_notice", Excluded(FORMAT)),
-    ("walk_permissions.rs::survivable_routing_tooltip", Excluded(FORMAT)),
 ];
 
 /// Panel and TUI functions that are not simply one row's handler: a

@@ -20,7 +20,9 @@
 //! pieces are a mixture of two runs has duplicate targets and is
 //! unsolvable-as-read, the way frozen `isValidBoard` rejects it.
 //!
-//! The V8 wrapper is the only production caller.
+//! The V8 wrapper reads the clue boards through it; the Monkey Madness
+//! reinitialisation step in `script` reads its own panel through
+//! [`read_puzzle_board_by`], with the same solver.
 
 use crate::game_data::SelectedGameData;
 
@@ -159,10 +161,23 @@ pub fn slot_of_piece(selected: Option<&SelectedGameData>, id: i32) -> Option<u8>
 /// fails closed rather than filling a board the interface did not post. The
 /// gap is the slot no row named; the page itself is never padded to 25.
 pub fn read_puzzle_board(rows: &[PuzzleRow], selected: Option<&SelectedGameData>) -> Option<Board> {
+    read_puzzle_board_by(rows, |id| slot_of_piece(selected, id))
+}
+
+/// [`read_puzzle_board`] over a caller-owned piece map. Another 5×5 board
+/// with the same mechanics (the Monkey Madness reinitialisation panel) names
+/// its own pieces: `target_of` returns the target slot of one piece id, or
+/// `None` for an id the board does not hold. The fail-closed reads are the
+/// same: a piece the map cannot place, a row off the board, a second row for
+/// one slot, and a page that is not 24 pieces around one gap all read `None`.
+pub fn read_puzzle_board_by(
+    rows: &[PuzzleRow],
+    target_of: impl Fn(i32) -> Option<u8>,
+) -> Option<Board> {
     let mut board: Board = [None; PUZZLE_SIZE];
     let mut filled = 0usize;
     for row in rows {
-        let target = slot_of_piece(selected, row.id)?;
+        let target = target_of(row.id)?;
         let slot = usize::try_from(row.slot).ok()?;
         if slot >= PUZZLE_SIZE || board[slot].is_some() {
             return None;
@@ -625,5 +640,34 @@ mod tests {
             assert!(!is_puzzle_solved(&mixed));
             assert_eq!(solve_puzzle(&mixed), None, "{base} mixed");
         }
+    }
+
+    /// A board with its own piece map (the Monkey Madness panel) reads and
+    /// plans the same way, and fails closed on a piece the map does not hold.
+    #[test]
+    fn a_caller_owned_piece_map_reads_and_solves_the_same_board() {
+        let board = shuffled(255);
+        let rows: Vec<PuzzleRow> = board
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, cell)| {
+                (*cell).map(|target| PuzzleRow {
+                    slot: slot as i32,
+                    id: 9000 + i32::from(target),
+                })
+            })
+            .collect();
+        let map = |id: i32| u8::try_from(id - 9000).ok().filter(|target| *target < 24);
+        assert_eq!(read_puzzle_board_by(&rows, map), Some(board));
+        let plan = solve_puzzle(&board).expect("a shuffled board is solvable");
+        assert!(replays(&board, &plan));
+
+        let mut foreign = rows.clone();
+        foreign[3].id = 1;
+        assert_eq!(read_puzzle_board_by(&foreign, map), None, "unknown piece");
+        let mut doubled = rows.clone();
+        doubled[4].slot = doubled[5].slot;
+        assert_eq!(read_puzzle_board_by(&doubled, map), None, "one slot twice");
+        assert_eq!(read_puzzle_board_by(&rows[1..], map), None, "23 pieces");
     }
 }

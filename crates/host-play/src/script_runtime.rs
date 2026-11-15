@@ -29,19 +29,23 @@ pub(crate) use script_nav::pump_route_work;
 pub(super) use script_nav::CarriedWalk;
 #[cfg(feature = "js")]
 pub(super) use script_nav::PostedWalkOutcome;
+#[cfg(all(test, feature = "js"))]
+pub(super) use script_nav::RouteDemand;
 #[cfg(test)]
 pub(super) use script_nav::{
     approach_tiles, drain_route_work_for_test, publish_route_owner_refusal,
     resolve_route_exclusions, route_world_state, RouteDemandKind, ScriptRouteRequest,
 };
 pub(super) use script_nav::{
-    blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, ScriptRouteExclusions,
-    ScriptWalkArm,
+    blocked_zone_detail, hold_script_nav, reset_script_nav, zone_witness_items, NavBot,
+    ScriptRouteExclusions, ScriptWalkArm,
 };
 use script_nav::{log_walk_arm_bot, take_carried_walk};
 pub(crate) use script_nav::{manual_route_state, route_prereq_content, RoutePrereqContent};
 
-/// Resolve live-fixture crossing grants through the script walk product path.
+/// Resolve live-fixture crossing grants through the script walk product path:
+/// the names are validated, and the zone grant is the danger decision of a
+/// script that requests the crossing with the global override off.
 #[cfg(feature = "test-support")]
 pub fn resolve_script_cross_zones_for_live_test(
     opts: nav_planner::router::FindOptions,
@@ -51,8 +55,7 @@ pub fn resolve_script_cross_zones_for_live_test(
     state: &nav_planner::WorldState,
     cross: &[&str],
 ) -> Result<nav_planner::router::FindOptions, String> {
-    script_nav::resolve_route_exclusions(
-        opts,
+    let exclusions = script_nav::resolve_route_exclusions(
         world,
         from,
         to,
@@ -61,8 +64,16 @@ pub fn resolve_script_cross_zones_for_live_test(
             cross: cross.iter().map(|name| Arc::from(*name)).collect(),
             ..Default::default()
         },
-    )
-    .map(|(opts, _)| opts)
+    )?;
+    let decision = crate::WalkGlobals::default().danger_decision(
+        Default::default(),
+        Default::default(),
+        !exclusions.cross.is_empty(),
+    );
+    Ok(nav_planner::router::FindOptions {
+        zones: decision.zones(),
+        ..opts
+    })
 }
 #[path = "script_walk.rs"]
 mod script_walk;
@@ -412,17 +423,14 @@ pub(super) fn script_movement_owned(state: Option<script::RunState>) -> bool {
 /// `AutoRelogin.ts:138-141`): started and not stopping. An offline slot's
 /// started script reads Paused.
 pub(super) fn script_active(scripts: &ScriptWall, name: &str) -> bool {
-    script_state_is_active(
-        script_slot(scripts, name).and_then(|slot| slot.lock().ok().map(|slot| slot.state())),
-    )
-}
-
-/// [`script_active`] for a run state already read.
-pub(super) fn script_state_is_active(state: Option<script::RunState>) -> bool {
-    matches!(
-        state,
-        Some(script::RunState::Starting | script::RunState::Running | script::RunState::Paused)
-    )
+    script_slot(scripts, name)
+        .and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
+        .is_some_and(|state| {
+            matches!(
+                state,
+                script::RunState::Starting | script::RunState::Running | script::RunState::Paused
+            )
+        })
 }
 
 /// Puzzle-board post tests: the production observe path

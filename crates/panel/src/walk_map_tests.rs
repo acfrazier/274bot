@@ -111,7 +111,7 @@ fn ready_images_with_tiles(
         NEXT_DIR.fetch_add(1, Ordering::Relaxed)
     ));
     let cache = host_play::map_cache::MapCacheRoot::from_root(root.clone());
-    let directory = cache.image_dir(identity).expect("image directory");
+    let directory = cache.image_dir(identity.revision);
     fs::create_dir_all(&directory).expect("image directory");
 
     let mut receipts = Vec::new();
@@ -156,7 +156,6 @@ fn ready_images_with_tiles(
     .expect("manifest file");
     let descriptor = MapProfileDescriptor::new(
         identity.revision,
-        identity.content,
         identity.policy,
         fixture::fixture_descriptor().catalogue_identity().policy,
     )
@@ -183,7 +182,7 @@ fn ready_images_with_tiles(
 
 fn image_identity_with(byte: u8) -> ImageIdentity {
     let mut identity = super::fixtures::image_identity();
-    identity.content = Digest([byte; 32]);
+    identity.policy = Digest([byte; 32]);
     identity
 }
 
@@ -599,11 +598,10 @@ fn serialize_decode_outcome(
     rgba: &[u8],
 ) -> Vec<u8> {
     let length = u32::try_from(rgba.len()).expect("tile result fits the wire length");
-    let mut serialized = Vec::with_capacity(93 + rgba.len());
+    let mut serialized = Vec::with_capacity(61 + rgba.len());
     serialized.extend_from_slice(b"WMD1");
     serialized.extend_from_slice(&generation.to_be_bytes());
     serialized.extend_from_slice(&image.revision.to_be_bytes());
-    serialized.extend_from_slice(&image.content.0);
     serialized.extend_from_slice(&image.policy.0);
     serialized.push(key.plane);
     serialized.push(key.lod);
@@ -623,7 +621,6 @@ fn walk_map_decode_supersedes_old_generation_identity_and_key() {
     let old_identity = super::fixtures::image_identity();
     let new_identity = ImageIdentity {
         revision: old_identity.revision,
-        content: Digest([0xe1; 32]),
         policy: Digest([0xe2; 32]),
     };
     let old_png = Arc::<[u8]>::from(encode_tile(old_key).expect("old tile"));
@@ -2232,10 +2229,6 @@ fn slash_label_collect_reuses_name_buffer_after_warmup() {
 #[ignore = "requires BOT_WALK_MAP_DECODE_CORPUS to point at a published real image artifact"]
 fn real_walk_map_decode_matches_legacy_outcome_bytes() {
     let _work_service_guard = decode_service_test_lock();
-    #[derive(serde::Deserialize)]
-    struct DeclaredIdentity {
-        identity: ImageIdentity,
-    }
 
     let root = std::path::PathBuf::from(
         std::env::var_os("BOT_WALK_MAP_DECODE_CORPUS")
@@ -2243,10 +2236,7 @@ fn real_walk_map_decode_matches_legacy_outcome_bytes() {
     );
     let manifest_bytes =
         std::fs::read(root.join("manifest.json")).expect("read real image manifest");
-    let declared: DeclaredIdentity =
-        serde_json::from_slice(&manifest_bytes).expect("read declared image identity");
-    let manifest =
-        ImageManifest::decode(&manifest_bytes, declared.identity).expect("validate image manifest");
+    let manifest = ImageManifest::decode(&manifest_bytes).expect("validate image manifest");
     let tiles = manifest.tiles.as_slice();
     assert!(
         !tiles.is_empty(),
@@ -2257,9 +2247,6 @@ fn real_walk_map_decode_matches_legacy_outcome_bytes() {
     for receipt in tiles {
         let path = root.join(receipt.key.relative_path().expect("validated tile path"));
         let png = std::fs::read(path).expect("read published terrain PNG");
-        receipt
-            .verify_png(&png)
-            .expect("published terrain PNG matches its receipt");
         let legacy_rgba = decode_tile(&png).expect("legacy decode oracle");
         controller
             .request(1, manifest.identity, receipt.key, Arc::from(png))

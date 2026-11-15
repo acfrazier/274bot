@@ -560,7 +560,7 @@ fn absent_packet_generation_does_not_start_a_batch_or_reuse_a_roll() {
 }
 
 #[test]
-fn fishing_knife_request_uses_the_current_published_npc_generation() {
+fn fishing_knife_request_network_coords_use_the_published_path_head() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -569,9 +569,15 @@ fn fishing_knife_request_uses_the_current_published_npc_generation() {
     use client::client::{Client, ClientConfig, ClientNpc, ClientRevision};
 
     let mut rig = Rig::new("fishing.freshfish.op1");
-    let row = &rig.snapshot.npcs()[0];
-    let tile = row.tile;
-    let type_id = row.r#type.unwrap();
+    let tile = rig
+        .handle
+        .inspect(|machine| machine.args.target.tile)
+        .expect("selected target has a network path head");
+    let type_id = rig.snapshot.npcs()[0].r#type.unwrap();
+    let rendered = WorldTile {
+        x: tile.x + 5,
+        ..tile
+    };
     let mut client = Client::from_shared_with_revision(
         ClientConfig {
             host: "127.0.0.1".into(),
@@ -587,15 +593,17 @@ fn fishing_knife_request_uses_the_current_published_npc_generation() {
     );
     let mut npc = ClientNpc::at(tile.x, tile.z);
     npc.r#type = Some(type_id);
-    npc.entity.x = tile.x * 128 + npc.entity.size * 64;
-    npc.entity.z = tile.z * 128 + npc.entity.size * 64;
+    npc.entity.x = rendered.x * 128 + npc.entity.size * 64;
+    npc.entity.z = rendered.z * 128 + npc.entity.size * 64;
     client.npc[42] = Some(Box::new(npc));
     client.npc_ids[0] = 42;
     client.npc_count = 1;
     client.gens.npc = 1;
     client.gens.npc_info = 37;
     assert!(rig.snapshot.rebuild_family(&client, Family::Npc));
-
+    let observed = &rig.snapshot.npcs()[0];
+    assert_eq!(observed.tile, rendered);
+    assert_eq!(observed.network, tile);
     rig.animate(AnimClass::Roll);
     assert!(rig.poll(101).is_pending());
     assert_eq!(rig.arms(), 1);

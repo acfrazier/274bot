@@ -120,10 +120,6 @@ export const ENGINE_DEBUG_COMMANDS: readonly DebugCommand[] = [
     command('kick', 'Kick another player.', [arg('username', 'string')], true),
 ];
 
-const ENGINE_COMMAND_NAMES = ENGINE_DEBUG_COMMANDS.map((row) => row.name);
-const ENGINE_OPTIONAL_COMMAND_NAMES = ['givebank'] as const;
-// The 274 handler predates the local-only bank seed command; 289 adds it.
-
 function normalizedCategory(value: string) {
     const trimmed = value.trim();
     if (trimmed === 'Engine commands' || trimmed === 'Client commands' || trimmed === 'Client & Engine commands') {
@@ -402,46 +398,10 @@ export function parseDebugprocSource(
     return rows;
 }
 
-type EngineProductionGate = 'none' | 'production' | 'non-production';
-type ParsedEngineCommand = { name: string; productionGate: EngineProductionGate };
-
-const ENGINE_NON_PRODUCTION_ONLY: Record<string, true> = { givebank: true };
-
-function parseEngineCommands(text: string) {
-    const found = new Map<string, ParsedEngineCommand>();
-    for (const match of text.matchAll(/\bcmd\s*===\s*(['"])([a-z0-9_]+)\1/g)) {
-        const index = match.index ?? 0;
-        const lineEnd = text.indexOf('\n', index);
-        const condition = text.slice(index, lineEnd < 0 ? text.length : lineEnd);
-        const productionGate: EngineProductionGate = /&&\s*!\s*Environment\.(?:node\.production|NODE_PRODUCTION)\b/.test(condition)
-            ? 'non-production'
-            : /&&\s*Environment\.(?:node\.production|NODE_PRODUCTION)\b/.test(condition)
-              ? 'production'
-              : 'none';
-        found.set(match[2], { name: match[2], productionGate });
-    }
-    return found;
-}
-
-function expectedEngineProductionGate(row: DebugCommand): EngineProductionGate {
-    if (row.production_only) return 'production';
-    if (ENGINE_NON_PRODUCTION_ONLY[row.name]) return 'non-production';
-    return 'none';
-}
-
-/** Verify the hand-maintained engine metadata still covers the selected handler. */
-export function assertEngineCommandDrift(text: string) {
-    const found = parseEngineCommands(text);
-    const missing = [...found.keys()].filter((name) => !ENGINE_COMMAND_NAMES.includes(name));
-    const stale = [...ENGINE_COMMAND_NAMES].filter((name) => !found.has(name) && !ENGINE_OPTIONAL_COMMAND_NAMES.some((optional) => optional === name));
-    const gateDrift = ENGINE_DEBUG_COMMANDS.filter((row) => {
-        const source = found.get(row.name);
-        return source && source.productionGate !== expectedEngineProductionGate(row);
-    }).map((row) => `${row.name}: expected ${expectedEngineProductionGate(row)}`);
-    if (missing.length || stale.length || gateDrift.length) {
-        const suffix = gateDrift.length ? `, production gate drift [${gateDrift.join(', ')}]` : '';
-        throw new Error(`ClientCheatHandler command drift: missing metadata [${missing.join(', ')}], stale metadata [${stale.join(', ')}]${suffix}`);
-    }
+/** The hand-authored engine command rows whose names the selected handler declares. */
+export function declaredEngineCommands(text: string) {
+    const found = new Set<string>();
+    for (const match of text.matchAll(/\bcmd\s*===\s*(['"])([a-z0-9_]+)\1/g)) found.add(match[2]);
     return ENGINE_DEBUG_COMMANDS.filter((row) => found.has(row.name)).map((row) => ({ ...row, args: row.args.map((value) => ({ ...value })) }));
 }
 
@@ -558,7 +518,7 @@ export function extractDebugCatalog(
         seen.add(row.name);
         if (!CATEGORIES.has(row.category)) throw new Error(`debugproc ${row.name}: unknown category ${row.category}`);
     }
-    const engine = assertEngineCommandDrift(engineHandlerText).map((row) => { const hint = help.get(row.name); return hint ? { ...row, category: hint.category, description: hint.description ?? row.description } : row; });
+    const engine = declaredEngineCommands(engineHandlerText).map((row) => { const hint = help.get(row.name); return hint ? { ...row, category: hint.category, description: hint.description ?? row.description } : row; });
     commands.push(...engine);
     commands.sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
     const names: DebugNameFamilies = {};

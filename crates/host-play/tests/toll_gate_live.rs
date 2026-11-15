@@ -238,10 +238,9 @@ fn walk_arm_to(
     let state = WorldState::from_snapshot(snapshot).with_map_members(true);
     let arms = WalkArms::default();
     let admission = host_play::admission::Admission::manual(
-        FindOptions::default(),
+        host_play::WalkGlobals::default().manual_decision(false),
         host_play::admission::capture(snapshot, state.map_members, Default::default(), false, None),
         0,
-        host_play::WalkGlobals::default(),
     );
     let route = arm_walk_on(
         world,

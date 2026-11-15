@@ -3,8 +3,11 @@
 //! Quantities are final held targets. A usable minimum can be below the
 //! target. Bank hints require a visit before they can refuse a request.
 
+pub mod buy;
 pub mod plan;
 pub mod run;
+mod shop_run;
+pub mod vendor;
 
 use crate::bank::ops::MAX_MEMO;
 use crate::native::{ActionError, WalkOptions};
@@ -196,12 +199,25 @@ pub enum AcquireVerdict {
     Blocked(AcquireBlock),
 }
 
+/// One planned shop need after pack, worn and planned bank coverage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Purchase {
+    /// The index in the original request, retained for refusal and wake facts.
+    pub need: u8,
+    pub item: i32,
+    /// Final held targets after any covering worn item is subtracted.
+    pub target: i32,
+    pub minimum: i32,
+}
+
 /// Fixed-size work produced by the incremental planner.
 pub struct AcquirePlan {
     pub(crate) withdrawals: [Option<Withdrawal>; MAX_MEMO],
     pub(crate) withdrawal_count: usize,
     pub(crate) wears: [Option<i32>; MAX_MEMO],
     pub(crate) wear_count: usize,
+    pub(crate) purchases: [Option<Purchase>; MAX_MEMO],
+    pub(crate) purchase_count: usize,
     pub(crate) scan: bool,
     pub(crate) child: Option<u8>,
     pub(crate) authored: bool,
@@ -215,6 +231,8 @@ impl AcquirePlan {
             withdrawal_count: 0,
             wears: [None; MAX_MEMO],
             wear_count: 0,
+            purchases: [None; MAX_MEMO],
+            purchase_count: 0,
             scan: false,
             child: None,
             authored: false,
@@ -324,7 +342,8 @@ pub struct AcquireReceipt {
     pub deposited: u32,
     pub kept_unbankable: bool,
     pub bank_open: bool,
-    pub bought: u8,
+    /// Sum of observed landed shop units, never planned button quantities.
+    pub bought: u32,
     pub last_bank: Option<BankReceipt>,
 }
 

@@ -299,6 +299,9 @@ fn assign_of_a_missing_card_fails_every_marked_bot_and_saves_nothing() {
 #[cfg(feature = "js")]
 #[test]
 fn assign_and_restart_replaces_running_cards_and_starts_idle_ones() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = fixture("restart", &["alice", "bob", "carol", "dave"], 3);
     let (old, _) = f.card("old.ts");
     let (new, new_sel) = f.card("new.ts");

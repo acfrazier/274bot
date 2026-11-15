@@ -612,6 +612,7 @@ fn fixture(
         stage: Some("cook:0"),
         loadout: None,
         extra_items,
+        skills: &[],
         seed_vars,
         stand,
         mode,

@@ -5,11 +5,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::TryRecvError;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use script_js::{CardPreparationOutcome, JsLibrary, LoadStage, PreparedCard};
-use {script::ScriptSource, script_js::ApiFamily, script_js::LoadIsolate};
-
+use script::{ScriptKind, ScriptSource};
+use script_js::{
+    ApiFamily, CacheMeta, CardPreparationOutcome, JsCache, JsLibrary, LoadIsolate, LoadStage,
+    PreparedCard,
+};
 const GOOD: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 const GOOD_V2: &str = "export const apiVersion = 2;\nexport function tick(api) { api._n = 1; }\n";
 const BAD_PARSE: &str =
@@ -38,7 +41,7 @@ fn scratch(name: &str) -> PathBuf {
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create load-diagnostics scratch directory");
     dir
 }
 
@@ -53,9 +56,9 @@ fn write(dir: &Path, rel: &str, src: &str) -> PathBuf {
         .split('/')
         .fold(dir.to_path_buf(), |path, part| path.join(part));
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+        std::fs::create_dir_all(parent).expect("create source-fixture parent directory");
     }
-    std::fs::write(&path, src).unwrap();
+    std::fs::write(&path, src).expect("write source fixture");
     path
 }
 
@@ -72,12 +75,8 @@ fn cooperative_card_preparation_matches_the_changed_real_source() {
     let dir = scratch("cooperative-card");
     let mut js = library(&dir);
     let path = write(&dir, "changed.ts", GOOD);
-    let previous = js
-        .load(&path)
-        .expect("load the original card")
-        .sha256
-        .clone();
-    std::fs::write(&path, GOOD_V2).unwrap();
+    let previous = js.load(&path).expect("load the original card").sha256;
+    std::fs::write(&path, GOOD_V2).expect("update card source fixture");
     let snapshot = std::sync::Arc::new(
         js.card_preparation_snapshot(ScriptSource::File, &path.to_string_lossy(), None)
             .expect("capture a changed card"),
@@ -88,7 +87,7 @@ fn cooperative_card_preparation_matches_the_changed_real_source() {
         snapshot.scratch_bytes(),
         snapshot.result_bytes(),
     )
-    .unwrap();
+    .expect("build cooperative preparation input");
     let candidate = script::preparation::submit_cooperative(
         script::preparation::PreparationKind::Card,
         api::identity::Scope::Process,
@@ -161,15 +160,15 @@ fn cooperative_force_prepare_warms_an_unchanged_card() {
 
 fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
     let scripts = root.join("src/bot/scripts");
-    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::create_dir_all(&scripts).expect("create fake catalog script directory");
     let mut index =
         String::from("import { ScriptRegistry } from '../runtime/ScriptRegistry.js';\n");
     for (name, src) in bots {
         let folder = name.replace(' ', "");
         index.push_str(&format!("import {folder} from './{folder}/{folder}.js';\n"));
         let d = scripts.join(&folder);
-        std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join(format!("{folder}.ts")), src).unwrap();
+        std::fs::create_dir_all(&d).expect("create fake card directory");
+        std::fs::write(d.join(format!("{folder}.ts")), src).expect("write fake card source");
     }
     for (name, _) in bots {
         let folder = name.replace(' ', "");
@@ -177,16 +176,67 @@ fn fake_catalog(root: &Path, bots: &[(&str, &str)]) {
             "ScriptRegistry.register({{ name: '{name}', description: '{name}', category: 'Test', create: () => new {folder}() }});\n"
         ));
     }
-    std::fs::write(scripts.join("index.ts"), index).unwrap();
+    std::fs::write(scripts.join("index.ts"), index).expect("write fake catalog index");
+}
+
+fn selected_validation_context() -> Option<(
+    Arc<api::game_data::SelectedGameData>,
+    Arc<api::named_banks::NamedBankFacts>,
+)> {
+    if !api::test_support::game_data_available() {
+        return None;
+    }
+    let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("local R289 test data");
+    let banks = api::named_banks::bank_catalog()
+        .expect("local bank catalog")
+        .iter()
+        .map(|bank| api::named_banks::NamedBank::new(bank.name, bank.tile))
+        .collect();
+    Some((
+        game_data,
+        Arc::new(api::named_banks::NamedBankFacts::from_banks(banks)),
+    ))
+}
+
+fn prepared_catalog_card(lib: &mut JsLibrary, cache: &JsCache, name: &str) -> PreparedCard {
+    lib.ensure_js(ScriptSource::Catalog, name)
+        .unwrap_or_else(|error| panic!("{name}: transpile: {error}"));
+    let card = lib
+        .get(ScriptSource::Catalog, name)
+        .cloned()
+        .unwrap_or_else(|| panic!("{name}: card missing after transpile"));
+    let siblings = script_js::resolve_sibling_modules(
+        &card.path,
+        &card.origin,
+        cache,
+        CacheMeta {
+            kind: ScriptKind::Compat,
+            source: ScriptSource::Catalog,
+            shape: Some(format!("{:?}", card.shape)),
+            api_family: None,
+        },
+    )
+    .unwrap_or_else(|error| panic!("{name}: siblings: {error}"));
+    PreparedCard {
+        fingerprint: card.sha256.clone(),
+        card,
+        siblings,
+    }
 }
 
 /// Drive the same cancellable validation transaction that product reload
 /// uses, rather than bypassing its bounded admission with a synchronous card.
-fn validate_cards(cards: Vec<PreparedCard>) -> Vec<(PreparedCard, Result<(), String>)> {
+fn validate_cards(
+    cards: Vec<PreparedCard>,
+    game_data: Arc<api::game_data::SelectedGameData>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+) -> Vec<(PreparedCard, script_js::CardValidation)> {
     let _guard = VALIDATION_TEST_LOCK
         .lock()
         .expect("validation test lock poisoned");
-    let batch = LoadIsolate::validate_prepared_batch(cards).unwrap();
+    let batch = LoadIsolate::validate_prepared_batch(cards, game_data, named_banks)
+        .expect("validate prepared test cards");
     let until = Instant::now() + Duration::from_secs(45);
     loop {
         match batch.try_recv() {
@@ -197,6 +247,97 @@ fn validate_cards(cards: Vec<PreparedCard>) -> Vec<(PreparedCard, Result<(), Str
             }
             Err(TryRecvError::Disconnected) => panic!("validation coordinator disconnected"),
         }
+    }
+}
+
+/// Prepare a whole catalog the way the product's refresh does: the bounded
+/// catalogue job on WorkAdmission, joined to its terminal result.
+fn prepare_catalogue(js: &JsLibrary, root: &Path) -> script_js::CatalogPreparationResult {
+    let snapshot = std::sync::Arc::new(
+        js.catalog_preparation_snapshot(root)
+            .expect("capture the catalogue metadata"),
+    );
+    let input = script::preparation::PreparationInput::new(
+        1,
+        snapshot.input_bytes(),
+        snapshot.scratch_bytes(),
+        snapshot.result_bytes(),
+    )
+    .expect("build catalogue preparation input");
+    script::preparation::submit_cooperative(
+        script::preparation::PreparationKind::Catalogue,
+        api::identity::Scope::Process,
+        input,
+        snapshot.cooperative_prepare(),
+    )
+    .expect("admit catalogue preparation")
+    .join()
+    .expect("worker completes")
+    .expect("bounded catalogue preparation completes")
+}
+
+#[test]
+fn prepared_batch_loads_module_drop_and_constructor_bank_facts() {
+    let Some((game_data, named_banks)) = selected_validation_context() else {
+        return;
+    };
+    let dir = scratch("prepared-content");
+    let root = dir.join("catalog");
+    fake_catalog(
+        &root,
+        &[
+            (
+                "DropReader",
+                r#"
+import { DROP_DB } from '../../data/dropdb.js';
+const drops = DROP_DB['Green dragon'] ?? [];
+if (!Array.isArray(drops) || drops.length === 0) {
+    throw new Error('selected Green dragon drop facts are missing');
+}
+export default class DropReader extends LoopingBot { loop() {} }
+"#,
+            ),
+            (
+                "BankReader",
+                r#"
+import { BANK_LOCATIONS } from '../../api/bank/BankLocations.js';
+function bankTile(name: string) {
+    const bank = BANK_LOCATIONS.find((candidate) => candidate.name === name);
+    if (!bank) throw new Error(`bankTile: unknown bank '${name}'`);
+    return bank.tile;
+}
+export default class BankReader extends LoopingBot {
+    private bank = (() => {
+        const tile = bankTile('Falador East');
+        if (tile.x !== 3013 || tile.z !== 3355) {
+            throw new Error('selected Falador East bank stand is incorrect');
+        }
+        return tile;
+    })();
+    loop() {}
+}
+"#,
+            ),
+        ],
+    );
+    let mut lib = library(&dir);
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("register prepared-batch fixture");
+    let cache = JsCache::new(dir.join("siblings"));
+    let cards = ["DropReader", "BankReader"]
+        .into_iter()
+        .map(|name| prepared_catalog_card(&mut lib, &cache, name))
+        .collect();
+
+    let results = validate_cards(cards, game_data, named_banks);
+    assert_eq!(results.len(), 2);
+    for (card, result) in results {
+        assert!(
+            matches!(result, script_js::CardValidation::Validated),
+            "{} failed with selected content: {:?}",
+            card.card.name,
+            result
+        );
     }
 }
 
@@ -238,8 +379,10 @@ fn duplicate_display_names_are_keyed_by_path() {
     assert!(js.load(&one).is_err());
     let imported = js.load(&two).expect("unloadable file still registers");
     assert_eq!(
-        imported.unloadable.as_deref(),
-        Some("../../event/webwalk/Something.js")
+        imported.unloadable,
+        Some(script_js::UnloadReason::UnsupportedImport(
+            "../../event/webwalk/Something.js".into()
+        ))
     );
 
     let failures = js.load_failures();
@@ -276,6 +419,9 @@ fn corrected_retry_clears_only_the_affected_identity() {
 
 #[test]
 fn failed_replace_preserves_working_card_and_records_attempt() {
+    let Some((game_data, named_banks)) = selected_validation_context() else {
+        return;
+    };
     let dir = scratch("replace");
     let mut js = library(&dir);
     let path = write(&dir, "live.ts", GOOD);
@@ -295,10 +441,16 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
             panic!("changed candidate was not prepared")
         }
     };
-    let (prepared, result) = validate_cards(vec![prepared])
-        .pop()
-        .expect("one validation result");
-    let err = result.unwrap_err();
+    let (prepared, result) = validate_cards(
+        vec![prepared],
+        Arc::clone(&game_data),
+        Arc::clone(&named_banks),
+    )
+    .pop()
+    .expect("one validation result");
+    let script_js::CardValidation::Failed(err) = result else {
+        panic!("the broken runtime must fail validation: {result:?}");
+    };
     js.record_prepared_failure(&prepared, &err);
     assert!(err.contains("runtime boom"), "{err}");
 
@@ -318,6 +470,9 @@ fn failed_replace_preserves_working_card_and_records_attempt() {
 #[test]
 fn catalog_mixed_batch_retains_named_failures() {
     let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let Some((game_data, named_banks)) = selected_validation_context() else {
+        return;
+    };
     let dir = scratch("catalog-mixed");
     let root = dir.join("catalog");
     fake_catalog(
@@ -380,12 +535,20 @@ fn catalog_mixed_batch_retains_named_failures() {
     }
     let mut prepared_ok = Vec::new();
     for candidate in result.prepared.into_iter().chain(result.warmed) {
-        let (candidate, result) = validate_cards(vec![candidate])
-            .pop()
-            .expect("one validation result");
+        let (candidate, result) = validate_cards(
+            vec![candidate],
+            Arc::clone(&game_data),
+            Arc::clone(&named_banks),
+        )
+        .pop()
+        .expect("one validation result");
         match result {
-            Ok(()) => prepared_ok.push(candidate),
-            Err(error) => js.record_prepared_failure(&candidate, &error),
+            script_js::CardValidation::Validated | script_js::CardValidation::NotChecked => {
+                prepared_ok.push(candidate)
+            }
+            script_js::CardValidation::Failed(error) => {
+                js.record_prepared_failure(&candidate, &error)
+            }
         }
     }
     assert_eq!(prepared_ok.len(), 1);
@@ -418,6 +581,112 @@ fn catalog_mixed_batch_retains_named_failures() {
         "{named} / {}",
         js.named_failure_output()
     );
+}
+
+/// A retired card that the catalog refresh adds is not a prepare failure and
+/// never enters the refresh report's failed count.
+#[test]
+fn catalog_policy_hold_refresh_records_no_load_failure() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("catalog-policy-hold-added");
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("Woodcutter", GOOD)]);
+    let mut js = library(&dir);
+    let result = prepare_catalogue(&js, &root);
+    assert_eq!(result.diff.added, ["Woodcutter"]);
+    assert!(
+        result.prepare_failed.is_empty(),
+        "a retired card is not a prepare failure: {:?}",
+        result.prepare_failed
+    );
+    let report = js.apply_catalog_diff(result.diff);
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(report.summary(), "added 1");
+    let card = js
+        .get(ScriptSource::Catalog, "Woodcutter")
+        .expect("the retired card stays listed");
+    assert_eq!(
+        card.unloadable,
+        Some(script_js::UnloadReason::Retired(
+            "replaced by the native Gatherer".into()
+        ))
+    );
+    assert!(
+        js.load_failure(&card.identity_key()).is_none(),
+        "a retired card records no load failure"
+    );
+}
+
+/// A retired card whose source changes keeps its old registration and gains
+/// no load-failure record.
+#[test]
+fn a_changed_retired_card_does_not_gain_a_load_failure() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("catalog-policy-hold-changed");
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("Woodcutter", GOOD)]);
+    let mut js = library(&dir);
+    js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("register the catalog");
+    let path = root.join("src/bot/scripts/Woodcutter/Woodcutter.ts");
+    std::fs::write(&path, GOOD_V2).unwrap();
+    let result = prepare_catalogue(&js, &root);
+    assert_eq!(result.diff.changed, ["Woodcutter"]);
+    assert!(
+        result.prepare_failed.is_empty(),
+        "a retired card is not a prepare failure: {:?}",
+        result.prepare_failed
+    );
+    for failure in &result.prepare_failed {
+        js.record_failure(failure.clone());
+    }
+    let report = js.apply_catalog_diff(result.diff);
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(!report.summary().contains("failed"), "{}", report.summary());
+    let key = js
+        .get(ScriptSource::Catalog, "Woodcutter")
+        .expect("the retired card stays listed")
+        .identity_key();
+    assert!(
+        js.load_failure(&key).is_none(),
+        "a changed retired card gains no load failure"
+    );
+}
+
+/// An unresolved import is still a load failure, recorded with the specifier
+/// and counted in the refresh report.
+#[test]
+fn an_unsupported_import_still_records_a_load_failure() {
+    let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
+    let dir = scratch("catalog-import-failure");
+    let root = dir.join("catalog");
+    fake_catalog(&root, &[("BadImport", BAD_IMPORT)]);
+    let mut js = library(&dir);
+    let result = prepare_catalogue(&js, &root);
+    assert_eq!(
+        result.prepare_failed.len(),
+        1,
+        "{:?}",
+        result.prepare_failed
+    );
+    let failure = &result.prepare_failed[0];
+    assert_eq!(failure.name, "BadImport");
+    assert_eq!(failure.stage, LoadStage::ImportResolution);
+    assert_eq!(
+        failure.sibling.as_deref(),
+        Some("../../event/webwalk/Something.js")
+    );
+    for failure in &result.prepare_failed {
+        js.record_failure(failure.clone());
+    }
+    let mut report = js.apply_catalog_diff(result.diff);
+    report.failed.extend(result.prepare_failed);
+    assert_eq!(report.failed.len(), 1);
+    assert_eq!(report.summary(), "added 1, failed 1");
+    assert!(js
+        .load_failures()
+        .iter()
+        .any(|f| f.name == "BadImport" && f.stage == LoadStage::ImportResolution));
 }
 
 #[test]

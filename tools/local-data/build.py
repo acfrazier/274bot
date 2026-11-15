@@ -62,6 +62,8 @@ def build_local_data(repo_root, environment, *, runner=run, windows=None):
                 str(nav_pack),
                 "--revision",
                 revision,
+                "--engine",
+                str(engine),
                 "--content",
                 str(content),
                 "--cache",

@@ -887,7 +887,10 @@ impl Walk {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep the walk request fields explicit at the compatibility boundary"
+    )]
     fn begin_with_intent(
         dest: WorldTile,
         radius: i32,
@@ -1751,10 +1754,6 @@ impl Family for WalkResilient {
         if let Some(reason) = avoid_refusal(&opts.avoid_zones) {
             set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Refuse(reason);
-        }
-        if opts.cross_zones.len() > 8 {
-            set_last_outcome(Some(WalkExecutorOutcome::Failed));
-            return Begin::Refuse("crossZones: more than 8 zone ids".into());
         }
         if interrupted(cx) {
             set_last_outcome(Some(WalkExecutorOutcome::Interrupted));

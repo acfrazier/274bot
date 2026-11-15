@@ -31,7 +31,7 @@ fn spawn_native(src: &str) -> LoadIsolate {
             session: 1,
         }),
     )
-    .unwrap()
+    .expect("spawn native shop test isolate")
 }
 
 fn post_native_seat_page(
@@ -137,12 +137,13 @@ mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R274)
+        .expect("load revision 274 shop test data")
 }
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data())
-        .unwrap()
+        .expect("spawn shop compatibility isolate")
 }
 
 /// One posted shop/stock/backpack row.
@@ -178,9 +179,9 @@ fn npc<'a>(name: &'a str, actions: &'a [String]) -> SceneEntityInput<'a> {
         combat_level: 0,
         target_kind: 1,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: 3222,
+        nz: 3222,
         shape: 0,
         angle: 0,
     }
@@ -1025,7 +1026,7 @@ fn corridor(here_x: i32, to_x: i32, beside: Option<i32>) -> Corridor {
     };
     for x in here_x..=to_x {
         let i = index(x);
-        let rank = u16::try_from(x - here_x).unwrap();
+        let rank = u16::try_from(x - here_x).expect("corridor rank fits in u16");
         c.walkable[i / 32] |= 1 << (i % 32);
         c.reachable[i / 32] |= 1 << (i % 32);
         c.reachable_adj[i / 32] |= 1 << (i % 32);
@@ -1042,7 +1043,8 @@ fn corridor(here_x: i32, to_x: i32, beside: Option<i32>) -> Corridor {
         // The keeper's tile, reached through its stand at `to_x`.
         let i = index(x);
         c.reachable_adj[i / 32] |= 1 << (i % 32);
-        c.adjacent_rank[i] = u16::try_from(to_x - here_x).unwrap();
+        c.adjacent_rank[i] =
+            u16::try_from(to_x - here_x).expect("adjacent corridor rank fits in u16");
         c.step[i] |= 1;
     }
     c
@@ -1076,6 +1078,8 @@ fn keeper_at<'a>(actions: &'a [String], x: i32, distance: i32) -> SceneEntityInp
         x,
         z: 5,
         distance,
+        nx: x,
+        nz: 5,
         ..npc("Shop keeper", actions)
     }
 }

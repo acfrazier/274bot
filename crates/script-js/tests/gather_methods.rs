@@ -86,15 +86,21 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 }
 
 fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
-    let data = api::game_data::for_revision(revision).unwrap();
+    let data = api::game_data::for_revision(revision)
+        .expect("load selected game data for gathering-method tests");
     // Real selected data is guarded at each calling test.
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .expect("spawn gathering-method native isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let value = iso.probe("globalThis.__probe").unwrap();
+    let value = iso
+        .probe("globalThis.__probe")
+        .expect("read gathering-method probe result");
     iso.join();
-    serde_json::from_str(value.as_str().unwrap()).unwrap()
+    let json = value
+        .as_str()
+        .expect("gathering-method probe result is JSON text");
+    serde_json::from_str(json).expect("parse gathering-method probe JSON")
 }
 
 /// Empty bootstrap families leave the gathering families deliberately absent.
@@ -114,11 +120,12 @@ fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
 }
 
 fn catalog(revision: ClientRevision) -> std::sync::Arc<api::gather_methods::GatherCatalog> {
-    let data = api::game_data::for_revision(revision).unwrap();
+    let data = api::game_data::for_revision(revision)
+        .expect("load selected game data for gathering-method catalog");
     api::selected::FamilyPreparation::run(move |worker| data.prepare_gathering(worker))
-        .unwrap()
+        .expect("start gathering-method family preparation")
         .join()
-        .unwrap()
+        .expect("gathering-method family worker completes")
         .expect("gathering family prepares")
 }
 

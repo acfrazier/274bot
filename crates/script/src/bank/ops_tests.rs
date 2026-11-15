@@ -546,7 +546,7 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
     pack[0].def.stackable = true;
     let keep = [502];
     assert_eq!(
-        deposit_capacity_next(&keep, Some(&side[..]), Some(&pack[..]), true),
+        deposit_capacity_next(&keep, None, Some(&side[..]), Some(&pack[..]), true),
         DepositScan::Click(DepositClick {
             id: 500,
             slot: 0,
@@ -555,7 +555,7 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
         })
     );
     assert_eq!(
-        deposit_capacity_next(&keep, Some(&side[..]), Some(&pack[1..]), true),
+        deposit_capacity_next(&keep, None, Some(&side[..]), Some(&pack[1..]), true),
         DepositScan::Click(DepositClick {
             id: 501,
             slot: 1,
@@ -566,18 +566,19 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
 
     let wrong_op = [native(501, "Singles", 1, 1, 2001, &[Some("Deposit-All")])];
     assert_eq!(
-        deposit_capacity_next(&[], Some(&wrong_op[..]), Some(&pack[1..2]), true),
+        deposit_capacity_next(&[], None, Some(&wrong_op[..]), Some(&pack[1..2]), true),
         DepositScan::MissingRequired,
         "an unstackable must not fall back from missing Deposit-1 to Deposit-All"
     );
     assert_eq!(
-        deposit_capacity_next::<ItemView>(&[], None, Some(&pack[..1]), true),
+        deposit_capacity_next::<ItemView>(&[], None, None, Some(&pack[..1]), true),
         DepositScan::WaitView
     );
     let empty_side: [ItemView; 0] = [];
     assert_eq!(
         deposit_capacity_next(
             &[500, 501, 502],
+            None,
             Some(&empty_side[..]),
             Some(&pack[..]),
             true,
@@ -585,7 +586,7 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
         DepositScan::Done
     );
     assert_eq!(
-        deposit_capacity_next(&[], Some(&side[..]), Some(&pack[..]), false),
+        deposit_capacity_next(&[], None, Some(&side[..]), Some(&pack[..]), false),
         DepositScan::SessionGone
     );
 }
@@ -1163,4 +1164,49 @@ fn booth_named_and_nearest_action_pick_the_nearest_match() {
         Some(1)
     );
     assert!(booth_at(&rows, tile, Some("Furnace")).is_none());
+}
+
+#[test]
+fn npc_at_network_coords_matches_the_exact_bank_stand_head() {
+    let stand = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let rendered = WorldTile { x: 3205, ..stand };
+    let row = NpcView {
+        index: 7,
+        r#type: None,
+        name: Some("Banker".into()),
+        actions: Vec::new(),
+        tile: rendered,
+        distance: 5,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: None,
+        spot_animation: -1,
+        spot_animation_stamp: -1,
+        health: 0,
+        total_health: 0,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: stand,
+        x: rendered.x,
+        z: rendered.z,
+        yaw: 0,
+    };
+
+    assert_eq!(
+        npc_at(std::slice::from_ref(&row), stand, "banker").map(|npc| npc.index),
+        Some(7)
+    );
+    assert!(npc_at(std::slice::from_ref(&row), rendered, "Banker").is_none());
 }

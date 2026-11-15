@@ -1151,8 +1151,11 @@ mod tests {
 
         let timed_out = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();
         RUNTIME.with(|rt| {
-            rt.borrow_mut().clock.deadline =
-                Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+            rt.borrow_mut().clock.deadline = Some(
+                std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_millis(1))
+                    .expect("test deadline is in the past"),
+            );
         });
         assert_eq!(call("next", timed_out, 7)["reason"], "modal-timeout");
         let wall_expired = begin("Cook's Assistant", 0)["token"].as_u64().unwrap();

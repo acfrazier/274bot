@@ -517,6 +517,67 @@ fn an_unknown_profile_write_is_rejected_with_the_owner_text() {
     );
 }
 
+/// A refusal whose owner text is far longer than one line (here an unknown
+/// profile with a 700-character name) shows the front ends one short line
+/// that points at the log; the whole text is in the log once, packed under
+/// the store's cap. The command book keeps the short line, and the refusal
+/// line the command boundary writes carries it too, not a second copy.
+#[test]
+fn a_refused_command_shows_the_brief_and_logs_its_detail_once() {
+    use crate::log::{global, LogScope, LogView};
+    // The sink must be installed before the refusal writes its detail.
+    global();
+    let mut d = driver("refused-brief", &["alice"]);
+    // `ж` appears in no other test's log lines.
+    let name = format!("ghost-{}", "ж".repeat(700));
+    d.session_mut()
+        .stage_guardian(crate::session::GuardianEdit::fields(true, "strength", true));
+    let guardian = d
+        .submit(OperatorCommand::SetGuardian, Targets::Profile(&name))
+        .expect("admitted");
+    let shown = d
+        .session()
+        .command_failure(guardian.request())
+        .expect("the refusal has a line")
+        .to_owned();
+    assert!(shown.chars().count() <= crate::LINE_MAX, "{shown}");
+    assert!(!shown.contains('\n'));
+    assert!(shown.starts_with("random: no profile ghost-ж"), "{shown}");
+    assert!(shown.ends_with(crate::LOG_POINTER), "{shown}");
+
+    let mut view = LogView::new(LogScope::All);
+    global().refresh(&mut view);
+    let lines: Vec<String> = view
+        .rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        .filter(|message| message.contains('ж'))
+        .collect();
+    let detail: Vec<&String> = lines.iter().filter(|l| l.starts_with("detail: ")).collect();
+    assert!(detail.len() > 1, "packed lines: {lines:#?}");
+    let mut rejoined = String::new();
+    for (index, line) in detail.iter().enumerate() {
+        assert!(
+            line.len() <= api::hostlog::LINE_BYTES,
+            "{} bytes",
+            line.len()
+        );
+        assert!(!line.ends_with('…'), "the store cut a line");
+        let body = line.strip_prefix("detail: ").expect("head");
+        let marker = format!("[{}/{}] ", index + 1, detail.len());
+        rejoined.push_str(body.strip_prefix(&marker).expect("numbered"));
+    }
+    assert_eq!(
+        rejoined,
+        format!("random: no profile {name}"),
+        "the whole text, once"
+    );
+    // The boundary's own refusal line is short: no second copy of the text.
+    for line in lines.iter().filter(|l| !l.starts_with("detail: ")) {
+        assert!(line.matches('ж').count() <= crate::SUMMARY_MAX, "{line}");
+    }
+}
+
 fn terminal_app(d: &HeadlessDriver, request: RequestId) -> Option<Terminal> {
     d.report(request)?
         .member(Subject::Application)?
@@ -2995,7 +3056,7 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     assert_eq!(plan_names(&d), ["alice", "bob"]);
     let prompt = waiting.prompt();
     assert!(
-        prompt.contains("alice: Start accepts only these zones."),
+        prompt.contains("alice: The guide asks to cross these zones."),
         "{prompt}"
     );
     assert!(
@@ -3062,7 +3123,7 @@ fn quester_fleet_start_discloses_each_queue_and_skips_changed_consent() {
     assert!(
         result
             .text()
-            .contains("alice: Start accepts only these zones.")
+            .contains("alice: The guide asks to cross these zones.")
             && result.text().contains("bob: No danger zones are declared."),
         "the result retains each confirmed disclosure: {}",
         result.text()
@@ -4619,6 +4680,8 @@ fn compiled_gatherer_paint_controls_pause_resume_and_stop() {
         xp: 0,
         xp_per_hour: None,
         bank: Arc::from(""),
+        bank_seen: None,
+        block_reason: Arc::from(""),
         last_progress: 0,
         deaths: 0,
         recoveries: 0,
@@ -4663,6 +4726,8 @@ fn native_gatherer_paint_controls_pause_resume_and_stop() {
         xp: 0,
         xp_per_hour: None,
         bank: Arc::from(""),
+        bank_seen: None,
+        block_reason: Arc::from(""),
         last_progress: 0,
         deaths: 0,
         recoveries: 0,
@@ -6832,7 +6897,15 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
         match terminal_app(&d, request) {
             Some(Settlement::Failed(CommandFailure::Rejected(
                 crate::command::Rejection::WriteRefused,
-            ))) => refused.push(request),
+            ))) => {
+                refused.push(request);
+                assert!(
+                    d.session()
+                        .setting_failure(setting)
+                        .is_some_and(|text| text.starts_with("Not saved: ")),
+                    "the setting shows the reason"
+                );
+            }
             None => accepted.push(request),
             other => panic!("neither accepted nor refused by the queue: {other:?}"),
         }
@@ -6857,12 +6930,6 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
         .filter(|row| row.message().contains("WriteRefused"))
         .count();
     assert_eq!(lines, refused.len(), "one info line per refused command");
-    assert!(
-        d.session()
-            .setting_failure(setting)
-            .is_some_and(|text| text.starts_with("Not saved: ")),
-        "the setting shows the reason"
-    );
     // The accepted writes settle on their own: no further refusal line.
     drop(disk);
     for request in accepted {

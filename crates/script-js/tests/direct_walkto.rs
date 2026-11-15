@@ -8,7 +8,7 @@ use script::interact::InteractReq;
 use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 use common::post_snapshot_input;
 
 fn base_snapshot<'a>(here: TileInput) -> SnapshotInput<'a> {
@@ -92,7 +92,8 @@ fn tile(x: i32, z: i32, level: i32) -> TileInput {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn direct-walkto test isolate")
 }
 
 fn walk_to_src(call: &str) -> String {

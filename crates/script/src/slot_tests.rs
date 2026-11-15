@@ -16,6 +16,38 @@ impl Script for Noop {
     }
 }
 
+#[test]
+fn native_relog_readiness_gate_retains_run_intent_without_operator_pause() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(103_101);
+    slot.start_test_script(Box::new(Noop), None).unwrap();
+    let before = slot.native_run().unwrap();
+    slot.reset_session_work();
+    slot.on_is_up(true);
+    let relogged = slot.native_run().unwrap();
+    assert_eq!((relogged.slot, relogged.run), (before.slot, before.run));
+    assert_ne!(relogged.session, before.session);
+    assert_eq!(slot.state(), RunState::Running);
+
+    // A scene rebuild can close readiness after the first new-session sample.
+    slot.on_is_up(false);
+    assert_eq!(slot.state(), RunState::Paused);
+    assert!(slot.want_run, "readiness does not mean operator Pause");
+    assert_eq!(slot.native_run(), Some(relogged));
+    slot.on_is_up(true);
+    assert_eq!(slot.state(), RunState::Running);
+    assert_eq!(slot.native_run(), Some(relogged));
+
+    slot.pause();
+    slot.on_is_up(false);
+    slot.on_is_up(true);
+    assert_eq!(slot.state(), RunState::Paused);
+    assert!(!slot.want_run, "operator Pause survives restored readiness");
+}
+
 fn empty_snapshot(tick: u64) -> SnapshotInput<'static> {
     SnapshotInput {
         tick,
@@ -1249,6 +1281,7 @@ fn compiled_ctx<'a>(
             reach: None,
             reach_flood: None,
             bank_memory: None,
+            shop_keepers: None,
             collision: None,
             nav: None,
             hold: false,

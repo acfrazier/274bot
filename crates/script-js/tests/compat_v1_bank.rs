@@ -7,14 +7,15 @@ use script::native::snapshot_source::{ItemRowInput, NativeFactsInput, SnapshotIn
 use script_js::{LoadIsolate, LoadShape, Ready};
 use std::time::{Duration, Instant};
 
-mod common;
+pub mod common;
 
 const INDEX_D_TS: &str = include_str!("../compat-js/index.d.ts");
 const MODULES_JSON: &str = include_str!("../compat-js/modules.json");
 const ABI_CONTRACT: &str = include_str!("../compat-js/abi-contract.json");
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn compatibility bank isolate")
 }
 
 fn bot(imports: &str, body: &str) -> String {
@@ -35,7 +36,9 @@ export default class T extends LoopingBot {{
 fn run(src: &str, expr: &str) -> serde_json::Value {
     let iso = spawn(src);
     iso.on_game_tick(1);
-    let value = iso.probe(expr).unwrap();
+    let value = iso
+        .probe(expr)
+        .expect("read compatibility bank probe result");
     iso.join();
     value
 }
@@ -54,7 +57,8 @@ fn mentions(text: &str, name: &str) -> bool {
 /// and no generated output promises it.
 fn assert_export_removed(module: &str, name: &str) {
     let src = bot(&format!("import {{ {name} }} from '{module}';"), "");
-    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![])
+        .expect("spawn removed-export check isolate");
     let deadline = Instant::now() + Duration::from_secs(10);
     let error = loop {
         match iso.poll_ready() {

@@ -191,6 +191,9 @@ impl World {
                         z: self.facts.luthas_anchor.z + 1,
                         level: self.facts.luthas_anchor.level,
                         distance: 1,
+                        size: 1,
+                        nx: self.facts.luthas_anchor.x,
+                        nz: self.facts.luthas_anchor.z + 1,
                         actions: vec!["Talk-to".into()].into(),
                         reachable_adj: true,
                         ..EntityRow::default()

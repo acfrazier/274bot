@@ -18,8 +18,11 @@ use nav_executor::{TravelOptions, TravelOutcome, Traveller};
 use nav_planner::router::{FindOptions, Route};
 use nav_planner::world::NavWorld;
 
-use crate::evidence::{Evidence, GroundGuardEvidence, GroundGuardItem, SeedDepositEvidence};
-use crate::proof::Proof;
+use crate::evidence::{
+    Evidence, GroundGuardEvidence, GroundGuardItem, ReceiptEvent, ReceiptManifest, RunReceipt,
+    SeedDepositEvidence,
+};
+use crate::proof::{DeltaBaseline, Proof};
 use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
 #[cfg(test)]
 use crate::Wait;
@@ -387,6 +390,7 @@ pub struct ScenarioRunner {
     scenario: Scenario,
     snapshot: GameSnapshot,
     obj_names: Option<Arc<ObjNames>>,
+    quest_catalog: Option<Arc<api::quest_facts::QuestCatalog>>,
     /// The whole-world router surface (collision + transport graph),
     /// loaded from the baked nav pack; both `Walk` and `Follow` steps
     /// route on it.
@@ -397,6 +401,8 @@ pub struct ScenarioRunner {
     /// The armed nav route (re-passed each client cycle; the traveller
     /// consumes it when a run starts).
     route: Option<Route>,
+    /// The same owned quest facts used to admit the armed route.
+    route_quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     /// Whole-window shot label fired at the terminal state (PASS and
     /// FAIL); `None` for scenarios that only fire `Shot` steps.
     terminal_shot: Option<&'static str>,
@@ -451,9 +457,9 @@ pub struct ScenarioRunner {
     relog_session: Option<u64>,
     relog_left_session: bool,
     /// The Relog step sent its logout and the host has not yet posted the
-    /// slot's explicit Login: a bot with no script stays logged out after
-    /// its exit, so the step's own logout cannot rely on a reconnect. The
-    /// driver that ticks this runner consumes the request with
+    /// slot's explicit Login, a real one-shot command that covers the step's
+    /// own relog (an unlatched slot with auto-login would also reconnect by
+    /// itself). The driver that ticks this runner consumes the request with
     /// [`ScenarioRunner::take_relog_login`] and posts the operator Login
     /// intent (host-play's `SlotArm::arm_explicit_login`).
     relog_login_wanted: bool,
@@ -473,6 +479,9 @@ pub struct ScenarioRunner {
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
+    /// Exact inventory/stat baselines for armed quantity-delta proofs.
+    /// Empty until a named quantity action or delta predicate is armed.
+    delta_baselines: Vec<DeltaBaseline>,
     /// Chat-sequence baseline for the current FreshTutorial, FreshChat,
     /// FreshChatSincePreviousStep, or FreshQuestCompletion wait. Latched
     /// when the step begins (the previous step for
@@ -532,6 +541,8 @@ pub struct ScenarioRunner {
     #[allow(clippy::type_complexity)]
     shot_sink: Option<Box<dyn FnMut(&str, &GameSnapshot) + Send>>,
     terminal_cleanup: Option<TerminalCleanup>,
+    /// A scenario requests a receipt by default. Disarming drops the entire owner.
+    run_receipt: Option<Box<RunReceipt>>,
 }
 
 impl ScenarioRunner {
@@ -563,6 +574,11 @@ impl ScenarioRunner {
         self.map_members = map_members;
     }
 
+    /// Bind the selected quest catalog prepared by the live host off-pump.
+    pub fn set_quest_catalog(&mut self, catalog: Option<Arc<api::quest_facts::QuestCatalog>>) {
+        self.quest_catalog = catalog;
+    }
+
     /// Control terminal restoration to the teardown world speed.
     ///
     /// Defaults to `true`; setting `false` leaves the initial requested
@@ -590,10 +606,12 @@ impl ScenarioRunner {
             scenario,
             snapshot: GameSnapshot::new(),
             obj_names: None,
+            quest_catalog: None,
             nav_world,
             traveller: Traveller::new(),
             map_members: false,
             route: None,
+            route_quest_evidence: None,
             terminal_shot,
             phase: Phase::Seeding,
             step: 0,
@@ -624,6 +642,7 @@ impl ScenarioRunner {
             ground_guard: None,
             seed_deposits: Vec::new(),
             xp_baselines: Vec::new(),
+            delta_baselines: Vec::new(),
             fresh_xp_baseline: None,
             fresh_chat_baseline: None,
             next_fresh_chat_baseline: None,
@@ -643,7 +662,109 @@ impl ScenarioRunner {
             script_idle: false,
             shot_sink: None,
             terminal_cleanup: None,
+            run_receipt: Some(Box::default()),
         }
+    }
+
+    /// Stop or start dispatch recording without changing any gameplay predicate.
+    /// Ordinary ticks/paints allocate nothing for this observer while disarmed.
+    pub fn set_receipt_recording(&mut self, enabled: bool) {
+        if enabled {
+            if self.run_receipt.is_none() && !matches!(self.phase, Phase::Done) {
+                self.run_receipt = Some(Box::default());
+            }
+        } else {
+            self.run_receipt = None;
+        }
+    }
+
+    /// Supply identities/hashes that only the host knows, including after the
+    /// terminal receipt moves into evidence. No inspection occurs in the observer.
+    pub fn receipt_manifest_mut(&mut self) -> Option<&mut ReceiptManifest> {
+        self.run_receipt
+            .as_mut()
+            .or_else(|| self.evidence.as_mut()?.run_receipt.as_mut())
+            .map(|receipt| &mut receipt.manifest)
+    }
+
+    fn bind_receipt(&mut self, client: &Client) {
+        let Some(receipt) = self.run_receipt.as_mut() else {
+            return;
+        };
+        receipt.manifest.revision = Some(client.revision().as_i32());
+        if receipt.manifest.actor.is_empty() {
+            receipt.manifest.actor = self
+                .live_names
+                .first()
+                .map(String::as_str)
+                .unwrap_or_else(|| {
+                    self.scenario
+                        .seed
+                        .profiles
+                        .first()
+                        .map_or("unbound", |profile| profile.0)
+                })
+                .to_owned();
+        }
+        if receipt.manifest.sessions.last() != Some(&client.gens.session) {
+            if receipt.manifest.sessions.len() < crate::evidence::MAX_RECEIPT_EVENTS {
+                receipt.manifest.sessions.push(client.gens.session);
+            } else {
+                receipt.manifest.complete = false;
+                // Retain the active identity even when the history is partial.
+                *receipt
+                    .manifest
+                    .sessions
+                    .last_mut()
+                    .expect("full session history") = client.gens.session;
+            }
+        }
+    }
+
+    fn receipt_event(
+        &mut self,
+        event: &'static str,
+        kind: &'static str,
+        result: Option<&'static str>,
+        detail: Option<&str>,
+    ) {
+        let Some(receipt) = self.run_receipt.as_mut() else {
+            return;
+        };
+        let step = self.scenario.steps.get(self.step);
+        let name = step.map_or("terminal cleanup", |step| step.name);
+        let why_source = if step.is_some() {
+            "step-name"
+        } else {
+            "runner-phase"
+        };
+        if matches!(event, "STEP" | "INTERVENTION") {
+            api::host_log!(
+                api::hostlog::Category::ScriptLifecycle,
+                api::hostlog::Level::Info,
+                "STEP {}: {} WHY={} why_source={} kind={} intervention={:?}",
+                self.step + 1,
+                name,
+                name,
+                why_source,
+                kind,
+                detail,
+            );
+        }
+        receipt.push(ReceiptEvent {
+            event,
+            ordinal: self.step + 1,
+            name,
+            why: name,
+            why_source,
+            kind,
+            tick: self.snapshot.tick(),
+            elapsed_ms: self.started.elapsed().as_millis() as u64,
+            session: receipt.manifest.sessions.last().copied().unwrap_or(0),
+            tile: self.snapshot.tile().map(|(x, z, level)| [x, z, level]),
+            result,
+            detail: detail.map(str::to_owned),
+        });
     }
 
     /// Install the whole-window shot sink (headed: the panel's window
@@ -823,8 +944,8 @@ impl ScenarioRunner {
     /// Run companion `index`'s hook once per client cycle on `client`. The
     /// caller delivers one frame per call, exactly like [`tick`]. `true`
     /// means the hook pressed this slot's logout and needs the host's
-    /// explicit Login (the operator Login intent) posted for it, because a
-    /// bot with no script stays parked after its exit.
+    /// explicit Login (the operator Login intent, a real one-shot command)
+    /// posted for it.
     pub fn companion_tick(&mut self, index: usize, client: &mut Client) -> bool {
         (self.scenario.companions[index].per_frame)(client)
     }
@@ -832,8 +953,8 @@ impl ScenarioRunner {
     /// Whether the current Relog step sent its logout and still needs the
     /// host's explicit Login. The driver that ticks this runner consumes the
     /// request with [`Self::take_relog_login`] and posts the operator Login
-    /// intent for the driven slot; a bot with no script does not reconnect by
-    /// itself, so the relog would otherwise wait out its budget.
+    /// intent for the driven slot. The Login is a real one-shot command; an
+    /// unlatched slot with auto-login would also reconnect by itself.
     pub fn relog_login_wanted(&self) -> bool {
         self.relog_login_wanted
     }
@@ -981,6 +1102,9 @@ impl ScenarioRunner {
         if matches!(self.phase, Phase::Done) {
             return;
         }
+        self.bind_receipt(client);
+        self.delta_baselines
+            .retain(|baseline| baseline.session == client.gens.session);
         let dirty = self.snapshot.rebuild(client);
         // Observed game ticks since the last poll: `snapshot.tick()`
         // advances once per `PLAYER_INFO` (the server's world cycle),
@@ -999,12 +1123,23 @@ impl ScenarioRunner {
             self.fresh_xp_baseline = None;
             self.fresh_chat_baseline = None;
             self.next_fresh_chat_baseline = None;
+            self.delta_baselines.clear();
             self.visited_within = false;
             self.lamp_episode = None;
             self.maze_episode = None;
         }
         self.retry_xp_baselines();
         self.retry_chat_baseline();
+        if matches!(self.phase, Phase::Running) && !self.step_sent {
+            let wait_arm = self.current_step().wait.arm;
+            self.capture_delta_baselines(wait_arm, client.gens.session);
+            if matches!(
+                self.current_step().kind,
+                StepKind::MakeProduct { .. } | StepKind::EnterAmount { .. }
+            ) {
+                self.capture_delta_baselines(self.scenario.proof, client.gens.session);
+            }
+        }
         // Scene-settle tracking: the wall-clock instant the scene first
         // held `scene_state == 2`; any drop below 2 (a tele's rebuild)
         // resets it.
@@ -1030,7 +1165,7 @@ impl ScenarioRunner {
         }
         if matches!(self.phase, Phase::Seeding) && self.seed_done() {
             self.phase = Phase::Running;
-            self.begin_step();
+            self.begin_step(client.gens.session);
         }
         if matches!(self.phase, Phase::Running) {
             // Scene-settle gate: never start a step until the scene has
@@ -1058,7 +1193,19 @@ impl ScenarioRunner {
                     // it, so a matching line already in the ring is stale.
                     self.speed_chat_baseline =
                         Some(crate::quest_fast::chat_baseline(&self.snapshot));
-                    if let Err(error) = crate::quest_fast::send_tick_speed(client, ms) {
+                    self.receipt_event("INTERVENTION", "world-speed", None, None);
+                    let result = crate::quest_fast::send_tick_speed(client, ms);
+                    self.receipt_event(
+                        "DISPATCH",
+                        "world-speed",
+                        Some(if result.is_ok() {
+                            "accepted"
+                        } else {
+                            "refused"
+                        }),
+                        result.as_ref().err().map(String::as_str),
+                    );
+                    if let Err(error) = result {
                         self.finish_fail(&error);
                         return;
                     }
@@ -1087,7 +1234,15 @@ impl ScenarioRunner {
             let repeat_ready = !repeat || self.repeat_sent_game_tick != Some(self.snapshot.tick());
             if !self.step_sent && repeat_ready {
                 self.fire_nav_step_sustains(client);
-                if let Err(msg) = self.send_current(client) {
+                self.receipt_event("STEP", self.dispatch_kind(), None, None);
+                let result = self.send_current(client);
+                self.receipt_event(
+                    "DISPATCH",
+                    self.dispatch_kind(),
+                    Some(result.as_ref().map_or("refused", |result| *result)),
+                    result.as_ref().err().map(String::as_str),
+                );
+                if let Err(msg) = result {
                     self.finish_fail(&format!(
                         "step {} ({}): {msg}",
                         self.step + 1,
@@ -1285,7 +1440,7 @@ impl ScenarioRunner {
                             sink(label, &self.snapshot);
                         }
                     }
-                    self.advance_step();
+                    self.advance_step(client.gens.session);
                 }
             } else if waited_game_ticks >= budget {
                 let tick_unit = if budget == 1 {
@@ -1428,7 +1583,7 @@ impl ScenarioRunner {
         &self.scenario.steps[self.step]
     }
 
-    fn begin_step(&mut self) {
+    fn begin_step(&mut self, session: u64) {
         self.step_sent = false;
         self.repeat_sent_game_tick = None;
         self.relog_logout_sent = false;
@@ -1438,6 +1593,7 @@ impl ScenarioRunner {
         self.game_ticks_waited = 0;
         self.traveller.clear();
         self.route = None;
+        self.route_quest_evidence = None;
         self.fresh_xp_baseline = None;
         self.fresh_chat_baseline = None;
         if matches!(
@@ -1542,6 +1698,17 @@ impl ScenarioRunner {
             }
         }
         self.capture_xp_baseline(self.current_step().wait.arm);
+        self.capture_delta_baselines(self.current_step().wait.arm, session);
+        if matches!(
+            self.current_step().kind,
+            StepKind::MakeProduct { .. } | StepKind::EnterAmount { .. }
+        ) {
+            self.capture_delta_baselines(self.scenario.proof, session);
+        }
+    }
+
+    fn capture_delta_baselines(&mut self, proof: Proof, session: u64) {
+        proof.capture_delta_baselines(&self.snapshot, session, &mut self.delta_baselines);
     }
 
     /// Whether `proof` holds on this tick: snapshot predicates against the
@@ -1552,6 +1719,7 @@ impl ScenarioRunner {
         }
         match proof {
             Proof::ScriptIdle => self.script_idle,
+            Proof::All(proofs) => proofs.iter().all(|proof| self.holds(*proof)),
             Proof::ScriptReceipt { prefix } => self
                 .script_receipts
                 .iter()
@@ -1595,11 +1763,12 @@ impl ScenarioRunner {
                 )
             }),
             Proof::VisitedWithin { .. } => self.visited_within,
-            other => other.check_with_xp_context(
+            other => other.check_with_delta_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),
                 Some(&self.xp_baselines),
                 self.fresh_xp_baseline,
+                Some(&self.delta_baselines),
             ),
         }
     }
@@ -2080,7 +2249,7 @@ impl ScenarioRunner {
         self.capture_next_chat_baseline();
     }
 
-    fn fire_poll_sustains(&self, client: &mut Client) {
+    fn fire_poll_sustains(&mut self, client: &mut Client) {
         let names = self.obj_names.as_deref();
         let cheats: Vec<&'static str> = self
             .scenario
@@ -2093,25 +2262,53 @@ impl ScenarioRunner {
             })
             .collect();
         for cmd in cheats {
-            cheat(client, cmd);
+            self.receipt_event("INTERVENTION", "sustain", None, Some(cmd));
+            let result = cheat(client, cmd);
+            self.receipt_event(
+                "DISPATCH",
+                "sustain",
+                Some(if result.is_sent() {
+                    "accepted"
+                } else {
+                    "refused"
+                }),
+                None,
+            );
         }
     }
 
-    fn fire_nav_step_sustains(&self, client: &mut Client) {
+    fn fire_nav_step_sustains(&mut self, client: &mut Client) {
         if !matches!(
             self.current_step().kind,
             StepKind::Walk { .. } | StepKind::Follow { .. } | StepKind::FollowTele { .. }
         ) {
             return;
         }
-        for s in &self.scenario.settings.sustains {
+        for index in 0..self.scenario.settings.sustains.len() {
+            let s = &self.scenario.settings.sustains[index];
             if matches!(s.when, SustainWhen::EachNavStep) {
-                cheat(client, s.cheat);
+                let cmd = s.cheat;
+                self.receipt_event("INTERVENTION", "sustain", None, Some(cmd));
+                let result = cheat(client, cmd);
+                self.receipt_event(
+                    "DISPATCH",
+                    "sustain",
+                    Some(if result.is_sent() {
+                        "accepted"
+                    } else {
+                        "refused"
+                    }),
+                    None,
+                );
             }
         }
     }
 
-    fn advance_step(&mut self) {
+    fn advance_step(&mut self, session: u64) {
+        if self.run_receipt.is_some() {
+            let predicate = self.current_predicate_name();
+            self.receipt_event("OBSERVED", "predicate", Some("held"), Some(&predicate));
+        }
         self.step += 1;
         if self.step >= self.scenario.steps.len() {
             if !matches!(self.scenario.proof, Proof::FreshStatXpGain { .. }) {
@@ -2119,7 +2316,7 @@ impl ScenarioRunner {
             }
             self.phase = Phase::Proving;
         } else {
-            self.begin_step();
+            self.begin_step(session);
         }
     }
 
@@ -2154,6 +2351,25 @@ impl ScenarioRunner {
         });
     }
 
+    fn dispatch_kind(&self) -> &'static str {
+        match self.current_step().kind {
+            StepKind::Perform { .. } | StepKind::Repeat { .. } => "legacy-closure",
+            StepKind::MakeProduct { .. } | StepKind::EnterAmount { .. } => "interaction",
+            StepKind::NativeSeedDeposit { .. } => "fixture-deposit",
+            StepKind::DrainDialogs { .. } => "dialogue",
+            StepKind::Relog => "relog",
+            StepKind::Walk { .. } | StepKind::Follow { .. } | StepKind::FollowTele { .. } => {
+                "route"
+            }
+            StepKind::ObserveMazeCompletion {
+                trigger: Some(_), ..
+            }
+            | StepKind::ObserveRandomEvent { .. } => "event-trigger",
+            StepKind::StartScript | StepKind::StopScript => "host-script",
+            _ => "observation",
+        }
+    }
+
     /// Send the current step's action once. `Perform` runs its closure;
     /// `Walk` and `Follow` arm the whole-world route (`find_with` over the
     /// collision + transport graph) and drive `Traveller::follow`.
@@ -2161,11 +2377,11 @@ impl ScenarioRunner {
     /// closes it (re-sent every client cycle — a refusal with nothing up is
     /// fine); `Shot` sends nothing (the step only waits for its arm to capture
     /// it).
-    fn send_current(&mut self, client: &mut Client) -> Result<(), String> {
+    fn send_current(&mut self, client: &mut Client) -> Result<&'static str, String> {
         match &self.scenario.steps[self.step].kind {
             StepKind::Perform { send } | StepKind::Repeat { send } => {
                 if send(client, &self.snapshot) {
-                    Ok(())
+                    Ok("accepted")
                 } else {
                     Err("driver rejected the send".into())
                 }
@@ -2175,12 +2391,14 @@ impl ScenarioRunner {
                 quantity,
                 note_id,
             } => {
+                let (unnoted_id, quantity, note_id) = (*unnoted_id, *quantity, *note_id);
+                self.receipt_event("INTERVENTION", "fixture-deposit", None, None);
                 let result = crate::native_seed_deposit_attempt(
                     client,
                     &self.snapshot,
-                    *unnoted_id,
-                    *quantity,
-                    *note_id,
+                    unnoted_id,
+                    quantity,
+                    note_id,
                 );
                 let outcome = match result {
                     Ok(crate::SeedDepositProgress::DepositSent) => "DepositSent",
@@ -2192,46 +2410,54 @@ impl ScenarioRunner {
                 };
                 self.trace_seed_deposit(outcome);
                 match result {
-                    Ok(
-                        crate::SeedDepositProgress::DepositSent
-                        | crate::SeedDepositProgress::AlreadyDeposited,
-                    ) => {
+                    Ok(crate::SeedDepositProgress::DepositSent) => {
                         self.step_sent = true;
-                        Ok(())
+                        Ok("accepted")
                     }
-                    Ok(crate::SeedDepositProgress::BankPending) => Ok(()),
+                    Ok(crate::SeedDepositProgress::AlreadyDeposited) => {
+                        self.step_sent = true;
+                        Ok("already-observed")
+                    }
+                    Ok(crate::SeedDepositProgress::BankPending) => Ok("pending"),
                     Err(failure) => Err(failure.to_string()),
                 }
             }
+            StepKind::MakeProduct { product_id } => {
+                crate::ui_actions::make_product(&self.snapshot, client, *product_id)
+                    .map(|()| "accepted")
+            }
+            StepKind::EnterAmount { value } => {
+                crate::ui_actions::enter_amount(&self.snapshot, client, *value).map(|()| "accepted")
+            }
             StepKind::DrainDialogs { choice } => {
                 let mut ix = Interactions::new(&self.snapshot, client);
-                if self.snapshot.chat_continue_component_id() != -1 {
-                    match ix.continue_dialog(None) {
-                        SendResult::Sent { .. } | SendResult::Refused { .. } => Ok(()),
-                    }
+                let result = if self.snapshot.chat_continue_component_id() != -1 {
+                    ix.continue_dialog(None)
                 } else if !self.snapshot.chat_options().is_empty() {
-                    match ix.answer_choice(*choice) {
-                        SendResult::Sent { .. } | SendResult::Refused { .. } => Ok(()),
-                    }
+                    ix.answer_choice(*choice)
                 } else {
                     let m = self.snapshot.modals();
                     if m.main == -1 && m.side == -1 && m.chat == -1 && m.tutorial == -1 {
-                        return Ok(());
+                        return Ok("no-send");
                     }
-                    match ix.close_modal() {
-                        SendResult::Sent { .. } | SendResult::Refused { .. } => Ok(()),
-                    }
-                }
+                    ix.close_modal()
+                };
+                Ok(if matches!(result, SendResult::Sent { .. }) {
+                    "accepted"
+                } else {
+                    "refused"
+                })
             }
             StepKind::ObserveMazeCompletion { trigger, .. } => {
-                if let Some(cmd) = trigger {
+                if let Some(cmd) = *trigger {
+                    self.receipt_event("INTERVENTION", "maze-trigger", None, Some(cmd));
                     if cheat(client, cmd).is_sent() {
-                        Ok(())
+                        Ok("accepted")
                     } else {
                         Err("driver rejected the send".into())
                     }
                 } else {
-                    Ok(())
+                    Ok("no-send")
                 }
             }
             StepKind::Shot { .. }
@@ -2242,9 +2468,9 @@ impl ScenarioRunner {
             | StepKind::ObserveStallCombat { .. }
             | StepKind::ObserveStyleAcrossLootTrips { .. }
             | StepKind::ObserveCombatAcrossBankReturns { .. }
-            | StepKind::ObserveRandomEvent { .. } => Ok(()),
+            | StepKind::ObserveRandomEvent { .. } => Ok("no-send"),
             #[cfg(feature = "varbit-observation")]
-            StepKind::ObserveVarbit { .. } => Ok(()),
+            StepKind::ObserveVarbit { .. } => Ok("no-send"),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
                 if client.ingame && !self.relog_logout_sent {
@@ -2255,19 +2481,20 @@ impl ScenarioRunner {
                         );
                     }
                     self.relog_logout_sent = true;
-                    // The bot has no script at a pre-Start relog, so the
-                    // approved scriptless policy parks it after this exit;
-                    // the driver posts the operator Login (a no-op wait here
-                    // would time out). A scripted bot ignores the request:
-                    // its own demand already relogs it.
+                    // The driver posts the operator Login, a real one-shot
+                    // command that covers this relog; an unlatched slot with
+                    // auto-login would also reconnect by itself.
                     self.relog_login_wanted = true;
+                    return Ok("accepted");
                 }
-                Ok(())
+                Ok("no-send")
             }
-            StepKind::Walk { dest } | StepKind::Follow { dest } => {
-                self.arm_route(*dest, self.nav_find_opts(false))
-            }
-            StepKind::FollowTele { dest } => self.arm_route(*dest, self.nav_find_opts(true)),
+            StepKind::Walk { dest } | StepKind::Follow { dest } => self
+                .arm_route(*dest, self.nav_find_opts(false))
+                .map(|()| "armed"),
+            StepKind::FollowTele { dest } => self
+                .arm_route(*dest, self.nav_find_opts(true))
+                .map(|()| "armed"),
         }
     }
 
@@ -2283,6 +2510,39 @@ impl ScenarioRunner {
             },
             ..FindOptions::default()
         }
+    }
+
+    fn capture_quest_evidence(&self) -> Option<nav_planner::quest_gates::QuestEvidence> {
+        let catalog = self.quest_catalog.as_ref()?;
+        let gens = self.snapshot.gens();
+        // This provider belongs only to this runner. Its freshness floor
+        // follows the runner's observed session and PlayerInfo generation.
+        let stamp = api::quest_progress::EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 0,
+                run: 0,
+                session: gens.session,
+            },
+            tick: u64::from(self.snapshot.tick()),
+            sequence: gens.player_info,
+        };
+        let provider = api::quest_progress::QuestListEvidenceProvider::from_snapshot(
+            catalog,
+            api::snapshot::SnapshotView::new(Some(&self.snapshot), stamp),
+        );
+        let bytes = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
+            .extend(std::alloc::Layout::new::<
+                api::quest_progress::QuestListEvidenceProvider,
+            >())
+            .ok()?
+            .0
+            .pad_to_align()
+            .size()
+            .checked_add(provider.retained_status_bytes())?;
+        Some(
+            nav_planner::quest_gates::QuestEvidence::new(Arc::new(provider), stamp)
+                .with_owned_provider_bytes(bytes),
+        )
     }
 
     /// Arm a whole-world route: `nav_planner::router::find` over the packed
@@ -2307,8 +2567,9 @@ impl ScenarioRunner {
         // cannot pay / has not earned is not relaxed. The traveller's
         // latched essence-mine session lets a route from inside the mine
         // use the exit portal's return hop to the entry wizard.
-        let state = nav_planner::WorldState::from_snapshot(&self.snapshot)
+        let mut state = nav_planner::WorldState::from_snapshot(&self.snapshot)
             .with_map_members(self.map_members);
+        state.quest_evidence = self.capture_quest_evidence();
         let opts = FindOptions {
             essence: self.traveller.essence(),
             ..opts
@@ -2323,6 +2584,7 @@ impl ScenarioRunner {
         ) {
             Ok(route) => {
                 self.route = Some(route);
+                self.route_quest_evidence = state.quest_evidence;
                 Ok(())
             }
             Err(e) => Err(format!(
@@ -2376,6 +2638,7 @@ impl ScenarioRunner {
                     .as_ref()
                     .map(|w| w.graph.teleports.as_slice()),
                 edges: self.nav_world.as_ref().map(|w| w.graph.edges.as_slice()),
+                quest_evidence: self.route_quest_evidence.as_ref(),
                 ..TravelOptions::default()
             };
             self.traveller
@@ -2390,6 +2653,7 @@ impl ScenarioRunner {
         if let TravelOutcome::Arrived { .. } = outcome {
             // Don't re-arm the original outside→door→dest legs next client cycle.
             self.route = None;
+            self.route_quest_evidence = None;
             return;
         }
         self.finish_fail(&format!(
@@ -2474,12 +2738,28 @@ impl ScenarioRunner {
             hold,
             self.obj_names.as_deref(),
         );
-        if let Some(command) = episode.next_send(&frame) {
-            if !cheat(client, &command).is_sent() {
+        let command = episode.next_send(&frame);
+        if let Some(command) = command {
+            self.receipt_event("INTERVENTION", "random-event-trigger", None, Some(&command));
+            let result = cheat(client, &command);
+            self.receipt_event(
+                "DISPATCH",
+                "random-event-trigger",
+                Some(if result.is_sent() {
+                    "accepted"
+                } else {
+                    "refused"
+                }),
+                None,
+            );
+            if !result.is_sent() {
                 return Verdict::Fail(format!("driver rejected `{command}`"));
             }
         }
-        episode.observe(frame)
+        self.random_event
+            .as_mut()
+            .expect("armed episode")
+            .observe(frame)
     }
 
     fn begin_terminal_cleanup(&mut self, speed_ms: u32, outcome: TerminalOutcome) {
@@ -2513,7 +2793,19 @@ impl ScenarioRunner {
             if let Some(cleanup) = self.terminal_cleanup.as_mut() {
                 cleanup.baseline = Some(mark);
             }
-            if let Err(error) = crate::quest_fast::send_tick_speed(client, speed_ms) {
+            self.receipt_event("INTERVENTION", "world-speed-cleanup", None, None);
+            let result = crate::quest_fast::send_tick_speed(client, speed_ms);
+            self.receipt_event(
+                "DISPATCH",
+                "world-speed-cleanup",
+                Some(if result.is_ok() {
+                    "accepted"
+                } else {
+                    "refused"
+                }),
+                result.as_ref().err().map(String::as_str),
+            );
+            if let Err(error) = result {
                 self.fail_terminal_cleanup(&error);
                 return;
             }
@@ -2633,6 +2925,19 @@ impl ScenarioRunner {
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
         evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
+        self.receipt_event(
+            "TERMINAL",
+            "predicate",
+            Some("PASS"),
+            Some(&evidence.predicate),
+        );
+        evidence.run_receipt = self.run_receipt.take();
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            api::hostlog::Level::Info,
+            "SCENARIO_RECEIPT {}",
+            evidence.to_json(),
+        );
         self.evidence = Some(evidence);
     }
 
@@ -2669,6 +2974,19 @@ impl ScenarioRunner {
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
         evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
+        self.receipt_event(
+            "TERMINAL",
+            "predicate",
+            Some(outcome),
+            evidence.message.as_deref(),
+        );
+        evidence.run_receipt = self.run_receipt.take();
+        api::host_log!(
+            api::hostlog::Category::ScriptLifecycle,
+            api::hostlog::Level::Info,
+            "SCENARIO_RECEIPT {}",
+            evidence.to_json(),
+        );
         self.evidence = Some(evidence);
     }
 }

@@ -32,7 +32,9 @@ fn gathering_isolate() -> LoadIsolate {
     let isolate = LoadIsolate::spawn(API_BOT.to_owned(), LoadShape::CompatClass, vec![])
         .expect("spawn gathering API isolate");
     assert_eq!(
-        isolate.probe("typeof globalThis.__gathering").unwrap(),
+        isolate
+            .probe("typeof globalThis.__gathering")
+            .expect("read gathering API export probe"),
         "object"
     );
     isolate

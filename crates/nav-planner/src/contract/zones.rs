@@ -155,6 +155,39 @@ impl<'a> ZoneTableView<'a> {
         Ok(self.zone(bound)?.kind())
     }
 
+    /// Zone rows covered by one pack-bound zone or group, in pack order.
+    /// The iterator borrows the table and allocates nothing.
+    pub fn covered_zones(
+        self,
+        bound: BoundZoneKey,
+    ) -> Result<impl Iterator<Item = ZoneView<'a>> + 'a, ContractError> {
+        if bound.pack != self.pack {
+            return Err(ContractError::PackMismatch);
+        }
+        if !self.contains_key(bound.key) {
+            return Err(ContractError::UnknownKey);
+        }
+        Ok(self
+            .table
+            .zones()
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, _)| {
+                let index = u16::try_from(index).ok()?;
+                let covered = match bound.key {
+                    ZoneKey::Zone(wanted) => index == wanted,
+                    ZoneKey::Group(group) => self.table.groups()[usize::from(group)]
+                        .members
+                        .contains(&index),
+                };
+                covered.then_some(ZoneView {
+                    pack: self.pack,
+                    table: self.table,
+                    index,
+                })
+            }))
+    }
+
     /// Member zone keys of a bound group key, bound to this pack, in pack
     /// order. Not public: the frozen facade names a group by its key; the
     /// owner boundary judges a group member by member
@@ -426,5 +459,62 @@ impl<'a> WildernessView<'a> {
     /// Content `~wilderness_level(coord)`: 0 outside every zone.
     pub fn level(self, tile: WorldTile) -> i32 {
         self.rules.level(tile)
+    }
+}
+
+/// Multi-combat map cells of the selected pack (`maps/multiway.csv`).
+///
+/// Content `map_multiway(coord)` reads the engine's 8x8 zone map
+/// (`GameMap.ts:102-105`). A pack built without that file has an empty key
+/// list; the view then reports every tile as not known to be single-way, so
+/// an absent table never grants a single-way claim. No public key storage.
+#[derive(Clone, Copy, Debug)]
+pub struct MultiwayView<'a> {
+    keys: &'a [u32],
+}
+
+impl<'a> MultiwayView<'a> {
+    pub(crate) fn new(keys: &'a [u32]) -> Self {
+        Self { keys }
+    }
+
+    /// A view with no table: [`Self::single_way_around`] is always false.
+    pub const fn none() -> Self {
+        Self { keys: &[] }
+    }
+
+    /// True when the pack carries a multiway table.
+    pub fn known(self) -> bool {
+        !self.keys.is_empty()
+    }
+
+    /// True when every 8x8 map cell within `margin` tiles of `tile` is known
+    /// to be outside the multiway table. An absent table, an unpackable tile
+    /// or a negative coordinate is false (never a single-way claim).
+    pub fn single_way_around(self, tile: WorldTile, margin: u8) -> bool {
+        if !self.known() || tile.x < 0 || tile.z < 0 || !(0..4).contains(&tile.level) {
+            return false;
+        }
+        let margin = i32::from(margin);
+        let x0 = ((tile.x - margin).max(0)) >> 3;
+        let x1 = (tile.x + margin) >> 3;
+        let z0 = ((tile.z - margin).max(0)) >> 3;
+        let z1 = (tile.z + margin) >> 3;
+        for cell_x in x0..=x1 {
+            for cell_z in z0..=z1 {
+                let origin = WorldTile {
+                    x: cell_x << 3,
+                    z: cell_z << 3,
+                    level: tile.level,
+                };
+                let Ok(key) = crate::pack::pack_tile_key(origin) else {
+                    return false;
+                };
+                if self.keys.binary_search(&key).is_ok() {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }

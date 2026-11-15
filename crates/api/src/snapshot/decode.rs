@@ -1043,6 +1043,7 @@ impl GameSnapshot {
         }
         self.quest_statuses.clear();
         self.quest_statuses_available = false;
+        self.quest_statuses_root = -1;
         let Some(root) = client.side_icon.get(2).copied() else {
             return true;
         };
@@ -1053,6 +1054,7 @@ impl GameSnapshot {
             return true;
         }
         self.quest_statuses_available = true;
+        self.quest_statuses_root = root;
         let mut queue = vec![root];
         let mut head = 0;
         while head < queue.len() {
@@ -2908,9 +2910,7 @@ mod tests {
     const VIEW_RESOLUTION_BASELINE: [usize; 4] = [640, 21_248, 640, 19_712];
 
     fn snapshot_view_resolution_allocations(revision: ClientRevision) -> [usize; 4] {
-        use client::config::runtime_377::{
-            CacheFields377, InterfaceFields377, LocFields377, NpcFields377,
-        };
+        use client::config::runtime_377::{CacheFields377, InterfaceFields377, NpcFields377};
         use client::config::{CacheRevision377, LocType, NpcType};
 
         let mut cache = Cache::default();
@@ -2937,7 +2937,6 @@ mod tests {
         if revision == ClientRevision::R377 {
             cache.revision_377 = Some(Box::new(CacheRevision377 {
                 config: CacheFields377 {
-                    locs: vec![LocFields377 { morph: None }],
                     npcs: vec![NpcFields377 {
                         field_1451: -1,
                         field_1430: -1,

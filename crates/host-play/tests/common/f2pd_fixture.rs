@@ -61,6 +61,7 @@ pub fn cell(case: Case<'_>) -> Cell {
         stage: Some(case.stage),
         loadout: Some(FixtureLoadout::Path(case.loadout)),
         extra_items: case.items,
+        skills: &[],
         seed_vars: &[],
         stand: case.stand,
         mode: case.mode,

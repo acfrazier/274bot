@@ -94,6 +94,7 @@ pub const CARD: CompiledCard = CompiledCard {
     description: "Rust-native clue trail solver — waits for a clue and solves it.",
     category: "Treasure Trails",
     schema_version: 1,
+    reads_schema_versions: &[],
     schema: settings_schema,
     per_account_settings: &[],
     prepare,
@@ -248,10 +249,6 @@ const DONE: &str = "done";
 const CALLBACK_HANDOFFS: usize = 4;
 
 /// One live native machine. Never both Combat and ClearPrayers.
-#[allow(
-    clippy::large_enum_variant,
-    reason = "Keep the live combat machine inline; size_of::<Sherlock>() stays ≤ 1 KiB."
-)]
 enum Fight {
     Combat(ActionHandle<Combat>),
     ClearPrayers(ActionHandle<ClearPrayers>),
@@ -1159,9 +1156,9 @@ fn inv_page(ctx: &HostFrame<'_>) -> Value {
     )
 }
 
-/// The posted npc page the guarded encounter observes: the slot index the
-/// Attack rides, the type id, the posted name and tile, the health pair the
-/// kill is read through, and the target pair `targets_me` compares.
+/// The private native NPC page. Its path-head fields replace rendered x/z
+/// and the cached distance without adding map entries or allocations.
+/// Health and target facts still describe the same posted actor.
 fn npc_page(ctx: &HostFrame<'_>) -> Value {
     let rows: &[api::snapshot::NpcView] = ctx.snapshot().map_or(&[], GameSnapshot::npcs);
     Value::Array(
@@ -1172,10 +1169,10 @@ fn npc_page(ctx: &HostFrame<'_>) -> Value {
                     "index": npc.index as i32,
                     "id": npc.r#type.map_or(-1, |kind| kind as i32),
                     "name": npc.name,
-                    "x": npc.tile.x,
-                    "z": npc.tile.z,
-                    "level": npc.tile.level,
-                    "distance": npc.distance,
+                    "_nx": npc.network.x,
+                    "_nz": npc.network.z,
+                    "level": npc.network.level,
+                    "size": npc.size,
                     "health": npc.health,
                     "max_health": npc.total_health,
                     "in_combat": npc.in_combat,
@@ -1705,6 +1702,7 @@ mod tests {
                     reach: None,
                     reach_flood: self.reach_flood.as_ref(),
                     bank_memory: None,
+                    shop_keepers: None,
                     collision: None,
                     nav: None,
                     hold: self.hold,

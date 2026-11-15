@@ -1,20 +1,26 @@
 //! Revision-377 constructor and bounded live interaction qualification.
 //!
-//! The live tests are ignored and require `LIVE=1` plus an owned `BOT_LIVE_NAME_PREFIX`.
-//! They use the canonical `--revision 377` local profile with explicit paths
+//! Tests are ignored and require `LIVE=1` plus an owned `BOT_LIVE_NAME_PREFIX`.
+//! They use the canonical `--revision 377` profile with explicit paths
 //! `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`, `CLIENT_UNPACK_DIR`, `NAV_PACK`,
-//! and `NAV_FLAGS`. Template preparation follows the production runtime-cache
+//! and `NAV_FLAGS`. `WORLD_GAME_PORT` and `WORLD_HTTP_PORT` may select another
+//! local engine. The Make-X cell also requires `PARITY_3B_EVIDENCE_DIR` for its
+//! account receipt. Template preparation uses the production runtime-cache
 //! path in a private home.
-//! Pre-Start mainland fixtures request a fresh login after observing logout:
-//! idle slots park on a server logout, so the fixture posts Login through its
-//! SlotArm once available rather than relying on automatic reconnect policy.
+//! Numeric NPC selection and reacquisition require a wall-valid adjacent
+//! approach in the observed collision scene.
+//! Pre-Start mainland fixtures request a fresh login after observing logout.
+//! A server logout does not latch the slot, so an unlatched slot with
+//! auto-login reconnects by itself; the fixture still posts a real one-shot
+//! Login through its SlotArm once available, for its own relog.
 //!
 //! Live invocation (with the real resource paths supplied by the owner):
 //! ```text
-//! /Users/acfrazier/experiments/274bot/.superpowers/bin/isohome env \
+//! ${ISOHOME:?} env \
 //!   LIVE=1 BOT_LIVE_NAME_PREFIX=f377 ENGINE_DIR=<377-engine> \
 //!   CLIENT_377_CACHE_DIR=<377-raw-cache> CLIENT_UNPACK_DIR=<377-decoded-snapshot> \
 //!   NAV_PACK=<377-nav-pack> NAV_FLAGS=<377-nav-flags> \
+//!   PARITY_3B_EVIDENCE_DIR=<evidence-output> \
 //!   cargo test --locked -p host-play --features test-support --test revision_377_live \
 //!   -- --ignored --nocapture --test-threads=1
 //! ```
@@ -27,6 +33,9 @@ mod machines;
 
 #[path = "revision_377_live/cook.rs"]
 mod cook;
+
+#[path = "revision_377_live/quantity.rs"]
+mod quantity;
 
 #[path = "revision_377_live/quester.rs"]
 mod quester;
@@ -143,6 +152,8 @@ fn path_is_file(path: &Path, name: &str) -> Result<(), String> {
 
 fn load_bound_377() -> Result<Bound377, String> {
     require_live_guard()?;
+    let game_port = host_play::live_ports::env_port("WORLD_GAME_PORT", GAME_PORT);
+    let asset_port = host_play::live_ports::env_port("WORLD_HTTP_PORT", ASSET_PORT);
     let engine_dir = required_path("ENGINE_DIR")?;
     let cache_dir = required_path("CLIENT_377_CACHE_DIR")?;
     let unpack_dir = required_path("CLIENT_UNPACK_DIR")?;
@@ -155,6 +166,20 @@ fn load_bound_377() -> Result<Bound377, String> {
     path_is_file(&nav_flags, "NAV_FLAGS")?;
 
     let home = ScratchHome::new()?;
+    if game_port != GAME_PORT || asset_port != ASSET_PORT {
+        let mut servers = host_play::Servers::builtins();
+        let local = servers
+            .servers
+            .iter_mut()
+            .find(|profile| profile.name == "local-377")
+            .expect("built-in local-377 profile");
+        local.worlds[0].port = game_port;
+        local.worlds[0].asset_port = asset_port;
+        let bot_dir = home.0.join(".274bot");
+        fs::create_dir_all(&bot_dir).map_err(|error| error.to_string())?;
+        let bytes = serde_json::to_vec_pretty(&servers).map_err(|error| error.to_string())?;
+        fs::write(bot_dir.join("servers.json"), bytes).map_err(|error| error.to_string())?;
+    }
     let environment = ProfileEnvironment {
         home: Some(home.0.clone()),
         engine_dir: Some(engine_dir.clone()),
@@ -164,6 +189,7 @@ fn load_bound_377() -> Result<Bound377, String> {
         ..ProfileEnvironment::default()
     };
     let options = ProfileOptions {
+        // A saved local roster retains generated-data admission at custom ports.
         revision: Some(REVISION.to_string()),
         engine_dir: Some(engine_dir.clone()),
         cache_dir: Some(cache_dir.clone()),
@@ -176,16 +202,16 @@ fn load_bound_377() -> Result<Bound377, String> {
     if selection.revision() != ClientRevision::R377
         || selection.profile_class() != ProfileClass::Local
         || selection.game_host() != GAME_HOST
-        || selection.game_port() != GAME_PORT
+        || selection.game_port() != game_port
         || selection.asset_host() != GAME_HOST
-        || selection.asset_port() != ASSET_PORT
+        || selection.asset_port() != asset_port
         || selection.engine_dir() != engine_dir.as_path()
         || selection.cache_dir() != cache_dir.as_path()
         || selection.unpack_dir() != unpack_dir.as_path()
         || selection.nav_pack() != nav_pack.as_path()
         || selection.nav_flags() != nav_flags.as_path()
     {
-        return Err("resolved profile differs from the canonical 377 localhost resources".into());
+        return Err("resolved profile differs from the explicit 377 localhost resources".into());
     }
 
     let template = selection.prepare_template()?;
@@ -200,9 +226,9 @@ fn load_bound_377() -> Result<Bound377, String> {
         || profile.profile_class() != ProfileClass::Local
         || profile.client().revision() != ClientRevision::R377
         || profile.client().game_host() != GAME_HOST
-        || profile.client().game_port() != GAME_PORT
+        || profile.client().game_port() != game_port
         || profile.client().asset_host() != GAME_HOST
-        || profile.client().asset_port() != ASSET_PORT
+        || profile.client().asset_port() != asset_port
         || profile.client().cache_dir() != prepared.jag_dir.as_path()
         || profile.client().unpack_dir() != prepared.unpack_root()
         || profile.nav_pack() != nav_pack.as_path()
@@ -268,10 +294,19 @@ fn assert_377_client(client: &Client, lowmem: bool) -> Result<(), String> {
         return Err("prepared 377 client fell back to a legacy cache without 377 sidecars".into());
     };
     let config = &sidecar.config;
+    if client.cache.locs.is_empty()
+        || client.cache.loc_morphs.is_empty()
+        || client.cache.loc_morphs.len() >= client.cache.locs.len()
+    {
+        return Err(format!(
+            "377 location cache is empty or its morph records are not sparse: locations={}, morphs={}",
+            client.cache.locs.len(),
+            client.cache.loc_morphs.len()
+        ));
+    }
     for (name, decoded, adapted) in [
         ("objs", config.objs.len(), client.cache.objs.len()),
         ("npcs", config.npcs.len(), client.cache.npcs.len()),
-        ("locs", config.locs.len(), client.cache.locs.len()),
         ("seqs", config.seqs.len(), client.cache.seqs.len()),
         ("varps", config.varps.len(), client.cache.varps.len()),
         ("varbits", config.varbits.len(), client.cache.varbits.len()),
@@ -446,10 +481,6 @@ fn lumbridge(tile: WorldTile) -> bool {
         && tile.z.div_euclid(64) == LUMBRIDGE_REGION
 }
 
-fn chebyshev(a: WorldTile, b: WorldTile) -> u32 {
-    a.x.abs_diff(b.x).max(a.z.abs_diff(b.z))
-}
-
 #[derive(Clone, Copy)]
 struct NpcChoice {
     type_id: usize,
@@ -461,13 +492,15 @@ struct NpcChoice {
 fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Option<NpcChoice> {
     let (x, z, level) = snapshot.tile()?;
     let player_tile = WorldTile { x, z, level };
+    let flood = SceneQuery::new(snapshot.scene(), Some(player_tile)).flood_reach()?;
     snapshot
         .npcs()
         .iter()
         .filter_map(|npc| {
             let type_id = npc.r#type?;
             if wanted_type.is_some_and(|wanted| wanted != type_id)
-                || npc.tile.level != level
+                || npc.network.level != level
+                || !flood.at(&npc.network).1
                 || !npc
                     .actions
                     .iter()
@@ -476,11 +509,12 @@ fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Opti
             {
                 return None;
             }
-            let distance = chebyshev(player_tile, npc.tile);
+            let distance =
+                u32::try_from(api::query::chebyshev_to(player_tile, npc.network)).ok()?;
             (distance <= 8).then_some(NpcChoice {
                 type_id,
                 index: npc.index,
-                tile: npc.tile,
+                tile: npc.network,
                 distance,
             })
         })
@@ -626,7 +660,7 @@ fn run_live_interaction() -> Result<(), String> {
             |state| nearest_talk_npc(state, None).is_some(),
         )?;
         let choice = nearest_talk_npc(&snapshot, None)
-            .ok_or("no nearby numeric NPC with Talk-to in Lumbridge")?;
+            .ok_or("no nearby reachable numeric NPC with Talk-to in Lumbridge")?;
         let target = direct_step_toward(snapshot.scene(), origin, choice.tile)?;
         if !lumbridge(target) || target.level != origin.level {
             return Err(format!(
@@ -673,34 +707,18 @@ fn run_live_interaction() -> Result<(), String> {
             json!({"from": origin, "target": target, "same_loaded_region": true}),
         );
 
-        let (px, pz, level) = snapshot
-            .tile()
-            .ok_or("missing tile before NPC interaction")?;
-        let npc = snapshot
-            .npcs()
-            .iter()
-            .filter(|npc| {
-                npc.r#type == Some(choice.type_id)
-                    && npc.tile.level == level
-                    && chebyshev(
-                        WorldTile {
-                            x: px,
-                            z: pz,
-                            level,
-                        },
-                        npc.tile,
-                    ) <= 8
-                    && npc
-                        .actions
-                        .iter()
-                        .flatten()
-                        .any(|action| action.eq_ignore_ascii_case(TALK_ACTION))
+        let current = nearest_talk_npc(&snapshot, Some(choice.type_id));
+        let npc = current
+            .and_then(|current| {
+                snapshot
+                    .npcs()
+                    .iter()
+                    .find(|npc| npc.index == current.index)
             })
-            .min_by_key(|npc| (npc.distance, npc.index))
             .cloned()
             .ok_or_else(|| {
                 format!(
-                    "NPC type {} is no longer nearby with {TALK_ACTION}",
+                    "NPC type {} is no longer nearby and reachable with {TALK_ACTION}",
                     choice.type_id
                 )
             })?;
@@ -744,6 +762,109 @@ fn run_live_interaction() -> Result<(), String> {
     result
 }
 
+fn talk_target_snapshot(rows: [(usize, i32, i32); 2]) -> GameSnapshot {
+    let here = WorldTile {
+        x: 50,
+        z: 50,
+        level: 0,
+    };
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_tile(here);
+    snapshot.seed_scene(SceneView {
+        available: true,
+        base_x: 48,
+        base_z: 48,
+        level: 0,
+        width: 12,
+        height: 12,
+        collision_flags: vec![0; 12 * 12],
+    });
+    snapshot.seed_npcs(
+        rows.into_iter()
+            .map(|(index, network_x, rendered_x)| api::snapshot::NpcView {
+                index,
+                r#type: Some(1),
+                name: None,
+                actions: vec![Some(TALK_ACTION.into())],
+                tile: WorldTile {
+                    x: rendered_x,
+                    ..here
+                },
+                distance: 1,
+                animation: -1,
+                animation_frame: 0,
+                pose_animation: -1,
+                orientation: 0,
+                target_orientation: 0,
+                overhead_text: None,
+                spot_animation: -1,
+                spot_animation_stamp: 0,
+                health: 1,
+                total_health: 1,
+                face_entity: -1,
+                target: None,
+                moving: true,
+                running: false,
+                in_combat: false,
+                level: 1,
+                size: 1,
+                network: WorldTile {
+                    x: network_x,
+                    ..here
+                },
+                x: rendered_x * 128 + 64,
+                z: here.z * 128 + 64,
+                yaw: 0,
+            })
+            .collect(),
+    );
+    snapshot
+}
+
+#[test]
+fn network_coords_live_driver_selects_and_reacquires_the_server_talk_target() {
+    let snapshot = talk_target_snapshot([(1, 51, 58), (2, 58, 51)]);
+    for wanted in [None, Some(1)] {
+        let choice = nearest_talk_npc(&snapshot, wanted).expect("server-near Talk target");
+        assert_eq!(choice.index, 1);
+        assert_eq!(
+            choice.tile,
+            WorldTile {
+                x: 51,
+                z: 50,
+                level: 0
+            }
+        );
+        assert_eq!(choice.distance, 1);
+    }
+}
+
+#[test]
+fn talk_target_selection_rejects_a_nearer_npc_behind_a_closed_wall() {
+    let mut snapshot = talk_target_snapshot([(1, 49, 58), (2, 58, 51)]);
+    let mut scene = snapshot.scene().clone();
+    for z in 0..scene.height {
+        scene.collision_flags[(scene.height + z) as usize] = client::dash3d::CollisionFlag::W_E;
+        scene.collision_flags[(2 * scene.height + z) as usize] = client::dash3d::CollisionFlag::W_W;
+    }
+    snapshot.seed_scene(scene);
+    for wanted in [None, Some(1)] {
+        let choice = nearest_talk_npc(&snapshot, wanted).expect("farther reachable Talk target");
+        assert_eq!(choice.index, 2);
+    }
+    snapshot.seed_npcs(vec![snapshot.npcs()[0].clone()]);
+    assert!(nearest_talk_npc(&snapshot, None).is_none());
+}
+
+#[test]
+fn talk_target_selection_requires_observed_collision() {
+    let mut snapshot = talk_target_snapshot([(1, 51, 58), (2, 58, 51)]);
+    let mut scene = snapshot.scene().clone();
+    scene.available = false;
+    snapshot.seed_scene(scene);
+    assert!(nearest_talk_npc(&snapshot, None).is_none());
+}
+
 #[test]
 fn direct_step_uses_loaded_collision_instead_of_the_npc_offset() {
     let from = WorldTile {
@@ -784,7 +905,7 @@ fn direct_step_uses_loaded_collision_instead_of_the_npc_offset() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, an owned BOT_LIVE_NAME_PREFIX, explicit 377 cache/snapshot/nav inputs, and the local 377 engine at 127.0.0.1:43595/assets:81"]
+#[ignore = "requires LIVE=1, an owned BOT_LIVE_NAME_PREFIX, explicit 377 cache/snapshot/nav inputs, and a local 377 engine (WORLD_GAME_PORT/WORLD_HTTP_PORT override 43595/81)"]
 fn live_377_attaches_walks_and_interacts_with_numeric_npc() -> Result<(), String> {
     run_live_interaction()
 }

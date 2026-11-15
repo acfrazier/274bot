@@ -190,7 +190,8 @@ fn r289_tick_arm_is_fully_classified_and_matches_reviewed_families() {
     let Some(catalog) = prepared_r289_gathering() else {
         return;
     };
-    assert_eq!(catalog.methods().len(), 41);
+    // Ten woodcutting, sixteen mining (iron is two: regular rocks and the Haunted Mine veins) and sixteen fishing.
+    assert_eq!(catalog.methods().len(), 42);
     for method in catalog.methods() {
         assert!(
             matches!(
@@ -296,6 +297,16 @@ fn r289_tick_arm_is_fully_classified_and_matches_reviewed_families() {
     assert!(fast_mine.tick_arm.depletes);
     assert_eq!(normal_mine.tick_arm.native_arm, None);
     assert_eq!(fast_mine.tick_arm.native_arm, None);
+    // The Haunted Mine veins sit in the iron row but run mining_rock_normal: their own method, with the normal
+    // handler's delayed yield and the same pickaxe facts as every other normal-handler ore.
+    let haunted_iron = tick_method(&catalog, "mining.iron.get_ore_normal");
+    assert!(haunted_iron.tick_arm.delay_drop);
+    assert!(haunted_iron.tick_arm.depletes);
+    assert_eq!(haunted_iron.tick_arm.native_arm, None);
+    assert_eq!(
+        haunted_iron.tick_arm.tool_facts,
+        normal_mine.tick_arm.tool_facts
+    );
     for (alias, arm, animation, no_gain) in [
         ("bronze_pickaxe", 7, 625, false),
         ("iron_pickaxe", 6, 626, false),
@@ -453,6 +464,46 @@ fn facts_old_data_is_refused_by_version() {
         }
     }
 }
+#[test]
+fn stale_generated_data_names_the_file_and_the_rebuild_command() {
+    let document = minimal_json(r#", "quest_identity": {"rows": [], "operation_fingerprint": 1}"#);
+    let path = std::path::Path::new("crates/api/data/game-data/289.json");
+    let error = decode_game_data(document.as_bytes(), ClientRevision::R289, path)
+        .expect_err("an unknown field written by other tooling must be refused");
+    let display = error.to_string();
+    assert!(
+        display.contains("unknown field `operation_fingerprint`"),
+        "the serde detail stays in the message: {display}"
+    );
+    assert!(
+        display.contains("crates/api/data/game-data/289.json"),
+        "the message names the file that failed: {display}"
+    );
+    assert!(
+        display.contains("python3 tools/local-data/build.py"),
+        "the message says how to regenerate the file: {display}"
+    );
+}
+
+#[cfg(all(feature = "embedded-game-data", not(no_local_game_data)))]
+#[test]
+fn embedded_decode_diagnostic_uses_a_workspace_relative_source() {
+    let error = embedded_decode_error(
+        ClientRevision::R289,
+        "generated game data decode: test".to_owned(),
+    );
+    let display = error.to_string();
+    assert!(
+        display
+            .contains("crates/api/data/game-data/289.json (embedded when this build was compiled)"),
+        "the embedded source is named relative to the workspace: {display}"
+    );
+    assert!(
+        !display.contains(env!("CARGO_MANIFEST_DIR")),
+        "the build machine's path stays out of the binary: {display}"
+    );
+}
+
 #[test]
 fn facts_negative_bonus_is_signed() {
     // generate.ts:3044-3047,3161-3178 publishes PvP V0 bonuses only on289.
@@ -1151,7 +1202,7 @@ fn bare_quest_identity_vec_does_not_decode() {
 fn coverage_only_quest_identity_is_not_success() {
     let error = SelectedGameData::decode(
             minimal_json(
-                r#", "quest_identity": {"rows": [], "coverage": [{"class": "revision-absent", "alias": "routequest", "on_revision": 274, "other_pin_id": 387, "copied": false, "reason": "not copied"}]}"#,
+                r#", "quest_identity": {"rows": [], "coverage": [{"class": "revision-absent", "alias": "routequest", "on_revision": 274, "copied": false, "reason": "not copied"}]}"#,
             )
             .as_bytes(),
             ClientRevision::R274,
@@ -2566,9 +2617,9 @@ fn melee_weapon_tier_matches_the_wield_gates() {
     // Ranged weapons tier through the ranged gate, not the melee one.
     assert!(data.melee_weapon_tier(861).is_none());
     assert!(data.melee_weapon_tier(805).is_none());
-    assert_eq!(data.melee_weapon_tier_rows().len(), 148);
+    assert_eq!(data.melee_weapon_tier_rows().len(), 149);
     // Every field of every row: a wrong tier, gate or strength fails here.
-    let expected: [(i32, u8, bool, u8); 148] = [
+    let expected: [(i32, u8, bool, u8); 149] = [
         (35, 20, false, 0),
         (278, 0, false, 0),
         (466, 0, false, 0),
@@ -2717,6 +2768,7 @@ fn melee_weapon_tier_matches_the_wield_gates() {
         (3899, 0, false, 0),
         (4037, 0, false, 0),
         (4039, 0, false, 0),
+        (4068, 0, false, 0),
     ];
     let actual: Vec<(i32, u8, bool, u8)> = data
         .melee_weapon_tier_rows()

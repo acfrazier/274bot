@@ -12,7 +12,7 @@ The tool reads paths with `git diff --name-only` and expands changes to the
 `vendor/fr-client-rust` gitlink into paths changed between its old and new
 commits. If either commit is missing locally, the tool prints a fetch command
 and exits with an error. It lists covering cells and their exact commands.
-Run each listed cell three times on the changed code. The tool also lists
+Run each listed cell once on the changed code. The tool also lists
 uncovered live paths and unclassified paths. Exit code 0 means no gaps. Exit
 code 1 means a live path has no cell or a path is unclassified. Exit code 2
 means the input or Git diff is invalid.
@@ -61,6 +61,47 @@ for 16 more observed game ticks. R289 content sets this combat lockout in
 frames or wall-clock seconds. A fixed 30-second deadline bounds the whole
 shutdown, including Stop. A forced worker close is not a clean logout.
 
+Gatherer cells keep the original cell error when final evidence capture or
+clean logout also fails. All errors appear in the test result. A successful
+cell still requires successful capture and clean logout.
+The capture needs the slot's frame callback. A missing engine can prevent
+that callback from running, so a capture timeout alone does not identify a
+banking failure. Check the selected host and both engine ports before a run.
+An engine source directory does not mean that its service is running.
+
+
+## Runner receipt cells
+
+Run `host.receipt-377-client-live` and `host.receipt-377-cook-raster-live`
+against a local revision-377 engine. Set `ENGINE_377_DIR`,
+`CLIENT_377_CACHE_DIR`, `CLIENT_377_UNPACK_DIR`, `NAV_PACK_377`, and
+`NAV_FLAGS_377` to its resources. Use disposable copies for writable cache
+and unpack inputs. The Cook cell reads `LIVE_377_GAME_PORT` and
+`LIVE_377_HTTP_PORT`, which default to `43595` and `81`. For the client cell,
+configure those ports in the disposable HOME's `local-377` server roster.
+Do not use endpoint CLI overrides: they disable generated 377 game data.
+
+Both cells need `ISOHOME`, an owned `BOT_LIVE_NAME_PREFIX`, and
+`LIVE_EVIDENCE_DIR`. The Cook cell enables CPU raster capture. Check its
+terminal receipt and recompute each artifact's byte count and SHA-256.
+The client cell checks source identities without completing a quest.
+`panel.build-info-headless` checks the existing build label and tooltip.
+It proves formatting, not a headed frame.
+
+`host.quantity-377-make-x-live` uses the same 377 resources and port
+variables as the Cook cell. It seeds only the account's knife, two logs and
+Fletching level, and writes the account witness under `LIVE_EVIDENCE_DIR`.
+It passes on 30 new arrow shafts, two consumed logs and 10 Fletching XP.
+
+## Quarantined map cells
+
+These cells stay out of the active map until their fixtures are repaired.
+Do not cite them as live proof.
+
+| Cell | Fixture defect | Repair needed |
+|---|---|---|
+| `host.gather-bait-stale-hint` | The fixture writes an unscoped bank hint. The supported hint format requires the active revision and content scope, so the loader correctly refuses it. The cell then fails its expectation that the hint loaded. | Write the active profile's revision and content scope into the hint before the run. |
+| `host.gatherer-wc-near-edge` | The fresh-XP check uses distance to the oak's origin tile, not its 3×3 footprint. A valid adjacent stand can be more than one tile from that origin, so the cell times out after the bot approaches and chops the tree. | Check XP against the target's full footprint and valid adjacent stand, not only its origin. |
 
 ## Quarantined ignored live tests
 
@@ -82,14 +123,15 @@ All cells not listed below normally run on merlot. Engine A uses game port
 |---|---|
 | `host.npc-hop-engine-b` | Run on chardonnay. The command sets `WORLD_CACHE_DIR` and `LIVE_EVIDENCE_DIR`. Engine B is reached through the loopback tunnel at game port `45594` and HTTP port `2080`. |
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
-| `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `host.quester-cook-full-engine-q`, `host.quester-sheep-full-engine-q`, `host.quester-runemysteries-full-engine-q`, `host.quester-romeojuliet-full-engine-q`, `host.quester-imp-full-engine-q`, `host.quester-vampire-full-engine-q`, `host.quester-doric-full-engine-q`, `host.quester-gobdip-full-engine-q`, `host.quester-hetty-full-engine-q`, `host.quester-demon-full-engine-q`, `host.quester-hazeelcult-full-engine-q`, `host.quester-priestperil-full-engine-q`, `host.quester-drunkmonk-full-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
+| `host.bank-mage-teller-native` | Run on chardonnay with Engine L at `127.0.0.1:47594` and HTTP port `3080`. The cell uses local 289 assets, named-bank catalog data, a minted account, and `LIVE_EVIDENCE_DIR`. |
+| `host.bank-npc-pick-burst`, `host.grinch-cross-region-return` | Run on aubaine with the Engine L endpoint at `127.0.0.1:44594` and HTTP port `1080`. The bank-pick burst requires ten disposable accounts; Grinch uses real cross-region bank returns. |
+| `host.quester-path-engine-q`, `host.quester-sheep-spin-engine-q`, `host.quester-prince-smelt-wig-spin-engine-q`, `host.quester-qualified-priest-engine-q`, `host.quester-jonny-stand-engine-q`, `host.quester-jonny-small-hp-planner-engine-q`, `host.quester-mordred-continuation-engine-q`, `host.quester-digsite-thieve-engine-q`, `host.quester-cook-full-engine-q`, `host.quester-sheep-full-engine-q`, `host.quester-runemysteries-full-engine-q`, `host.quester-romeojuliet-full-engine-q`, `host.quester-imp-full-engine-q`, `host.quester-vampire-full-engine-q`, `host.quester-doric-full-engine-q`, `host.quester-gobdip-full-engine-q`, `host.quester-hetty-full-engine-q`, `host.quester-demon-full-engine-q`, `host.quester-hazeelcult-full-engine-q`, `host.quester-priestperil-full-engine-q`, `host.quester-drunkmonk-full-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host at game port `44694` and HTTP port `1180`. Engine Q uses fixed 300 ms ticks. Leave `QUESTER_TICK_MS` unset. Do not send `::speed`. |
 | `host.quester-bank-teller-engine-q`, `host.quester-bank-player-open-engine-q`, `host.quester-bank-chest-engine-q` | Use the Engine Q endpoint and tick rules in the row above. |
 | `script.release-path-refusal` | Run on a build-enabled lab host with an isolated HOME and `LIVE_EVIDENCE_DIR`. It builds production release libraries but opens no game session. |
 | `host.walk-no-route-live` | Run on aubaine against the 600 ms Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`, using its assigned lab scope and the per-cell I/O admission gate. The release command maps the read-only Engine L tree from `BOT_ENGINE_DIR` and uses the `NAV_PACK_289`, `NAV_FLAGS_289`, `BOT_CACHE_DIR`, and `CATALOG_ROOT` inputs for the local R289 client profile. It writes the test receipts under `LIVE_EVIDENCE_DIR`. |
 | `host.quester-partner-trade` | Run on a build-enabled lab host against a shared 289 engine with two free accounts. It needs the Sherlock inputs and also `BOT_LIVE_PARTNER_NAME_PREFIX` (1 to 4 bytes, different from `BOT_LIVE_NAME_PREFIX`). The command names Engine A's ports. On chardonnay set `WORLD_GAME_PORT=47594` and `WORLD_HTTP_PORT=3080` to run it on Engine L. Leave `QUESTER_TICK_MS` unset. The cell passes only when the Phoenix key moves between the two accounts and both log out. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
 | `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
-| `host.transport-relog`, `host.transport-dead-server`, `host.transport-idle-held`, `host.scriptless-park-protocol-error`, `host.scriptless-park-dead-server`, `host.scriptless-idle-logout` | Run on any host with Engine A at `127.0.0.1:44594` and `127.0.0.1:1080` (on aubaine that is a relay to Engine L). The scripted cells (`transport-*`) run a native script that does nothing, so the bot keeps its reconnect. The `scriptless-*` cells run a bot with no script: it parks after the exit and stays logged out for 30 s until the cell logs it in. Local engines run with `debug: true`, which ignores the idle request. The `scriptless-idle-logout` cell therefore waits for the client's own idle request (90 s), then answers with the Logout packet a production server sends. |
 | `host.nav-zanaris-entrana` | Run on aubaine with Engine L at `127.0.0.1:47594` and `127.0.0.1:3080`. Set `ENGINE_A_DIR` to the Engine L directory. Also set `BOT_CACHE_DIR`, `NAV_PACK_289`, `LIVE_EVIDENCE_DIR`, `CATALOG_ROOT`, and `QUESTER_PATH_DIR`. Use the composed head's pack and its merged Zanaris Path source. This cell proves entry to the Entrana dungeon, not completion of Lost City. |
 | `host.sherlock-entrana-walk-arrive`, `host.sherlock-entrana-content-categories` | Run on aubaine through Engine L's relay at `127.0.0.1:44594` and `127.0.0.1:1080`. Set the standard Engine A, pack, cache, catalog, and evidence variables. |
 | `host.gatherer-fly-tick`, `host.gatherer-net-tick`, `host.gatherer-mine-iron-tick`, `host.gatherer-oak-tick`, `host.gatherer-tick-refused-rune` | Run on aubaine against the 600 ms Engine L relay at game port `47594` and HTTP port `3080`. Set `GATHERER_ENGINE_DIR` to the read-only local Engine L client tree. Each cell uses a fresh account prefix and evidence path. Do not start, stop, or change Engine L. |
@@ -106,6 +148,7 @@ transition beyond the seeded stage, or actual quest completion.
 |---|---|
 | `host.quester-qualified-priest-engine-q` | `priest-start.json`: Father Aereck advances the qualified Path from `priest:0` to `priest:1`. |
 | `host.quester-jonny-stand-engine-q` | `blackarm-jonny.json`: one explicit pre-Start `phoenixgang=8` seed selects the journal-only `p:8` stage (`quest_blackarmgang.constant:11`; journal:33-46). The Phoenix role walks from the cabbage field, fights real Jonny, and hands in his report to reach `p:9`. The report and joined state are not seeded. |
+| `host.quester-jonny-small-hp-planner-engine-q` | `blackarm-jonny-small-hp.json`: the `host.quester-jonny-stand-engine-q` seed with the Phoenix account's Hitpoints seeded to 4 and two lobsters in the pack (only account state). Jonny hits for at most 1 every 4 ticks, so a 12-point lobster overheals; the supply planner (`combat/risk/supplies.rs`) bites it only in the critical tier and sizes 2 lobsters for the `p:8` fight (the old rule: 4). The cell asserts the production food-sizing line names exactly the 2 seeded lobsters, that every lobster eaten at this cap is a critical-tier bite, and that the stage reaches `p:9`. |
 | `host.quester-mordred-continuation-engine-q` | `arthur-mordred.json`: Base40 fights real Mordred and continues Morgan's dialogue to reach `arthur:4`. Neither success state is seeded. |
 | `host.quester-digsite-thieve-engine-q` | `itexam-thieve.json`: Thieving25 approaches the workman from the recorded route start and advances from the first exam to the second. Only the unrelated orange and purple samples are seeded. |
 
@@ -193,15 +236,34 @@ artifact selection. `--verify-cells` lists only this cell's picker-test selector
 it does not run or validate the external production-library proof.
 
 
+## Gatherer Shop lab routing
+
+The shared runner reads `tools/live-map/map.toml` from the `--repo` path.
+It does not read the map from the runner checkout.
+
+On Aubaine, ports `44594/1080` relay to Engine L at `47594/3080`. Use
+`--engine-game-port 44594 --engine-http-port 1080`. This keeps the older
+hard-coded A cells on the relay to L.
+
+Export `ENGINE_L_DIR` to the local Engine L directory. The runner has no
+default for this alias.
+
+On chardonnay, use Engine L only at `47594/3080`. Do not use `44594/1080`.
+Those ports belong to the Windows drivers. Set the runner engine ports to
+`47594/3080`.
+
+Use Engine Q only for quest cells at `44694/1180`. Leave
+`QUESTER_TICK_MS` unset. The runner routes quest cells to Q.
+
 
 Client submodule paths have separate coverage. The gitlink and the client
 workspace and package manifests select the GPU headed cell, including for a
 test-only client bump. `client/client.rs`,
 `client/actor_289.rs`, `render/draw.rs`, and `render/backend/cpu.rs` select
-both headed cells. `client/client.rs` also selects the six relog and park cells
-(`host.transport-*` and `host.scriptless-*`) because it
+both headed cells. `client/client.rs` also selects the relog cells and the idle
+cell (`host.transport-*` and `host.scriptless-idle-held`) because it
 contains `Client::login` (`vendor/fr-client-rust/crates/client/src/client/client.rs:3445`).
-Changes under `client/src/io/**` select the same six cells. The CPU headed cell
+Changes under `client/src/io/**` select the same cells. The CPU headed cell
 sets `BOT_CPU=1`; the GPU cell removes it.
 
 The map lists test-only paths in `not_live.globs`. A path in
@@ -215,6 +277,19 @@ The NPC-hop test requires `WORLD_NAV_PACK` and reads its optional `WORLD_NAV_FLA
 `WORLD_ENGINE_DIR`, and `WORLD_CACHE_DIR` at `crates/host-play/tests/npc_hop_live.rs:87-115`.
 It checks `LIVE=1` and writes receipts when `LIVE_EVIDENCE_DIR` is set at
 `crates/host-play/tests/npc_hop_live.rs:53-58,308-323`.
+
+## Bank and acquisition call paths
+
+`host.bank-mage-teller-native` and `host.bank-npc-pick-burst` cover
+`crates/host-play/src/bank_npc_live.rs`. The first runs the real Mage Arena
+teller receipt; the second exercises the shared bank-pick retry burst.
+`crates/host-play/src/script_bank_harness.rs` is test-only and is excluded
+from live coverage by its exact `not_live.globs` entry.
+
+`host.grinch-cross-region-return` covers
+`crates/script/src/acquire/run.rs`: `Grinch::start_bank` constructs
+`AcquireRun` at `crates/script/src/grinch.rs:630`, and the live cross-region
+return cell is selected at `crates/host-play/tests/grinch_live.rs:119-123`.
 
 ## ScriptWalkArm call paths
 
@@ -239,6 +314,32 @@ A separate row maps `survivable_admission_live.rs` to both admission tests.
 The four scenario cells advance routes through the live slot loop at
 `crates/host-play/src/play_slots.rs:1909-1929` and
 `crates/host-play/src/script_walk.rs:867-885`.
+
+## Quest evidence at route boundaries
+
+The route request owns its selected quest evidence. The same evidence must
+reach route inspection, a route resumed after an automatic bank trip, and
+transport action checks. A green quest row alone does not prove an exact
+quest stage. The provider uses the selected content's completion ranges and,
+where proved by that content, unchanged green from the first stable cold
+login. A later colour change invalidates that login proof.
+
+These Engine A cells cover the three product paths:
+
+| Cell | Required result |
+|---|---|
+| `host.nav-post-bank-quest-stage` | A real walk fetches its missing travel fare from a bank, resumes the requested route, and crosses the Heroes' Guild entrance. The account's completed quests and bank stock are pre-Start fixtures; neither the bank trip nor the crossing is injected. |
+| `host.nav-compat-quest-stage` | A real compat `Traversal.walkTo` call inspects the route and crosses the Heroes' Guild entrance with qualified completion evidence. |
+| `host.nav-web-actions` | Fresh accounts cross both Mage Arena webs using a knife and a worn slash weapon. Each attempt must record the content action, the changed web location, arrival, and clean logout. |
+
+The web receipt counts all packed web actions and those with quest gates.
+If the latter count is zero, the live cell proves real web action selection
+and retry behavior, not a quest-gated web that the content does not contain.
+The executor's controlled gated-web tests separately require the same owned
+quest evidence at the initial action, cut retry, and recheck after approach.
+The Heroes' Guild cells use the real content stage window in both route
+planning and execution. They do not replace that window with a completion
+predicate or read the server's quest variable as product evidence.
 
 ## Death recovery
 

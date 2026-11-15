@@ -134,7 +134,8 @@ export default class T extends LoopingBot {
 "#;
 
 fn queue_selected(src: &str, first_then_second: bool) -> Vec<InteractReq> {
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn inventory-button test isolate");
     let ops: Vec<String> = WITHDRAW_OPS.iter().map(|s| (*s).to_string()).collect();
     let a = hide_row(10, 0, &ops);
     let b = hide_row(11, 1, &ops);
@@ -143,7 +144,9 @@ fn queue_selected(src: &str, first_then_second: bool) -> Vec<InteractReq> {
     snap.bank = &bank;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    let probe = iso.probe("__probe").unwrap();
+    let probe = iso
+        .probe("__probe")
+        .expect("read inventory-button probe result");
     assert_eq!(probe, true, "selected id 11 Withdraw-X must queue");
     let reqs = iso.drain_interacts();
     iso.join();

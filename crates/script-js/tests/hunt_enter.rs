@@ -41,8 +41,13 @@ fn ready() -> Value {
 }
 
 fn with_site(mut base: Value, site: Value) -> Value {
-    let obj = base.as_object_mut().unwrap();
-    for (k, v) in site.as_object().unwrap() {
+    let obj = base
+        .as_object_mut()
+        .expect("hunt contract base value is an object");
+    for (k, v) in site
+        .as_object()
+        .expect("hunt contract site value is an object")
+    {
         obj.insert(k.clone(), v.clone());
     }
     base
@@ -302,6 +307,7 @@ fn choose_hit_answers_the_fragment_index_not_the_last() {
         name: "Guard".into(),
         actions: vec!["Talk-to".into()],
         distance: 1,
+        network: Some(tile(10, 10, 0)),
     }];
     seen.chat_options = vec![
         "Go away".into(),
@@ -333,6 +339,7 @@ fn fragment_miss_logs_watch_tower_and_emits_no_answer() {
         name: "Guard".into(),
         actions: vec!["Talk-to".into()],
         distance: 1,
+        network: Some(tile(10, 10, 0)),
     }];
     seen.chat_options = vec!["Yes".into(), "No".into()];
     set_observation(seen);
@@ -376,6 +383,7 @@ fn fee_proof_is_not_the_walk_and_sets_prepaid_before_loc() {
         name: "Saniboch".into(),
         actions: vec!["Pay".into()],
         distance: 1,
+        network: Some(tile(12, 12, 0)),
     }];
     seen.inv = vec![EnterInv {
         id: 995,
@@ -463,6 +471,7 @@ fn fee_modal_is_close_modal_not_answer() {
         name: "Saniboch".into(),
         actions: vec!["Pay".into()],
         distance: 1,
+        network: Some(tile(12, 12, 0)),
     }];
     seen.inv = vec![EnterInv {
         id: 995,
@@ -496,6 +505,7 @@ fn prepaid_survives_yield_and_reset_and_drops_on_stop() {
         name: "Saniboch".into(),
         actions: vec!["Pay".into()],
         distance: 1,
+        network: Some(tile(12, 12, 0)),
     }];
     seen.inv = vec![EnterInv {
         id: 995,
@@ -738,7 +748,7 @@ fn pause_freezes_the_one_armed_window() {
     assert!(before > 200_000, "stand window is 300000, got {before}");
     hunt_lair::on_pause();
     std::thread::sleep(std::time::Duration::from_millis(280));
-    let frozen = call("next", token, p.clone(), Some(ack_walk(token)));
+    let frozen = call("next", token, p, Some(ack_walk(token)));
     assert_eq!(frozen["kind"], "wait");
     hunt_lair::on_resume();
     let after = enter_deadline_remaining_ms(token).unwrap_or(0);
@@ -757,6 +767,7 @@ fn hold_yields_false_and_leaves_prepaid_unchanged() {
         name: "Saniboch".into(),
         actions: vec!["Pay".into()],
         distance: 1,
+        network: Some(tile(12, 12, 0)),
     }];
     seen.inv = vec![EnterInv {
         id: 995,

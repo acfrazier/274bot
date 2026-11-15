@@ -302,6 +302,84 @@ fn a_cold_store_fails_closed_for_starting_but_never_for_self_defence() {
 }
 
 #[test]
+fn player_zone_gate_uses_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = wilderness_scene(tile(3100, 3600));
+    let mut bob = player(8, BOB, tile(3101, 3600), &fight_ops(), 60);
+    bob.network = tile(2700, 3600);
+    scene.players.push(bob);
+    scene.refresh();
+    assert_eq!(
+        refused(Harness::try_new(&scene, player_request(BOB, true), 0)),
+        Some(PvpRefusal::OpponentOutside)
+    );
+}
+
+#[test]
+fn named_player_search_bounds_use_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = wilderness_scene(tile(3100, 3600));
+    let rendered = tile(3101, 3600);
+    let mut bob = player(8, BOB, rendered, &fight_ops(), 60);
+    bob.network = tile(3105, 3600);
+    scene.players.push(bob);
+    scene.refresh();
+    let mut request = player_request(BOB, true);
+    request.search_bounds = Some(Arc::from([api::gather_methods::SceneRegionInput {
+        min_x: rendered.x,
+        min_z: rendered.z,
+        max_x: rendered.x,
+        max_z: rendered.z,
+        level: rendered.level,
+    }]));
+    let mut harness = Harness::new(&scene, request);
+    let effect = harness.pending(&scene, 1);
+    assert_eq!(harness.machine.engaged(), None);
+    assert!(
+        !matches!(
+            effect,
+            Some(HostEffect::Interaction(InteractReq::Player { .. }))
+        ),
+        "the rendered in-bounds pose cannot admit a player whose network tile is out of bounds"
+    );
+}
+
+#[test]
+fn attacker_player_search_bounds_use_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = wilderness_scene(tile(3100, 3600));
+    let rendered = tile(3101, 3600);
+    let mut alice = aggressor(&scene, 8, "alice", rendered);
+    alice.network = tile(3105, 3600);
+    scene.players.push(alice);
+    scene.refresh();
+    let mut request = self_defence_request();
+    request.search_bounds = Some(Arc::from([api::gather_methods::SceneRegionInput {
+        min_x: rendered.x,
+        min_z: rendered.z,
+        max_x: rendered.x,
+        max_z: rendered.z,
+        level: rendered.level,
+    }]));
+    let mut harness = Harness::new(&scene, request);
+    let effect = harness.pending(&scene, 1);
+    assert_eq!(harness.machine.engaged(), None);
+    assert!(
+        !matches!(
+            effect,
+            Some(HostEffect::Interaction(InteractReq::Player { .. }))
+        ),
+        "a rendered in-bounds aggressor is not selected when its network tile is outside bounds"
+    );
+}
+
+#[test]
 fn a_global_flip_during_a_fight_changes_the_next_begin_only() {
     if !api::test_support::game_data_available() {
         return;
@@ -743,6 +821,51 @@ fn is_player_cast(effect: &Option<HostEffect>) -> bool {
 }
 
 #[test]
+fn manual_player_cast_uses_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use super::magic_tests::{magic_scene, refresh_magic};
+    let mut scene = magic_scene(Some("staff_of_fire"), 60);
+    scene.wilderness = Some(content_wilderness());
+    place_local(&mut scene, tile(3340, 3250));
+    let rendered = tile(3341, 3250);
+    let network = tile(3342, 3250);
+    let mut bob = player(8, BOB, rendered, &fight_ops(), 60);
+    bob.network = network;
+    scene.players.push(bob);
+    refresh_magic(&mut scene, 3, false);
+    let request = CombatRequest {
+        style: Style::Mage,
+        spells: Some(
+            [SpellRef {
+                alias: Arc::from("fire_bolt"),
+            }]
+            .into_iter()
+            .collect::<Vec<_>>()
+            .into(),
+        ),
+        retaliate: false,
+        ..player_request(BOB, true)
+    };
+    let mut harness = Harness::new(&scene, request);
+    assert!(
+        matches!(
+            harness.pending(&scene, 1),
+            Some(HostEffect::Interaction(InteractReq::UseWidgetOn {
+                kind,
+                x,
+                z,
+                level,
+                index: Some(8),
+                ..
+            })) if kind == "player" && (x, z, level) == (network.x, network.z, network.level)
+        ),
+        "manual player casts must carry the network path-head coordinates"
+    );
+}
+
+#[test]
 fn case6_the_single_way_line_holds_a_manual_cast_for_exactly_eight_ticks() {
     if !api::test_support::game_data_available() {
         return;
@@ -973,6 +1096,74 @@ fn case22_a_pen_opponent_24_tiles_away_stays_engaged_with_lost_radius_32() {
         harness.take();
     }
     assert_eq!(ended, Some(CombatEnd::TargetGone));
+}
+
+#[test]
+fn player_lost_radius_and_leash_cancel_use_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = pen_scene();
+    let stand = scene.local.player.network;
+    scene
+        .players
+        .push(player(8, BOB, tile(stand.x + 1, stand.z), &fight_ops(), 60));
+    scene.refresh();
+    let mut request = player_request(BOB, true);
+    request.stand = Some(stand);
+    request.lost_radius = 1;
+    let mut harness = Harness::new(&scene, request);
+    player_attack(harness.pending(&scene, 1), BOB, "Fight");
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Player,
+        index: 8,
+    });
+    scene.local.player.actor.in_combat = true;
+    scene.players[0].actor.tile = tile(stand.x + 1, stand.z);
+    scene.players[0].network = tile(stand.x + 7, stand.z);
+    scene.refresh();
+    assert!(matches!(
+        harness.pending(&scene, 2),
+        Some(HostEffect::Walk(walk)) if walk.target == tile(stand.x - 2, stand.z)
+    ));
+}
+
+#[test]
+fn level_refusal_uses_player_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = wilderness_scene(tile(3100, 3700));
+    scene.local.player.combat_level = 40;
+    scene
+        .players
+        .push(player(8, BOB, tile(3101, 3700), &fight_ops(), 60));
+    scene.refresh();
+    let mut harness = Harness::new(&scene, player_request(BOB, true));
+    player_attack(harness.pending(&scene, 1), BOB, "Fight");
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Player,
+        index: 8,
+    });
+    scene.local.player.actor.in_combat = true;
+    scene.players[0].network = tile(3101, 3528);
+    scene.refresh();
+    say(
+        &mut scene,
+        1,
+        "You need to move deeper into the wilderness.",
+    );
+    let report = match harness.poll(&scene.snapshot, 3) {
+        Poll::Ready(Ok(report)) => report,
+        other => panic!("the level refusal must end the fight: {other:?}"),
+    };
+    assert_eq!(
+        report.end,
+        CombatEnd::Aborted(AbortReason::PvpRefused(PvpRefusal::LevelRange {
+            wilderness: 2,
+            difference: 20,
+        }))
+    );
 }
 
 // --- Case 20: the protect follows the opponent's observed style -----------------

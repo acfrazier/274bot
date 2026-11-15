@@ -38,6 +38,7 @@ use nav_planner::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
 use nav_planner::WorldState;
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
+use crate::walk_permissions::DangerDecision;
 use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath, RouteSearchResultKind};
 
 // The real v17 Dusty-key diagnosis needs 679,226 settlements before it
@@ -301,9 +302,7 @@ struct RoutePreflights {
 }
 
 fn route_search_options(request: &ScriptRouteRequest) -> FindOptions {
-    if request.admission.compat_v1
-        || request.admission.policy == crate::admission::RiskPolicy::Proceed
-    {
+    if request.admission.decision.policy == crate::admission::RiskPolicy::Proceed {
         FindOptions {
             zones: ZoneExempt::all(),
             ..request.opts
@@ -2432,7 +2431,8 @@ impl RouteJob {
                 self.plan_item_limit(),
                 self.request.world.banks().len(),
             )
-            .ok_or(RouteJobError::Budget)?,
+            .ok_or(RouteJobError::Budget)?
+            .with_preferences(self.request.opts.bank_preferences),
         );
         self.bank_plan_capture_step = 0;
         self.bank_undo_reserved = false;
@@ -4849,6 +4849,28 @@ fn native_route_exclusions(
     exclusions
 }
 
+/// A native walk's exclusions and its one danger decision. A compat walk in
+/// flight (`compat`) keeps its original wire entries, and its own `crossZones`
+/// counts as the walk's crossing request.
+fn native_walk_danger(
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    request: (&[Arc<str>], &[Arc<str>], script::native::WalkOptions),
+    session_permissions: Option<script::native::WalkPermissions>,
+    compat: Option<&ScriptRouteExclusions>,
+) -> (ScriptRouteExclusions, FindOptions, DangerDecision) {
+    let (avoid, cross, walk) = request;
+    let exclusions = native_route_exclusions(avoid, cross, compat);
+    let (options, decision) = super::walk_permissions::native_admission(
+        navs,
+        name,
+        walk,
+        session_permissions,
+        !exclusions.cross.is_empty(),
+    );
+    (exclusions, options, decision)
+}
+
 #[derive(Clone)]
 pub(crate) struct RouteQuestContext {
     selected: Arc<api::game_data::SelectedGameData>,
@@ -5108,10 +5130,11 @@ pub(crate) struct NavBot {
     /// The compiled instance's effective Start/config revision, never a draft.
     /// `None` identifies isolate walks, which keep their existing option wiring.
     pub(crate) native_permissions: Option<script::native::WalkPermissions>,
+    pub(crate) bank_preferences: api::named_banks::BankPreferences,
     pub(crate) compat_v1: bool,
-    /// The held runtime-net setting was reported during this session.
-    pub(crate) runtime_gate_logged: bool,
     pub(crate) admission: Option<Box<crate::admission::Admission>>,
+    /// Shared Path food reservations retained through publication and reroutes.
+    pub(crate) walk_protected_items: Option<Arc<[script::combat::FoodReserve]>>,
     pub(crate) assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
     pub(crate) poison_hold: Option<crate::poison_hold::PoisonHold>,
     pub(crate) last_assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
@@ -5364,11 +5387,15 @@ pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
         build()
     );
 }
-fn format_zone_witness(table: &nav_planner::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+/// One `label [name]` item per zone key, in key order: the text a refusal
+/// names each blocking zone by.
+pub(crate) fn zone_witness_items(
+    table: &nav_planner::zones::ZoneTable,
+    keys: &[ZoneKey],
+) -> Vec<String> {
     keys.iter()
         .map(|&key| format!("{} [{}]", table.label(key), table.name(key)))
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect()
 }
 
 pub(crate) fn blocked_zone_detail(
@@ -5377,7 +5404,7 @@ pub(crate) fn blocked_zone_detail(
 ) -> String {
     format!(
         "blocked by danger zones: {}",
-        format_zone_witness(table, keys)
+        zone_witness_items(table, keys).join(", ")
     )
 }
 
@@ -5386,14 +5413,16 @@ pub(crate) fn blocked_zone_detail(
 const SCRIPT_DANGER_HINT: &str =
     "to allow it, set Danger routing to Always in Nav config, or allow danger zones in the script's own settings if it has that option";
 
+/// Resolve a walk's frozen avoid rectangles and validate its named crossings.
+/// A non-empty `cross` list is the script's danger request; it reaches the
+/// one danger decision as `crossing_requested`, never here.
 pub(crate) fn resolve_route_exclusions(
-    mut opts: FindOptions,
     world: &NavWorld,
     from: WorldTile,
     to: WorldTile,
     state: &WorldState,
     mut exclusions: ScriptRouteExclusions,
-) -> Result<(FindOptions, ScriptRouteExclusions), String> {
+) -> Result<ScriptRouteExclusions, String> {
     if exclusions.avoid_wire.len() > route_inspect::MAX_AVOID {
         return Err("avoidZones: more than 16 entries".to_string());
     }
@@ -5474,28 +5503,19 @@ pub(crate) fn resolve_route_exclusions(
     }) {
         return Err("avoidZones: a rectangle with inverted bounds or a level off 0-3".to_string());
     }
-    if exclusions.cross.len() > 8 {
-        return Err("crossZones: more than 8 zone names".to_string());
-    }
-    let mut keys = Vec::with_capacity(exclusions.cross.len());
+    // Every name must resolve against the pack's catalog. The list has no
+    // length limit.
     for name in &exclusions.cross {
         let Some(table) = zones else {
             return Err(format!(
                 "crossZones: zone catalog unavailable (legacy grid pack); cannot resolve {name:?}"
             ));
         };
-        let Some(key) = table.resolve(name) else {
+        if table.resolve(name).is_none() {
             return Err(format!("crossZones: unknown zone {name:?}"));
-        };
-        keys.push(key);
+        }
     }
-    let named = ZoneExempt::named(&keys)
-        .map_err(|_| "crossZones: more than 8 distinct zones".to_string())?;
-    opts.zones = opts
-        .zones
-        .union(named)
-        .map_err(|_| "crossZones: more than 8 distinct zones".to_string())?;
-    Ok((opts, exclusions))
+    Ok(exclusions)
 }
 
 impl ScriptWalkArm {
@@ -5565,7 +5585,14 @@ impl ScriptWalkArm {
         if request.protect {
             let view = SnapshotView::new(Some(snapshot), evidence);
             let admission = super::admission::condition_tables(world)
-                .map(|(tables, _)| script::combat::WalkGuard::begin_with(&request, &view, tables))
+                .map(|(tables, _)| {
+                    script::combat::WalkGuard::begin_with_protected(
+                        &request,
+                        &view,
+                        tables,
+                        authority.clone_protected_items(),
+                    )
+                })
                 .unwrap_or(Err(script::combat::guard::GuardRefusal::Tables));
             if let Err(reason) = admission {
                 refusal(&format!("Walk protection: {reason:?}"));
@@ -5594,54 +5621,60 @@ impl ScriptWalkArm {
         };
         let from = WorldTile { x, z, level };
         let radius = i32::from(request.radius);
-        let (mut options, policy, enforce) = super::walk_permissions::native_admission(
+        let (exclusions, mut options, decision) = native_walk_danger(
             &self.navs,
             &self.name,
-            request.options,
+            (&request.avoid, &request.cross, request.options),
             session_permissions,
+            None,
         );
         if let Some(allow) = manual_bank_fetch {
             options.allow_bank_fetch = allow;
         }
+        options.bank_preferences = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .map_or_default(|bot| bot.bank_preferences);
         let empty = WorldState::empty();
         let state = self.state.as_deref().unwrap_or(&empty);
-        let (options, exclusions) = match resolve_route_exclusions(
-            options,
-            world,
-            from,
-            request.target,
-            state,
-            native_route_exclusions(&request.avoid, &request.cross, None),
-        ) {
-            Ok(resolved) => resolved,
-            Err(detail) => {
-                refusal(&detail);
-                return;
-            }
-        };
+        let exclusions =
+            match resolve_route_exclusions(world, from, request.target, state, exclusions) {
+                Ok(resolved) => resolved,
+                Err(detail) => {
+                    refusal(&detail);
+                    return;
+                }
+            };
         let admission = {
             let navs = self.navs.lock().unwrap();
             let bot = navs.get(&self.name);
-            let input = crate::admission::capture(
+            let input = crate::admission::capture_excluding(
                 snapshot,
                 state.map_members,
                 bot.and_then(|bot| bot.condition.current()),
                 bot.is_some_and(|bot| bot.walk_guard_off.is_some()),
                 Some(world),
+                authority.protected_items().unwrap_or(&[]),
             );
             // A v1 card keeps frozen danger routing on the machine-owned
             // native walks too, as on its compiled walks (`compiled_options`).
             let compat_v1 = bot.is_some_and(|bot| bot.compat_v1);
-            crate::admission::Admission {
-                policy,
-                enforce: enforce || !request.cross.is_empty(),
-                grants: options.zones,
-                allow: request.allow,
-                input,
-                generation: authority.request_id().get(),
+            let food_credit = super::walk_permissions::walk_arms_danger_food_guard(
+                decision,
+                request.allow.food,
                 compat_v1,
-                escape: None,
-            }
+            );
+            let mut allow = request.allow;
+            allow.food = food_credit;
+            crate::admission::Admission::from_decision(
+                decision,
+                allow,
+                input,
+                authority.request_id().get(),
+                compat_v1,
+            )
         };
         let live_geometry = if radius > 0 {
             request
@@ -5757,8 +5790,41 @@ impl ScriptWalkArm {
                 return false;
             }
         }
+        // A v1 card keeps frozen danger routing on the machine-owned native
+        // walks too (Banking.open's stand walk), as on its compiled walks.
+        let (off_debt, condition, compat_v1, compat_policy) = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .map_or((false, None, false, None), |bot| {
+                (
+                    bot.walk_guard_off.is_some(),
+                    bot.condition.current().copied(),
+                    bot.compat_v1,
+                    bot.compat_walk_native_policy(authority.run()),
+                )
+            });
+        let (exclusions, mut options, decision) = native_walk_danger(
+            &self.navs,
+            &self.name,
+            (&request.avoid, &request.cross, request.options),
+            session_permissions,
+            compat_policy
+                .as_ref()
+                .and_then(|(_, exclusions)| exclusions.as_deref()),
+        );
+        // Route credit and the danger-food guard consume the same decision.
+        let route_food = super::walk_permissions::walk_arms_danger_food_guard(
+            decision,
+            request.allow.food,
+            compat_v1,
+        );
+        let danger_guard = route_food;
+        let mut allow = request.allow;
+        allow.food = route_food;
         let protect = request.protect;
-        let guard = if protect || request.food_guard || request.cure_guard {
+        let guard = if protect || request.food_guard || request.cure_guard || danger_guard {
             let view = SnapshotView::new(
                 Some(snapshot),
                 EvidenceStamp {
@@ -5773,12 +5839,18 @@ impl ScriptWalkArm {
                 script::combat::guard::shared_tables().ok()
             };
             let admission = match tables {
-                Some(tables) if protect => {
-                    script::combat::WalkGuard::begin_with(&request, &view, tables)
-                }
-                Some(tables) => {
-                    script::combat::WalkGuard::begin_food_only_with(&request, &view, tables)
-                }
+                Some(tables) if request.protect => script::combat::WalkGuard::begin_with_protected(
+                    &request,
+                    &view,
+                    tables,
+                    authority.clone_protected_items(),
+                ),
+                Some(tables) => script::combat::WalkGuard::begin_food_only_with_protected(
+                    &request,
+                    &view,
+                    tables,
+                    authority.clone_protected_items(),
+                ),
                 None => Err(script::combat::guard::GuardRefusal::Tables),
             };
             match admission {
@@ -5794,54 +5866,30 @@ impl ScriptWalkArm {
         } else {
             None
         };
-        let (mut options, policy, enforce) = super::walk_permissions::native_admission(
-            &self.navs,
-            &self.name,
-            request.options,
-            session_permissions,
-        );
         if let Some(allow) = manual_bank_fetch {
             options.allow_bank_fetch = allow;
         }
-        // A v1 card keeps frozen danger routing on the machine-owned native
-        // walks too (Banking.open's stand walk), as on its compiled walks.
-        let (off_debt, compat_v1, condition, compat_policy) = self
-            .navs
-            .lock()
-            .unwrap()
-            .get(&self.name)
-            .map_or((false, false, None, None), |bot| {
-                (
-                    bot.walk_guard_off.is_some(),
-                    bot.compat_v1,
-                    bot.condition.current().copied(),
-                    bot.compat_walk_native_policy(authority.run()),
-                )
-            });
         if let Some((original, _)) = compat_policy.as_ref() {
             options.allow_teleports = original.allow_teleports
                 && request.options.allow_teleports != script::native::WalkBit::Forbid;
             options.allow_wilderness = original.allow_wilderness
                 && request.options.allow_wilderness != script::native::WalkBit::Forbid;
             options.allow_bank_fetch = original.allow_bank_fetch;
-            options.zones = original.zones;
         }
-        let admission = crate::admission::Admission {
-            policy,
-            enforce: enforce || !request.cross.is_empty(),
-            grants: options.zones,
-            allow: request.allow,
-            input: crate::admission::capture(
+        let admission = crate::admission::Admission::from_decision(
+            decision,
+            allow,
+            crate::admission::capture_excluding(
                 snapshot,
                 self.state.as_ref().is_some_and(|state| state.map_members),
                 condition.as_ref(),
                 off_debt,
                 self.world.as_deref(),
+                authority.protected_items().unwrap_or(&[]),
             ),
-            generation: 0,
+            0,
             compat_v1,
-            escape: None,
-        };
+        );
         let context = self
             .navs
             .lock()
@@ -5864,13 +5912,6 @@ impl ScriptWalkArm {
                 return false;
             }
         };
-        let exclusions = native_route_exclusions(
-            &request.avoid,
-            &request.cross,
-            compat_policy
-                .as_ref()
-                .and_then(|(_, exclusions)| exclusions.as_deref()),
-        );
         let queued = self.queue_route_impl(
             request.target.x,
             request.target.z,
@@ -5885,6 +5926,7 @@ impl ScriptWalkArm {
             Some(authority),
             request.loc_id,
             request.arrival,
+            decision,
             Some(admission),
             false,
             request.candidate_goals,
@@ -5900,6 +5942,7 @@ impl ScriptWalkArm {
     /// Re-find an estimated endpoint against newly observed live geometry
     /// without replacing the owning script action. The caller removes the old
     /// follow first and only calls this when no worker/bank session is active.
+    /// `danger` is the walk's own decision ([`crate::admission::Admission::decision`]).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn refresh_route_in_snapshot(
         mut self,
@@ -5913,6 +5956,7 @@ impl ScriptWalkArm {
         loc_id: Option<i32>,
         arrival: ArrivalKind,
         compat_tile_intent: bool,
+        danger: DangerDecision,
     ) -> bool {
         self.queue_route_impl(
             to.x,
@@ -5928,6 +5972,7 @@ impl ScriptWalkArm {
             authority,
             loc_id,
             arrival,
+            danger,
             None,
             compat_tile_intent,
             None,
@@ -6015,6 +6060,8 @@ impl ScriptWalkArm {
         retarget: bool,
         request_id: u64,
     ) -> bool {
+        let (_, danger) =
+            super::walk_permissions::compiled_options(&self.navs, &self.name, opts, false);
         self.clone().queue_route_impl(
             x,
             z,
@@ -6029,6 +6076,7 @@ impl ScriptWalkArm {
             None,
             None,
             ArrivalKind::Reach,
+            danger,
             None,
             false,
             None,
@@ -6055,7 +6103,8 @@ impl ScriptWalkArm {
         retarget: bool,
         request_id: u64,
     ) -> bool {
-        let opts = super::walk_permissions::compiled_options(&self.navs, &self.name, opts);
+        let (opts, danger) =
+            super::walk_permissions::compiled_options(&self.navs, &self.name, opts, false);
         self.queue_route_impl(
             x,
             z,
@@ -6070,6 +6119,7 @@ impl ScriptWalkArm {
             None,
             None,
             ArrivalKind::Reach,
+            danger,
             None,
             false,
             None,
@@ -6077,6 +6127,7 @@ impl ScriptWalkArm {
     }
 
     /// Queue a walk with the request's frozen avoid rectangles and zone names.
+    /// `opts` and `danger` come from [`super::walk_permissions::compiled_options`].
     #[allow(clippy::too_many_arguments)] // route queue plus the walk's exclusions
     pub(crate) fn queue_fixed_route_in_snapshot_avoiding(
         mut self,
@@ -6087,6 +6138,7 @@ impl ScriptWalkArm {
         opts: FindOptions,
         request_id: u64,
         exclusions: ScriptRouteExclusions,
+        danger: DangerDecision,
     ) -> bool {
         self.queue_route_impl(
             x,
@@ -6102,6 +6154,7 @@ impl ScriptWalkArm {
             None,
             None,
             ArrivalKind::Reach,
+            danger,
             None,
             false,
             None,
@@ -6109,6 +6162,7 @@ impl ScriptWalkArm {
     }
 
     /// [`Self::queue_route_in_snapshot`] for a walk with request exclusions.
+    /// `opts` and `danger` come from [`super::walk_permissions::compiled_options`].
     #[allow(clippy::too_many_arguments)] // plus the borrowed arm-time scene and exclusions
     pub(crate) fn queue_route_in_snapshot_avoiding(
         mut self,
@@ -6121,6 +6175,7 @@ impl ScriptWalkArm {
         request_id: u64,
         compat_tile_intent: bool,
         exclusions: ScriptRouteExclusions,
+        danger: DangerDecision,
     ) -> bool {
         self.queue_route_impl(
             x,
@@ -6136,6 +6191,7 @@ impl ScriptWalkArm {
             None,
             None,
             ArrivalKind::Reach,
+            danger,
             None,
             compat_tile_intent,
             None,
@@ -6159,6 +6215,8 @@ impl ScriptWalkArm {
         request_id: u64,
         loc_id: Option<i32>,
     ) -> Option<std::sync::mpsc::Receiver<()>> {
+        let (_, danger) =
+            super::walk_permissions::compiled_options(&self.navs, &self.name, opts, false);
         let (completion, receiver) = RouteCompletion::channel();
         self.clone()
             .queue_route_impl(
@@ -6175,6 +6233,7 @@ impl ScriptWalkArm {
                 None,
                 loc_id,
                 ArrivalKind::Reach,
+                danger,
                 None,
                 false,
                 None,
@@ -6262,14 +6321,16 @@ impl ScriptWalkArm {
 
     /// Queue one route request. The request takes the arm's own captured
     /// [`WorldState`] (moved, not copied again), so it keeps the facts of the
-    /// frame that armed it.
+    /// frame that armed it. `danger` is the walk's one danger decision: its
+    /// zone grant is the walk's, and a walk with no request-built admission
+    /// is admitted from it.
     #[allow(clippy::too_many_arguments)] // queue state plus borrowed arm-time scene
     fn queue_route_impl(
         &mut self,
         x: i32,
         z: i32,
         level: i32,
-        opts: FindOptions,
+        mut opts: FindOptions,
         radius: i32,
         retarget: bool,
         request_id: u64,
@@ -6279,6 +6340,7 @@ impl ScriptWalkArm {
         authority: Option<script::native::HostAuthority>,
         loc_id: Option<i32>,
         arrival: ArrivalKind,
+        danger: DangerDecision,
         request_admission: Option<crate::admission::Admission>,
         compat_tile_intent: bool,
         candidate_goals: Option<script::native::WalkGoals>,
@@ -6286,6 +6348,12 @@ impl ScriptWalkArm {
         if authority.as_ref().is_some_and(|owner| !owner.live()) {
             return false;
         }
+        opts.bank_preferences = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .map_or_default(|bot| bot.bank_preferences);
         let to = WorldTile { x, z, level };
         let Some((hx, hz, hl)) = self.here else {
             log_walk_arm(&self.name, || {
@@ -6422,10 +6490,16 @@ impl ScriptWalkArm {
         } else {
             let empty = WorldState::empty();
             let route_state = state.as_deref().unwrap_or(&empty);
-            match resolve_route_exclusions(opts, world, from, to, route_state, exclusions) {
-                Ok((opts, exclusions)) => {
+            match resolve_route_exclusions(world, from, to, route_state, exclusions) {
+                Ok(exclusions) => {
                     let exclusions = (!exclusions.is_empty()).then(|| Arc::new(exclusions));
-                    (opts, exclusions)
+                    (
+                        FindOptions {
+                            zones: danger.zones(),
+                            ..opts
+                        },
+                        exclusions,
+                    )
                 }
                 Err(reason) => {
                     log_walk_arm(&self.name, || {
@@ -6474,7 +6548,7 @@ impl ScriptWalkArm {
             .map(|admission| admission.input)
             .or_else(|| {
                 snapshot.map(|snapshot| {
-                    crate::admission::capture(
+                    crate::admission::capture_excluding(
                         snapshot,
                         state.as_ref().is_some_and(|state| state.map_members),
                         self.navs
@@ -6485,6 +6559,10 @@ impl ScriptWalkArm {
                             .as_ref(),
                         false,
                         self.world.as_deref(),
+                        authority
+                            .as_ref()
+                            .and_then(|owner| owner.protected_items())
+                            .unwrap_or(&[]),
                     )
                 })
             });
@@ -6544,30 +6622,26 @@ impl ScriptWalkArm {
                     && bot.native_walk.is_none()
                     && bot.walk_request_id == request_id
                     && bot.requested_route == Some(key));
+            // A walk with no request-built admission (compat, compiled and
+            // watchdog walks) is admitted from its own danger decision.
             let mut admission = request_admission
                 .or_else(|| {
                     same_owner
                         .then(|| bot.admission.as_deref().copied())
                         .flatten()
                 })
-                .unwrap_or_else(|| crate::admission::Admission {
-                    policy: if bot.compat_v1 || opts.zones.is_all() {
-                        script::native::RiskPolicy::Proceed
-                    } else {
-                        script::native::RiskPolicy::Avoid
-                    },
-                    enforce: super::walk_permissions::NET_AVAILABLE
-                        || opts.zones != ZoneExempt::NONE,
-                    grants: opts.zones,
-                    allow: script::native::WalkAllow {
-                        prayer: !bot.compat_v1,
-                        food: !bot.compat_v1,
-                        escape: !bot.compat_v1,
-                    },
-                    input: Default::default(),
-                    generation: 0,
-                    compat_v1: bot.compat_v1,
-                    escape: None,
+                .unwrap_or_else(|| {
+                    crate::admission::Admission::from_decision(
+                        danger,
+                        script::native::WalkAllow {
+                            prayer: !bot.compat_v1,
+                            food: !bot.compat_v1,
+                            escape: !bot.compat_v1,
+                        },
+                        Default::default(),
+                        0,
+                        bot.compat_v1,
+                    )
                 });
             if let Some(mut input) = captured_input {
                 input.poison = admission.input.poison;
@@ -6622,6 +6696,9 @@ impl ScriptWalkArm {
             bot.route_loc_geometry = loc_geometry;
             bot.requested_exclusions = exclusions.clone();
             bot.native_walk = authority.clone();
+            bot.walk_protected_items = authority
+                .as_ref()
+                .and_then(|owner| owner.clone_protected_items());
             bot.native_walk_failure = None;
             bot.route_compat_tile_intent = compat_tile_intent;
             let request = ScriptRouteRequest {
@@ -7422,17 +7499,12 @@ impl ScriptRouteRequest {
             ..
         } = output;
         let outcome = Self::project_route_job_outcome(outcome, opts, bank_avoid_copy, &world);
-        let tried = match &refusal {
-            Some(script::native::WalkRefusal::NoRouteWithinBounds { tried, .. }) => *tried,
-            _ => 0,
-        };
         (
             crate::admission::RouteAdmission {
                 outcome,
                 assessment,
                 refusal,
                 blocked,
-                tried,
             },
             targets,
             opts,
@@ -7483,10 +7555,12 @@ impl NavBot {
         };
         options.allow_teleports = script::native::WalkBit::from(Some(key.2));
         options.allow_wilderness = script::native::WalkBit::from(Some(key.3));
-        options.allow_danger_zones = match admission.policy {
-            script::native::RiskPolicy::Inherit => script::native::WalkBit::Inherit,
-            script::native::RiskPolicy::Proceed => script::native::WalkBit::Allow,
-            script::native::RiskPolicy::Avoid => script::native::WalkBit::Forbid,
+        // Only a permission is carried: any all-zone grant (the override or a
+        // request) is `Allow`, and the decision re-derives which one it was.
+        options.allow_danger_zones = if admission.grants != ZoneExempt::NONE {
+            script::native::WalkBit::Allow
+        } else {
+            script::native::WalkBit::Inherit
         };
         let exclusions = self.requested_exclusions.clone();
         let (avoid, cross) = exclusions.as_ref().map_or_else(
@@ -8601,7 +8675,6 @@ pub(crate) fn reset_script_nav(
         return false;
     }
     end_route_follow(nav);
-    nav.runtime_gate_logged = false;
     nav.reset_walk_outcome();
     route_inspect::reset_inspect(nav);
     nav.bank_pick.reset();
@@ -8794,6 +8867,7 @@ fn end_route_follow(nav: &mut NavBot) {
     super::script_walk::owe_walk_guard_off(nav);
     nav.end_native_walk(script::native::WalkEnd::Cancelled);
     nav.admission_pending = false;
+    nav.walk_protected_items = None;
     // A finished advisory answer of a live owner still awaits delivery.
     if nav
         .assess_result
@@ -8857,10 +8931,9 @@ mod diagnostic_tests {
         let mut request = ScriptRouteRequest {
             candidate_goals: None,
             admission: crate::admission::Admission::manual(
-                FindOptions::default(),
+                crate::WalkGlobals::default().manual_decision(false),
                 Default::default(),
                 1,
-                crate::WalkGlobals::default(),
             ),
             generation: 1,
             request_id: 1,
@@ -8928,10 +9001,9 @@ mod diagnostic_tests {
         Box::new(ScriptRouteRequest {
             candidate_goals: None,
             admission: crate::admission::Admission::manual(
-                FindOptions::default(),
+                crate::WalkGlobals::default().manual_decision(false),
                 Default::default(),
                 1,
-                crate::WalkGlobals::default(),
             ),
             generation: 1,
             request_id: 1,
@@ -9043,10 +9115,9 @@ mod diagnostic_tests {
         request.candidate_goals = Some(script::native::WalkGoals::new(vec![to]).unwrap());
         request.opts = FindOptions::default();
         request.admission = crate::admission::Admission::manual(
-            request.opts,
+            crate::WalkGlobals::default().manual_decision(request.opts.zones.is_all()),
             Default::default(),
             1,
-            crate::WalkGlobals::default(),
         );
         request.state = Some(Arc::new(WorldState::empty()));
         request
@@ -9225,10 +9296,9 @@ mod diagnostic_tests {
         request.opts.allow_bank_fetch = true;
         request.bank_origin = Origin::Hint;
         request.admission = crate::admission::Admission::manual(
-            request.opts,
+            crate::WalkGlobals::default().manual_decision(request.opts.zones.is_all()),
             Default::default(),
             1,
-            crate::WalkGlobals::default(),
         );
         let mut job = RouteJob::prepare(
             "first-goal-budget-test",
@@ -9337,10 +9407,9 @@ mod diagnostic_tests {
                     ..FindOptions::default()
                 };
                 request.admission = crate::admission::Admission::manual(
-                    request.opts,
+                    crate::WalkGlobals::default().manual_decision(request.opts.zones.is_all()),
                     Default::default(),
                     1,
-                    crate::WalkGlobals::default(),
                 );
                 request
             };
@@ -9955,10 +10024,9 @@ mod diagnostic_tests {
         request.opts.allow_bank_fetch = true;
         request.opts.allow_wilderness = true;
         request.admission = crate::admission::Admission::manual(
-            request.opts,
+            crate::WalkGlobals::default().manual_decision(request.opts.zones.is_all()),
             Default::default(),
             1,
-            crate::WalkGlobals::default(),
         );
         request.state = Some(Arc::new(WorldState::empty()));
         request.bank_origin = origin;
@@ -10879,10 +10947,9 @@ mod diagnostic_tests {
                     request.arrival = ArrivalKind::Area;
                     request.opts = opts;
                     request.admission = crate::admission::Admission::manual(
-                        opts,
+                        crate::WalkGlobals::default().manual_decision(opts.zones.is_all()),
                         Default::default(),
                         1,
-                        crate::WalkGlobals::default(),
                     );
                     request.state = Some(route_state);
                     request.candidate_goals = candidate_goals;
@@ -11045,10 +11112,9 @@ mod diagnostic_tests {
                 ..FindOptions::default()
             };
             request.admission = crate::admission::Admission::manual(
-                request.opts,
+                crate::WalkGlobals::default().manual_decision(request.opts.zones.is_all()),
                 Default::default(),
                 1,
-                crate::WalkGlobals::default(),
             );
             request.state = Some(Arc::new(WorldState {
                 stats: (0..25).map(|skill| (skill, 99)).collect(),
@@ -11864,10 +11930,9 @@ mod route_quest_provider_tests {
             opts: FindOptions::default(),
             state: None,
             admission: crate::admission::Admission::manual(
-                FindOptions::default(),
+                crate::WalkGlobals::default().manual_decision(false),
                 Default::default(),
                 1,
-                crate::WalkGlobals::default(),
             ),
             bank_origin: Origin::Unknown,
             bank: Vec::new(),
@@ -11919,6 +11984,244 @@ mod route_quest_provider_tests {
         assert_eq!(charged.result_bytes - baseline.result_bytes, owned_bytes);
     }
 
+    #[test]
+    fn post_bank_replan_reuses_admitted_route_quest_evidence() {
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let quests = selected.try_quests().expect("prepared quest catalog");
+        let facts = quests.quest("hero").expect("selected Hero's Quest facts");
+        assert!(!facts.colour_authoritative);
+        let gate = QuestGate::Window(api::selected::StageWindow {
+            quest: facts.id.clone(),
+            signal: facts.varp.clone(),
+            values: facts
+                .completion_range_after_login
+                .expect("qualified Hero completion range"),
+        });
+        let observed = stamp(run(), 18, 18);
+        let context = context(Arc::clone(&selected), observed);
+        let mut snapshot = snapshot(
+            &facts.display,
+            nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+            true,
+        );
+        snapshot.seed_tick(18);
+        snapshot.begin_fresh_login_quest_colours();
+        assert!(snapshot.quest_green_since_fresh_login(0));
+        let evidence = captured_route_quests(Some(&context), &snapshot, None, observed)
+            .expect("qualified selected quest-list evidence");
+        assert_eq!(evidence.test(&gate), Truth::True);
+
+        let origin = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        let width = 5;
+        let height = 5;
+        let mut plane = vec![0u32; width * height];
+        for z in 0..height {
+            plane[z * width + 1] |= client::dash3d::CollisionFlag::W_E as u32;
+            plane[z * width + 2] |= client::dash3d::CollisionFlag::W_W as u32;
+        }
+        let mut collision_flags = vec![0u32; 4 * plane.len()];
+        collision_flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = nav_planner::collision::pack_walk(&collision_flags);
+        let collision = nav_planner::collision::WorldCollision {
+            origin,
+            width,
+            height,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let door_at = WorldTile {
+            x: 2,
+            z: 2,
+            level: 0,
+        };
+        let mut graph = nav_planner::transport::TransportGraph::default();
+        graph.at.entry(door_at).or_default().push(0);
+        graph.edges.push(nav_planner::transport::TransportEdge {
+            kind: nav_planner::transport::TransportKind::Door,
+            at: door_at,
+            to: door_at,
+            takeoff: None,
+            player_delta: None,
+            loc_id: 1530,
+            option: 1,
+            ticks: 1,
+            dir: Some(nav_planner::transport::DoorDir::E),
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: Vec::new(),
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: Some(
+                nav_planner::quest_gates::QuestGates::new([gate.clone()])
+                    .expect("valid selected stage gate"),
+            ),
+        });
+        let world = NavWorld::from_parts(collision, graph, Vec::new());
+        let initial_from = WorldTile {
+            x: 0,
+            z: 1,
+            level: 0,
+        };
+        let here = WorldTile {
+            x: 0,
+            z: 3,
+            level: 0,
+        };
+        let destination = WorldTile {
+            x: 4,
+            z: 2,
+            level: 0,
+        };
+        let options = FindOptions::default();
+        let initial_state =
+            WorldState::from_snapshot(&snapshot).with_quest_evidence(evidence.clone());
+        let initial_route = Arc::new(
+            nav_planner::router::find_with(
+                &world.collision,
+                &world.graph,
+                initial_from,
+                destination,
+                options,
+                &initial_state,
+            )
+            .expect("admitted route crosses the stage-window door"),
+        );
+        assert!(
+            nav_planner::router::find_with(
+                &world.collision,
+                &world.graph,
+                here,
+                destination,
+                options,
+                &WorldState::empty(),
+            )
+            .is_err(),
+            "the wall leaves the gated door as the only crossing"
+        );
+
+        struct NoopDriver;
+        impl api::interact::Driver for NoopDriver {
+            fn set_menu(&mut self, _: i32, _: i32, _: i32, _: i32, _: i32) {}
+            fn do_action(&mut self, _: i32) -> bool {
+                false
+            }
+            fn try_move(
+                &mut self,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: bool,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: i32,
+                _: i32,
+            ) -> bool {
+                false
+            }
+            fn local_route(&self) -> Option<(i32, i32)> {
+                None
+            }
+            fn build_base(&self) -> (i32, i32) {
+                (0, 0)
+            }
+            fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
+                None
+            }
+            fn send_packet(&mut self, _: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+                Ok(())
+            }
+            fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
+                false
+            }
+        }
+
+        let make_bot = |retain_evidence: bool| {
+            let route_evidence = retain_evidence.then(|| evidence.clone());
+            NavBot {
+                route_basis: Some(Arc::new(crate::admission::RouteBasis {
+                    _route: RoutePath::legacy(Arc::clone(&initial_route)),
+                    options,
+                    avoid: Arc::from([]),
+                    quest_evidence: route_evidence.clone(),
+                })),
+                route_quest_evidence: route_evidence,
+                bank_fetch: Some(PendingBankFetch::for_test_with_route(
+                    VecDeque::from([BankStep::Walk {
+                        x: here.x,
+                        z: here.z,
+                        level: here.level,
+                    }]),
+                    destination,
+                    options,
+                    Arc::clone(&initial_route),
+                )),
+                ..NavBot::default()
+            }
+        };
+
+        let mut admitted = make_bot(true);
+        let mut admitted_driver = NoopDriver;
+        assert!(!crate::script_runtime::step_bank_fetch_on_bot(
+            &mut admitted_driver,
+            &snapshot,
+            &mut admitted,
+            Some(&world),
+            Some((here.x, here.z, here.level)),
+            false,
+        ));
+        assert!(admitted.bank_fetch.is_none());
+        let resumed = admitted
+            .route_path_for_follow()
+            .expect("post-bank route re-found");
+        assert_eq!(resumed.first_tile(), Some(here));
+        assert!(
+            resumed
+                .legacy_route()
+                .expect("legacy test route")
+                .legs
+                .iter()
+                .any(|leg| matches!(
+                    leg,
+                    nav_planner::router::Leg::Transport { edge }
+                        if edge.loc_id == 1530 && edge.quest_gates.is_some()
+                )),
+            "the resumed path must include the real stage-window door"
+        );
+
+        let mut unproven = make_bot(false);
+        let mut unproven_driver = NoopDriver;
+        assert!(!crate::script_runtime::step_bank_fetch_on_bot(
+            &mut unproven_driver,
+            &snapshot,
+            &mut unproven,
+            Some(&world),
+            Some((here.x, here.z, here.level)),
+            false,
+        ));
+        assert!(
+            unproven.route_path_for_follow().is_none(),
+            "the same post-bank replan must fail closed without pinned evidence"
+        );
+    }
+
     fn compat_bot(selected: Arc<api::game_data::SelectedGameData>, request_id: u64) -> NavBot {
         let target = WorldTile {
             x: 3423,
@@ -11946,13 +12249,9 @@ mod route_quest_provider_tests {
             requested_route: Some((target, 3, false, false, true, ZoneExempt::NONE)),
             requested_exclusions: Some(Arc::new(exclusions)),
             admission: Some(Box::new(crate::admission::Admission::manual(
-                FindOptions {
-                    allow_bank_fetch: true,
-                    ..Default::default()
-                },
+                crate::WalkGlobals::default().manual_decision(false),
                 Default::default(),
                 7,
-                crate::WalkGlobals::default(),
             ))),
             ..Default::default()
         };
@@ -12272,6 +12571,52 @@ mod route_quest_provider_tests {
             assert_eq!(bot.compat_walk_request_id(), Some(16));
             assert!(!bot.compat_walk_handed_over());
         }
+    }
+
+    /// DANGER-SIMPLIFY R2-F2: a machine-owned native walk inside a compat
+    /// walk (Banking.open's stand walk) takes its danger decision from the
+    /// one decision, with the compat walk's own `crossZones` as its request:
+    /// permitted and enforced while the global override is off. The same
+    /// native walk with no compat walk in flight has no permission.
+    #[test]
+    fn a_native_walk_inside_a_compat_walk_counts_its_cross_zones_as_the_request() {
+        let Some(selected) = selected_r289() else {
+            return;
+        };
+        let mut bot = compat_bot(Arc::clone(&selected), 11);
+        let (_, gates) = compat_gates(&selected);
+        fail_compat(
+            &mut bot,
+            script::native::WalkEnd::NeedsStep(Arc::clone(&gates)),
+        );
+        bot.take_compat_walk_handover(WorldTile {
+            x: 3408,
+            z: 3489,
+            level: 0,
+        })
+        .expect("owned no-path handover");
+        // The compat walk's native children (its handover walk, Banking.open's
+        // stand walk) see its frozen policy and exclusions.
+        let (_, compat) = bot
+            .compat_walk_native_policy(run())
+            .expect("compat policy for native children");
+        let compat = compat.expect("compat exclusions");
+        assert_eq!(compat.cross.len(), 1);
+        let navs = Arc::new(Mutex::new(HashMap::from([("alice".to_owned(), bot)])));
+        let request: (&[Arc<str>], &[Arc<str>], _) =
+            (&[], &[], script::native::WalkOptions::default());
+        let (exclusions, options, decision) =
+            native_walk_danger(&navs, "alice", request, None, Some(&compat));
+        assert_eq!(exclusions.cross, compat.cross);
+        assert_eq!(
+            decision,
+            crate::DangerLevel::Never.decide(Default::default(), Default::default(), true)
+        );
+        assert!(decision.permitted && decision.enforce);
+        assert_eq!(options.zones, decision.zones());
+        let (_, alone, alone_decision) = native_walk_danger(&navs, "alice", request, None, None);
+        assert!(!alone_decision.permitted);
+        assert_eq!(alone.zones, ZoneExempt::NONE);
     }
 
     #[test]

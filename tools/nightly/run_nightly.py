@@ -198,13 +198,13 @@ KEEP_DAYS = int(os.environ.get("NIGHTLY_KEEP_DAYS", "14"))
 # Every cell enforces its own scenario deadline inside the frontend; this outer
 # cap only stops a process that never reaches a terminal state.
 CELL_CAP_S = int(os.environ.get("NIGHTLY_CELL_CAP_S", "3600"))
-# Two cells need more than the Windows host's 1200 s outer cap. The proven
-# walls come from the 2026-10-21 night (summary.json in each run folder).
-# jive_kbd reached a verdict at 2543.0 s on Linux and 2529.6 s on Mac TUI.
-# Its scenario deadline is 2700 s. quester_queue passed at 1987.9 s on Linux
-# and at 1022.0 s on Windows TUI. A cap of 3600 s covers each proven wall.
-# It also keeps the runner default for the other platforms.
-CELL_CAPS_DEFAULT_S = {"jive_kbd": 3600, "quester_queue": 3600}
+# Two cells need more than the Windows host's 1200 s outer cap, and a cell's cap
+# must exceed its own scenario deadline, or the runner kills it before it can
+# report PASS or FAIL. jive_kbd: scenario deadline 2700 s, proven wall 2543.0 s
+# (2026-10-21, Linux). quester_queue: QUESTER_QUEUE_DEADLINE_S below plus the
+# live test's 15 s margin (crates/host-play/tests/quester_queue_live.rs).
+QUESTER_QUEUE_DEADLINE_S = 7200  # crates/scenario/src/scenarios/quester.rs QUEUE_DEADLINE
+CELL_CAPS_DEFAULT_S = {"jive_kbd": 3600, "quester_queue": 7500}
 
 
 def parse_cell_caps(text: str, defaults: dict) -> dict:
@@ -338,7 +338,7 @@ CATALOG = Path(os.environ.get("NIGHTLY_CATALOG", str(ROOT / "rs2b0t")))
 NAV_SNAPSHOT = Path(os.environ.get("NIGHTLY_NAV_SNAPSHOT", str(ROOT / "nav-snapshot")))
 NAV_FIXTURE = Path(os.environ.get(
     "NIGHTLY_NAV_FIXTURE",
-    str(ROOT / "fixtures" / "274bot-289-v18.navpack"),
+    str(ROOT / "fixtures" / "274bot-289-v19.navpack"),
 ))
 # The old inspection capture the host-play route-inspect test compares
 # against. The test's built-in default path exists only on merlot, so each
@@ -1616,6 +1616,8 @@ LOCAL_DATA_REQUIRED_OUTPUTS = (
     Path("crates/api/data/game-data/289/quests.json"),
     Path("crates/api/data/game-data/274/gathering.json"),
     Path("crates/api/data/game-data/289/gathering.json"),
+    Path("crates/api/data/game-data/274/bank_npcs.json"),
+    Path("crates/api/data/game-data/289/bank_npcs.json"),
     Path("crates/api/data/game-data/289/prereq_steps.json"),
     Path("crates/api/data/game-data/bank-catalog.json"),
     Path("crates/api/data/game-data/cook-catalog.json"),
@@ -1917,9 +1919,11 @@ def restore_purged_game_data(tree: Path, purged_data_dir: Path | None = None) ->
         seen: set[str] = set()
         for member in members:
             relative = PurePosixPath(member.name)
+            allowed_parent = relative.parts in (("crates",), ("crates", "api"))
             if (relative.is_absolute() or not relative.parts or ".." in relative.parts
                     or "\\" in member.name
-                    or relative.parts[:3] != ("crates", "api", "data")):
+                    or (not allowed_parent and relative.parts[:3] != ("crates", "api", "data"))
+                    or (allowed_parent and not member.isdir())):
                 raise RuntimeError(f"unsafe purged-data archive member: {member.name!r}")
             canonical = relative.as_posix()
             if canonical in seen:
@@ -3106,11 +3110,10 @@ def run_latency_pass(branch: str, binary: Path | None, cells: list[str], bands: 
 
 
 def lane_asset_env(tree: Path | None = None, *, require_generated: bool = True) -> dict:
-    """Return local test inputs, choosing packs from the tested tree's format.
+    """Return local test inputs, choosing assets from the tested tree's format.
 
-    Post-ADR trees use their generated pack for this runner's revision. Legacy
-    trees keep the configured reference fixture. When a generated pack is
-    required, missing outputs use the generator's diagnostic.
+    Post-ADR trees use their generated pack and exact local-data roots. Legacy
+    trees keep the configured reference fixture and do not receive these roots.
     """
     generated_tree = tree is not None and (tree / "tools/local-data/build.py").is_file()
     if generated_tree:
@@ -3134,14 +3137,19 @@ def lane_asset_env(tree: Path | None = None, *, require_generated: bool = True) 
     if INSPECT_BASELINE.is_file():
         env["T5W_INSPECT_CAPTURE_BASELINE"] = str(INSPECT_BASELINE)
     if generated_tree:
-        engine_289 = os.environ.get("NIGHTLY_GAME_DATA_289_ENGINE")
-        content_289 = os.environ.get("NIGHTLY_GAME_DATA_289_CONTENT")
-        if REVISION == "289":
-            engine_289 = engine_289 or str(ENGINE_PRISTINE / "engine")
-            content_289 = content_289 or str(ENGINE_PRISTINE / "content")
-        if engine_289 and content_289:
-            env["ISOLATED_289_ENGINE_DIR"] = str(Path(engine_289).expanduser().resolve())
-            env["ISOLATED_289_CONTENT_DIR"] = str(Path(content_289).expanduser().resolve())
+        inputs = local_data_environment(tree, tree / "target")
+        for revision in ("274", "289"):
+            for kind in ("ENGINE", "CONTENT"):
+                env[f"RS2VM_{kind}_{revision}"] = inputs[f"GAME_DATA_{revision}_{kind}"]
+        env["ISOLATED_289_ENGINE_DIR"] = inputs["GAME_DATA_289_ENGINE"]
+        env["ISOLATED_289_CONTENT_DIR"] = inputs["GAME_DATA_289_CONTENT"]
+        bun = os.environ.get("BUN_EXECUTABLE") or shutil.which("bun")
+        if not bun:
+            raise RuntimeError("missing local-data input RS2VM_BUN: no Bun executable is configured")
+        bun_path = Path(bun).expanduser().resolve()
+        if not bun_path.is_file():
+            raise RuntimeError(f"missing local-data input RS2VM_BUN: {bun_path}")
+        env["RS2VM_BUN"] = str(bun_path)
     return env
 
 
@@ -3689,6 +3697,15 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
             build_ok, build_error = False, f"build {deadline_text('build')} reached; see build.log"
         except (subprocess.CalledProcessError, OSError, RuntimeError) as error:
             build_ok, build_error = False, f"{error}"
+        if build_ok:
+            missing_binaries = [
+                f"{frontend}-play" for frontend in cell_steps
+                if binaries.get(f"{frontend}-play") is None
+            ]
+            if missing_binaries:
+                build_ok = False
+                build_error = ("build did not produce required binary: "
+                               + ", ".join(missing_binaries))
         log(f"{branch}: build {'ok' if build_ok else 'FAILED'}")
     build_wall = round(time.monotonic() - build_started, 1)
 
@@ -3699,11 +3716,9 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         binary = binaries.get(f"{frontend}-play")
         if note_quiet_lock():
             reason_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
-        if binary is None and not reason_unavailable and not reason_not_run:
-            # The build failed or did not run, so there is no binary to run
-            # cells with. Mark the cells NOT_RUN with the build reason and
-            # do not start the engine: the run still writes its summary and
-            # DONE (the latency pass does the same, see run_latency_pass).
+        if (not build_ok or binary is None) and not reason_unavailable and not reason_not_run:
+            # A failed or incomplete build cannot provide a frontend for its cells.
+            # Mark the cells NOT_RUN and do not start the engine.
             build_detail = (build_error or "").strip().lstrip(";").strip()
             reason_not_run = (f"build failed: {build_detail}" if build_detail
                               else "the build did not run; see build.log")
@@ -3725,8 +3740,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
                 else:
                     reason_not_run = f"engine {detail}"
         rows, runnable = cell_rows(frontend, cells, run_dir, cell_base, skips, reason_unavailable, reason_not_run)
-        if runnable:
-            assert binary is not None
+        if runnable and binary is not None:
             rows += run_cells(frontend, binary, runnable, run_dir, work, cell_base,
                               parallel if frontend == "tui" else PANEL_PARALLEL,
                               step_deadline(frontend, step_start), branch)

@@ -3072,6 +3072,10 @@ fn dialogue_stationary_cook_refusal_retries_once_at_fixed_ticks() {
     walking.seed_local_player(super::tests::local_player(player_tile));
     let mut cook_ahead = cook.clone();
     cook_ahead.distance = 4;
+    cook_ahead.network = api::WorldTile {
+        x: player_tile.x + 4,
+        ..player_tile
+    };
     walking.seed_npcs(vec![cook_ahead]);
     walking.seed_chat_lines(vec![game_message(1, "I can't reach that!")]);
     assert!(with_tick(&walking, &mut ledger, 3, |tick| {
@@ -3623,12 +3627,12 @@ fn dialogue_approach_replans_when_npc_moves_then_talks_after_it_settles() {
         level: 0,
     };
     let initial_npc_tile = api::WorldTile {
-        x: 7,
+        x: 10,
         z: 5,
         level: 0,
     };
     let moved_npc_tile = api::WorldTile {
-        x: 8,
+        x: 11,
         z: 5,
         level: 0,
     };
@@ -3637,10 +3641,10 @@ fn dialogue_approach_replans_when_npc_moves_then_talks_after_it_settles() {
     before.seed_npcs(vec![dialogue_npc_at(5, initial_npc_tile)]);
     let mut moved = snapshot();
     moved.seed_local_player(super::tests::local_player(player_tile));
-    moved.seed_npcs(vec![dialogue_npc_at(5, moved_npc_tile)]);
+    moved.seed_npcs(vec![dialogue_npc_at(6, moved_npc_tile)]);
     let mut settled = snapshot();
     settled.seed_local_player(super::tests::local_player(api::WorldTile {
-        x: 7,
+        x: 10,
         z: 5,
         level: 0,
     }));
@@ -3937,7 +3941,14 @@ fn dialogue_approach_timeout_counts_observed_ticks_not_wall_time() {
         z: 5,
         level: 0,
     }));
-    before.seed_npcs(vec![dialogue_npc(5)]);
+    before.seed_npcs(vec![dialogue_npc_at(
+        5,
+        api::WorldTile {
+            x: 10,
+            z: 5,
+            level: 0,
+        },
+    )]);
 
     let mut ledger = None;
     let handle = with_tick(&before, &mut ledger, 1, |tick| {

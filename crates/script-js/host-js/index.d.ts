@@ -975,6 +975,8 @@ export interface GatherSettings {
   useZanarisBank?: boolean;
   /** 1..10000, default 100, only when its card show-if holds */
   baitTarget?: number;
+  /** default true */
+  buyTools?: boolean;
   /** default "" */
   food?: string;
   /** 0..28, default 0 */
@@ -1029,6 +1031,8 @@ export interface GatherStatus {
   xp: number;
   xp_per_hour: number;
   bank: string;
+  bank_seen: string;
+  block_reason: string;
   last_progress: number;
   deaths: number;
   recoveries: number;

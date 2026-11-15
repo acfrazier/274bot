@@ -7334,6 +7334,7 @@ fn lifecycle_followups_unreachable_loot_walk_retries_before_skipping_to_the_next
         crate::native::HostEffect::Interaction(_) => "interaction",
         crate::native::HostEffect::Walk(_) => "walk",
         crate::native::HostEffect::BankPick(_) => "bank pick",
+        crate::native::HostEffect::ServicePick(_) => "service pick",
         crate::native::HostEffect::AssessWalk(_) => "walk assessment",
         crate::native::HostEffect::ServerOrdered(_) => "server ordered",
     };

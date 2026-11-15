@@ -581,6 +581,54 @@ impl<Io> OperatorSession<Io> {
             .and_then(|member| member.detail())
     }
 
+    /// Why `request` did not apply, for a surface's error banner when no
+    /// member completed it: the one member's reason (`not logged in`), or for
+    /// several members the counts and the first bot with its reason
+    /// (`WalkTo: not applied for 3 bots, first: alice (not logged in)`). A
+    /// member's reason is its refusal or failure text, else the words of its
+    /// skip. `None` when no member reported anything, so the surface may say
+    /// its own generic text.
+    pub fn not_applied_reason(&self, request: RequestId, label: &str) -> Option<String> {
+        let report = self.commands.book.report(request)?;
+        let mut reasons: Vec<(Option<crate::selection::ProfileIdentity>, String)> = Vec::new();
+        for member in report.members() {
+            let reason = match member.terminal() {
+                Some(Settlement::Completed(Completion::Done)) | None => continue,
+                Some(Settlement::Completed(Completion::Skipped(skip))) => {
+                    super::scripts::skip_label(*skip).to_owned()
+                }
+                Some(_) => match member.detail() {
+                    Some(detail) => detail.to_owned(),
+                    None => continue,
+                },
+            };
+            let who = match member.subject() {
+                Subject::Profile(identity) => Some(identity),
+                Subject::Application => None,
+            };
+            reasons.push((who, reason));
+        }
+        match reasons.as_slice() {
+            [] => None,
+            [(_, reason)] => Some(reason.clone()),
+            [(who, reason), ..] => {
+                let first =
+                    who.map_or_else(|| "application".to_owned(), |id| self.name_for_identity(id));
+                let first = api::hostlog::cut_chars(&first, 16);
+                Some(
+                    api::hostlog::cut_chars(
+                        &format!(
+                            "{label}: not applied for {} bots, first: {first} ({reason})",
+                            reasons.len()
+                        ),
+                        crate::SUMMARY_MAX,
+                    )
+                    .into_owned(),
+                )
+            }
+        }
+    }
+
     /// Stage the profile write the next SaveProfile / CreateProfile
     /// commits (a profile form's Save).
     pub(crate) fn stage_profile_write(&mut self, write: StagedProfileWrite) {
@@ -2125,12 +2173,43 @@ impl<Io> OperatorSession<Io> {
                 (Settlement::Failed(CommandFailure::Failed(kind)), detail)
             }
         };
-        let _ = self.commands.book.settle(
+        self.settle_brief(
             request,
             Subject::Application,
             terminal.0,
             terminal.1.as_deref(),
         );
+    }
+
+    /// Settle a member with the one short line the command book keeps and
+    /// the front ends show. A detail longer than one line (or with a line
+    /// break) is cut to its first line with the log pointer, and its whole
+    /// text is written to the log once, for the bot it belongs to
+    /// ([`crate::Brief::from_text`]). A detail that already is one short line
+    /// (a walk refusal's published brief) passes through unchanged and logs
+    /// nothing.
+    pub(super) fn settle_brief(
+        &mut self,
+        request: RequestId,
+        subject: Subject,
+        terminal: Settlement<Completion, CommandFailure>,
+        detail: Option<&str>,
+    ) {
+        let line = detail.map(|text| {
+            let brief = crate::Brief::from_text(text);
+            // The bot's name is looked up only for a detail that is logged.
+            let slot = match subject {
+                Subject::Profile(identity) if brief.has_detail() => {
+                    Some(self.name_for_identity(identity))
+                }
+                _ => None,
+            };
+            brief.publish(&crate::LogTarget::command(slot.as_deref()))
+        });
+        let _ = self
+            .commands
+            .book
+            .settle(request, subject, terminal, line.as_deref());
     }
 
     /// Stop's half for a member whose Start still waits for its permit or
@@ -2213,10 +2292,7 @@ impl<Io> OperatorSession<Io> {
         terminal: Settlement<Completion, CommandFailure>,
         detail: Option<&str>,
     ) {
-        let _ = self
-            .commands
-            .book
-            .settle(request, subject, terminal, detail);
+        self.settle_brief(request, subject, terminal, detail);
     }
 
     /// The marks whose profile is gone, as the bulk report's skipped rows.
@@ -2433,12 +2509,7 @@ impl<Io> OperatorSession<Io> {
                 }
                 Err(reason) => {
                     let terminal = Settlement::Failed(CommandFailure::Rejected(rejection(&reason)));
-                    let _ = self.commands.book.settle(
-                        request,
-                        Subject::Application,
-                        terminal,
-                        Some(&reason),
-                    );
+                    self.settle_brief(request, Subject::Application, terminal, Some(&reason));
                 }
             }
             return;
@@ -2554,10 +2625,7 @@ impl<Io> OperatorSession<Io> {
         let subject = Subject::Profile(self.profile_identity_or_synthetic(name));
         // A member already settled by a condition or a slot event keeps
         // its one terminal.
-        let _ = self
-            .commands
-            .book
-            .settle(request, subject, terminal, detail);
+        self.settle_brief(request, subject, terminal, detail);
     }
 
     /// Record the dispatch's mailbox receipts. A member admitted on its
@@ -2708,12 +2776,7 @@ impl<Io> OperatorSession<Io> {
                 }
                 (true, Some((terminal, detail))) => {
                     let owned = self.commands.owned.swap_remove(index);
-                    let _ = self.commands.book.settle(
-                        owned.request,
-                        owned.subject,
-                        terminal,
-                        detail.as_deref(),
-                    );
+                    self.settle_brief(owned.request, owned.subject, terminal, detail.as_deref());
                 }
                 (true, None) => index += 1,
             }
@@ -2738,12 +2801,7 @@ impl<Io> OperatorSession<Io> {
             match settled {
                 Some((terminal, detail)) => {
                     self.commands.app_owned.swap_remove(index);
-                    let _ = self.commands.book.settle(
-                        request,
-                        Subject::Application,
-                        terminal,
-                        detail.as_deref(),
-                    );
+                    self.settle_brief(request, Subject::Application, terminal, detail.as_deref());
                 }
                 None => index += 1,
             }

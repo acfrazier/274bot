@@ -7,7 +7,7 @@ use script::interact::InteractReq;
 use script::native::snapshot_source::TileInput;
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 use common::{ingame_snapshot, post_snapshot_input};
 
 /// A frozen search bound is accepted when the initial walk is started. This
@@ -32,7 +32,8 @@ export default class T extends LoopingBot {{
 }}
 "#
     );
-    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![])
+        .expect("spawn walk-bound test isolate");
     let mut snap = ingame_snapshot();
     snap.here = Some(TileInput {
         x: 3222,
@@ -41,7 +42,7 @@ export default class T extends LoopingBot {{
     });
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    iso.probe("true").unwrap();
+    iso.probe("true").expect("complete first walk-bound tick");
     let ops = iso.drain_interacts();
     // The route ends at the dest.
     snap.tick = 2;
@@ -52,14 +53,14 @@ export default class T extends LoopingBot {{
     });
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
-    iso.probe("true").unwrap();
+    iso.probe("true").expect("complete second walk-bound tick");
     let err = iso
         .probe("__err")
-        .unwrap()
+        .expect("read walk-bound error result")
         .as_str()
         .unwrap_or_default()
         .to_string();
-    let ok = iso.probe("__ok").unwrap();
+    let ok = iso.probe("__ok").expect("read walk-bound success result");
     iso.join();
     (err, ops, ok)
 }
@@ -183,7 +184,8 @@ export default class T extends LoopingBot {{
 }}
 "#
     );
-    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![])
+        .expect("spawn walk-option test isolate");
     let mut snap = ingame_snapshot();
     snap.here = Some(TileInput {
         x: 3222,
@@ -196,18 +198,24 @@ export default class T extends LoopingBot {{
         post_snapshot_input(&iso, &snap);
         iso.on_game_tick(tick);
         // The probe round-trips the isolate: the tick's batch is complete.
-        iso.probe("true").unwrap();
+        iso.probe("true").expect("complete walk-option game tick");
         ops.extend(iso.drain_interacts());
     }
-    let logs: Vec<String> = serde_json::from_value(iso.probe("__logs").unwrap()).unwrap();
+    let logs: Vec<String> =
+        serde_json::from_value(iso.probe("__logs").expect("read walk-option logs"))
+            .expect("decode walk-option logs");
     let err = iso
         .probe("__err")
-        .unwrap()
+        .expect("read walk-option error result")
         .as_str()
         .unwrap_or_default()
         .to_string();
-    let sus = iso.probe("__sus").unwrap().as_i64().unwrap_or(0);
-    let ok = iso.probe("__ok").unwrap();
+    let sus = iso
+        .probe("__sus")
+        .expect("read walk-option suspicion count")
+        .as_i64()
+        .unwrap_or(0);
+    let ok = iso.probe("__ok").expect("read walk-option success result");
     iso.join();
     (ops, logs, err, sus, ok)
 }

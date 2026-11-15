@@ -60,6 +60,8 @@ pub struct KeyNpc {
     pub name: String,
     pub actions: Vec<String>,
     pub tile: Tile,
+    /// The NPC's south-west path-head tile, absent when its size is unknown.
+    pub network: Option<Tile>,
 }
 
 #[derive(Clone, Debug)]
@@ -81,8 +83,9 @@ impl KeyObservation {
     fn from_scene(scene: &Scene) -> Self {
         let empty = Self::empty();
         let latest = scene.latest();
+        let session = scene.since_login();
         Self {
-            here: scene.since_logout().here().map(Tile::from),
+            here: session.here().map(Tile::from),
             ingame: latest.ingame().unwrap_or(empty.ingame),
             hold: latest.hold().unwrap_or(empty.hold),
             ours: latest.ours().unwrap_or(empty.ours),
@@ -118,6 +121,7 @@ impl KeyObservation {
                             name: row.name_or_empty().to_string(),
                             actions: observed::strings(&row.actions),
                             tile: row.tile().into(),
+                            network: row.network_tile().map(Tile::from),
                         })
                         .collect()
                 })
@@ -169,7 +173,10 @@ impl KeyObservation {
                             actions: observed::ops_of(&row.actions),
                             x: row.tile.x,
                             z: row.tile.z,
-                            level: row.tile.level,
+                            level: row.network.map_or(row.tile.level, |network| network.level),
+                            nx: row.network.map_or(0, |network| network.x),
+                            nz: row.network.map_or(0, |network| network.z),
+                            size: i32::from(row.network.is_some()),
                             ..EntityRow::default()
                         })
                         .collect(),
@@ -354,9 +361,13 @@ fn nearest_jailer(obs: &KeyObservation) -> Option<KeyNpc> {
     obs.npcs
         .iter()
         .filter(|npc| npc.name == "Jailer" && npc.actions.iter().any(|action| action == "Attack"))
-        .filter(|npc| live_dist(here, npc.tile) <= JAILER_RADIUS)
-        .min_by_key(|npc| live_dist(here, npc.tile))
-        .cloned()
+        .filter_map(|npc| {
+            npc.network
+                .map(|network| (npc, observed::network_distance(here.into(), network.into())))
+        })
+        .filter(|(_, distance)| *distance <= JAILER_RADIUS)
+        .min_by_key(|(_, distance)| *distance)
+        .map(|(npc, _)| npc.clone())
 }
 
 fn jailer_live(obs: &KeyObservation, index: i32) -> bool {
@@ -897,5 +908,66 @@ impl HuntKind for Key {
 
     fn end(token: u64) {
         KEY_RUNTIMES.with(|m| m.borrow_mut().remove(&token));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn jailer_row(index: i32, x: i32, z: i32, nx: i32, nz: i32, size: i32) -> EntityRow {
+        EntityRow {
+            index,
+            name: Some("Jailer".into()),
+            actions: observed::ops_of(&["Attack".to_string()]),
+            x,
+            z,
+            level: 0,
+            nx,
+            nz,
+            size,
+            ..EntityRow::default()
+        }
+    }
+
+    #[test]
+    fn jailer_network_coords_drive_radius_and_ranking() {
+        on_reset();
+        let here = observed::Tile {
+            x: CORRIDOR.x,
+            z: CORRIDOR.z,
+            level: CORRIDOR.level,
+        };
+        observed::replace(1, true, |post| {
+            post.session(true).here(here).npcs(vec![
+                jailer_row(10, here.x, here.z, 2942, here.z, 1),
+                jailer_row(11, 3000, 9700, 2932, here.z, 1),
+            ]);
+        });
+        let token = dispatch(&json!({ "op": "begin" }))["token"]
+            .as_u64()
+            .unwrap();
+        let attack = dispatch(&json!({
+            "op": "next",
+            "token": token,
+            "key": "taverley-blue",
+            "keyItem": { "id": 1590 },
+        }));
+        assert_eq!(attack["kind"], "npc");
+        assert_eq!(attack["index"], 11);
+
+        observed::replace(2, true, |post| {
+            post.session(true)
+                .here(here)
+                .npcs(vec![jailer_row(12, here.x, here.z, 2932, here.z, 0)]);
+        });
+        assert!(nearest_jailer(&observation()).is_none());
+        observed::replace(3, true, |post| {
+            post.session(true)
+                .npcs(vec![jailer_row(13, here.x, here.z, 2932, here.z, 1)]);
+        });
+        assert!(nearest_jailer(&observation()).is_none());
+        on_reset();
+        observed::on_reset();
     }
 }

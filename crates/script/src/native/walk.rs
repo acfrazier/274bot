@@ -683,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn moving_radius_arrival_uses_network_origin_and_rejects_stale_flood() {
+    fn moving_radius_network_coords_use_the_path_head_and_reject_stale_flood() {
         let logical = WorldTile {
             x: 3200,
             z: 3200,
@@ -726,7 +726,7 @@ mod tests {
         };
         let arrived = |snapshot: &GameSnapshot, reach: &api::query::ReachQueryView, key| {
             let view = SnapshotView::new(Some(snapshot), stamp).with_reach(Some(reach));
-            assert_eq!(view.here().map(|here| here.value), Some(rendered));
+            assert_eq!(view.here().map(|here| here.value), Some(logical));
             Frame {
                 snapshot: view,
                 outcome: HostOutcome::empty(),
@@ -755,6 +755,7 @@ mod tests {
         reach.available = false;
         assert!(!arrived(&snapshot, &reach, key));
     }
+
     #[test]
     fn area_arrival_uses_loaded_standability_without_reaching_the_centre() {
         let here = WorldTile {

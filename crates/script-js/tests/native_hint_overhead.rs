@@ -96,14 +96,16 @@ export default class T extends LoopingBot {{
 }}
 "#
     );
-    LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src, LoadShape::CompatClass, vec![])
+        .expect("spawn native-hint-overhead isolate")
 }
 
 fn tick(iso: &LoadIsolate, bytes: Vec<u8>, tick: u64) -> serde_json::Value {
     iso.post_snapshot(bytes);
     iso.on_game_tick(tick);
     let _ = iso.probe("true");
-    iso.probe("__probe").unwrap()
+    iso.probe("__probe")
+        .expect("read native-hint-overhead probe result")
 }
 
 #[test]

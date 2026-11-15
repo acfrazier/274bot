@@ -1582,6 +1582,9 @@ fn run_cells(
     for cell in &mut cells {
         cell.scenario.settings.nav.engine_speed_ms = None;
     }
+    let global_danger = cells
+        .iter()
+        .any(|cell| cell.scenario.settings.nav.allow_danger_zones);
     if apply_fast_settings {
         scenario::quester::apply_quester_fast_settings(&mut cells[0].scenario, fast_settings);
     }
@@ -1740,10 +1743,10 @@ fn run_cells(
         inventory_violation: None,
     }));
     // Each slot's arm is owned here, not by `try_spawn_slot`'s default: the
-    // fixture's own pre-Start relogs log the scriptless bot out, and the
-    // approved idle-park policy keeps it logged out until an explicit Login.
-    // Building the profiles first lets the frame below post that Login on the
-    // same arm the spawned slot runs with.
+    // fixture's own pre-Start relogs log the bot out; the frame below posts a
+    // real one-shot Login on the arm the spawned slot runs with. An unlatched
+    // slot with auto-login would also reconnect by itself. Building the
+    // profiles first makes that arm available to the frame.
     let mut live_profiles = Vec::with_capacity(entries.len());
     let mut slot_arms = Vec::with_capacity(entries.len());
     for (index, (account, password)) in entries.iter().enumerate() {
@@ -2168,6 +2171,13 @@ fn run_cells(
         },
     )?;
 
+    if global_danger {
+        // The user's global Danger routing setting, as the panel publishes it.
+        play.set_walk_globals(host_play::WalkGlobals {
+            allow_danger_zones: true,
+            ..host_play::WalkGlobals::default()
+        });
+    }
     let start_handle = play.script_start_handle();
     {
         let mut state = shared.lock().map_err(|_| "live state poisoned")?;
@@ -3857,6 +3867,8 @@ pub struct PathCell<'a> {
     pub stage: Option<&'a str>,
     pub loadout: Option<scenario::quester::FixtureLoadout<'a>>,
     pub extra_items: &'a [(&'a str, i32)],
+    /// Skill levels from a Path seed file; they replace the profile level.
+    pub skills: &'a [(&'a str, i32)],
     /// Explicit operator seeds for hint-less stages (released Cook: the stage
     /// varp and value, recorded like every other cheat). See
     /// `scenario::quester::quester_stage_with_seeds`.
@@ -3882,6 +3894,7 @@ pub fn path_cell(spec: PathCell<'_>) -> Result<Cell, String> {
             stage: spec.stage,
             loadout: spec.loadout,
             extra_items: spec.extra_items,
+            skills: spec.skills,
             seed_vars: spec.seed_vars,
             stand: spec.stand,
             before_relog: spec.before_relog,

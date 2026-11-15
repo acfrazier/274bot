@@ -10,13 +10,14 @@ workspace = true
 [dependencies]
 api = { path = "../api", default-features = false }
 nav-planner = { path = "../nav-planner" }
+rs2vm = { path = "../rs2vm" }
 client = { workspace = true }
 thiserror = "2.0.20"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 
 [dev-dependencies]
-api = { path = "../api", default-features = false, features = ["embedded-game-data"] }
+api = { path = "../api", default-features = false, features = ["embedded-game-data", "test-support"] }
 allocation-counter = "0.8.1"
 
 [[bin]]

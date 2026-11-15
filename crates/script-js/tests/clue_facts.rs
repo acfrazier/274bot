@@ -12,7 +12,7 @@ mod local_game_data;
 
 fn facts(revision: ClientRevision) -> api::game_data::TrailFacts {
     api::game_data::for_revision(revision)
-        .unwrap()
+        .expect("load clue facts for the requested revision")
         .trails()
         .expect("landed family")
         .clone()
@@ -529,26 +529,36 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
 }
 
 fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
-    let data = api::game_data::for_revision(revision).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let data = api::game_data::for_revision(revision).expect("load clue probe game data");
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .expect("spawn clue probe isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let value = iso.probe("globalThis.__probe").unwrap();
+    let value = iso
+        .probe("globalThis.__probe")
+        .expect("read clue probe result");
     iso.join();
-    serde_json::from_str(value.as_str().unwrap()).unwrap()
+    serde_json::from_str(value.as_str().expect("clue probe result is a JSON string"))
+        .expect("parse clue probe result")
 }
 
 /// The same probe over a posted pack page instead of an empty pack.
 fn probe_page(src: &str, revision: ClientRevision, page: &[(i32, i32)]) -> serde_json::Value {
-    let data = api::game_data::for_revision(revision).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let data = api::game_data::for_revision(revision).expect("load clue page probe game data");
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .expect("spawn clue page probe isolate");
     post_page(&iso, 1, page);
     iso.on_game_tick(1);
-    let value = iso.probe("globalThis.__probe").unwrap();
+    let value = iso
+        .probe("globalThis.__probe")
+        .expect("read clue page probe result");
     iso.join();
-    serde_json::from_str(value.as_str().unwrap()).unwrap()
+    serde_json::from_str(
+        value
+            .as_str()
+            .expect("clue page probe result is a JSON string"),
+    )
+    .expect("parse clue page probe result")
 }
 
 /// Minimal selected data with valid empty bootstrap families and no trail family.
@@ -1282,9 +1292,10 @@ export async function tick(api) {
 "#;
 
 fn spawn_live_clue_run() -> LoadIsolate {
-    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let data = api::game_data::for_revision(ClientRevision::R274)
+        .expect("load revision 274 live clue data");
     LoadIsolate::spawn_with_game_data(LIVE_CLUE_RUN.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap()
+        .expect("spawn live clue test isolate")
 }
 
 fn live_clue_tick(
@@ -1300,10 +1311,15 @@ fn live_clue_tick(
 }
 
 fn assert_live_yield(iso: &LoadIsolate) {
-    let out = iso.probe("globalThis.__out").unwrap();
+    let out = iso
+        .probe("globalThis.__out")
+        .expect("read live clue output");
     assert_eq!(out["kind"], "done", "{out:?}");
     assert_eq!(out["value"]["kind"], "yield", "{out:?}");
-    assert!(iso.probe("globalThis.__error").unwrap().is_null());
+    assert!(iso
+        .probe("globalThis.__error")
+        .expect("read live clue error output")
+        .is_null());
 }
 
 fn clue_walk(x: i32, z: i32, level: i32) -> InteractReq {

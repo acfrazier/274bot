@@ -76,6 +76,7 @@ fn jailer(index: i32, at: Tile) -> KeyNpc {
         name: "Jailer".into(),
         actions: vec!["Attack".into()],
         tile: at,
+        network: Some(at),
     }
 }
 
@@ -506,6 +507,7 @@ fn jailer_attack_uses_that_rows_index_not_the_name_alone() {
             name: "Jailer".into(),
             actions: vec!["Attack".into()],
             tile: tile(2912, 9690, 0),
+            network: Some(tile(2912, 9690, 0)),
         },
         jailer(7, tile(2904, 9690, 0)),
         KeyNpc {
@@ -513,12 +515,14 @@ fn jailer_attack_uses_that_rows_index_not_the_name_alone() {
             name: "Jailer".into(),
             actions: vec!["Talk-to".into()],
             tile: tile(2901, 9690, 0),
+            network: Some(tile(2901, 9690, 0)),
         },
         KeyNpc {
             index: 4,
             name: "Goblin".into(),
             actions: vec!["Attack".into()],
             tile: tile(2900, 9690, 0),
+            network: Some(tile(2900, 9690, 0)),
         },
     ];
     set_observation(seen);
@@ -551,6 +555,7 @@ fn reused_index_is_death_then_take_not_another_attack() {
         name: "Goblin".into(),
         actions: vec!["Attack".into()],
         tile: tile(2932, 9690, 0),
+        network: Some(tile(2932, 9690, 0)),
     }];
     dead.ground = vec![ground(1591, "Jail key", tile(2931, 9690, 0))];
     set_observation(dead);

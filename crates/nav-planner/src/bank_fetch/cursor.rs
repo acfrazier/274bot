@@ -84,6 +84,7 @@ pub(super) fn reserve_growth<T>(
 #[derive(Debug, Default)]
 pub struct BankFetchCursor {
     phase: Phase,
+    preferences: api::named_banks::BankPreferences,
     index: usize,
     request: usize,
     alternative: usize,
@@ -110,6 +111,12 @@ pub struct BankFetchCursor {
 impl BankFetchCursor {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Apply the same opt-ins as native named-bank selection.
+    pub fn with_preferences(mut self, preferences: api::named_banks::BankPreferences) -> Self {
+        self.preferences = preferences;
+        self
     }
 
     /// Create a cursor whose owned row buffers fit the captured input and
@@ -585,6 +592,10 @@ impl BankFetchCursor {
 
     fn check_access(&mut self, collision: &WorldCollision, stands: &[BankStand], from: WorldTile) {
         if let Some(stand) = stands.get(self.index) {
+            if !super::bank_enabled_by_preferences(stand, self.preferences) {
+                self.index += 1;
+                return;
+            }
             for tile in bank_access_tiles(collision, stand) {
                 let key = (
                     i32::from(stand.tile.level != from.level),

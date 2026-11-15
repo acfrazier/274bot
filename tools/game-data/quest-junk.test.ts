@@ -25,8 +25,7 @@ export const QUEST_JUNK: readonly QuestJunkEntry[] = [
         { id: 2400, name: 'Key', quest: 'Demon Slayer' },
         { id: 666, name: 'Portrait', quest: "The Knight's Sword" },
     ]);
-    // A changed helper body, a row that is not `[id, name]`, and a table of nothing all refuse.
-    await assert.rejects(extractQuestJunk(engine, junk('return items.map(([id, name]) => ({ id: id + 1, name, quest }));')), /helper junk changed/);
+    // A row that is not `[id, name]` and a table of nothing both refuse.
     await assert.rejects(extractQuestJunk(engine, junk('return items.map(([id, name]) => ({ id, name, quest }));').replace("[2399, 'Key']", "['x', 'Key']")), /junk row/);
     await assert.rejects(extractQuestJunk(engine, "export const QUEST_JUNK = [];\n"), /empty/);
 }

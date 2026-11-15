@@ -78,6 +78,7 @@ fn velrak(index: i32, at: Tile, action: &str) -> CellNpc {
         name: "Velrak the explorer".into(),
         actions: vec![action.into()],
         tile: at,
+        network: Some(at),
     }
 }
 
@@ -368,7 +369,7 @@ fn velrak_walk_to_reclick_does_not_yield_false_or_add_flags() {
     );
 
     cell_force_bound_reached(token);
-    let step = call(token, proj.clone(), None);
+    let step = call(token, proj, None);
     assert_eq!(
         kind(&step),
         "walk-to",
@@ -407,8 +408,8 @@ fn posted_npc_distance_zero_does_not_skip_the_walk() {
         target_kind: 0,
         target_index: -1,
         size: 1,
-        nx: 0,
-        nz: 0,
+        nx: 2931,
+        nz: 9680,
         shape: 0,
         angle: 0,
     };
@@ -638,7 +639,7 @@ fn door_approach_failure_does_not_fall_through_to_use_on() {
     assert!(window <= WALK_LEG_MS as i64 && window > 290_000, "{window}");
 
     cell_force_bound_reached(token);
-    let step = call(token, proj.clone(), Some(walk_reply()));
+    let step = call(token, proj, Some(walk_reply()));
     assert_eq!(
         kind(&step),
         "walk-near",
@@ -775,7 +776,7 @@ fn dialog_answer_is_the_posted_slot_and_closed_is_not_the_handoff() {
     let mut seen = obs(Some(cell_here()));
     seen.chat_modal_id = -1;
     set_observation(seen);
-    let step = call(token, proj.clone(), None);
+    let step = call(token, proj, None);
     assert_ne!(
         kind(&step),
         "yield",

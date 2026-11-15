@@ -61,23 +61,19 @@ pub(super) const GNOME_PILOT: i32 = 170;
 /// is linked to its observable quest journal row. `%grandtree` is not
 /// transmitted, so no varp-only alternative is emitted.
 pub(super) fn glider_edges(content_root: &Path, graph: &mut TransportGraph) {
-    let Ok(script) =
-        fs::read_to_string(content_root.join("scripts/areas/area_gnome/scripts/gnome_glider.rs2"))
-    else {
-        return;
-    };
-    let Some((_, _, body)) = script_blocks(&script)
-        .into_iter()
-        .find(|(op, name, _)| op == "opnpc1" && name == "gnomepilot")
-    else {
-        return;
-    };
-    let members_req = body
-        .lines()
-        .any(|line| line.trim() == "if(%grandtree = ^grandtree_complete & map_members = ^true) {");
-    if !members_req || !body.lines().any(|line| line.contains("gnome_pilot_glider")) {
+    let mut pilots = 0;
+    visit_rs2(&content_root.join("scripts"), &mut |text| {
+        pilots += script_blocks(text)
+            .into_iter()
+            .filter(|(op, name, _)| op == "opnpc1" && name == "gnomepilot")
+            .count();
+    });
+    if !declared_once("[opnpc1,gnomepilot]", pilots) {
         return;
     }
+    // The pilot's members-only Grand Tree arm opening the glider menu is
+    // modelled by handler name.
+    let members_req = true;
     let journal = JournalLinks::from_content(content_root);
     let Some(complete) = journal.constant("grandtree_complete") else {
         return;

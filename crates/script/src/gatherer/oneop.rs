@@ -117,13 +117,13 @@ impl OneOpArgs {
         (main || chat || count).then(Self::close_modal)
     }
 
-    pub fn wear(name: Arc<str>, item_id: i32, action: &str) -> Self {
+    pub fn wear(name: Arc<str>, item_id: i32, item_slot: i32, action: &str) -> Self {
         Self {
             request: InteractReq::Held {
                 name: name.to_string(),
                 action: action.into(),
-                slot: None,
-                target_item_id: None,
+                slot: Some(item_slot),
+                target_item_id: Some(item_id),
             },
             kind: OneOpKind::Wear { item_id },
             bound_ticks: 8,

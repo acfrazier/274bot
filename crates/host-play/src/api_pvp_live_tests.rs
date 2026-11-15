@@ -611,6 +611,48 @@ fn js_name(name: &str) -> String {
     serde_json::to_string(name).expect("a name is a JSON string")
 }
 
+/// Attack, Defence, Strength and Hitpoints XP, without treating missing facts as zero.
+fn combat_xp(xp: &[(i32, i32)]) -> [Option<i32>; 4] {
+    let mut totals = [None; 4];
+    for &(index, total) in xp {
+        let Ok(index) = usize::try_from(index) else {
+            continue;
+        };
+        if let Some(slot) = totals.get_mut(index) {
+            *slot = Some(total);
+        }
+    }
+    totals
+}
+
+fn combat_observed(
+    in_combat_seen: bool,
+    before: &[Option<i32>; 4],
+    after: &[Option<i32>; 4],
+) -> bool {
+    in_combat_seen
+        || before
+            .iter()
+            .zip(after)
+            .any(|(before, after)| matches!((before, after), (Some(before), Some(after)) if after > before))
+}
+
+#[test]
+fn pvp_one_hit_kill_with_combat_xp_is_observed() {
+    let before = combat_xp(&[(0, 4470), (1, 4470), (2, 4470), (3, 4470)]);
+    let after = combat_xp(&[(0, 4470), (1, 4470), (2, 4482), (3, 4473)]);
+    assert!(combat_observed(false, &before, &after));
+}
+
+#[test]
+fn pvp_no_combat_state_and_no_combat_xp_is_not_observed() {
+    let before = combat_xp(&[(0, 4470), (1, 4470), (2, 4470), (3, 4470)]);
+    let after = combat_xp(&[(0, 4470), (1, 4470), (2, 4470), (3, 4470), (4, 100)]);
+    assert!(!combat_observed(false, &before, &after));
+    assert!(!combat_observed(false, &[None; 4], &after));
+    assert!(combat_observed(true, &before, &after));
+}
+
 /// The fight with a player that the opt-in authorises: Attack in the
 /// Wilderness, killed, with the source the report names.
 fn opt_in_cell(label: &str, uids: [i32; 2], global: bool, source: &str) {
@@ -618,6 +660,7 @@ fn opt_in_cell(label: &str, uids: [i32; 2], global: bool, source: &str) {
     let victim = pair.display_name(1);
     pair.load(0);
     let pvp = if global { "" } else { "pvp: true, " };
+    let before_xp = combat_xp(&pair.observed[0].lock().expect("observed lock").xp);
     pair.arm(
         0,
         &format!(
@@ -637,6 +680,7 @@ fn opt_in_cell(label: &str, uids: [i32; 2], global: bool, source: &str) {
     });
     let phases = pair.phases(0);
     let after = (pair.snapshot(0), pair.snapshot(1));
+    let after_xp = combat_xp(&after.0.xp);
     pair.receipt(
         &format!("api-pvp-{label}-receipt.json"),
         json!({
@@ -650,6 +694,8 @@ fn opt_in_cell(label: &str, uids: [i32; 2], global: bool, source: &str) {
             "victim_row_had_attack_op": attack_op_seen,
             "victim_row_had_fight_op": fight_op_seen,
             "attacker_in_combat_seen": in_combat_seen,
+            "attacker_combat_xp_before": before_xp,
+            "attacker_combat_xp_after": after_xp,
             "attacker": after.0,
             "victim_after": after.1,
         }),
@@ -666,7 +712,10 @@ fn opt_in_cell(label: &str, uids: [i32; 2], global: bool, source: &str) {
         attack_op_seen && !fight_op_seen,
         "the Wilderness gives the row the Attack op (attack {attack_op_seen}, fight {fight_op_seen})"
     );
-    assert!(in_combat_seen, "the attacker was never in combat");
+    assert!(
+        combat_observed(in_combat_seen, &before_xp, &after_xp),
+        "neither attacker combat state nor combat XP gain was observed"
+    );
 }
 
 #[test]

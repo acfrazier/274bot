@@ -83,6 +83,7 @@ struct Runtime {
     condition: Option<api::condition::BotCondition>,
     poison_unknown_pulse: u8,
     cure_poison: crate::survival::CurePoison,
+    protected_items: Option<Arc<[crate::combat::FoodReserve]>>,
     wilderness: Option<TestWilderness>,
 }
 impl Runtime {
@@ -112,6 +113,7 @@ impl Runtime {
         let mut actions = NativeActions { _private: () };
         let mut cx = ActionContext {
             stage_cross: None,
+            protected_items: self.protected_items.as_ref().map(Arc::clone),
             walk_prereq: Default::default(),
             condition: self.condition,
             poison_unknown_pulse: self.poison_unknown_pulse,
@@ -133,6 +135,7 @@ impl Runtime {
             eligible: true,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
         };
         f(&mut actions, &mut cx)
     }
@@ -223,6 +226,7 @@ impl Harness {
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
+            protected_items: None,
             wilderness: scene.wilderness.clone(),
         };
         let (machine, lease) =
@@ -1399,7 +1403,7 @@ fn case27_recovery_food_and_drink_share_a_ready_plan() {
     }
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
-    scene.stat(3, 25, 40);
+    scene.stat(3, 18, 40);
     scene.stat(5, 0, 43);
     scene.face_us();
     scene.inventory.push(scene.held("lobster", 0));
@@ -1552,7 +1556,7 @@ fn case43_capped_recovery_gates_the_drink_strictly() {
     if !api::test_support::game_data_available() {
         return;
     }
-    for (hp, max, drink) in [(20, 30, true), (16, 30, false), (35, 40, true)] {
+    for (hp, max, drink) in [(18, 30, true), (16, 30, false), (35, 40, true)] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
         scene.stat(3, hp, max);
@@ -1579,6 +1583,31 @@ fn case43_capped_recovery_gates_the_drink_strictly() {
         if !drink {
             assert_eq!(harness.machine.input_lock(), None);
         }
+    }
+
+    // 20/30 and 19/30 against the warlord (danger 9, critical floor 10): 20 is
+    // above the eat line (19), and 19 is in the caution tier where the 12-point
+    // lobster does not fit the 11 missing points. Neither is a recovery bite
+    // (it would overheal), so nothing is eaten or drunk: a recovery bite
+    // follows the shared tier rule like every other eater.
+    for hp in [20, 19] {
+        let mut scene = Scene::new("khazard_warlord");
+        let mut harness = fight(&mut scene);
+        scene.stat(3, hp, 30);
+        scene.stat(5, 0, 43);
+        scene.face_us();
+        scene.inventory.push(scene.held("lobster", 0));
+        scene.inventory.push(scene.held("4doseprayerrestore", 1));
+        scene.refresh();
+        let plan = harness.pending_batch(&scene, 3);
+        assert!(
+            !plan.effects.iter().flatten().any(|row| matches!(
+                row,
+                HostEffect::Interaction(InteractReq::Held { action, .. })
+                    if action == "Eat" || action == "Drink"
+            )),
+            "an overhealing lobster is no recovery bite at {hp}/30"
+        );
     }
 
     let mut scene = Scene::new("khazard_warlord");
@@ -1623,6 +1652,57 @@ fn case3_food_only_line_and_real_heal_choose_largest_fitting_food() {
             assert_len(&plan, 0);
         }
     }
+}
+
+#[test]
+fn path_food_reservation_never_eats_bread_and_uses_lobster_instead() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+
+    let mut reserved_only = Scene::new("khazard_warlord");
+    let bread = reserved_only.held("bread", 0);
+    let bread_id = bread.def.id;
+    let mut harness = fight(&mut reserved_only);
+    harness.runtime.protected_items = Some(Arc::from([crate::combat::FoodReserve {
+        id: bread_id,
+        qty: 1,
+    }]));
+    reserved_only.stat(3, 12, 40);
+    reserved_only.inventory.push(bread);
+    reserved_only.refresh();
+    let plan = harness.pending_batch(&reserved_only, 3);
+    assert!(
+        plan.effects.iter().flatten().all(|effect| !matches!(
+            effect,
+            HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Eat"
+        )),
+        "the only food is reserved for the Path"
+    );
+
+    let mut mixed = Scene::new("khazard_warlord");
+    let bread = mixed.held("bread", 0);
+    let bread_id = bread.def.id;
+    let lobster = mixed.held("lobster", 1);
+    let mut harness = fight(&mut mixed);
+    harness.runtime.protected_items = Some(Arc::from([crate::combat::FoodReserve {
+        id: bread_id,
+        qty: 1,
+    }]));
+    mixed.face_us();
+    mixed.stat(3, 9, 40);
+    mixed.inventory.extend([bread, lobster]);
+    mixed.refresh();
+    let plan = harness.pending_batch(&mixed, 3);
+    assert!(matches!(
+        plan.get(0),
+        Some(HostEffect::Interaction(InteractReq::Held {
+            name,
+            action,
+            slot: Some(1),
+            ..
+        })) if name == "Lobster" && action == "Eat"
+    ));
 }
 
 #[test]
@@ -2094,7 +2174,9 @@ fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
     if !api::test_support::game_data_available() {
         return;
     }
-    for hp in [9, 18, 25] {
+    // 19/40 is the eat line against the warlord (danger 9): a bite is due and
+    // the lobster fits. 25/40 is above it: no bite, so nothing carries the drink.
+    for hp in [9, 18, 19] {
         let mut scene = Scene::new("khazard_warlord");
         let mut harness = fight(&mut scene);
         scene.stat(3, hp, 40);
@@ -2115,6 +2197,15 @@ fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
             held_row(&plan, 1, "Drink");
         }
     }
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    scene.stat(3, 25, 40);
+    scene.stat(5, 0, 43);
+    scene.face_us();
+    scene.inventory.push(scene.held("lobster", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
+    scene.refresh();
+    assert_len(&harness.pending_batch(&scene, 3), 0);
     let mut scene = Scene::new("khazard_warlord");
     let mut harness = fight(&mut scene);
     scene.stat(3, 25, 40);
@@ -2580,6 +2671,7 @@ fn case40_retreat_waits_through_drink_lock_and_observed_arrival() {
         assert!(harness.pending(&scene, tick).is_none());
     }
     scene.local.player.actor.tile = goal;
+    scene.local.player.network = goal;
     scene.refresh();
     let report = harness.ready(&scene, 20);
     assert_eq!(report.end, CombatEnd::Aborted(AbortReason::Retreated));
@@ -3793,7 +3885,7 @@ fn case53_script_refused_recovery_food_never_enters_a_drink_lock() {
     }
     let mut scene = Scene::new("khazard_warlord");
     scene.face_us();
-    scene.stat(3, 25, 40);
+    scene.stat(3, 18, 40);
     scene.stat(5, 0, 43);
     scene.inventory.push(scene.held("lobster", 0));
     scene.inventory.push(scene.held("1doseprayerrestore", 1));
@@ -3880,7 +3972,7 @@ fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
 
     let mut scene = Scene::new("khazard_warlord");
     scene.face_us();
-    scene.stat(3, 25, 40);
+    scene.stat(3, 16, 40);
     scene.stat(5, 0, 43);
     let mut lobster = scene.held("lobster", 0);
     lobster.count = 2;
@@ -3893,17 +3985,18 @@ fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
     held_row(&emitted, 0, "Eat");
     attack_row(&emitted, 1);
     assert_eq!(spilled.machine.eat_ready(), 3);
-    // One hit of nine after the spilled eat leaves HP at 28. Keep the pack
-    // baseline stale through E+1, then expose its decrease at E+2.
+    // From 16, the heal of 12 and one hit of nine after the spilled eat leave
+    // HP at 19. Keep the pack baseline stale through E+1, then expose its
+    // decrease at E+2.
     scene.install();
-    scene.stat(3, 28, 40);
+    scene.stat(3, 19, 40);
     scene.refresh();
     assert_len(&spilled.pending_batch(&scene, 2), 0);
     scene.inventory[0].count = 1;
     scene.refresh();
     assert_len(&spilled.pending_batch(&scene, 3), 0);
     assert_eq!(spilled.machine.eat_ready(), 5);
-    scene.stat(3, 28, 40);
+    scene.stat(3, 19, 40);
     scene.refresh();
     let before_proven = spilled.pending_batch(&scene, 4);
     assert_len(&before_proven, 2);
@@ -3911,6 +4004,118 @@ fn case54_readiness_covers_first_poll_handoff_gap_and_spilled_eat() {
     attack_row(&before_proven, 1);
     assert_eq!(spilled.machine.eat_ready(), 5);
     assert_eq!(spilled.machine.input_lock(), None);
+}
+
+/// The two tiers through the combat machine. A warlord (danger 9) on a
+/// 20-point account: critical at 10 (`danger + 1`), caution up to 19
+/// (`2 * danger + 1`). In caution a lobster (12) that would overheal is not
+/// eaten; in the critical tier it is.
+#[test]
+fn the_combat_machine_eats_an_overhealing_bite_only_in_the_critical_tier() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (hp, eats) in [(15, false), (11, false), (10, true), (3, true)] {
+        let mut scene = Scene::new("khazard_warlord");
+        let mut own = fight(&mut scene);
+        scene.face_us();
+        scene.stat(3, hp, 20);
+        let mut lobster = scene.held("lobster", 0);
+        lobster.count = 2;
+        scene.inventory.push(lobster);
+        scene.refresh();
+        let batch = own.pending_batch(&scene, 3);
+        if eats {
+            assert_len(&batch, 2);
+            held_row(&batch, 0, "Eat");
+        } else {
+            assert!(
+                !own.machine.pending_row(RowKind::Eat),
+                "{hp}/20 is caution and no lobster fits"
+            );
+        }
+    }
+}
+
+/// A caution-tier bite settles on its count drop only once the heal shows (the
+/// stale-HP rule): Hitpoints rising is the heal, falling is a hit that lands
+/// first, and the food's own delay after the bite ran bounds the wait
+/// (`consume.rs2:122-127`). The bite is emitted in tick 3; the count drop is
+/// first seen in tick 4. 15/40 against the warlord (danger 9, critical floor
+/// 10) is the caution tier, where a lobster fits.
+#[test]
+fn a_bite_settles_only_when_its_heal_shows_after_the_count_drop() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (name, hp_after, settles_at) in [
+        ("heal observed", 27, 4),
+        ("hit first", 11, 4),
+        ("heal not observed", 15, 7),
+    ] {
+        let mut scene = Scene::new("khazard_warlord");
+        let mut own = fight(&mut scene);
+        scene.face_us();
+        scene.stat(3, 15, 40);
+        let mut lobster = scene.held("lobster", 0);
+        lobster.count = 2;
+        scene.inventory.push(lobster);
+        scene.refresh();
+        let eat = own.pending_batch(&scene, 3);
+        held_row(&eat, 0, "Eat");
+        scene.install();
+        scene.inventory[0].count = 1;
+        scene.stat(3, hp_after, 40);
+        scene.refresh();
+        for tick in 4..settles_at {
+            own.pending_batch(&scene, tick);
+            assert!(
+                own.machine.pending_row(RowKind::Eat),
+                "{name}: the heal is unseen at tick {tick}"
+            );
+            assert_eq!(own.machine.counters.food, 0, "{name}: tick {tick}");
+        }
+        own.pending_batch(&scene, settles_at);
+        assert_eq!(
+            own.machine.counters.food, 1,
+            "{name}: settled at tick {settles_at}"
+        );
+    }
+}
+
+/// The critical tier never waits for the last heal: 9/40 against the warlord is
+/// critical (floor 10). The bite sent in tick 3 ran (its count dropped in tick
+/// 4) and Hitpoints still read 9. The old bite ends as `no-heal-seen` and the
+/// next one is planned as soon as the next-food clock allows it, in tick 6,
+/// where the caution-tier twin above waits for tick 7.
+#[test]
+fn a_critical_bite_does_not_wait_for_the_last_heal() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("khazard_warlord");
+    let mut own = fight(&mut scene);
+    scene.face_us();
+    scene.stat(3, 9, 40);
+    let mut lobster = scene.held("lobster", 0);
+    lobster.count = 2;
+    scene.inventory.push(lobster);
+    scene.refresh();
+    let eat = own.pending_batch(&scene, 3);
+    held_row(&eat, 0, "Eat");
+    scene.install();
+    scene.inventory[0].count = 1;
+    scene.refresh();
+    for tick in 4..6 {
+        own.pending_batch(&scene, tick);
+        assert!(
+            own.machine.pending_row(RowKind::Eat),
+            "the next-food clock holds the old bite open at tick {tick}"
+        );
+    }
+    let next = own.pending_batch(&scene, 6);
+    held_row(&next, 0, "Eat");
+    assert_eq!(own.machine.counters.food, 1, "the old bite ended");
 }
 
 #[test]
@@ -3988,14 +4193,15 @@ fn leash_fight(scene: &mut Scene, budget_ticks: u16) -> Harness {
 }
 
 #[test]
-fn stand_leash_loss_walks_off_the_server_chase_before_target_gone() {
+fn stand_leash_loss_uses_npc_network_coords_to_cancel_the_server_chase() {
     if !api::test_support::game_data_available() {
         return;
     }
     let mut scene = Scene::new("imp");
     let stand = scene.local.player.actor.tile;
     let mut harness = leash_fight(&mut scene, 50);
-    scene.npcs[0].tile = tile(stand.x + 13, stand.z);
+    scene.npcs[0].tile = tile(stand.x + 1, stand.z);
+    scene.npcs[0].network = tile(stand.x + 13, stand.z);
     scene.npcs[0].distance = 13;
     scene.refresh();
 
@@ -4030,7 +4236,8 @@ fn leash_cancellation_grace_kill_beats_the_exact_budget_boundary() {
     let mut scene = Scene::new("imp");
     let stand = scene.local.player.actor.tile;
     let mut harness = leash_fight(&mut scene, 4);
-    scene.npcs[0].tile = tile(stand.x + 13, stand.z);
+    scene.npcs[0].tile = tile(stand.x + 1, stand.z);
+    scene.npcs[0].network = tile(stand.x + 13, stand.z);
     scene.npcs[0].distance = 13;
     scene.refresh();
     assert!(matches!(
@@ -4072,6 +4279,7 @@ fn quester_combat_approach_replans_after_no_path() {
         Some("first route failed"),
     );
     scene.local.player.actor.tile = tile(here.x + 1, here.z);
+    scene.local.player.network = tile(here.x + 1, here.z);
     scene.face_us();
     scene.refresh();
     scene.snapshot.seed_hitmarks(HitmarksView {
@@ -4469,7 +4677,8 @@ fn stand_is_reached_before_engagement_even_when_a_target_is_already_in_radius() 
 }
 
 #[test]
-fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
+fn melee_pick_uses_npc_network_coords_for_footprints_and_never_takes_a_target_behind_a_closed_pen()
+{
     if !api::test_support::game_data_available() {
         return;
     }
@@ -4479,13 +4688,14 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
     let mut scene = Scene::new("cow");
     let here = scene.local.player.actor.tile;
     let penned = tile(here.x + 3, here.z);
-    scene.npcs[0].tile = penned;
+    scene.npcs[0].tile = tile(here.x, here.z + 6);
     scene.npcs[0].network = penned;
+    scene.npcs[0].size = 0;
     scene.npcs[0].distance = 3;
     let mut open = scene.npcs[0].clone();
     open.index = 8;
-    open.tile = tile(here.x, here.z + 6);
-    open.network = open.tile;
+    open.tile = penned;
+    open.network = tile(here.x, here.z + 6);
     open.distance = 6;
     scene.npcs.push(open);
     scene.refresh();
@@ -4504,8 +4714,9 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
 
     // With only the penned cow present, nothing is picked at all.
     let mut scene = Scene::new("cow");
-    scene.npcs[0].tile = penned;
+    scene.npcs[0].tile = tile(here.x, here.z + 6);
     scene.npcs[0].network = penned;
+    scene.npcs[0].size = 0;
     scene.npcs[0].distance = 3;
     scene.refresh();
     let reach = flood_view(tile(here.x - 10, here.z - 10), 32, &pen_flags(penned), here);
@@ -4515,6 +4726,181 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
         harness.pending(&scene, 1).is_none(),
         "no attack and no walk: the player is at the stand and the only cow is penned"
     );
+}
+
+#[test]
+fn npc_target_selection_uses_network_coords_for_search_bounds_and_radius() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("imp");
+    let here = scene.local.player.network;
+    let rendered = tile(here.x + 1, here.z);
+    scene.npcs[0].tile = rendered;
+    scene.npcs[0].network = tile(here.x + 4, here.z);
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.engage_radius = 1;
+    request.search_bounds = Some(Arc::from([api::gather_methods::SceneRegionInput {
+        min_x: rendered.x,
+        min_z: rendered.z,
+        max_x: rendered.x,
+        max_z: rendered.z,
+        level: rendered.level,
+    }]));
+    let mut harness = Harness::new(&scene, request);
+    let effect = harness.pending(&scene, 1);
+    assert_eq!(harness.machine.engaged(), None);
+    assert!(
+        !matches!(
+            effect,
+            Some(HostEffect::Interaction(InteractReq::Npc { action, .. })) if action == "Attack"
+        ),
+        "a rendered tile in bounds cannot select an NPC whose network tile is out of bounds"
+    );
+}
+
+#[test]
+fn attacker_npc_search_bounds_use_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("imp");
+    let rendered = scene.npcs[0].tile;
+    scene.npcs[0].network = tile(rendered.x + 4, rendered.z);
+    scene.face_us();
+    scene.refresh();
+    let mut request = scene.request();
+    request.target = Target::Attacker {
+        npcs: true,
+        players: false,
+    };
+    request.search_bounds = Some(Arc::from([api::gather_methods::SceneRegionInput {
+        min_x: rendered.x,
+        min_z: rendered.z,
+        max_x: rendered.x,
+        max_z: rendered.z,
+        level: rendered.level,
+    }]));
+    let mut harness = Harness::new(&scene, request);
+    let effect = harness.pending(&scene, 1);
+    assert_eq!(harness.machine.engaged(), None);
+    assert!(
+        !matches!(
+            effect,
+            Some(HostEffect::Interaction(InteractReq::Npc { action, .. })) if action == "Attack"
+        ),
+        "an attacker whose rendered tile is in bounds but network tile is not must not be picked"
+    );
+}
+
+fn incoming_projectile(
+    source: api::WorldTile,
+    local_index: usize,
+) -> api::snapshot::ProjectileView {
+    api::snapshot::ProjectileView {
+        spotanim: 9,
+        level: source.level,
+        src: source,
+        target: Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: local_index,
+        }),
+        t1: 41,
+        t2: 51,
+    }
+}
+
+fn projectile_has_threat_event(scene: &Scene, actor: ActorRef) -> bool {
+    let mut harness = Harness::new(scene, scene.request());
+    harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| {
+        let frame = Frame::borrow(cx.snapshot()).unwrap();
+        let mut threats = ThreatSet::default();
+        threats.observe(&frame, &scene.tables, 1);
+        let has_event = threats
+            .iter(1)
+            .any(|threat| threat.actor == actor && threat.has_event());
+        has_event
+    })
+}
+
+#[test]
+fn incoming_projectile_attribution_uses_npc_and_player_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let npc_actor = ActorRef {
+        kind: ActorKind::Npc,
+        index: 7,
+    };
+    let mut npc_scene = Scene::new("imp");
+    let source = npc_scene.npcs[0].tile;
+    npc_scene.face_us();
+    npc_scene.npcs[0].tile = source;
+    npc_scene.npcs[0].network = tile(source.x + 5, source.z);
+    npc_scene.npcs[0].animation = -1;
+    npc_scene.npcs[0].spot_animation = -1;
+    npc_scene.refresh();
+    npc_scene
+        .snapshot
+        .seed_projectiles(vec![incoming_projectile(
+            source,
+            npc_scene.local.player.index,
+        )]);
+    assert!(
+        !projectile_has_threat_event(&npc_scene, npc_actor),
+        "a rendered-tile match must not attribute a projectile to an NPC on another network tile"
+    );
+
+    npc_scene.npcs[0].tile = tile(source.x + 5, source.z);
+    npc_scene.npcs[0].network = source;
+    npc_scene.refresh();
+    npc_scene
+        .snapshot
+        .seed_projectiles(vec![incoming_projectile(
+            source,
+            npc_scene.local.player.index,
+        )]);
+    assert!(projectile_has_threat_event(&npc_scene, npc_actor));
+
+    let player_actor = ActorRef {
+        kind: ActorKind::Player,
+        index: 8,
+    };
+    let mut player_scene = Scene::new("imp");
+    let source = player_scene.local.player.network;
+    let mut remote = pvp_tests::player(8, "alice", source, &[Some("Attack")], 60);
+    remote.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Player,
+        index: player_scene.local.player.index,
+    });
+    remote.actor.animation = -1;
+    remote.actor.spot_animation = -1;
+    remote.network = tile(source.x + 5, source.z);
+    player_scene.players.push(remote);
+    player_scene.refresh();
+    player_scene
+        .snapshot
+        .seed_projectiles(vec![incoming_projectile(
+            source,
+            player_scene.local.player.index,
+        )]);
+    assert!(
+        !projectile_has_threat_event(&player_scene, player_actor),
+        "a rendered-tile match must not attribute a projectile to a player on another network tile"
+    );
+
+    player_scene.players[0].actor.tile = tile(source.x + 5, source.z);
+    player_scene.players[0].network = source;
+    player_scene.refresh();
+    player_scene
+        .snapshot
+        .seed_projectiles(vec![incoming_projectile(
+            source,
+            player_scene.local.player.index,
+        )]);
+    assert!(projectile_has_threat_event(&player_scene, player_actor));
 }
 
 #[test]
@@ -4670,6 +5056,7 @@ fn user_input_ends_combat_leash_walk_without_retarget_or_rewalk() {
     let mut harness = leash_fight(&mut scene, 50);
     scene.npcs[0].tile = tile(stand.x + 13, stand.z);
     scene.npcs[0].distance = 13;
+    scene.npcs[0].network = scene.npcs[0].tile;
     scene.refresh();
 
     let walk_tick = (3..=5).find(|tick| match harness.pending(&scene, *tick) {

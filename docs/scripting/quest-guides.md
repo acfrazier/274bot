@@ -25,7 +25,7 @@ A guide is one JSON file with schema 3. It names the quest, the checks the Quest
 
 - `roles[]`: `role` (`null` for solo), `progress_binding`, `progress`, an optional owned `progress_reader` step (required for `Miniquest`; invoked initially and after every advancing step), guarded `prelude[]`, and `sequences[]`. `progress` declares quest colours, journal stage rules, flags, and monotonicity. Keep the prelude short.
 - `sequences[]`: `stage`, `required`, `terminal`, `recovery_entry`, optional `cross` declarations, optional `order` (`"authored"` default, `"nearest"`, or `"ordered"`), and `steps[]`.
-- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, and `x:*`). Default kinds compile as `false` when it is omitted.
+- `steps[]`: `id`, `kind`, `version`, `args`, `skip_if`, and `settle` are required. `comment` is optional. `advances` is required for Explicit handler kinds (`talk`, `interact`, `use_on`, `make`, `combat`, `gather`, `thieve`, `answer_count`, `if_button`, and `x:*`). Default kinds compile as `false` when it is omitted.
 
 ### Retry limits
 
@@ -36,6 +36,23 @@ The runner counts failed begins, soft poll failures, and settle timeouts. It als
 Hard poll failures (`Blocked`, `CombatInterrupted`, or `NeedsEvidence`) and user input still stop the guide at once. User input does not spend an attempt. If the per-step limit is spent, the runner reports its named stop. Without the pair, the existing five-failure park limit applies.
 
 After a settle timeout, an advancing step rereads progress before it retries.
+
+Optional `failure_signal` is a predicate document. Use it only with `max_attempts`
+and `stop`. It names evidence that an attempt failed without changing anything
+the watchdog tracks, such as a `message` fact on the content's failure text.
+
+The runner checks chat since the step began. It checks when a settle timeout
+closes an attempt that ran to its end and sent its operation. A timeout with
+the signal counts as watchdog progress, so only `max_attempts` bounds those
+retries.
+
+A timeout without the signal still counts toward the watchdog's
+eight-observation park. So does a timeout from a step that never ran to its end.
+Cite the content line that prints the signal in the step `comment`.
+
+Example: Dwarf Cannon's railing repair uses
+`{"Fact":{"kind":"message","version":1,"args":{"any":["but fail and cut yourself trying."]}}}`
+(`railings.rs2:78-91`).
 
 `skip_if` and `settle` use externally tagged predicate documents: `{"All":[...]}`, `{"Any":[...]}`, `{"Not":...}`, and `{"Fact":{"kind":"...","version":1,"args":{...}}}`. Keep this envelope as written.
 
@@ -55,10 +72,11 @@ prohibition. An omitted per-walk field uses the global, script, and header
 grants.
 These switches do not change the guide's explicitly authored quest conversations.
 
-## Required danger zones
+## Danger zones a guide crosses
 
-Declare each unavoidable danger zone where the guide must enter or cross it.
-A sequence's `cross` grants its zones to every route in that stage.
+Declare each danger zone where the guide must enter or cross it.
+A declaration is the guide's request to cross danger zones on the walks it covers.
+A sequence's `cross` covers every route in that stage.
 The sequence field uses stable navigation zone ids, with a `name` and `reason` for each zone.
 
 ```json
@@ -70,33 +88,37 @@ The sequence field uses stable navigation zone ids, with a `name` and `reason` f
 ```
 
 Walk and combat steps can also declare an `args.cross` array of stable zone ids.
-Those grants apply only to that step's routes, including a combat step's first approach.
-A prelude step keeps its own grants.
-Each route accepts the union of its step and current stage declarations, without duplicates.
+Those requests apply only to that step's routes, including a combat step's first approach.
+A prelude step keeps its own requests.
+Each route is covered by the union of its step and current stage declarations, without duplicates.
+A guide can declare any number of zones.
 
-The compiler rejects unknown ids and a route whose combined set exceeds eight zones.
+The compiler rejects unknown ids.
 Stage declarations also require unique ids and nonempty names and reasons.
 A navigation pack must be available when a guide declares zones.
 
 A Quester walk step cannot use `args.allow_danger_zones`. The compiler rejects
-that field. Declare stage grants in the sequence's `cross` array. Use
-`args.cross` only for a step-scoped grant.
+that field. Declare stage requests in the sequence's `cross` array. Use
+`args.cross` only for a step-scoped request.
 
 Panel and TUI list stage and step declarations before Start, with their scopes.
 The next stage does not retain the previous stage's declarations.
-Other zones remain avoided, even when the global danger setting is on.
 
-An empty `cross` set on an active Quester stage is still a scope. It grants no
-danger zones. A global setting or an old saved Quester card value does not
-change that rule.
+A walk may cross danger zones if Danger routing is `Always`, or if a stage or
+step `cross` requests that crossing. These are the only permission sources.
 
-A route whose only path crosses an undeclared danger zone is refused. Unscoped
-walks outside a Quester stage are unchanged.
+With `Always`, every Quester walk may cross, declared or not. An old saved
+Quester card value does not change it. Without `Always`, a walk with no
+declaration avoids danger zones. If every route crosses one, the walk is refused.
 
-The food guard is armed for the whole walk when a route uses a declared
-crossing. Protection runs only where a step requests it. A declaration does not
-add a survivability check to a fully declared route; its existing admission
-behavior is unchanged.
+A declaration permits a walk to cross any danger zone, not just the named
+ones. Every permitted danger crossing arms the food guard for the whole walk.
+Protection runs only where a step requests it.
+
+With the global setting on, the walk goes and the survival model's bound is
+informational. With the setting off and a declaration, survival admission
+checks the route. It refuses a chance of death above 1%, whichever zones the
+route crosses.
 
 ## Steps
 
@@ -120,6 +142,34 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `partner` | Default | One side of a paired Shield of Arrav / Hero's Quest handoff (a guide-authoring reference; no bundled Beta 2 guide uses it). |
 | `gather` | Explicit | One finite Woodcutting, Mining, or Fishing goal (`skill`, one `resource` key or `method` id, `until` inventory goal, optional `anchor`/`radius`). |
 | `thieve` | Explicit | One finite pickpocket goal against a selected NPC (`target`, `until` inventory goal, optional `anchor`/`radius`). |
+| `answer_count` | Explicit | Answer the numeric count dialog (content `p_countdialog`) with `value`; `source` cites the content. Waits at most `max_ticks` observed ticks for the dialog, sends one answer, and ends when the dialog is closed. |
+| `if_button` | Explicit | Press one interface component (`component`, the content pack id) once it and every layer above it are shown; `source` cites the content. Waits at most `max_ticks` observed ticks, sends one press, and ends on the host's receipt. |
+| `x:mm:solve_reinitialisation` | Explicit | Monkey Madness: solve the open 5 by 5 reinitialisation board. See [Reinitialisation board](#reinitialisation-board) for inputs and failure conditions. |
+
+### Count dialogs and interface buttons
+
+Content can ask for a number (`p_countdialog`) or wait for a press on its own interface. Neither is a dialogue page, so `talk` does not answer them. Use the two steps in order after the conversation that opens them:
+
+1. A `talk` step whose conversation ends at the prompt. Set `gap_ticks` when the script closes the chat and delays before the prompt (`p_delay(n)` costs n + 1 ticks).
+2. `answer_count` with the number to type, or `if_button` with the component to press. Both send one request, and only while the prompt is shown. The step never repeats a request; a failure goes to the runner's bounded retry.
+3. Settle on what the content does next (a chat line, an item, a stage), not on the step itself. Both steps are Explicit: declare `advances`.
+
+`max_ticks` is observed game ticks from the step's start. Size it from the content delay before the prompt, and cite it in `source`. Use `talk` with `continue_only` for the chat pages that follow, and use `answer_once` only for menus.
+
+Death Plateau's dice game uses all three: Harold's stake (`death_guard_equiproom.rs2:227-228`), the roll button `death_dice:com_28` (`:46-47`, shown after three `p_delay(2)` at `:88-99`) and the continue button `death_dice:com_30` (`:123`, `p_pausebutton`).
+
+A `buttontype=pause` component sends the resume press that `p_pausebutton` waits for.
+
+### Reinitialisation board
+
+Open the panel first with an `interact` step. `pieces` supplies the alias prefix
+of its 24 pieces, `reinitialisation`. `arrival` supplies the `tile` and `source`
+where the cutscene after the last piece leaves the player.
+
+The step uses the shared sliding-puzzle solver on the board the client holds.
+It clicks one piece per observed move, then waits for the cutscene to reach
+`arrival`. It fails after three clicks that moved nothing, when the board
+closes unsolved, or when the cutscene does not arrive within 34 ticks.
 
 ## Checks a guide can use
 
@@ -228,14 +278,14 @@ Use `ordered` for stages whose steps leave nothing observable behind, such as Ha
    The cursor can pass the last step while the `acquire` step's own `settle` and `skip_if` are still `False` (a burnt pie, a product lost on the way). The recipe then restarts from its first step, and every child `skip_if` is checked again. Only a pass that began a child restarts.
 
    The `acquire` step's optional `max_restarts` arg (default 8) bounds this; past it the step parks with `<recipe> gave up after <N> attempts: <settle> is still false`. A restart repeats every child whose `skip_if` is false, so guard buys, hand-ins and consumed items with a `skip_if` that holds once they are done.
-8. **Watchdog.** At step boundaries, the watchdog observes the stage, player tile, inventory, worn items, and total posted skill XP. Three unchanged observations warn; eight park for no progress. Journal flags, chat, and colour alone do not change its signature, so a flag-only transition is not watchdog progress.
+8. **Watchdog.** At step boundaries, the watchdog observes the stage, player tile, inventory, worn items, and total posted skill XP. Three unchanged observations warn; eight park for no progress. Journal flags, chat, and colour alone do not change its signature, so a flag-only transition is not watchdog progress. The one exception is a settle timeout that shows its step's declared `failure_signal` (see Retry limits): it clears the count.
 
 
 ## How a run gathers items
 
 Provisioning checks the inventory first and plans from the account's bank memory, which the host updates whenever the bank is open; the Quester keeps no bank receipt of its own. Collecting or making an item outside the bank does not change that memory.
 
-Unless `quest.owns_inventory` bypasses preparation, missing required or acquirable items, coin floats, active-loadout carry floats, and tools needed by a gather step may cause a bank check. An item with `from_stage` is ignored until the quest reaches that stage (an Unknown stage keeps it out), so it causes neither an acquisition nor the initial bank scan early.
+Missing required or acquirable items, coin floats, active-loadout carry floats, and gather tools may cause a bank check. `quest.owns_inventory` leaves these quest supplies to the Path, but still runs survival preparation. An item with `from_stage` is ignored until that stage, including its acquisition and initial bank scan.
 
 For a gather step, the Provisioner withdraws one method-usable tool only when none is carried or equipped and the bank has one. This uses the same bank scan, capacity planning, and withdrawal route as recipes.
 
@@ -261,7 +311,7 @@ Closing the bank:
 
 ### Bank memory and inventory space
 
-Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
+Bank memory has three states. A bank never seen (`Unknown`) costs one scan trip. A shortage known only from an earlier login (`Hint`) costs one verifying trip. Only a required-item shortage in a bank seen open this login (`Session`) blocks in place. The Quester keeps no other bank record.
 
 Preparation preserves the guide's record items, tools and floats. There is no unconditional inventory freshen or deposit sweep.
 
@@ -272,6 +322,51 @@ Available bank hints are withdrawn only when they fit alongside the active recip
 An unmeetable speculative peak does not itself park the guide. Preparation falls back to immediate withdrawals while still requiring room for the active acquisition's final item. Later inventory pressure is left to the running family.
 
 Provisioner's bank scan, capacity deposit and withdrawal boundaries are included in the stage's bounded run trace; the terminal `finish` line is emitted even if that trace reaches its event cap.
+
+### Survival supplies
+
+Before a risky stage, the bank check prices the stage's declared NPC fights and
+permitted `cross` zones with the shared survival model. It selects from the
+guide's combat loadouts and ordinary food the account holds or banks.
+An unread bank does not remove credit for food already held. If carried gear
+and food meet the bound, preparation does not visit a bank for a better kit.
+
+The existing loadout run withdraws and wears gear first, one piece at a time.
+Worn gear uses no inventory slots. Required quest items reserve their space
+next. Food then fills the remaining space, up to the model's target.
+
+The food calculation uses the live food guard's threshold and content timing.
+For each declared `must_have` item, the required quantity is excluded from
+survival credit and automatic eating. Surplus of the same food remains edible:
+eight lobsters with a required quantity of four provide four survival bites.
+Tools, step arguments, and predicates do not reserve a food quantity by ID alone.
+The schema does not yet distinguish survival supplies from quest-consumed food;
+the declared `must_have` quantity is the conservative reservation.
+
+The current sizing model supports one ordinary food kind. A mixture reports a
+specific model limit, not missing combat facts.
+There is no prayer, regeneration, or escape credit.
+
+A supply shortfall does not itself stop preparation. Status and the unmet-need
+log name the item, target quantity, and quantity obtained. Actual route
+admission remains the decision point: a script-requested crossing must pass the
+1% death bound. A global danger override proceeds without passing that bound,
+with its food guard armed. A compatibility walk also proceeds, but keeps its
+existing behavior: no food guard and no food credit.
+
+If no eligible bank has a route from the current position, preparation records
+the automatic supply shortfall and continues without another scan that stage.
+It does not treat an unread bank as empty. Required quest supplies still fail
+when their bank cannot be reached.
+
+Survival deposits preserve the Path's managed items and held survival food.
+Automatic gear cannot replace protected worn gear, take an authored equipment
+slot, or equip an item that the Path needs carried.
+
+If combat facts, food timing, or a future attacker are unknown, preparation
+does not claim a passing target. It reports the stage, NPCs, and actual cause.
+A planner error is also informational. Preparation continues to admission.
+
 
 ## Rules of thumb
 
@@ -312,11 +407,20 @@ declaration that cannot deal positive damage at any Hitpoints from 1 to 99.
 It also refuses a scaled formula without a multiplier and an invalid constant.
 Do not put a hazard on a `walk` or `combat` step. Their own guards handle food.
 
+### Upkeep and recovery
+
 The Quester prices the hazard from step selection until selection chooses
 another step. A new hazard step waits one tick before it begins, so survival
 can decide first. Known incoming damage and the hazard add together.
 A bite cancels the current step and closes a game page before eating.
 The restarted step keeps its hazard and the family's original quantity target.
+
+Before preparing supplies, the runner checks a proven next step's hazard.
+An available bite uses the existing upkeep owner before a bank action, not
+beside it. If no edible food is held, preparation can still fetch supplies
+before the step is selected. This check commits no skips or selected hazard.
+The runner selects again after preparation. An unknown predicate still blocks
+lower steps.
 
 Without food, the Quester holds until its current Hitpoints clear the dynamic
 eat line. It closes pages while it holds. A page still open on the 25th parked
@@ -334,6 +438,25 @@ A multi-hit loop is not one step event. Mark it as uncovered in the guide's
 comment rather than declaring only one hit. Damage from an area or map timer
 is also not a step hazard. Cancelling a step does not stop that damage.
 Survival phase 2 owns those hazards. Underground Pass remains uncovered.
+
+### How a bite is chosen
+
+A bite spends no food it cannot use while the next hit cannot kill. Eating has
+two tiers. At or below the danger plus one, the next hit can kill. The live
+threats set the danger; it is a quarter of the maximum Hitpoints when unknown.
+Then the bite goes out at once. It takes the held food whose heal best fits the
+missing Hitpoints, even if it overheals.
+
+Above that, up to the eat line, the Quester bites only a food whose heal fits
+the missing Hitpoints. It waits when none fits. The eat line is twice the
+danger plus one. When the danger is unknown it is half the maximum. The step's
+hazard floor or the caller's floor can set it instead.
+
+After a bite, the next bite waits until the heal shows in Hitpoints. That is a
+rise, or a fall when a hit lands first. It also ends when the food's own delay
+has passed. Each bite writes one `survival eat` log line. The line gives the
+Hitpoints before, the maximum, the food and its heal, the danger, the critical
+line, and the Hitpoints seen afterwards.
 
 ## The members world fact
 

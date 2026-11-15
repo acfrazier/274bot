@@ -512,6 +512,7 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("firemaker", scenarios::firemaker_scenario),
     Entry::new("firemaker_oak", scenarios::firemaker_oak_scenario),
+    Entry::new("fletching_make_x", scenarios::fletching_make_x_scenario),
     Entry::new("climbing_boots", scenarios::climbing_boots_scenario),
     Entry::new(
         "climbing_boots_teleport",

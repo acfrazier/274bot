@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
 
-const BASE_PREDECESSORS = ['F0', 'T1.3', 'T2.1'];
+const BASE_PREDECESSORS = ['F0', 'T1.3b', 'T2.1'];
 const ACTIVE_FAMILIES = ['bank', 'chatbox', 'cooking', 'cow', 'entities', 'gathering', 'inventory', 'runecrafting', 'skills', 'world-primitives'];
 // These nav values are expected assertions only; generated classifications
 // come from frozen import graphs and native backend source evidence.
@@ -70,6 +70,8 @@ const ADDITIONAL_FAMILY_POLICIES = [
 const MODULE_RULES = [
     ['@rs2b0t/api', { id: 'compat-runtime', nav: false }],
     ['api/ai/clues/', { id: 'clues', nav: true }],
+    // Reads the quest journal through the questlog's native read; it does not walk.
+    ['api/ai/quests/defs/dragonslayer/journal.js', { id: 'questlog', nav: false }],
     ['api/ai/quests/', { id: 'quests', nav: true }],
     ['api/combat/hunting/', { id: 'hunt', nav: true }],
     ['api/combat/', { id: 'combat', nav: false }],
@@ -1330,7 +1332,7 @@ function buildArtifacts({
             activation_endpoint: row.family_id === 'bank' ? 'T2.3' : 'T2.rest',
             activation_state: ACTIVE_FAMILIES.includes(row.family_id) ? 'activated' : 'not-activated',
             canonical_endpoint_predecessors: row.family_id === 'bank'
-                ? ['F0', 'T1.3', 'T2.2', 'T5.1']
+                ? ['F0', 'T1.3b', 'T2.2', 'T5.1']
                 : predecessors,
             predecessors,
             counts: {
@@ -1449,7 +1451,7 @@ function validateArtifacts(contract, predecessors, navFamilies = null, currentIn
         const canonical = family.canonical_endpoint_predecessors;
         if (!Array.isArray(canonical)) fail(`Missing canonical endpoint predecessors for ${family.family_id}`);
         const canonicalExpected = family.family_id === 'bank'
-            ? ['F0', 'T1.3', 'T2.2', 'T5.1']
+            ? ['F0', 'T1.3b', 'T2.2', 'T5.1']
             : family.predecessors;
         if (JSON.stringify(canonical) !== JSON.stringify(canonicalExpected)) {
             fail(`Non-canonical endpoint predecessor list for ${family.family_id}`);

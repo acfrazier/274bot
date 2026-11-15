@@ -48,12 +48,18 @@ fn guardian_r1_tree_spirit_anchor_is_observed_before_targeting() {
     }
     // dryad spawn delays its attack by one tick. A spawn sighting must
     // survive the later first-targeting sighting after movement.
+    let data = event_game_data();
+    let spirit = data.npc_name(438).expect("289 tree spirit content row");
+    let escape_distance = spirit
+        .maxrange
+        .max(0)
+        .saturating_add(2)
+        .max(spirit.wanderrange.max(0).saturating_add(4));
     let mut c = new_client();
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 9, 10);
     plant_npc_typed_with_op(&mut c, 0, 438, "Tree spirit", -1, None, "Attack");
-    set_flee_npc(&mut c, 9, 11);
-    let data = event_game_data();
+    set_npc_tiles(&mut c, 0, (9, 11), (9, 11 - escape_distance));
     let mut guardian = Guardian::new();
     let mut driver = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -657,4 +663,213 @@ fn lost_tool_refit_player_chat_rejection_text_does_not_stop_the_repair() {
         drv.menus.is_empty(),
         "do not repeat a refit the game rejected"
     );
+}
+#[test]
+fn guardian_talk_walk_uses_npc_network_tile() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
+    set_npc_tiles(&mut c, 0, (5, 0), (1, 0));
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    assert_eq!((snap.npcs()[0].tile.x, snap.npcs()[0].tile.z), (1, 0));
+    assert_eq!(
+        (snap.npcs()[0].network.x, snap.npcs()[0].network.z),
+        (5, 0)
+    );
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, None);
+
+    assert_eq!(status.kind, Some(RandomKind::Dialog));
+    assert!(status.hold);
+    assert_eq!(driver.walks, vec![(5, 0)]);
+    assert!(driver.menus.is_empty());
+    assert!(driver.actions.is_empty());
+}
+
+#[test]
+fn guardian_owned_pick_walk_uses_npc_network_tile() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Test!"), "Pick");
+    set_npc_tiles(&mut c, 0, (5, 0), (1, 0));
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, None);
+
+    assert_eq!(status.kind, Some(RandomKind::Pick));
+    assert!(status.hold);
+    assert_eq!(driver.walks, vec![(5, 0)]);
+    assert!(driver.menus.is_empty());
+    assert!(driver.actions.is_empty());
+}
+
+#[test]
+fn guardian_authenticated_pick_walk_uses_npc_network_tile() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+    set_npc_tiles(&mut c, 0, (1, 0), (1, 0));
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    guardian.tick(&mut driver, &snap, &settings, 1_000, None);
+    assert_eq!(driver.actions, vec![0], "the first Pick is the ownership probe");
+
+    driver.menus.clear();
+    driver.actions.clear();
+    c.add_chat(0, "The fruit isn't ready to be picked yet...", "");
+    open_chat(&mut c);
+    tick_at(&mut c, &mut snap);
+    let authenticated = guardian.tick(&mut driver, &snap, &settings, 2_000, None);
+    assert!(authenticated.ours);
+    assert!(authenticated.hold);
+
+    driver.menus.clear();
+    driver.actions.clear();
+    close_chat(&mut c);
+    set_npc_tiles(&mut c, 0, (5, 0), (1, 0));
+    tick_at(&mut c, &mut snap);
+    let retry = guardian.tick(&mut driver, &snap, &settings, 5_000, None);
+
+    assert!(retry.ours);
+    assert!(retry.hold);
+    assert_eq!(driver.walks, vec![(5, 0)]);
+    assert!(driver.menus.is_empty());
+    assert!(driver.actions.is_empty());
+}
+
+#[test]
+fn guardian_evade_disengage_range_uses_npc_network_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
+    set_npc_tiles(&mut c, 0, (1, 0), (1, 0));
+    let mut guardian = Guardian::new();
+    let mut driver = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let first = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+    assert!(first.hold);
+    assert_eq!(driver.walks.len(), 1);
+
+    set_npc_tiles(&mut c, 0, (4, 0), (1, 0));
+    c.npc[0].as_mut().expect("swarm").entity.face_entity = -1;
+    tick_at(&mut c, &mut snap);
+    let disengaged = guardian_tick_with_data(&mut guardian, &mut driver, &snap, &settings, &data);
+
+    assert!(disengaged.hold);
+    assert_eq!(
+        driver.walks.len(),
+        1,
+        "render proximity must not trigger another flee after network distance exceeds three"
+    );
+}
+
+#[test]
+fn featureless_plant_adjacency_uses_network_tile() {
+    let mut c = new_client();
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
+    set_npc_tiles(&mut c, 0, (1, 0), (5, 0));
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+
+    assert_eq!((snap.npcs()[0].tile.x, snap.npcs()[0].tile.z), (5, 0));
+    assert_eq!(
+        detect(&snap, 0, &no_cooldown()).map(|event| event.kind),
+        Some(RandomKind::Pick)
+    );
+}
+
+#[test]
+fn fishing_nearby_latch_uses_npc_network_tile() {
+    let mut c = new_client();
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc(&mut c, 0, "Fishing spot", -1, None);
+    set_npc_tiles(&mut c, 0, (5, 0), (20, 0));
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let mut loss = GearLoss::new();
+
+    loss.observe(&snap, 0);
+
+    assert_eq!(loss.last_fishing_tick, Some(snap.tick()));
+    assert!(loss.can_recover);
+}
+
+#[test]
+fn guardian_evade_missing_actor_retention_tracks_network_tile() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let data = event_game_data();
+    let mut c = new_client();
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
+    set_npc_tiles(&mut c, 0, (1, 0), (1, 0));
+    let mut guardian = Guardian::new();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let mut event = detect(&snap, 0, &no_cooldown());
+    guardian.refresh_evade(&snap, &mut event, Some(&data), true);
+    guardian.evade.as_mut().expect("evade state").has_fled = true;
+
+    set_npc_tiles(&mut c, 0, (15, 0), (1, 0));
+    tick_at(&mut c, &mut snap);
+    let mut event = None;
+    guardian.refresh_evade(&snap, &mut event, Some(&data), true);
+    assert_eq!(
+        guardian.evade.as_ref().expect("retained state").last_tile,
+        (15, 0)
+    );
+
+    clear_npcs(&mut c);
+    tick_at(&mut c, &mut snap);
+    let mut event = None;
+    guardian.refresh_evade(&snap, &mut event, Some(&data), true);
+
+    assert_eq!(event.map(|event| event.kind), Some(RandomKind::Evade));
+}
+
+#[test]
+fn guardian_evade_network_fallback_sets_start_and_last_tiles() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let data = event_game_data();
+    let mut c = new_client();
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
+    set_npc_tiles(&mut c, 0, (5, 0), (1, 0));
+    let mut guardian = Guardian::new();
+    let mut snap = GameSnapshot::new();
+    tick_at(&mut c, &mut snap);
+    let mut event = detect(&snap, 0, &no_cooldown());
+
+    guardian.refresh_evade(&snap, &mut event, Some(&data), true);
+
+    let state = guardian.evade.as_ref().expect("evade state");
+    assert_eq!(state.start_tile, (5, 0));
+    assert_eq!(state.last_tile, (5, 0));
 }

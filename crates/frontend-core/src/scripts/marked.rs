@@ -11,7 +11,8 @@ use crate::session::OperatorSession;
 
 impl Scripts {
     /// The assignment a selected card saves. A card that cannot start
-    /// (missing file, unavailable catalog card, unloadable import) has none.
+    /// (a missing file, a retired catalog card, an unsupported import) has
+    /// none.
     pub(crate) fn assignment_for(
         &mut self,
         sel: &script::ScriptSel,
@@ -39,7 +40,7 @@ impl Scripts {
                 }
                 let card = self.startable_card(*source, lookup)?;
                 match &card.unloadable {
-                    Some(reason) => Err(format!("unloadable import: {reason}")),
+                    Some(reason) => Err(reason.line()),
                     None => Ok(Some(card.assignment())),
                 }
             }

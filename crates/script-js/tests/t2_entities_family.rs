@@ -31,9 +31,9 @@ fn entity<'a>(
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: x,
+        nz: z,
         shape: 0,
         angle: 0,
     }
@@ -122,7 +122,8 @@ fn empty_snapshot<'a>(tick: u64) -> SnapshotInput<'a> {
 fn tick(iso: &LoadIsolate, snapshot: &SnapshotInput<'_>) -> serde_json::Value {
     iso.post_snapshot(encode_snapshot(snapshot));
     iso.on_game_tick(snapshot.tick);
-    iso.probe("__probe").unwrap()
+    iso.probe("__probe")
+        .expect("read entity-family probe result")
 }
 
 const ENTITY_API: &str = r#"
@@ -161,7 +162,7 @@ export default class EntityFamilyBot extends LoopingBot {
             .name(' goblin ', 'GOBLIN')
             .action('attack')
             .within(2)
-            .inside({ minX: 3200, maxX: 3202, minZ: 3200, maxZ: 3202 })
+            .inside({ minX: 3199, maxX: 3202, minZ: 3200, maxZ: 3202 })
             .results();
         const nearest = Npcs.query().nearest();
         globalThis.__probe = {
@@ -401,14 +402,15 @@ fn actor_snapshot<'a>(
 
 fn query_batch_tick(iso: &LoadIsolate, tick: u64, iterations: u32) -> serde_json::Value {
     iso.probe(&format!("globalThis.__queryIterations = {iterations}"))
-        .unwrap();
+        .expect("set entity query iteration count");
     let mut snapshot = empty_snapshot(tick);
     let actions = ["Attack".to_string()];
     let npcs = [entity(1, 9, Some("Goblin"), (3201, 3201, 0), 1, &actions)];
     snapshot.npcs = &npcs;
     iso.post_snapshot(encode_snapshot(&snapshot));
     iso.on_game_tick(tick);
-    iso.probe("__queryResult").unwrap()
+    iso.probe("__queryResult")
+        .expect("read entity query batch result")
 }
 
 const QUERY_BATCH_API: &str = r#"
@@ -480,7 +482,8 @@ fn complete_entities_and_query_contract_on_served_isolates() {
     assert_eq!(iso.probe("1").unwrap(), serde_json::json!(1));
     let probe = tick(&iso, &snapshot);
     assert_eq!(probe["aliases"], serde_json::json!([true, true, true]));
-    assert_eq!(probe["roots"], serde_json::json!([2, 1, 2]));
+    // Native geometry includes the first path head, not the other-level NPC.
+    assert_eq!(probe["roots"], serde_json::json!([2, 1, 1]));
     assert_eq!(probe["wrapped"], serde_json::json!([true, true, true]));
     assert_eq!(probe["npc"][0], "Goblin");
     assert_eq!(

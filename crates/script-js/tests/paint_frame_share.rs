@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 
 const TICKED: &str = r#"
 import { Paint } from '../../paint/Paint.js';

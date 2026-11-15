@@ -18,9 +18,10 @@ impl Gatherer {
             && (self.retained.recovery != RecoveryState::Idle || !self.retained.haul_since_death);
         self.cancel_active();
         self.trip = TripStep::Idle;
-        self.scratch.selected_bank = None;
-        self.scratch.withdrawals = None;
-        self.supply_missing = None;
+        self.scratch.needs = None;
+        self.scratch.parked = None;
+        self.scratch.replan_once = false;
+        self.scratch.rebuild_park_request = false;
         self.observed_progress = None;
         self.proof_evidence = 0;
         self.tool = ToolState {
@@ -31,7 +32,7 @@ impl Gatherer {
         self.respawn_settle = None;
         self.proving_runs = 0;
         self.recovery_reprovisions = 0;
-        self.scratch.return_stall_recovery.reset();
+        self.scratch.walk.retry.reset();
         self.needs_validate = true;
         self.retained.deaths = self.retained.deaths.saturating_add(1);
         self.retained.haul_since_death = false;
@@ -50,7 +51,10 @@ impl Gatherer {
     }
 
     // Keep recovery's prepared-food bite separate so an unmet need cannot stop its supply trip.
-    fn begin_recovery_eat(&mut self, tick: &mut NativeTick<'_>) -> bool {
+    // The bite rule is the shared one (`policy::eats_food`); only its trigger
+    // is the Gatherer's own: the user's `eatBelow` is the caller floor. Post-death
+    // recovery sees no threats, so the danger is zero and the floor is the line.
+    pub(super) fn begin_recovery_eat(&mut self, tick: &mut NativeTick<'_>) -> bool {
         let Some(food) = &self.prepared.supply.food else {
             return false;
         };
@@ -72,7 +76,24 @@ impl Gatherer {
             .filter(|row| row.def.id == food.id)
             .map(|row| row.count)
             .sum::<i32>();
-        if hp.effective > below || held == 0 || !self.fence.reserve(1) {
+        let Some(heal) = crate::combat::guard::shared_tables_ref()
+            .and_then(|tables| tables.food(food.id))
+            .map(|fact| fact.heal)
+        else {
+            return false;
+        };
+        if held == 0
+            || !crate::combat::policy::eats_food(
+                hp.effective,
+                hp.base,
+                heal,
+                Some(0),
+                Some(0),
+                0,
+                below,
+            )
+            || !self.fence.reserve(1)
+        {
             return false;
         }
         let args = OneOpArgs::eat(&food.name, food.id, held);
@@ -138,18 +159,13 @@ impl Gatherer {
         if self.needs_validate {
             match self.validate(&mut tick.cx) {
                 Validation::Pending => return,
-                Validation::Wear(tool) => {
-                    self.tool = tool;
-                    self.begin_wear(tick);
-                    return;
-                }
                 Validation::Ready => self.needs_validate = false,
             }
         }
         if self.failure.is_some() {
             return;
         }
-        if self.begin_recovery_eat(tick) {
+        if self.active_matches_none() && self.begin_recovery_eat(tick) {
             return;
         }
         match step {
@@ -160,7 +176,7 @@ impl Gatherer {
                     return;
                 }
                 let snapshot = tick.cx.snapshot();
-                let (Some(stats), Some(_), Some(_), Some(_)) = (
+                let (Some(_), Some(_), Some(_), Some(_)) = (
                     snapshot.stats(),
                     snapshot.inventory(),
                     snapshot.equipment(),
@@ -168,14 +184,9 @@ impl Gatherer {
                 ) else {
                     return;
                 };
-                // The same admission as a live boundary (N7): a
-                // `Session`-known shortage fails in place, a `Hint` or an
-                // unknown bank earns one reprovision trip.
-                if self.admit_supply(SupplyPlan::plan(
-                    &self.prepared,
-                    stats.value,
-                    snapshot.stock(),
-                )) {
+                // The same admission as a live boundary (N7): a known
+                // shortage parks. A Hint or an unknown bank earns one scan.
+                if self.admit_supply(&tick.cx) {
                     return;
                 }
                 if snapshot
@@ -184,7 +195,11 @@ impl Gatherer {
                 {
                     // Recreation can observe a completed withdrawal before
                     // the previous instance closed its bank modal.
-                    self.advance_trip(TripStep::Close);
+                    self.scratch.needs = Some(Arc::from([]));
+                    self.advance_trip(TripStep::Supply {
+                        return_to_work: false,
+                        deposit_products: false,
+                    });
                 } else {
                     self.advance_recovery(RecoveryState::Pending { step: 4 }, tick);
                     self.needs_validate = true;

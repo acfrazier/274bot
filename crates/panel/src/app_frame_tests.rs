@@ -28,7 +28,7 @@ use host_play::{SlotArm, SlotStatus};
 
 use super::{frame_pumps, game_window_title, ui_frame, LiveHarness, LiveNull, PanelState};
 use crate::session::{PanelWindow, Session, SlotIo};
-use crate::test_support::TestDir;
+use crate::test_support::{map_catalogue_fixture, map_fixture, map_play_fixture, TestDir};
 use crate::window::Gpu;
 use frontend_core::{OperatorCommand, Targets};
 
@@ -1780,7 +1780,7 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
     });
     assert!(rig.text.contains("Start zone scope"), "{}", rig.text);
     assert!(
-        rig.text.contains("Start accepts only these zones."),
+        rig.text.contains("The guide asks to cross these zones."),
         "{}",
         rig.text
     );
@@ -1803,6 +1803,140 @@ fn panel_driver_shows_quester_zone_disclosure_before_start() {
     );
     assert!(rig.text.contains("draynor-jail-guards"), "{}", rig.text);
     assert!(rig.text.contains("Guide reason:"), "{}", rig.text);
+}
+
+/// The production panel frame opens the real combo and submits one middle
+/// danger-level command after the operator picks its second entry.
+#[test]
+fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
+    use frontend_core::DangerLevel;
+
+    let _isolated = IsolatedStores::enter("frame-danger-routing-middle");
+    let (session, _dir) = session_with_play("frame-danger-routing-middle", &["alice"]);
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        eprintln!(
+            "panel_driver_selects_when_survivable_from_the_open_dropdown: no headless GPU, skipped"
+        );
+        return;
+    };
+    rig.frames_until("the panel preferences", |rig| {
+        rig.session().panel_preferences_ready()
+    });
+    rig.session().open_window(PanelWindow::NavConfig);
+    super::TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(Vec::clear);
+    super::TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(Vec::clear);
+    let mut previous_combo = None;
+    let mut stable_combo = None;
+    rig.frames_until("the settled Nav config combo", |_| {
+        let items = super::TEST_ROUTING_ITEM_BOUNDS.with_borrow_mut(std::mem::take);
+        let combo = items.get(9).copied();
+        let settled = combo.is_some() && combo == previous_combo;
+        previous_combo = combo;
+        if settled {
+            stable_combo = combo;
+        }
+        settled
+    });
+    assert_eq!(rig.session().ui.nav.danger_level(), DangerLevel::Never);
+
+    let combo = stable_combo.expect("the real Nav config frame draws the Danger routing combo");
+    let center = |bounds: [f32; 4]| [(bounds[0] + bounds[2]) * 0.5, (bounds[1] + bounds[3]) * 0.5];
+    let combo_center = center(combo);
+    for pressed in [false, true, false] {
+        rig.frame_at(combo_center, pressed, Pointer::Away);
+    }
+
+    let mut choices = Vec::new();
+    for _ in 0..8 {
+        rig.frame_at(combo_center, false, Pointer::Away);
+        choices = super::TEST_ROUTING_CHOICE_BOUNDS.with_borrow_mut(std::mem::take);
+        if choices.len() == 3 {
+            break;
+        }
+    }
+    assert_eq!(
+        choices.len(),
+        3,
+        "the actual popup displays every Danger routing level at {combo:?}; frame:\n{}",
+        rig.text
+    );
+    assert_eq!(
+        frontend_core::walk_permissions::DANGER_ROUTING_LEVELS.map(DangerLevel::label),
+        ["Never", "When survivable", "Always"]
+    );
+
+    crate::session::take_submitted_commands();
+    let middle = center(choices[1]);
+    for pressed in [false, false, true, false] {
+        rig.frame_at(middle, pressed, Pointer::Away);
+    }
+    assert_eq!(
+        rig.session().ui.nav.danger_level(),
+        DangerLevel::WhenSurvivable
+    );
+    assert_eq!(
+        crate::session::take_submitted_commands(),
+        vec![frontend_core::OperatorCommand::SetDangerLevel(
+            DangerLevel::WhenSurvivable
+        )]
+    );
+}
+
+#[test]
+fn panel_driver_shows_map_catalogue_failure() {
+    let small_world =
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    let profile_fixture = map_fixture::MapFixture::new(&small_world, "local-289");
+    let ready_fixture =
+        map_catalogue_fixture::ReadyCatalogueFixture::new(profile_fixture.template.profile());
+    let ready = ready_fixture.ready();
+    let world = map_catalogue_fixture::catalogue_overflow_world();
+    let changed_world = map_catalogue_fixture::changed_catalogue_overflow_world();
+    let mut session = Session::new();
+    session.core.set_spawn_workers(false);
+    session.install_prepared_template(frontend_core::launch::ProfileTemplate::from_host(
+        Arc::clone(&profile_fixture.template),
+    ));
+    session.core.set_play(Some(map_play_fixture::play(
+        &profile_fixture.template,
+        nav_planner::tile::Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+    )));
+    session.set_focus_for_test("alice");
+    session.walkto_open = true;
+    crate::session::reset_map_catalogue_build_count();
+    session.bind_ready_catalogue(Some(Arc::clone(&world)), Arc::clone(&ready));
+    assert_eq!(crate::session::map_catalogue_build_count(), 1);
+    session.bind_ready_catalogue(Some(Arc::clone(&changed_world)), ready);
+    assert_eq!(crate::session::map_catalogue_build_count(), 2);
+
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        eprintln!("panel_driver_shows_map_catalogue_failure: no headless GPU, skipped");
+        return;
+    };
+    let _nav = crate::picker::lock_nav_statics();
+    crate::picker::set_pack(Some(changed_world));
+
+    // The first frame creates the dock tree. Keep drawing until the production
+    // picker shows its map-status notice above the canvas.
+    for _ in 0..3 {
+        rig.frame(Pointer::Away);
+        if rig.text.contains("map catalogue unavailable") {
+            break;
+        }
+    }
+
+    let message = rig.text.clone();
+    let status = rig.session().map_bind_status();
+    crate::picker::set_pack(None);
+    assert!(
+        message.contains("map catalogue unavailable"),
+        "the map shows its catalogue failure (status: {status:?}): {message}"
+    );
+    assert_eq!(status.as_deref(), Some("map catalogue unavailable"));
 }
 
 /// The whole panel frame as the CI lanes run it: one real Dear ImGui frame

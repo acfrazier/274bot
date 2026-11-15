@@ -1,0 +1,11 @@
+[package]
+name = "rs2vm"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = "2.0.20"

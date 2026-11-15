@@ -30,11 +30,11 @@ fn spawn(src: &str) -> BankSlot {
 }
 
 fn post_snapshot_input(slot: &mut BankSlot, input: &SnapshotInput<'_>) {
-    slot.post_snapshot(input, NativeFactsInput::default());
+    slot.post_snapshot(input, &NativeFactsInput::default());
 }
 
 fn post_snapshot_native(slot: &mut BankSlot, input: &SnapshotInput<'_>) {
-    slot.post_snapshot(input, NativeFactsInput::default());
+    slot.post_snapshot(input, &NativeFactsInput::default());
 }
 
 fn post_snapshot_delta_native(
@@ -44,9 +44,9 @@ fn post_snapshot_delta_native(
 ) {
     slot.post_snapshot_with_observations(
         surface_input,
-        NativeFactsInput::default(),
+        &NativeFactsInput::default(),
         native_input,
-        NativeFactsInput::default(),
+        &NativeFactsInput::default(),
     );
 }
 
@@ -54,7 +54,7 @@ fn tick(slot: &mut BankSlot, n: u64, input: &SnapshotInput<'_>) {
     slot.tick_posted_with_frames(
         n,
         input,
-        NativeFactsInput {
+        &NativeFactsInput {
             bank_snapshot_generation: (input.bank_generation != 0).then(|| {
                 i64::try_from(input.bank_generation).expect("fixture packet generation fits i64")
             }),
@@ -66,7 +66,9 @@ fn tick(slot: &mut BankSlot, n: u64, input: &SnapshotInput<'_>) {
 fn one_action(slot: &mut BankSlot, message: &str) -> HostAction {
     let mut actions = slot.take_actions();
     assert_eq!(actions.len(), 1, "{message}");
-    actions.pop().unwrap()
+    actions
+        .pop()
+        .expect("exactly one bank action follows the length assertion")
 }
 
 fn accept_walk(slot: &mut BankSlot, action: &HostAction, tick: u64) {
@@ -125,7 +127,7 @@ struct ReachFixture {
 
 impl ReachFixture {
     fn open(base_x: i32, base_z: i32, width: i32, height: i32) -> Self {
-        let cells = usize::try_from(width * height).unwrap();
+        let cells = usize::try_from(width * height).expect("reach fixture dimensions fit in usize");
         let words = cells.div_ceil(32);
         Self {
             base_x,
@@ -585,7 +587,7 @@ fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
     snap.bank_generation = 1;
     slot.post_snapshot(
         &snap,
-        NativeFactsInput {
+        &NativeFactsInput {
             bank_snapshot_generation: Some(1),
             ..Default::default()
         },
@@ -662,7 +664,7 @@ export default class T extends LoopingBot {
     snap.bank_generation = 1;
     slot.post_snapshot(
         &snap,
-        NativeFactsInput {
+        &NativeFactsInput {
             bank_snapshot_generation: Some(1),
             ..Default::default()
         },
@@ -703,7 +705,7 @@ fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
     snap.bank_generation = 1;
     slot.post_snapshot(
         &snap,
-        NativeFactsInput {
+        &NativeFactsInput {
             bank_snapshot_generation: Some(0),
             ..Default::default()
         },
@@ -719,7 +721,7 @@ fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
     snap.bank_loaded = true;
     slot.post_snapshot(
         &snap,
-        NativeFactsInput {
+        &NativeFactsInput {
             bank_snapshot_generation: Some(1),
             ..Default::default()
         },
@@ -794,7 +796,7 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
     snap.bank_generation = 1;
     slot.post_snapshot(
         &snap,
-        NativeFactsInput {
+        &NativeFactsInput {
             bank_snapshot_generation: Some(1),
             ..Default::default()
         },
@@ -859,7 +861,7 @@ export default class T extends LoopingBot {
     snap.bank_generation = 1;
     slot.post_snapshot(
         &snap,
-        NativeFactsInput {
+        &NativeFactsInput {
             bank_snapshot_generation: Some(1),
             ..Default::default()
         },
@@ -944,7 +946,7 @@ export default class T extends LoopingBot {
         snap.tick = tick_number;
         slot.post_snapshot(
             &snap,
-            NativeFactsInput {
+            &NativeFactsInput {
                 bank_snapshot_generation: Some(1),
                 ..Default::default()
             },

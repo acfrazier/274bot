@@ -7,7 +7,8 @@ use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 
 fn spawn_class(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn onStop test isolate")
 }
 
 fn examplebot_source() -> String {

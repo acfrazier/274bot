@@ -453,7 +453,8 @@ export function tick(api) {
 }
 
 fn spawn_v2(source: &str) -> LoadIsolate {
-    LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap()
+    LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![])
+        .expect("spawn actor-observation isolate")
 }
 
 fn open_collision<'a>(flags: &'a [i32]) -> NativeFactsInput<'a> {

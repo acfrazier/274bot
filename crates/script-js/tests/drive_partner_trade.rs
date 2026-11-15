@@ -11,7 +11,8 @@ use std::time::Duration;
 const TRADE_CLOSE_DEBOUNCE_MS: u64 = 600;
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn partner-trade test isolate")
 }
 
 fn probe_bool(iso: &LoadIsolate, expression: &str) -> bool {
@@ -211,17 +212,25 @@ export default class T extends LoopingBot {
 "#;
 
 fn events(iso: &LoadIsolate) -> Vec<String> {
-    serde_json::from_value(iso.probe("globalThis.__ev || []").unwrap()).unwrap()
+    serde_json::from_value(
+        iso.probe("globalThis.__ev || []")
+            .expect("read partner-trade events"),
+    )
+    .expect("decode partner-trade events")
 }
 
 /// Take the events since the last call.
 fn take(iso: &LoadIsolate) -> Vec<String> {
     // In place: a running iteration holds the array.
-    serde_json::from_value(iso.probe("(globalThis.__ev || []).splice(0)").unwrap()).unwrap()
+    serde_json::from_value(
+        iso.probe("(globalThis.__ev || []).splice(0)")
+            .expect("take partner-trade events"),
+    )
+    .expect("decode taken partner-trade events")
 }
 
 fn set(iso: &LoadIsolate, js: &str) {
-    iso.probe(js).unwrap();
+    iso.probe(js).expect("execute partner-trade test script");
 }
 
 fn offer_screen<'a>(partner: Option<&'a str>) -> SnapshotInput<'a> {

@@ -13,7 +13,7 @@ mod local_game_data;
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-gold-stubs-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create gold-stubs temporary directory");
     dir
 }
 
@@ -224,7 +224,7 @@ export const ALCH_OPTIONS = ['Maple longbow', 'Yew longbow'];
 fn alcher_logic_sibling_is_sha_cached_at_start() {
     let dir = temp_dir("alcher-logic");
     let cache_root = dir.join("js-cache");
-    let cache = JsCache::new(cache_root.clone());
+    let cache = JsCache::new(cache_root);
     let card_dir = dir.join("Alcher");
     std::fs::create_dir_all(&card_dir).unwrap();
     let main_path = card_dir.join("Alcher.ts");
@@ -337,13 +337,9 @@ export default class T extends LoopingBot {
 }
 "#;
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(
-        src.to_string(),
-        LoadShape::CompatClass,
-        vec![],
-        data.clone(),
-    )
-    .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
+            .unwrap();
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
     assert!(

@@ -4,13 +4,16 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use script::native::snapshot_source::StatInput;
-use script_js::{JsLibrary, LoadIsolate};
-use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
+use script::ScriptKind;
+use script_js::{CacheMeta, JsLibrary, LoadIsolate};
+use {script::ScriptSource, script_js::JsCache};
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -23,7 +26,7 @@ fn scratch(name: &str) -> PathBuf {
         name
     ));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create catalog fixture scratch directory");
     dir
 }
 
@@ -42,14 +45,18 @@ import type { DangerZoneRect } from '../../event/webwalk/data/dangerZones.js';
 const _zone: DangerZoneRect = { minX: 0, maxX: 1, minZ: 0, maxZ: 1 };
 export default class TypeOnly extends LoopingBot { loop() { bestMeleeWeapon([], { attack: 1 }); } }
 "#;
-    std::fs::create_dir_all(scripts.join("CookBot")).unwrap();
-    std::fs::create_dir_all(scripts.join("Woodcutter")).unwrap();
-    std::fs::create_dir_all(scripts.join("HerbCard")).unwrap();
-    std::fs::create_dir_all(scripts.join("TypeOnly")).unwrap();
-    std::fs::write(scripts.join("CookBot/CookBot.ts"), body).unwrap();
-    std::fs::write(scripts.join("Woodcutter/Woodcutter.ts"), body).unwrap();
-    std::fs::write(scripts.join("HerbCard/HerbCard.ts"), herbs_card).unwrap();
-    std::fs::write(scripts.join("TypeOnly/TypeOnly.ts"), type_only).unwrap();
+    std::fs::create_dir_all(scripts.join("CookBot")).expect("create CookBot fixture directory");
+    std::fs::create_dir_all(scripts.join("Woodcutter"))
+        .expect("create Woodcutter fixture directory");
+    std::fs::create_dir_all(scripts.join("HerbCard")).expect("create HerbCard fixture directory");
+    std::fs::create_dir_all(scripts.join("TypeOnly")).expect("create TypeOnly fixture directory");
+    std::fs::write(scripts.join("CookBot/CookBot.ts"), body).expect("write CookBot fixture script");
+    std::fs::write(scripts.join("Woodcutter/Woodcutter.ts"), body)
+        .expect("write Woodcutter fixture script");
+    std::fs::write(scripts.join("HerbCard/HerbCard.ts"), herbs_card)
+        .expect("write HerbCard fixture script");
+    std::fs::write(scripts.join("TypeOnly/TypeOnly.ts"), type_only)
+        .expect("write TypeOnly fixture script");
     std::fs::write(
         scripts.join("index.ts"),
         r#"
@@ -63,7 +70,7 @@ ScriptRegistry.register({ name: 'HerbCard', create: () => new HerbCard() });
 ScriptRegistry.register({ name: 'TypeOnly', create: () => new TypeOnly() });
 "#,
     )
-    .unwrap();
+    .expect("write catalog fixture index");
 }
 
 fn register_fixture(dir: &Path) -> JsLibrary {
@@ -77,6 +84,17 @@ fn register_fixture(dir: &Path) -> JsLibrary {
 
 fn throw_shaped(line: &str) -> bool {
     line.contains("not impl") || line.contains("Error:") || line.contains("TypeError")
+}
+/// The frozen bank roster as the public `api` catalogue gives it. The test needs
+/// every bank name to resolve; it does not need a navigation world.
+fn selected_named_banks() -> Arc<api::named_banks::NamedBankFacts> {
+    let catalog = api::named_banks::bank_catalog().expect("selected bank catalog");
+    Arc::new(api::named_banks::NamedBankFacts::from_banks(
+        catalog
+            .iter()
+            .map(|bank| api::named_banks::NamedBank::new(bank.name, bank.tile))
+            .collect(),
+    ))
 }
 
 #[test]
@@ -293,7 +311,6 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
 
     let mut bright_names = Vec::new();
     let mut dim = 0usize;
-    let mut preexisting_unresolved = 0usize;
     let mut failures = BTreeSet::new();
     for card in lib.cards() {
         if card.source != ScriptSource::Catalog {
@@ -304,26 +321,18 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         let is_dim = script_js::is_catalog_dim(&card.name)
             || card
                 .unloadable
-                .as_deref()
-                .is_some_and(|reason| reason.starts_with("dim: "));
+                .as_ref()
+                .is_some_and(|reason| !reason.is_import());
         if is_dim {
             if card.unloadable.is_none() {
                 failures.insert(format!("{}: dim card has no unloadable reason", card.name));
             }
             dim += 1;
         } else if let Some(reason) = &card.unloadable {
-            // The frozen baseline also rejects this exact import: there is no
-            // served journal.js shim, while the pinned source contains journal.ts.
-            if card.name == "AccountLeveler"
-                && reason == "../../api/ai/quests/defs/dragonslayer/journal.js"
-            {
-                preexisting_unresolved += 1;
-            } else {
-                failures.insert(format!(
-                    "{}: unexpected unloadable reason {reason}",
-                    card.name
-                ));
-            }
+            failures.insert(format!(
+                "{}: unexpected unloadable reason {reason}",
+                card.name
+            ));
         } else {
             bright_names.push(card.name.clone());
         }
@@ -332,10 +341,19 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         !bright_names.is_empty(),
         "frozen catalog has no bright cards"
     );
+    assert!(
+        bright_names.iter().any(|name| name == "AccountLeveler"),
+        "AccountLeveler must load as a bright catalog card; its card says {:?}",
+        lib.cards()
+            .iter()
+            .find(|card| card.source == ScriptSource::Catalog && card.name == "AccountLeveler")
+            .map(|card| card.unloadable.as_ref().map(ToString::to_string))
+    );
 
     let cache = JsCache::new(dir.join("siblings"));
     let bytes = script_js::wire::encode_snapshot(&common::ingame_snapshot());
     let content = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let named_banks = selected_named_banks();
     let mut started = 0usize;
     for name in bright_names {
         if let Err(error) = lib.ensure_js(ScriptSource::Catalog, &name) {
@@ -379,11 +397,12 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
             );
         }
         let settings = script::merge_bag(&card.settings_schema, &settings_input, None);
-        let isolate = match LoadIsolate::spawn_with_game_data(
+        let isolate = match LoadIsolate::spawn_with_content(
             card.js.clone(),
             card.shape,
             siblings,
-            content.clone(),
+            Some(Arc::clone(&content)),
+            Arc::clone(&named_banks),
         ) {
             Ok(isolate) => isolate,
             Err(error) => {
@@ -398,12 +417,6 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         isolate.on_game_tick(1);
         if let Err(probe_error) = isolate.probe("true") {
             match isolate.poll_ready() {
-                script_js::Ready::Failed(load_error)
-                    if name == "MuleCrafter"
-                        && load_error.contains("bankTile: unknown bank 'Falador East'") =>
-                {
-                    eprintln!("Frozen catalog expected baseline failure {name}: {load_error}");
-                }
                 script_js::Ready::Failed(load_error) => {
                     failures.insert(format!(
                         "{name}: loader failed after first-tick probe ({probe_error}): {load_error}"
@@ -424,8 +437,69 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         isolate.join();
         started += 1;
     }
-    eprintln!(
-        "Frozen catalog first tick: {started} bright cards; {dim} dim cards skipped; {preexisting_unresolved} pre-existing unresolved imports skipped"
+    eprintln!("Frozen catalog first tick: {started} bright cards; {dim} dim cards skipped");
+    let selected_names = ["JiveDragons", "GreenDragon", "MuleCrafter"];
+    let mut prepared = Vec::with_capacity(selected_names.len());
+    for name in selected_names.iter().copied() {
+        let card = lib
+            .get(ScriptSource::Catalog, name)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name}: missing from frozen catalog"));
+        let siblings = script_js::resolve_sibling_modules(
+            &card.path,
+            &card.origin,
+            &cache,
+            CacheMeta {
+                kind: ScriptKind::Compat,
+                source: ScriptSource::Catalog,
+                shape: Some(format!("{:?}", card.shape)),
+                api_family: None,
+            },
+        )
+        .unwrap_or_else(|error| panic!("{name}: siblings: {error}"));
+        prepared.push(script_js::PreparedCard {
+            fingerprint: card.sha256.clone(),
+            card,
+            siblings,
+        });
+    }
+    let batch = LoadIsolate::validate_prepared_batch(
+        prepared,
+        Arc::clone(&content),
+        Arc::clone(&named_banks),
+    )
+    .expect("submit selected-facts prepared-batch validation");
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let validated = loop {
+        match batch.try_recv() {
+            Ok(rows) => break rows,
+            Err(TryRecvError::Empty) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "selected-facts validation did not settle"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(TryRecvError::Disconnected) => {
+                panic!("selected-facts validation coordinator disconnected")
+            }
+        }
+    };
+    let mut validated_names = Vec::new();
+    for (card, result) in validated {
+        match result {
+            script_js::CardValidation::Validated | script_js::CardValidation::NotChecked => {
+                validated_names.push(card.card.name)
+            }
+            script_js::CardValidation::Failed(error) => {
+                failures.insert(format!("{}: prepared validation {error}", card.card.name));
+            }
+        }
+    }
+    assert_eq!(
+        validated_names,
+        selected_names.map(str::to_owned),
+        "all three frozen cards pass the production prepared-batch path"
     );
     assert!(
         failures.is_empty(),

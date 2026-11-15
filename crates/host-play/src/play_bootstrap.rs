@@ -571,6 +571,7 @@ impl Play {
                 if let Some(data) = game_data.as_deref() {
                     // A profile world may already be shared by another Play.
                     let _ = world.bind_named_bank_facts(data);
+                    let _ = world.bind_shop_keeper_facts(data);
                 }
                 world.named_bank_facts().cloned().unwrap_or_default()
             })
@@ -917,6 +918,64 @@ fn load_template(cache_dir: &str) -> IfaceTables {
         Err(_) => (Vec::new(), Vec::new()),
     };
     (cache, ifaces, ifaces_mut)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn play_binds_shop_catalog_before_any_slot_or_frame_uses_it() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+            .expect("selected R289 content");
+        let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 4]);
+        let world = Arc::new(NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
+                origin: WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                width: 1,
+                height: 1,
+                walk,
+                blocked,
+                flags: None,
+            },
+            nav_planner::transport::TransportGraph::default(),
+            Vec::new(),
+        ));
+        world.bind_named_bank_facts(&data).expect("bank-only setup");
+        assert!(world.shop_keeper_facts().is_none());
+        let play = Play::assemble(
+            PlayConnection::Direct(PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 1,
+                cache_dir: String::new(),
+                lowmem: true,
+                mainland: false,
+            }),
+            Some(data),
+            Arc::new(Cache::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Some(Arc::clone(&world)),
+            wilderness_levels_of(Some(&world)),
+        );
+        assert!(play.handles.is_empty(), "no slot or frame has started");
+        assert!(
+            !world
+                .shop_keeper_facts()
+                .expect("startup bound shops")
+                .rows()
+                .is_empty(),
+            "selected catalog is ready before the first native input"
+        );
+    }
 }
 
 #[cfg(test)]

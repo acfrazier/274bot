@@ -603,7 +603,7 @@ class FakeVM:
 
 
 class NightlyOrchestrationTests(unittest.TestCase):
-    def make_settings(self, root: Path):
+    def make_settings(self, root: Path, overrides=None):
         runner = root / "runner"
         (runner / "tools/nightly").mkdir(parents=True)
         for name in ("run_nightly.py", "nightly-mac-guest.py"):
@@ -617,7 +617,6 @@ class NightlyOrchestrationTests(unittest.TestCase):
             (root / engine / script).write_text("#!/bin/sh\n", encoding="utf-8")
         fixtures = root / "nightly-root/fixtures"
         fixtures.mkdir(parents=True)
-        (fixtures / "274bot-289-v18.navpack").write_text("fixture\n", encoding="utf-8")
         (fixtures / "inspect.fb").write_text("inspect fixture\n", encoding="utf-8")
         isohome = root / "isohome"
         isohome.write_text("#!/bin/sh\nexec \"$@\"\n", encoding="utf-8")
@@ -627,7 +626,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
         source = make_source(root)
         disk_root = root / "disk"
         disk_root.mkdir()
-        return nightly.Settings({
+        values = {
             "NIGHTLY_MAC_RUNNER": str(runner),
             "NIGHTLY_MAC_ROOT": str(root / "nightly-root"),
             "NIGHTLY_MAC_RUNS": str(root / "NIGHTLY"),
@@ -640,7 +639,9 @@ class NightlyOrchestrationTests(unittest.TestCase):
             "NIGHTLY_MAC_VM_TOOL": str(vm_tool),
             "NIGHTLY_MAC_SOURCE_REPO": str(source),
             "NIGHTLY_MAC_DISK_ROOT": str(disk_root),
-        })
+        }
+        values.update(overrides or {})
+        return nightly.Settings(values)
 
     def test_stages_purged_data_and_configured_274_inputs_into_the_guest(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -751,6 +752,40 @@ class NightlyOrchestrationTests(unittest.TestCase):
                 ),
                 "content\n",
             )
+
+    def test_manual_overrides_run_only_the_main_build_lane(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(
+                Path(temporary),
+                {
+                    "NIGHTLY_MAC_JOBS": "main",
+                    "NIGHTLY_MAC_STEPS": "lanes",
+                    "NIGHTLY_MAC_LANES": "build",
+                },
+            )
+            created = []
+
+            def vm_factory(*args):
+                vm = FakeVM(*args)
+                created.append(vm)
+                return vm
+
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=vm_factory)
+            self.assertEqual(controller.run(), 0)
+            vm = created[0]
+
+            self.assertEqual([key for _command, key in vm.run_calls], ["bootstrap", "dev-main"])
+            command = vm.run_calls[1][0]
+            self.assertEqual(command[-2:], ["--lanes", "build"])
+            environment = {
+                item.split("=", 1)[0]: item.split("=", 1)[1]
+                for item in command[1:]
+                if "=" in item and item.split("=", 1)[0].startswith("NIGHTLY_")
+            }
+            self.assertEqual(environment["NIGHTLY_STEPS"], "lanes")
+            self.assertTrue(environment["NIGHTLY_NAV_FIXTURE"].endswith(
+                "274bot-289-v19.navpack"
+            ))
 
     def test_runs_main_and_quest_for_each_branch_then_stops_and_publishes(self):
         with tempfile.TemporaryDirectory() as temporary:

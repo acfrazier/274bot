@@ -1499,8 +1499,7 @@ fn out_of_range_dialog_walks_to_npc_before_talk_to() {
     plant_player(&mut c, "Test", 0, 0);
     plant_npc(&mut c, 0, "Genie", -1, Some("Greetings Test!"));
     // Move the genie to tile (3, 0): out of Talk-to range.
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -1543,19 +1542,29 @@ fn guardian_tick_with_data(
         None,
     )
 }
-fn set_flee_player(c: &mut Client, x: i32, z: i32, moving: bool) {
+fn set_player_tiles(c: &mut Client, network: (i32, i32), rendered: (i32, i32)) {
     let player = c.local_player.as_mut().expect("player");
-    player.entity.x = x * 128 + 64;
-    player.entity.z = z * 128 + 64;
-    player.route_x[0] = x;
-    player.route_z[0] = z;
-    player.entity.route_length = if moving { 1 } else { 0 };
+    player.entity.x = rendered.0 * 128 + 64;
+    player.entity.z = rendered.1 * 128 + 64;
+    player.route_x[0] = network.0;
+    player.route_z[0] = network.1;
+}
+
+fn set_npc_tiles(c: &mut Client, slot: usize, network: (i32, i32), rendered: (i32, i32)) {
+    let npc = c.npc[slot].as_mut().expect("npc");
+    npc.entity.x = rendered.0 * 128 + 64;
+    npc.entity.z = rendered.1 * 128 + 64;
+    npc.route_x[0] = network.0;
+    npc.route_z[0] = network.1;
+}
+
+fn set_flee_player(c: &mut Client, x: i32, z: i32, moving: bool) {
+    set_player_tiles(c, (x, z), (x, z));
+    c.local_player.as_mut().expect("player").entity.route_length = if moving { 1 } else { 0 };
 }
 
 fn set_flee_npc(c: &mut Client, x: i32, z: i32) {
-    let npc = c.npc[0].as_mut().expect("npc");
-    npc.entity.x = x * 128 + 64;
-    npc.entity.z = z * 128 + 64;
+    set_npc_tiles(c, 0, (x, z), (x, z));
 }
 
 fn direct_route_tiles(from: (i32, i32), to: (i32, i32)) -> Vec<(i32, i32)> {
@@ -1708,8 +1717,7 @@ fn evade_swarm_holds_through_zero_damage_ticks_until_nearby_despawn() {
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_typed_with_op(&mut c, 0, 411, "Swarm", 32768, None, "Attack");
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let data = event_game_data();
     let swarm = data.npc_name(411).expect("289 Swarm content row");
     assert_eq!(swarm.attackrate, Some(7));
@@ -1887,9 +1895,7 @@ fn evade_still_targeting_outside_estimated_range_re_flees_without_release() {
     let status = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     assert_eq!(status.kind, Some(RandomKind::Evade));
     assert_eq!(drv.walks, vec![(0, -7)]);
-    let npc = c.npc[0].as_mut().expect("river troll");
-    npc.entity.x = 2 * 128 + 64;
-    npc.entity.z = 64;
+    set_npc_tiles(&mut c, 0, (2, 0), (2, 0));
 
     // The player is seven from the latched NPC start tile while the chasing
     // troll has moved to tile two (only five from the player). Engine
@@ -2234,105 +2240,189 @@ fn angry_drunken_dwarf_stays_dialog_and_releases_after_resolution() {
 }
 
 #[test]
-fn fight_and_ignore_policies_force_flee_and_release_native_claim() {
+fn fight_policy_forces_flee_and_releases_native_claim() {
     if !api::test_support::game_data_available() {
         return;
     }
 
-    let data = event_game_data();
-    for policy in [
+    // A saved Fight stays Fight and the Guardian still treats it as Flee
+    // until its own slice.
+    let mut settings = ProfileSettings::default();
+    settings
+        .random_event_policies
+        .insert("river troll".to_string(), vault::RandomEventPolicy::Fight);
+    assert_eq!(
+        settings.random_event_policy("river troll"),
         vault::RandomEventPolicy::Fight,
-        vault::RandomEventPolicy::Ignore,
-    ] {
-        let mut c = new_client();
-        ingame_scene(&mut c);
-        plant_player(&mut c, "Test", 0, 0);
-        plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
-        let mut settings = ProfileSettings::default();
-        settings
-            .random_event_policies
-            .insert("river troll".to_string(), policy);
-        let mut g = Guardian::new();
-        let mut drv = FakeDriver::default();
-        let mut snap = GameSnapshot::new();
-        let notifications = std::cell::Cell::new(0);
-        tick_at(&mut c, &mut snap);
-        let mut knock = |event: &DetectedRandom| {
-            assert_eq!(event.kind, RandomKind::Evade);
-            notifications.set(notifications.get() + 1);
-            RandomClaim::Handle
-        };
-        let mut status = g.tick_with_live_policies(
-            &mut drv,
-            &snap,
-            &settings,
-            &GuardianLiveContext {
-                event_policies: &settings.random_event_policies,
-                game_data: Some(&data),
-            },
-            0,
-            Some(&mut knock),
-        );
-        assert_eq!(status.kind, Some(RandomKind::Evade));
-        assert_eq!(
-            status.claim,
-            RandomClaim::Host,
-            "the unsupported policy is overridden"
-        );
-        assert!(status.ours && status.hold, "{policy:?} is treated as Flee");
-        assert_eq!(drv.walks, vec![(0, -7)]);
-        assert_eq!(notifications.get(), 1, "the native script is notified once");
+        "a saved Fight stays Fight"
+    );
 
-        let player = c.local_player.as_mut().expect("player");
-        player.entity.route_length = 1;
-        player.route_x[0] = 0;
-        player.route_z[0] = -7;
-        tick_at(&mut c, &mut snap);
-        status = g.tick_with_live_policies(
-            &mut drv,
-            &snap,
-            &settings,
-            &GuardianLiveContext {
-                event_policies: &settings.random_event_policies,
-                game_data: Some(&data),
-            },
-            0,
-            Some(&mut knock),
-        );
-        assert!(status.hold && status.ours);
-        assert_eq!(
-            drv.walks,
-            vec![(0, -7)],
-            "the pending route is not replayed"
-        );
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let mut snap = GameSnapshot::new();
+    let notifications = std::cell::Cell::new(0);
+    tick_at(&mut c, &mut snap);
+    let mut knock = |event: &DetectedRandom| {
+        assert_eq!(event.kind, RandomKind::Evade);
+        notifications.set(notifications.get() + 1);
+        RandomClaim::Handle
+    };
+    let mut status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
+    assert_eq!(status.kind, Some(RandomKind::Evade));
+    assert_eq!(
+        status.claim,
+        RandomClaim::Host,
+        "the unsupported policy is overridden"
+    );
+    assert!(status.ours && status.hold, "Fight is treated as Flee");
+    assert_eq!(drv.walks, vec![(0, -7)]);
+    assert_eq!(notifications.get(), 1, "the native script is notified once");
 
-        c.npc[0] = None;
-        c.npc_count = 0;
-        tick_at(&mut c, &mut snap);
-        status = g.tick_with_live_policies(
-            &mut drv,
-            &snap,
-            &settings,
-            &GuardianLiveContext {
-                event_policies: &settings.random_event_policies,
-                game_data: Some(&data),
-            },
-            0,
-            Some(&mut knock),
-        );
-        assert_eq!(status.kind, None);
-        assert!(
-            !status.ours && !status.hold,
-            "compiled pending bits clear at resolution"
-        );
-        assert_eq!(status.claim, RandomClaim::Host);
-        assert_eq!(drv.walks, vec![(0, -7), (0, 0)]);
-        assert_eq!(
-            notifications.get(),
-            1,
-            "a continuing event does not re-knock"
-        );
+    let player = c.local_player.as_mut().expect("player");
+    player.entity.route_length = 1;
+    player.route_x[0] = 0;
+    player.route_z[0] = -7;
+    tick_at(&mut c, &mut snap);
+    status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
+    assert!(status.hold && status.ours);
+    assert_eq!(
+        drv.walks,
+        vec![(0, -7)],
+        "the pending route is not replayed"
+    );
+
+    c.npc[0] = None;
+    c.npc_count = 0;
+    tick_at(&mut c, &mut snap);
+    status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
+    assert_eq!(status.kind, None);
+    assert!(
+        !status.ours && !status.hold,
+        "compiled pending bits clear at resolution"
+    );
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert_eq!(drv.walks, vec![(0, -7), (0, 0)]);
+    assert_eq!(
+        notifications.get(),
+        1,
+        "a continuing event does not re-knock"
+    );
+}
+
+#[test]
+fn legacy_ignore_policy_is_flee_before_the_guardian_sees_it() {
+    if !api::test_support::game_data_available() {
+        return;
     }
+
+    // The 0.2.9.1-written vault fixture: `ignore` for the River troll, three
+    // other ignores, `fight` for Swarm, `flee` for Zombie, and two events
+    // with no entry.
+    const LEGACY: &[u8] = include_bytes!("../../vault/tests/fixtures/legacy-0.2.9-policies.vault");
+    const LEGACY_PASS: &str = "v11c-legacy-fixture";
+    let path = std::env::temp_dir().join(format!(
+        "274bot-host-legacy-policy-{}.vault",
+        std::process::id()
+    ));
+    std::fs::write(&path, LEGACY).unwrap();
+    let settings = {
+        let vault = vault::Vault::unlock(&path, LEGACY_PASS).unwrap();
+        vault.get("alice").expect("alice").settings.clone()
+    };
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(
+        settings.random_event_policy("river troll"),
+        vault::RandomEventPolicy::Flee,
+        "a 0.2.9 ignore reaches runtime as Flee"
+    );
+    assert_eq!(
+        settings.random_event_policy("swarm"),
+        vault::RandomEventPolicy::Fight,
+        "a saved Fight stays Fight"
+    );
+    assert_eq!(
+        settings.random_event_policy("tree spirit"),
+        vault::RandomEventPolicy::Flee,
+        "a missing entry keeps the default"
+    );
+
+    // The Guardian takes the ordinary Flee path: the script's Handle claim
+    // stands, it never falls into the unavailable-Fight branch that forces
+    // the Host claim, and the host neither walks nor holds.
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let mut snap = GameSnapshot::new();
+    let notifications = std::cell::Cell::new(0);
+    tick_at(&mut c, &mut snap);
+    let mut knock = |event: &DetectedRandom| {
+        assert_eq!(event.kind, RandomKind::Evade);
+        notifications.set(notifications.get() + 1);
+        RandomClaim::Handle
+    };
+    let status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
+    assert_eq!(status.kind, Some(RandomKind::Evade));
+    assert_eq!(
+        status.claim,
+        RandomClaim::Handle,
+        "the script keeps the event: ignore was converted to Flee"
+    );
+    assert!(
+        !status.hold,
+        "the host does not hold an event the script claimed"
+    );
+    assert!(drv.walks.is_empty(), "no escape walk is dispatched");
+    assert_eq!(notifications.get(), 1, "the native script is notified once");
 }
 
 #[test]
@@ -2884,8 +2974,7 @@ fn unknown_strange_plant_is_not_picked_held_or_chased() {
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_with_op(&mut c, 0, "Strange plant", -1, None, "Pick");
     // Out of reach, so a chase would be visible.
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -3227,8 +3316,7 @@ fn aggressive_strange_plant_is_not_picked_or_chased() {
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Test!"), "Attack");
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
@@ -3307,7 +3395,7 @@ fn authenticated_plant_drops_reused_id_op_and_angry_replacements() {
         drv.menus.clear();
         drv.actions.clear();
         c.npc[0].as_mut().expect("plant").r#type = replacement_type;
-        c.npc[0].as_mut().expect("plant").entity.x = 3 * 128 + 64;
+        set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
         tick_at(&mut c, &mut snap);
         let status = g.tick(&mut drv, &snap, &settings, 20_000, None);
         assert!(
@@ -3345,8 +3433,7 @@ fn plant_ownership_is_revalidated_when_the_slot_changes() {
     ingame_scene(&mut c);
     plant_player(&mut c, "Test", 0, 0);
     plant_npc_with_op(&mut c, 0, "Strange plant", -1, Some("Pick Test!"), "Pick");
-    c.npc[0].as_mut().expect("planted").entity.x = 3 * 128 + 64;
-    c.npc[0].as_mut().expect("planted").entity.z = 64;
+    set_npc_tiles(&mut c, 0, (3, 0), (3, 0));
     let mut g = Guardian::new();
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();

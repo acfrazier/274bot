@@ -880,17 +880,11 @@ impl SlotScript {
                 isolate.align_execution(ExecutionId::first(run));
             }
         }
-        if self.seat_compiled_owner.is_none() {
-            if let Some(run) = self.compiled.as_ref() {
-                let key = run.run;
-                let card = run.config.card();
-                self.admit_compiled_owner(key, card);
-            }
-        }
         self.seat_session_held = false;
         if let Some(seat) = &mut self.seat {
             seat.hold(self.guardian_held);
         }
+        self.admit_waiting_compiled_owner();
         self.flush_held_walk_terminal();
         if let Some(run) = self.seat.as_ref().map(|seat| seat.run()) {
             self.seat_fence.arm(ExecutionId::first(run));
@@ -918,6 +912,7 @@ impl SlotScript {
             self.native_runtime.clear_note_progress();
             self.discard_seat_gameplay_delivery();
         } else {
+            self.admit_waiting_compiled_owner();
             self.flush_held_walk_terminal();
         }
     }
@@ -1174,8 +1169,30 @@ impl SlotScript {
         self.admit_compiled_owner(run, card);
     }
 
+    /// Admit the owner of a compiled run that waited for a hold to release.
+    /// A seat that is held (the Guardian's `SessionHeld`, or no ready session)
+    /// keeps a Start in its producer's custody (`Admission::Deferred`,
+    /// `tools/seat-model`: no Start step is enabled while held). The compiled
+    /// run installs at once and its owner is admitted here, on the first
+    /// frame the seat is not held.
+    fn admit_waiting_compiled_owner(&mut self) {
+        if self.seat_compiled_owner.is_some() {
+            return;
+        }
+        let Some(run) = self.compiled.as_ref() else {
+            return;
+        };
+        let (key, card) = (run.run, run.config.card());
+        self.admit_compiled_owner(key, card);
+    }
+
     fn admit_compiled_owner(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {
         if run.slot_key().is_none() {
+            return;
+        }
+        if self.seat.as_ref().is_some_and(|seat| seat.held()) {
+            // Held: the owner waits (see `admit_waiting_compiled_owner`).
+            // No request id is minted for a Start the seat cannot take.
             return;
         }
         let kind = crate::registry::compiled_card(card).map(|card| card.native_kind);
@@ -2159,15 +2176,17 @@ impl SlotScript {
         }
     }
 
-    /// Whether the script may dispatch at all: Running by operator intent,
-    /// not in a watchdog recovery hold, and not Blocked (which closes
-    /// dispatch until Retry, though the instance is retained).
+    /// Whether the script may dispatch: Running by operator intent, without
+    /// a watchdog recovery hold or a terminal failure. A supply park has no
+    /// failure and retains the evidence-idle protocol.
     fn dispatch_open(&self) -> bool {
         let blocked = self
             .compiled
             .as_ref()
             .and_then(|run| run.output.status.as_deref())
-            .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked);
+            .is_some_and(|status| {
+                status.phase == crate::native::NativePhase::Blocked && status.failure.is_some()
+            });
         self.state == RunState::Running
             && self.want_run
             && self.has_instance()
@@ -2624,6 +2643,7 @@ impl SlotScript {
                 crate::native::HostEffect::Interaction(req) => seat_interact_class(req, owner),
                 crate::native::HostEffect::Walk(_)
                 | crate::native::HostEffect::BankPick(_)
+                | crate::native::HostEffect::ServicePick(_)
                 | crate::native::HostEffect::AssessWalk(_)
                 | crate::native::HostEffect::ServerOrdered(_) => {
                     (api::script_contract::EmissionClass::Gameplay, None)
@@ -2887,6 +2907,17 @@ impl SlotScript {
     ) {
         if let Some(ledger) = self.native_runtime.ledger.as_mut() {
             ledger.complete_bank_pick(authority, receipt);
+        }
+    }
+
+    /// Deliver a service pick only to its still-live native run/request owner.
+    pub fn complete_native_service_pick(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        receipt: crate::native_bank::ServicePickReceipt,
+    ) {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            ledger.complete_service_pick(authority, receipt);
         }
     }
 
@@ -3964,10 +3995,9 @@ impl SlotScript {
         }
         let frozen = frozen
             || self.compiled.as_ref().is_some_and(|run| {
-                run.output
-                    .status
-                    .as_ref()
-                    .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
+                run.output.status.as_ref().is_some_and(|status| {
+                    status.phase == crate::native::NativePhase::Blocked && status.failure.is_some()
+                })
             });
         let freeze_action = self.watchdog.set_frozen(frozen, now);
         if frozen
@@ -4124,10 +4154,9 @@ impl SlotScript {
             return Err("watchdog restart cancelled: frozen".into());
         }
         if self.compiled.as_ref().is_some_and(|run| {
-            run.output
-                .status
-                .as_ref()
-                .is_some_and(|status| status.phase == crate::native::NativePhase::Blocked)
+            run.output.status.as_ref().is_some_and(|status| {
+                status.phase == crate::native::NativePhase::Blocked && status.failure.is_some()
+            })
         }) {
             return Err("watchdog restart cancelled: blocked".into());
         }

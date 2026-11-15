@@ -11,7 +11,8 @@ use {
 };
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn modal compatibility isolate")
 }
 
 fn base<'a>() -> SnapshotInput<'a> {

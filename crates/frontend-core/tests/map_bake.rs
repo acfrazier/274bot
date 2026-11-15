@@ -11,7 +11,7 @@ use std::time::Duration;
 use frontend_core::walk_map::WalkMapDemand;
 use frontend_core::{load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt};
 use host_play::map_cache::fixture::{
-    fixture_descriptor, other_cache_descriptor, ship_fixture_terrain, wait_for_status,
+    fixture_descriptor, other_revision_descriptor, ship_fixture_terrain, wait_for_status,
     CountingMapProducer,
 };
 use host_play::map_cache::{
@@ -225,8 +225,7 @@ fn publish_terrain_without_catalogue(scratch: &Scratch) {
     }
     let catalogue = scratch
         .root()
-        .catalogue_dir(fixture_descriptor().catalogue_identity())
-        .unwrap();
+        .catalogue_dir(fixture_descriptor().revision());
     std::fs::remove_dir_all(&catalogue).unwrap();
 }
 
@@ -255,7 +254,7 @@ fn shipped_terrain_for_the_bound_cache_opens_without_asking_or_baking_in_both_fr
     assert_eq!(producer.image_runs(), 0, "no terrain bake");
     let identity = fixture_descriptor().image_identity();
     assert_eq!(
-        tree(&manager.root().image_dir(identity).unwrap()),
+        tree(&manager.root().image_dir(fixture_descriptor().revision())),
         tree(&shipped.image_dir(identity).unwrap()),
         "installed into the map cache byte for byte"
     );
@@ -278,25 +277,6 @@ fn shipped_terrain_for_the_bound_cache_opens_without_asking_or_baking_in_both_fr
         (MapBakePrompt::None, MapBakePrompt::None)
     );
     assert_eq!(producer.image_runs(), 0);
-}
-
-#[test]
-fn terrain_shipped_for_another_client_cache_is_ignored_and_the_bake_asks() {
-    let scratch = Scratch::new("shipped-foreign");
-    let (manager, producer, shipped) = shipped_manager(&scratch);
-    let before = tree(shipped.path());
-    let mut gate = MapBakeGate::new(MapBakeChoice::Ask);
-    let handle = gate
-        .open_for_test(&manager, other_cache_descriptor(), MapDemand::Images)
-        .unwrap();
-    assert_eq!(gate.prompt(), MapBakePrompt::None, "check readiness first");
-    assert_eq!(handle.demand(), MapDemand::ReadyImages, "adopt, never bake");
-    wait_ready(&handle);
-    assert!(!has_terrain(&handle));
-    gate.note_ready_without_terrain(WalkMapDemand::ReadyImages);
-    assert_eq!(gate.prompt(), MapBakePrompt::Asking);
-    assert_eq!(producer.image_runs(), 0);
-    assert_eq!(tree(shipped.path()), before, "shipped terrain left on disk");
 }
 
 #[test]
@@ -382,26 +362,20 @@ fn over_the_cache_cap_the_admitted_terrain_is_not_pruned_or_rebaked() {
     };
     let catalogue = scratch
         .root()
-        .catalogue_dir(fixture_descriptor().catalogue_identity())
-        .unwrap();
+        .catalogue_dir(fixture_descriptor().revision());
     std::fs::remove_dir_all(catalogue).unwrap();
-    let terrain = scratch
-        .root()
-        .image_dir(fixture_descriptor().image_identity())
-        .unwrap();
-    // Publish a second owned identity, then exceed the whole-cache cap with
-    // an unreferenced sparse payload. A foreign directory must remain invalid.
+    let terrain = scratch.root().image_dir(fixture_descriptor().revision());
+    // Publish a second revision-scoped root, then exceed the cache cap. The
+    // unleased root must be pruned instead of the admitted terrain.
+    let unrelated_descriptor = other_revision_descriptor();
     {
         let (installer, _) = manager(&scratch);
         let handle = installer
-            .request(other_cache_descriptor(), MapDemand::Images)
+            .request(unrelated_descriptor.clone(), MapDemand::Images)
             .unwrap();
         wait_ready(&handle);
     }
-    let unrelated = scratch
-        .root()
-        .image_dir(other_cache_descriptor().image_identity())
-        .unwrap();
+    let unrelated = scratch.root().image_dir(unrelated_descriptor.revision());
     // The requested terrain is the least recently used accepted image root.
     set_dir_modified(
         &terrain,

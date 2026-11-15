@@ -25,9 +25,13 @@ fn start(
     shape: LoadShape,
     data: &std::sync::Arc<api::game_data::SelectedGameData>,
 ) -> LoadIsolate {
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), shape, vec![], data.clone()).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), shape, vec![], data.clone())
+        .expect("spawn gathering ownership isolate");
     // The startup barrier: module evaluation has finished once the isolate answers.
-    assert_eq!(iso.probe("1").unwrap(), serde_json::json!(1));
+    assert_eq!(
+        iso.probe("1").expect("await gathering isolate startup"),
+        serde_json::json!(1)
+    );
     iso
 }
 

@@ -361,7 +361,10 @@ fn handshake_tick(
             if !matches!(current, Screen::Offer | Screen::Confirm) {
                 state.opened_at = None;
                 state.validated_offer = false;
-                if pen_at(scene.here().unwrap_or_default()).is_some() {
+                let Some(here) = scene.here() else {
+                    return true;
+                };
+                if pen_at(here).is_some() {
                     return true;
                 }
                 let now = Instant::now();
@@ -375,7 +378,9 @@ fn handshake_tick(
                     players.iter().find(|player| {
                         duel_name(player.name_or_empty()) == expected
                             && !player.in_combat
-                            && pen_at(player.tile()).is_none()
+                            && player
+                                .network_tile()
+                                .is_some_and(|tile| pen_at(tile).is_none())
                     })
                 });
                 if let Some(target) = target {
@@ -1155,9 +1160,12 @@ mod tests {
     #[test]
     fn duel_offer_stall_boundary_is_thirty_seconds() {
         let now = Instant::now();
-        let mut before = Some(now - OFFER_TIMEOUT + Duration::from_nanos(1));
+        let at_deadline = now
+            .checked_sub(OFFER_TIMEOUT)
+            .expect("offer timeout deadline is in the past");
+        let mut before = Some(at_deadline + Duration::from_nanos(1));
         assert!(!offer_stalled(&mut before, now));
-        let mut at = Some(now - OFFER_TIMEOUT);
+        let mut at = Some(at_deadline);
         assert!(offer_stalled(&mut at, now));
     }
 
@@ -1196,7 +1204,11 @@ mod tests {
             assert!(clock.deadline.is_some(), "the handshake window is armed");
 
             post(2, modal);
-            clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+            clock.deadline = Some(
+                Instant::now()
+                    .checked_sub(Duration::from_millis(1))
+                    .expect("test deadline is in the past"),
+            );
             ops.clear();
             let ended = travel.drive(&mut Cx::test(&mut ops, &mut clock, None));
             assert_eq!(ended, Some(false), "modal {modal}");

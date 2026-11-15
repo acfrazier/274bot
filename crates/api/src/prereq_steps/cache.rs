@@ -1,7 +1,7 @@
 //! Process-shared cache for the selected prerequisite-step family.
 //!
-//! The family is hash-verified off-pump during preparation. Cache-only lookup
-//! never decodes or hashes the artifact.
+//! The family is decoded off-pump during preparation. Cache-only lookup
+//! never decodes the artifact.
 
 use super::{wire, PrereqCatalog};
 use crate::game_data::SelectedGameData;

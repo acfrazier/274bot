@@ -10,10 +10,6 @@ pub(super) const MEMBERGATE_LEFT_CLOSED: &str = "door_left_closed";
 pub(super) const MEMBERGATE_RIGHT_CLOSED: &str = "door_right_closed";
 pub(super) const MEMBERGATE_LEFT_OPENED: &str = "door_left_opened";
 pub(super) const MEMBERGATE_RIGHT_OPENED: &str = "door_right_opened";
-pub(super) const MEMBERGATE_LEFT_OPEN: &str =
-    "if(map_members=^false){mes(^mes_members_gate);return;}~open_double_doors_left(500,door_right_closed,loc_param(open_sound));";
-pub(super) const MEMBERGATE_RIGHT_OPEN: &str =
-    "if(map_members=^false){mes(^mes_members_gate);return;}~open_double_doors_right(500,door_left_closed,loc_param(open_sound));";
 
 /// Closed membergate block as read from `doubledoors.loc`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +60,7 @@ pub(super) fn membergate_edges(
                 bump(skipped, SKIP_MEMBERGATE_CONFLICT, 1);
                 continue;
             }
-            _ => {
+            None => {
                 bump(skipped, SKIP_MEMBERGATE_HANDLER, 1);
                 continue;
             }
@@ -175,49 +171,35 @@ pub(super) fn membergate_edges(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MembergateHandler {
     Ok,
-    Invalid,
     Conflict,
 }
 
-/// Loc-specific `[oploc1,membergatel|membergater]` bodies under `scripts`.
-/// Same-line and next-line forms. Duplicate identical canonical bodies are
-/// fine; a second different body is a conflict. Extra guards / a different
-/// opener fail closed.
+/// Loc-specific `[oploc1,membergatel|membergater]` blocks under `scripts`.
+/// Same-line and next-line forms. The handler's members refusal and
+/// double-door open are modelled by name: exactly one declaration is `Ok`,
+/// and a second declaration, equal or different, is a conflict.
 pub(super) fn membergate_handlers(content_root: &Path) -> HashMap<bool, MembergateHandler> {
-    let mut bodies: HashMap<bool, Vec<String>> = HashMap::new();
+    let mut declared: HashMap<bool, usize> = HashMap::new();
     visit_rs2(&content_root.join("scripts"), &mut |text| {
-        for (left, body) in membergate_oploc_handlers(text) {
-            bodies.entry(left).or_default().push(normalized_body(&body));
+        for (left, _) in membergate_oploc_handlers(text) {
+            *declared.entry(left).or_default() += 1;
         }
     });
     let mut out = HashMap::new();
-    for left in [true, false] {
-        let expected = if left {
-            MEMBERGATE_LEFT_OPEN
-        } else {
-            MEMBERGATE_RIGHT_OPEN
-        };
-        let Some(found) = bodies.get(&left) else {
-            continue;
-        };
-        let mut distinct = found.clone();
-        distinct.sort();
-        distinct.dedup();
-        out.insert(
-            left,
-            if distinct.len() > 1 {
-                MembergateHandler::Conflict
-            } else if distinct.first().map(String::as_str) == Some(expected) {
-                MembergateHandler::Ok
-            } else {
-                MembergateHandler::Invalid
-            },
-        );
+    for (left, name) in [(true, MEMBERGATE_LEFT), (false, MEMBERGATE_RIGHT)] {
+        let count = declared.get(&left).copied().unwrap_or(0);
+        if declared_once(&format!("[oploc1,{name}]"), count) {
+            out.insert(left, MembergateHandler::Ok);
+        } else if count > 1 {
+            out.insert(left, MembergateHandler::Conflict);
+        }
     }
     out
 }
 
+/// A header inside a `/* */` comment is not a declaration.
 pub(super) fn membergate_oploc_handlers(text: &str) -> Vec<(bool, String)> {
+    let text = super::rs2_syntax::strip_block_comments(text);
     let mut out = Vec::new();
     let mut cur: Option<(bool, String)> = None;
     for raw in text.lines() {

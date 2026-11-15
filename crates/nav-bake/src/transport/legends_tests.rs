@@ -108,6 +108,7 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
         None,
         Some(&quests),
         None,
+        None,
     );
 
     let gate_edges = graph
@@ -185,6 +186,7 @@ fn legends_gate_requires_started_progress_and_crosses_each_leaf_both_ways() {
         None,
         None,
         None,
+        None,
     );
     assert!(!without_quest
         .edges
@@ -217,6 +219,7 @@ fn every_mature_jungle_loc_has_map_or_completion_tool_and_takeoff_gates() {
         &collision,
         None,
         Some(&quests),
+        None,
         None,
     );
 
@@ -434,6 +437,7 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
         None,
         Some(&quests),
         None,
+        None,
     );
     let takeoff = WorldTile {
         x: 99,
@@ -483,6 +487,7 @@ fn jungle_crossing_accepts_blocked_jungle_landing_only() {
         None,
         Some(&quests),
         None,
+        None,
     );
     assert!(
         !graph.edges.iter().any(|edge| {
@@ -511,6 +516,7 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
         &collision,
         None,
         Some(&quests),
+        None,
         None,
     );
     assert!(
@@ -542,14 +548,7 @@ fn jungle_refuses_to_bake_when_a_required_tool_or_proven_map_is_missing() {
         write_legends_content(&fx);
         fx.write("pack/obj.pack", obj_pack);
         write_jungle_map(&fx, &[2887]);
-        let (graph, _, _) = super::super::derive_transports_with_audit(
-            fx.path(),
-            &defs,
-            &collision,
-            None,
-            quest_source,
-            None,
-        );
+        let (graph, _, _) = super::super::derive_transports_with_audit(fx.path(), &defs, &collision, None, quest_source, None, None);
         assert!(
             !graph.edges.iter().any(|edge| {
                 edge.kind == TransportKind::AgilityShortcut && edge.loc_id == 2887
@@ -594,6 +593,7 @@ fn legends_gate_engine_closure_follows_helpers_into_general_scripts() {
         &open_collision(2724, 3345, 12, 12),
         None,
         Some(&quests),
+        None,
         None,
     );
     assert_eq!(

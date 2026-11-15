@@ -256,9 +256,9 @@ fn frame(
                 if !api::interact::logout(client, &ifaces) {
                     return Err("tutorial logout interface unavailable".into());
                 }
-                // The fixture has no script, so the approved scriptless policy
-                // parks this bot after its own logout: post the operator's
-                // explicit Login before waiting for the new session.
+                // The fixture's own logout consumed the login. Post a real one-shot
+                // Login before waiting for the new session; an unlatched slot with
+                // auto-login would also reconnect by itself.
                 arm.arm_explicit_login();
                 state.step = 3;
             }

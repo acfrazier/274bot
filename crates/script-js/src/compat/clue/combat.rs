@@ -607,8 +607,9 @@ impl ClueRuntime {
                 match input
                     .get("npcs")
                     .and_then(Value::as_array)
-                    .and_then(|page| pick_keeper(keeper_id, keeper_name, page, tile))
-                {
+                    .and_then(|page| {
+                        pick_keeper(keeper_id, keeper_name, page, tile, posted_here(input))
+                    }) {
                     Some(_) => {
                         let id = self.alloc_delegation();
                         self.keeper = Some(Keeper {

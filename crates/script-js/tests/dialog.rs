@@ -14,7 +14,8 @@ use {
 };
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn dialog test isolate")
 }
 
 fn npc<'a>(name: &'a str, actions: &'a [String], index: i32) -> SceneEntityInput<'a> {
@@ -36,9 +37,9 @@ fn npc<'a>(name: &'a str, actions: &'a [String], index: i32) -> SceneEntityInput
         combat_level: 0,
         target_kind: 1,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: 2532,
+        nz: 4712,
         shape: 0,
         angle: 0,
     }
@@ -179,8 +180,8 @@ fn reach_view(grid: &ReachGrid) -> ReachViewInput<'_> {
     }
 }
 
-fn post_native(iso: &LoadIsolate, snap: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
-    iso.post_snapshot(encode_snapshot_with_native(snap, native));
+fn post_native(iso: &LoadIsolate, snap: &SnapshotInput<'_>, native: &NativeFactsInput<'_>) {
+    iso.post_snapshot(encode_snapshot_with_native(snap, *native));
 }
 
 fn failed_reach_walk(request_id: u64, x: i32, z: i32, radius: i32) -> NativeFactsInput<'static> {
@@ -208,7 +209,7 @@ fn post_page(iso: &LoadIsolate, snap: &SnapshotInput<'_>, texts: &[String]) {
     post_native(
         iso,
         snap,
-        NativeFactsInput {
+        &NativeFactsInput {
             chat_page_fingerprint: api::snapshot::chat_page_fingerprint(
                 texts,
                 snap.chat_options
@@ -1153,6 +1154,8 @@ fn open_dialogue_uses_door_aware_npc_reach() {
     let mut target = npc("Gundai", &talk, 4);
     target.x = 8;
     target.z = 5;
+    target.nx = 8;
+    target.nz = 5;
     target.distance = 3;
     target.reachable = false;
     target.reachable_adj = false;
@@ -1188,7 +1191,7 @@ fn open_dialogue_uses_door_aware_npc_reach() {
     assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
 
     snap.tick = 2;
-    post_native(&iso, &snap, failed_reach_walk(request_id, 7, 5, 1));
+    post_native(&iso, &snap, &failed_reach_walk(request_id, 7, 5, 1));
     tick(&iso, 2);
     assert_eq!(
         iso.drain_interacts(),

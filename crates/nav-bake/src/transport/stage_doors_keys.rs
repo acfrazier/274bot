@@ -48,7 +48,7 @@ pub(super) fn key_use_edges(
     observable: &ObservableGates,
     audit: &mut VarpGateAudit,
 ) {
-    let supported = src.supported_procs().0;
+    let supported = src.supported_procs();
     let mut ids: Vec<_> = src.oplocu.keys().collect();
     ids.sort_unstable();
     for name in ids {

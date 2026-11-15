@@ -10,12 +10,13 @@ mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("load revision 289 shop test data")
 }
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data())
-        .unwrap()
+        .expect("spawn shop buyout test isolate")
 }
 
 fn tick(iso: &LoadIsolate) {
@@ -29,7 +30,7 @@ import { buyoutPlan } from '../../api/shop/BuyoutLogic.js';
 export default class T extends LoopingBot {
     loop() {
         const rec = Object.values(SHOP_DB).find(r => r.keepers.includes('Aemad')) ?? null;
-        const unknown = Object.values(SHOP_DB).find(r => r.keepers.includes('Shop keeper')) ?? null;
+        const unknown = Object.values(SHOP_DB).find(r => r.keepers.includes('Unpublished test keeper')) ?? null;
         let plan = null;
         let err = null;
         try {
@@ -46,7 +47,7 @@ export default class T extends LoopingBot {
         }
         let unsupported = null;
         try {
-            buyoutPlan({ inv: 'generalshop1', keepers: ['Shop keeper'], items: [] }, { pot_empty: 3 }, 200, new Set(['Pot']));
+            buyoutPlan({ inv: 'unpinned_test_shop', keepers: ['Unpublished test keeper'], items: [] }, { pot_empty: 3 }, 200, new Set(['Pot']));
         } catch (e) {
             unsupported = String(e.message || e);
         }
@@ -94,14 +95,24 @@ fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
             "archeryshop",
             "archeryshop2",
             "axeshop",
+            "boozeshop",
+            "clotheshop",
+            "death_pub",
             "fishingshop",
             "fishingshop2",
+            "generalshop1",
+            "generalshop2",
+            "generalshop6",
+            "gnomeshop_heck",
+            "khazardshop",
             "magearena_runeshop",
             "magicguildshop",
             "magicshop",
             "pickaxeshop",
             "runeshop",
-            "shilofishingshop"
+            "shantayshop",
+            "shilofishingshop",
+            "wydinstore"
         ])
     );
     assert_eq!(probe["err"], Value::Null);

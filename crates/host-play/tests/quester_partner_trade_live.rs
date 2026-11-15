@@ -110,6 +110,7 @@ fn role_cell(
             stage,
             loadout: None,
             extra_items: items,
+            skills: &[],
             stand: STAND,
         },
         gang,

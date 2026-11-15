@@ -1821,7 +1821,6 @@ fn a_login_withdrawn_without_a_later_command_names_why() {
         .observe(LifecycleFact::SessionExited {
             clean: true,
             resumable: false,
-            idle_request_pending: false,
         })
         .unwrap();
     assert_eq!(

@@ -2397,7 +2397,10 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
         f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
         f.scripts.show_load_failures();
         f.scripts.take_notice().unwrap().apply(&mut banner);
-        assert!(banner.as_deref().unwrap_or("").contains("first-load"));
+        assert!(
+            banner.as_deref().unwrap_or("").contains("failed to load"),
+            "the banner names the failure: {banner:?}"
+        );
         if let Some(error) = newer {
             banner = Some(error.to_string());
         }
@@ -2419,6 +2422,88 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
         assert_eq!(banner.as_deref(), newer, "newer banner {newer:?}");
         f.core.play().unwrap().script_stop("alice");
     }
+}
+
+/// 80 failed cards are one banner line of at most `LINE_MAX` characters (the
+/// count and two names), every failure is in the log, and showing the list
+/// again, or a second Refresh that fails the same cards, adds no log line.
+#[cfg(feature = "js")]
+#[test]
+fn load_failures_show_one_short_line_and_log_each_failure_once() {
+    use crate::log::{global, LogScope, LogView};
+    // The sink must be installed before the failures are logged.
+    global();
+    let mut f = fixture("load-failure-brief", &["alice"]);
+    let log_lines = || -> Vec<String> {
+        let mut view = LogView::new(LogScope::Process);
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|message| message.starts_with("load failure: ") && message.contains("LfBrief"))
+            .collect()
+    };
+    for i in 0..80 {
+        let path = f.dir.join(format!("lfbrief{i:02}.ts"));
+        let failure = script_js::LoadFailure::capture(
+            script::ScriptSource::File,
+            &path,
+            &format!("LfBrief{i:02}"),
+            "Unexpected token at 3:7",
+            Some("export const x = ;"),
+            None,
+        );
+        f.scripts.js_mut().record_failure(failure);
+    }
+    assert_eq!(f.scripts.load_failure_count(), 80);
+    f.scripts.take_notice();
+    f.scripts.show_load_failures();
+    let line = f
+        .scripts
+        .take_notice()
+        .and_then(|notice| notice.text().map(str::to_owned))
+        .expect("the failures are shown");
+    assert!(line.chars().count() <= crate::LINE_MAX, "{line}");
+    assert!(!line.contains('\n'), "{line}");
+    assert_eq!(
+        line,
+        format!(
+            "80 scripts failed to load: LfBrief00, LfBrief01 +78 more{}",
+            crate::LOG_POINTER
+        )
+    );
+    assert_eq!(
+        f.scripts.load_failure_line().as_deref(),
+        Some(line.as_str())
+    );
+
+    // Every failure is in the log, under the store's cap, once.
+    let first = log_lines();
+    assert!(
+        first.len() > 1 && first.len() <= 80,
+        "{} lines",
+        first.len()
+    );
+    for entry in &first {
+        assert!(
+            entry.len() <= api::hostlog::LINE_BYTES,
+            "{} bytes",
+            entry.len()
+        );
+        assert!(!entry.ends_with('…'), "the store cut a line");
+    }
+    for i in 0..80 {
+        let name = format!("LfBrief{i:02} (");
+        assert_eq!(
+            first.iter().filter(|l| l.contains(&name)).count(),
+            1,
+            "{name} is logged once"
+        );
+    }
+    // The banner again, and a Refresh failing the same cards: no new line.
+    f.scripts.show_load_failures();
+    f.scripts.show_load_failures();
+    assert_eq!(log_lines(), first);
 }
 
 /// Each Start's operation id reaches its member's fleet row and slot log
@@ -2943,7 +3028,13 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
     let mut f = native_fixture("native-restore", &["alice"]);
     let id = script::CompiledId("Sherlock");
     let key = script::compiled_identity_key(id);
-    for entry in [None, Some(json!({"schema_version": 1, "values": {}}))] {
+    // The empty entry is the pre-envelope form. 0.2.8 read it as schema 1
+    // with no saved values, and 0.2.9 does the same.
+    for entry in [
+        None,
+        Some(json!({})),
+        Some(json!({"schema_version": 1, "values": {}})),
+    ] {
         let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
         row.settings.script_settings.remove(&key);
         if let Some(entry) = entry {
@@ -2972,7 +3063,6 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
         }
     }
     for entry in [
-        json!({}),
         json!({"schema_version": 2, "values": {"future": 9}}),
         json!({"schema_version": 1, "values": null}),
     ] {
@@ -3006,17 +3096,10 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
             .is_err());
         f.core.flush_writes();
         assert_eq!(std::fs::read(&vault_path).unwrap(), saved_bytes);
-        if entry.as_object().unwrap().is_empty() {
-            assert!(matches!(
-                Vault::unlock(&vault_path, "test-passphrase-01"),
-                Err(vault::VaultError::UnsupportedSavedFormat { path }) if path == vault_path,
-            ));
-        } else {
-            assert_eq!(
-                f.saved_bag("alice", &key),
-                Some(entry.as_object().unwrap().clone())
-            );
-        }
+        assert_eq!(
+            f.saved_bag("alice", &key),
+            Some(entry.as_object().unwrap().clone())
+        );
     }
     assert!(matches!(
         f.scripts.compiled_schema(
@@ -3024,6 +3107,86 @@ fn compiled_restore_keeps_current_sherlock_permissions_and_refuses_malformed_sch
             None,
             CompiledCardId::from_script(script::CompiledId("missing"))
         ),
+        super::SchemaView::Unavailable(_)
+    ));
+}
+
+/// Gatherer settings that 0.2.8 saved (schema 4) load in 0.2.9 (schema 5):
+/// each saved value stays, and `buyTools`, which schema 5 added, takes its
+/// default. The next save stamps schema 5. Schema 3 is older than 0.2.8 and
+/// stays refused.
+#[test]
+fn gatherer_settings_saved_by_0_2_8_load_and_resave_as_the_current_schema() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut f = native_fixture("native-gatherer-schema-4", &["alice"]);
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+    let saved = json!({"schema_version": 4, "values": {"skill": "Mining", "bank": "Nearest"}});
+    let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+    row.settings
+        .script_settings
+        .insert(key.clone(), saved.as_object().unwrap().clone());
+    f.core
+        .save_profile(row, crate::ArmMirror::none(), "restore")
+        .unwrap();
+    f.core.flush_writes();
+
+    let super::SchemaView::Ready { version, .. } =
+        f.scripts
+            .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id))
+    else {
+        panic!("0.2.8 Gatherer settings must stay usable");
+    };
+    assert_eq!(version, 5);
+    let bag = f
+        .scripts
+        .compiled_bag(&f.core, "alice", CompiledCardId::from_script(id))
+        .unwrap();
+    assert_eq!(bag["skill"], json!("Mining"));
+    assert_eq!(bag["bank"], json!("Nearest"));
+    assert_eq!(
+        bag["buyTools"],
+        json!(true),
+        "the new setting takes its default"
+    );
+    assert_eq!(
+        f.saved_bag("alice", &key),
+        Some(saved.as_object().unwrap().clone()),
+        "a read does not rewrite the saved settings"
+    );
+
+    let mut values = Map::new();
+    values.insert("skill".into(), json!("Mining"));
+    values.insert("bank".into(), json!("Nearest"));
+    f.scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            values,
+        )
+        .unwrap();
+    f.core.flush_writes();
+    let resaved = f.saved_bag("alice", &key).unwrap();
+    assert_eq!(resaved["schema_version"], json!(5));
+
+    let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+    row.settings.script_settings.insert(
+        key.clone(),
+        json!({"schema_version": 3, "values": {"skill": "Mining"}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    f.core
+        .save_profile(row, crate::ArmMirror::none(), "restore")
+        .unwrap();
+    f.core.flush_writes();
+    assert!(matches!(
+        f.scripts
+            .compiled_schema(&f.core, Some("alice"), CompiledCardId::from_script(id)),
         super::SchemaView::Unavailable(_)
     ));
 }
@@ -5858,6 +6021,164 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
             .get(script::ScriptSource::Catalog, "PresentBot")
             .is_some(),
         "a later valid $RS2B0T root must still register its cards"
+    );
+}
+
+/// Bind the selected game data and a navigation world, so catalog
+/// validation has the real ready context the front ends supply.
+#[cfg(feature = "js")]
+fn bind_selected_script_context(f: &mut Fixture) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("local R289 test data");
+    let world =
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    let play = f.core.play_mut_for_test().expect("fixture play session");
+    play.bind_script_test_data(data);
+    play.bind_script_test_world(std::sync::Arc::new(world));
+}
+
+/// Write `cards` as `.ts` catalog cards under one registry index.
+#[cfg(feature = "js")]
+fn write_catalog(dir: &std::path::Path, cards: &[(&str, &str)]) -> PathBuf {
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    let mut index = String::new();
+    for (register, folder) in cards {
+        std::fs::create_dir_all(scripts.join(folder)).unwrap();
+        index.push_str(&format!("import {folder} from './{folder}/{folder}.js';\n"));
+        index.push_str(&format!(
+            "ScriptRegistry.register({{ name: '{register}', create: () => new {folder}() }});\n"
+        ));
+        std::fs::write(
+            scripts.join(folder).join(format!("{folder}.ts")),
+            format!("export default class {folder} extends LoopingBot {{ override loop() {{}} }}"),
+        )
+        .unwrap();
+    }
+    std::fs::write(scripts.join("index.ts"), index).unwrap();
+    root
+}
+
+/// A three-card catalog whose middle card is larger than the 4 MiB source
+/// cap of one validation isolate.
+#[cfg(feature = "js")]
+fn write_catalog_with_oversized_middle_card(dir: &std::path::Path) -> PathBuf {
+    let root = dir.join("rs2b0t-big");
+    let scripts = root.join("src/bot/scripts");
+    let mut index = String::new();
+    for (register, folder) in [("First", "First"), ("Big", "Big"), ("Last", "Last")] {
+        std::fs::create_dir_all(scripts.join(folder)).unwrap();
+        index.push_str(&format!("import {folder} from './{folder}/{folder}.js';\n"));
+        index.push_str(&format!(
+            "ScriptRegistry.register({{ name: '{register}', create: () => new {folder}() }});\n"
+        ));
+    }
+    std::fs::write(scripts.join("index.ts"), index).unwrap();
+    for folder in ["First", "Last"] {
+        std::fs::write(
+            scripts.join(folder).join(format!("{folder}.js")),
+            format!("export default class {folder} extends LoopingBot {{ loop() {{}} }}\n"),
+        )
+        .unwrap();
+    }
+    let mut oversized = String::from("// ");
+    oversized.push_str(&"x".repeat(4 * 1024 * 1024));
+    oversized.push_str("\nexport default class Big extends LoopingBot { loop() {} }\n");
+    std::fs::write(scripts.join("Big").join("Big.js"), oversized).unwrap();
+    root
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_import_continues_past_a_card_too_large_to_validate() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut f = fixture("catalog-import-oversized-card", &["alice"]);
+    bind_selected_script_context(&mut f);
+    let root = write_catalog_with_oversized_middle_card(&f.dir);
+    f.scripts
+        .request_catalog_import(&root, &script_js::default_rs2b0t_path_file())
+        .expect("a three-card import queues");
+    f.pump_until("the catalog import did not settle", |f| {
+        !f.scripts.catalog_work_pending() && !f.scripts.reload_validation_pending()
+    });
+
+    let imported: Vec<&str> = f
+        .scripts
+        .cards()
+        .filter(|card| card.source() == CardSource::Catalog)
+        .map(|card| card.name())
+        .collect();
+    assert_eq!(
+        imported.len(),
+        3,
+        "every card must be imported: {imported:?}"
+    );
+    assert!(
+        f.scripts
+            .card(CardSource::Catalog, "Big")
+            .is_some_and(|card| card.is_transpiled()),
+        "the oversized card loads unchecked, as release/0.2.9 loaded it"
+    );
+    assert_eq!(f.scripts.load_failure_count(), 0);
+    let notice = f
+        .scripts
+        .take_notice()
+        .expect("the import reports a notice");
+    assert_eq!(
+        notice.text(),
+        Some("Catalog imported: 3 cards; Big: not checked: too large to check")
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn content_change_cancelling_a_catalog_import_names_the_import() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut f = fixture("catalog-import-content-change", &["alice"]);
+    bind_selected_script_context(&mut f);
+    let root = write_catalog(&f.dir, &[("Alpha", "Alpha"), ("Beta", "Beta")]);
+    f.scripts
+        .request_catalog_import(&root, &script_js::default_rs2b0t_path_file())
+        .expect("a two-card import queues");
+    let guard = Instant::now() + HANG_GUARD;
+    while !f.scripts.reload_validation_pending() {
+        assert!(
+            Instant::now() < guard,
+            "the catalog import never started validating"
+        );
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // The selected content changes while the import validates.
+    let world =
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3());
+    f.core
+        .play_mut_for_test()
+        .expect("fixture play session")
+        .bind_script_test_world(std::sync::Arc::new(world));
+    f.pump_until("the cancelled import did not settle", |f| {
+        !f.scripts.catalog_work_pending() && !f.scripts.reload_validation_pending()
+    });
+
+    assert_eq!(
+        f.scripts
+            .take_notice()
+            .and_then(|notice| notice.text().map(str::to_owned)),
+        Some(
+            "Import cancelled: selected content changed. The catalog will be checked again."
+                .to_string()
+        )
+    );
+    assert!(
+        f.scripts
+            .cards()
+            .all(|card| card.source() != CardSource::Catalog),
+        "a cancelled import applies no card"
     );
 }
 

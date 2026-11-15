@@ -53,6 +53,7 @@ pub const CARD: CompiledCard = CompiledCard {
         "Collect selected visible holiday items around the Start tile, bank them and return.",
     category: "Gathering",
     schema_version: 1,
+    reads_schema_versions: &[],
 
     schema,
     per_account_settings: &[],

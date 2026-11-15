@@ -5,7 +5,7 @@ use {
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
 
-mod common;
+pub mod common;
 
 fn entity<'a>(
     index: i32,
@@ -405,7 +405,8 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
             ],
             "identity": [true, true, true, true],
             "filteredOrder": [["first", "second"], ["second"], ["first"], ["first", "second"]],
-            "nearest": ["second", "second", "second", "second", "second", "second"],
+            // Actor ranks use path heads; static rows keep their posted distances.
+            "nearest": ["first", "second", "first", "second", "first", "first"],
             "all": [
                 [[-900, "edited"], [-900, "edited"]],
                 [[-900, "edited"], [-900, "edited"]],

@@ -12,7 +12,8 @@ use {
 };
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn reach test isolate")
 }
 
 fn npc<'a>(
@@ -42,9 +43,9 @@ fn npc<'a>(
         combat_level: 0,
         target_kind: 1,
         target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
+        size: 1,
+        nx: x,
+        nz: z,
         shape: 0,
         angle: 0,
     }
@@ -138,8 +139,8 @@ fn post(iso: &LoadIsolate, snap: &SnapshotInput<'_>) {
     iso.post_snapshot(encode_snapshot(snap));
 }
 
-fn post_native(iso: &LoadIsolate, snap: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
-    iso.post_snapshot(encode_snapshot_with_native(snap, native));
+fn post_native(iso: &LoadIsolate, snap: &SnapshotInput<'_>, native: &NativeFactsInput<'_>) {
+    iso.post_snapshot(encode_snapshot_with_native(snap, *native));
 }
 
 fn tick(iso: &LoadIsolate, n: u64) {
@@ -267,7 +268,7 @@ fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
         other => panic!("expected close-in walk-near, got {other:?}"),
     };
     snap.tick = 2;
-    post_native(&iso, &snap, fail_native(request_id, 5, 5, 3));
+    post_native(&iso, &snap, &fail_native(request_id, 5, 5, 3));
     tick(&iso, 2);
     assert_eq!(
         iso.probe("__ok").unwrap(),
@@ -310,7 +311,7 @@ fn stand_walk_failure_takes_the_ladder_scene_step_before_the_talk() {
         other => panic!("expected stand walk-near, got {other:?}"),
     };
     snap.tick = 2;
-    post_native(&iso, &snap, fail_native(request_id, 5, 5, 1));
+    post_native(&iso, &snap, &fail_native(request_id, 5, 5, 1));
     tick(&iso, 2);
     assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
     assert_eq!(
@@ -424,6 +425,119 @@ fn nearest_same_name_talk_uses_posted_index() {
 }
 
 #[test]
+fn network_coords_npc_dialog_ranks_from_local_server_path_heads_and_footprint() {
+    let iso = spawn(NPC_DIALOG);
+    let actions = ["Talk-to".to_string()];
+    let mut rendered_near = npc("Traiborn", &actions, 2, 5, 5, 0, true);
+    rendered_near.nx = 50;
+    rendered_near.nz = 50;
+    let mut network_near = npc("Traiborn", &actions, 11, 30, 30, 100, true);
+    network_near.size = 2;
+    network_near.nx = 6;
+    network_near.nz = 5;
+    let npcs = [rendered_near, network_near];
+    let mut snap = base(stand());
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Traiborn".into(),
+            action: "Talk-to".into(),
+            index: Some(11),
+        }],
+        "rank the local path head to the remote NPC path head, not rendered tiles or cached distance"
+    );
+    iso.join();
+}
+
+#[test]
+fn network_coords_moved_npc_reselects_on_the_existing_retry_ticks() {
+    let iso = spawn(NPC_DIALOG);
+    iso.probe("globalThis.__openMs = 0").unwrap();
+    let actions = ["Talk-to".to_string()];
+    let mut rendered_near = npc("Traiborn", &actions, 2, 5, 5, 0, true);
+    rendered_near.nx = 50;
+    rendered_near.nz = 50;
+    let mut network_near = npc("Traiborn", &actions, 11, 30, 30, 100, true);
+    network_near.nx = 6;
+    network_near.nz = 5;
+    let npcs = [rendered_near, network_near];
+    let mut snap = base(stand());
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Traiborn".into(),
+            action: "Talk-to".into(),
+            index: Some(11),
+        }]
+    );
+
+    let mut rendered_near = npc("Traiborn", &actions, 3, 5, 5, 0, true);
+    rendered_near.nx = 60;
+    rendered_near.nz = 60;
+    let mut network_near = npc("Traiborn", &actions, 12, 30, 30, 100, true);
+    network_near.nx = 9;
+    network_near.nz = 5;
+    let moved_npcs = [rendered_near, network_near];
+    snap.tick = 2;
+    snap.npcs = &moved_npcs;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    snap.tick = 3;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Traiborn".into(),
+            action: "Talk-to".into(),
+            index: Some(12),
+        }],
+        "the next normal retry reads the moved network target without extending its wait"
+    );
+    iso.join();
+}
+
+#[test]
+fn network_coords_missing_origin_or_npc_size_does_not_click() {
+    let iso = spawn(NPC_DIALOG);
+    let actions = ["Talk-to".to_string()];
+    let mut row = npc("Traiborn", &actions, 4, 5, 5, 0, true);
+    row.nx = 5;
+    row.nz = 5;
+    let npcs = [row];
+    let mut snap = base(stand());
+    snap.here = None;
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no local path head, no actor"
+    );
+    iso.join();
+
+    let iso = spawn(NPC_DIALOG);
+    let mut row = npc("Traiborn", &actions, 4, 5, 5, 0, true);
+    row.size = 0;
+    let npcs = [row];
+    let mut snap = base(stand());
+    snap.npcs = &npcs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "unknown NPC footprint is not selectable"
+    );
+    iso.join();
+}
+
+#[test]
 fn open_ms_zero_talks_again_next_round_instead_of_settling() {
     // Frozen npcDialog passes `retryAfterTimeout: true` (Reach.ts:288-300):
     // an unanswered talk waits one tick and clicks again, it does not
@@ -485,7 +599,7 @@ fn npc_dialog_opens_the_door_in_front_of_an_unreachable_npc_then_talks() {
     // Frozen approaches the door with walkResilient (Reach.ts:112-114): a
     // failed baked walk takes the ladder's scene step, not the Open.
     snap.tick = 2;
-    post_native(&iso, &snap, fail_native(request_id, 7, 5, 1));
+    post_native(&iso, &snap, &fail_native(request_id, 7, 5, 1));
     tick(&iso, 2);
     assert_eq!(
         iso.drain_interacts(),
@@ -804,7 +918,8 @@ fn cant_reach(seq: i32) -> [ChatLineInput<'static>; 1] {
 }
 
 fn logs(iso: &LoadIsolate) -> Vec<String> {
-    serde_json::from_value(iso.probe("__logs").unwrap()).unwrap()
+    serde_json::from_value(iso.probe("__logs").expect("read reach-test logs"))
+        .expect("decode reach-test logs")
 }
 
 #[test]
@@ -846,7 +961,7 @@ fn entity_op_walks_to_and_opens_the_door_toward_the_target_then_retries() {
     // baked walk takes the scene step; the Open follows once the ladder
     // ends beside the door.
     snap.tick = 3;
-    post_native(&iso, &snap, fail_native(request_id, 7, 5, 1));
+    post_native(&iso, &snap, &fail_native(request_id, 7, 5, 1));
     tick(&iso, 3);
     assert_eq!(
         iso.drain_interacts(),
@@ -1192,7 +1307,12 @@ fn tick_until_settled(
     let mut ops = Vec::new();
     let mut n = from;
     // `__ok` exists only once the script's first loop has run.
-    while n < from + ticks && iso.probe("globalThis.__ok ?? null").unwrap() == Value::Null {
+    while n < from + ticks
+        && iso
+            .probe("globalThis.__ok ?? null")
+            .expect("read reach completion state")
+            == Value::Null
+    {
         std::thread::sleep(pause);
         tick(iso, n);
         ops.extend(iso.drain_interacts());
@@ -1644,7 +1764,7 @@ fn loc_op_pumps_sustain_while_it_walks_to_the_stand() {
 fn loc_op_clicks_after_a_wait(expect_ms: &str, wait_for_retry: bool) -> usize {
     let iso = spawn(LOC_OP);
     iso.probe(&format!("globalThis.__expectMs = {expect_ms}"))
-        .unwrap();
+        .expect("set reach-test expectation duration");
     let actions = ["Take From".to_string()];
     let locs = [barrel(&actions, 6, 5, 1)];
     let mut snap = base(stand());
@@ -1666,7 +1786,7 @@ fn loc_op_clicks_after_a_wait(expect_ms: &str, wait_for_retry: bool) -> usize {
             "{expect_ms}: hang guard expired, no retry click after tick {n}"
         );
     }
-    let ok = iso.probe("__ok").unwrap();
+    let ok = iso.probe("__ok").expect("read reach-test result");
     iso.join();
     assert_eq!(first, vec![loc_op(6, 5, "Take From", 7000)], "{expect_ms}");
     assert_eq!(ok, Value::Null, "{expect_ms}: still reaching, not {ok}");
@@ -1721,7 +1841,7 @@ export default class T extends LoopingBot {
         canlight: &[],
         stamp: 1,
     };
-    post_native(&iso, &snap, NativeFactsInput::default());
+    post_native(&iso, &snap, &NativeFactsInput::default());
     tick(&iso, 1);
 
     let blocked = "{ x: 6, z: 5, level: 0 }";

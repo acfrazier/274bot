@@ -150,7 +150,6 @@ fn map_poi_catalogue() -> (std::sync::Arc<WalkCatalogue>, Tile, Tile) {
     ));
     let identity = CatalogueIdentity {
         revision: 289,
-        content: digest(1),
         policy: digest(2),
     };
     let booth = poi_record(
@@ -736,21 +735,23 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
 fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
-    app.nav = app
-        .nav
-        .with_danger_level(frontend_core::DangerLevel::Always);
-    app.script_scope_notice_ack = true;
-    app.survivable_routing_notice_ack = true;
     app.settings_state.row = 8;
-    let rows = draw(&mut app, 60, 14);
-    let (col, row) = find(&rows, "Danger routing:")
-        .expect("the selected global remains visible in a compact terminal");
-    app.on_click(col, row + 1);
-    assert_eq!(
-        app.nav.danger_level(),
+    app.script_scope_notice_ack = true;
+    for expected in [
+        frontend_core::DangerLevel::WhenSurvivable,
+        frontend_core::DangerLevel::Always,
         frontend_core::DangerLevel::Never,
-        "the wrapped continuation cycles the danger setting"
-    );
+    ] {
+        let rows = draw(&mut app, 60, 14);
+        let (col, row) = find(&rows, "Danger routing:")
+            .expect("the selected global remains visible in a compact terminal");
+        app.on_click(col, row + 1);
+        assert_eq!(
+            app.nav.danger_level(),
+            expected,
+            "the wrapped continuation cycles the danger setting"
+        );
+    }
     assert!(
         app.pause_script_on_manual_walk_abort,
         "a continuation never activates the next setting"
@@ -758,15 +759,33 @@ fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
 }
 
 #[test]
-fn settings_survivable_notice_ack_is_independent_and_reaches_the_shared_projection() {
+fn danger_routing_cycles_all_three_levels_without_a_migration_notice() {
     let mut app = TuiApp::new("274bot headless");
     app.settings_state.open = true;
     app.script_scope_notice_ack = true;
-    assert!(find(&draw(&mut app, 100, 24), "Danger routing has three levels").is_some());
-    assert_eq!(app.on_key(key(KeyCode::Char('n'))), AppAction::None);
-    assert!(app.script_scope_notice_ack && app.survivable_routing_notice_ack);
-    assert!(app.walk_permissions.survivable_routing_notice_ack());
-    assert!(find(&draw(&mut app, 100, 24), "Danger routing has three levels").is_none());
+    app.settings_state.row = 8;
+    assert_eq!(app.nav.danger_level(), frontend_core::DangerLevel::Never);
+    let first = draw(&mut app, 100, 24);
+    assert!(find(&first, "Danger routing: Never").is_some());
+    assert!(find(&first, "dismiss this notice").is_none());
+    for expected in [
+        frontend_core::DangerLevel::WhenSurvivable,
+        frontend_core::DangerLevel::Always,
+        frontend_core::DangerLevel::Never,
+    ] {
+        assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+        assert_eq!(app.nav.danger_level(), expected);
+        assert_eq!(
+            app.nav_preferences_dirty,
+            [frontend_core::NavPreference::AllowDangerZones],
+            "one queued write carries the level"
+        );
+        assert!(find(
+            &draw(&mut app, 100, 24),
+            &format!("Danger routing: {}", expected.label())
+        )
+        .is_some());
+    }
 }
 
 /// The settings popup owns the keyboard: global letters do not leak out
@@ -824,7 +843,7 @@ fn map_enter_confirms_a_walk_selection() {
 #[test]
 fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     let mut app = open_map_world();
-    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true, true, true);
+    app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true, true);
 
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     assert_eq!(
@@ -863,12 +882,19 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
         !app.map_route_through_zones,
         "MapOpen also resets stale state"
     );
-    app.nav = app
-        .nav
-        .with_danger_level(frontend_core::DangerLevel::WhenSurvivable);
     app.map_route_through_zones = true;
     app.settings_state.open = true;
     app.settings_state.row = 8;
+    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    assert_eq!(
+        app.nav.danger_level(),
+        frontend_core::DangerLevel::WhenSurvivable
+    );
+    assert!(!app.nav.allow_danger_zones());
+    assert!(
+        app.map_route_through_zones,
+        "the held middle level keeps the Never-level one-shot control"
+    );
     assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
     app.settings_state.open = false;
     assert!(app.nav.allow_danger_zones());
@@ -1948,6 +1974,16 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             .collect()
     }
 
+    fn flattened_text(shown: &str) -> String {
+        shown
+            .chars()
+            .map(|c| if c == '\n' || c == '│' { ' ' } else { c })
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     let evidence_root =
         std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
     for (width, height) in [(120, 40), (80, 24)] {
@@ -1974,18 +2010,25 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             shown.contains("Start zone scope"),
             "{width}x{height}: {shown}"
         );
+        // The disclosure wraps at the pane width: test its words, not its
+        // line breaks or the pane border.
+        let flat = flattened_text(&shown);
         assert!(
-            shown.contains("Start accepts only these zones."),
-            "{width}x{height}: {shown}"
+            flat.contains(
+                "Warning: these guides are unqualified. Live testing has not shown that they work: arthur."
+            ),
+            "{width}x{height}: the unqualified-guide warning stays visible: {shown}"
         );
-        assert!(
-            shown.contains("The food guard is armed for the whole walk"),
-            "{width}x{height}: {shown}"
-        );
-        assert!(
-            shown.contains("protection runs only where a step requests it."),
-            "{width}x{height}: {shown}"
-        );
+        for sentence in [
+            "The guide asks to cross these zones.",
+            "The food guard is armed for the whole walk",
+            "protection runs only where a step requests it.",
+        ] {
+            assert!(
+                flat.contains(sentence),
+                "{width}x{height}: {sentence}: {shown}"
+            );
+        }
         assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
         assert!(
             !shown.contains("Prince Ali Rescue"),
@@ -2018,9 +2061,14 @@ fn arthur_zone_scope_renders_all_eight_names_and_reasons_at_common_sizes() {
             page_index += 1;
             rows = draw(&mut app, width, height);
             shown = text(&rows);
+            let flat = flattened_text(&shown);
             assert!(
-                shown.contains("Start zone scope") && shown.contains("[Start t]"),
-                "{width}x{height}: controls stay visible while scrolling: {shown}"
+                shown.contains("Start zone scope")
+                    && shown.contains("[Start t]")
+                    && flat.contains(
+                        "Warning: these guides are unqualified. Live testing has not shown that they work: arthur."
+                    ),
+                "{width}x{height}: controls and warning stay visible while scrolling: {shown}"
             );
             pages.push(zone_rows(&rows, app.script_area));
             if let Some(root) = &evidence_root {
@@ -2121,7 +2169,7 @@ fn assert_mouse_browse_pick_discloses_quester_zones_before_start(width: u16, hei
         "{width}x{height}: the selected guide's zone scope is shown before Start: {shown}"
     );
     assert!(
-        shown.contains("Start accepts only these zones."),
+        shown.contains("The guide asks to cross these zones."),
         "{width}x{height}: the shared Start notice is shown: {shown}"
     );
     assert!(
@@ -2188,6 +2236,77 @@ fn mouse_browse_pick_discloses_quester_zones_before_start_80x24() {
     assert_mouse_browse_pick_discloses_quester_zones_before_start(80, 24);
 }
 
+fn assert_start_screen_warns_about_unqualified_guides_only_when_allowed(width: u16, height: u16) {
+    let evidence_root =
+        std::env::var_os("UNQUALIFIED_OPTIN_TUI_EVIDENCE").map(std::path::PathBuf::from);
+    let flat = |shown: &str| shown.split_whitespace().collect::<Vec<_>>().join(" ");
+    for allowed in [false, true] {
+        let mut app = script_app();
+        app.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+        let settings = serde_json::Map::from_iter([
+            ("quests".to_owned(), serde_json::json!(["arthur"])),
+            (
+                "include_draft_guides".to_owned(),
+                serde_json::json!(allowed),
+            ),
+        ]);
+        let mut disclosure = frontend_core::scripts::QuesterStartZoneCache::default();
+        assert!(disclosure.update_settings(
+            frontend_core::selection::ProfileIdentity::synthetic("tui-unqualified-warning"),
+            0,
+            Ok(settings),
+        ));
+        app.set_quester_start_zone_view(disclosure.shared_view());
+        app.script_state = ScriptRunState::Idle;
+        assert_eq!(app.show_screen(Screen::Script), AppAction::None);
+
+        let shown = text(&draw(&mut app, width, height));
+        assert!(
+            shown.contains(frontend_core::scripts::START_ZONE_SCOPE_TITLE),
+            "{width}x{height} allowed={allowed}: {shown}"
+        );
+        assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
+        let flat_shown = flat(&shown);
+        if allowed {
+            assert!(
+                flat_shown.contains("Warning: these guides are unqualified."),
+                "{width}x{height}: the warning is shown before Start: {shown}"
+            );
+            assert!(
+                flat_shown.contains("arthur"),
+                "{width}x{height}: the warning names the guide: {shown}"
+            );
+        } else {
+            assert!(
+                !flat_shown.contains("unqualified"),
+                "{width}x{height}: no warning while the setting is off: {shown}"
+            );
+        }
+        if let Some(root) = &evidence_root {
+            let directory = root.join("UNQUALIFIED-OPTIN");
+            std::fs::create_dir_all(&directory).expect("create TUI evidence directory");
+            std::fs::write(
+                directory.join(format!(
+                    "tui-start-{width}x{height}-allow-{}.txt",
+                    if allowed { "on" } else { "off" }
+                )),
+                &shown,
+            )
+            .expect("write TUI capture");
+        }
+    }
+}
+
+#[test]
+fn start_screen_warns_about_unqualified_guides_only_when_allowed_120x40() {
+    assert_start_screen_warns_about_unqualified_guides_only_when_allowed(120, 40);
+}
+
+#[test]
+fn start_screen_warns_about_unqualified_guides_only_when_allowed_80x24() {
+    assert_start_screen_warns_about_unqualified_guides_only_when_allowed(80, 24);
+}
+
 #[test]
 fn palette_start_opens_quester_zone_scope_before_start() {
     let evidence_root =
@@ -2234,7 +2353,7 @@ fn palette_start_opens_quester_zone_scope_before_start() {
             "{width}x{height}: {shown}"
         );
         assert!(
-            shown.contains("Start accepts only these zones."),
+            shown.contains("The guide asks to cross these zones."),
             "{width}x{height}: {shown}"
         );
         assert!(shown.contains("[Start t]"), "{width}x{height}: {shown}");
@@ -2527,4 +2646,309 @@ fn space_on_the_map_toggles_the_focused_bots_model_mark() {
         app.toggle_walk_send_focused(),
         AppAction::SetMark("alice".into(), false)
     );
+}
+
+/// A walk refusal that names 99 danger zones (6,360 characters), as the
+/// script's park reason.
+fn zone_reason() -> String {
+    let zones: Vec<String> = (0..99)
+        .map(|i| {
+            format!(
+                "Ogre (L53) at 2567,{} level 0 [ogre@2567,{},0]",
+                3000 + i,
+                3000 + i
+            )
+        })
+        .collect();
+    format!(
+        "blocked by danger zones: {}; to allow it, set Danger routing to Always in Nav config",
+        zones.join(", ")
+    )
+}
+
+/// The row of `rows` that starts with `prefix` after its leading border, with
+/// the border and padding at its end dropped.
+fn row_starting<'a>(rows: &'a [String], prefix: &str) -> Option<&'a str> {
+    rows.iter()
+        .map(|row| {
+            row.trim_start_matches(['│', ' '])
+                .trim_end_matches(['│', ' '])
+        })
+        .find(|row| row.starts_with(prefix))
+}
+
+/// A published brief is one short line: at 80x24 the message row cuts it to
+/// the 75 cells it has with `…`, at 120x40 the whole line fits; a click
+/// opens the modal with the whole line, and the modal keeps it after the
+/// message line's timeout.
+#[test]
+fn the_message_line_shows_the_brief_at_80x24_and_120x40() {
+    let line = format!(
+        "Blocked by 99 danger zones; tick \"Route through danger zones\" to walk anyway, then walk again{}",
+        frontend_core::LOG_POINTER
+    );
+    assert!(line.chars().count() <= frontend_core::LINE_MAX);
+    for (width, height, cut) in [(80u16, 24u16, true), (120, 40, false)] {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.error = Some(line.clone());
+        let rows = draw(&mut app, width, height);
+        println!("CAPTURE message-line {width}x{height}\n{}", text(&rows));
+        let row =
+            row_starting(&rows, "msg: ").unwrap_or_else(|| panic!("{width}x{height}: {rows:?}"));
+        if cut {
+            assert!(row.ends_with('…'), "{width}x{height}: {row}");
+            assert!(crate::text::cells(row) <= usize::from(width), "{row}");
+            assert!(!row.contains("(see log)"), "cut before the pointer: {row}");
+        } else {
+            assert!(row.contains(&line), "{width}x{height}: {row}");
+        }
+        // The click opens the whole line; the text is the modal's own.
+        let (x, y) = find(&rows, "msg: ").expect("the message row");
+        app.on_click(x + 6, y);
+        assert!(
+            matches!(&app.modal, Some(Modal::Message { text, .. }) if *text == line),
+            "{width}x{height}: {:?}",
+            app.modal
+        );
+        app.error = None;
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains("Blocked by 99 danger zones"),
+            "the modal keeps its text after the line expires: {width}x{height}"
+        );
+    }
+}
+
+/// A wide character is never split across the last column of the row.
+#[test]
+fn the_message_line_never_splits_a_wide_character_at_the_last_column() {
+    for (width, height) in [(80u16, 24u16), (120, 40)] {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.error = Some("日".repeat(60));
+        let rows = draw(&mut app, width, height);
+        let row = row_starting(&rows, "msg: ").expect("the message row");
+        // The test backend draws the second cell of a wide character as a
+        // space, so a whole last character reads `日 …`.
+        assert!(row.ends_with("日 …"), "{width}x{height}: {row}");
+        assert!(row.chars().count() <= usize::from(width));
+    }
+}
+
+/// The Status card and the Script pane show a parked script's reason as one
+/// short line, with no zone item; a click on it (or the palette's Show full
+/// reason) opens the whole text, which the modal keeps.
+#[test]
+fn the_status_and_script_panes_show_the_short_reason() {
+    let reason = zone_reason();
+    assert!(reason.chars().count() > 5_000);
+    for (width, height) in [(80u16, 24u16), (120, 40)] {
+        for screen in [Screen::Overview, Screen::Script] {
+            let mut app = crate::test_support::fleet_app(&["alice"]);
+            app.show_screen(screen);
+            let mut detail = crate::test_support::ready_detail("alice");
+            detail.row_mut().set_script(ScriptRunState::Running);
+            let status = NativeStatus::working(CompiledCardId::QUESTER)
+                .with_text_field("action_state", "Action", "blocked")
+                .with_text_field("block_reason", "Blocked", &reason);
+            app.detail = Some(status.attach_to(detail));
+            let rows = draw(&mut app, width, height);
+            let all = text(&rows);
+            println!("CAPTURE reason-pane {screen:?} {width}x{height}\n{all}");
+            let label = match screen {
+                Screen::Script => "blocked by danger zones",
+                _ => "reason: blocked by danger zones",
+            };
+            let row = row_starting(&rows, label)
+                .unwrap_or_else(|| panic!("{screen:?} {width}x{height}: {all}"));
+            assert!(row.ends_with('…'), "{screen:?} {width}x{height}: {row}");
+            // Only the first 100 characters of the reason are drawn: the
+            // first zone, not the 51st.
+            assert!(
+                !all.contains("2567,3050"),
+                "{screen:?} {width}x{height}: {all}"
+            );
+            assert!(
+                !all.contains("to allow it, set Danger routing"),
+                "{screen:?} {width}x{height}: the whole reason is not drawn"
+            );
+            // A click on the row opens the whole reason.
+            let (x, y) = find(&rows, label).unwrap();
+            app.on_click(x + 2, y);
+            assert!(
+                matches!(&app.modal, Some(Modal::Message { text, title, .. })
+                    if *text == reason && title == "Reason"),
+                "{screen:?} {width}x{height}: {:?}",
+                app.modal.as_ref().map(|_| "a modal")
+            );
+            // The modal holds the text, and Esc closes it.
+            let shown = text(&draw(&mut app, width, height));
+            assert!(shown.contains("Reason"), "{screen:?} {width}x{height}");
+            app.on_key(key(KeyCode::Esc));
+            assert!(app.modal.is_none());
+            // The palette command opens the same text.
+            let action = app.run_command(crate::commands::Command::ShowReason);
+            assert_eq!(action, AppAction::None);
+            assert!(matches!(&app.modal, Some(Modal::Message { text, .. }) if *text == reason));
+        }
+    }
+    // A reason that is already one short line is not a click target.
+    let mut app = crate::test_support::fleet_app(&["alice"]);
+    app.show_screen(Screen::Overview);
+    let mut detail = crate::test_support::ready_detail("alice");
+    detail.row_mut().set_script(ScriptRunState::Running);
+    let status = NativeStatus::working(CompiledCardId::QUESTER)
+        .with_text_field("action_state", "Action", "blocked")
+        .with_text_field("block_reason", "Blocked", "no step for stage");
+    app.detail = Some(status.attach_to(detail));
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "reason: no step").expect("the reason row");
+    app.on_click(x + 2, y);
+    assert!(
+        app.modal.is_none(),
+        "a whole reason has nothing more to show"
+    );
+}
+
+#[cfg(feature = "js")]
+fn failure_rows(count: usize) -> Vec<crate::script_failures::LoadFailureRow> {
+    (0..count)
+        .map(|i| crate::script_failures::LoadFailureRow {
+            name: if i == 3 {
+                "AVeryLongCardNameThatDoesNotFitItsColumn".into()
+            } else {
+                format!("Card{i:02}")
+            },
+            place: "ParseTranspile:3:7".into(),
+            first_line: format!("Unexpected token number {i}"),
+            text: format!(
+                "Card{i:02} (/scripts/card{i:02}.ts) ParseTranspile:3:7: Unexpected token number {i}\nidentity: file:card{i:02}\nfingerprint: fp{i:02}"
+            ),
+        })
+        .collect()
+}
+
+/// The load-failure list owns the script pane's inner rectangle: at 80x24
+/// that is 78 x 16, a header, 7 list rows, a rule and 7 text rows; at 120x40
+/// it is 82 x 26, 12 list rows and 12 text rows. The selected failure's whole
+/// text is in the text area; a long name is cut to its column.
+#[cfg(feature = "js")]
+#[test]
+fn load_failure_list_shows_rows_and_detail_at_80x24_and_120x40() {
+    for (width, height, list_rows, inner_width) in
+        [(80u16, 24u16, 7usize, 78usize), (120, 40, 12, 82)]
+    {
+        let mut app = crate::test_support::fleet_app(&["alice"]);
+        app.script_failures = failure_rows(12);
+        assert_eq!(app.on_key(key(KeyCode::F(5))), AppAction::None);
+        assert_eq!(app.on_key(ch('F')), AppAction::None, "{width}x{height}");
+        assert!(app.script_failures_open);
+        let rows = draw(&mut app, width, height);
+        let all = text(&rows);
+        println!("CAPTURE load-failures {width}x{height}\n{all}");
+        let (hx, hy) =
+            find(&rows, "Load failures: 12").unwrap_or_else(|| panic!("{width}x{height}: {all}"));
+        // The rule row sits below the list rows and spans the inner width.
+        let rule = rows[usize::from(hy) + 1 + list_rows]
+            .chars()
+            .skip(usize::from(hx))
+            .collect::<String>();
+        assert!(
+            rule.starts_with(&"─".repeat(inner_width)),
+            "{width}x{height}: the rule is {list_rows} rows under the header: {rule}\n{all}"
+        );
+        // The first list row is the selection; the rows above the rule are all list rows.
+        assert!(
+            rows[usize::from(hy) + 1].contains("> Card00"),
+            "{width}x{height}: {}",
+            rows[usize::from(hy) + 1]
+        );
+        for list_row in 1..=list_rows.min(12) {
+            assert!(
+                rows[usize::from(hy) + list_row].contains("ParseTranspile:3:7"),
+                "{width}x{height}: list row {list_row}"
+            );
+        }
+        // The text rows below the rule hold the selected failure's text.
+        let below: String = rows[usize::from(hy) + 2 + list_rows..].join("\n");
+        assert!(
+            below.contains("identity: file:card00"),
+            "{width}x{height}: {below}"
+        );
+        assert!(below.contains("fingerprint: fp00"), "{width}x{height}");
+        // Pick the fourth failure: its long name is cut to 24 cells.
+        for _ in 0..3 {
+            app.on_key(key(KeyCode::Down));
+        }
+        let rows = draw(&mut app, width, height);
+        assert!(
+            text(&rows).contains("> AVeryLongCardNameThatDo…  ParseTranspile:3:7"),
+            "{width}x{height}"
+        );
+        assert!(
+            text(&rows).contains("identity: file:card03"),
+            "{width}x{height}"
+        );
+        // The pane's own inner width bounds every row.
+        for row in &rows {
+            assert!(row.chars().count() <= usize::from(width));
+        }
+    }
+}
+
+/// The list opens from the `[Failed N F]` button (drawn only with N > 0) and
+/// from the palette, which switches to the Script tab first; Up/Down pick,
+/// PageDown scrolls the text, Esc and Enter close.
+#[cfg(feature = "js")]
+#[test]
+fn load_failure_list_opens_from_the_button_and_the_palette_and_closes_on_esc() {
+    let mut app = crate::test_support::fleet_app(&["alice"]);
+    assert_eq!(app.on_key(key(KeyCode::F(5))), AppAction::None);
+    assert_eq!(app.screen, Screen::Script);
+    let rows = draw(&mut app, 120, 40);
+    assert!(!text(&rows).contains("Failed"), "no failures, no button");
+    app.run_command(crate::commands::Command::ScriptFailures);
+    assert!(
+        !app.script_failures_open,
+        "with no failure there is nothing to open"
+    );
+
+    app.script_failures = failure_rows(12);
+    let rows = draw(&mut app, 120, 40);
+    let (x, y) = find(&rows, "[Failed 12 F]").expect("the button with its count");
+    app.on_click(x + 2, y);
+    assert!(app.script_failures_open, "the button opens the list");
+    app.on_key(key(KeyCode::Down));
+    app.on_key(ch('j'));
+    assert_eq!(app.failure_sel, 2);
+    app.on_key(ch('k'));
+    assert_eq!(app.failure_sel, 1);
+    app.on_key(key(KeyCode::PageDown));
+    app.on_key(key(KeyCode::PageUp));
+    assert_eq!(
+        app.failure_scroll, 0,
+        "the three-line text has nothing to scroll"
+    );
+    app.on_key(key(KeyCode::Esc));
+    assert!(!app.script_failures_open);
+
+    // The palette, from another tab.
+    app.show_screen(Screen::Overview);
+    app.on_key(ch(':'));
+    for c in "load failures".chars() {
+        app.on_key(ch(c));
+    }
+    app.on_key(key(KeyCode::Enter));
+    assert!(
+        app.script_failures_open,
+        "the palette command opens the list"
+    );
+    assert_eq!(app.screen, Screen::Script, "and shows the Script tab first");
+    app.on_key(key(KeyCode::Enter));
+    assert!(!app.script_failures_open, "Enter closes");
+
+    // A click outside the pane closes it too.
+    app.run_command(crate::commands::Command::ScriptFailures);
+    assert!(app.script_failures_open);
+    app.on_click(0, 0);
+    assert!(!app.script_failures_open);
 }

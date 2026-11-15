@@ -1985,6 +1985,21 @@ fn quest_statuses<'s>(
     Ok(output.into())
 }
 
+/// The quest-tab rows the host posted, for the v1 `Quests` shim. rs2b0t's `reader.questStatuses()`
+/// is `[]` while the quest tab is not loaded (`ClientAdapter.ts:1615-1620`), so a snapshot that
+/// posted no rows reads as an empty list here. The v2 page keeps its `null` for that state.
+pub(super) fn posted_quest_rows<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let snapshot = snapshot(scope)?;
+    let rows = property(scope, snapshot, "quest_statuses")?;
+    Ok(if array(rows).is_some() {
+        rows
+    } else {
+        empty_array(scope).into()
+    })
+}
+
 fn side_tab_interface_value<'s>(
     scope: &mut v8::HandleScope<'s>,
     snapshot: v8::Local<'s, v8::Value>,

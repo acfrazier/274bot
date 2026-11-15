@@ -13,7 +13,7 @@ use script_js::wire::{
 };
 
 fn id(raw: u64) -> RequestId {
-    RequestId::isolate(raw).unwrap()
+    RequestId::isolate(raw).expect("test request ID is valid")
 }
 
 fn slot() -> SlotScript {

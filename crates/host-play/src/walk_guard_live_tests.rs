@@ -1393,7 +1393,7 @@ impl LiveState {
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
         self.last_tile = self.snapshot.local_player().map(|player| {
-            let tile = player.player.actor.tile;
+            let tile = player.player.network;
             (tile.x, tile.z, tile.level)
         });
         let tick = self.snapshot.tick();

@@ -9,7 +9,7 @@ and failure exits in Rust so preservation projects can reuse the same
 behavior through `host-play`, the TUI or the panel. No engine assets or
 external catalog scripts are included in this repository.
 
-0.2.8 Beta 2 is the current release. Revision 289 is the production revision: the harness cells
+0.2.9 Beta 2 is the current release. Revision 289 is the production revision: the harness cells
 are written, run and claimed for it. Revision 274 cells run best-effort and
 are neither tested nor claimed.
 
@@ -321,8 +321,10 @@ no cure gate. The tree uses ordinary melee crush damage, not poison.
 
 The authored approach targets `3108,3346,0` with radius one. Its stage declares
 `nasty_tree@3108,3346,0` in `cross`, because this test deliberately enters the
-tree's hunt range. Quester forbids undeclared danger crossings. The declared
-zone permits this route without changing admission policy or poison facts.
+tree's hunt range. The declaration is the guide's request to cross danger
+zones on that walk (the global setting off). Survival admission still checks
+that walk's route against the 1% death bound; the declaration does not change
+poison facts.
 The harness compiles the Path against the selected navigation world's zone
 catalog, so the compiler validates that declaration before account creation.
 The bot must perform the approach after Start, observe the unattackable
@@ -463,7 +465,11 @@ to choose a default quest. It reads embedded Paths by default. Set
 `QUESTER_PATH_DIR` to an absolute folder to use the existing folder registry;
 the requested Path must be served from that folder. `QUESTER_SEEDS` optionally
 names a JSON file in the `quester_path_live` seed format (`stage`, `stand`,
-`loadout`, `extra_items`, `seed_vars`, `before_relog`, `expect`, and `mode`).
+`loadout`, `extra_items`, `seed_vars`, `skills`, `before_relog`, `expect`, and `mode`).
+`skills` is a list of `["skill name", level]` pairs (level 1-99); each replaces
+the profile level for that skill, is part of the planned stats the Start check
+requires exactly, and is recorded as `seeded_skills` in the Start receipt. An
+unknown skill, a level outside 1-99 or a repeated skill is refused.
 `expect` and `mode` control the headless cell's settling; the headed scenario
 always watches native quest completion.
 When supplied, the seed file's `stand` selects the fixture's starting tile and
@@ -824,6 +830,55 @@ search/dig clues, or complete treasure trails.
 Gatherer cells live in `crates/host-play/tests/gatherer_live.rs`. Each uses an
 isolated `HOME` plus absolute `GATHERER_ENGINE_DIR`, `GATHERER_NAV_PACK` and
 `GATHERER_CATALOG_ROOT`, and the `BOT_LIVE_NAME_PREFIX` namespace.
+
+The tool-buy packet-rate oracle keeps the limit of five Driver packets per
+observed game tick. In `test-support` builds, the real outbound observer counts
+commits owned by a host request or made inside a Driver call. It does not count
+client keepalives or map-completion packets outside those scopes. A deferred
+client packet is committed before the Driver scope starts. The scope and counter
+do not exist in production builds; they do not change production input lineage.
+
+The bait cells read the run-tagged native status format
+(`native Gatherer run=<n> phase=...`). A clean Running/Blocked sample with an
+open bank is not yet the final park: the cell keeps observing, within its
+original deadline, until the bank closes. A failure or a non-Running slot still
+ends the check at once. The receipt records how many open-bank polls it saw.
+
+The death/no-stock check requires Running/Blocked recovery, a missing-tool
+reason, bank-access evidence and zero status trips. It does not require the
+selected bank's purpose label to be `Withdraw`: a recovery supply read can
+correctly show `Supply`. The same-region death check waits for the native
+`respawn observed; settling` event at recovery step 1, then persists the sampled
+death and respawn tiles. Its positive witness still needs the respawn square,
+the same 64-tile region and plane, and fresh progress after recovery.
+
+The Auto-mode fixture searches near Al Kharid at `(3295,3298,0)` for a
+reachable, standable origin with no real tree inside its 32-tile ring.
+Its authored-scene regression includes every normal tree in the full scene,
+not just selected examples. A real tree 33–128 tiles away
+must have a reachable adjacent approach. The fixture rechecks the origin and
+approaches against the observed scene after teleporting; a flood-reachable but
+blocked origin does not qualify.
+The adjacent-approach prerequisite uses a scene-sized expansion budget, not
+the query API's 400-expansion default for short reach checks.
+The oracle requires a resolved Auto anchor outside the initial 32-tile ring
+and a recorded search bound above 32 and at most 128. It then requires movement
+to a real next group, fresh products and XP. This covers the initial Auto search
+and its expanded rings, not the exhausted-group retry path. Initial search need
+not emit that retry path's `widening Auto within 128 tiles` event.
+
+The refused death-return fixture uses the real oak at `(3204,3525,0)`, away
+from the old Skeleton danger zone. It starts in the wilderness but leaves
+`allowWilderness=false`, so the return from respawn crosses a forbidden boundary.
+The oracle requires a terminal `return-failed` after death and keeps its walk
+detail; it does not require the detail to name `Refused` rather than `NoPath`.
+It records the effective wilderness permission and every changed observed tile
+after respawn, using the selected world's wilderness facts. It must see no
+wilderness entry, no renewed navigation or movement after failure, and an
+Idle/Failed owner with three fresh quiet game ticks. Cleanup can retire the
+completed request ID to zero while all route work is inactive; any later
+nonzero request fails the check. Missing permission, tile or navigation
+evidence also fails. Neither fixture seeds resources or changes the safety gate.
 
 ### Bank closure observations
 

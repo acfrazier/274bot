@@ -1386,19 +1386,24 @@ globalThis.__resolveSchema = {
 
     fn setup() -> Runtime {
         crate::runtime::platform::bootstrap_test_v8_platform();
-        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-        crate::materialize::callback_v8::install_ops(&mut runtime).unwrap();
+        let mut runtime =
+            Runtime::new(RuntimeOptions::default()).expect("create lifecycle V8 test runtime");
+        crate::materialize::callback_v8::install_ops(&mut runtime)
+            .expect("install lifecycle test callback operations");
         let state = std::sync::Arc::new(script::local_state::SlotState::new(
             std::sync::Arc::new(SettingsRawPort),
-            api::local_state::AccountKey::try_new("local-289", "runtime").unwrap(),
+            api::local_state::AccountKey::try_new("local-289", "runtime")
+                .expect("construct lifecycle test account key"),
             api::local_state::ContentScope::try_new(
                 api::selected::ClientRevision::R289,
                 "settings-resolve",
             )
-            .unwrap(),
+            .expect("construct lifecycle test content scope"),
         ));
-        super::install(&mut runtime, Some(state)).unwrap();
-        runtime.eval::<()>(SETUP).unwrap();
+        super::install(&mut runtime, Some(state)).expect("install lifecycle test runtime");
+        runtime
+            .eval::<()>(SETUP)
+            .expect("evaluate lifecycle test setup");
         runtime
     }
 

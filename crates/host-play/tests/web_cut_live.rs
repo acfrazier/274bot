@@ -42,13 +42,19 @@ const WEB_TARGETS: [(i32, i32); 2] = [(3095, 3957), (3093, 3957)];
 const WEB_FAILURE: &str = "You fail to cut through it.";
 
 fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
+    let game_port = std::env::var("WORLD_GAME_PORT")
+        .map(|value| value.parse().expect("WORLD_GAME_PORT must be a port"))
+        .unwrap_or(45594);
+    let http_port = std::env::var("WORLD_HTTP_PORT")
+        .map(|value| value.parse().expect("WORLD_HTTP_PORT must be a port"))
+        .unwrap_or(2080);
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
-        port: Some(45594),
+        port: Some(game_port),
         asset_host: Some("127.0.0.1".into()),
-        http_port: Some(2080),
+        http_port: Some(http_port),
         nav_pack: Some(PathBuf::from(
             std::env::var("WORLD_NAV_PACK")
                 .expect("WORLD_NAV_PACK must name the worktree v19 pack"),
@@ -67,8 +73,8 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
         .expect("bind explicit local R289 profile");
     assert_eq!(profile.profile_class(), host_play::ProfileClass::Local);
     assert_eq!(profile.client().game_host(), "127.0.0.1");
-    assert_eq!(profile.client().game_port(), 45594);
-    assert_eq!(profile.client().asset_port(), 2080);
+    assert_eq!(profile.client().game_port(), game_port);
+    assert_eq!(profile.client().asset_port(), http_port);
     let template = SharedClientTemplate::load(Arc::clone(&profile))
         .expect("load selected R289 profile and v19 pack");
     assert!(
@@ -390,7 +396,12 @@ fn wait_for_closed_webs(
         let waited_for_revert = slashed_since
             .iter()
             .all(|since| since.is_none_or(|since| tick.saturating_sub(since) >= 100));
-        if ids.iter().all(|id| *id == Some(WEB_LOC)) && waited_for_revert {
+        // web.rs2:30 keeps each shared-world slash open for 100 ticks.
+        // Wait out that window before asking the next account to prove another cut.
+        if tick.saturating_sub(start_tick) >= 100
+            && ids.iter().all(|id| *id == Some(WEB_LOC))
+            && waited_for_revert
+        {
             return json!({
                 "start_tick": start_tick,
                 "start_webs": web_ids_json(start_ids),
@@ -867,6 +878,13 @@ fn live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions() {
             "attempt_scene": attempt_scene,
             "observed_loc_changes": observed_loc_changes,
             "observed_failure_messages": failures,
+            "packed_web_actions": world.graph.edges.iter()
+                .filter(|edge| nav_planner::executor_adapter::is_slashable_web(edge))
+                .count(),
+            "packed_quest_gated_web_actions": world.graph.edges.iter()
+                .filter(|edge| nav_planner::executor_adapter::is_slashable_web(edge)
+                    && edge.quest_gates.is_some())
+                .count(),
             "outcome": format!("{outcome:?}"),
             "arrival": snapshot.tile(),
             "ingame": snapshot.ingame(),

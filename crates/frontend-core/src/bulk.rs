@@ -7,6 +7,8 @@
 
 use std::fmt::{self, Write as _};
 
+use crate::Brief;
+
 /// Names listed per outcome kind in the summary; the counts cover the rest.
 const LISTED: usize = 6;
 
@@ -154,6 +156,9 @@ pub struct BulkReport {
     /// Set when the whole command was refused before any bot was asked
     /// (for a walk: no destination, stale map binding, no navigation).
     refusal: Option<String>,
+    /// The producer wrote each failed row's detail to the log (a walk
+    /// refusal: the host logs it once per bot), so the brief may point there.
+    detail_logged: bool,
 }
 
 impl BulkReport {
@@ -176,7 +181,16 @@ impl BulkReport {
             done_verb,
             rows,
             refusal,
+            detail_logged: false,
         }
+    }
+
+    /// The producer wrote each failed row's detail to the log, so
+    /// [`Self::brief`] points at the log.
+    #[must_use]
+    pub fn with_detail_logged(mut self) -> Self {
+        self.detail_logged = true;
+        self
     }
 
     /// A report for a click with nothing marked.
@@ -315,6 +329,81 @@ impl BulkReport {
             detail_sep = "; ";
         }
         text
+    }
+}
+
+impl BulkReport {
+    /// The one line a front end shows: the counts, the first failed (else
+    /// skipped) bot by name with its short reason, and the log pointer when
+    /// the producer logged the detail. `summary()` keeps the whole text with
+    /// up to six names per kind; this line does not carry it.
+    ///
+    /// The parts are added in priority order and the last ones that do not
+    /// fit [`crate::SUMMARY_MAX`] characters are dropped: the label and
+    /// counts, then the bot's name (cut to 16 characters), then its reason.
+    pub fn brief(&self) -> Brief {
+        const NAME_CHARS: usize = 16;
+        let mut brief = if let Some(reason) = &self.refusal {
+            Brief::new(format!(
+                "{}: {reason} ({} marked bots not sent)",
+                self.label,
+                self.rows.len()
+            ))
+        } else if self.rows.is_empty() {
+            return Brief::new(format!("{}: no bots marked", self.label));
+        } else {
+            let (done, skipped, pending, failed) = (
+                self.done_count(),
+                self.skipped_count(),
+                self.pending_count(),
+                self.failed_count(),
+            );
+            let mut text = format!(
+                "{}: {} {done}, skipped {skipped}",
+                self.label, self.done_verb
+            );
+            if pending > 0 {
+                let _ = write!(text, ", pending {pending}");
+            }
+            if failed > 0 {
+                let _ = write!(text, ", failed {failed}");
+            }
+            // Rows sort failed, skipped, pending, done: the first row is the
+            // first failure, else the first skip.
+            let first = self
+                .rows
+                .first()
+                .filter(|row| row.outcome.is_failed() || row.outcome.is_skipped());
+            if let Some(row) = first {
+                let kind = if row.outcome.is_failed() {
+                    "failed"
+                } else {
+                    "skipped"
+                };
+                let name = api::hostlog::cut_chars(&row.profile, NAME_CHARS);
+                let clause = format!(" — first {kind}: {name}");
+                if (text.chars().count() + clause.chars().count()) <= crate::SUMMARY_MAX {
+                    text.push_str(&clause);
+                    if let Some(reason) = row.outcome.reason() {
+                        let reason = format!(" ({reason})");
+                        if text.chars().count() + reason.chars().count() <= crate::SUMMARY_MAX {
+                            text.push_str(&reason);
+                        }
+                    }
+                }
+            }
+            Brief::new(text)
+        };
+        if self.detail_logged {
+            if self.refusal.is_some() || self.failed_count() > 0 {
+                brief = brief.logged_by_producer();
+            }
+        } else if self.summary() != brief.summary() {
+            // Nobody logged the rest: [`Brief::publish`] writes the whole
+            // summary once, with every name and reason.
+            brief = brief.with_detail([self.summary()]);
+        }
+        brief
     }
 }
 

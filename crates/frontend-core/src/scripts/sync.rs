@@ -1190,6 +1190,23 @@ impl Scripts {
         self.sync.last.as_ref()
     }
 
+    /// Test support: targets every open settings copy still holds for room.
+    /// Zero once the copy has started them all or settled.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn copy_queue_waiting_for_test(&self) -> usize {
+        self.sync
+            .last
+            .iter()
+            .chain(self.sync.earlier.iter())
+            .map(|report| {
+                report
+                    .queued
+                    .as_ref()
+                    .map_or(0, |queue| queue.remaining.len())
+            })
+            .sum()
+    }
+
     /// Apply the prepared sync. Each same-card target, and each unassigned
     /// target left in the frozen scope (marked Apply), gets the snapshot
     /// bag. Unassigned targets are assigned the card in the same write as

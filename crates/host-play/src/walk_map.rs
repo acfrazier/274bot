@@ -11,9 +11,9 @@ pub(crate) use actions::{
     LEGACY_ZONES_DETAIL,
 };
 pub use actions::{
-    ActionError, ActionKind, FocusToken, GroupWalkReport, Layers, MapCommand, MapContext, MapModel,
-    MapWalkPlan, Selection, WalkActionOutcome, WalkExclude, WalkRequest, WalkSlotOutcome,
-    WalkSlotOutcomeKind, WalkSlotReady, WalkSlotRequest, WalkSlotStatus,
+    ActionError, ActionKind, BlockedZones, FocusToken, GroupWalkReport, Layers, MapCommand,
+    MapContext, MapModel, MapWalkPlan, Selection, WalkActionOutcome, WalkExclude, WalkRequest,
+    WalkSlotOutcome, WalkSlotOutcomeKind, WalkSlotReady, WalkSlotRequest, WalkSlotStatus,
 };
 pub use catalogue::{
     display_name_into, Catalogue, DisplayName, Entry, Meaning, Search, SourceStatus, BANK_API_NOTE,

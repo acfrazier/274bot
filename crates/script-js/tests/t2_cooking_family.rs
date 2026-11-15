@@ -16,7 +16,8 @@ mod local_fact_catalogs;
 mod local_game_data;
 
 fn data() -> Arc<SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("load revision 289 cooking test data")
 }
 
 fn roster() -> NamedBankFacts {
@@ -47,11 +48,12 @@ fn spawn_with(
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    spawn_with(src, Some(data()), roster()).unwrap()
+    spawn_with(src, Some(data()), roster()).expect("spawn cooking compatibility isolate")
 }
 
 fn probe(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
-    iso.probe(expr).unwrap()
+    iso.probe(expr)
+        .expect("probe cooking compatibility isolate")
 }
 
 const CATALOG_SOURCE: &str = r#"

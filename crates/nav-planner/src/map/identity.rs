@@ -69,19 +69,16 @@ pub struct CatalogueKey(pub Digest);
 #[serde(deny_unknown_fields)]
 pub struct ImageIdentity {
     pub revision: u16,
-    /// Verified decoded client identity (274DCI01), not cache-transfer identity.
-    pub content: Digest,
     pub policy: Digest,
 }
 impl ImageIdentity {
-    /// SHA256(IMAGE_KEY_DOMAIN || revision:u16 || schema:u16 || content || policy).
+    /// SHA256(IMAGE_KEY_DOMAIN || revision:u16 || schema:u16 || policy).
     pub fn key(self) -> Result<ImageKey, MapError> {
         super::revision(self.revision)?;
         Ok(ImageKey(key(
             IMAGE_KEY_DOMAIN,
             self.revision,
             IMAGE_SCHEMA,
-            self.content,
             self.policy,
         )))
     }
@@ -91,29 +88,26 @@ impl ImageIdentity {
 #[serde(deny_unknown_fields)]
 pub struct CatalogueIdentity {
     pub revision: u16,
-    pub content: Digest,
     pub policy: Digest,
 }
 impl CatalogueIdentity {
-    /// SHA256(CATALOGUE_KEY_DOMAIN || revision:u16 || schema:u16 || content || policy).
+    /// SHA256(CATALOGUE_KEY_DOMAIN || revision:u16 || schema:u16 || policy).
     pub fn key(self) -> Result<CatalogueKey, MapError> {
         super::revision(self.revision)?;
         Ok(CatalogueKey(key(
             CATALOGUE_KEY_DOMAIN,
             self.revision,
             CATALOGUE_SCHEMA,
-            self.content,
             self.policy,
         )))
     }
 }
 
-fn key(domain: &[u8], revision: u16, schema: u16, content: Digest, policy: Digest) -> Digest {
+fn key(domain: &[u8], revision: u16, schema: u16, policy: Digest) -> Digest {
     let mut h = Sha256::new();
     h.update(domain);
     h.update(revision.to_be_bytes());
     h.update(schema.to_be_bytes());
-    h.update(content.0);
     h.update(policy.0);
     Digest(h.finalize().into())
 }
@@ -135,7 +129,6 @@ pub struct EncoderLibrary {
 #[serde(deny_unknown_fields)]
 pub struct BakePolicy {
     pub algorithm: Text,
-    pub producer_sources: Digest,
     pub encoder: EncoderLibrary,
     /// Sorted unique library names, including compression backend/libpng if used.
     pub libraries: Rows<EncoderLibrary, 8>,
@@ -143,8 +136,8 @@ pub struct BakePolicy {
     pub options: Text,
 }
 impl BakePolicy {
-    /// SHA256("274bot.map.bake-policy\0" || version:u16=1 || algorithm:text ||
-    /// sources:32 || encoder.name:text || encoder.version:text || count:u8 ||
+    /// SHA256("274bot.map.bake-policy\0" || version:u16=2 || algorithm:text ||
+    /// encoder.name:text || encoder.version:text || count:u8 ||
     /// each library(name:text,version:text) || options:text).
     pub fn identity(&self) -> Result<Digest, MapError> {
         for pair in self.libraries.as_slice().windows(2) {
@@ -154,9 +147,8 @@ impl BakePolicy {
         }
         let mut h = Sha256::new();
         h.update(b"274bot.map.bake-policy\0");
-        h.update(1u16.to_be_bytes());
+        h.update(2u16.to_be_bytes());
         text(&mut h, &self.algorithm);
-        h.update(self.producer_sources.0);
         text(&mut h, &self.encoder.name);
         text(&mut h, &self.encoder.version);
         h.update([self.libraries.as_slice().len() as u8]);
@@ -174,16 +166,14 @@ impl BakePolicy {
 #[serde(deny_unknown_fields)]
 pub struct CataloguePolicy {
     pub algorithm: Text,
-    pub producer_sources: Digest,
 }
 impl CataloguePolicy {
-    /// SHA256("274bot.map.catalogue-policy\0" || version:u16=1 || algorithm:text || sources:32).
+    /// SHA256("274bot.map.catalogue-policy\0" || version:u16=2 || algorithm:text).
     pub fn identity(&self) -> Digest {
         let mut h = Sha256::new();
         h.update(b"274bot.map.catalogue-policy\0");
-        h.update(1u16.to_be_bytes());
+        h.update(2u16.to_be_bytes());
         text(&mut h, &self.algorithm);
-        h.update(self.producer_sources.0);
         Digest(h.finalize().into())
     }
 }

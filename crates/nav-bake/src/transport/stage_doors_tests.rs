@@ -6,7 +6,7 @@ use client::dash3d::CollisionFlag;
 use nav_planner::router::{find_first_with, find_with, FindOptions, Leg, RouteError};
 use nav_planner::world_state::WorldState;
 
-/// The shared engine facts every stage-door fixture needs: the pinned
+/// The shared engine facts every stage-door fixture needs: the 289
 /// engine door and ladder procs ([`ENGINE_DOOR_PROCS`], verbatim),
 /// `^left`/`^right`, `^true`, the journal colour rule and
 /// one quest row (`%heroquest`, "Hero's Quest", complete at 15), a
@@ -91,7 +91,8 @@ fn derive_stage_with_quests(
     let entries: Vec<(i32, i32, i32)> = locs.iter().map(|&id| (id, 1, 1)).collect();
     let defs = loc_defs(&entries);
     let wc = bake_collision(fx, &defs, &locs.iter().copied().collect());
-    let graph = derive_transports_with_audit(fx.path(), &defs, &wc, None, Some(quests), None).0;
+    let graph =
+        derive_transports_with_audit(fx.path(), &defs, &wc, None, Some(quests), None, None).0;
     (graph, wc)
 }
 
@@ -437,8 +438,16 @@ fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
     }]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     with_authoritative_hero(|quests| {
-        let graph =
-            derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests), None).0;
+        let graph = derive_transports_with_audit(
+            fx.path(),
+            &defs,
+            &collision,
+            None,
+            Some(quests),
+            None,
+            None,
+        )
+        .0;
         let edges: Vec<_> = graph
             .edges
             .iter()
@@ -488,6 +497,7 @@ fn post_completion_pass_through_keeps_exact_stage_and_current_player() {
             &other_collision,
             None,
             Some(quests),
+            None,
             None,
         )
         .0;
@@ -1015,7 +1025,7 @@ if($key_used = true) {
 }
 
 /// Writes a plain opener (`plain_door`, loc 900, west wall at (2821,3438))
-/// over the pinned engine procs, with `extra` script text added.
+/// over the engine door procs, with `extra` script text added.
 fn plain_opener_fixture(extra: &str) -> Fixture {
     let fx = Fixture::new();
     write_stage_engine(&fx);
@@ -1023,60 +1033,6 @@ fn plain_opener_fixture(extra: &str) -> Fixture {
     fx.write("scripts/quests/quest_misc/scripts/plain.rs2", extra);
     write_open_square(&fx, "0 5 46: 900 0 0\n");
     fx
-}
-
-const PLAIN_OPENER: &str = "[oploc1,plain_door]\n~open_and_close_door(loc_1535, ~check_axis(coord, loc_coord, loc_angle), false);\n";
-
-/// A crossing proc is modelled only while the content's body of it (and of
-/// every proc it calls) is the pinned engine body: the verbatim 289 procs
-/// cross, while an `~open_and_close_door` whose landing calculation drifts,
-/// or that moves the player again, or a drifted `~door_open` it calls,
-/// yields no edge and is counted in the skip report — even though every
-/// line the old marker check looked for is still there.
-#[test]
-fn stage_door_crosses_only_through_the_pinned_engine_procs() {
-    let fx = plain_opener_fixture(PLAIN_OPENER);
-    let (graph, _) = derive_stage(&fx, &[900]);
-    assert_eq!(
-        door_crossings(&graph, 900).len(),
-        2,
-        "the pinned procs cross"
-    );
-
-    let door = "$dest = movecoord($loc_coord, $x, 0, $z);\n}\np_teleport($dest);";
-    let door_open_west = "case ^loc_west : return(-1, 0);";
-    for (label, from, to) in [
-        (
-            "landing drift",
-            door,
-            "$dest = movecoord($loc_coord, $x, 0, add($z, 1));\n}\np_teleport($dest);",
-        ),
-        (
-            "second movement",
-            door,
-            "$dest = movecoord($loc_coord, $x, 0, $z);\n}\np_teleport($dest);\np_teleport(movecoord($dest, 0, 0, 3));",
-        ),
-        ("callee drift", door_open_west, "case ^loc_west : return(-2, 0);"),
-    ] {
-        assert!(ENGINE_DOOR_PROCS.contains(from), "{label}");
-        // Drift only the first occurrence: `~open_and_close_door`'s body,
-        // or the wall-straight arm of `~door_open`.
-        let drifted = ENGINE_DOOR_PROCS.replacen(from, to, 1);
-        let fx = plain_opener_fixture(PLAIN_OPENER);
-        fx.write("scripts/doors/scripts/engine_door_procs.rs2", &drifted);
-        let defs = loc_defs(&[(900, 1, 1)]);
-        let wc = bake_collision(&fx, &defs, &HashSet::from([900]));
-        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
-        assert!(
-            door_crossings(&graph, 900).is_empty(),
-            "{label}: a drifted proc is not a crossing"
-        );
-        assert_eq!(
-            skip_total(&skipped, SKIP_STAGE_DOOR_PROC_DRIFT),
-            1,
-            "{label}: the drifted proc is reported"
-        );
-    }
 }
 
 /// After the crossing, an opener may only call procs proven never to move
@@ -1739,13 +1695,8 @@ fn forced_move_unknown_gates_writes_randomness_and_bad_motion_fail_closed() {
 }
 
 #[test]
-fn tool_priority_identity_and_movement_proc_drift_are_not_guessed() {
-    for label in [
-        "tool identity",
-        "primitive drift",
-        "conflicting tool level",
-        "unused selector",
-    ] {
+fn tool_priority_identity_is_not_guessed() {
+    for label in ["tool identity", "conflicting tool level", "unused selector"] {
         let fx = Fixture::new();
         write_forced_fixture(&fx, TOOL_OBSTACLE);
         write_tool_selector(&fx);
@@ -1760,13 +1711,6 @@ if(stat(mining) < 50) return;
 if($tool = bronze_tool) { ~forcemove(movecoord(coord, 3, 0, 0)); }
 else { ~forcemove(movecoord(coord, -3, 0, 0)); }
 ",
-            ),
-            "primitive drift" => fx.write(
-                "scripts/skill_agility/scripts/agility.rs2",
-                &include_str!("engine_forced_procs.rs2").replace(
-                    "~agility_walk($change_x, $change_z, false);",
-                    "p_teleport($dest_coord);",
-                ),
             ),
             _ => fx.write(
                 "scripts/tool_conflict.obj",
@@ -1820,6 +1764,7 @@ if(inv_total(worn, gown) > 0 & inv_total(worn, robe) > 0) {
         &mut HashMap::new(),
         &ObservableGates::from_content(fx.path(), None),
         &mut audit,
+        None,
         None,
     );
     assert_eq!(
@@ -1981,7 +1926,8 @@ fn derive_entrance_fixture_with_quests(
     let defs = loc_defs(&[(6000, 2, 2), (6001, 2, 2)]);
     let collision = bake_collision(fx, &defs, &HashSet::new());
     let graph =
-        derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests), None).0;
+        derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(quests), None, None)
+            .0;
     (graph, collision)
 }
 
@@ -2691,19 +2637,12 @@ fn fortress_aggro_door_crosses_both_ways_without_a_quest_or_item_gate() {
     }
 }
 
-/// A known proc name is insufficient. Its whole body and coordinate
-/// arguments must retain the passability proof.
+/// The aggro proc must be defined exactly once and called with coordinate
+/// arguments; an unknown proc or a direct NPC mode change refuses.
 #[test]
-fn fortress_aggro_door_refuses_drift_missing_duplicate_and_unknown_procs() {
-    let teleport = BLACK_KNIGHTS_AGGRO.replace(
-        "npc_setmode(opplayer2);",
-        "npc_setmode(opplayer2); p_teleport(loc_coord);",
-    );
-    let varp_write = BLACK_KNIGHTS_AGGRO.replace("npc_setmode(opplayer2);", "%plain_flag = 1;");
+fn fortress_aggro_door_refuses_missing_duplicate_and_unknown_procs() {
     let duplicate = format!("{BLACK_KNIGHTS_AGGRO}\n{BLACK_KNIGHTS_AGGRO}");
     for (proc, call) in [
-        (teleport.as_str(), "~black_knights_aggro(coord, coord);"),
-        (varp_write.as_str(), "~black_knights_aggro(coord, coord);"),
         (duplicate.as_str(), "~black_knights_aggro(coord, coord);"),
         ("", "~black_knights_aggro(coord, coord);"),
         (BLACK_KNIGHTS_AGGRO, "~black_knights_aggro(coord);"),

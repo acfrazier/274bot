@@ -15,7 +15,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use frontend_core::MarkOp;
 
-use crate::app::{AppAction, ErrorNeed, Refusal, TuiApp};
+use crate::app::{AppAction, ErrorNeed, Refusal, TuiApp, ZoneScroll};
 use crate::commands::{
     script_key_command, Command, Group, Unavailable, CHAT_KEYS, FLEET_KEYS, MAP_KEYS, OVERVIEW_KEYS,
 };
@@ -162,6 +162,9 @@ impl TuiApp {
             if self.rs2b0t_catalog_open {
                 return "Script: catalog folder";
             }
+            if self.script_failures_open {
+                return "Script: load failures";
+            }
         }
         if self.script_browse_open {
             return "Script: Browse";
@@ -213,6 +216,7 @@ impl TuiApp {
             #[cfg(feature = "js")]
             "Script: load file" => "Up/Down · Enter open · Esc close",
             #[cfg(feature = "js")]
+            "Script: load failures" => "Up/Down pick · PgUp/PgDn text · Esc or Enter close",
             "Script: catalog folder" => "Up/Down · Enter open · Esc not now",
             "Script: Browse" => "Up/Down pick · Enter or Esc closes, the pick stays",
             "Overview" if self.memory.is_some_and(frontend_core::MemoryNotice::can_relog) =>
@@ -345,7 +349,26 @@ impl TuiApp {
                 self.mouse_capture = !self.mouse_capture;
                 return AppAction::MouseCapture(self.mouse_capture);
             }
-            Command::ShowMessage => self.open_modal(Modal::Message { scroll: 0 }),
+            Command::ShowMessage => {
+                // A snapshot: the text stays after the message line expires.
+                let text = self.error.clone().unwrap_or_default();
+                self.open_modal(Modal::Message {
+                    scroll: 0,
+                    title: "Message".into(),
+                    text,
+                });
+            }
+            Command::ShowReason => {
+                let text = self
+                    .focused_reason()
+                    .map(|reason| reason.full().to_owned())
+                    .unwrap_or_default();
+                self.open_modal(Modal::Message {
+                    scroll: 0,
+                    title: "Reason".into(),
+                    text,
+                });
+            }
             Command::FilterFleet => {
                 self.focus_pane(Pane::Fleet);
                 self.table.editing = true;
@@ -433,7 +456,7 @@ impl TuiApp {
                 return AppAction::batch(show, run);
             }
             #[cfg(feature = "js")]
-            Command::ScriptLoad | Command::ImportCatalog => {
+            Command::ScriptLoad | Command::ImportCatalog | Command::ScriptFailures => {
                 let show = if self.screen == Screen::Script {
                     AppAction::None
                 } else {
@@ -672,16 +695,23 @@ impl TuiApp {
     /// The Script tab's letters (`SCRIPT_KEYS`) and the Quester disclosure's
     /// vertical scrolling. Browse and Load popups own their keys while open.
     fn script_pane_key(&mut self, key: KeyEvent) -> AppAction {
-        let page = i32::from(self.script_area.height.saturating_sub(12).max(1));
         match key.code {
-            KeyCode::Char('j') if is_text(&key) && self.scroll_quester_start_zones(1) => {
+            KeyCode::Char('j')
+                if is_text(&key) && self.scroll_quester_start_zones(ZoneScroll::Rows(1)) =>
+            {
                 AppAction::None
             }
-            KeyCode::Char('k') if is_text(&key) && self.scroll_quester_start_zones(-1) => {
+            KeyCode::Char('k')
+                if is_text(&key) && self.scroll_quester_start_zones(ZoneScroll::Rows(-1)) =>
+            {
                 AppAction::None
             }
-            KeyCode::PageDown if self.scroll_quester_start_zones(page) => AppAction::None,
-            KeyCode::PageUp if self.scroll_quester_start_zones(-page) => AppAction::None,
+            KeyCode::PageDown if self.scroll_quester_start_zones(ZoneScroll::Page(1)) => {
+                AppAction::None
+            }
+            KeyCode::PageUp if self.scroll_quester_start_zones(ZoneScroll::Page(-1)) => {
+                AppAction::None
+            }
             KeyCode::Char(c) if is_text(&key) => {
                 script_key_command(c).map_or(AppAction::None, |command| self.run_command(command))
             }
@@ -717,7 +747,6 @@ impl TuiApp {
         .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
         .pvp_start_fights(&mut self.pvp_start_fights)
         .script_scope_notice_ack(&mut self.script_scope_notice_ack)
-        .survivable_routing_notice_ack(&mut self.survivable_routing_notice_ack)
         .quester_paths(&mut self.quester_paths);
         pane.memory = self.settings_memory;
         let outcome = pane.on_key(key);
@@ -742,12 +771,9 @@ impl TuiApp {
                 });
             }
             SettingsKey::WalkGlobal(preference) => {
-                let pending = frontend_core::WalkGlobalsView::new(
-                    self.nav,
-                    self.script_scope_notice_ack,
-                    self.survivable_routing_notice_ack,
-                );
-                if preference == frontend_core::NavPreference::SurvivableRouting
+                let pending =
+                    frontend_core::WalkGlobalsView::new(self.nav, self.script_scope_notice_ack);
+                if preference == frontend_core::NavPreference::AllowDangerZones
                     && !pending.danger_this_walk(true)
                 {
                     self.map_route_through_zones = false;
@@ -760,13 +786,6 @@ impl TuiApp {
             SettingsKey::ScriptScopeNoticeAck => {
                 self.script_scope_notice_ack = true;
                 self.queue_nav_preference(frontend_core::NavPreference::ScriptScopeNoticeAck);
-                if self.shared_preferences().is_none() {
-                    self.refresh_walk_permissions();
-                }
-            }
-            SettingsKey::SurvivableRoutingNoticeAck => {
-                self.survivable_routing_notice_ack = true;
-                self.queue_nav_preference(frontend_core::NavPreference::SurvivableRoutingNoticeAck);
                 if self.shared_preferences().is_none() {
                     self.refresh_walk_permissions();
                 }
@@ -837,6 +856,14 @@ impl TuiApp {
         }
         if contains(self.regions.message, col, row) && self.error.is_some() {
             return self.run_command(Command::ShowMessage);
+        }
+        if self
+            .regions
+            .reasons
+            .iter()
+            .any(|rect| contains(*rect, col, row))
+        {
+            return self.run_command(Command::ShowReason);
         }
         if let Some(part) = self.regions.header_part_at(col, row) {
             return self.run_command(match part {

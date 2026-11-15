@@ -108,14 +108,13 @@ fn a_notice_adds_no_allocation_to_a_drawn_frame() {
 }
 
 /// Allocation events of one draw of the open popup with the saved
-/// settings' `feedback` beside their rows and both dismiss lines showing,
+/// settings' `feedback` beside their rows and the script-scope dismiss line showing,
 /// with the teleport row selected.
 fn draw_feedback(feedback: &[(Setting, SettingFeedback)], area: Rect) -> (usize, Buffer) {
     let settings = SettingsDraft::default();
     let mut nav = WalkGlobals::default();
     let mut bake = MapBakeChoice::Ask;
     let mut scope_ack = false;
-    let mut survivable_ack = false;
     let mut state = SettingsState {
         open: true,
         row: 5,
@@ -123,7 +122,6 @@ fn draw_feedback(feedback: &[(Setting, SettingFeedback)], area: Rect) -> (usize,
     };
     let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
     pane.script_scope_notice_ack = Some(&mut scope_ack);
-    pane.survivable_routing_notice_ack = Some(&mut survivable_ack);
     pane.feedback = feedback;
     let mut buf = Buffer::empty(area);
     let before = events();
@@ -145,13 +143,11 @@ fn a_pending_or_failed_setting_adds_no_allocation_to_a_drawn_frame() {
     let teleports = Setting::Nav(NavPreference::AllowTeleports);
     let bake = Setting::MapBake;
     let scope = Setting::Nav(NavPreference::ScriptScopeNoticeAck);
-    let survivable = Setting::Nav(NavPreference::SurvivableRoutingNoticeAck);
     let none: Vec<(Setting, SettingFeedback)> = Vec::new();
     let pending = vec![
         (teleports, SettingFeedback::Pending),
         (bake, SettingFeedback::Pending),
         (scope, SettingFeedback::Pending),
-        (survivable, SettingFeedback::Pending),
     ];
     let failed = vec![
         (
@@ -159,8 +155,7 @@ fn a_pending_or_failed_setting_adds_no_allocation_to_a_drawn_frame() {
             SettingFeedback::Failed(long.replace("(end)", "(teleports end)")),
         ),
         (bake, SettingFeedback::Failed("Not saved: busy".into())),
-        (scope, SettingFeedback::Failed(long.clone())),
-        (survivable, SettingFeedback::Failed(long)),
+        (scope, SettingFeedback::Failed(long)),
     ];
     for (w, h) in [(80, 24), (120, 40)] {
         let area = Rect::new(0, 0, w, h);
@@ -187,5 +182,40 @@ fn a_pending_or_failed_setting_adds_no_allocation_to_a_drawn_frame() {
                 );
             }
         }
+    }
+}
+
+/// The Danger routing row (selected, so its line paints) costs a drawn frame
+/// the same allocations at all three levels, and each level paints its label.
+#[test]
+fn danger_routing_levels_cost_the_same_allocations_to_draw() {
+    use frontend_core::{danger_routing_tooltip, DANGER_ROUTING_LEVELS};
+    assert_eq!(
+        WalkGlobals::default().danger_level(),
+        DANGER_ROUTING_LEVELS[0]
+    );
+    let mut counts = Vec::new();
+    for level in DANGER_ROUTING_LEVELS {
+        let area = Rect::new(0, 0, 120, 40);
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default().with_danger_level(level);
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState {
+            open: true,
+            row: 8,
+            ..Default::default()
+        };
+        let pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
+        let mut buf = Buffer::empty(area);
+        let before = events();
+        pane.render(area, &mut buf);
+        counts.push(events() - before);
+        let shown = screen(&buf);
+        assert!(shown.contains(&format!("Danger routing: {}", level.label())));
+        assert!(shown.contains(&danger_routing_tooltip(level)[..20]));
+    }
+    let baseline = counts[0];
+    for (level, count) in DANGER_ROUTING_LEVELS.into_iter().zip(counts) {
+        assert_eq!(count, baseline, "allocations at Never and {level:?}");
     }
 }

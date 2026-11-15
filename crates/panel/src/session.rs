@@ -237,8 +237,38 @@ pub fn debug_maxme_cheats() -> &'static [&'static str] {
 /// Cooldown between cpal open retries after a device failure: a machine
 /// without an audio device must not re-open (and re-log) every 20 ms frame.
 const AUDIO_OPEN_RETRY: Duration = Duration::from_secs(5);
-/// Cadence of the published-catalogue probe while a WalkTo map demand bakes.
+/// Cadence for published-catalogue probes and failed-bind retries.
 const MAP_CATALOGUE_PROBE: Duration = Duration::from_secs(1);
+
+fn probe_published_catalogue<T>(
+    probe: &mut Option<Instant>,
+    now: Instant,
+    read: impl FnOnce() -> T,
+) -> Option<T> {
+    if probe.is_none_or(|at| now.duration_since(at) >= MAP_CATALOGUE_PROBE) {
+        *probe = Some(now);
+        Some(read())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static MAP_CATALOGUE_BUILD_COUNT: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_map_catalogue_build_count() {
+    MAP_CATALOGUE_BUILD_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn map_catalogue_build_count() -> usize {
+    MAP_CATALOGUE_BUILD_COUNT.with(std::cell::Cell::get)
+}
 
 /// Legacy local vault path used before a profile has been resolved.
 pub fn default_vault_path() -> PathBuf {
@@ -1201,8 +1231,10 @@ pub struct Session {
     pub map_images: Option<Arc<frontend_core::walk_map::WalkReadyImages>>,
     pub observed_map_services: Vec<frontend_core::walk_map::WalkObservedService>,
     map_catalogue_named: bool,
-    /// Last published-catalogue probe while the map demand is not ready;
-    /// probes run at [`MAP_CATALOGUE_PROBE`], never every frame.
+    map_catalogue_unavailable: bool,
+    map_catalogue_failed_inputs: Option<frontend_core::walk_map::WalkCatalogueBuildInputs>,
+    /// Last published-catalogue probe or retry after a failed bind.
+    /// The cadence prevents work on every frame.
     map_catalogue_probe: Option<Instant>,
     /// WalkTo Send: focused vs group checklist. Recomputed on open/refresh.
     pub walk_send: WalkSendState,
@@ -1628,9 +1660,9 @@ fn nav_member_setting(key: &str) -> frontend_core::Setting {
         "allow_bank_fetch" => Setting::Nav(N::AllowBankFetch),
         "allow_prereq_dialogue" => Setting::Nav(N::AllowPrereqDialogue),
         "allow_quest_start" => Setting::Nav(N::AllowQuestStart),
-        "allow_danger_zones" | "survivable_routing" => Setting::DangerRouting,
+        "allow_danger_zones" => Setting::DangerRouting,
+        "survivable_routing" => Setting::DangerRouting,
         "script_scope_notice_ack" => Setting::Nav(N::ScriptScopeNoticeAck),
-        "survivable_routing_notice_ack" => Setting::Nav(N::SurvivableRoutingNoticeAck),
         "show_special_areas" => Setting::Nav(N::ShowSpecialAreas),
         "pause_script_on_manual_walk_abort" => Setting::Nav(N::PauseScriptOnManualWalkAbort),
         _ => unreachable!("only shared Nav members are retained"),
@@ -1676,12 +1708,6 @@ fn apply_walk_permissions_to_nav(
         view.script_scope_notice_ack(),
         pending,
     );
-    apply_walk_permission(
-        nav,
-        "survivable_routing_notice_ack",
-        view.survivable_routing_notice_ack(),
-        pending,
-    );
 }
 
 fn apply_walk_permission(
@@ -1711,7 +1737,6 @@ fn nav_member_mut<'a>(nav: &'a mut NavSettings, key: &'static str) -> &'a mut bo
         "allow_danger_zones" => &mut nav.allow_danger_zones,
         "survivable_routing" => &mut nav.survivable_routing,
         "script_scope_notice_ack" => &mut nav.script_scope_notice_ack,
-        "survivable_routing_notice_ack" => &mut nav.survivable_routing_notice_ack,
         _ => unreachable!("only shared Nav members are refreshed"),
     }
 }
@@ -1727,7 +1752,6 @@ fn apply_pending_nav_members(nav: &mut NavSettings, pending: &HashMap<&'static s
             "allow_danger_zones" => nav.allow_danger_zones = *value,
             "survivable_routing" => nav.survivable_routing = *value,
             "script_scope_notice_ack" => nav.script_scope_notice_ack = *value,
-            "survivable_routing_notice_ack" => nav.survivable_routing_notice_ack = *value,
             "show_special_areas" => nav.show_special_areas = *value,
             "pause_script_on_manual_walk_abort" => {
                 nav.pause_script_on_manual_walk_abort = *value;
@@ -1747,6 +1771,19 @@ std::thread_local! {
 #[cfg(test)]
 pub(crate) fn reorders_submitted() -> u32 {
     REORDERS_SUBMITTED.get()
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// Every command `Session::submit` was given on this test thread.
+    static SUBMITTED_COMMANDS: std::cell::RefCell<Vec<OperatorCommand>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Take the commands submitted on this test thread since the last call.
+#[cfg(test)]
+pub(crate) fn take_submitted_commands() -> Vec<OperatorCommand> {
+    SUBMITTED_COMMANDS.with_borrow_mut(std::mem::take)
 }
 
 enum VaultSavedData {
@@ -1898,6 +1935,8 @@ impl Session {
             map_images: None,
             observed_map_services: Vec::new(),
             map_catalogue_named: false,
+            map_catalogue_unavailable: false,
+            map_catalogue_failed_inputs: None,
             map_catalogue_probe: None,
             walk_send: WalkSendState::default(),
             nav_settings_open: false,
@@ -4672,6 +4711,8 @@ impl Session {
         command: OperatorCommand,
         targets: Targets<'_>,
     ) -> Option<frontend_core::Submitted> {
+        #[cfg(test)]
+        SUBMITTED_COMMANDS.with_borrow_mut(|commands| commands.push(command));
         let (core, mut surface) = self.core_and_surface();
         match core.submit(command, targets, &mut surface) {
             Ok(submitted) => Some(submitted),
@@ -5341,14 +5382,12 @@ impl Session {
             // for it at a coarse cadence (descriptor + directory probe),
             // not on every frame of the bake.
             let now = Instant::now();
-            if self
-                .map_catalogue_probe
-                .is_none_or(|at| now.duration_since(at) >= MAP_CATALOGUE_PROBE)
+            if let Some(Some(ready)) =
+                probe_published_catalogue(&mut self.map_catalogue_probe, now, || {
+                    frontend_core::walk_map::peek_walk_catalogue(&profile)
+                })
             {
-                self.map_catalogue_probe = Some(now);
-                if let Some(ready) = frontend_core::walk_map::peek_walk_catalogue(&profile) {
-                    self.bind_ready_catalogue(world.clone(), ready);
-                }
+                self.bind_ready_catalogue(world.clone(), ready);
             }
         }
         self.refresh_observed_map_services(world);
@@ -5405,10 +5444,15 @@ impl Session {
         self.map_catalogue = None;
         self.observed_map_services.clear();
         self.map_catalogue_named = false;
+        self.map_catalogue_unavailable = false;
+        self.map_catalogue_failed_inputs = None;
         self.map_model.close();
     }
 
     pub fn map_bind_status(&self) -> Option<String> {
+        if self.map_catalogue_unavailable {
+            return Some(String::from("map catalogue unavailable"));
+        }
         let status = self.map_desk.map_demand()?.status();
         match status.state() {
             WalkMapJobState::Ready => None,
@@ -5442,7 +5486,30 @@ impl Session {
         }
     }
 
-    fn bind_ready_catalogue(
+    pub(crate) fn mark_map_catalogue_unavailable(
+        &mut self,
+        error: impl std::fmt::Display,
+        failed_inputs: frontend_core::walk_map::WalkCatalogueBuildInputs,
+    ) {
+        self.map_catalogue_probe = Some(Instant::now());
+        if self.map_catalogue_unavailable
+            && self.map_catalogue_failed_inputs.as_ref() == Some(&failed_inputs)
+        {
+            return;
+        }
+        api::host_log!(
+            stderr;
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Error,
+            "WalkTo map catalogue: {error}"
+        );
+        self.map_catalogue_unavailable = true;
+        self.map_catalogue_failed_inputs = Some(failed_inputs);
+        self.map_catalogue = None;
+        self.map_catalogue_named = false;
+        self.map_model.close();
+    }
+    pub(crate) fn bind_ready_catalogue(
         &mut self,
         world: Option<Arc<NavWorld>>,
         ready: Arc<frontend_core::walk_map::WalkReadyCatalogue>,
@@ -5455,38 +5522,78 @@ impl Session {
         else {
             return;
         };
+        let Some(profile) = profile else {
+            return;
+        };
         let identity = ready.identity();
         let nav = nav_planner::producer::identity(world.as_ref())
             .ok()
             .map(|identity| identity.pack());
-        let data = profile
-            .as_ref()
-            .and_then(BoundProfile::game_data)
-            .or_else(|| self.core.game_data());
+        let data = profile.game_data().or_else(|| self.core.game_data());
         let same = self.map_catalogue.as_ref().is_some_and(|catalogue| {
             catalogue.identity() == identity
                 && Some(catalogue.nav_pack_id()) == nav
                 && catalogue.client_status() == WalkSourceStatus::Available
         });
-        if same && (self.map_catalogue_named || data.is_none()) {
+        if !self.map_catalogue_unavailable && same && (self.map_catalogue_named || data.is_none()) {
             return;
         }
-        let Some(profile) = profile.as_ref() else {
-            return;
+        let failed_inputs = if self.map_catalogue_unavailable {
+            if self
+                .map_catalogue_failed_inputs
+                .as_ref()
+                .is_some_and(|failed| failed.matches_binding(&profile, nav, &ready))
+            {
+                let now = Instant::now();
+                if self
+                    .map_catalogue_probe
+                    .is_some_and(|at| now.duration_since(at) < MAP_CATALOGUE_PROBE)
+                {
+                    return;
+                }
+                self.map_catalogue_probe = Some(now);
+                let inputs = frontend_core::walk_map::WalkCatalogueBuildInputs::new(
+                    &profile, &world, &ready,
+                );
+                if self.map_catalogue_failed_inputs.as_ref() == Some(&inputs) {
+                    return;
+                }
+                inputs
+            } else {
+                self.map_catalogue_probe = Some(Instant::now());
+                frontend_core::walk_map::WalkCatalogueBuildInputs::new(&profile, &world, &ready)
+            }
+        } else {
+            frontend_core::walk_map::WalkCatalogueBuildInputs::new(&profile, &world, &ready)
         };
-        let Ok((catalogue, profile_named)) =
-            self.core.walk_catalogue_from_ready(profile, world, ready)
-        else {
-            return;
-        };
+        if self.map_catalogue_unavailable {
+            self.map_catalogue_unavailable = false;
+            self.map_catalogue_failed_inputs = None;
+        }
+        #[cfg(test)]
+        MAP_CATALOGUE_BUILD_COUNT.with(|count| count.set(count.get() + 1));
+        let (catalogue, profile_named) =
+            match self.core.walk_catalogue_from_ready(&profile, world, ready) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.mark_map_catalogue_unavailable(error, failed_inputs);
+                    return;
+                }
+            };
         let has_data = data.is_some();
         let catalogue = match data {
             Some(data) if !profile_named => match catalogue.with_game_data(data) {
                 Ok(named) => named,
-                Err(_) => return,
+                Err(error) => {
+                    self.mark_map_catalogue_unavailable(error, failed_inputs);
+                    return;
+                }
             },
             _ => catalogue,
         };
+        self.map_catalogue_probe = None;
+        self.map_catalogue_failed_inputs = None;
+        self.map_catalogue_unavailable = false;
         self.map_catalogue_named = profile_named || has_data;
         self.map_catalogue = Some(Arc::new(catalogue));
     }
@@ -5618,7 +5725,12 @@ impl Session {
             self.route_gen = self.route_gen.wrapping_add(1);
             self.error = None;
         } else {
-            self.error = Some(String::from("map: WalkTo was not applied"));
+            // The member's own reason (`not logged in`), else the generic text.
+            self.error = Some(
+                self.core
+                    .not_applied_reason(submitted.request(), "WalkTo")
+                    .unwrap_or_else(|| String::from("map: WalkTo was not applied")),
+            );
         }
         applied
     }
@@ -5750,7 +5862,11 @@ impl Session {
         if walking > 0 {
             self.route_gen = self.route_gen.wrapping_add(1);
         }
-        self.error = Some(report.summary());
+        self.error = Some(
+            report
+                .brief()
+                .publish(&frontend_core::LogTarget::walk(None)),
+        );
         walking > 0
     }
 
@@ -5787,7 +5903,11 @@ impl Session {
         if applied {
             self.error = None;
         } else {
-            self.error = Some(String::from("map: Teleport was not applied"));
+            self.error = Some(
+                self.core
+                    .not_applied_reason(submitted.request(), "Teleport")
+                    .unwrap_or_else(|| String::from("map: Teleport was not applied")),
+            );
         }
         applied
     }

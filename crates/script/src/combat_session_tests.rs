@@ -343,6 +343,7 @@ fn with_tick<R>(
         actions: &mut actions,
         cx: crate::native::ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -350,6 +351,7 @@ fn with_tick<R>(
             evidence,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
             wilderness: None,
             revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(&world.snapshot), evidence),
@@ -380,6 +382,7 @@ fn with_tick<R>(
                 reach: None,
                 reach_flood: None,
                 bank_memory: None,
+                shop_keepers: None,
                 collision: None,
                 hold: world.held,
                 world_members: api::selected::Truth::Unknown,

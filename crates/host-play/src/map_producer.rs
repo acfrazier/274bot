@@ -6,7 +6,7 @@ use crate::map_cache::{
     MapBakeCursorStep, MapBakeProducer, MapCacheError, MapProgressSnapshot, MapStage,
 };
 use nav_planner::map::cache::{BakeStage, CompletedUnit, UnitKey};
-use nav_planner::map::formats::{ClientPois, PayloadReceipt};
+use nav_planner::map::formats::ClientPois;
 use nav_planner::map::identity::Digest;
 use nav_planner::map::producer::{self, CatalogueCursor, CatalogueProgress, CatalogueStage};
 use nav_planner::map::raster::{
@@ -86,8 +86,7 @@ impl MapBakeProducer for NativeMapProducer {
                 output: None,
             }),
             ArtifactKind::Images => Box::new(NativeImageCursor(
-                ImageBakeCursor::new(input, partial_dir, request.descriptor().image_identity())
-                    .map_err(MapCacheError::Map)?,
+                ImageBakeCursor::new(input, partial_dir).map_err(MapCacheError::Map)?,
             )),
         };
         Ok(cursor)
@@ -197,19 +196,10 @@ struct WriterImageTileSink<'a> {
 impl ImageTileSink for WriterImageTileSink<'_> {
     type Error = MapCacheError;
 
-    fn checkpointed(&mut self, key: TileKey) -> Option<PayloadReceipt> {
-        self.writer
-            .completed_receipt(UnitKey::Terrain { tile: key })
-    }
-
-    fn write_tile(
-        &mut self,
-        key: TileKey,
-        png: &[u8],
-    ) -> Result<Option<PayloadReceipt>, Self::Error> {
+    fn write_tile(&mut self, key: TileKey, png: &[u8]) -> Result<bool, Self::Error> {
         self.writer
             .write_image_tile(UnitKey::Terrain { tile: key }, png)
-            .map(Some)
+            .map(|_| true)
     }
 }
 
@@ -218,16 +208,8 @@ struct BackpressureImageTileSink;
 impl ImageTileSink for BackpressureImageTileSink {
     type Error = MapCacheError;
 
-    fn checkpointed(&mut self, _key: TileKey) -> Option<PayloadReceipt> {
-        None
-    }
-
-    fn write_tile(
-        &mut self,
-        _key: TileKey,
-        _png: &[u8],
-    ) -> Result<Option<PayloadReceipt>, Self::Error> {
-        Ok(None)
+    fn write_tile(&mut self, _key: TileKey, _png: &[u8]) -> Result<bool, Self::Error> {
+        Ok(false)
     }
 }
 
@@ -308,7 +290,6 @@ mod tests {
     fn catalogue_input_work_does_not_request_a_cache_writer() {
         let input = producer::ClientMapInput::new(
             289,
-            Digest([7; 32]),
             std::path::Path::new("/verified/jag"),
             std::path::Path::new("/verified/snapshot"),
         )

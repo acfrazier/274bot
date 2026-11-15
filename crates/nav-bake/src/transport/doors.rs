@@ -166,8 +166,7 @@ pub(super) fn door_edges(
                     continue;
                 }
             };
-            let quest_reverse =
-                free_arm.and_then(|arm| completed_quest_reverse(*id, arm, ids, &varps));
+            let quest_reverse = free_arm.and_then(|_| completed_quest_reverse(*id, ids));
             for (dir, to) in crossings.into_iter().flatten() {
                 let is_free = free_arm.is_some_and(|arm| dir == arm.free_dir(angle_dir));
                 let is_gated_reverse = free_arm.is_some() && !is_free;

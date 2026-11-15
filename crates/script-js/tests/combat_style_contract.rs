@@ -1,6 +1,6 @@
 //! The ChickenKiller style announcement consumes Game's resolution object.
 
-mod common;
+pub mod common;
 
 use script_js::{LoadIsolate, LoadShape};
 

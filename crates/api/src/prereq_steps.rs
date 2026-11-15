@@ -1,12 +1,11 @@
 //! Authored prerequisite-step facts for the navigation runner.
 //!
-//! The catalog contains only source-pinned rows. A row proves a gate only when
+//! The catalog contains authored semantic rows. A row proves a gate only when
 //! every value established by the row lies inside that gate's stage window.
 
 use crate::selected::{FactKey, InclusiveRange, QuestGate, StageWindow, Truth};
 use crate::WorldTile;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 mod cache;
 mod wire;
 
@@ -54,24 +53,12 @@ pub struct ActionableGate {
     pub crossing: CrossingId,
 }
 
-/// Content citation serialized as the authored `file:first-last` string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct PrereqSource(pub Arc<str>);
-
-impl fmt::Display for PrereqSource {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrereqCrossing {
     pub crossing: CrossingId,
     pub pass: PassEvidence,
     pub delay: CrossingDelay,
-    pub source: PrereqSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,15 +67,12 @@ pub struct PassEvidence {
     pub message: Arc<str>,
     pub landing: WorldTile,
     pub proves: InclusiveRange,
-    pub source: PrereqSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CrossingDelay {
     pub ticks: u16,
-    #[serde(default)]
-    pub source: Option<PrereqSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,16 +80,6 @@ pub struct CrossingDelay {
 pub struct AfterRule {
     pub proves: InclusiveRange,
     pub after: InclusiveRange,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewedWrite {
-    pub write: PrereqSource,
-    pub sets: i32,
-    pub guard: PrereqSource,
-    pub guard_text: Arc<str>,
-    pub called_from: Arc<str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,7 +94,6 @@ pub struct RefusalPage {
     pub page: Arc<str>,
     pub then: RefusalThen,
     pub proves: InclusiveRange,
-    pub source: PrereqSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,21 +110,13 @@ pub struct PrereqTarget {
     pub op: u8,
     pub anchor: WorldTile,
     pub leash: u16,
-    pub source: PrereqSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PrereqPrecondition {
-    Gate {
-        gate: QuestGate,
-        source: PrereqSource,
-    },
-    OwnedAnywhere {
-        item: FactKey,
-        otherwise: OwnedElse,
-        source: PrereqSource,
-    },
+    Gate { gate: QuestGate },
+    OwnedAnywhere { item: FactKey, otherwise: OwnedElse },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,7 +156,6 @@ pub struct TalkBranch {
     #[serde(default)]
     pub terminal: Option<Arc<str>>,
     pub proves: InclusiveRange,
-    pub source: PrereqSource,
     #[serde(default)]
     pub requires_at_opener: Option<OpenerRequirement>,
     #[serde(default)]
@@ -221,7 +185,6 @@ pub struct Talk {
 pub struct LineRule {
     pub page: Arc<str>,
     pub choice: Arc<str>,
-    pub source: PrereqSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,7 +209,6 @@ pub struct PrereqStep {
     pub crossings: Arc<[PrereqCrossing]>,
     pub establishes: StageWindow,
     pub after: Arc<[AfterRule]>,
-    pub reviewed_writes: Arc<[ReviewedWrite]>,
     pub probe: Probe,
     pub target: PrereqTarget,
     pub preconditions: Arc<[PrereqPrecondition]>,
@@ -270,20 +232,15 @@ impl PrereqStep {
         u8::try_from(index).ok().map(|index| (index, entry))
     }
 
-    /// Range that the preservation proof says holds after a page establishes `possible`.
+    /// Authored range that holds after a page establishes `possible`.
     pub fn after_for(&self, possible: InclusiveRange) -> Option<InclusiveRange> {
         let mut matches = self.after.iter().filter(|rule| rule.proves == possible);
         let after = matches.next()?.after;
         matches.next().is_none().then_some(after)
     }
-
-    /// Content identity source for runner diagnostics is the matched crossing's citation.
-    pub fn source(&self, crossing: &CrossingId) -> Option<&PrereqSource> {
-        self.crossing(crossing).map(|(_, entry)| &entry.source)
-    }
 }
 
-/// A source-pinned journal page that establishes one account signal.
+/// A journal page that establishes one account signal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrereqJournal {
@@ -292,9 +249,7 @@ pub struct PrereqJournal {
     pub quest: FactKey,
     pub establishes: StageWindow,
     pub after: Arc<[AfterRule]>,
-    pub reviewed_writes: Arc<[ReviewedWrite]>,
     pub rules: Arc<[JournalRule]>,
-    pub source: PrereqSource,
 }
 
 /// Every normalized substring must occur in the same acquired journal page.
@@ -303,7 +258,6 @@ pub struct PrereqJournal {
 pub struct JournalRule {
     pub all: Arc<[Arc<str>]>,
     pub proves: InclusiveRange,
-    pub source: PrereqSource,
 }
 
 /// A prerequisite table violates a structural catalog invariant.

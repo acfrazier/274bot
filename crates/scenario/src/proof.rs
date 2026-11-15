@@ -36,6 +36,12 @@ pub enum Proof {
     ItemId { id: i32, count: i32 },
     /// Inventory contains at most `count` of exact object `id`.
     ItemIdAtMost { id: i32, count: i32 },
+    /// Inventory count of exact object `id` increased by at least `count`
+    /// from the runner-captured inventory baseline. Bare checks fail closed.
+    ProductDelta { id: i32, count: i32 },
+    /// Inventory count of exact object `id` decreased by at least `count`
+    /// from the runner-captured inventory baseline. Bare checks fail closed.
+    InputConsumed { id: i32, count: i32 },
     /// Inventory contains at least `count` of any exact object in `ids`.
     ItemIdAny { ids: &'static [i32], count: i32 },
     /// Every posted inventory slot is occupied (the pack is full: occupied
@@ -75,6 +81,8 @@ pub enum Proof {
     BankItemIdAtMost { id: i32, count: i32 },
     /// The bank modal is closed after a preceding observed bank step.
     BankClosed,
+    /// A Make-X count prompt is currently open.
+    AmountPrompt,
     /// The bank window is open and its contents have loaded (`fresh_bank`).
     BankOpen,
     /// `arrived(x, z, level)`: standing on the tile (or adjacent to it
@@ -238,6 +246,9 @@ pub enum Proof {
     /// Skill `id`'s XP rose by at least `min` since this specific step began.
     /// Unlike [`Proof::StatXpGain`], an earlier step's gain cannot satisfy it.
     FreshStatXpGain { id: i32, min: i32 },
+    /// Skill `id`'s XP increased by at least `min` from a runner-captured
+    /// stat baseline. Bare checks fail closed.
+    XpDelta { id: i32, min: i32 },
     /// An NPC of `r#type` stands on the tile.
     NpcAt { r#type: usize, x: i32, z: i32 },
     /// An NPC of the obj `r#type` id stands within chebyshev `radius` of
@@ -311,6 +322,21 @@ pub enum Proof {
         orbit_yaw: i32,
         orbit_pitch: i32,
     },
+    /// Every child snapshot predicate must hold.
+    All(&'static [Proof]),
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeltaBaselineKind {
+    InventoryItem,
+    StatXp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DeltaBaseline {
+    pub(crate) kind: DeltaBaselineKind,
+    pub(crate) id: i32,
+    pub(crate) value: i32,
+    pub(crate) session: u64,
 }
 
 /// Parse one exact system-chat speed confirmation.
@@ -395,6 +421,8 @@ impl Proof {
             Proof::ItemAtMost { name, count } => format!("has_item({name})<={count}"),
             Proof::ItemId { id, count } => format!("has_item_id({id})>={count}"),
             Proof::ItemIdAtMost { id, count } => format!("has_item_id({id})<={count}"),
+            Proof::ProductDelta { id, count } => format!("product_delta({id})>={count}"),
+            Proof::InputConsumed { id, count } => format!("input_consumed({id})>={count}"),
             Proof::ItemIdAny { ids, count } => format!(
                 "has_item_id_any({})>={count}",
                 ids.iter().map(i32::to_string).collect::<Vec<_>>().join(",")
@@ -420,6 +448,7 @@ impl Proof {
                 format!("fresh_bank_item_id({id})<={count}")
             }
             Proof::BankClosed => "bank_closed".to_string(),
+            Proof::AmountPrompt => "amount_prompt".to_string(),
             Proof::BankOpen => "bank_open".to_string(),
             Proof::Arrived { x, z, level } => format!("arrived({x},{z},{level})"),
             Proof::ArrivedNear {
@@ -481,6 +510,7 @@ impl Proof {
             Proof::FreshStatXpGain { id, min } => {
                 format!("fresh_stat_xp_gain({id})>={min}")
             }
+            Proof::XpDelta { id, min } => format!("xp_delta({id})>={min}"),
             Proof::NpcAt { r#type, x, z } => format!("npc({type})@({x},{z})"),
             Proof::NpcNear { r#type, radius } => format!("npc_near({type},{radius})"),
             Proof::NpcIdsAbsentNear { ids, radius } => {
@@ -545,6 +575,41 @@ impl Proof {
                 orbit_yaw,
                 orbit_pitch,
             } => format!("render_view_ready({x},{z},{level},yaw={orbit_yaw},pitch={orbit_pitch})"),
+            Proof::All(proofs) => format!("all({} predicates)", proofs.len()),
+        }
+    }
+
+    /// Capture only the exact inventory/stat baselines named by this proof.
+    /// The runner calls this when the proof is armed, never on an unarmed poll.
+    pub(crate) fn capture_delta_baselines(
+        &self,
+        snap: &GameSnapshot,
+        session: u64,
+        baselines: &mut Vec<DeltaBaseline>,
+    ) {
+        match self {
+            Proof::All(proofs) => {
+                for proof in *proofs {
+                    proof.capture_delta_baselines(snap, session, baselines);
+                }
+            }
+            Proof::ProductDelta { id, .. } | Proof::InputConsumed { id, .. }
+                if snap.ingame() && snap.scene_state() == 2 && snap.inventory_ready() =>
+            {
+                push_delta_baseline(
+                    baselines,
+                    DeltaBaselineKind::InventoryItem,
+                    *id,
+                    inv_id_count(snap, *id),
+                    session,
+                );
+            }
+            Proof::XpDelta { id, .. } if snap.ingame() && snap.scene_state() == 2 => {
+                if let Some(value) = stat_xp(snap, *id) {
+                    push_delta_baseline(baselines, DeltaBaselineKind::StatXp, *id, value, session);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -575,7 +640,27 @@ impl Proof {
         xp_baselines: Option<&[(i32, i32)]>,
         fresh_xp_baseline: Option<(i32, i32)>,
     ) -> bool {
+        self.check_with_delta_context(snap, names, xp_baselines, fresh_xp_baseline, None)
+    }
+
+    pub(crate) fn check_with_delta_context(
+        &self,
+        snap: &GameSnapshot,
+        names: Option<&ObjNames>,
+        xp_baselines: Option<&[(i32, i32)]>,
+        fresh_xp_baseline: Option<(i32, i32)>,
+        delta_baselines: Option<&[DeltaBaseline]>,
+    ) -> bool {
         match self {
+            Proof::All(proofs) => proofs.iter().all(|proof| {
+                proof.check_with_delta_context(
+                    snap,
+                    names,
+                    xp_baselines,
+                    fresh_xp_baseline,
+                    delta_baselines,
+                )
+            }),
             Proof::Item { name, count } => {
                 // Sum every inv stack whose def name matches. `by_name`
                 // returns the *lowest* id (a stub "Coins" at id 0/1), so
@@ -608,6 +693,30 @@ impl Proof {
             }
             Proof::ItemId { id, count } => inv_id_count(snap, *id) >= *count,
             Proof::ItemIdAtMost { id, count } => inv_id_count(snap, *id) <= *count,
+            Proof::ProductDelta { id, count } => {
+                let Some(baseline) = delta_baselines.and_then(|rows| {
+                    rows.iter()
+                        .find(|row| row.kind == DeltaBaselineKind::InventoryItem && row.id == *id)
+                }) else {
+                    return false;
+                };
+                snap.ingame()
+                    && snap.scene_state() == 2
+                    && snap.inventory_ready()
+                    && inv_id_count(snap, *id).saturating_sub(baseline.value) >= *count
+            }
+            Proof::InputConsumed { id, count } => {
+                let Some(baseline) = delta_baselines.and_then(|rows| {
+                    rows.iter()
+                        .find(|row| row.kind == DeltaBaselineKind::InventoryItem && row.id == *id)
+                }) else {
+                    return false;
+                };
+                snap.ingame()
+                    && snap.scene_state() == 2
+                    && snap.inventory_ready()
+                    && baseline.value.saturating_sub(inv_id_count(snap, *id)) >= *count
+            }
             Proof::ItemIdAny { ids, count } => {
                 ids.iter().map(|id| inv_id_count(snap, *id)).sum::<i32>() >= *count
             }
@@ -691,6 +800,7 @@ impl Proof {
                     && snap.bank_component_id() < 0
                     && !snap.bank_loaded()
             }
+            Proof::AmountPrompt => snap.ingame() && snap.count_dialog_open(),
             Proof::Arrived { x, z, level } => snap.tile().is_some_and(|(tx, tz, tl)| {
                 arrived(
                     Tile {
@@ -822,44 +932,42 @@ impl Proof {
                 }
                 stat_xp(snap, *id).is_some_and(|cur| cur - baseline >= *min)
             }
+            Proof::XpDelta { id, min } => {
+                let Some(baseline) = delta_baselines.and_then(|rows| {
+                    rows.iter()
+                        .find(|row| row.kind == DeltaBaselineKind::StatXp && row.id == *id)
+                }) else {
+                    return false;
+                };
+                snap.ingame()
+                    && snap.scene_state() == 2
+                    && stat_xp(snap, *id)
+                        .is_some_and(|current| current.saturating_sub(baseline.value) >= *min)
+            }
             Proof::NpcAt { r#type, x, z } => snap
                 .npcs()
                 .iter()
-                .any(|n| n.r#type == Some(*r#type) && n.x == *x && n.z == *z),
+                .any(|n| n.r#type == Some(*r#type) && n.network.x == *x && n.network.z == *z),
             Proof::NpcNear { r#type, radius } => snap.tile().is_some_and(|(tx, tz, tl)| {
+                let here = WorldTile {
+                    x: tx,
+                    z: tz,
+                    level: tl,
+                };
                 snap.npcs().iter().any(|n| {
                     n.r#type == Some(*r#type)
-                        && n.tile.level == tl
-                        && chebyshev(
-                            Tile {
-                                x: tx,
-                                z: tz,
-                                level: tl,
-                            },
-                            Tile {
-                                x: n.tile.x,
-                                z: n.tile.z,
-                                level: n.tile.level,
-                            },
-                        ) <= *radius
+                        && api::query::chebyshev_to(here, n.network) <= *radius
                 })
             }),
             Proof::NpcIdsAbsentNear { ids, radius } => snap.tile().is_some_and(|(tx, tz, tl)| {
+                let here = WorldTile {
+                    x: tx,
+                    z: tz,
+                    level: tl,
+                };
                 !snap.npcs().iter().any(|n| {
                     n.r#type.is_some_and(|kind| ids.contains(&kind))
-                        && n.tile.level == tl
-                        && chebyshev(
-                            Tile {
-                                x: tx,
-                                z: tz,
-                                level: tl,
-                            },
-                            Tile {
-                                x: n.tile.x,
-                                z: n.tile.z,
-                                level: n.tile.level,
-                            },
-                        ) <= *radius
+                        && api::query::chebyshev_to(here, n.network) <= *radius
                 })
             }),
             Proof::GroundItemIdsAbsentNear {
@@ -887,8 +995,14 @@ impl Proof {
                 radius,
             } => snap.npcs().iter().any(|npc| {
                 npc.name.as_deref() == Some(*name)
-                    && npc.tile.level == *level
-                    && (npc.tile.x - *x).abs().max((npc.tile.z - *z).abs()) <= *radius
+                    && api::query::chebyshev_to(
+                        npc.network,
+                        WorldTile {
+                            x: *x,
+                            z: *z,
+                            level: *level,
+                        },
+                    ) <= *radius
             }),
             Proof::NpcNameTargetingLocal { name } => {
                 let slot = snap.self_slot();
@@ -974,6 +1088,7 @@ fn npc_unengaged_in_sight(snap: &GameSnapshot, name: &str, radius: i32) -> bool 
             .get((lx * scene.height + lz) as usize)
             .copied()
     };
+    let player_tile = WorldTile { x, z, level };
     let player = Footprint {
         lx: x - scene.base_x,
         lz: z - scene.base_z,
@@ -991,7 +1106,7 @@ fn npc_unengaged_in_sight(snap: &GameSnapshot, name: &str, radius: i32) -> bool 
         };
         npc.name.as_deref() == Some(name)
             && tile.level == level
-            && (tile.x - x).abs().max((tile.z - z).abs()) <= radius
+            && api::query::chebyshev_to(tile, player_tile) <= radius
             && !npc.in_combat
             && npc.target.is_none()
             && (npc.total_health == 0 || npc.health > 0)
@@ -1041,6 +1156,25 @@ fn inv_id_count(snap: &GameSnapshot, id: i32) -> i32 {
         .filter(|(item_id, _)| *item_id == id)
         .map(|(_, count)| *count)
         .sum()
+}
+fn push_delta_baseline(
+    baselines: &mut Vec<DeltaBaseline>,
+    kind: DeltaBaselineKind,
+    id: i32,
+    value: i32,
+    session: u64,
+) {
+    if !baselines
+        .iter()
+        .any(|baseline| baseline.kind == kind && baseline.id == id && baseline.session == session)
+    {
+        baselines.push(DeltaBaseline {
+            kind,
+            id,
+            value,
+            session,
+        });
+    }
 }
 
 fn fresh_bank(snap: &GameSnapshot) -> bool {
@@ -2080,6 +2214,8 @@ mod tests {
         let npc = c.npc[3].as_mut().unwrap();
         npc.entity.x = 2880;
         npc.entity.z = 1600;
+        npc.entity.route_x[0] = 22;
+        npc.entity.route_z[0] = 12;
         c.bump_gens(ServerProt::NPC_INFO);
         let s = snap(&mut c);
         assert!(Proof::NpcNear {
@@ -2124,6 +2260,48 @@ mod tests {
     }
 
     #[test]
+    fn npc_near_ignores_a_rendered_only_nearby_pose() {
+        let mut c = seeded();
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.x = 2880;
+        npc.entity.z = 1600;
+        npc.entity.route_x[0] = 0;
+        npc.entity.route_z[0] = 0;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let snapshot = snap(&mut c);
+
+        assert!(
+            !Proof::NpcNear {
+                r#type: 708,
+                radius: 2,
+            }
+            .check(&snapshot, None),
+            "the path head is outside the player's radius even when the rendered pose is near"
+        );
+    }
+
+    #[test]
+    fn npc_ids_absent_near_uses_network_position() {
+        let mut c = seeded();
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.x = 2880;
+        npc.entity.z = 1600;
+        npc.entity.route_x[0] = 0;
+        npc.entity.route_z[0] = 0;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let snapshot = snap(&mut c);
+
+        assert!(
+            Proof::NpcIdsAbsentNear {
+                ids: &[708],
+                radius: 2,
+            }
+            .check(&snapshot, None),
+            "a rendered-only nearby NPC does not block the absent-set proof"
+        );
+    }
+
+    #[test]
     fn npc_name_near_matches_a_dormant_resource_in_a_bounded_world_area() {
         let mut c = seeded();
         let mut npcs = (0..=708)
@@ -2140,6 +2318,8 @@ mod tests {
         let npc = c.npc[3].as_mut().unwrap();
         npc.entity.x = 2880;
         npc.entity.z = 1600;
+        npc.entity.route_x[0] = 22;
+        npc.entity.route_z[0] = 12;
         c.bump_gens(ServerProt::NPC_INFO);
         let s = snap(&mut c);
         assert!(Proof::NpcNameNear {
@@ -2158,6 +2338,41 @@ mod tests {
             radius: 2,
         }
         .check(&s, None));
+    }
+
+    #[test]
+    fn npc_name_near_ignores_a_rendered_only_nearby_pose() {
+        let mut c = seeded();
+        let mut npcs = (0..=708)
+            .map(|id| NpcType {
+                id,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        npcs[708].name = "Rocks".into();
+        c.cache = Arc::new(Cache {
+            npcs,
+            ..Default::default()
+        });
+        let npc = c.npc[3].as_mut().unwrap();
+        npc.entity.x = 2880;
+        npc.entity.z = 1600;
+        npc.entity.route_x[0] = 0;
+        npc.entity.route_z[0] = 0;
+        c.bump_gens(ServerProt::NPC_INFO);
+        let snapshot = snap(&mut c);
+
+        assert!(
+            !Proof::NpcNameNear {
+                name: "Rocks",
+                x: 3220,
+                z: 3212,
+                level: 0,
+                radius: 2,
+            }
+            .check(&snapshot, None),
+            "the path head is outside the queried area despite its rendered pose"
+        );
     }
 
     #[test]
@@ -2836,19 +3051,132 @@ mod tests {
     }
 
     #[test]
-    fn npc_at_matches_type_and_tile() {
-        let s = snap(&mut seeded());
+    fn npc_at_matches_type_and_network_tile() {
+        let mut client = seeded();
+        let npc = client.npc[3].as_mut().unwrap();
+        npc.entity.route_x[0] = 5;
+        npc.entity.route_z[0] = 7;
+        client.bump_gens(ServerProt::NPC_INFO);
+        let snapshot = snap(&mut client);
         assert!(Proof::NpcAt {
             r#type: 708,
-            x: 100,
-            z: 200
+            x: 3205,
+            z: 3207
         }
-        .check(&s, None));
+        .check(&snapshot, None));
+        assert!(
+            !Proof::NpcAt {
+                r#type: 708,
+                x: 100,
+                z: 200
+            }
+            .check(&snapshot, None),
+            "rendered pixel aliases are not world tile coordinates"
+        );
         assert!(!Proof::NpcAt {
             r#type: 709,
-            x: 100,
-            z: 200
+            x: 3205,
+            z: 3207
         }
-        .check(&s, None));
+        .check(&snapshot, None));
+    }
+    #[test]
+    fn quantity_proofs_compare_captured_inventory_and_xp_deltas() {
+        let mut c = seeded();
+        let inv_id = c
+            .iface_id(|iface| iface.r#type == ComponentType::TYPE_INV)
+            .expect("inventory interface");
+        let inventory = c.iface_mut(inv_id).expect("inventory interface");
+        // Client inventory interface encodes item IDs as id + 1.
+        inventory.link_obj_type = Some(vec![1512]);
+        inventory.link_obj_number = Some(vec![2]);
+        c.stat_xp[9] = 500;
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        let mut baseline_snapshot = snap(&mut c);
+        baseline_snapshot.seed_transmission_ready(true, false);
+
+        static COMBINED: [Proof; 2] = [
+            Proof::ProductDelta { id: 52, count: 30 },
+            Proof::XpDelta { id: 9, min: 10 },
+        ];
+        let all = Proof::All(&COMBINED);
+        let consumed = Proof::InputConsumed { id: 1511, count: 2 };
+        let mut baselines = Vec::new();
+        all.capture_delta_baselines(&baseline_snapshot, 7, &mut baselines);
+        consumed.capture_delta_baselines(&baseline_snapshot, 7, &mut baselines);
+        assert_eq!(baselines.len(), 3);
+        assert!(!Proof::ProductDelta { id: 52, count: 1 }.check(&baseline_snapshot, None));
+        assert!(!Proof::XpDelta { id: 9, min: 1 }.check(&baseline_snapshot, None));
+        assert!(!consumed.check(&baseline_snapshot, None));
+
+        let inventory = c.iface_mut(inv_id).expect("inventory interface");
+        inventory.link_obj_type = Some(vec![53]);
+        inventory.link_obj_number = Some(vec![30]);
+        c.stat_xp[9] = 600;
+        c.dialog_input_open = true;
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        let mut after = snap(&mut c);
+        after.seed_transmission_ready(true, false);
+
+        assert!(!Proof::ProductDelta { id: 52, count: 30 }.check(&after, None));
+        assert!(!Proof::XpDelta { id: 9, min: 10 }.check(&after, None));
+        assert!(Proof::AmountPrompt.check(&after, None));
+        assert!(consumed.check_with_delta_context(&after, None, None, None, Some(&baselines)));
+        assert!(COMBINED[0].check_with_delta_context(&after, None, None, None, Some(&baselines)));
+        assert!(COMBINED[1].check_with_delta_context(&after, None, None, None, Some(&baselines)));
+        assert!(all.check_with_delta_context(&after, None, None, None, Some(&baselines)));
+
+        let inventory = c.iface_mut(inv_id).expect("inventory interface");
+        inventory.link_obj_number = Some(vec![29]);
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        let mut short_product = snap(&mut c);
+        short_product.seed_transmission_ready(true, false);
+        assert!(!COMBINED[0].check_with_delta_context(
+            &short_product,
+            None,
+            None,
+            None,
+            Some(&baselines)
+        ));
+
+        let inventory = c.iface_mut(inv_id).expect("inventory interface");
+        inventory.link_obj_number = Some(vec![30]);
+        c.stat_xp[9] = 509;
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        let mut short_xp = snap(&mut c);
+        short_xp.seed_transmission_ready(true, false);
+        assert!(COMBINED[0].check_with_delta_context(
+            &short_xp,
+            None,
+            None,
+            None,
+            Some(&baselines)
+        ));
+        assert!(!COMBINED[1].check_with_delta_context(
+            &short_xp,
+            None,
+            None,
+            None,
+            Some(&baselines)
+        ));
+        c.stat_xp[9] = 510;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        let mut exact_xp = snap(&mut c);
+        exact_xp.seed_transmission_ready(true, false);
+        assert!(COMBINED[1].check_with_delta_context(
+            &exact_xp,
+            None,
+            None,
+            None,
+            Some(&baselines)
+        ));
+
+        c.dialog_input_open = false;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        assert!(!Proof::AmountPrompt.check(&snap(&mut c), None));
     }
 }

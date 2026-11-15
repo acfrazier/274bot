@@ -7,54 +7,12 @@ use super::*;
 pub(super) const BRASS_KEY_DOOR_NAME: &str = "brasskeydoor";
 pub(super) const BRASS_KEY_NAME: &str = "edgevilledungeonkey";
 pub(super) const BRASS_KEY_OPEN_LABEL: &str = "open_edgeville_dungeon_door";
-pub(super) const BRASS_KEY_LOCKED_HANDLER: &str = r#"mes("The door is locked.");"#;
-pub(super) const BRASS_KEY_USE_HANDLER: &str = r#"
-switch_obj(last_useitem) {
-    case edgevilledungeonkey : @open_edgeville_dungeon_door;
-    case default : ~displaymessage(^dm_default);
-}
-"#;
-pub(super) const BRASS_KEY_OPEN_HANDLER: &str = r#"
-if (inv_total(inv, edgevilledungeonkey) > 0) {
-    mes("You unlock the door.");
-    sound_synth(locked, 1, 0);
-    def_coord $loc_coord = loc_coord;
-    def_int $angle = loc_angle;
-    def_locshape $shape = loc_shape;
-    def_loc $replacement = loc_param(next_loc_stage);
-    def_int $x;
-    def_int $z;
-    $x, $z = ~door_open($angle, loc_shape);
-    def_boolean $entering = ~check_axis(coord, $loc_coord, $angle);
-    def_coord $dest = $loc_coord;
-    if ($entering = true) {
-        if (coord ! $loc_coord) {
-            p_delay(0);
-            p_teleport($loc_coord);
-            sound_synth(door_open, 1, 0);
-            p_delay(1);
-        } else {
-            p_delay(0);
-            sound_synth(door_open, 1, 0);
-        }
-        $dest = movecoord($loc_coord, $x, 0, $z);
-    } else {
-        p_delay(0);
-        sound_synth(door_open, 1, 0);
-    }
-    p_teleport($dest);
-    loc_add($loc_coord, inviswall, $angle, $shape, 3);
-    loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, modulo(add($angle, 1), 4), $shape, 3);
-} else {
-    mes("The door is locked.");
-}
-"#;
-
 /// The Edgeville surface-hut door is not a generic `Open` door:
-/// `[oploc1,brasskeydoor]` is locked, while the canonical `oplocu` handler
-/// admits only `edgevilledungeonkey`, verifies it is still held, teleports
-/// across, and temporarily replaces the closed leaf with `inviswall` plus
-/// the configured `next_loc_stage` leaf at `door_open(angle, shape)`.
+/// `[oploc1,brasskeydoor]` is locked, while the `oplocu` handler admits only
+/// `edgevilledungeonkey`, verifies it is still held, teleports across, and
+/// temporarily replaces the closed leaf with `inviswall` plus the configured
+/// `next_loc_stage` leaf at `door_open(angle, shape)`. These semantics are
+/// modelled by name; the handlers must exist exactly once.
 ///
 /// The two edges preserve those source endpoints. Entering starts at the
 /// closed placement and lands on the replacement tile; leaving starts at
@@ -83,7 +41,7 @@ pub(super) fn brass_key_door_edges(
         bump(skipped, SKIP_BRASS_KEY_SOURCE, 1);
         return;
     };
-    if !brass_key_handler_matches(content_root) {
+    if !brass_key_handlers_present(content_root) {
         bump(skipped, SKIP_BRASS_KEY_SOURCE, 1);
         return;
     }
@@ -172,11 +130,8 @@ pub(super) fn brass_key_open_loc_id(
     (!conflicted).then_some(found).flatten()
 }
 
-/// Exact selected-content handler check. Whitespace and comments may move,
-/// but the locked normal op, key-only item-use switch, non-consuming
-/// inventory guard, source teleport, and temporary replacement sequence may
-/// not change silently.
-pub(super) fn brass_key_handler_matches(content_root: &Path) -> bool {
+/// The brass-key door's three handlers are each declared exactly once.
+pub(super) fn brass_key_handlers_present(content_root: &Path) -> bool {
     let path = content_root
         .join("scripts")
         .join("areas")
@@ -186,17 +141,13 @@ pub(super) fn brass_key_handler_matches(content_root: &Path) -> bool {
     let Ok(text) = fs::read_to_string(path) else {
         return false;
     };
-    let handler_matches = |op: &str, name: &str, expected: &str| {
-        let bodies = selected_script_bodies(&text, op, name);
-        let mut matching = bodies.iter().map(String::as_str);
-        let Some(body) = matching.next() else {
-            return false;
-        };
-        matching.next().is_none() && normalized_body(body) == normalized_body(expected)
-    };
-    handler_matches("oploc1", BRASS_KEY_DOOR_NAME, BRASS_KEY_LOCKED_HANDLER)
-        && handler_matches("oplocu", BRASS_KEY_DOOR_NAME, BRASS_KEY_USE_HANDLER)
-        && handler_matches("label", BRASS_KEY_OPEN_LABEL, BRASS_KEY_OPEN_HANDLER)
+    [
+        ("oploc1", BRASS_KEY_DOOR_NAME),
+        ("oplocu", BRASS_KEY_DOOR_NAME),
+        ("label", BRASS_KEY_OPEN_LABEL),
+    ]
+    .into_iter()
+    .all(|(op, name)| selected_script_bodies(&text, op, name).len() == 1)
 }
 
 /// Bodies of one selected `[op,name]` block, stopping at the next header

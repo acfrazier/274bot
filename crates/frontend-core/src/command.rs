@@ -1793,9 +1793,6 @@ impl CommandBook {
             }
             Some(ParkReason::OperatorLogout) => Some("a logout was requested"),
             Some(ParkReason::PersistedLogout) => Some("the bot is set to stay logged out"),
-            Some(ParkReason::IdleLogout) => Some("the server logged the bot out while it was idle"),
-            Some(ParkReason::ServerLogout) => Some("the server logged the bot out"),
-            Some(ParkReason::IdleDisconnect) => Some("the bot disconnected while it was idle"),
             Some(ParkReason::NoIntent | ParkReason::WorldError) | None => None,
         }
     }
@@ -1875,7 +1872,10 @@ impl CommandBook {
         }
         let member = self.locate_pending(request, subject)?;
         member.state = MemberState::Settled(terminal);
-        member.detail = detail.map(Box::from);
+        // The book keeps one short line, whoever settled. The session's
+        // `settle_brief` logs a long detail before it gets here; this only
+        // guarantees a direct caller never stores a longer one.
+        member.detail = detail.map(|text| Box::from(&*crate::notice_line(text)));
         self.file_settled();
         Ok(())
     }

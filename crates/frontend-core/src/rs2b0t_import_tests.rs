@@ -41,11 +41,19 @@ fn def(
     }
 }
 
+/// One fake card's dim reason. Only the `js` build can hand one to a
+/// [`CatalogCard`] (no `ImportCatalog` implementation dims a card without
+/// `js`); the placeholder keeps the catalog's shape the same in both builds.
+#[cfg(feature = "js")]
+type DimReason = script_js::UnloadReason;
+#[cfg(not(feature = "js"))]
+type DimReason = ();
+
 /// A catalog with rs2b0t's CowKiller and Woodcutter parameter shapes (a
 /// subset), optionally dimming one card.
 struct FakeCatalog {
     loaded: bool,
-    cards: Vec<(String, Vec<script::SettingDef>, Option<String>)>,
+    cards: Vec<(String, Vec<script::SettingDef>, Option<DimReason>)>,
 }
 
 impl FakeCatalog {
@@ -87,10 +95,13 @@ impl FakeCatalog {
         }
     }
 
+    #[cfg(feature = "js")]
     fn dim(mut self, name: &str) -> Self {
         for card in &mut self.cards {
             if card.0 == name {
-                card.2 = Some("needs an unsupported import".into());
+                card.2 = Some(script_js::UnloadReason::Retired(
+                    "needs an unsupported import".into(),
+                ));
             }
         }
         self
@@ -107,9 +118,12 @@ impl ImportCatalog for FakeCatalog {
             .iter()
             .find(|card| card.0 == name)
             .map(|(name, schema, dim)| {
+                #[cfg(not(feature = "js"))]
+                let _ = dim;
                 CatalogCard::new(
                     schema,
-                    dim.as_deref(),
+                    #[cfg(feature = "js")]
+                    dim.as_ref(),
                     ScriptAssignment {
                         source_kind: "catalog".into(),
                         identity: name.clone(),
@@ -359,6 +373,7 @@ impl ImportCatalog for ThieverCatalog {
         (name == "Thiever").then(|| {
             CatalogCard::new(
                 &self.0,
+                #[cfg(feature = "js")]
                 None,
                 ScriptAssignment {
                     source_kind: "catalog".into(),
@@ -1161,6 +1176,7 @@ fn maps_every_item_or_reports_why_not() {
     assert!(preview.contains("not imported: Global.runAuto"));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn dimmed_scripts_keep_parameters_but_are_not_assigned() {
     let file = parse_profile_file(FIXTURE).unwrap();
@@ -2085,6 +2101,7 @@ impl ImportCatalog for ResidualCatalog {
     fn card(&self, name: &str) -> Option<CatalogCard<'_>> {
         (name == "Thiever").then(|| CatalogCard {
             schema: &self.0,
+            #[cfg(feature = "js")]
             unloadable: None,
             assignment: ScriptAssignment {
                 source_kind: "catalog".into(),

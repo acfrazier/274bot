@@ -314,9 +314,9 @@ fn start_fixture(random_events: bool) -> LiveCell {
         account,
         fixture,
     };
-    // The fixture logs its scriptless bot out to complete the tutorial (phase
-    // 3); the approved scriptless policy then parks it, so post the operator's
-    // explicit Login once after that logout.
+    // The fixture logs its bot out to complete the tutorial (phase 3). Post a
+    // real one-shot Login once after that logout; an unlatched slot with
+    // auto-login would also reconnect by itself.
     let mut login_posted = false;
     wait_until(&live, "fixture ready", Duration::from_secs(240), |live| {
         let state = live
@@ -930,6 +930,96 @@ fn run_native_cell() {
     );
 }
 
+/// A compiled card installed while the Guardian's Maze hold stands must wait
+/// for the release (`SlotScript::admit_waiting_compiled_owner`), not panic.
+#[cfg(feature = "js")]
+fn run_native_under_guardian_hold_cell() {
+    let live = start_fixture(true);
+    live.fixture
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .trigger = Some(FixtureTrigger::Maze);
+    // The hold stands: the Guardian is the one hold reason and the Maze
+    // event owns the slot.
+    wait_until(
+        &live,
+        "Maze Guardian hold",
+        Duration::from_secs(90),
+        |live| {
+            let status = live
+                .play
+                .statuses()
+                .into_iter()
+                .find(|status| status.username == live.account)
+                .expect("slot status");
+            status.random.kind == Some(api::random::RandomKind::Maze)
+                && status.random.hold
+                && live
+                    .play
+                    .arm(&live.account)
+                    .map(|arm| arm.session_hold_reasons())
+                    .unwrap_or_default()
+                    == [api::lifecycle::HoldReason::Guardian]
+        },
+    );
+    let settings: Map<String, Value> =
+        serde_json::from_str(GATHER_SETTINGS_JSON).expect("Gatherer settings");
+    live.play
+        .script_start(&live.account, script::CompiledId("Gatherer"), settings)
+        .expect("start compiled Gatherer card under the Guardian hold");
+    let mut installed_seat = None;
+    wait_until(
+        &live,
+        "compiled Gatherer installs",
+        Duration::from_secs(60),
+        |live| {
+            installed_seat = live.play.script_seat_probe(&live.account);
+            installed_seat.is_some()
+        },
+    );
+    let install = installed_seat.expect("seat armed by the install");
+    // Release, then the owner runs the card: the Gatherer yields a result.
+    let mut yielded = 0;
+    wait_until(
+        &live,
+        "compiled Gatherer runs after the Guardian hold releases",
+        Duration::from_secs(420),
+        |live| {
+            assert_ne!(
+                live.play.script_state(&live.account),
+                script::RunState::Error,
+                "the install under the hold must not fail the run: {:?}",
+                live.play.script_last_error(&live.account)
+            );
+            if let Some(status) = live.play.script_native_status(&live.account) {
+                yielded = yielded.max(status_field(&status, "yielded"));
+            }
+            yielded > 0
+        },
+    );
+    let after = live.play.script_seat_probe(&live.account);
+    live.play.script_stop(&live.account);
+    wait_until(
+        &live,
+        "compiled card Stop",
+        Duration::from_secs(30),
+        |live| live.play.script_state(&live.account) == script::RunState::Idle,
+    );
+    assert!(live.play.script_seat_probe(&live.account).is_none());
+    save_receipt(
+        "seat-live-native-card-under-guardian-hold.json",
+        &json!({
+            "cell":"seat_live_native_card_started_under_guardian_hold",
+            "account":live.account,
+            "host":format!("127.0.0.1:{}", host_play::live_ports::game_port()),
+            "held_at_install": install.held,
+            "seat_at_install":seat_json(install),
+            "yielded":yielded,
+            "seat_after_release":after.map(seat_json),
+        }),
+    );
+}
+
 #[cfg(feature = "js")]
 fn run_world_switch_restart_cell() {
     let live = start_fixture(false);
@@ -1085,6 +1175,13 @@ fn seat_live_hook_callbacks() {
 #[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
 fn seat_live_native_card() {
     run_native_cell();
+}
+
+#[cfg(feature = "js")]
+#[test]
+#[ignore = "requires LIVE=1, a local 289 engine at WORLD_GAME_PORT (Engine A 127.0.0.1:44594 by default) and BOT_HTTP_PORT, which is required and has no default (Engine A 127.0.0.1:1080), disposable HOME/cache, and real R289 assets"]
+fn seat_live_native_card_started_under_guardian_hold() {
+    run_native_under_guardian_hold_cell();
 }
 
 #[cfg(feature = "js")]

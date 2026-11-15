@@ -265,9 +265,8 @@ pub struct SequenceDocument {
     pub recovery_entry: Option<FactKey>,
     #[serde(default)]
     pub order: SequenceOrder,
-    /// Stable navigation identities the stage may cross.
+    /// Stable navigation identities the stage asks to cross.
     #[serde(default)]
-    #[cfg_attr(feature = "path-schema", schemars(length(max = 8)))]
     pub cross: Vec<RequiredZoneDocument>,
     pub steps: Vec<StepDocument>,
 }
@@ -311,6 +310,14 @@ pub struct StepDocument {
     pub max_attempts: Option<u32>,
     /// Named stop reported when `max_attempts` is exhausted.
     pub stop: Option<String>,
+    /// Content signal that one counted attempt ran and failed in the world: the
+    /// step's operation was sent and the content's own failure feedback (for
+    /// example its game message) was observed. Needs `max_attempts`. A settle
+    /// timeout whose attempt shows this signal counts as progress for the
+    /// no-progress watchdog, so `max_attempts` bounds the retries; a timeout
+    /// that shows nothing still counts toward the watchdog's park limit.
+    #[serde(default)]
+    pub failure_signal: Option<PredicateDocument>,
     /// Predicate which skips this step when proven true.
     pub skip_if: PredicateDocument,
     /// Predicate which settles this step after execution.

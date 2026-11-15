@@ -17,15 +17,14 @@ impl JournalLinks {
         let interface =
             fs::read_to_string(content_root.join("scripts/player/interfaces/questlist.if"))
                 .unwrap_or_default();
-        // A green row must mean progress >= the call's completion argument.
-        // A renamed or different colour helper supplies no route proof.
-        let colour_rule = journal
-            .split_once("[proc,send_quest_progress_colour]")
-            .and_then(|(_, body)| body.split("\n[").next());
-        if !colour_rule.is_some_and(|body| {
-            body.contains("} else if ($progress >= $complete_progress) {")
-                && body.contains("if_setcolour($component, ^green_rgb);")
-        }) {
+        // A green row means progress >= the call's completion argument: the
+        // colour helper is modelled by name. Without exactly one declaration
+        // of it under `scripts` there is no proof.
+        let mut helpers = 0;
+        visit_rs2(&content_root.join("scripts"), &mut |text| {
+            helpers += proc_bodies(text, "send_quest_progress_colour").len();
+        });
+        if !declared_once("[proc,send_quest_progress_colour]", helpers) {
             return Self {
                 by_varp: HashMap::new(),
                 constants,
@@ -171,6 +170,7 @@ pub(super) struct ObservableGates {
     names_by_id: HashMap<i32, String>,
     journal: JournalLinks,
     stage_windows: HashMap<i32, api::selected::StageWindow>,
+    signal_windows: HashMap<i32, api::selected::StageWindow>,
 }
 
 impl ObservableGates {
@@ -209,6 +209,33 @@ impl ObservableGates {
                         })
                 })
                 .collect(),
+            signal_windows: quests
+                .into_iter()
+                .flat_map(|quests| &quests.facts.rows)
+                .filter_map(|row| {
+                    let domain = row.stage_domain?;
+                    let (Some(min), Some(max)) = (domain.min, domain.max) else {
+                        return None;
+                    };
+                    (!row.colour_authoritative
+                        && row.transmission == api::game_data::Transmission::NotTransmitted
+                        && !row.varp.is_empty()
+                        && row.varp_id >= 0
+                        && row.complete > 0
+                        && min == 0
+                        && max >= row.complete)
+                        .then(|| {
+                            (
+                                row.varp_id,
+                                api::selected::StageWindow {
+                                    quest: api::selected::FactKey::new(&row.id),
+                                    signal: api::selected::FactKey::new(&row.varp),
+                                    values: domain,
+                                },
+                            )
+                        })
+                })
+                .collect(),
         }
     }
     pub(super) fn completed_quest_name(
@@ -218,6 +245,16 @@ impl ObservableGates {
     ) -> Option<&str> {
         let completion = self.journal.constant(completion_constant)?;
         self.journal.completed_name(varp, completion)
+    }
+
+    pub(super) fn stage_window(&self, varp_id: i32) -> Option<&api::selected::StageWindow> {
+        self.stage_windows.get(&varp_id)
+    }
+
+    /// Return a content-bounded signal even when its journal colour is shared.
+    pub(super) fn signal_window(&self, varp_id: i32) -> Option<&api::selected::StageWindow> {
+        self.stage_window(varp_id)
+            .or_else(|| self.signal_windows.get(&varp_id))
     }
 
     pub(super) fn admit_edge(

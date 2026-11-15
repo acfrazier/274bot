@@ -650,6 +650,10 @@ mod tests {
         let proxy = LoopbackProxy::start(upstream.local_addr().unwrap()).unwrap();
         let mut client = TcpStream::connect(proxy.address()).unwrap();
         let (mut server, _) = accept_with_timeout(&upstream).unwrap();
+        // macOS and the BSDs give an accepted socket the non-blocking flag of the
+        // listener; Linux does not. Make the mode explicit so the read timeout below
+        // is the only wait, and the hello read waits for the proxy up to IO_TIMEOUT.
+        server.set_nonblocking(false).unwrap();
         client.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
         server.set_read_timeout(Some(IO_TIMEOUT)).unwrap();
         client.write_all(&[14, 0]).unwrap();

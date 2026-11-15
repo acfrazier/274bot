@@ -227,7 +227,7 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
         let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
         let arms = WalkArms::default();
         let admission = host_play::admission::Admission::manual(
-            command.options(),
+            host_play::WalkGlobals::default().manual_decision(command.options().zones.is_all()),
             host_play::admission::capture(
                 &snapshot,
                 state.map_members,
@@ -236,7 +236,6 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
                 None,
             ),
             0,
-            host_play::WalkGlobals::default(),
         );
         let route = match command.walk_on(
             &world,
