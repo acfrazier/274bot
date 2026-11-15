@@ -2694,6 +2694,145 @@ fn a_script_failure_during_the_world_speed_cleanup_turns_the_pass_into_a_failure
     assert_eq!(probe.looks(), 1);
 }
 
+fn measured_pass_gate_runner(probe: &GateProbe) -> (ScenarioRunner, Client) {
+    let mut scenario = measured_scenario(crate::CombatExpectation::Quiet, false);
+    scenario.steps.insert(
+        0,
+        Step {
+            name: "start the measured script",
+            kind: StepKind::StartScript,
+            wait: wait(Proof::IngameScene2, 2),
+        },
+    );
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.set_pass_gate(Some(probe.gate()));
+    let mut client = seeded_client();
+    client.stat_effective_level[3] = 10;
+    for _ in 0..4 {
+        if runner.step == 2 {
+            break;
+        }
+        runner.tick(&mut client);
+    }
+    assert!(runner.wants_script_failure());
+    assert_eq!(runner.step, 2, "Start and Begin reached the measured watch");
+    assert!(runner.combat_observer.is_some());
+    (runner, client)
+}
+
+fn observe_measured_damage(runner: &mut ScenarioRunner, client: &mut Client) {
+    client.stat_effective_level[3] = 8;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.snapshot.rebuild(client);
+    CombatObserver::observe(
+        runner.combat_observer.as_deref_mut(),
+        &runner.snapshot,
+        client.gens.session,
+    );
+    assert_eq!(
+        runner.combat_observer.as_ref().unwrap().invalid_reason(),
+        Some("hitpoints-decreased")
+    );
+}
+
+fn record_measured_pass(runner: &mut ScenarioRunner, after_cleanup: bool) {
+    if after_cleanup {
+        runner.begin_terminal_cleanup(600, TerminalOutcome::Pass);
+        assert!(matches!(runner.phase, Phase::Cleaning));
+        let outcome = runner.terminal_cleanup.take().unwrap().outcome;
+        runner.complete_terminal(outcome);
+    } else {
+        runner.record_pass();
+    }
+}
+
+#[test]
+fn measured_pass_gate_both_vetoes_keep_invalid_and_its_reason_first() {
+    for after_cleanup in [false, true] {
+        let probe = GateProbe::new(true);
+        let (mut runner, mut client) = measured_pass_gate_runner(&probe);
+        observe_measured_damage(&mut runner, &mut client);
+        record_measured_pass(&mut runner, after_cleanup);
+
+        assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+        let evidence = runner.evidence().unwrap();
+        assert_eq!(evidence.outcome, "INVALID");
+        assert_eq!(evidence.exit_code(), 1);
+        assert_eq!(evidence.message.as_deref(), Some("hitpoints-decreased"));
+        assert_eq!(probe.looks(), 0, "INVALID precedes the script pass gate");
+        let combat = evidence.interference.as_ref().unwrap();
+        assert!(!combat.windows[0].valid);
+        assert_eq!(combat.invalid_reason, Some("hitpoints-decreased"));
+        runner.tick(&mut client);
+        assert_eq!(runner.evidence().unwrap().outcome, "INVALID");
+    }
+}
+
+#[test]
+fn measured_pass_gate_failed_script_with_clean_window_is_nonpass() {
+    for after_cleanup in [false, true] {
+        let probe = GateProbe::new(true);
+        let (mut runner, mut client) = measured_pass_gate_runner(&probe);
+        runner
+            .combat_observer
+            .as_mut()
+            .unwrap()
+            .end("product")
+            .unwrap();
+        record_measured_pass(&mut runner, after_cleanup);
+
+        assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+        let evidence = runner.evidence().unwrap();
+        assert_eq!(evidence.outcome, "FAIL");
+        assert_eq!(evidence.exit_code(), 1);
+        assert_eq!(
+            evidence.message.as_deref(),
+            Some("the script on bob failed: the queue blocked")
+        );
+        assert_eq!(probe.looks(), 1);
+        let combat = evidence.interference.as_ref().unwrap();
+        assert!(combat.windows[0].valid);
+        assert_eq!(combat.invalid_reason, None);
+        runner.tick(&mut client);
+        assert_eq!(runner.evidence().unwrap().outcome, "FAIL");
+    }
+}
+
+#[test]
+fn measured_pass_gate_invalid_window_with_successful_script_cannot_pass() {
+    for after_cleanup in [false, true] {
+        let probe = GateProbe::new(false);
+        let (mut runner, mut client) = measured_pass_gate_runner(&probe);
+        observe_measured_damage(&mut runner, &mut client);
+        record_measured_pass(&mut runner, after_cleanup);
+
+        assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+        assert_eq!(runner.evidence().unwrap().outcome, "INVALID");
+        assert_eq!(runner.evidence().unwrap().exit_code(), 1);
+        assert_eq!(probe.looks(), 0);
+    }
+}
+
+#[test]
+fn measured_pass_gate_clean_window_and_successful_script_still_pass() {
+    let probe = GateProbe::new(false);
+    let (mut runner, _) = measured_pass_gate_runner(&probe);
+    runner
+        .combat_observer
+        .as_mut()
+        .unwrap()
+        .end("product")
+        .unwrap();
+    record_measured_pass(&mut runner, true);
+
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert_eq!(runner.evidence().unwrap().outcome, "PASS");
+    assert_eq!(runner.evidence().unwrap().exit_code(), 0);
+    assert_eq!(probe.looks(), 1);
+}
+
 #[test]
 fn shot_step_with_the_default_sink_is_a_noop_and_passes() {
     // The headless twin leaves the default (no-op) sink: a Shot step

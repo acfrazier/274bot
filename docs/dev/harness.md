@@ -538,6 +538,12 @@ owns it. Each slot's receipts count from the generation of its own accepted
 Start; a receipt of an earlier run is ignored. A completed, stopped, cancelled
 or paused script ends nothing.
 
+A measured window that is invalid takes precedence over the script pass gate.
+Its terminal outcome stays `INVALID`, with a nonzero exit, even when a started
+script also failed. Otherwise a failed script produces `FAIL`. Only explicit
+`PASS` evidence permits a successful status or exit. Cleanup never turns either
+non-pass outcome into a pass.
+
 ### Quester journal fixtures
 
 The headless Quester journal fixtures run with

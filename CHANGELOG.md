@@ -12,6 +12,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   even after cleanup. The receipt keeps the same events outside a window.
   A cell can explicitly label its own deliberate death instead of treating
   it as interference.
+  An invalid window also takes precedence over a failed started script at the
+  final pass gate, so its interference reason remains the terminal diagnostic.
 - `ObserveMenu` checks exact menu operations and structured targets without
   sending input; the unarmed observer path allocates nothing.
 - The revision-377 attachment live check requires Hans by NPC type and never

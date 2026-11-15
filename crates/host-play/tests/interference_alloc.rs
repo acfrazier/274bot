@@ -45,6 +45,6 @@ fn measured_combat_owner_has_fixed_state_size() {
     assert_eq!(std::mem::size_of::<Option<Box<CombatObserver>>>(), 8);
     assert_eq!(std::mem::size_of::<CombatSample>(), 72);
     assert_eq!(std::mem::size_of::<CombatObserver>(), 160);
-    // The existing 5,784 B runner gains one owner pointer and one receipt pointer.
-    assert_eq!(std::mem::size_of::<scenario::ScenarioRunner>(), 5800);
+    // Dev's two-word pass gate extends the 5,800 B measured-window runner.
+    assert_eq!(std::mem::size_of::<scenario::ScenarioRunner>(), 5816);
 }
