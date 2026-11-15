@@ -19,6 +19,8 @@ pub enum VarbitUnavailable {
     MissingBaseVarp { id: i32, base_varp: i32 },
     /// The snapshot has no row for the definition's base varp.
     MissingSnapshotValue { id: i32, base_varp: i32 },
+    /// The caller has no independent receipt for the snapshot's base value.
+    UnobservedBaseVarp { id: i32, base_varp: i32 },
 }
 
 /// Whether the selected base-varp value is known to have been received.
@@ -266,5 +268,48 @@ mod tests {
             varbit_value(&snapshot(Some(44)), &missing_metadata, 0),
             unknown
         );
+    }
+
+    #[test]
+    fn private_base_286_is_only_an_unknown_candidate() {
+        let mut cache = cache_with_varbit(false);
+        cache.varbits[0].basevar = 286;
+        cache.varbits[0].startbit = 14;
+        cache.varbits[0].endbit = 27;
+        cache.varps.resize_with(287, Default::default);
+        let fields = &mut cache.revision_377.as_mut().unwrap().config.varps;
+        fields.resize(287, fields[0].clone());
+        assert!(!fields[286].transmit);
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_varps(vec![VarpView {
+            index: 286,
+            value: 1 << 14,
+        }]);
+        assert_eq!(
+            varbit_value(&snapshot, &cache, 0),
+            Ok(VarbitValue {
+                value: 1,
+                observation: VarbitObservation::Unknown {
+                    base_varp: 286,
+                    base_value: 1 << 14,
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn repeated_queries_allocate_nothing_for_candidates_or_missing_values() {
+        let cache = cache_with_varbit(true);
+        let present = snapshot(Some(44));
+        let absent = snapshot(None);
+        let measured = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                std::hint::black_box(varbit_value(&present, &cache, 0)).unwrap();
+                assert!(std::hint::black_box(varbit_value(&absent, &cache, 0)).is_err());
+                assert!(std::hint::black_box(varbit_value(&present, &cache, 1)).is_err());
+            }
+        });
+        assert_eq!(measured.count_total, 0);
+        assert_eq!(measured.bytes_total, 0);
     }
 }

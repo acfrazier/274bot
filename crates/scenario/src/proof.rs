@@ -10,9 +10,9 @@ use api::snapshot::{
 use nav_planner::arrival::arrived;
 use nav_planner::tile::{chebyshev, Tile};
 
-/// Caller-supplied evidence that a base varp was observed in the current
-/// session. The runner matches its index and value to the current query, but
-/// callers must ensure it came from an independent observation.
+/// Caller-supplied evidence that a base varp was received in this session.
+/// The caller owns provenance and required freshness, such as a receipt after
+/// an action starts. The runner only matches the index and current base value.
 #[cfg(feature = "varbit-observation")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ObservedVarpWitness {

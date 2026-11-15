@@ -1721,6 +1721,21 @@ cells = [
   "scenario.quantity-make-x-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib fletching_make_x_ -- --nocapture --test-threads=1",
 ]
 
+# Cache-defined extraction stays Unknown without an independent base-varp
+# witness. The 377 cell pulls the real lever before reading its changed base,
+# then proves no-witness, stale-value, wrong-index and missing cases fail closed.
+[[cover]]
+globs = [
+  "crates/api/src/snapshot/varbit.rs",
+  "crates/scenario/src/lib.rs",
+  "crates/scenario/src/proof.rs",
+  "crates/scenario/src/runner.rs",
+  "crates/scenario/src/scenarios/client_377.rs",
+]
+cells = [
+  "host.varbit-377-known-missing-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} PARITY_VARBIT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact varbit::varbit_377_known_and_missing_are_read_only --nocapture --test-threads=1",
+]
+
 # Only the provider of the existing static label changed. Controlled formatting
 # tests prove the displayed line and tooltip; no gameplay or UI layout changed.
 [[cover]]
