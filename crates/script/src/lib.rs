@@ -52,6 +52,7 @@ pub mod keep_list;
 pub mod loadout_plan;
 pub mod loadouts_store;
 pub mod local_state;
+pub mod manifest;
 
 pub mod native;
 pub mod native_bank;
