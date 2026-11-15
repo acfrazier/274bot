@@ -1514,8 +1514,12 @@ class LocalDataRunnerTests(unittest.TestCase):
             def fake_run(args, *, cwd, env, log_to, timeout):
                 self.assertEqual(args, [sys.executable, "tools/local-data/build.py"])
                 self.assertEqual(cwd, tree)
-                self.assertTrue(env["GAME_DATA_274_ENGINE"].endswith("/274/engine"))
-                self.assertTrue(env["GAME_DATA_289_CONTENT"].endswith("/289/content"))
+                self.assertEqual(
+                    Path(env["GAME_DATA_274_ENGINE"]).resolve(),
+                    Path(inputs["NIGHTLY_GAME_DATA_274_ENGINE"]).resolve())
+                self.assertEqual(
+                    Path(env["GAME_DATA_289_CONTENT"]).resolve(),
+                    Path(inputs["NIGHTLY_GAME_DATA_289_CONTENT"]).resolve())
                 self.assertTrue(timeout > 0)
                 output = cwd / generated
                 output.parent.mkdir(parents=True, exist_ok=True)
