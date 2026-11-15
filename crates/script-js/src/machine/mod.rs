@@ -3546,7 +3546,7 @@ pub(crate) fn on_snapshot(snapshot: &isolate_fb::Snapshot<'_>) -> Result<(), Str
                         advanced_owner = Some(mirror.owner);
                     }
                 }
-                mirror.prompt = prompt.clone();
+                mirror.prompt.clone_from(prompt);
             }
             if let Some(owner) = advanced_owner {
                 host.mark_seat_changed(owner);
