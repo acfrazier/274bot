@@ -44,6 +44,16 @@ impl FromIterator<HostCapability> for DeclaredHostCapabilities {
     }
 }
 
+/// Descriptive string fields of a [`ScriptManifest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestText {
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub description: String,
+    pub category: String,
+}
+
 /// Validated, language-neutral metadata extracted from a native script.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScriptManifest {
@@ -60,18 +70,20 @@ pub struct ScriptManifest {
 
 impl ScriptManifest {
     /// Creates a manifest from values already validated by a language frontend.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_version: u32,
-        name: String,
-        version: String,
-        author: String,
-        description: String,
-        category: String,
+        text: ManifestText,
         tags: Vec<String>,
         settings_schema: Vec<SettingDef>,
         capabilities: DeclaredHostCapabilities,
     ) -> Self {
+        let ManifestText {
+            name,
+            version,
+            author,
+            description,
+            category,
+        } = text;
         Self {
             api_version,
             name,
@@ -236,11 +248,13 @@ mod tests {
     fn manifest(settings_schema: Vec<SettingDef>) -> ScriptManifest {
         ScriptManifest::new(
             2,
-            "Miner".into(),
-            "1".into(),
-            "Alice".into(),
-            "Mine ore".into(),
-            "Mining".into(),
+            ManifestText {
+                name: "Miner".into(),
+                version: "1".into(),
+                author: "Alice".into(),
+                description: "Mine ore".into(),
+                category: "Mining".into(),
+            },
             vec!["ore".into()],
             settings_schema,
             [HostCapability::HostPacketProtocol].into_iter().collect(),

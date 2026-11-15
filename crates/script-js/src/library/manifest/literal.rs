@@ -63,7 +63,7 @@ pub(super) fn parse_literal(
                 return Err(error(
                     path,
                     original_source,
-                    span.clone(),
+                    span,
                     field_path,
                     DeclarationReason::Literal(LiteralReason::NonFinite),
                 ));

@@ -15,7 +15,7 @@ use deno_ast::swc::common::Span;
 use deno_ast::{MediaType, ParseParams, ParsedSource, StartSourcePos};
 use exports::{DirectConst, ExportSupplier, ModuleGraph, ModuleNode};
 use literal::{parse_literal, LiteralValue, SpannedValue};
-use script::manifest::{DeclaredHostCapabilities, HostCapability, ScriptManifest};
+use script::manifest::{DeclaredHostCapabilities, HostCapability, ManifestText, ScriptManifest};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::Path;
@@ -113,7 +113,7 @@ pub fn analyze(path: &Path, source: &str) -> Result<ScriptAnalysis, ExtractionEr
         let Some(tick_span) = graph.direct_tick_function() else {
             return Err(declaration_error(
                 graph.entry(),
-                direct.statement_span.clone(),
+                direct.statement_span,
                 "tick",
                 DeclarationReason::Manifest(ManifestReason::MissingTick),
             )
@@ -449,11 +449,13 @@ fn parse_manifest(
     };
     Ok(ScriptManifest::new(
         api_version.expect("required apiVersion was validated"),
-        take_text("name", &mut text_fields),
-        take_text("version", &mut text_fields),
-        take_text("author", &mut text_fields),
-        take_text("description", &mut text_fields),
-        take_text("category", &mut text_fields),
+        ManifestText {
+            name: take_text("name", &mut text_fields),
+            version: take_text("version", &mut text_fields),
+            author: take_text("author", &mut text_fields),
+            description: take_text("description", &mut text_fields),
+            category: take_text("category", &mut text_fields),
+        },
         tags.expect("required tags were validated"),
         settings.expect("required settings were validated"),
         capabilities.expect("required capabilities were validated"),
