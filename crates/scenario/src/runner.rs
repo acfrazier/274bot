@@ -606,12 +606,7 @@ impl ScenarioRunner {
             scenario.seed.mainland || scenario.settings.require_mainland_base;
         let engine_speed_ms = scenario.settings.nav.engine_speed_ms;
         let receipt_prefixes = receipt_prefixes(&scenario);
-        let nested_observer = scenario
-            .steps
-            .iter()
-            .map(|step| step.wait.arm)
-            .chain([scenario.proof])
-            .find_map(nested_client_observation);
+        let invalid_observation = client_observation_refusal(&scenario);
         let mut runner = Self {
             scenario,
             snapshot: GameSnapshot::new(),
@@ -675,10 +670,8 @@ impl ScenarioRunner {
             pass_gate: None,
             run_receipt: Some(Box::default()),
         };
-        if let Some(observer) = nested_observer {
-            runner.record_fail(&format!(
-                "{observer} cannot be nested in Proof::All; use a top-level observation proof"
-            ));
+        if let Some(message) = invalid_observation {
+            runner.record_fail(&message);
         }
         runner
     }
@@ -3070,15 +3063,81 @@ impl ScenarioRunner {
     }
 }
 
-fn nested_client_observation(proof: Proof) -> Option<&'static str> {
-    let Proof::All(proofs) = proof else {
-        return None;
-    };
-    proofs.iter().find_map(|proof| match proof {
+fn client_observation(proof: Proof) -> Option<&'static str> {
+    match proof {
         Proof::MenuHasEntry { .. } => Some("MenuHasEntry"),
         Proof::VarbitEquals { .. } => Some("VarbitEquals"),
-        other => nested_client_observation(*other),
-    })
+        Proof::All(proofs) => proofs.iter().find_map(|proof| client_observation(*proof)),
+        _ => None,
+    }
+}
+
+fn nested_client_observation(proof: Proof) -> Option<&'static str> {
+    match proof {
+        Proof::All(proofs) => proofs.iter().find_map(|proof| client_observation(*proof)),
+        _ => None,
+    }
+}
+
+fn client_observation_refusal(scenario: &Scenario) -> Option<String> {
+    for (index, step) in scenario.steps.iter().enumerate() {
+        let (observer, reason) = match step.kind {
+            StepKind::ObserveStyleAcrossLootTrips { .. } | StepKind::NativeSeedDeposit { .. } => (
+                client_observation(step.wait.arm),
+                "requires client observation",
+            ),
+            _ => (
+                nested_client_observation(step.wait.arm),
+                "cannot be nested in Proof::All",
+            ),
+        };
+        if let Some(observer) = observer {
+            return Some(format!(
+                "step {} ({}) wait arm: {observer} {reason}. Use a top-level observation proof",
+                index + 1,
+                step.name
+            ));
+        }
+        if let StepKind::ObserveStallCombat { guard_ready, .. } = step.kind {
+            if let Some(observer) = client_observation(guard_ready) {
+                return Some(format!(
+                    "step {} ({}) guard_ready: {observer} requires client observation. Use a top-level observation proof",
+                    index + 1,
+                    step.name
+                ));
+            }
+        }
+    }
+    if let Some(observer) = nested_client_observation(scenario.proof) {
+        return Some(format!(
+            "terminal proof: {observer} cannot be nested in Proof::All. Use a top-level observation proof"
+        ));
+    }
+    for (index, sustain) in scenario.settings.sustains.iter().enumerate() {
+        if let SustainWhen::Poll(proof) = sustain.when {
+            if let Some(observer) = client_observation(proof) {
+                return Some(format!(
+                    "sustain {} poll condition: {observer} requires client observation. Use a top-level observation proof",
+                    index + 1
+                ));
+            }
+        }
+    }
+    for (index, proof) in scenario
+        .settings
+        .fixture_prereqs
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+    {
+        if let Some(observer) = client_observation(*proof) {
+            return Some(format!(
+                "fixture prerequisite {}: {observer} requires client observation. Use a top-level observation proof",
+                index + 1
+            ));
+        }
+    }
+    None
 }
 
 /// The failure text of a run that ended because the script on `slot` failed.

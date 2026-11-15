@@ -14,6 +14,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   are available in every scenario build without an optional feature.
 - Scenario construction refuses menu and varbit observations nested in `All`.
   Use each observation as a top-level wait arm or terminal proof instead.
+  Snapshot-only sustain polls, stall-combat guards, fixture prerequisites,
+  loot-style wait arms, and native seed-deposit wait arms refuse both
+  observations at any depth. Refusals identify their authored location
+  before the runner can send an action.
 
 ### Scenario runner
 

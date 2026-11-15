@@ -112,6 +112,7 @@ pub enum Proof {
     },
     /// A structured operation/target is present in the current menu while an
     /// `ObserveMenu` step is armed. Snapshot-only checks fail closed.
+    /// A terminal proof requires the last step to be `ObserveMenu`.
     MenuHasEntry {
         operation: MenuOperation,
         target: MenuTargetSelector,
@@ -181,6 +182,8 @@ pub enum Proof {
     /// per-index receive receipt, so the base observation is Unknown. The
     /// proof remains false unless `observed_base_varp` witnesses the selected
     /// definition's base-varp index and current value.
+    /// A terminal proof requires an `ObserveVarbit` step with the same id
+    /// anywhere in the scenario, not necessarily as the last step.
     VarbitEquals {
         id: i32,
         value: i32,
@@ -329,6 +332,10 @@ pub enum Proof {
     /// Every child predicate must hold. Runner construction rejects nested
     /// `MenuHasEntry` and `VarbitEquals` in wait arms and terminal proofs.
     /// Use top-level observation proofs with their matching steps instead.
+    /// Construction also rejects both observations, at any depth, in sustain
+    /// polls, stall-combat guards, fixture prerequisites, loot-style wait
+    /// arms, and native seed-deposit wait arms. These sites use snapshot-only
+    /// checks and cannot observe the client.
     All(&'static [Proof]),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
