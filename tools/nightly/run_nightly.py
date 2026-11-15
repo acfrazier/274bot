@@ -809,9 +809,8 @@ SELF_UPDATE_FROM_ENV = "NIGHTLY_SELF_UPDATE_FROM"
 # Set in the self-check subprocess: the updater's own tests skip when it is
 # present, so a check never re-tests the updater recursively.
 SELF_CHECK_ACTIVE_ENV = "NIGHTLY_SELF_CHECK_ACTIVE"
-# The whole guard (py_compile plus the runner's own unit tests) fits in about
-# a minute on Linux and macOS. On Windows the same suite takes over two
-# minutes (process and git spawn cost), so the Windows night allows five.
+# The self-check runs the candidate's full test file.
+# Linux and macOS finish in about a minute. Windows gets five minutes.
 # A slower or hung check keeps the old code instead of the night.
 SELF_UPDATE_TIMEOUT_S = 300 if IS_WINDOWS else 55
 FETCH_TIMEOUT_S = 120

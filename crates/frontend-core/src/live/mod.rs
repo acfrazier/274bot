@@ -142,10 +142,18 @@ where
     }
 }
 
+/// The generation each started script's accepted Start runs under, by slot
+/// name. The runner's pass gate reads the same list as the pump.
+type StartedRuns = std::sync::Arc<std::sync::Mutex<Vec<(String, u64)>>>;
+
 #[derive(Default)]
 struct RunnerState {
     runner: Option<scenario::ScenarioRunner>,
     pending: Vec<host_play::live_start::PendingCatalogStart>,
+    /// Per started script, the generation its accepted Start runs under (slot
+    /// name, generation). Lifecycle receipts of older generations belong to
+    /// earlier runs. An entry ends with its Start, at the scenario's Stop.
+    started_runs: StartedRuns,
     start_handle: Option<host_play::ScriptStartHandle>,
     catalog: Option<host_play::catalog_core::CoreWatch>,
     pair: Option<host_play::paired_core::PairWatch>,
@@ -575,6 +583,7 @@ impl RunnerHandle {
         let mut state = self.0.lock().unwrap();
         state.runner.take();
         state.pending.clear();
+        state.started_runs.lock().unwrap().clear();
         state.login_requests.clear();
         state.start_handle = None;
         state.catalog = None;
@@ -590,7 +599,9 @@ impl RunnerHandle {
 
     /// Replace the pending scenario Starts.
     pub fn stage(&self, plan: StartPlan) {
-        self.0.lock().unwrap().pending = plan.0;
+        let mut state = self.0.lock().unwrap();
+        state.pending = plan.0;
+        state.started_runs.lock().unwrap().clear();
     }
 
     /// Copy staged adapter Starts for a front-end integration test.
@@ -1454,6 +1465,11 @@ impl RunnerHandle {
         state.start_handle = Some(play.script_start_handle());
         state.catalog = Some(play.catalog_core_watch());
         state.pair = Some(play.paired_core_watch());
+        // A pass gate that the runner holds reads the slots of the previous
+        // play: the next frame installs one for this play.
+        if let Some(runner) = state.runner.as_mut() {
+            runner.set_pass_gate(None);
+        }
     }
 
     pub(crate) fn frame<C, T, U>(
@@ -1471,6 +1487,7 @@ impl RunnerHandle {
         let RunnerState {
             runner: runner_slot,
             pending,
+            started_runs,
             start_handle,
             catalog,
             pair,
@@ -1522,6 +1539,23 @@ impl RunnerHandle {
                                 .is_some_and(|handle| handle.idle(name)),
                         );
                     }
+                    // A script that already failed must not end the run in PASS:
+                    // read every started script's receipt before the runner decides.
+                    forward_script_failures(
+                        runner,
+                        start_handle.as_ref(),
+                        pending,
+                        started_runs,
+                        None,
+                    );
+                    // The runner asks this gate again just before it publishes a
+                    // PASS: a script that fails after the read above still cannot
+                    // end the run in PASS.
+                    if !runner.has_pass_gate() {
+                        if let Some(handle) = start_handle.as_ref() {
+                            runner.set_pass_gate(Some(script_failure_gate(handle, started_runs)));
+                        }
+                    }
                     tick_with_hold(runner, client, hold);
                     if runner.take_relog_login() {
                         // The Relog step logged a scriptless bot out: post the
@@ -1554,6 +1588,14 @@ impl RunnerHandle {
                             }
                             _ => {}
                         }
+                        // Note the generation of the Start this pump accepted.
+                        forward_script_failures(
+                            runner,
+                            start_handle.as_ref(),
+                            pending,
+                            started_runs,
+                            None,
+                        );
                     }
                 }
             }
@@ -1562,8 +1604,80 @@ impl RunnerHandle {
                 // The companion's prep relog wants the operator Login.
                 login_requests.push(name.to_owned());
             }
+            forward_script_failures(
+                runner,
+                start_handle.as_ref(),
+                pending,
+                started_runs,
+                Some(name),
+            );
         }
     }
+}
+
+/// Fail the scenario when a script it started ended Failed, with the script's
+/// own reason. The scenario's steps watch the game, not the slot, so a script
+/// that blocked or crashed would otherwise leave them waiting out the whole
+/// deadline. `only` limits the check to one slot; the driven slot reads every
+/// started script, so a failed companion cannot end in PASS either. The
+/// runner's pass gate ([`script_failure_gate`]) is the last look before a PASS.
+fn forward_script_failures(
+    runner: &mut scenario::ScenarioRunner,
+    handle: Option<&host_play::ScriptStartHandle>,
+    pending: &[host_play::live_start::PendingCatalogStart],
+    started_runs: &StartedRuns,
+    only: Option<&str>,
+) {
+    let mut started_runs = started_runs.lock().unwrap();
+    started_runs.retain(|(slot, _)| {
+        pending
+            .iter()
+            .any(|card| card.started && card.slot == *slot)
+    });
+    let Some(handle) = handle.filter(|_| runner.wants_script_failure()) else {
+        return;
+    };
+    for card in pending
+        .iter()
+        .filter(|card| card.started && only.is_none_or(|slot| card.slot == slot))
+    {
+        let generation = match started_runs.iter().find(|(slot, _)| *slot == card.slot) {
+            Some((_, generation)) => *generation,
+            None => {
+                let Some(generation) = handle.started_generation(&card.slot) else {
+                    continue;
+                };
+                started_runs.push((card.slot.clone(), generation));
+                generation
+            }
+        };
+        if let Some(reason) = handle.failure_since(&card.slot, generation) {
+            // The pass gate locks the list too: let go of it first.
+            drop(started_runs);
+            runner.fail_script(&card.slot, &reason);
+            return;
+        }
+    }
+}
+
+/// The pass gate of a live runner, its last look before it publishes a PASS.
+/// It reads the lifecycle receipt of every started script again, so a script
+/// that failed after the frame's first read cannot end the run in PASS. A
+/// failure that a script publishes after this read happened after the proof.
+fn script_failure_gate(
+    handle: &host_play::ScriptStartHandle,
+    started_runs: &StartedRuns,
+) -> scenario::PassGate {
+    let handle = handle.clone();
+    let started_runs = std::sync::Arc::clone(started_runs);
+    Box::new(move || {
+        let started_runs = started_runs.lock().unwrap();
+        started_runs.iter().find_map(|(slot, generation)| {
+            handle
+                .failure_since(slot, *generation)
+                .map(|reason| (slot.clone(), reason))
+        })
+    })
 }
 
 fn pair_setup_expired(timing: &Option<host_play::live_gate::LiveTiming>) -> bool {
@@ -2513,3 +2627,6 @@ mod tests {
 
 #[cfg(test)]
 mod manifest_tests;
+
+#[cfg(test)]
+mod pump_tests;

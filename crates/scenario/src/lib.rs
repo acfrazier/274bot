@@ -56,7 +56,7 @@ pub use fixture::{
 };
 pub use interference::CombatExpectation;
 pub use proof::Proof;
-pub use runner::{RunnerStatus, ScenarioRunner};
+pub use runner::{PassGate, RunnerStatus, ScenarioRunner};
 pub(crate) use scenarios::script_live_seed_steps;
 pub use scenarios::{
     duel_arena_completed_duel_step, nav_full_scenario, thiever_sustained_scenario,
