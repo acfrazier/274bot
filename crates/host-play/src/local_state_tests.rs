@@ -2943,7 +2943,10 @@ fn quarantine_copy_flushes_its_candidate() {
 /// byte for byte in a private `panel-ui.json.corrupt-<time>` copy, synced
 /// with its directory entry, before default preferences are committed
 /// with their ledger. The source itself is left as it is; the operator is
-/// told (a warning) and one info audit line names the action.
+/// told (a warning) and one info audit line names the action. A file that
+/// is also truncated and names a field twice is the truncated one first:
+/// it is refused as not JSON, not as the duplicate, and quarantined the
+/// same way.
 #[test]
 fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh() {
     let _state_lease = crate::test_process::state();
@@ -2952,6 +2955,11 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
         ("not-json", b"{not valid json".to_vec()),
         ("not-utf8", vec![b'{', 0xff, 0xfe, b'}']),
         ("not-an-object", b"[1, 2, 3]".to_vec()),
+        ("duplicate-and-truncated", br#"{"a":1,"a":"#.to_vec()),
+        (
+            "duplicate-in-a-non-object-root",
+            br#"[{"a":1,"a":2}]"#.to_vec(),
+        ),
     ] {
         let mut notices = None;
         let preferences = preferences_at(&scratch, case, Some(&bytes), |service| {
@@ -3205,6 +3213,50 @@ fn a_save_refused_by_database_permissions_names_the_cause_and_the_remedy() {
         assert!(error.contains(needle), "save lacks {needle:?}: {error}");
     }
     assert!(!error.contains("store I/O error"), "{error}");
+}
+
+/// FU:15 (S3a): the duplicate-field check costs no more than the parse it
+/// checks. This document — a 768 KiB first field name and 120 object
+/// levels, the shape the round-1 review measured, where the checked
+/// reader's peak was 188,772,239 bytes against the plain reader's 829,271
+/// — holds a value's position as a chain of the parsing frames' own
+/// segments, so no path text is built while the document parses and every
+/// field name is still owned exactly once. The bound: the checked parse's
+/// peak is the plain `serde_json` read's peak plus one small step for the
+/// parser's own bookkeeping, never a copy of the path per level.
+#[test]
+fn a_deep_document_parses_within_the_plain_reader_s_peak_allocation() {
+    let mut raw = String::new();
+    raw.push_str("{\"");
+    raw.push_str(&"k".repeat(768 * 1024));
+    raw.push_str("\":");
+    for level in 0..120 {
+        raw.push('{');
+        raw.push_str(&format!("\"{level}\":"));
+    }
+    raw.push('1');
+    raw.push_str(&"}".repeat(121));
+    assert!(raw.len() > 786_000, "the document is the reviewed shape");
+    let plain = allocation_counter::measure(|| {
+        drop(std::hint::black_box(
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap(),
+        ));
+    });
+    let checked = allocation_counter::measure(|| {
+        drop(std::hint::black_box(
+            files::object_without_duplicate_fields(&raw).unwrap(),
+        ));
+    });
+    assert_eq!(
+        checked.bytes_current, 0,
+        "the checked parse leaves nothing allocated"
+    );
+    assert!(
+        checked.bytes_max <= plain.bytes_max + 64 * 1024,
+        "peak {} bytes against the plain read's {}",
+        checked.bytes_max,
+        plain.bytes_max
+    );
 }
 
 /// A refused loadouts file stays byte-for-byte intact and is never renamed,

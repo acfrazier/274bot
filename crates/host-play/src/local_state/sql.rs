@@ -1197,6 +1197,25 @@ impl Db {
                     SqlFailure::refused(FailureReason::Schema, text)
                 }
             },
+            SourceFailure::Ambiguous(cause) => {
+                let remedy = match usage {
+                    SourceUse::FirstImport => "Edit the file as said, or remove it to start empty.",
+                    SourceUse::Reimport => {
+                        "Edit the file as said, or remove it to keep the saved preferences."
+                    }
+                    SourceUse::Recovery => {
+                        "Edit the file as said, or name another private JSON object with \
+                         --source."
+                    }
+                };
+                SqlFailure::refused(
+                    FailureReason::Schema,
+                    format!(
+                        "Preferences refused at {display:?}: {cause}. The file was not changed. \
+                         {outcome} {remedy} Retry after fixing this cause."
+                    ),
+                )
+            }
             SourceFailure::Unsafe(cause) => SqlFailure::refused(
                 FailureReason::Io,
                 format!(
@@ -1934,6 +1953,10 @@ pub(super) enum SourceFailure {
     Unrepresentable(String),
     /// Unsafe owner or mode, with its remedy.
     Unsafe(String),
+    /// A field named twice in one object: which value was meant is
+    /// unknown, so the file is refused whole, and its cause carries the
+    /// field, the object and the edit that removes the duplicate.
+    Ambiguous(String),
     /// Any other read or metadata failure (I/O, wrong type).
     Unreadable(String),
 }
@@ -1964,8 +1987,12 @@ pub(super) fn read_legacy(path: &Path) -> Legacy {
         }
         Err(error) => return Legacy::Refused(classify_io(&error)),
     };
-    let Ok(Value::Object(document)) = serde_json::from_str::<Value>(&text) else {
-        return malformed(path);
+    let document = match files::object_without_duplicate_fields(&text) {
+        Ok(document) => document,
+        Err(error @ files::ReadError::DuplicateField { .. }) => {
+            return Legacy::Refused(SourceFailure::Ambiguous(error.to_string()));
+        }
+        Err(_) => return malformed(path),
     };
     let (_, unrepresentable) = files::preference_rows(&document);
     if unrepresentable > 0 {

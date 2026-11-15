@@ -411,6 +411,153 @@ fn first_import_takes_the_whole_object_once_and_keeps_the_source_as_migrated_evi
     assert_eq!(second.document(), first.document());
 }
 
+/// The domain head row of the preferences, when the database has one.
+fn head_row(root: &StateRoot) -> Option<u64> {
+    inspect(root)
+        .query_row(
+            "SELECT version FROM domain_head WHERE domain = 'preferences'",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .unwrap()
+        .map(|raw| sql::decode_u64(&raw).unwrap())
+}
+
+/// FU:15 (S3a, S1 merge): a legacy `panel-ui.json` that names a field twice
+/// in one object, at the top level or nested, is refused by the first
+/// import as the file reader refuses it: the refusal names the path, the
+/// cause (field and object) and the remedy, the source file keeps every
+/// byte and its name, and the database gets no preference head and no
+/// ledger row. A repaired file imports afterwards.
+#[test]
+fn a_legacy_file_with_a_duplicate_field_is_refused_by_the_import_and_changes_nothing() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-import-duplicate");
+    let root = root_of(&scratch);
+    let source = root.preferences_file();
+    for (case, bytes, cause) in [
+        (
+            "top level",
+            br#"{"last_focus":"alice","last_focus":"bob"}"#.to_vec(),
+            r#"field "last_focus" is named twice in the top level; edit the file to remove one of them"#,
+        ),
+        (
+            "nested",
+            br#"{"nav":{"allow_teleports":true,"allow_teleports":false}}"#.to_vec(),
+            r#"field "allow_teleports" is named twice in the object "nav"; edit the file to remove one of them"#,
+        ),
+    ] {
+        write_private(&source, &bytes);
+        let service = open(&scratch);
+        let error = refusal(&service.preferences());
+        let text = error.to_string();
+        assert!(
+            text.contains(&format!("{:?}", source.display().to_string())),
+            "{case}: {text}"
+        );
+        assert!(text.contains(cause), "{case}: {text}");
+        assert!(
+            text.contains("No source ledger or defaults were saved"),
+            "{case}: {text}"
+        );
+        assert!(
+            text.contains("Edit the file as said, or remove it to start empty."),
+            "{case}: {text}"
+        );
+        assert_eq!(
+            std::fs::read(&source).unwrap(),
+            bytes,
+            "{case}: every byte stays"
+        );
+        assert_eq!(
+            kept_copies(&root, "corrupt").len() + kept_copies(&root, "migrated").len(),
+            0,
+            "{case}: no copy, no evidence"
+        );
+        assert!(
+            !root.path().join("panel-ui.json.migrated").exists(),
+            "{case}"
+        );
+        assert_eq!(head_row(&root), None, "{case}: no preference head");
+        assert_eq!(ledger_kind(&root), None, "{case}: no ledger row");
+        assert!(
+            service
+                .preferences()
+                .set("map_bake", serde_json::json!("always"))
+                .is_err(),
+            "{case}: nothing saves over the refused file"
+        );
+        assert_eq!(head_row(&root), None, "{case}: a refused save adds no head");
+        drop(service);
+    }
+    // The repaired file imports at the next start.
+    write_private(&source, br#"{"last_focus":"bob"}"#);
+    let service = open(&scratch);
+    assert_eq!(
+        ready(&service.preferences()).document()["last_focus"],
+        json!("bob")
+    );
+    assert_eq!(ledger_kind(&root).as_deref(), Some("imported"));
+}
+
+/// A valid legacy file, with the same field name in different objects (not
+/// a duplicate), imports with exactly the values a plain `serde_json` read
+/// holds, decided from the fixture before anything reads it.
+#[test]
+fn a_legacy_file_without_duplicate_fields_imports_with_the_values_it_held() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-import-valid");
+    let root = root_of(&scratch);
+    let bytes = br#"{
+        "last_focus": "alice",
+        "nav": {"allow_teleports": true},
+        "pvp": {"start_fights": true},
+        "layout": [{"name": "mine"}, {"name": "yours"}],
+        "future": {"same": 1, "other": {"same": 2}}
+    }"#
+    .to_vec();
+    write_private(&root.preferences_file(), &bytes);
+    let expected: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(&bytes).unwrap();
+    let service = open(&scratch);
+    let snapshot = ready(&service.preferences());
+    assert_eq!(**snapshot.document(), expected);
+    assert_eq!(stored_document(&root), serde_json::Value::Object(expected));
+    assert_eq!(ledger_kind(&root).as_deref(), Some("imported"));
+    assert!(head_row(&root).is_some());
+    assert_eq!(
+        std::fs::read(root.path().join("panel-ui.json.migrated")).unwrap(),
+        bytes,
+        "exact source bytes kept"
+    );
+}
+
+/// A non-object root and a truncated file keep their malformed handling
+/// under the duplicate check, whatever duplicates they also hold: kept in
+/// a `.corrupt-` copy, defaults started, a quarantined ledger row.
+#[test]
+fn a_duplicate_in_a_malformed_legacy_file_is_still_the_malformed_file() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-import-malformed-duplicate");
+    for (case, bytes) in [
+        ("truncated", br#"{"a":1,"a":"#.to_vec()),
+        ("non-object root", br#"[{"a":1,"a":2}]"#.to_vec()),
+    ] {
+        let root = StateRoot::new(scratch.home.join(case).join(".274bot"));
+        write_private(&root.preferences_file(), &bytes);
+        let service = LocalStateService::open_process(root.clone());
+        assert!(
+            ready(&service.preferences()).document().is_empty(),
+            "{case}"
+        );
+        assert_eq!(ledger_kind(&root).as_deref(), Some("quarantined"), "{case}");
+        let copies = kept_copies(&root, "corrupt");
+        assert_eq!(copies.len(), 1, "{case}");
+        assert_eq!(std::fs::read(&copies[0]).unwrap(), bytes, "{case}");
+    }
+}
+
 #[test]
 fn a_newer_sql_edit_wins_over_the_original_json_still_present() {
     let _state_lease = crate::test_process::state();

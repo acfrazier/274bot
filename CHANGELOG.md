@@ -49,6 +49,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Preferences and saved state
 
+- A `panel-ui.json` that names a field twice in the same object (a hand
+  edit can do this) is now refused instead of read keeping the last of
+  the two values, wherever the file is read: the import of the old file
+  into the preferences database refuses it too. The refusal names the
+  file, the field and the object it sits in and asks you to edit the
+  file to remove one of them. The file stays as it is, and no
+  preferences or import record are saved from it, so the next start
+  refuses again until the file is fixed or removed. A file whose content
+  does not parse at all, say one truncated in the middle of the repeated
+  field, is still the unreadable file: its bytes are kept in a
+  `.corrupt-` copy and default preferences start, whatever fields it
+  also names.
 - Preferences now live in a SQLite database, `.274bot/state/state.sqlite3`
   (with its `-wal` and `-shm` files), instead of `panel-ui.json`. The first
   start of this version imports the whole `panel-ui.json`, members it does not
