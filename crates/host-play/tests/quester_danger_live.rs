@@ -303,6 +303,7 @@ fn run_keep_stairs(
                 .map(|_| crossing_observation(snapshot)))
         }),
         Box::new(|snapshot, _| Some(crossing_observation(snapshot))),
+        None,
     );
     script::quester::registry::set_source(source_before);
     if expect_bound_refusal {
