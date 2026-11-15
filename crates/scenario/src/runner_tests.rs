@@ -132,6 +132,72 @@ fn observe_menu_is_armed_typed_and_never_sends() {
     assert_eq!(client.out.pos, 0);
 }
 
+fn assert_nested_observer_is_rejected(proof: Proof, observer: &str) {
+    for terminal in [false, true] {
+        let mut scenario = stat_scenario(0, 2);
+        scenario.settings.teardown_world_speed_ms = Some(600);
+        if terminal {
+            scenario.proof = proof;
+        } else {
+            scenario.steps[0].wait.arm = proof;
+        }
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("nested {observer} must be refused at construction");
+        };
+        assert!(
+            message.contains(observer) && message.contains("cannot be nested in Proof::All"),
+            "{message}"
+        );
+        let receipt = runner.evidence().expect("invalid scenario receipt");
+        assert_eq!(receipt.outcome, "FAIL");
+        assert_eq!(receipt.ticks, 0);
+        let mut client = seeded_client();
+        client.runenergy = 7;
+        runner.tick(&mut client);
+        assert_eq!(
+            client.runenergy, 7,
+            "an invalid scenario must not run its step"
+        );
+        assert_eq!(
+            client.out.pos, 0,
+            "an invalid scenario must not run cleanup"
+        );
+    }
+}
+
+#[test]
+fn menu_proofs_in_all_are_refused_at_construction() {
+    const MENU: Proof = Proof::MenuHasEntry {
+        operation: api::snapshot::MenuOperation::NpcOption(1),
+        target: api::snapshot::MenuTargetSelector::NpcType(0),
+    };
+    for proof in [
+        Proof::All(&[MENU]),
+        Proof::All(&[Proof::Stat { id: 16, min: 100 }, Proof::All(&[MENU])]),
+    ] {
+        assert_nested_observer_is_rejected(proof, "MenuHasEntry");
+    }
+}
+
+#[test]
+fn varbit_proofs_in_all_are_refused_at_construction() {
+    const VARBIT: Proof = Proof::VarbitEquals {
+        id: 0,
+        value: 3,
+        observed_base_varp: Some(ObservedVarpWitness {
+            varp_id: 0,
+            value: 44,
+        }),
+    };
+    for proof in [
+        Proof::All(&[VARBIT]),
+        Proof::All(&[Proof::Stat { id: 16, min: 100 }, Proof::All(&[VARBIT])]),
+    ] {
+        assert_nested_observer_is_rejected(proof, "VarbitEquals");
+    }
+}
+
 #[test]
 fn stop_script_requires_a_host_observed_idle_slot() {
     let mut scenario = stat_scenario(0, 100);

@@ -599,7 +599,13 @@ impl ScenarioRunner {
             scenario.seed.mainland || scenario.settings.require_mainland_base;
         let engine_speed_ms = scenario.settings.nav.engine_speed_ms;
         let receipt_prefixes = receipt_prefixes(&scenario);
-        Self {
+        let nested_observer = scenario
+            .steps
+            .iter()
+            .map(|step| step.wait.arm)
+            .chain([scenario.proof])
+            .find_map(nested_client_observation);
+        let mut runner = Self {
             scenario,
             snapshot: GameSnapshot::new(),
             obj_names: None,
@@ -660,7 +666,13 @@ impl ScenarioRunner {
             shot_sink: None,
             terminal_cleanup: None,
             run_receipt: Some(Box::default()),
+        };
+        if let Some(observer) = nested_observer {
+            runner.record_fail(&format!(
+                "{observer} cannot be nested in Proof::All; use a top-level observation proof"
+            ));
         }
+        runner
     }
 
     /// Stop or start dispatch recording without changing any gameplay predicate.
@@ -2998,6 +3010,17 @@ impl ScenarioRunner {
         );
         self.evidence = Some(evidence);
     }
+}
+
+fn nested_client_observation(proof: Proof) -> Option<&'static str> {
+    let Proof::All(proofs) = proof else {
+        return None;
+    };
+    proofs.iter().find_map(|proof| match proof {
+        Proof::MenuHasEntry { .. } => Some("MenuHasEntry"),
+        Proof::VarbitEquals { .. } => Some("VarbitEquals"),
+        other => nested_client_observation(*other),
+    })
 }
 
 /// The distinct receipt prefixes a scenario's [`Proof::ScriptReceipt`]

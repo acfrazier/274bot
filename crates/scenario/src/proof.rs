@@ -326,7 +326,9 @@ pub enum Proof {
         orbit_yaw: i32,
         orbit_pitch: i32,
     },
-    /// Every child snapshot predicate must hold.
+    /// Every child predicate must hold. Runner construction rejects nested
+    /// `MenuHasEntry` and `VarbitEquals` in wait arms and terminal proofs.
+    /// Use top-level observation proofs with their matching steps instead.
     All(&'static [Proof]),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

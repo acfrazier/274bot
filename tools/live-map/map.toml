@@ -2252,7 +2252,7 @@ cells = [
 ]
 
 # Structured menu observations use real 377 rows: request chat, loc Examine,
-# and a world player's slot. Hans is the deterministic legacy interaction.
+# and a world player's slot through the scenario runner.
 [[cover]]
 globs = [
   "crates/api/src/query.rs",
@@ -2267,5 +2267,17 @@ globs = [
 ]
 cells = [
   "host.menu-377-trade-duel-loc-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} PARITY_2C_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} PARITY_2C_SERVED_IDENTITY=${PARITY_2C_SERVED_IDENTITY:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact menu::trade_duel_loc_menu_377 --nocapture --test-threads=1",
+]
+
+# Hans exercises the API and host interaction harness, not the scenario runner.
+[[cover]]
+globs = [
+  "crates/api/src/query.rs",
+  "crates/api/src/snapshot.rs",
+  "crates/api/src/snapshot/decode.rs",
+  "crates/api/src/snapshot/views.rs",
+  "crates/host-play/tests/revision_377_live.rs",
+]
+cells = [
   "host.menu-377-hans-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact live_377_attaches_walks_and_interacts_with_numeric_npc --nocapture --test-threads=1",
 ]

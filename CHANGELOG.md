@@ -12,6 +12,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   receive receipts; `VarbitEquals` requires a matching observed-varp witness.
   An unrequested observer adds no per-tick allocations. Varbit observations
   are available in every scenario build without an optional feature.
+- Scenario construction refuses menu and varbit observations nested in `All`.
+  Use each observation as a top-level wait arm or terminal proof instead.
 
 ### Scenario runner
 
