@@ -26,6 +26,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   tests replay the model's traces against the Guardian. When a slot has no
   script claim source, the Guardian now hands any script claim back to itself at
   once.
+- The Quester rocky-elevation live oracle counts actual scenario-worker polls.
+  Recovered client entity cycles no longer cause a false late-drain failure.
 - A generated game data file that fails to decode now names the file and says
   to regenerate it with `python3 tools/local-data/build.py`.
 - Revision 377 stage-1 shop extraction resolves keeper configs by section name

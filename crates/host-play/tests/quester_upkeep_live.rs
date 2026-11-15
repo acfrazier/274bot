@@ -51,22 +51,37 @@ struct Mark {
 }
 
 impl Mark {
-    fn from_client_cycle(tick: u64, cycle: i32) -> Option<Self> {
-        Some(Self {
-            tick,
-            poll: u64::try_from(cycle).ok()?,
-        })
-    }
-
-    fn from_snapshot(snapshot: &GameSnapshot) -> Option<Self> {
-        // The observer loop and the scenario worker run independently. Both
-        // must stamp the client cycle stored by the worker, not count reads.
-        Self::from_client_cycle(snapshot.gens().player_info, snapshot.hitmarks()?.loop_cycle)
-    }
-
     fn gap(self, earlier: Self) -> i128 {
         i128::from(self.tick) - i128::from(earlier.tick)
     }
+}
+
+/// One ordinal per real worker callback, not per recovered 20 ms entity cycle.
+#[derive(Default)]
+struct ClientPollClock {
+    poll: u64,
+    native_cycle: Option<u64>,
+}
+
+impl ClientPollClock {
+    fn observe(&mut self, native_cycle: Option<u64>) {
+        self.poll += 1;
+        self.native_cycle = native_cycle;
+    }
+
+    fn mark(&self, tick: u64, native_cycle: Option<u64>) -> Option<Mark> {
+        if self.poll == 0 || native_cycle.is_none() || native_cycle != self.native_cycle {
+            return None;
+        }
+        Some(Mark {
+            tick,
+            poll: self.poll,
+        })
+    }
+}
+
+fn native_client_cycle(snapshot: &GameSnapshot) -> Option<u64> {
+    u64::try_from(snapshot.hitmarks()?.loop_cycle).ok()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -145,7 +160,9 @@ struct C0Receipt {
     r0: Option<Mark>,
     g_drop: Option<FoodDrop>,
     l0: Option<Mark>,
+    l0_native_cycle: Option<u64>,
     s_send: Option<Mark>,
+    s_send_native_cycle: Option<u64>,
     s1: Option<Mark>,
     s_drop: Option<FoodDrop>,
     restart: Option<Mark>,
@@ -223,7 +240,11 @@ impl C0Receipt {
             "s1_after_l0_ticks": self.s1.zip(self.l0).map(|(s1, l0)| s1.gap(l0)),
         });
         receipt["frame_clock"] = json!("raw PLAYER_INFO generation");
-        receipt["client_poll_clock"] = json!("native client loop_cycle");
+        receipt["client_poll_clock"] = json!("scenario worker callback ordinal");
+        receipt["native_client_cycles"] = json!({
+            "L0": self.l0_native_cycle,
+            "attempt_drain_send": self.s_send_native_cycle,
+        });
         receipt["survival_deadline_clock"] = json!("native script tick");
         receipt["survival_op_events"] = json!(self
             .survival_op_events
@@ -463,6 +484,7 @@ impl RunPurpose {
 
 struct LiveWitness {
     receipt: C0Receipt,
+    poll_clock: ClientPollClock,
     last_lobsters: i32,
     last_chat_sequence: i32,
     journal_open_seen: bool,
@@ -473,6 +495,7 @@ impl Default for LiveWitness {
     fn default() -> Self {
         Self {
             receipt: C0Receipt::default(),
+            poll_clock: ClientPollClock::default(),
             last_lobsters: 8,
             last_chat_sequence: -1,
             journal_open_seen: false,
@@ -482,14 +505,26 @@ impl Default for LiveWitness {
 }
 
 impl LiveWitness {
+    fn mark(&self, snapshot: &GameSnapshot) -> Option<Mark> {
+        self.poll_clock
+            .mark(snapshot.gens().player_info, native_client_cycle(snapshot))
+    }
+
     fn observed_mark(&mut self, snapshot: &GameSnapshot) -> Option<Mark> {
-        let mark = Mark::from_snapshot(snapshot);
+        let mark = self.mark(snapshot);
         if mark.is_none() {
             self.receipt
                 .failure
-                .get_or_insert_with(|| "client-cycle clock unavailable".into());
+                .get_or_insert_with(|| "client-poll clock unavailable or snapshot stale".into());
         }
         mark
+    }
+
+    fn observe_l0(&mut self, at: Mark) {
+        if self.receipt.l0.is_none() {
+            self.receipt.l0 = Some(at);
+            self.receipt.l0_native_cycle = self.poll_clock.native_cycle;
+        }
     }
 }
 
@@ -667,7 +702,7 @@ fn insert_attempt_drain_and_anchors(
                     let Some(at) = witness.observed_mark(snapshot) else {
                         return false;
                     };
-                    witness.receipt.l0.get_or_insert(at);
+                    witness.observe_l0(at);
                 }
                 witness.receipt.l0.is_some()
             }),
@@ -680,7 +715,7 @@ fn insert_attempt_drain_and_anchors(
     };
     let drain_witness = Arc::clone(&witness);
     let drain = Step {
-        name: "drain Hitpoints on the client cycle after L0",
+        name: "drain Hitpoints on the worker callback after L0",
         kind: StepKind::Perform {
             send: Box::new(move |client, snapshot| {
                 let Ok(mut witness) = drain_witness.lock() else {
@@ -697,6 +732,7 @@ fn insert_attempt_drain_and_anchors(
                 let sent = api::interact::cheat(client, &command).is_sent();
                 if sent {
                     witness.receipt.s_send = Some(at);
+                    witness.receipt.s_send_native_cycle = witness.poll_clock.native_cycle;
                 }
                 sent
             }),
@@ -733,8 +769,9 @@ fn live_callbacks(
             let witness = family_witness
                 .lock()
                 .map_err(|_| "C0 live witness poisoned".to_owned())?;
-            let now = Mark::from_snapshot(snapshot)
-                .ok_or_else(|| "C0 failed: client-cycle clock unavailable".to_owned())?;
+            let now = witness.mark(snapshot).ok_or_else(|| {
+                "C0 failed: client-poll clock unavailable or snapshot stale".to_owned()
+            })?;
             let logs = hostlogs();
             if witness.receipt.death || snapshot.local_player().is_none() {
                 return Err("C0 failed: player death or missing local player".into());
@@ -806,7 +843,18 @@ fn run_c0(purpose: RunPurpose) -> Result<LiveCapture, String> {
     let witness = Arc::new(Mutex::new(LiveWitness::default()));
     let cell = build_cell(purpose.label(), Arc::clone(&witness))?;
     let (observe_family, observe_tick) = live_callbacks(purpose, Arc::clone(&witness));
-    let result = quester_live::run_observed(cell, observe_family, observe_tick);
+    let poll_witness = Arc::clone(&witness);
+    let observe_client_poll = Box::new(move |snapshot: &GameSnapshot| {
+        if let Ok(mut witness) = poll_witness.lock() {
+            witness.poll_clock.observe(native_client_cycle(snapshot));
+        }
+    });
+    let result = quester_live::run_observed(
+        cell,
+        observe_family,
+        observe_tick,
+        Some(observe_client_poll),
+    );
     let mut logs = hostlogs();
     logs.extend(read_script_trace(&trace_path)?);
     let mut receipt = witness
@@ -860,7 +908,7 @@ fn record_frame(witness: &mut LiveWitness, snapshot: &GameSnapshot, status: &Scr
         }
         if line.text.contains(CLIMB_LINE) {
             new_climb_line = true;
-            witness.receipt.l0.get_or_insert(at);
+            witness.observe_l0(at);
             witness.receipt.chat_events.push(ChatEvent {
                 at,
                 sequence: line.sequence,
@@ -1300,9 +1348,9 @@ fn check_phase_l_and_s<'a>(
         failures.push("post-L0 stat_drain send was not observed".into());
     }
     if let Some((l0, s_send)) = l0.zip(s_send) {
-        // The runner starts a Perform step in the same tick the previous Await step
-        // finishes, so a send on the L0 poll is correct. The drain must not come
-        // before L0 and must come no later than one poll after it.
+        // Await advances to Perform for the next worker callback. Count real
+        // callbacks, not recovered entity cycles, and retain the L0-or-next-poll
+        // bound regardless of how often the outer observer reads the snapshot.
         let latest_send_poll = l0.poll.saturating_add(1);
         if s_send.poll < l0.poll || s_send.poll > latest_send_poll {
             failures.push(format!(
@@ -2153,15 +2201,28 @@ mod tests {
     }
 
     #[test]
-    fn client_poll_marks_use_worker_cycles_not_observer_read_count() {
-        let l0 = Mark::from_client_cycle(80, 1600).unwrap();
+    fn client_poll_clock_counts_callbacks_not_recovered_cycles_or_reads() {
+        let mut clock = ClientPollClock::default();
+        assert_eq!(clock.mark(80, Some(1600)), None);
+        clock.observe(Some(1600));
+        let l0 = clock.mark(80, Some(1600)).unwrap();
         for _ in 0..3 {
-            assert_eq!(Mark::from_client_cycle(80, 1600), Some(l0));
+            assert_eq!(clock.mark(80, Some(1600)), Some(l0));
         }
-        let send = Mark::from_client_cycle(80, 1601).unwrap();
+
+        // The next callback can follow a recovered entity cycle. It remains
+        // exactly one poll later, even though the native clock advanced twice.
+        clock.observe(Some(1602));
+        let send = clock.mark(80, Some(1602)).unwrap();
         assert_eq!(send.poll, l0.poll + 1);
         assert_eq!(send.tick, l0.tick);
-        assert_eq!(Mark::from_client_cycle(80, -1), None);
+        assert_eq!(clock.mark(80, Some(1600)), None);
+        assert_eq!(clock.mark(80, None), None);
+
+        clock.observe(Some(1603));
+        assert_eq!(clock.mark(80, Some(1603)).unwrap().poll, l0.poll + 2);
+        clock.observe(None);
+        assert_eq!(clock.mark(80, None), None);
     }
 
     #[test]
@@ -2412,12 +2473,15 @@ mod tests {
     }
 
     #[test]
-    fn await_then_perform_uses_the_next_client_cycle_at_the_same_game_tick() {
+    fn await_then_perform_uses_the_next_worker_poll_despite_recovered_cycles() {
         let mut client = seeded_client();
-        let anchor = Arc::new(Mutex::new(None::<u64>));
-        let send_tick = Arc::new(Mutex::new(None::<u64>));
+        let clock = Arc::new(Mutex::new(ClientPollClock::default()));
+        let anchor = Arc::new(Mutex::new(None::<Mark>));
+        let send_tick = Arc::new(Mutex::new(None::<Mark>));
         let ready_anchor = Arc::clone(&anchor);
         let perform_tick = Arc::clone(&send_tick);
+        let ready_clock = Arc::clone(&clock);
+        let perform_clock = Arc::clone(&clock);
         let scenario = scenario::Scenario {
             name: "same-game-tick-await-perform",
             seed: Seed {
@@ -2428,10 +2492,13 @@ mod tests {
                 Step {
                     name: "await first client cycle",
                     kind: StepKind::Await {
-                        evidence: "snapshot tick captured",
+                        evidence: "snapshot game tick and worker poll captured",
                         ready: Box::new(move |snapshot| {
                             if let Ok(mut anchor) = ready_anchor.lock() {
-                                anchor.get_or_insert(snapshot.gens().player_info);
+                                *anchor = ready_clock.lock().unwrap().mark(
+                                    snapshot.gens().player_info,
+                                    native_client_cycle(snapshot),
+                                );
                             }
                             true
                         }),
@@ -2447,7 +2514,10 @@ mod tests {
                     kind: StepKind::Perform {
                         send: Box::new(move |_, snapshot| {
                             if let Ok(mut tick) = perform_tick.lock() {
-                                *tick = Some(snapshot.gens().player_info);
+                                *tick = perform_clock.lock().unwrap().mark(
+                                    snapshot.gens().player_info,
+                                    native_client_cycle(snapshot),
+                                );
                                 true
                             } else {
                                 false
@@ -2467,6 +2537,8 @@ mod tests {
         let mut runner = ScenarioRunner::new(scenario);
         runner.set_scene_settle(Duration::ZERO);
 
+        client.loop_cycle = 1600;
+        clock.lock().unwrap().observe(Some(1600));
         runner.tick(&mut client);
         let await_tick = anchor.lock().unwrap().expect("Await recorded its snapshot");
         assert!(
@@ -2474,12 +2546,12 @@ mod tests {
             "Perform must wait for the next client cycle"
         );
 
+        client.loop_cycle = 1602;
+        clock.lock().unwrap().observe(Some(1602));
         runner.tick(&mut client);
         let perform_tick = send_tick.lock().unwrap().expect("Perform ran on cycle two");
-        assert_eq!(
-            perform_tick, await_tick,
-            "the client cycle did not advance the game tick"
-        );
+        assert_eq!(perform_tick.tick, await_tick.tick);
+        assert_eq!(perform_tick.poll, await_tick.poll + 1);
     }
 
     fn seeded_client() -> Client {
@@ -2685,7 +2757,9 @@ mod tests {
             r0: optional_mark_from_json(&value["R0"], "R0")?,
             g_drop: optional_drop("G_drop")?,
             l0: optional_mark_from_json(&value["L0"], "L0")?,
+            l0_native_cycle: value["native_client_cycles"]["L0"].as_u64(),
             s_send: optional_mark_from_json(&value["attempt_drain_send"], "attempt_drain_send")?,
+            s_send_native_cycle: value["native_client_cycles"]["attempt_drain_send"].as_u64(),
             s1: optional_mark_from_json(&value["S1"], "S1")?,
             s_drop: optional_drop("S_drop")?,
             restart: optional_mark_from_json(&value["restart_prompt"], "restart_prompt")?,
