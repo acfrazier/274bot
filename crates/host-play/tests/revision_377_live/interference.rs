@@ -221,7 +221,14 @@ fn run_case(inside: bool, directory: &Path, mode: &str) -> Result<(), String> {
                 state.ingame() && state.scene_state() == 2 && state.tile() == Some((3220, 3220, 0))
             },
         )?;
-        let command = format!("tele {} {} {}", START_TILE.0, START_TILE.1, START_TILE.2);
+        let command = format!(
+            "tele {},{},{},{},{}",
+            START_TILE.2,
+            START_TILE.0 >> 6,
+            START_TILE.1 >> 6,
+            START_TILE.0 & 63,
+            START_TILE.1 & 63
+        );
         writeln!(log, "{}", json!({"phase":"fixture","account":name,"action":command,"scope":"own fresh account position"})).map_err(|error| error.to_string())?;
         if !interact::cheat(&mut client, &command).is_sent() {
             return Err("fixture own teleport refused".into());
