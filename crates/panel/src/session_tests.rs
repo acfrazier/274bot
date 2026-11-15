@@ -11630,6 +11630,12 @@ fn settings_feedback_a_save_of_unknown_outcome_shows_as_unknown_not_as_not_saved
         "the reason stays: {member}"
     );
     assert!(!member.to_lowercase().contains("not saved"), "{member}");
+    assert_eq!(
+        s.panel_preference_write_error()
+            .map(|failure| failure.heading()),
+        Some("Preference save outcome unknown:"),
+        "General config heads the failure as unknown"
+    );
     let owned = s
         .core
         .setting_failure(frontend_core::Setting::Draw(DrawSwitch::CaptureInput))

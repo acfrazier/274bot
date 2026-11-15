@@ -1054,7 +1054,31 @@ struct PanelWriteError {
     owner: FeedbackOwner,
     request: u64,
     text: String,
+    /// The save's outcome is unknown: its COMMIT ended in a disk error that
+    /// the database could not settle (plan §4.2). The text says so, and so
+    /// does the General config's heading.
+    outcome_unknown: bool,
     since: Instant,
+}
+
+/// The newest panel-write failure of the focused view, as the General config
+/// shows it: the text, and the heading that says what became of the save.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PanelWriteFailure<'a> {
+    pub(crate) text: &'a str,
+    outcome_unknown: bool,
+}
+
+impl PanelWriteFailure<'_> {
+    /// "Preference save failed:", or, for a save whose outcome is unknown
+    /// (it may be stored), "Preference save outcome unknown:".
+    pub(crate) fn heading(&self) -> &'static str {
+        if self.outcome_unknown {
+            "Preference save outcome unknown:"
+        } else {
+            "Preference save failed:"
+        }
+    }
 }
 
 /// The operator's unsettled change of each saved operational setting
@@ -2339,13 +2363,16 @@ impl Session {
 
     /// The newest panel-write failure of the focused view (the global config
     /// shows it).
-    pub(crate) fn panel_preference_write_error(&self) -> Option<&str> {
+    pub(crate) fn panel_preference_write_error(&self) -> Option<PanelWriteFailure<'_>> {
         let focused = self.core.selected();
         self.preference_write_errors
             .iter()
             .rev()
             .find(|error| error.owner.shows_for(focused))
-            .map(|error| error.text.as_str())
+            .map(|error| PanelWriteFailure {
+                text: error.text.as_str(),
+                outcome_unknown: error.outcome_unknown,
+            })
     }
 
     /// The retained failure of the panel-owned setting whose members lie
@@ -2831,6 +2858,7 @@ impl Session {
             Some(shown) => {
                 shown.request = request;
                 shown.text = text;
+                shown.outcome_unknown = outcome_unknown;
                 shown.since = now;
             }
             None => self.preference_write_errors.push(PanelWriteError {
@@ -2838,6 +2866,7 @@ impl Session {
                 owner: member.owner.clone(),
                 request,
                 text,
+                outcome_unknown,
                 since: now,
             }),
         }

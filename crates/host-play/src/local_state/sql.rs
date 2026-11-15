@@ -2644,6 +2644,24 @@ pub(super) fn recover_text(display: &str, cause: &str, frontend: Frontend) -> St
     text
 }
 
+/// The refusal of preferences whose first read panicked (a contained writer
+/// job): the cause the panic carried (bounded, on one line) and the way
+/// out. Nothing was written by the refusal; a later open reads the database
+/// again.
+pub(super) fn first_read_panicked(root: &StateRoot, message: &str) -> Arc<str> {
+    let cause: String = message
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(200)
+        .collect();
+    Arc::from(format!(
+        "Preferences refused at {:?}: reading them stopped unexpectedly ({cause}). Nothing is \
+         saved over them in this run. Restart 274bot to read them again; if it stops again, the \
+         log line \"reading preferences panicked\" names the cause.",
+        root.database_file().display().to_string()
+    ))
+}
+
 fn closed() -> SqlFailure {
     SqlFailure::refused(
         FailureReason::Dirty,

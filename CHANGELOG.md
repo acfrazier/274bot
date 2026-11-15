@@ -122,10 +122,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   outcome (saved, or not saved) and is never reported as cancelled.
 - A script Start (its loadouts and script settings), and a bank load at a
   session start, in the first moments after launch, while the preferences are
-  still being imported into the database, now wait for that import to settle
-  before they read their file. They no longer queue behind it on the shared
-  writer, and still give up after their own timeout (5 seconds for a Start).
-  A preferences store that is refused does not hold them back.
+  being imported into the database, now wait for the import to end before they
+  read their file. They no longer queue behind it on the shared writer, and
+  still give up after their own timeout (5 seconds for a Start). They are not
+  held back when the import only waits for another 274bot process, or when the
+  preferences are refused.
+- If reading the preferences stops unexpectedly when 274bot starts (a program
+  fault), the preferences are now refused for that run, with the file, the
+  cause and what to do (restart 274bot), as other refusals are. A script Start
+  or a bank load goes on, and a save fails with the refusal, instead of
+  waiting for preferences that never read.
 - The Debug tab saves a pinned command and the recent commands separately. A
   pin that failed to save is no longer saved when you send a command, and a
   recent command that failed to save is no longer saved when you pin one.

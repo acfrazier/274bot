@@ -5477,9 +5477,9 @@ fn preferences_state_line(ui: &Ui, session: &Session) {
 
 fn global_config_section(ui: &Ui, session: &mut Session) {
     preferences_state_line(ui, session);
-    if let Some(error) = session.panel_preference_write_error() {
-        ui.text_colored(session.ui.chrome.error_rgba(), "Preference save failed:");
-        ui.text_wrapped(error);
+    if let Some(failure) = session.panel_preference_write_error() {
+        ui.text_colored(session.ui.chrome.error_rgba(), failure.heading());
+        ui.text_wrapped(failure.text);
     }
     ui.spacing();
     ui.text_colored([1.0, 1.0, 1.0, 1.0], "Server:");

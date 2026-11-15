@@ -8106,6 +8106,74 @@ fn preference_frame(
     drawn_text(ctx, session, draw)
 }
 
+/// General config heads a panel-owned write failure by what became of the
+/// save: "Preference save failed:" over a save that did not happen, and
+/// "Preference save outcome unknown:" over one whose COMMIT ended in a disk
+/// error that the database could not settle (plan §4.2). The text under the
+/// heading agrees with it, and a newer write of the setting replaces both.
+#[test]
+fn general_config_heads_a_panel_write_failure_by_what_became_of_the_save() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-general-heading");
+    let mut ctx = dock_host_context();
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let service = session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .clone();
+    let failing = std::sync::Arc::new(AtomicBool::new(true));
+    let unknown = std::sync::Arc::new(AtomicBool::new(false));
+    let refusing = std::sync::Arc::clone(&failing);
+    service.set_write_fault_for_test(std::sync::Arc::new(move || refusing.load(Ordering::SeqCst)));
+    let unsure = std::sync::Arc::clone(&unknown);
+    service.set_write_unknown_for_test(std::sync::Arc::new(move || unsure.load(Ordering::SeqCst)));
+    // One write of a panel-owned setting, and General config once it ended
+    // in a failure.
+    let mut failed_write = |session: &mut crate::session::Session| {
+        let value = !session.ui.show_parameters_rail;
+        session
+            .persist_panel_member(
+                &["show_parameters_rail"],
+                Some(serde_json::Value::Bool(value)),
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while session.panel_preference_write_error().is_none() {
+            session.pump_status();
+            session.poll_panel_preferences();
+            assert!(Instant::now() < deadline, "the failure never settled");
+            thread::sleep(Duration::from_millis(2));
+        }
+        without_log_pane(preference_frame(&mut ctx, session, &|ui, s| {
+            super::global_config_section(ui, s)
+        }))
+    };
+
+    let shown = failed_write(&mut session);
+    assert!(shown.contains("Preference save failed:"), "{shown}");
+    assert!(shown.contains("Preferences not saved:"), "{shown}");
+    assert!(!shown.contains("outcome unknown"), "{shown}");
+
+    failing.store(false, Ordering::SeqCst);
+    unknown.store(true, Ordering::SeqCst);
+    let shown = failed_write(&mut session);
+    assert!(
+        shown.contains("Preference save outcome unknown:"),
+        "the heading says the outcome is unknown: {shown}"
+    );
+    assert!(
+        shown.contains("Preferences save outcome unknown:"),
+        "the text under it says so too: {shown}"
+    );
+    assert!(
+        !shown.contains("Preference save failed:") && !shown.contains("Preferences not saved:"),
+        "nothing says the save failed: {shown}"
+    );
+}
+
 /// T5.3-S4 headed check D-1: while the preferences are refused (here a
 /// legacy file another user could have written), General config shows why
 /// (the path, the cause and the remedy) where it would show "Loading

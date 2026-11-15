@@ -3262,13 +3262,13 @@ fn cold_walk_reads_return_at_once_while_the_writer_is_inside_a_real_sql_call() {
 }
 
 /// A Start through the service readback API waits for the preferences'
-/// first import to settle. It never queues behind the import on the shared
-/// writer, which cannot preempt a job in flight (operator decision on the
-/// S1 occupancy gate, 2026-11-15). The import is held inside a real SQL
-/// call. The Start's read, as a queue request and as a bounded call, ends
-/// `NotReady` and leaves nothing of itself in the writer's queue; once the
-/// import is released, a Start that waited for it reads, and so does the
-/// composition's Start read of the loadouts.
+/// first import while it runs. It never queues behind the import on the
+/// shared writer, which cannot preempt a job in flight (operator decision
+/// on the S1 occupancy gate, 2026-11-15). The import is held inside a real
+/// SQL call. The Start's read, as a queue request and as a bounded call,
+/// ends `NotReady` and leaves nothing of itself in the writer's queue; once
+/// the import is released, a Start that waited for it reads, and so does
+/// the composition's Start read of the loadouts.
 #[test]
 fn a_start_readback_waits_for_the_first_import_and_never_queues_behind_it() {
     let _state_lease = crate::test_process::state();
@@ -3353,6 +3353,136 @@ fn a_start_readback_waits_for_the_first_import_and_never_queues_behind_it() {
     );
     ready(&service.preferences());
     assert!(composition.operator_loadouts("alice").unwrap().is_empty());
+}
+
+/// A first read of the preferences that only waits, because another
+/// connection holds the SQL write lock, is no import in flight: a Start's
+/// read and a bank load are not held back by it (plan §4.4, §5.4: bank,
+/// Start and exit jobs keep running while the lock is held, and file reads
+/// go before preference jobs). The first read keeps waiting for the lock
+/// meanwhile, and opens when the lock is released.
+#[test]
+fn a_start_readback_is_not_held_back_by_a_first_read_that_waits_for_the_sql_write_lock() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("t53s4-start-vs-sql-lock");
+    let root = root_of(&scratch);
+    ready(&open(&scratch).preferences());
+    let holder = inspect(&root);
+    holder.busy_timeout(Duration::ZERO).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let service = open(&scratch);
+    let preferences = service.preferences();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while preferences.wait_cause().is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "the first read never waited for the lock"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let scope = ContentScope::try_new(client::io::ClientRevision::R289, "test-content").unwrap();
+    let composition = StateComposition::new(Arc::clone(&service), "local-289", scope);
+    let loadouts = composition
+        .identity(LocalStateDomain::LoadoutsReferences, "alice")
+        .unwrap();
+    // Two seconds are a hang guard, not a time limit: a read does not wait
+    // for the lock, so it answers at once.
+    assert_eq!(
+        service.readback_lease(&loadouts, Duration::from_secs(2)),
+        Ok(None),
+        "a Start's read waited for the first read that waits for the lock"
+    );
+    assert_eq!(
+        service.readback_lease(&bank_identity("alice"), Duration::from_secs(2)),
+        Ok(None),
+        "a bank load waited for the first read that waits for the lock"
+    );
+    assert!(
+        matches!(preferences.snapshot(), Err(error) if error.is_not_ready()),
+        "the first read still waits for the lock"
+    );
+    holder.execute_batch("ROLLBACK").unwrap();
+    ready(&preferences);
+}
+
+/// A first read of the preferences that panics (a contained writer-job
+/// panic) refuses the preferences for the run, with its cause and remedy,
+/// as any other refusal does. They would otherwise stay cold, a save
+/// accepted afterwards would never settle, nothing would ask for another
+/// read, and every Start and bank load would wait for nothing. A Start's
+/// read and a bank load go on, and a save gets the refusal.
+#[test]
+fn a_panicking_first_preferences_read_refuses_them_and_holds_nothing_back() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("t53s4-first-read-panics");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let service = LocalStateService::open_process_with_read_stall_for_test(
+        root_of(&scratch),
+        Arc::new(move || {
+            // Call 1 is the loadouts read the open queues first (file reads
+            // go before preference jobs), call 2 the preferences' first read.
+            if counted.fetch_add(1, Ordering::SeqCst) == 1 {
+                panic!("the first preferences read panics");
+            }
+        }),
+    );
+    let preferences = service.preferences();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let refusal = loop {
+        match preferences.snapshot() {
+            Err(error) if error.is_not_ready() => {}
+            Err(error) => break error,
+            Ok(snapshot) => panic!(
+                "the preferences opened at {} after their first read panicked",
+                snapshot.version()
+            ),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the panicked first read left the preferences cold"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let text = refusal.to_string();
+    assert!(
+        text.contains("Preferences refused at")
+            && text.contains("the first preferences read panics")
+            && text.contains("Restart 274bot"),
+        "the refusal names its path, cause and remedy: {text}"
+    );
+    let scope = ContentScope::try_new(client::io::ClientRevision::R289, "test-content").unwrap();
+    let composition = StateComposition::new(Arc::clone(&service), "local-289", scope);
+    let loadouts = composition
+        .identity(LocalStateDomain::LoadoutsReferences, "alice")
+        .unwrap();
+    assert_eq!(
+        service.readback_lease(&loadouts, Duration::from_secs(10)),
+        Ok(None),
+        "a Start's read goes on"
+    );
+    assert_eq!(
+        service.readback_lease(&bank_identity("alice"), Duration::from_secs(10)),
+        Ok(None),
+        "a bank load goes on"
+    );
+    match preferences.begin_set("n", json!(1)) {
+        Err(error) => assert!(
+            error.to_string().contains("Preferences refused at"),
+            "{error}"
+        ),
+        Ok(Update::Queued(mut update)) => {
+            let failure = update
+                .wait(Duration::from_secs(10))
+                .expect("a save over refused preferences settles")
+                .expect_err("refused preferences save nothing");
+            assert!(
+                failure.to_string().contains("Preferences refused at"),
+                "{failure}"
+            );
+        }
+        Ok(Update::Durable) => panic!("refused preferences saved"),
+    }
 }
 
 /// Run `read` on its own thread while the writer is held at `phase`, and
