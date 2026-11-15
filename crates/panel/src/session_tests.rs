@@ -8336,14 +8336,15 @@ fn set_random_event_policy_persists_without_spawning() {
     assert!(s.set_random_event_policy(
         "alice",
         "River Troll",
-        frontend_core::GuardianPolicy::Ignore
+        frontend_core::GuardianPolicy::Fight
     ));
     assert_eq!(
         s.core
             .profile("alice")
             .unwrap()
             .random_event_policy("river troll"),
-        frontend_core::GuardianPolicy::Ignore
+        frontend_core::GuardianPolicy::Fight,
+        "a saved Fight stays saved while the choice is unavailable"
     );
     assert!(
         s.core.slots().is_empty(),

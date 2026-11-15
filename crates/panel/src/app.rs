@@ -7521,9 +7521,7 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
     }
     ui.text_wrapped("Off: show event status only; do not handle or hold events.");
     let policies_open = ui.collapsing_header("Policies", TreeNodeFlags::NONE);
-    ui.set_item_tooltip(
-        "Per-event response: Flee is available; Fight and Ignore are disabled, and saved choices are treated as Flee.",
-    );
+    ui.set_item_tooltip(frontend_core::GUARDIAN_FIGHT_UNAVAILABLE);
     if policies_open {
         for (event, label) in frontend_core::GUARDIAN_EVENTS {
             ui.text_disabled(label);
@@ -7753,27 +7751,20 @@ fn random_event_policy_combo(
     event: &str,
     policy: &mut frontend_core::GuardianPolicy,
 ) -> bool {
-    use frontend_core::GuardianPolicy::{Fight, Flee, Ignore};
-
-    let preview = match *policy {
-        Flee => "Flee",
-        Fight => "Fight (not available yet)",
-        Ignore => "Ignore (not available yet)",
-    };
     let id = format!("##random-event-policy-{event}");
     let options = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
     let mut changed = false;
     ui.set_next_item_width(-1.0);
-    if let Some(_open) = ui.begin_combo_with_flags(&id, preview, options) {
-        for (option, label) in [
-            (Flee, "Flee"),
-            (Fight, "Fight (not available yet)"),
-            (Ignore, "Ignore (not available yet)"),
-        ] {
+    if let Some(_open) = ui.begin_combo_with_flags(&id, policy.label(), options) {
+        for option in frontend_core::GuardianPolicy::OPTIONS {
             let selected = option == *policy;
-            let _disabled = (option != Flee).then(|| ui.begin_disabled());
-            if ui.selectable_config(label).selected(selected).build() && option == Flee {
-                *policy = option;
+            let _disabled = (!option.available()).then(|| ui.begin_disabled());
+            if ui
+                .selectable_config(option.label())
+                .selected(selected)
+                .build()
+                && apply_random_event_policy(policy, option)
+            {
                 changed = true;
             }
             if selected {
@@ -7782,6 +7773,20 @@ fn random_event_policy_combo(
         }
     }
     changed
+}
+
+/// Apply one picked policy choice to the draft: a choice that is not
+/// available is refused, picking the current choice changes nothing, and any
+/// other choice replaces it. Returns whether the draft changed.
+fn apply_random_event_policy(
+    policy: &mut frontend_core::GuardianPolicy,
+    option: frontend_core::GuardianPolicy,
+) -> bool {
+    if !option.available() || *policy == option {
+        return false;
+    }
+    *policy = option;
+    true
 }
 
 /// The lamp dialogue's skill names from the client skill table, minus the

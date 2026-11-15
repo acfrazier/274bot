@@ -422,8 +422,8 @@ impl Guardian {
     /// rising-edge `on_random` arm: once per detected event (kind+name
     /// signature), when the caller supplies it. The script's claim normally
     /// gates act + hold (`Host` claims both; `Handle` leaves the script
-    /// available); stored Fight/Ignore are forced to Guardian Flee until
-    /// their script-layer handlers exist.
+    /// available); a stored Fight is forced to Guardian Flee until its
+    /// script-layer handler exists.
     pub fn tick<D: Driver>(
         &mut self,
         driver: &mut D,
@@ -577,7 +577,7 @@ impl Guardian {
             ))
         });
         if let Some((index, name, policy)) = unsupported_policy {
-            // Fight/Ignore have no script-layer arm yet. Keep the Guardian in
+            // Fight has no script-layer arm yet. Keep the Guardian in
             // control so compiled scripts do not freeze behind `ours`.
             self.claim = RandomClaim::Host;
             if let Some(state) = self
