@@ -369,6 +369,12 @@ mod shop_heap_tests {
 
     fn collected_heap(runtime: &mut Runtime) -> HeapStats {
         let isolate = runtime.deno_runtime().v8_isolate();
+        // Twice: the first notification leaves part of the collection to
+        // concurrent marking on the process-wide V8 platform, whose one
+        // worker thread every other test isolate in this binary shares; the
+        // second pass reclaims it before the measurement. The same measure
+        // as `materialize::quest_records_v8_tests`.
+        isolate.low_memory_notification();
         isolate.low_memory_notification();
         let heap = isolate.get_heap_statistics();
         HeapStats {
