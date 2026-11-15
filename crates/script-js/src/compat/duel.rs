@@ -1160,9 +1160,12 @@ mod tests {
     #[test]
     fn duel_offer_stall_boundary_is_thirty_seconds() {
         let now = Instant::now();
-        let mut before = Some(now - OFFER_TIMEOUT + Duration::from_nanos(1));
+        let at_deadline = now
+            .checked_sub(OFFER_TIMEOUT)
+            .expect("offer timeout deadline is in the past");
+        let mut before = Some(at_deadline + Duration::from_nanos(1));
         assert!(!offer_stalled(&mut before, now));
-        let mut at = Some(now - OFFER_TIMEOUT);
+        let mut at = Some(at_deadline);
         assert!(offer_stalled(&mut at, now));
     }
 
@@ -1201,7 +1204,11 @@ mod tests {
             assert!(clock.deadline.is_some(), "the handshake window is armed");
 
             post(2, modal);
-            clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+            clock.deadline = Some(
+                Instant::now()
+                    .checked_sub(Duration::from_millis(1))
+                    .expect("test deadline is in the past"),
+            );
             ops.clear();
             let ended = travel.drive(&mut Cx::test(&mut ops, &mut clock, None));
             assert_eq!(ended, Some(false), "modal {modal}");

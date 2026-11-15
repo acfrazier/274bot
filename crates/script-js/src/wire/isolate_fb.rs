@@ -7604,7 +7604,7 @@ pub(crate) mod tests {
         let (changed_bytes, fp, evidence) = buf.encode_snapshot_delta_with_native_and_evidence(
             Some(&fp),
             &input,
-            native(marks),
+            &native(marks),
             false,
         );
         assert!(evidence, "a mark alone is a posted evidence change");
@@ -7921,10 +7921,13 @@ pub(crate) mod tests {
             vec!["Attack", "Pick-up"]
         );
         assert!(
+            // SAFETY: The decoder returned this NPC view from our encoder output.
+            // Its table and vtable remain in bounds for the live buffer.
             unsafe { npc._tab.get::<i32>(SceneEntity::VT_SHAPE, None) }.is_none(),
             "non-loc rows omit zero-valued loc geometry slots"
         );
         assert!(
+            // SAFETY: The same decoded NPC table remains live; its vtable bounds this optional scalar read.
             unsafe { npc._tab.get::<i32>(SceneEntity::VT_ANGLE, None) }.is_none(),
             "non-loc rows omit zero-valued loc geometry slots"
         );
@@ -9073,7 +9076,7 @@ pub(crate) mod tests {
             decode_interact_batch(&ibytes[..mid]).is_err(),
             "interact truncated mid-payload should err"
         );
-        let mut bad_root = ibytes.clone();
+        let mut bad_root = ibytes;
         bad_root[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(
             decode_interact_batch(&bad_root).is_err(),

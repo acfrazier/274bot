@@ -974,6 +974,10 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::large_types_passed_by_value,
+        reason = "forward the owned input to the value-taking wire encoder without copying it"
+    )]
     fn observe(input: SnapshotInput<'_>, native: NativeFactsInput<'_>) {
         let bytes = encode_snapshot_with_native(&input, native);
         let snap = Snapshot::from_bytes(&bytes).expect("snapshot");

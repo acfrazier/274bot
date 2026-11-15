@@ -2016,8 +2016,11 @@ mod tests {
         }
 
         fn expire(&mut self) {
-            self.clock.deadline =
-                Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+            self.clock.deadline = Some(
+                std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_millis(1))
+                    .expect("test deadline is in the past"),
+            );
         }
     }
 
