@@ -179,8 +179,8 @@ Release build, one core: the largest profile (`full`) takes about 7 s and an
 estimated 640 MB. The unit test lane runs every profile but `clock` and
 `full`; those two run in the nightly (`nightly.sh`, a 16 GB scope per
 profile) and with `JS_TEARDOWN_MODEL_FULL=1 cargo test -p js-teardown-model`.
-`systemd/` holds the nightly's user unit and timer for chardonnay (the install
-steps are in the unit's header); nothing installs them.
+`systemd/` holds the nightly's user unit and timer for a Linux nightly host
+(the install steps are in the unit's header); nothing installs them.
 
 Tests: `cargo test -p js-teardown-model`.
 

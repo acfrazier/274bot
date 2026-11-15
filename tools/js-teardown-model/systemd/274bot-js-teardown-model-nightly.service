@@ -1,4 +1,4 @@
-# chardonnay (user unit): the nightly full profile runs of tools/js-teardown-model
+# Linux nightly host (user unit): the nightly full profile runs of tools/js-teardown-model
 # (ADR 0017). The script runs every profile one at a time, each in its own
 # 16 GB memory scope, and exits non-zero when one does not end clean.
 # Install: ~/.config/systemd/user/274bot-js-teardown-model-nightly.service and
