@@ -2958,17 +2958,21 @@ fn private_files_stay_private_under_both_umasks() {
     for mask in ["0002", "0022"] {
         let scratch = IsolatedEnv::enter(&format!("t53s4-umask-{mask}"));
         let root = root_of(&scratch);
-        let status = std::process::Command::new("/bin/sh")
+        let output = std::process::Command::new("/bin/sh")
             .arg("-c")
             .arg(format!(
                 "umask {mask} && exec \"$0\" --ignored --exact local_state::sql_tests::umask_child"
             ))
             .arg(std::env::current_exe().unwrap())
             .env("T53_ROOT", root.path())
-            .stdout(std::process::Stdio::null())
-            .status()
+            .output()
             .unwrap();
-        assert!(status.success(), "umask {mask}");
+        assert!(
+            output.status.success(),
+            "umask {mask}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 
@@ -3197,10 +3201,11 @@ fn cold_walk_reads_return_at_once_while_the_writer_is_inside_a_real_sql_call() {
     assert!(preferences.walk_globals().is_ok());
 }
 
-/// Run `read` on its own thread while the writer is held, and return what it
-/// returned. It must finish before `release` is sent; the 4 s guard only
-/// turns a hang into a failure.
+/// Run `read` on its own thread while the writer is held at `phase`, and
+/// return what it returned. It must finish before `release` is sent; the 4 s
+/// guard only turns a hang into a failure.
 fn answers_while_held<T: Send + 'static>(
+    phase: &str,
     release: &mpsc::Sender<()>,
     read: impl FnOnce() -> T + Send + 'static,
 ) -> T {
@@ -3216,7 +3221,7 @@ fn answers_while_held<T: Send + 'static>(
         Err(_) => {
             let _ = release.send(());
             let _ = worker.join();
-            panic!("a cached read waited for the held writer");
+            panic!("{phase}: a cached read waited for the held writer");
         }
     }
 }
@@ -3285,7 +3290,7 @@ fn warm_cached_reads_never_wait_for_the_writer_in_a_refresh_a_lease_build_or_a_s
             .unwrap_or_else(|_| panic!("{phase}: the writer never reached the held point"));
 
         let reader = preferences.clone();
-        let (walk, document, snapshot) = answers_while_held(&release, move || {
+        let (walk, document, snapshot) = answers_while_held(phase, &release, move || {
             (reader.walk_globals(), reader.document(), reader.snapshot())
         });
         assert!(walk.is_ok(), "{phase}: the walk view reads while held");
