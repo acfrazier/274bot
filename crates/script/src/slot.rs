@@ -4761,6 +4761,20 @@ impl SlotScript {
         .then_some(receipt.runtime_generation)
     }
 
+    /// Reason of the latest lifecycle receipt when a run at or after
+    /// `generation` ended Failed. A watchdog restart issues a newer
+    /// generation, so that run's failure counts; an older generation belongs
+    /// to an earlier run. The reason stays borrowed in place.
+    pub fn failed_lifecycle_since(&self, generation: u64) -> Option<&str> {
+        self.lifecycle_receipt
+            .as_ref()
+            .filter(|receipt| {
+                receipt.state == ScriptTerminalState::Failed
+                    && receipt.runtime_generation >= generation
+            })
+            .map(|receipt| receipt.reason.as_str())
+    }
+
     /// Drain isolate tick / `this.log` lines. Tick errors update
     /// [`Self::last_error`]. Copies are kept for [`Self::take_pending_logs`].
     pub fn drain_logs(&mut self) -> Vec<String> {

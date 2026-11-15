@@ -5509,3 +5509,76 @@ fn gatherer_supply_park_keeps_its_run_controls_and_non_gameplay_watchdogs() {
     assert!(slot.evidence_wait_run.is_none());
     assert!(!slot.has_native_actions());
 }
+
+/// Ends its run on the first tick with the flow it was given.
+struct EndsRun(ScriptFlow);
+
+impl Script for EndsRun {
+    fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        Ok(self.0.clone())
+    }
+}
+
+fn start_ending_with(slot: &mut SlotScript, flow: ScriptFlow) -> u64 {
+    slot.start_test_script(Box::new(EndsRun(flow)), Some(selected()))
+        .unwrap();
+    slot.native_run().expect("the test run is installed").run
+}
+
+#[test]
+fn a_blocked_run_keeps_a_failed_receipt_for_the_generation_it_ran_under() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let reason = "search_result=Refusal; NoWayOut: ends inside Lesser demon (L82)";
+    let mut slot = SlotScript::new();
+    let run = start_ending_with(
+        &mut slot,
+        ScriptFlow::Blocked(ScriptFailure {
+            code: "queue-blocked".into(),
+            message: reason.into(),
+        }),
+    );
+    assert_eq!(
+        slot.failed_lifecycle_since(run),
+        None,
+        "a live run has no receipt"
+    );
+
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Idle);
+    assert!(
+        slot.runtime_generation() > run,
+        "the blocked Stop moves the slot past the run it ended"
+    );
+    assert_eq!(slot.failed_lifecycle_since(run), Some(reason));
+    assert_eq!(slot.failed_lifecycle_since(run - 1), Some(reason));
+    assert_eq!(
+        slot.failed_lifecycle_since(run + 1),
+        None,
+        "a Start after the failed run is not the run that failed"
+    );
+}
+
+#[test]
+fn completed_and_cancelled_receipts_are_not_failures() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut slot = SlotScript::new();
+    let run = start_ending_with(&mut slot, ScriptFlow::Complete);
+    tick(&mut slot);
+    assert_eq!(
+        slot.lifecycle_receipt().map(|receipt| receipt.state),
+        Some(ScriptTerminalState::Completed)
+    );
+    assert_eq!(slot.failed_lifecycle_since(run), None);
+
+    let run = start_ending_with(&mut slot, ScriptFlow::Continue);
+    slot.stop();
+    assert_eq!(
+        slot.lifecycle_receipt().map(|receipt| receipt.state),
+        Some(ScriptTerminalState::Cancelled)
+    );
+    assert_eq!(slot.failed_lifecycle_since(run), None);
+}

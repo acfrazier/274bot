@@ -146,6 +146,10 @@ where
 struct RunnerState {
     runner: Option<scenario::ScenarioRunner>,
     pending: Vec<host_play::live_start::PendingCatalogStart>,
+    /// Generation the driven slot's accepted Start runs under. Lifecycle
+    /// receipts of older generations belong to earlier runs. `None` until a
+    /// Start is accepted, and again after the scenario's Stop.
+    started_run: Option<u64>,
     start_handle: Option<host_play::ScriptStartHandle>,
     catalog: Option<host_play::catalog_core::CoreWatch>,
     pair: Option<host_play::paired_core::PairWatch>,
@@ -566,6 +570,7 @@ impl RunnerHandle {
         let mut state = self.0.lock().unwrap();
         state.runner.take();
         state.pending.clear();
+        state.started_run = None;
         state.login_requests.clear();
         state.start_handle = None;
         state.catalog = None;
@@ -581,7 +586,9 @@ impl RunnerHandle {
 
     /// Replace the pending scenario Starts.
     pub fn stage(&self, plan: StartPlan) {
-        self.0.lock().unwrap().pending = plan.0;
+        let mut state = self.0.lock().unwrap();
+        state.pending = plan.0;
+        state.started_run = None;
     }
 
     /// Copy staged adapter Starts for a front-end integration test.
@@ -1472,6 +1479,7 @@ impl RunnerHandle {
         let RunnerState {
             runner: runner_slot,
             pending,
+            started_run,
             start_handle,
             catalog,
             pair,
@@ -1556,6 +1564,13 @@ impl RunnerHandle {
                             _ => {}
                         }
                     }
+                    forward_script_failure(
+                        runner,
+                        start_handle.as_ref(),
+                        pending,
+                        started_run,
+                        name,
+                    );
                 }
             }
         } else if let Some(index) = runner.companion_for(name) {
@@ -1564,6 +1579,36 @@ impl RunnerHandle {
                 login_requests.push(name.to_owned());
             }
         }
+    }
+}
+
+/// Fail the scenario when its started script ended Failed, with the script's
+/// own reason. The scenario's steps watch the game, not the slot, so a script
+/// that blocked or crashed would otherwise leave them waiting out the whole
+/// deadline.
+fn forward_script_failure(
+    runner: &mut scenario::ScenarioRunner,
+    handle: Option<&host_play::ScriptStartHandle>,
+    pending: &[host_play::live_start::PendingCatalogStart],
+    started_run: &mut Option<u64>,
+    name: &str,
+) {
+    if !pending.iter().any(|card| card.slot == name && card.started) {
+        *started_run = None;
+        return;
+    }
+    let Some(handle) = handle.filter(|_| runner.wants_script_failure()) else {
+        return;
+    };
+    let generation = match *started_run {
+        Some(generation) => generation,
+        None => match handle.started_generation(name) {
+            Some(generation) => *started_run.insert(generation),
+            None => return,
+        },
+    };
+    if let Some(reason) = handle.failure_since(name, generation) {
+        runner.fail_script(&reason);
     }
 }
 
@@ -2488,3 +2533,6 @@ mod tests {
 
 #[cfg(test)]
 mod manifest_tests;
+
+#[cfg(test)]
+mod pump_tests;

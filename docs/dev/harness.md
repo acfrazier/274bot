@@ -522,6 +522,13 @@ settlement: a scenario Stop revokes the script walk and bank selection, verifies
 the slot is Idle, and resets the card for a new Start. Quester's Cook fresh,
 resume, restart and login fixtures use this same compiled Start outcome gate.
 
+After Start, the shared live pump (`panel-play` and `tui-play`) also reads the
+slot's lifecycle receipt. A failed receipt of the started run, such as a
+blocked Quester queue, fails the scenario at once with the script's own
+reason. A watch such as `quest_done` then does not wait out its deadline for a
+result that the stopped script cannot make. A completed, stopped, cancelled or
+paused script ends nothing, and the receipt of an earlier run is ignored.
+
 ### Quester journal fixtures
 
 The headless Quester journal fixtures run with
