@@ -528,11 +528,15 @@ well as the driven slot's. A failed receipt of a started run, such as a
 blocked Quester queue, fails the scenario at once with the script's own
 reason and the slot that failed. A watch such as `quest_done` then does not
 wait out its deadline for a result that the stopped script cannot make. The
-pump reads the receipts before the runner checks its proofs in the same frame:
-a failure published before the frame that proves the scenario ends the run as
-a failure, not a pass. Each slot's receipts count from the generation of its
-own accepted Start; a receipt of an earlier run is ignored. A completed,
-stopped, cancelled or paused script ends nothing.
+pump reads the receipts before the runner checks its proofs in the same frame,
+and the runner reads them again just before it records a PASS, after a
+world-speed cleanup too. A failure that a script published before that second
+read ends the run as a failure, not a pass. This holds also when the thread of
+a companion published it while the frame ran. A failure that a script publishes
+after the second read happened after the proof, and the LD2 retirement design
+owns it. Each slot's receipts count from the generation of its own accepted
+Start; a receipt of an earlier run is ignored. A completed, stopped, cancelled
+or paused script ends nothing.
 
 ### Quester journal fixtures
 
