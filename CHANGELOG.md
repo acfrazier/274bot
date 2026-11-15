@@ -60,6 +60,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   with spare logs, and judge cycles without a chance XP requirement. Startup
   counts player-tile movement on native and replacement routes.
 
+### Native acquisition
+
+- Native shop acquisition walks an initially blocked route, then retries a
+  timed-out Trade with the keeper's current index so the server can path the
+  player. After a Trade, only a fresh "I can't reach that!" starts a walk.
+  As in Dialogue, the first refusal gets one recovery walk. A later refusal
+  gets a walk only when the keeper moved, and that walk spends one replan
+  from the NPC's wander range. One open sends at most 3 Trades and no Trade
+  after the last one. The final error gives the keeper's tiles and route and
+  names the walk that failed.
+- A purchase close starts a fresh shop-open attempt. The buy machine cannot
+  loop forever inside one tick.
+
 ### Panel and terminal app
 
 - The per-event Guardian policy is now Flee or Fight in both apps; the

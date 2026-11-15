@@ -521,7 +521,7 @@ impl NativeMachine for Dialogue {
 
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         let approach_replans_left = match &args.target {
-            DialogueTarget::Npc { id, .. } => dialogue_approach_replan_budget(cx, *id),
+            DialogueTarget::Npc { id, .. } => npc_approach_replan_budget(cx, *id),
             DialogueTarget::Continuation => 0,
         };
         let mut dialogue = Self {
@@ -2252,7 +2252,8 @@ fn talk_reachable(cx: &ActionContext<'_>, tile: api::WorldTile) -> bool {
     })
 }
 
-fn dialogue_approach_replan_budget(cx: &ActionContext<'_>, npc_id: i32) -> u16 {
+/// Number of non-home tiles in an NPC's configured wander square.
+pub(crate) fn npc_approach_replan_budget(cx: &ActionContext<'_>, npc_id: i32) -> u16 {
     let Ok(data) = api::game_data::for_revision(cx.revision()) else {
         return 0;
     };
