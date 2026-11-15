@@ -141,6 +141,7 @@ pub struct ScenarioSettings {
     /// Explicit world proofs prepare must acknowledge and run-prepared must
     /// observe before Start. When `None`, [`fixture_prereqs_of`] derives them
     /// from pre-StartScript wait arms (position/stat/item-like only).
+    /// Client-observation proofs are refused at construction, at any depth.
     pub fixture_prereqs: Option<&'static [Proof]>,
     /// Harness-owned loadouts posted at catalog Start instead of reading
     /// operator `loadouts.json`. Scenario-scoped; not a global name reservation
@@ -356,6 +357,7 @@ pub enum SustainWhen {
     /// Fire once when a nav step begins.
     EachNavStep,
     /// Fire every running client cycle while `proof` holds (e.g. energy ≤ 25).
+    /// Client-observation proofs are refused at construction, at any depth.
     Poll(Proof),
 }
 
@@ -551,6 +553,7 @@ pub enum StepKind {
     /// Sends no actions and preserves the Start-anchored cumulative XP arm.
     ObserveStallCombat {
         stand: WorldTile,
+        /// Client-observation proofs are refused at construction, at any depth.
         guard_ready: Proof,
     },
     /// Observe fresh XP after a bank return. A fresh bank visit starts a
@@ -591,6 +594,10 @@ pub enum StepKind {
     ObserveRandomEvent {
         cell: random_episode::RandomEventCell,
     },
+    /// Read a cache-defined varbit against the current base-varp snapshot.
+    /// The receive status is Unknown; a matching caller-supplied witness is
+    /// required for the equality proof. This step sends no client action.
+    ObserveVarbit { id: i32 },
     /// Read the current menu's typed operation and target entries while this
     /// step is armed. It accepts an immutable client view and sends nothing.
     ObserveMenu,

@@ -93,6 +93,17 @@ variables as the Cook cell. It seeds only the account's knife, two logs and
 Fletching level, and writes the account witness under `LIVE_EVIDENCE_DIR`.
 It passes on 30 new arrow shafts, two consumed logs and 10 Fletching XP.
 
+`host.varbit-377-known-missing-live` uses those same 377 resources and ports.
+It seeds only the account's mainland position and pulls a real lever twice.
+The first Pull supplies the observed before-value for the second Pull.
+The cell checks newer snapshots for base varp 33 and records both transitions.
+No observer sends client input. Missing definitions and unwitnessed bases
+produce `UNAVAILABLE`. Stale-value and wrong-index witnesses cannot pass.
+Set `PARITY_VARBIT_HEAD`, `PARITY_VARBIT_ENGINE`, `PARITY_VARBIT_CONTENT`,
+`PARITY_VARBIT_CLIENT`, and `PARITY_VARBIT_CRC` from the selected runtime.
+The cell records these identities and its computed verdict in
+`LIVE_EVIDENCE_DIR/varbit-witness.jsonl`.
+
 `host.menu-377-hans-live` requires Hans (NPC type 0) in the loaded Lumbridge
 scene. It fails rather than selecting a different Talk-to NPC.
 `host.menu-377-trade-duel-loc-live` uses two fresh accounts and the same 377
