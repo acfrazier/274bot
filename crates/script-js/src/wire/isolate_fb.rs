@@ -39,7 +39,14 @@ use std::sync::Arc;
 
 #[path = "../../schema/generated/isolate_generated.rs"]
 #[rustfmt::skip]
-#[expect(clippy::all, reason = "flatc 25.12.19 output is checked in byte-identical; clippy lints on generated code are upstream")]
+#[expect(
+    clippy::all,
+    clippy::unwrap_used,
+    clippy::undocumented_unsafe_blocks,
+    clippy::allow_attributes,
+    clippy::allow_attributes_without_reason,
+    reason = "flatc output; regenerated and byte-diffed by xtask ci"
+)]
 #[expect(rustdoc::all, reason = "flatc output carries no docs; rustdoc lints on generated code are upstream")]
 pub(crate) mod generated;
 use generated::rs_2b_0t::isolate::*;
@@ -2098,7 +2105,7 @@ impl IsolateBuf {
         native: NativeFactsInput<'_>,
     ) -> Vec<u8> {
         self.builder.reset();
-        encode_snapshot_masked_into(&mut self.builder, input, native, &DeltaMask::all());
+        encode_snapshot_masked_into(&mut self.builder, input, &native, &DeltaMask::all());
         self.copy_finished()
     }
 
@@ -2128,7 +2135,7 @@ impl IsolateBuf {
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint) {
         let (bytes, fingerprint, _) =
-            self.encode_snapshot_delta_with_native_and_evidence(last, input, native, force_banks);
+            self.encode_snapshot_delta_with_native_and_evidence(last, input, &native, force_banks);
         (bytes, fingerprint)
     }
 
@@ -2138,10 +2145,10 @@ impl IsolateBuf {
         &mut self,
         last: Option<&SnapshotFingerprint>,
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint, bool) {
-        let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
+        let mut fp = SnapshotFingerprint::from_input_with_native(input, *native);
         if let Some(previous) = last {
             fp.taking_damage = native.taking_damage.or(previous.taking_damage);
         }
@@ -2173,7 +2180,7 @@ impl IsolateBuf {
         let (bytes, fingerprint, _) = self.encode_snapshot_wake_with_native_and_evidence(
             last,
             input,
-            native,
+            &native,
             force_banks,
             preserve_inv,
         );
@@ -2186,7 +2193,7 @@ impl IsolateBuf {
         &mut self,
         last: Option<&mut SnapshotFingerprint>,
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
         force_banks: bool,
         preserve_inv: bool,
     ) -> (Vec<u8>, SnapshotFingerprint, bool) {
@@ -2198,7 +2205,7 @@ impl IsolateBuf {
                 force_banks,
             );
         };
-        let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
+        let mut fp = SnapshotFingerprint::from_input_with_native(input, *native);
         fp.taking_damage = native.taking_damage.or(last.taking_damage);
         fp.collision = collision_fp(Some(&last.collision), native.collision);
         let mut mask = DeltaMask::changed(last, &fp, force_banks);
@@ -2281,7 +2288,7 @@ pub fn encode_snapshot_delta_with_native(
 fn encode_snapshot_masked_into(
     b: &mut FlatBufferBuilder<'_>,
     input: &SnapshotInput<'_>,
-    native: NativeFactsInput<'_>,
+    native: &NativeFactsInput<'_>,
     mask: &DeltaMask,
 ) {
     // Children (strings, sub-tables, vectors) are written before the root
@@ -6856,28 +6863,28 @@ fn interact_off<'b>(
         InteractReq::ChannelOpen { channel_id, .. }
         | InteractReq::ChannelClose { channel_id, .. } => {
             table.add_channel_id(*channel_id);
-            table.add_name(name_off.unwrap());
+            table.add_name(name_off.expect("channel name encoded"));
         }
         InteractReq::ChannelPost { channel_id, .. } => {
             table.add_channel_id(*channel_id);
-            table.add_name(name_off.unwrap());
-            table.add_data(data_off.unwrap());
+            table.add_name(name_off.expect("channel post name encoded"));
+            table.add_data(data_off.expect("channel post data encoded"));
         }
         InteractReq::ChannelMessage {
             channel_id, seq, ..
         } => {
             table.add_channel_id(*channel_id);
-            table.add_name(name_off.unwrap());
+            table.add_name(name_off.expect("channel message sender encoded"));
             table.add_seq(*seq);
-            table.add_data(data_off.unwrap());
+            table.add_data(data_off.expect("channel message data encoded"));
         }
         InteractReq::ChannelStatus { channel_id, .. } => {
             table.add_channel_id(*channel_id);
-            table.add_action(action_off.unwrap());
+            table.add_action(action_off.expect("channel status message encoded"));
         }
         InteractReq::DuelAccept { rules, .. } => {
-            table.add_name(name_off.unwrap());
-            table.add_action(action_off.unwrap());
+            table.add_name(name_off.expect("duel partner name encoded"));
+            table.add_action(action_off.expect("duel screen encoded"));
             table.add_x(*rules);
         }
         InteractReq::ShopButton {
@@ -6887,8 +6894,8 @@ fn interact_off<'b>(
             chunk,
             ..
         } => {
-            table.add_kind(kind_off.unwrap());
-            table.add_name(name_off.unwrap());
+            table.add_kind(kind_off.expect("shop-button kind encoded"));
+            table.add_name(name_off.expect("shop-button item name encoded"));
             table.add_index(*slot);
             table.add_bank_item_id(*id);
             table.add_component_id(*component);
@@ -6918,7 +6925,7 @@ fn interact_off<'b>(
             table.add_x(*x);
             table.add_z(*z);
             table.add_level(*level);
-            table.add_kind(kind_off.unwrap());
+            table.add_kind(kind_off.expect("open-stand kind encoded"));
             if let Some(off) = name_off {
                 table.add_name(off);
             }
@@ -7056,14 +7063,14 @@ fn interact_off<'b>(
             }
         }
         InteractReq::Deposit { id, .. } => {
-            table.add_name(name_off.unwrap());
+            table.add_name(name_off.expect("deposit item name encoded"));
             if let Some(id) = id {
                 table.add_bank_item_id(*id);
             }
         }
         InteractReq::Withdraw { .. } => {
-            table.add_name(name_off.unwrap());
-            table.add_action(action_off.unwrap());
+            table.add_name(name_off.expect("withdraw item name encoded"));
+            table.add_action(action_off.expect("withdraw action encoded"));
         }
         InteractReq::WithdrawX {
             count,
@@ -7072,17 +7079,17 @@ fn interact_off<'b>(
             bank_generation,
             ..
         } => {
-            table.add_name(name_off.unwrap());
+            table.add_name(name_off.expect("withdraw-x item name encoded"));
             table.add_x(*count);
             table.add_bank_item_id(*bank_item_id);
             table.add_lands_as_id(*lands_as_id);
-            table.add_action(action_off.unwrap());
+            table.add_action(action_off.expect("withdraw-x action encoded"));
             table.add_bank_generation(*bank_generation);
         }
         InteractReq::Held { slot, .. } => {
             debug_assert!(slot.is_none(), "slot-exact Held is native-only");
-            table.add_name(name_off.unwrap());
-            table.add_action(action_off.unwrap());
+            table.add_name(name_off.expect("held item name encoded"));
+            table.add_action(action_off.expect("held action encoded"));
         }
         InteractReq::InvButton {
             id,
@@ -7136,8 +7143,8 @@ fn interact_off<'b>(
         }
         InteractReq::Close => {}
         InteractReq::Npc { index, .. } => {
-            table.add_name(name_off.unwrap());
-            table.add_action(action_off.unwrap());
+            table.add_name(name_off.expect("npc name encoded"));
+            table.add_action(action_off.expect("npc action encoded"));
             if let Some(idx) = index {
                 table.add_index(*idx);
             }
@@ -7148,7 +7155,7 @@ fn interact_off<'b>(
             table.add_x(*x);
             table.add_z(*z);
             table.add_level(*level);
-            table.add_action(action_off.unwrap());
+            table.add_action(action_off.expect("loc action encoded"));
             if let Some(id) = id {
                 table.add_index(*id);
             }
@@ -7162,14 +7169,14 @@ fn interact_off<'b>(
             if let Some(off) = name_off {
                 table.add_name(off);
             }
-            table.add_action(action_off.unwrap());
+            table.add_action(action_off.expect("object action encoded"));
             if let Some(id) = id {
                 table.add_index(*id);
             }
         }
         InteractReq::Player { .. } => {
-            table.add_name(name_off.unwrap());
-            table.add_action(action_off.unwrap());
+            table.add_name(name_off.expect("player name encoded"));
+            table.add_action(action_off.expect("player action encoded"));
         }
         InteractReq::UseOn {
             x,
@@ -7182,8 +7189,8 @@ fn interact_off<'b>(
             target_item_slot,
             ..
         } => {
-            table.add_name(name_off.unwrap());
-            table.add_kind(kind_off.unwrap());
+            table.add_name(name_off.expect("use-on item name encoded"));
+            table.add_kind(kind_off.expect("use-on kind encoded"));
             table.add_x(*x);
             table.add_z(*z);
             table.add_level(*level);
@@ -7216,7 +7223,7 @@ fn interact_off<'b>(
             ..
         } => {
             table.add_component_id(*component_id);
-            table.add_kind(kind_off.unwrap());
+            table.add_kind(kind_off.expect("use-widget-on kind encoded"));
             table.add_x(*x);
             table.add_z(*z);
             table.add_level(*level);
@@ -7257,12 +7264,12 @@ fn interact_off<'b>(
             table.add_stand_op(*tab);
         }
         InteractReq::Wear { .. } | InteractReq::Unequip { .. } => {
-            table.add_name(name_off.unwrap());
+            table.add_name(name_off.expect("wear or unequip item name encoded"));
         }
         InteractReq::SetRun { .. }
         | InteractReq::SetRetaliate { .. }
         | InteractReq::SetNoteMode { .. } => {
-            table.add_action(action_off.unwrap());
+            table.add_action(action_off.expect("setting value encoded"));
         }
         InteractReq::SetCameraYaw { yaw } => {
             table.add_x(*yaw);
@@ -7290,7 +7297,7 @@ fn interact_off<'b>(
             }
         },
         InteractReq::Key { down, .. } => {
-            table.add_action(action_off.unwrap());
+            table.add_action(action_off.expect("key identifier encoded"));
             if let Some(off) = kind_off {
                 table.add_kind(off);
             }
@@ -7658,7 +7665,7 @@ pub(crate) mod tests {
         let (_, fingerprint, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
             None,
             &input,
-            NativeFactsInput::default(),
+            &NativeFactsInput::default(),
             false,
         );
         assert!(!changed, "the keyframe establishes a baseline");
@@ -7667,7 +7674,7 @@ pub(crate) mod tests {
         let (_, fingerprint, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
             Some(&fingerprint),
             &input,
-            NativeFactsInput::default(),
+            &NativeFactsInput::default(),
             true,
         );
         assert!(
@@ -7678,7 +7685,7 @@ pub(crate) mod tests {
         let (_, _, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
             None,
             &input,
-            NativeFactsInput::default(),
+            &NativeFactsInput::default(),
             false,
         );
         assert!(!changed, "a full keyframe retransmission is not a change");
@@ -7695,7 +7702,7 @@ pub(crate) mod tests {
         let (_, fingerprint, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
             Some(&fingerprint),
             &input,
-            NativeFactsInput::default(),
+            &NativeFactsInput::default(),
             true,
         );
         assert!(
@@ -7707,7 +7714,7 @@ pub(crate) mod tests {
         let (_, _, changed) = buf.encode_snapshot_delta_with_native_and_evidence(
             Some(&fingerprint),
             &input,
-            NativeFactsInput::default(),
+            &NativeFactsInput::default(),
             true,
         );
         assert!(
