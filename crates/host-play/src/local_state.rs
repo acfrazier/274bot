@@ -3244,6 +3244,7 @@ impl Shared {
             #[cfg(test)]
             {
                 db.seams = self.state.lock().sql_seams.clone();
+                files::set_rows_point(db.seams.point.clone());
             }
             #[cfg(test)]
             let (job_started, class) = (Instant::now(), job_class(&job));
@@ -3533,7 +3534,7 @@ impl Shared {
         };
         // The lease rows of a version the store does not hold are built here,
         // with no service lock held; the swap below only moves them.
-        let read = read.map(|durable| durable.map(|durable| self.adoption(db, durable)));
+        let read = read.map(|durable| durable.map(|durable| self.adoption(durable)));
         let mut state = self.state.lock();
         match read {
             Err(sql::SqlFailure::Wait(cause)) => {
@@ -3562,8 +3563,9 @@ impl Shared {
     /// the store already holds needs nothing, and a new one gets its lease
     /// rows built. No service lock is held while they are built: the lock
     /// is taken only for a short look at the cached version here, and by
-    /// the caller for the swap (plan §3.2).
-    fn adoption(&self, db: &sql::Db, durable: sql::Durable) -> Adoption {
+    /// the caller for the swap (plan §3.2). A test watches the build itself,
+    /// inside `files::preference_rows`, never a marker beside it.
+    fn adoption(&self, durable: sql::Durable) -> Adoption {
         let held = self
             .state
             .lock()
@@ -3575,7 +3577,6 @@ impl Shared {
         if held {
             return Adoption::Same(durable.version);
         }
-        db.point("lease-rows");
         let (rows, _) = files::preference_rows(&durable.projection.document);
         Adoption::New {
             snapshot: LeaseSnapshot::preferences(rows),
@@ -3706,7 +3707,7 @@ impl Shared {
                 observed,
             }) => {
                 if let Some(observed) = observed {
-                    let adoption = self.adoption(db, observed);
+                    let adoption = self.adoption(observed);
                     self.state.lock().adopt_durable(adoption);
                 }
                 self.finish_with_detail(&key, queued, Settlement::Failed(code), detail);
@@ -3723,7 +3724,7 @@ impl Shared {
             }
             Ok(sql::Commit::Unchanged { staged, observed }) => {
                 if let Some(observed) = observed {
-                    let adoption = self.adoption(db, observed);
+                    let adoption = self.adoption(observed);
                     self.state.lock().adopt_durable(adoption);
                 }
                 self.finish(

@@ -3227,17 +3227,17 @@ fn answers_while_held<T: Send + 'static>(
 }
 
 /// The cold-start test above holds the first hydration. A warm service has
-/// three more places where the writer is busy and no cache-only reader may
-/// wait for it (plan §3.2, §9.5): inside the SQL of a refresh that follows
-/// another process's commit, building the lease rows of that version, and
-/// inside the SQL of a save. Hold the writer at each, and the cached walk
-/// view, document and snapshot still answer at once with what the cache
-/// held; after the release the refresh has adopted the other process's
-/// commit and the save is durable.
+/// two more places where the writer is busy inside a real SQL call and no
+/// cache-only reader may wait for it (plan §3.2, §9.5): the refresh that
+/// follows another process's commit, and a save. Hold the writer inside
+/// the SQL of each, and the cached walk view, document and snapshot still
+/// answer at once with what the cache held; after the release the refresh
+/// has adopted the other process's commit and the save is durable. The
+/// build of the lease rows has its own test below, which watches the build.
 #[test]
-fn warm_cached_reads_never_wait_for_the_writer_in_a_refresh_a_lease_build_or_a_save() {
+fn warm_cached_reads_never_wait_for_the_writer_in_a_refresh_or_a_save() {
     let _state_lease = crate::test_process::state();
-    for phase in ["refresh", "lease-rows", "save"] {
+    for phase in ["refresh", "save"] {
         let scratch = IsolatedEnv::enter(&format!("t53s4-warm-hold-{phase}"));
         let service = open(&scratch);
         let preferences = service.preferences();
@@ -3255,19 +3255,9 @@ fn warm_cached_reads_never_wait_for_the_writer_in_a_refresh_a_lease_build_or_a_s
                 let _ = released.lock().unwrap().recv_timeout(WAIT);
             }
         });
-        service.set_sql_seams_for_test(match phase {
-            "lease-rows" => sql::Seams {
-                point: Some(Arc::new(move |name| {
-                    if name == "lease-rows" {
-                        hold();
-                    }
-                })),
-                ..sql::Seams::default()
-            },
-            _ => sql::Seams {
-                stall_in_sql: Some(hold),
-                ..sql::Seams::default()
-            },
+        service.set_sql_seams_for_test(sql::Seams {
+            stall_in_sql: Some(hold),
+            ..sql::Seams::default()
         });
         // Another process of the root commits: this service has a version to
         // adopt at its next refresh.
@@ -3319,6 +3309,98 @@ fn warm_cached_reads_never_wait_for_the_writer_in_a_refresh_a_lease_build_or_a_s
             }
         }
     }
+}
+
+/// The lease rows of a version the writer adopts are built on the writer
+/// thread with no service lock held (plan §3.2, §9.5), so a cache-only
+/// reader answers while they are built. The test watches the build itself,
+/// not a marker beside it: `files::preference_rows` hands the named point
+/// `lease-rows` to the hand below on the writer thread at every build,
+/// wherever the build runs and whatever lock its caller holds. At each
+/// build the writer is parked at its start, and the cached walk view,
+/// document and snapshot are read on another thread: they must answer
+/// before the build goes on. A build under the service lock, the first or
+/// a second one, leaves them waiting. The rows of the adopted version are
+/// built once.
+#[test]
+fn lease_rows_are_built_on_the_writer_with_no_service_lock_held_at_every_build() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("t53s4-lease-rows-build");
+    let service = open(&scratch);
+    let preferences = service.preferences();
+    ready(&preferences);
+
+    // From the writer's next job, every build of lease rows on its thread
+    // reports here and waits for the release.
+    let (entered_tx, entered) = mpsc::channel::<usize>();
+    let (release, released) = mpsc::channel::<()>();
+    let released = std::sync::Mutex::new(released);
+    let builds = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&builds);
+    service.set_sql_seams_for_test(sql::Seams {
+        point: Some(Arc::new(move |name| {
+            if name == "lease-rows" {
+                let build = counted.fetch_add(1, Ordering::SeqCst) + 1;
+                entered_tx.send(build).unwrap();
+                let _ = released.lock().unwrap().recv_timeout(WAIT);
+            }
+        })),
+        ..sql::Seams::default()
+    });
+    // Another process of the root commits: this service has a version to
+    // adopt at its next refresh.
+    let peer = open(&scratch);
+    save(&peer.preferences(), "peer", json!(1)).unwrap();
+    // A stale cache asks for a refresh.
+    service.expire_preference_cache_for_test();
+    let _ = preferences.walk_globals();
+
+    let mut waited = Vec::new();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        match entered.recv_timeout(Duration::from_millis(20)) {
+            Ok(build) => {
+                let reader = preferences.clone();
+                let (answered_tx, answered) = mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let _ = answered_tx.send((
+                        reader.walk_globals().is_ok(),
+                        reader.document().is_ok(),
+                        reader.snapshot().is_ok(),
+                    ));
+                });
+                match answered.recv_timeout(Duration::from_secs(4)) {
+                    Ok((true, true, true)) => {}
+                    Ok(read) => {
+                        waited.push(format!("build {build}: a cached read failed {read:?}"))
+                    }
+                    Err(_) => waited.push(format!("build {build}: a cached read waited")),
+                }
+                // A build under the service lock goes on only now, and
+                // the waiting read ends with it.
+                release.send(()).unwrap();
+                worker.join().unwrap();
+            }
+            Err(_) => {
+                if ready(&preferences).document().get("peer").is_some() {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "lease-rows: the refresh never adopted the other process's commit"
+                );
+            }
+        }
+    }
+    assert!(
+        waited.is_empty(),
+        "lease-rows: a cached read waited for the writer inside a build: {waited:?}"
+    );
+    assert_eq!(
+        builds.load(Ordering::SeqCst),
+        1,
+        "lease-rows: the rows of the adopted version are built once"
+    );
 }
 
 #[test]

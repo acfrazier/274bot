@@ -337,9 +337,10 @@ pub(crate) struct Seams {
     /// ([`Db::resolve_uncertain`]): `Some` fails that reopening as given
     /// (a busy database, a refused one).
     pub(super) reconnect_fault: Option<Arc<dyn Fn() -> Option<SqlFailure> + Send + Sync>>,
-    /// Called at named points of the import, a save and the writer's
-    /// adoption of a version (a child process aborts there, or a stall
-    /// holds there).
+    /// Called at named points of the import and a save (a child process
+    /// aborts there, or a stall holds there), and as `"lease-rows"` inside
+    /// every lease-row build on the writer thread (`files::preference_rows`,
+    /// whoever calls it and whatever lock the caller holds).
     pub(crate) point: Option<Arc<dyn Fn(&'static str) + Send + Sync>>,
     /// Called at the end of every [`Db::commit`] with the worker
     /// connection's state: `None` when it was closed, else whether it is

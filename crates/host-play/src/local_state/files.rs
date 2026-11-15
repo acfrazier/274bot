@@ -1388,6 +1388,25 @@ pub(super) fn apply_loadout_edit(
     Ok(next)
 }
 
+/// A test's hand inside the lease-row build ([`preference_rows`]): the
+/// writer thread of a service carries the named point of that service's
+/// seams (the job loop installs it), so a test sees every build on that
+/// thread, wherever it runs and whatever lock its caller holds. No other
+/// thread has one.
+#[cfg(test)]
+pub(super) type RowsPoint = std::sync::Arc<dyn Fn(&'static str) + Send + Sync>;
+
+#[cfg(test)]
+thread_local! {
+    static ROWS_POINT: std::cell::RefCell<Option<RowsPoint>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Install (or clear) the calling thread's hand in the lease-row build.
+#[cfg(test)]
+pub(super) fn set_rows_point(point: Option<RowsPoint>) {
+    ROWS_POINT.with(|slot| *slot.borrow_mut() = point);
+}
+
 /// One preferences document (`panel-ui.json`, a JSON object) as rows. Each
 /// top-level member is one row: its name, and its value as compact JSON
 /// text. A member whose value is too long for one row and is an object is
@@ -1397,6 +1416,10 @@ pub(super) fn apply_loadout_edit(
 /// value still too long) cannot be held: it is counted, and a file with any
 /// is read but never rewritten.
 pub(super) fn preference_rows(document: &Map<String, Value>) -> (Vec<PreferenceRow>, usize) {
+    #[cfg(test)]
+    if let Some(point) = ROWS_POINT.with(|slot| slot.borrow().clone()) {
+        point("lease-rows");
+    }
     let mut rows = Vec::with_capacity(document.len());
     let mut unrepresentable = 0;
     for (name, value) in document {
