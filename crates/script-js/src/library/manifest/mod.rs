@@ -1590,7 +1590,7 @@ mod tests {
             ),
             (
                 "settings: {}",
-                "settings: { text: { type: 'string', default: '', options: ['option'], optionLabels: { option: '\\u202E' } } }",
+                "settings: { text: { type: 'string', default: 'option', options: ['option'], optionLabels: { option: '\\u202E' } } }",
             ),
         ] {
             assert_error_code(
