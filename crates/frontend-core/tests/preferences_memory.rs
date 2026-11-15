@@ -72,7 +72,12 @@ static ALLOCATOR: Counting = Counting;
 /// `(M_peak, T_peak, M_retained, T_retained)`, with `T = M + ceil(M / 8)`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const TRIPWIRES: Option<(isize, isize, isize, isize)> = Some(TRIPWIRES_LINUX_X86_64);
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const TRIPWIRES: Option<(isize, isize, isize, isize)> = Some(TRIPWIRES_MACOS_AARCH64);
+#[cfg(not(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
+)))]
 const TRIPWIRES: Option<(isize, isize, isize, isize)> = None;
 
 /// Linux x86_64, measured on chardonnay 2026-10-28 (T5.3-S4
@@ -81,6 +86,13 @@ const TRIPWIRES: Option<(isize, isize, isize, isize)> = None;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const TRIPWIRES_LINUX_X86_64: (isize, isize, isize, isize) =
     (5_920_519, 6_660_584, 1_993_919, 2_243_159);
+
+/// macOS aarch64, measured on merlot 2026-11-14 (S1-PREFS-SQLITE-1114
+/// `measure/rust-memory-macos.txt`, six runs, every one peak 5,920,907 B
+/// and retained 1,994,323 B); T = M + ceil(M / 8).
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const TRIPWIRES_MACOS_AARCH64: (isize, isize, isize, isize) =
+    (5_920_907, 6_661_021, 1_994_323, 2_243_614);
 
 /// A surface with no devices and no models.
 struct Bare;
@@ -131,8 +143,11 @@ fn poll(session: &mut OperatorSession<()>) {
 
 #[test]
 #[cfg_attr(
-    not(all(target_os = "linux", target_arch = "x86_64")),
-    ignore = "no measured tripwire for this target yet (T5.3-S4: macOS is measured when merlot's quiet window ends)"
+    not(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
+    )),
+    ignore = "no measured tripwire for this target yet (plan 9.2: measure it before the target ships)"
 )]
 fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwires() {
     let dir = scratch();
