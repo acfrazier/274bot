@@ -4,22 +4,30 @@
 //! their peak, against a baseline taken in the same initialized process
 //! before any preference allocation.
 //!
-//! The fixture: a D-sized legacy document imported at the first open, one
-//! core session following it, then the writer held while nine saves wait
-//! (eight queued, one active) up to the queue's byte bound, then released.
-//! The peak tripwire covers that whole run; the retained tripwire covers
-//! what stays once every save settled and every result was projected: the
-//! durable snapshot, the core's reconciliation copy and fixed structs.
+//! The fixture: a legacy document whose canonical form is exactly D bytes,
+//! imported at the first open, and one core session following it. Three old
+//! durable versions of it stay held through the whole run, each its own
+//! parsed copy: the panel's poll can hold three overlapping old documents
+//! (`crates/panel/src/session.rs:2287-2315`, then
+//! `crates/frontend-core/src/session.rs:1104-1119`, then
+//! `crates/frontend-core/src/session/prefs.rs:403-419`). Then three cycles:
+//! the writer is held while nine saves wait (eight queued, one active) up to
+//! the queue's byte bound D exactly, a tenth is refused, and the writer is
+//! released. The peak tripwire covers that whole run; the retained tripwire
+//! covers what stays once the old owners let go, every save settled and
+//! every result was projected: the durable snapshot, the core's
+//! reconciliation copy and fixed structs.
 //!
 //! Tripwires are the measured value plus 12.5 % headroom (`T = M + ceil(M /
-//! 8)`), committed per target with their measurement (evidence
-//! `T5.3-S4/resource-chardonnay-1/`); the test never remeasures its own limit.
+//! 8)`, plan-r3.md:334), committed per target with their measurement; the
+//! test never remeasures its own limit.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use api::local_state::{ErrorCode, ValidationReason};
 use frontend_core::command::DrawSwitch;
 use frontend_core::surface::{SlotAttach, SlotSurface, SpawnProfile};
 use frontend_core::{Models, OperatorSession};
@@ -69,7 +77,8 @@ unsafe impl GlobalAlloc for Counting {
 static ALLOCATOR: Counting = Counting;
 
 /// The measured tripwires of this target (bytes over the baseline):
-/// `(M_peak, T_peak, M_retained, T_retained)`, with `T = M + ceil(M / 8)`.
+/// `(M_peak, T_peak, M_retained, T_retained)`, with `T = M + H` and
+/// `H = ceil(M / 8)` (plan-r3.md:334); the test checks that arithmetic.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const TRIPWIRES: Option<(isize, isize, isize, isize)> = Some(TRIPWIRES_LINUX_X86_64);
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -80,16 +89,25 @@ const TRIPWIRES: Option<(isize, isize, isize, isize)> = Some(TRIPWIRES_MACOS_AAR
 )))]
 const TRIPWIRES: Option<(isize, isize, isize, isize)> = None;
 
-/// Linux x86_64, measured on chardonnay 2026-10-28 (T5.3-S4
-/// `resource-chardonnay-1/rust-memory.log`): peak 5,920,519 B, retained
-/// 1,993,919 B; T = M + ceil(M / 8).
+/// Linux x86_64. Peak: this fixture (three old owners, the full D-byte
+/// queue, three cycles), measured on the S1 candidate `44d233834` in the
+/// syrah guest on chardonnay, three repeats, all complete (S1-PREFS-SQLITE-1114
+/// `measure/activation/peak-three-summary.json`, computed by
+/// `summarize-peak-three.py`): M_peak 10,804,395 B, H_peak 1,350,550 B,
+/// T_peak 12,154,945 B (plan-r3.md:334). Retained: unchanged from T5.3-S4
+/// `resource-chardonnay-1/rust-memory.log`, 2026-10-28: M_retained
+/// 1,993,919 B, T_retained 2,243,159 B; this fixture's own retained value,
+/// 2,189,871 B in that summary, is within that T_retained.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const TRIPWIRES_LINUX_X86_64: (isize, isize, isize, isize) =
-    (5_920_519, 6_660_584, 1_993_919, 2_243_159);
+    (10_804_395, 12_154_945, 1_993_919, 2_243_159);
 
 /// macOS aarch64, measured on merlot 2026-11-14 (S1-PREFS-SQLITE-1114
 /// `measure/rust-memory-macos.txt`, six runs, every one peak 5,920,907 B
-/// and retained 1,994,323 B); T = M + ceil(M / 8).
+/// and retained 1,994,323 B); T = M + ceil(M / 8). Measured with the earlier
+/// fixture (one document, no old owners, a smaller queue): the fixture above
+/// peaks higher on this target, so the peak check fails here until the
+/// values measured with it replace these.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const TRIPWIRES_MACOS_AARCH64: (isize, isize, isize, isize) =
     (5_920_907, 6_661_021, 1_994_323, 2_243_614);
@@ -127,14 +145,96 @@ fn scratch() -> PathBuf {
     dir
 }
 
-/// The legacy document: 250 members of about 3.9 KiB under one object,
-/// just under D = 1 MiB as the product stores it.
-fn d_sized() -> Vec<u8> {
-    let members = (0..250)
-        .map(|n| format!("\"m{n:03}\":\"{}\"", "a".repeat(3_900)))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{{\"bulk\":{{{members}}}}}").into_bytes()
+/// D, the preference document bound (`MAX_PREFERENCES_BYTES`): the fixture
+/// below is calibrated to it to the byte.
+const D: usize = 1 << 20;
+const WAIT: Duration = Duration::from_secs(60);
+/// The legacy document has this many members; each value is `VALUE_BYTES`
+/// long, the first one `FIRST_EXTRA` longer.
+const MEMBERS: usize = 268;
+const VALUE_BYTES: usize = 3_896;
+const FIRST_EXTRA: usize = 142;
+/// Old durable versions held by their owners through the run, and the
+/// cycles of the full queue.
+const OLD_VERSIONS: usize = 3;
+const CYCLES: usize = 3;
+/// A save of the queue changes `SAVE_MEMBERS` members (`bulk.m000` and on),
+/// each to a value of `QUEUE_VALUE_BYTES` characters, the first member of the
+/// first save `QUEUE_FIRST_EXTRA` longer.
+const SAVES: usize = 9;
+const SAVE_MEMBERS: usize = 30;
+const QUEUE_VALUE_BYTES: usize = 3_869;
+const QUEUE_FIRST_EXTRA: usize = 166;
+
+/// The legacy document: one `bulk` object of 268 members, in the pretty
+/// form the product stores it in, exactly D bytes (the limit it admits).
+fn maximum_document() -> Vec<u8> {
+    use std::io::Write;
+    assert_eq!(
+        host_play::local_state::MAX_PREFERENCES_BYTES as usize,
+        D,
+        "the fixture is calibrated to D = 1,048,576 bytes: recalibrate it and measure again"
+    );
+    let mut bytes = Vec::with_capacity(D);
+    bytes.extend_from_slice(b"{\n  \"bulk\": {\n");
+    for member in 0..MEMBERS {
+        write!(&mut bytes, "    \"m{member:03}\": \"").unwrap();
+        let extra = if member == 0 { FIRST_EXTRA } else { 0 };
+        bytes.resize(bytes.len() + VALUE_BYTES + extra, b'a');
+        bytes.extend_from_slice(if member == MEMBERS - 1 {
+            b"\"\n"
+        } else {
+            b"\",\n"
+        });
+    }
+    bytes.extend_from_slice(b"  }\n}");
+    assert_eq!(bytes.len(), D, "the document must fill the byte limit");
+    // It is the canonical form: what the product stores is these bytes.
+    let parsed: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(&bytes).expect("a JSON object");
+    assert_eq!(
+        serde_json::to_vec_pretty(&parsed).expect("serializes"),
+        bytes,
+        "the document is not in the canonical form"
+    );
+    bytes
+}
+
+/// One save of the queue. The product charges a changed member at its key
+/// plus its JSON-encoded value (`bulk.m000` is 9 bytes, a value of 3,872
+/// characters 3,874), so the nine saves of a cycle charge exactly D bytes:
+/// 270 x (9 + 3,874) + 166. `extra` adds that many bytes to the last member.
+fn queue_patch(cycle: usize, round: usize, extra: usize) -> PreferencePatch {
+    let mut patch = PreferencePatch::new();
+    for member in 0..SAVE_MEMBERS {
+        let first = if round == 0 && member == 0 {
+            QUEUE_FIRST_EXTRA
+        } else {
+            0
+        };
+        let last = if member == SAVE_MEMBERS - 1 { extra } else { 0 };
+        let value = format!(
+            "{cycle}{round}-{}",
+            "b".repeat(QUEUE_VALUE_BYTES + first + last)
+        );
+        patch
+            .set_member(
+                &["bulk", &format!("m{member:03}")],
+                Some(serde_json::json!(value)),
+            )
+            .unwrap();
+    }
+    patch
+}
+
+/// Wait for a save to be durable.
+fn settle(update: Update) {
+    if let Update::Queued(mut update) = update {
+        update
+            .wait(WAIT)
+            .expect("a terminal result")
+            .expect("a durable save");
+    }
 }
 
 fn poll(session: &mut OperatorSession<()>) {
@@ -153,7 +253,7 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
     let dir = scratch();
     let root = StateRoot::new(dir.join(".274bot"));
     std::fs::create_dir_all(root.path()).expect("root");
-    let legacy = d_sized();
+    let legacy = maximum_document();
     let document_bytes = legacy.len() as isize;
     std::fs::write(root.preferences_file(), &legacy).expect("legacy file");
     drop(legacy);
@@ -167,9 +267,6 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
         )
         .unwrap();
     }
-    let (release, gate) = mpsc::channel::<()>();
-    let gate = Mutex::new(gate);
-    let held = Arc::new(AtomicBool::new(false));
     counter_counts_growth_and_release();
     counter_counts_realloc();
     let baseline = LIVE.load(Ordering::SeqCst);
@@ -181,50 +278,134 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
     session.bind_local_state(Arc::clone(&service));
     let _ = session.adopt_operator_preferences();
     let preferences = service.preferences();
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + WAIT;
     while preferences.snapshot().is_err() {
         assert!(Instant::now() < deadline, "the import never finished");
         std::thread::sleep(Duration::from_millis(5));
     }
     poll(&mut session);
-
-    let holding = Arc::clone(&held);
-    service.set_write_stall_for_test(Arc::new(move || {
-        if !holding.swap(true, Ordering::SeqCst) {
-            let _ = gate.lock().unwrap().recv();
-        }
-    }));
-    let mut updates = Vec::new();
-    for round in 0..9 {
-        let mut patch = PreferencePatch::new();
-        for member in 0..25 {
-            patch
-                .set_member(
-                    &["bulk", &format!("m{:03}", round * 25 + member)],
-                    Some(serde_json::json!(format!("{round}-{}", "b".repeat(3_800)))),
-                )
-                .unwrap();
-        }
-        match preferences.begin_patch(patch).expect("admitted") {
-            Update::Queued(update) => updates.push(update),
-            Update::Durable => panic!("a change is queued"),
-        }
-        poll(&mut session);
-    }
-    release.send(()).unwrap();
-    for mut update in updates {
-        update
-            .wait(Duration::from_secs(60))
-            .expect("settles")
-            .expect("durable");
-    }
-    for _ in 0..4 {
-        poll(&mut session);
-    }
-    assert!(
-        preferences.unprojected_requests().is_empty(),
-        "no retained result"
+    assert_eq!(
+        preferences.snapshot().expect("durable").document()["bulk"]
+            .as_object()
+            .map(|bulk| bulk.len()),
+        Some(MEMBERS),
+        "the whole legacy document was imported"
     );
+
+    // Three old durable versions, each held by its own owner from here to
+    // the end of the run: owner `index` holds the document as it was before
+    // save `index` below. Each save replaces the last member by a value of
+    // the same length, so every version is D bytes and its own copy.
+    let last_member = format!("m{:03}", MEMBERS - 1);
+    let mut old_versions = Vec::with_capacity(OLD_VERSIONS);
+    for index in 0..OLD_VERSIONS {
+        old_versions.push(preferences.snapshot().expect("a durable snapshot"));
+        let mut patch = PreferencePatch::new();
+        patch
+            .set_member(
+                &["bulk", &last_member],
+                Some(serde_json::json!(format!(
+                    "{index}{}",
+                    "a".repeat(VALUE_BYTES - 1)
+                ))),
+            )
+            .unwrap();
+        settle(preferences.begin_patch(patch).expect("admitted"));
+        poll(&mut session);
+    }
+
+    for cycle in 0..CYCLES {
+        let (entered_tx, entered) = mpsc::channel::<()>();
+        let (release, gate) = mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        let held = AtomicBool::new(false);
+        service.set_write_stall_for_test(Arc::new(move || {
+            if !held.swap(true, Ordering::SeqCst) {
+                entered_tx.send(()).unwrap();
+                let _ = gate.lock().unwrap().recv();
+            }
+        }));
+        let mut updates = Vec::with_capacity(SAVES);
+        for round in 0..SAVES {
+            if round == SAVES - 1 {
+                // The queue holds D bytes less this save: one byte more is
+                // refused for its size, so the nine saves fill it exactly.
+                let refused = preferences
+                    .begin_patch(queue_patch(cycle, round, 1))
+                    .expect_err("the queue admits D bytes and not one more");
+                assert!(
+                    matches!(
+                        refused.code(),
+                        Some(ErrorCode::Validation {
+                            reason: ValidationReason::TooLong,
+                            ..
+                        })
+                    ),
+                    "{refused}"
+                );
+            }
+            match preferences
+                .begin_patch(queue_patch(cycle, round, 0))
+                .expect("admitted")
+            {
+                Update::Queued(update) => updates.push(update),
+                Update::Durable => panic!("a change is queued"),
+            }
+            if round == 0 {
+                // The first save is the one active save; the other eight
+                // queue behind it.
+                entered
+                    .recv_timeout(WAIT)
+                    .expect("the writer is held in the first save");
+            }
+            poll(&mut session);
+        }
+        let tenth = preferences
+            .begin_set("overflow", serde_json::json!(true))
+            .expect_err("a tenth request is refused");
+        assert!(
+            matches!(tenth.code(), Some(ErrorCode::Busy { .. })),
+            "{tenth}"
+        );
+        release.send(()).unwrap();
+        for mut update in updates {
+            update.wait(WAIT).expect("settles").expect("durable");
+        }
+        for _ in 0..4 {
+            poll(&mut session);
+        }
+        assert!(
+            preferences.unprojected_requests().is_empty(),
+            "no retained result"
+        );
+        // The old versions are unchanged, and each is its own version.
+        let current = preferences.snapshot().expect("durable").version();
+        for (index, owner) in old_versions.iter().enumerate() {
+            let value = owner.document()["bulk"][last_member.as_str()]
+                .as_str()
+                .expect("a string value");
+            assert_eq!(value.len(), VALUE_BYTES, "old version {index}");
+            let first = if index == 0 {
+                b'a'
+            } else {
+                b'0' + (index - 1) as u8
+            };
+            assert_eq!(value.as_bytes()[0], first, "old version {index}");
+            assert!(
+                value.as_bytes()[1..].iter().all(|byte| *byte == b'a'),
+                "old version {index}"
+            );
+            assert_ne!(owner.version(), current, "old version {index}");
+            if index > 0 {
+                assert_ne!(
+                    owner.version(),
+                    old_versions[index - 1].version(),
+                    "old version {index}"
+                );
+            }
+        }
+    }
+    drop(old_versions);
     let peak = PEAK.load(Ordering::SeqCst) - baseline;
     drop(preferences);
     let retained = LIVE.load(Ordering::SeqCst) - baseline;
@@ -236,13 +417,16 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
         retained >= document_bytes,
         "retained {retained} < the imported document's {document_bytes} bytes: the counter missed allocations"
     );
-    // The queued patches alone hold 9 x 25 values of 3,800 bytes while the
-    // writer is stalled, so a counter that saw the work reads at least that
-    // much. A peak under the floor means the counter stopped counting.
-    let floor = 9 * 25 * 3_800;
+    // At its peak the fixture holds three old versions of the document, each
+    // its own parsed copy of 268 values, and the values of the nine saves
+    // that wait. A counter that saw the work reads at least that much; a
+    // peak under the floor means the counter stopped counting.
+    let document_values = MEMBERS * VALUE_BYTES + FIRST_EXTRA;
+    let queued_values = SAVES * SAVE_MEMBERS * QUEUE_VALUE_BYTES + QUEUE_FIRST_EXTRA;
+    let floor = (OLD_VERSIONS * document_values + queued_values) as isize;
     assert!(
         peak >= floor,
-        "peak {peak} < the queued patches' {floor} bytes: the counting allocator saw none of the work"
+        "peak {peak} < the {floor} bytes of three old versions and the full queue: the counting allocator saw none of the work"
     );
     let Some((m_peak, t_peak, m_retained, t_retained)) = TRIPWIRES else {
         return;
