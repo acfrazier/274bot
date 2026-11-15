@@ -1623,7 +1623,7 @@ impl FightRuntime {
                 .find(|n| n.index == target.index && n.id == target.id && n.name == target.name)
                 .cloned()
         } else {
-            Some(target.clone())
+            Some(target)
         };
         let Some(current) = current else {
             return self.begin_idle(IdleThen::Continue, proj, &obs);
@@ -1645,7 +1645,7 @@ impl FightRuntime {
         } else {
             current.name.to_lowercase()
         };
-        self.engaged_name = shown.clone();
+        self.engaged_name = shown;
         if Some(current.index) == self.engaged {
             self.reissues += 1;
         } else {

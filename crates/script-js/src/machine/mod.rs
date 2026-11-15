@@ -3546,7 +3546,7 @@ pub(crate) fn on_snapshot(snapshot: &isolate_fb::Snapshot<'_>) -> Result<(), Str
                         advanced_owner = Some(mirror.owner);
                     }
                 }
-                mirror.prompt = prompt.clone();
+                mirror.prompt.clone_from(prompt);
             }
             if let Some(owner) = advanced_owner {
                 host.mark_seat_changed(owner);
@@ -5733,7 +5733,11 @@ pub(crate) mod tests {
         HOST.with(|host| {
             for row in &mut host.borrow_mut().rows {
                 if row.clock.deadline.is_some() {
-                    row.clock.deadline = Some(std::time::Instant::now() - Duration::from_millis(1));
+                    row.clock.deadline = Some(
+                        std::time::Instant::now()
+                            .checked_sub(Duration::from_millis(1))
+                            .expect("test clock deadline is in the past"),
+                    );
                 }
             }
         });
@@ -6615,14 +6619,10 @@ pub(crate) mod tests {
         }
         for descriptor in super::BANK_FAMILY_DESCRIPTORS {
             for member in descriptor.callbacks {
-                let rows = HOOK_CHARACTERIZATIONS
-                    .iter()
-                    .filter(|row| {
-                        row.families().contains(&descriptor.name) && row.member() == *member
-                    })
-                    .collect::<Vec<_>>();
                 assert!(
-                    !rows.is_empty(),
+                    HOOK_CHARACTERIZATIONS.iter().any(|row| {
+                        row.families().contains(&descriptor.name) && row.member() == *member
+                    }),
                     "no ABI row for bank descriptor {} / {member}",
                     descriptor.name
                 );

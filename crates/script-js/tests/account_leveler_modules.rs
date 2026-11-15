@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]

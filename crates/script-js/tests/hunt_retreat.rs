@@ -538,7 +538,7 @@ fn arrival_after_hop_yields_without_rotate() {
     prelude(token, &p);
     assert_eq!(call("next", token, p.clone(), None)["kind"], "walk-to");
     hunt_fight::set_observation(obs_at(safespot_0()));
-    let step = call("next", token, p.clone(), None);
+    let step = call("next", token, p, None);
     assert_eq!(step["kind"], "yield");
     assert!(!validate(
         token,
@@ -581,7 +581,7 @@ fn died_mid_hop_yields_without_rotate() {
     let token = begin();
     let p = foodless_off();
     prelude(token, &p);
-    assert_eq!(call("next", token, p.clone(), None)["kind"], "walk-to");
+    assert_eq!(call("next", token, p, None)["kind"], "walk-to");
     let died = proj(json!({
         "died": true,
         "hasFood": false,
@@ -618,7 +618,7 @@ fn pause_hold_does_not_elapse_hop_or_retry() {
     let token = begin();
     let p = foodless_off();
     prelude(token, &p);
-    assert_eq!(call("next", token, p.clone(), None)["kind"], "walk-to");
+    assert_eq!(call("next", token, p, None)["kind"], "walk-to");
     let before = retreat_deadline_remaining_ms(token).unwrap_or(0);
     assert!(before > (RETREAT_HOP_MS as i64) - 200, "{before}");
     hunt_fight::on_pause();

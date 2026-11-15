@@ -353,7 +353,8 @@ export default class T extends LoopingBot {
 "#;
 
 fn spawn() -> LoadIsolate {
-    LoadIsolate::spawn(SRC.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(SRC.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn boost-potions isolate")
 }
 
 #[test]

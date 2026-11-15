@@ -89,7 +89,8 @@ fn throw_dom_exception<'s>(
     message: &str,
 ) -> v8::Local<'s, v8::Value> {
     let global = scope.get_current_context().global(scope);
-    let key = v8::String::new(scope, "DOMException").unwrap();
+    let key = v8::String::new(scope, "DOMException")
+        .expect("V8 can allocate the DOMException property name");
     let constructor = global.get(scope, key.into()).and_then(|value| {
         if let Ok(constructor) = v8::Local::<v8::Function>::try_from(value) {
             return Some(constructor);
@@ -100,8 +101,9 @@ fn throw_dom_exception<'s>(
         v8::Local::<v8::Function>::try_from(value).ok()
     });
     if let Some(constructor) = constructor {
-        let message = v8::String::new(scope, message).unwrap();
-        let name = v8::String::new(scope, name).unwrap();
+        let message =
+            v8::String::new(scope, message).expect("V8 can allocate the crypto exception message");
+        let name = v8::String::new(scope, name).expect("V8 can allocate the crypto exception name");
         let arguments: [v8::Local<v8::Value>; 2] = [message.into(), name.into()];
         if let Some(exception) = constructor.new_instance(scope, &arguments) {
             scope.throw_exception(exception.into());
@@ -115,14 +117,16 @@ fn throw_type_error<'s>(
     scope: &mut v8::HandleScope<'s>,
     message: &str,
 ) -> v8::Local<'s, v8::Value> {
-    let message = v8::String::new(scope, message).unwrap();
+    let message =
+        v8::String::new(scope, message).expect("V8 can allocate the crypto error message");
     let exception = v8::Exception::type_error(scope, message);
     scope.throw_exception(exception);
     v8::undefined(scope).into()
 }
 
 fn throw_error<'s>(scope: &mut v8::HandleScope<'s>, message: &str) -> v8::Local<'s, v8::Value> {
-    let message = v8::String::new(scope, message).unwrap();
+    let message =
+        v8::String::new(scope, message).expect("V8 can allocate the crypto error message");
     let exception = v8::Exception::error(scope, message);
     scope.throw_exception(exception);
     v8::undefined(scope).into()

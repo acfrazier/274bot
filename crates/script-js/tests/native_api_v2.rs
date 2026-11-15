@@ -16,7 +16,7 @@ use {
     script_js::wire::encode_snapshot_with_native,
 };
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -27,19 +27,19 @@ fn temp_dir() -> std::path::PathBuf {
         "274bot-script-native-api-v2-{}",
         std::process::id()
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create native API v2 test scratch directory");
     dir
 }
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = temp_dir().join(name);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create native API v2 fixture directory");
     dir
 }
 
 fn write_file(dir: &std::path::Path, name: &str, source: &str) -> std::path::PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, source).unwrap();
+    std::fs::write(&path, source).expect("write native API v2 fixture file");
     path
 }
 
@@ -422,18 +422,12 @@ export function tick() {}
         slot.feed_watchdog(settlement_at, None, &[], false, true, &lifecycle),
         WatchdogAction::None
     );
-    slot.note_game_packet_tick(
-        settlement_at + script::watchdog::SCHEDULER_WARN - Duration::from_millis(1),
-    );
+    let just_before_next_warning = (settlement_at + script::watchdog::SCHEDULER_WARN)
+        .checked_sub(Duration::from_millis(1))
+        .expect("scheduler warning threshold exceeds one millisecond");
+    slot.note_game_packet_tick(just_before_next_warning);
     assert_eq!(
-        slot.feed_watchdog(
-            settlement_at + script::watchdog::SCHEDULER_WARN - Duration::from_millis(1),
-            None,
-            &[],
-            false,
-            true,
-            &[],
-        ),
+        slot.feed_watchdog(just_before_next_warning, None, &[], false, true, &[],),
         WatchdogAction::None
     );
     assert_eq!(
@@ -1054,7 +1048,8 @@ fn run_hunt_card(body: &str, ticks: u64) -> LoadIsolate {
     let src = format!(
         "export const apiVersion = 2;\n{HUNT_SITE}\nlet started = false;\nexport async function tick(api) {{\n  if (started) return;\n  started = true;\n  globalThis.__statuses = [];\n  const status = (m) => globalThis.__statuses.push(m);\n{body}\n}}\n"
     );
-    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![])
+        .expect("spawn native-tick hunt card isolate");
     for tick in 1..=ticks {
         post_base(&iso, tick);
         iso.on_game_tick(tick);
@@ -1691,7 +1686,7 @@ fn open_collision<'a>() -> NativeFactsInput<'a> {
     }
 }
 
-fn post_with_native(iso: &LoadIsolate, tick: u64, facts: NativeFactsInput<'_>) {
+fn post_with_native(iso: &LoadIsolate, tick: u64, facts: &NativeFactsInput<'_>) {
     let mut input = script::native::snapshot_source::SnapshotInput {
         tick,
         here: None,
@@ -1766,7 +1761,7 @@ fn post_with_native(iso: &LoadIsolate, tick: u64, facts: NativeFactsInput<'_>) {
         walk_outcome_cancel_reason: Default::default(),
     };
     input.tick = tick;
-    iso.post_snapshot(encode_snapshot_with_native(&input, facts));
+    iso.post_snapshot(encode_snapshot_with_native(&input, *facts));
 }
 
 #[test]
@@ -2033,7 +2028,7 @@ export function tick(api) {
     post_with_native(
         &iso,
         6,
-        NativeFactsInput {
+        &NativeFactsInput {
             quest_statuses: Some(&rows),
             ..NativeFactsInput::default()
         },

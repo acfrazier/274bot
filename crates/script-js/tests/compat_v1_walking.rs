@@ -5,9 +5,12 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 fn eval(source: &str, expression: &str) -> Value {
-    let iso = LoadIsolate::spawn(source.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(source.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn compatibility walking isolate");
     iso.on_game_tick(1);
-    let result = iso.probe(expression).unwrap();
+    let result = iso
+        .probe(expression)
+        .expect("evaluate compatibility walking expression");
     iso.join();
     result
 }

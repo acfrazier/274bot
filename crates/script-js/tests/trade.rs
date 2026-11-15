@@ -10,7 +10,8 @@ use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn trade test isolate")
 }
 
 fn row<'a>(

@@ -97,7 +97,9 @@ export function tick(_api) {}
 fn opened_channel(isolate: &LoadIsolate) -> u64 {
     isolate.on_game_tick(1);
     // The probe is the tick's barrier: its batch has been forwarded.
-    isolate.probe("true").unwrap();
+    isolate
+        .probe("true")
+        .expect("complete channel-opening tick");
     match isolate.drain_interacts().as_slice() {
         [InteractReq::ChannelOpen { channel_id, .. }] => *channel_id,
         other => panic!("unexpected channel requests: {other:?}"),
@@ -109,7 +111,7 @@ fn message(channel_id: u64, n: i32) -> InteractReq {
         channel_id,
         sender: "b".into(),
         seq: 1,
-        data: script::channel::encode(&json!({ "n": n })).unwrap(),
+        data: script::channel::encode(&json!({ "n": n })).expect("encode channel test message"),
     }
 }
 

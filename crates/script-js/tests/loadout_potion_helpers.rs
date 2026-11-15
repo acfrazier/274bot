@@ -112,14 +112,21 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 }
 
 fn probe_v2(src: &str, revision: ClientRevision) -> serde_json::Value {
-    let data = api::game_data::for_revision(revision).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let data = api::game_data::for_revision(revision).expect("load loadout-potion test data");
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .expect("spawn NativeTick loadout-potion isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let value = iso.probe("globalThis.__probe").unwrap();
+    let value = iso
+        .probe("globalThis.__probe")
+        .expect("read NativeTick loadout-potion result");
     iso.join();
-    serde_json::from_str(value.as_str().unwrap()).unwrap()
+    serde_json::from_str(
+        value
+            .as_str()
+            .expect("NativeTick loadout-potion result is a JSON string"),
+    )
+    .expect("parse NativeTick loadout-potion result")
 }
 
 #[test]

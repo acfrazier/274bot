@@ -1504,7 +1504,10 @@ enum CardPreparationPhase {
 
 // Keep the owned snapshot inline: boxing each card would add an allocation
 // solely to shrink the already boxed preparation job's enum footprint.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Keep the owned snapshot inline; boxing each card adds an allocation to the already boxed preparation job"
+)]
 #[derive(Debug)]
 enum CardTaskSnapshot {
     Owned(CardPreparationSnapshot),

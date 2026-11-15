@@ -8,7 +8,7 @@ use {
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
 
-mod common;
+pub mod common;
 
 const API_SURFACE: &str = r#"
 import * as Root from '@rs2b0t/api';
@@ -274,7 +274,8 @@ fn row<'a>(
 }
 
 fn spawn() -> LoadIsolate {
-    LoadIsolate::spawn(API_SURFACE.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(API_SURFACE.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn inventory-family isolate")
 }
 
 fn post(iso: &LoadIsolate, snapshot: &SnapshotInput<'_>, side_modal_id: Option<i32>) {
@@ -284,14 +285,16 @@ fn post(iso: &LoadIsolate, snapshot: &SnapshotInput<'_>, side_modal_id: Option<i
     };
     iso.post_snapshot(encode_snapshot_with_native(snapshot, native));
     iso.on_game_tick(snapshot.tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso
+        .probe("true")
+        .expect("run inventory snapshot initialization");
 }
 
 fn schedule_work(iso: &LoadIsolate, expression: &str) {
     iso.probe(&format!(
         "globalThis.__inventoryWork = () => ({expression}); true"
     ))
-    .unwrap();
+    .expect("schedule inventory API work");
 }
 
 type UseOnFields<'a> = (

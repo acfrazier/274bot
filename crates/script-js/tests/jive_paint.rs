@@ -7,7 +7,7 @@ use {
     script_js::wire::encode_snapshot,
 };
 
-mod common;
+pub mod common;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(encode_snapshot(input));
@@ -99,7 +99,8 @@ fn tick(iso: &LoadIsolate, n: u64) {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn jive-paint test isolate")
 }
 
 fn crafting(xp: i32, base: i32) -> StatInput<'static> {

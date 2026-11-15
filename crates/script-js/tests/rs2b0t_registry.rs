@@ -50,13 +50,13 @@ ScriptRegistry.register({
 /// per-test scratch subdir so parallel tests never share files.
 fn temp_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-rs2b0t-registry-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create registry temp directory");
     dir
 }
 
 fn scratch(name: &str) -> PathBuf {
     let dir = temp_dir().join(name);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create registry scratch directory");
     dir
 }
 
@@ -944,7 +944,7 @@ export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...ALCH_ITEMS.map(i => i.key)];
         !script::setting_visible(custom.show_if.as_deref(), &bag),
         "default fodder keys must not reveal Custom item"
     );
-    let mut selected = bag.clone();
+    let mut selected = bag;
     selected.insert("items".into(), serde_json::json!(["custom"]));
     assert!(script::setting_visible(
         custom.show_if.as_deref(),
@@ -1403,7 +1403,8 @@ export default class T extends LoopingBot {
 
 fn write_shop_catalog(root: &Path, item_name: Option<&str>) {
     let scripts = root.join("src/bot/scripts");
-    std::fs::create_dir_all(scripts.join("ShopBuyout")).unwrap();
+    std::fs::create_dir_all(scripts.join("ShopBuyout"))
+        .expect("create ShopBuyout fixture directory");
     std::fs::write(
         scripts.join("index.ts"),
         r#"
@@ -1415,7 +1416,7 @@ ScriptRegistry.register({
 });
 "#,
     )
-    .unwrap();
+    .expect("write ShopBuyout registry fixture");
     std::fs::write(
         scripts.join("ShopBuyout/ShopBuyout.ts"),
         r#"
@@ -1427,7 +1428,7 @@ export const SETTINGS = {
 export default class ShopBuyout extends LoopingBot { override loop() {} }
 "#,
     )
-    .unwrap();
+    .expect("write ShopBuyout fixture script");
     std::fs::write(
         scripts.join("ShopBuyout/shopPresets.ts"),
         r#"
@@ -1437,9 +1438,10 @@ export const SHOP_PRESETS = [
 export function presetBuyableNames(): string[] { return []; }
 "#,
     )
-    .unwrap();
+    .expect("write shop presets fixture");
     if let Some(name) = item_name {
-        std::fs::create_dir_all(root.join("src/bot/data")).unwrap();
+        std::fs::create_dir_all(root.join("src/bot/data"))
+            .expect("create shop database fixture directory");
         std::fs::write(
             root.join("src/bot/data/shopdb.ts"),
             format!(
@@ -1449,7 +1451,7 @@ export function presetBuyableNames(): string[] { return []; }
 "#
             ),
         )
-        .unwrap();
+        .expect("write shop database fixture");
     }
 }
 

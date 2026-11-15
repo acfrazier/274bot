@@ -41,8 +41,13 @@ fn ready() -> Value {
 }
 
 fn with_site(mut base: Value, site: Value) -> Value {
-    let obj = base.as_object_mut().unwrap();
-    for (k, v) in site.as_object().unwrap() {
+    let obj = base
+        .as_object_mut()
+        .expect("hunt contract base value is an object");
+    for (k, v) in site
+        .as_object()
+        .expect("hunt contract site value is an object")
+    {
         obj.insert(k.clone(), v.clone());
     }
     base
@@ -743,7 +748,7 @@ fn pause_freezes_the_one_armed_window() {
     assert!(before > 200_000, "stand window is 300000, got {before}");
     hunt_lair::on_pause();
     std::thread::sleep(std::time::Duration::from_millis(280));
-    let frozen = call("next", token, p.clone(), Some(ack_walk(token)));
+    let frozen = call("next", token, p, Some(ack_walk(token)));
     assert_eq!(frozen["kind"], "wait");
     hunt_lair::on_resume();
     let after = enter_deadline_remaining_ms(token).unwrap_or(0);

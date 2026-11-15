@@ -12,7 +12,8 @@ use {
 };
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn reach test isolate")
 }
 
 fn npc<'a>(
@@ -138,8 +139,8 @@ fn post(iso: &LoadIsolate, snap: &SnapshotInput<'_>) {
     iso.post_snapshot(encode_snapshot(snap));
 }
 
-fn post_native(iso: &LoadIsolate, snap: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
-    iso.post_snapshot(encode_snapshot_with_native(snap, native));
+fn post_native(iso: &LoadIsolate, snap: &SnapshotInput<'_>, native: &NativeFactsInput<'_>) {
+    iso.post_snapshot(encode_snapshot_with_native(snap, *native));
 }
 
 fn tick(iso: &LoadIsolate, n: u64) {
@@ -267,7 +268,7 @@ fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
         other => panic!("expected close-in walk-near, got {other:?}"),
     };
     snap.tick = 2;
-    post_native(&iso, &snap, fail_native(request_id, 5, 5, 3));
+    post_native(&iso, &snap, &fail_native(request_id, 5, 5, 3));
     tick(&iso, 2);
     assert_eq!(
         iso.probe("__ok").unwrap(),
@@ -310,7 +311,7 @@ fn stand_walk_failure_takes_the_ladder_scene_step_before_the_talk() {
         other => panic!("expected stand walk-near, got {other:?}"),
     };
     snap.tick = 2;
-    post_native(&iso, &snap, fail_native(request_id, 5, 5, 1));
+    post_native(&iso, &snap, &fail_native(request_id, 5, 5, 1));
     tick(&iso, 2);
     assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
     assert_eq!(
@@ -598,7 +599,7 @@ fn npc_dialog_opens_the_door_in_front_of_an_unreachable_npc_then_talks() {
     // Frozen approaches the door with walkResilient (Reach.ts:112-114): a
     // failed baked walk takes the ladder's scene step, not the Open.
     snap.tick = 2;
-    post_native(&iso, &snap, fail_native(request_id, 7, 5, 1));
+    post_native(&iso, &snap, &fail_native(request_id, 7, 5, 1));
     tick(&iso, 2);
     assert_eq!(
         iso.drain_interacts(),
@@ -917,7 +918,8 @@ fn cant_reach(seq: i32) -> [ChatLineInput<'static>; 1] {
 }
 
 fn logs(iso: &LoadIsolate) -> Vec<String> {
-    serde_json::from_value(iso.probe("__logs").unwrap()).unwrap()
+    serde_json::from_value(iso.probe("__logs").expect("read reach-test logs"))
+        .expect("decode reach-test logs")
 }
 
 #[test]
@@ -959,7 +961,7 @@ fn entity_op_walks_to_and_opens_the_door_toward_the_target_then_retries() {
     // baked walk takes the scene step; the Open follows once the ladder
     // ends beside the door.
     snap.tick = 3;
-    post_native(&iso, &snap, fail_native(request_id, 7, 5, 1));
+    post_native(&iso, &snap, &fail_native(request_id, 7, 5, 1));
     tick(&iso, 3);
     assert_eq!(
         iso.drain_interacts(),
@@ -1305,7 +1307,12 @@ fn tick_until_settled(
     let mut ops = Vec::new();
     let mut n = from;
     // `__ok` exists only once the script's first loop has run.
-    while n < from + ticks && iso.probe("globalThis.__ok ?? null").unwrap() == Value::Null {
+    while n < from + ticks
+        && iso
+            .probe("globalThis.__ok ?? null")
+            .expect("read reach completion state")
+            == Value::Null
+    {
         std::thread::sleep(pause);
         tick(iso, n);
         ops.extend(iso.drain_interacts());
@@ -1757,7 +1764,7 @@ fn loc_op_pumps_sustain_while_it_walks_to_the_stand() {
 fn loc_op_clicks_after_a_wait(expect_ms: &str, wait_for_retry: bool) -> usize {
     let iso = spawn(LOC_OP);
     iso.probe(&format!("globalThis.__expectMs = {expect_ms}"))
-        .unwrap();
+        .expect("set reach-test expectation duration");
     let actions = ["Take From".to_string()];
     let locs = [barrel(&actions, 6, 5, 1)];
     let mut snap = base(stand());
@@ -1779,7 +1786,7 @@ fn loc_op_clicks_after_a_wait(expect_ms: &str, wait_for_retry: bool) -> usize {
             "{expect_ms}: hang guard expired, no retry click after tick {n}"
         );
     }
-    let ok = iso.probe("__ok").unwrap();
+    let ok = iso.probe("__ok").expect("read reach-test result");
     iso.join();
     assert_eq!(first, vec![loc_op(6, 5, "Take From", 7000)], "{expect_ms}");
     assert_eq!(ok, Value::Null, "{expect_ms}: still reaching, not {ok}");
@@ -1834,7 +1841,7 @@ export default class T extends LoopingBot {
         canlight: &[],
         stamp: 1,
     };
-    post_native(&iso, &snap, NativeFactsInput::default());
+    post_native(&iso, &snap, &NativeFactsInput::default());
     tick(&iso, 1);
 
     let blocked = "{ x: 6, z: 5, level: 0 }";

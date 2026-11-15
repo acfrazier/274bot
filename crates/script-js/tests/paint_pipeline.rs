@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use script::paint::ScriptPaint;
 use script_js::LoadIsolate;
 
-mod common;
+pub mod common;
 
 fn spawn(src: &str) -> LoadIsolate {
     let shape = script_js::detect_shape(src);

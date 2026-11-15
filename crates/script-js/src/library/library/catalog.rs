@@ -879,14 +879,14 @@ impl CatalogDiffWork {
         let registry_index = crate::library::rs2b0t_registry::RegistryIndex::parse(&index_ts)
             .map_err(|error| CatalogWorkerError::Registry {
                 path: index.display().to_string(),
-                reason: error.to_string(),
+                reason: error,
             })?;
         let registrations =
             registry_index
                 .registrations()
                 .map_err(|error| CatalogWorkerError::Registry {
                     path: index.display().to_string(),
-                    reason: error.to_string(),
+                    reason: error,
                 })?;
         if registrations.len() > MAX_CATALOG_CARDS {
             return Err(CatalogWorkerError::TooManyRegistrations);
@@ -1349,7 +1349,7 @@ impl CatalogDiffWork {
                     )
                     .map_err(|error| CatalogWorkerError::CardBounded {
                         name: registration.name.clone(),
-                        reason: error.to_string(),
+                        reason: error,
                     })?;
                 let incoming = CatalogIncoming {
                     card,

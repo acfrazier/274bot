@@ -107,7 +107,8 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn quest-status isolate")
 }
 
 /// Reads the raw isolate page (`__rs2b0t_host.snapshot`) so a test can see
@@ -133,7 +134,8 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn raw quest-page isolate")
 }
 
 /// rs2b0t's `reader.questStatuses()` returns `[]` while the quest tab is not loaded (no side-tab
@@ -151,7 +153,8 @@ fn tick(iso: &LoadIsolate, bytes: Vec<u8>, tick: u64) -> serde_json::Value {
     iso.post_snapshot(bytes);
     iso.on_game_tick(tick);
     let _ = iso.probe("true");
-    iso.probe("__probe").unwrap()
+    iso.probe("__probe")
+        .expect("read quest-status probe result")
 }
 
 #[test]

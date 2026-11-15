@@ -4,7 +4,7 @@ use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script::paint::{ScriptPaint, ScriptPaintButton};
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
@@ -96,18 +96,20 @@ fn tick(iso: &LoadIsolate, n: u64) {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn paint-button test isolate")
 }
 
 fn got(iso: &LoadIsolate) -> i64 {
     iso.probe("globalThis.__got || 0")
-        .unwrap()
+        .expect("read paint-button count")
         .as_i64()
-        .unwrap()
+        .expect("paint-button count is an integer")
 }
 
 fn clicked(iso: &LoadIsolate) -> serde_json::Value {
-    iso.probe("globalThis.__clicked").unwrap()
+    iso.probe("globalThis.__clicked")
+        .expect("read paint-button click result")
 }
 
 const PAINT: &str = r#"

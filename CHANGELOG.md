@@ -102,6 +102,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
     test server, once on a new Tutorial Island account and once on a mainland
     account. That was a start-and-run check, not a full training session.
 
+- Starting a built-in script (a Gatherer, for example) while a random-event
+  guardian was handling an event on the same bot, such as a maze or a
+  trapped box, could stop the bot's script thread with a panic. The script now
+  installs and waits, and it starts working on the first frame after the
+  guardian releases the bot. Stop during the wait works as usual.
+
 ### Scenario receipts
 
 - Scenario receipts retain ordered step intentions, dispatch results, observed

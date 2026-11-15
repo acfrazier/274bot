@@ -141,7 +141,7 @@ fn far_validates_near_and_hold_window_do_not() {
         "chebyshev 12 is Hold, not this task"
     );
     hunt_fight::set_observation(obs_at(Some(indexed_spot())));
-    assert!(!validate(token, p.clone()), "atTile is not a long walk-in");
+    assert!(!validate(token, p), "atTile is not a long walk-in");
     hunt_fight::set_observation(obs_at(Some(tile(2906, 9809, 0))));
     assert!(
         !validate(token, proj(json!({ "hasFood": true }))),
@@ -442,7 +442,7 @@ fn pause_and_hold_freeze_the_one_approach_deadline() {
     assert!(before > 100_000, "{before}");
     hunt_fight::on_pause();
     thread::sleep(Duration::from_millis(280));
-    let frozen = call("next", token, p.clone(), Some(ack(5)));
+    let frozen = call("next", token, p, Some(ack(5)));
     assert_eq!(frozen["kind"], "wait");
     hunt_fight::on_resume();
     let after = walk_deadline_remaining_ms(token).unwrap_or(0);
@@ -483,7 +483,7 @@ fn siblings_keep_verbs_and_walk_token_is_separate() {
 
     let fp = proj(json!({ "approach": [{"x": 1, "z": 1, "level": 0}] }));
     let fight_step = hunt_fight::dispatch(&{
-        let mut v = fp.clone();
+        let mut v = fp;
         v["op"] = json!("next");
         v["token"] = json!(fight);
         v
@@ -539,7 +539,7 @@ fn unexpected_replies_abort_and_unknown_op_is_not_invented() {
     let token = begin();
     assert_eq!(call("next", token, p.clone(), None)["kind"], "status");
     assert_eq!(call("next", token, p.clone(), None)["kind"], "walk");
-    let npc = call("next", token, p.clone(), Some(json!({ "queued": true })));
+    let npc = call("next", token, p, Some(json!({ "queued": true })));
     assert_eq!(npc["kind"], "aborted");
     let missing = hunt_fight::walk_dispatch(&json!({ "op": "walk-resilient", "token": token }));
     assert_eq!(missing["kind"], "notImpl");

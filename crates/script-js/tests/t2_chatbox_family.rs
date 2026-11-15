@@ -8,7 +8,7 @@ use {
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
 
-mod common;
+pub mod common;
 use common::{ingame_snapshot, post_snapshot_input};
 
 const SOURCE: &str = r#"
@@ -22,9 +22,11 @@ export default class T extends LoopingBot {
 "#;
 
 fn spawn() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(SOURCE.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(SOURCE.into(), LoadShape::CompatClass, vec![])
+        .expect("spawn chatbox-family isolate");
     assert_eq!(
-        iso.probe("typeof globalThis.__gameMessages").unwrap(),
+        iso.probe("typeof globalThis.__gameMessages")
+            .expect("verify chatbox-family export"),
         json!("object")
     );
     iso
@@ -39,7 +41,7 @@ fn lines<'a>(rows: &'a [ChatLineInput<'a>]) -> SnapshotInput<'a> {
 fn tick(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     post_snapshot_input(iso, input);
     iso.on_game_tick(input.tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso.probe("true").expect("settle chatbox-family tick");
 }
 
 fn row(seq: i32, text: &'static str) -> ChatLineInput<'static> {
@@ -64,11 +66,12 @@ fn post_delta(
 fn tick_delta(iso: &LoadIsolate, tick: u64, bytes: Vec<u8>) {
     iso.post_snapshot(bytes);
     iso.on_game_tick(tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso.probe("true").expect("settle chatbox-family delta tick");
 }
 
 fn value(iso: &LoadIsolate, expression: &str) -> Value {
-    iso.probe(expression).unwrap()
+    iso.probe(expression)
+        .expect("read chatbox-family probe result")
 }
 
 #[test]

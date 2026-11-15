@@ -93,7 +93,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
 }
 
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R274)
+        .expect("load revision 274 spell-facts test data")
 }
 
 #[test]

@@ -9,7 +9,7 @@ use {
     script_js::wire::{decode_interact_batch, encode_interact_batch},
 };
 
-mod common;
+pub mod common;
 use common::post_snapshot_input;
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -114,7 +114,8 @@ fn hide_row<'a>(ops: &'a [String]) -> ItemRowInput<'a> {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn count-dialog adapter isolate")
 }
 
 fn probe_src(body: &str) -> String {
@@ -139,7 +140,8 @@ fn tick_probe(
     post_snapshot_input(iso, snap);
     iso.on_game_tick(tick);
     let _ = iso.probe("true");
-    iso.probe(expr).unwrap()
+    iso.probe(expr)
+        .expect("read count-dialog adapter probe result")
 }
 
 #[test]

@@ -13,7 +13,7 @@ use {
     script_js::wire::encode_snapshot_with_native,
 };
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_bank_catalog.rs"]

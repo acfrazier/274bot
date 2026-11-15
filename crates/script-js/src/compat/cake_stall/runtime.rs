@@ -1049,7 +1049,11 @@ mod tests {
     fn refuse(runtime: &mut CakeStallRuntime, token: u64, obs: &Observation) -> Value {
         let steal = runtime.next(token, obs);
         assert_eq!(steal["kind"], "loc", "{steal}");
-        runtime.deadline = Some(Instant::now() - Duration::from_millis(1));
+        runtime.deadline = Some(
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("test deadline is in the past"),
+        );
         runtime.next(token, obs)
     }
 
@@ -1101,7 +1105,11 @@ mod tests {
         let token = token(&runtime.begin(Some(28)));
         let refused = refuse(&mut runtime, token, &observation());
         assert_eq!(refused["kind"], "observe", "a refusal loops: {refused}");
-        runtime.call_deadline = Some(Instant::now() - Duration::from_millis(1));
+        runtime.call_deadline = Some(
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("test deadline is in the past"),
+        );
         assert_eq!(runtime.next(token, &observation())["result"], "no-progress");
         assert_eq!(runtime.next(token, &observation())["kind"], "aborted");
 
@@ -1251,7 +1259,11 @@ mod tests {
         assert_eq!(runtime.next(token, &after)["kind"], "loc");
         assert_eq!(runtime.next(token, &after)["kind"], "wait");
         // Only now is the third refusal counted.
-        runtime.deadline = Some(Instant::now() - Duration::from_millis(1));
+        runtime.deadline = Some(
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("test deadline is in the past"),
+        );
         assert_eq!(runtime.next(token, &after)["kind"], "on-reset");
     }
 
@@ -1304,7 +1316,11 @@ mod tests {
         };
         assert_eq!(runtime.next(token, &far)["kind"], "walk-to");
         assert_eq!(runtime.next(token, &far)["kind"], "wait");
-        runtime.deadline = Some(Instant::now() - Duration::from_millis(1));
+        runtime.deadline = Some(
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("test deadline is in the past"),
+        );
         let short = runtime.next(token, &far);
         assert_eq!(short["kind"], "pause", "{short}");
         assert_eq!(
@@ -1315,7 +1331,11 @@ mod tests {
         let later = Observation { tick: 2, ..far };
         assert_eq!(runtime.next(token, &later)["kind"], "observe");
         assert_eq!(runtime.next(token, &later)["kind"], "walk-to");
-        runtime.deadline = Some(Instant::now() - Duration::from_millis(1));
+        runtime.deadline = Some(
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("test deadline is in the past"),
+        );
         let beside = Observation {
             here: Some(tile(2666, 3312)),
             ..observation()

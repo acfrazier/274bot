@@ -91,14 +91,16 @@ export default class T extends LoopingBot {
     loop() { globalThis.__probe = reader.retaliateControls(); }
 }
 "#;
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn retaliation-controls isolate")
 }
 
 fn tick(iso: &LoadIsolate, bytes: Vec<u8>, tick: u64) -> serde_json::Value {
     iso.post_snapshot(bytes);
     iso.on_game_tick(tick);
     let _ = iso.probe("true");
-    iso.probe("__probe").unwrap()
+    iso.probe("__probe")
+        .expect("read retaliation-controls probe result")
 }
 
 #[test]

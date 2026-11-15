@@ -3032,7 +3032,10 @@ fn rewrite_quoted_star_imports(body: &str, from_dir: &str) -> String {
                 }
             }
         }
-        let ch = body[i..].chars().next().unwrap();
+        let ch = body[i..]
+            .chars()
+            .next()
+            .expect("body contains a character at this UTF-8 byte offset");
         out.push(ch);
         i += ch.len_utf8();
     }

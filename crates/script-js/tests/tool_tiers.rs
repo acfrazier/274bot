@@ -89,7 +89,8 @@ export default class T extends LoopingBot {
 "#;
 
 fn tier_spawn() -> LoadIsolate {
-    LoadIsolate::spawn(TIER_SRC.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(TIER_SRC.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn tool-tiers test isolate")
 }
 
 #[test]

@@ -99,16 +99,18 @@ fn tick(iso: &LoadIsolate, n: u64) {
 }
 
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R274)
+        .expect("load revision 274 special-move test data")
 }
 
 fn data_289() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("load revision 289 special-move test data")
 }
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data())
-        .unwrap()
+        .expect("spawn special-move compatibility isolate")
 }
 
 const ARM: &str = r#"

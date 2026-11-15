@@ -5,7 +5,7 @@
 use script::native::snapshot_source::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 use common::post_snapshot_input;
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -110,7 +110,8 @@ fn row<'a>(
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn client adapter inventory isolate")
 }
 
 fn probe_src(body: &str) -> String {
@@ -135,7 +136,7 @@ fn tick_probe(
     post_snapshot_input(iso, snap);
     iso.on_game_tick(tick);
     let _ = iso.probe("true");
-    iso.probe(expr).unwrap()
+    iso.probe(expr).expect("read client adapter probe result")
 }
 
 #[test]
