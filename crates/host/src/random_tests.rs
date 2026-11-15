@@ -2240,105 +2240,189 @@ fn angry_drunken_dwarf_stays_dialog_and_releases_after_resolution() {
 }
 
 #[test]
-fn fight_and_ignore_policies_force_flee_and_release_native_claim() {
+fn fight_policy_forces_flee_and_releases_native_claim() {
     if !api::test_support::game_data_available() {
         return;
     }
 
-    let data = event_game_data();
-    for policy in [
+    // A saved Fight stays Fight and the Guardian still treats it as Flee
+    // until its own slice.
+    let mut settings = ProfileSettings::default();
+    settings
+        .random_event_policies
+        .insert("river troll".to_string(), vault::RandomEventPolicy::Fight);
+    assert_eq!(
+        settings.random_event_policy("river troll"),
         vault::RandomEventPolicy::Fight,
-        vault::RandomEventPolicy::Ignore,
-    ] {
-        let mut c = new_client();
-        ingame_scene(&mut c);
-        plant_player(&mut c, "Test", 0, 0);
-        plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
-        let mut settings = ProfileSettings::default();
-        settings
-            .random_event_policies
-            .insert("river troll".to_string(), policy);
-        let mut g = Guardian::new();
-        let mut drv = FakeDriver::default();
-        let mut snap = GameSnapshot::new();
-        let notifications = std::cell::Cell::new(0);
-        tick_at(&mut c, &mut snap);
-        let mut knock = |event: &DetectedRandom| {
-            assert_eq!(event.kind, RandomKind::Evade);
-            notifications.set(notifications.get() + 1);
-            RandomClaim::Handle
-        };
-        let mut status = g.tick_with_live_policies(
-            &mut drv,
-            &snap,
-            &settings,
-            &GuardianLiveContext {
-                event_policies: &settings.random_event_policies,
-                game_data: Some(&data),
-            },
-            0,
-            Some(&mut knock),
-        );
-        assert_eq!(status.kind, Some(RandomKind::Evade));
-        assert_eq!(
-            status.claim,
-            RandomClaim::Host,
-            "the unsupported policy is overridden"
-        );
-        assert!(status.ours && status.hold, "{policy:?} is treated as Flee");
-        assert_eq!(drv.walks, vec![(0, -7)]);
-        assert_eq!(notifications.get(), 1, "the native script is notified once");
+        "a saved Fight stays Fight"
+    );
 
-        let player = c.local_player.as_mut().expect("player");
-        player.entity.route_length = 1;
-        player.route_x[0] = 0;
-        player.route_z[0] = -7;
-        tick_at(&mut c, &mut snap);
-        status = g.tick_with_live_policies(
-            &mut drv,
-            &snap,
-            &settings,
-            &GuardianLiveContext {
-                event_policies: &settings.random_event_policies,
-                game_data: Some(&data),
-            },
-            0,
-            Some(&mut knock),
-        );
-        assert!(status.hold && status.ours);
-        assert_eq!(
-            drv.walks,
-            vec![(0, -7)],
-            "the pending route is not replayed"
-        );
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let mut snap = GameSnapshot::new();
+    let notifications = std::cell::Cell::new(0);
+    tick_at(&mut c, &mut snap);
+    let mut knock = |event: &DetectedRandom| {
+        assert_eq!(event.kind, RandomKind::Evade);
+        notifications.set(notifications.get() + 1);
+        RandomClaim::Handle
+    };
+    let mut status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
+    assert_eq!(status.kind, Some(RandomKind::Evade));
+    assert_eq!(
+        status.claim,
+        RandomClaim::Host,
+        "the unsupported policy is overridden"
+    );
+    assert!(status.ours && status.hold, "Fight is treated as Flee");
+    assert_eq!(drv.walks, vec![(0, -7)]);
+    assert_eq!(notifications.get(), 1, "the native script is notified once");
 
-        c.npc[0] = None;
-        c.npc_count = 0;
-        tick_at(&mut c, &mut snap);
-        status = g.tick_with_live_policies(
-            &mut drv,
-            &snap,
-            &settings,
-            &GuardianLiveContext {
-                event_policies: &settings.random_event_policies,
-                game_data: Some(&data),
-            },
-            0,
-            Some(&mut knock),
-        );
-        assert_eq!(status.kind, None);
-        assert!(
-            !status.ours && !status.hold,
-            "compiled pending bits clear at resolution"
-        );
-        assert_eq!(status.claim, RandomClaim::Host);
-        assert_eq!(drv.walks, vec![(0, -7), (0, 0)]);
-        assert_eq!(
-            notifications.get(),
-            1,
-            "a continuing event does not re-knock"
-        );
+    let player = c.local_player.as_mut().expect("player");
+    player.entity.route_length = 1;
+    player.route_x[0] = 0;
+    player.route_z[0] = -7;
+    tick_at(&mut c, &mut snap);
+    status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
+    assert!(status.hold && status.ours);
+    assert_eq!(
+        drv.walks,
+        vec![(0, -7)],
+        "the pending route is not replayed"
+    );
+
+    c.npc[0] = None;
+    c.npc_count = 0;
+    tick_at(&mut c, &mut snap);
+    status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
+    assert_eq!(status.kind, None);
+    assert!(
+        !status.ours && !status.hold,
+        "compiled pending bits clear at resolution"
+    );
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert_eq!(drv.walks, vec![(0, -7), (0, 0)]);
+    assert_eq!(
+        notifications.get(),
+        1,
+        "a continuing event does not re-knock"
+    );
+}
+
+#[test]
+fn legacy_ignore_policy_is_flee_before_the_guardian_sees_it() {
+    if !api::test_support::game_data_available() {
+        return;
     }
+
+    // The 0.2.9.1-written vault fixture: `ignore` for the River troll, three
+    // other ignores, `fight` for Swarm, `flee` for Zombie, and two events
+    // with no entry.
+    const LEGACY: &[u8] = include_bytes!("../../vault/tests/fixtures/legacy-0.2.9-policies.vault");
+    const LEGACY_PASS: &str = "v11c-legacy-fixture";
+    let path = std::env::temp_dir().join(format!(
+        "274bot-host-legacy-policy-{}.vault",
+        std::process::id()
+    ));
+    std::fs::write(&path, LEGACY).unwrap();
+    let settings = {
+        let vault = vault::Vault::unlock(&path, LEGACY_PASS).unwrap();
+        vault.get("alice").expect("alice").settings.clone()
+    };
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(
+        settings.random_event_policy("river troll"),
+        vault::RandomEventPolicy::Flee,
+        "a 0.2.9 ignore reaches runtime as Flee"
+    );
+    assert_eq!(
+        settings.random_event_policy("swarm"),
+        vault::RandomEventPolicy::Fight,
+        "a saved Fight stays Fight"
+    );
+    assert_eq!(
+        settings.random_event_policy("tree spirit"),
+        vault::RandomEventPolicy::Flee,
+        "a missing entry keeps the default"
+    );
+
+    // The Guardian takes the ordinary Flee path: the script's Handle claim
+    // stands, it never falls into the unavailable-Fight branch that forces
+    // the Host claim, and the host neither walks nor holds.
+    let data = event_game_data();
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc_typed_with_op(&mut c, 0, 391, "River troll", 32768, None, "Attack");
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let mut snap = GameSnapshot::new();
+    let notifications = std::cell::Cell::new(0);
+    tick_at(&mut c, &mut snap);
+    let mut knock = |event: &DetectedRandom| {
+        assert_eq!(event.kind, RandomKind::Evade);
+        notifications.set(notifications.get() + 1);
+        RandomClaim::Handle
+    };
+    let status = g.tick_with_live_policies(
+        &mut drv,
+        &snap,
+        &settings,
+        &GuardianLiveContext {
+            event_policies: &settings.random_event_policies,
+            game_data: Some(&data),
+        },
+        0,
+        Some(&mut knock),
+    );
+    assert_eq!(status.kind, Some(RandomKind::Evade));
+    assert_eq!(
+        status.claim,
+        RandomClaim::Handle,
+        "the script keeps the event: ignore was converted to Flee"
+    );
+    assert!(
+        !status.hold,
+        "the host does not hold an event the script claimed"
+    );
+    assert!(drv.walks.is_empty(), "no escape walk is dispatched");
+    assert_eq!(notifications.get(), 1, "the native script is notified once");
 }
 
 #[test]

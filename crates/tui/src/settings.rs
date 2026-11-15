@@ -26,8 +26,7 @@ use crate::app::SettingFeedback;
 
 /// The popup's title while no profile is bound to it.
 pub const TITLE: &str = "settings";
-const EVENT_POLICY_UNAVAILABLE: &str =
-    "Fight and Ignore are unavailable; the Guardian treats saved choices as Flee.";
+const EVENT_POLICY_UNAVAILABLE: &str = frontend_core::GUARDIAN_FIGHT_UNAVAILABLE;
 
 /// The last line of a selected setting taller than the viewport: which of
 /// its lines are hidden and the key that shows them.
@@ -555,11 +554,7 @@ impl Widget for SettingsPane<'_> {
         };
         let event_index = self.state.random_event_index % GUARDIAN_EVENTS.len();
         let (event_key, event_label) = GUARDIAN_EVENTS[event_index];
-        let event_policy = match self.settings.random_event_policy(event_key) {
-            GuardianPolicy::Flee => "Flee",
-            GuardianPolicy::Fight => "Fight (not available yet)",
-            GuardianPolicy::Ignore => "Ignore (not available yet)",
-        };
+        let event_policy = self.settings.random_event_policy(event_key).label();
         let marker = |row| if selected_row == row { "> " } else { "  " };
 
         let rows = [
@@ -664,10 +659,7 @@ impl Widget for SettingsPane<'_> {
             None,
             None,
             None,
-            Some((
-                "Fight/Ignore are unavailable; the Guardian treats saved choices as Flee.",
-                note_style,
-            )),
+            Some((frontend_core::GUARDIAN_FIGHT_UNAVAILABLE, note_style)),
             Some((ROUTING_SCOPE_NOTE, note_style)),
             None,
             None,
@@ -1411,7 +1403,7 @@ mod tests {
     }
 
     #[test]
-    fn popup_returns_supported_policy_reset_and_refuses_repeated_choice() {
+    fn popup_returns_supported_policy_reset_and_refuses_fight() {
         let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
@@ -1421,40 +1413,39 @@ mod tests {
             ..Default::default()
         };
 
-        for policy in [GuardianPolicy::Fight, GuardianPolicy::Ignore] {
-            settings.set_random_event_policy("river troll", policy);
-            let changed = {
-                let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
-                pane.on_key(key(KeyCode::Enter))
-            };
-            assert_eq!(
-                changed,
-                SettingsKey::ChangedWithNotice(
-                    SettingsEdit::RandomEventPolicy {
-                        event: "river troll",
-                        policy: GuardianPolicy::Flee,
-                    },
-                    EVENT_POLICY_UNAVAILABLE,
-                )
-            );
-            assert_eq!(
-                settings.random_event_policy("river troll"),
-                policy,
-                "the caller applies the supported reset"
-            );
-            settings.set_random_event_policy("river troll", GuardianPolicy::Flee);
+        let policy = GuardianPolicy::Fight;
+        settings.set_random_event_policy("river troll", policy);
+        let changed = {
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
+            pane.on_key(key(KeyCode::Enter))
+        };
+        assert_eq!(
+            changed,
+            SettingsKey::ChangedWithNotice(
+                SettingsEdit::RandomEventPolicy {
+                    event: "river troll",
+                    policy: GuardianPolicy::Flee,
+                },
+                EVENT_POLICY_UNAVAILABLE,
+            )
+        );
+        assert_eq!(
+            settings.random_event_policy("river troll"),
+            policy,
+            "the caller applies the supported reset"
+        );
+        settings.set_random_event_policy("river troll", GuardianPolicy::Flee);
 
-            let refused = {
-                let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
-                pane.on_key(key(KeyCode::Enter))
-            };
-            assert_eq!(refused, SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE));
-            assert_eq!(
-                settings.random_event_policy("river troll"),
-                GuardianPolicy::Flee,
-                "selecting unavailable Fight or Ignore is refused"
-            );
-        }
+        let refused = {
+            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
+            pane.on_key(key(KeyCode::Enter))
+        };
+        assert_eq!(refused, SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE));
+        assert_eq!(
+            settings.random_event_policy("river troll"),
+            GuardianPolicy::Flee,
+            "selecting the unavailable Fight is refused"
+        );
     }
 
     #[test]

@@ -13,22 +13,39 @@ use crate::command::RasterMode;
 /// One hostile random's response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GuardianPolicy {
-    /// Walk away (the only supported response; saved Fight and Ignore act
-    /// as Flee).
+    /// Walk away. The default and, until Guardian Fight is enabled, the
+    /// only supported response: a saved Fight is kept and treated as Flee.
     #[default]
     Flee,
-    /// Fight it (not available yet).
+    /// Fight it (not available yet; saved, and treated as Flee until then).
     Fight,
-    /// Ignore it (not available yet).
-    Ignore,
 }
 
 impl GuardianPolicy {
+    /// The choices both frontends offer, in display order. Every choice is
+    /// shown; [`Self::available`] says which can be picked now. A 0.2.9 file's
+    /// `ignore` value reaches this vocabulary as `Flee` (the vault converts
+    /// it at the persistence boundary), so it is not a choice.
+    pub const OPTIONS: [Self; 2] = [Self::Flee, Self::Fight];
+
+    /// The label both frontends show for this choice.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Flee => "Flee",
+            Self::Fight => "Fight (not available yet)",
+        }
+    }
+
+    /// Whether the choice can be selected now. Flee is the only live choice
+    /// until Guardian Fight lands; the next slice makes Fight available.
+    pub fn available(self) -> bool {
+        matches!(self, Self::Flee)
+    }
+
     pub(crate) fn from_vault(policy: RandomEventPolicy) -> Self {
         match policy {
             RandomEventPolicy::Flee => Self::Flee,
             RandomEventPolicy::Fight => Self::Fight,
-            RandomEventPolicy::Ignore => Self::Ignore,
         }
     }
 
@@ -36,10 +53,14 @@ impl GuardianPolicy {
         match self {
             Self::Flee => RandomEventPolicy::Flee,
             Self::Fight => RandomEventPolicy::Fight,
-            Self::Ignore => RandomEventPolicy::Ignore,
         }
     }
 }
+
+/// The notice both frontends show when Fight is attempted, until its slice
+/// enables the choice. One string keeps the panel and the TUI in step.
+pub const GUARDIAN_FIGHT_UNAVAILABLE: &str =
+    "Fight is not available yet; a saved Fight is treated as Flee.";
 
 /// The hostile randoms with a per-event policy: (stable key, label), in
 /// display order.
@@ -459,3 +480,7 @@ impl<'a> ProfileView<'a> {
         ProfileDraft::from_profile(self.profile)
     }
 }
+
+#[cfg(test)]
+#[path = "profile_draft_tests.rs"]
+mod tests;

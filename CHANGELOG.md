@@ -44,6 +44,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Panel and terminal app
 
+- The per-event Guardian policy is now Flee or Fight in both apps; the
+  Ignore choice is gone. A policy saved as Ignore by 0.2.9 loads as Flee,
+  and the next settings save writes Flee. A saved Fight stays Fight.
 - The TUI keeps every Quester start-zone row reachable with PageUp and
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
 

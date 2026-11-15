@@ -105,15 +105,21 @@ pub fn assignment_key(source_kind: &str, identity: &str) -> String {
     format!("{source_kind}:{identity}")
 }
 
-/// Per-event response policy. Only `Flee` is supported; stored `Fight` and
-/// `Ignore` values are currently treated as `Flee`.
+/// Per-event response policy. `Flee` is the default and the only supported
+/// response; a stored `Fight` value is saved as `Fight` and currently treated
+/// as `Flee` by the Guardian.
+///
+/// A 0.2.9 file's `"ignore"` value reads as `Flee` through the
+/// deserialize-only alias below; serialization writes only `flee` and
+/// `fight`, so the next ordinary save drops the legacy spelling. Remove the
+/// alias when the preceding release's format no longer needs reading.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RandomEventPolicy {
     #[default]
+    #[serde(alias = "ignore")]
     Flee,
     Fight,
-    Ignore,
 }
 
 /// When a script drinks a held antipoison. The stored form of the
@@ -669,8 +675,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        build_blob, derive_key, parse_header, serialize_profiles, Profile, ProfileSettings, Vault,
-        VaultChange, VaultError, MAX_PBKDF2_ROUNDS, MAX_VAULT_FILE_BYTES, SALT_LEN,
+        build_blob, derive_key, parse_header, serialize_profiles, Profile, ProfileSettings,
+        RandomEventPolicy, Vault, VaultChange, VaultError, MAX_PBKDF2_ROUNDS, MAX_VAULT_FILE_BYTES,
+        SALT_LEN,
     };
 
     /// A passphrase used by the vaults these tests create.
@@ -680,6 +687,24 @@ mod tests {
     /// passphrase `bot`, 100,000 rounds, two synthetic profiles). It is that
     /// writer's own output, not something this build produced.
     const LEGACY_VAULT: &[u8] = include_bytes!("../tests/fixtures/legacy-0.1.9.vault");
+
+    /// A real vault written by 0.2.9.1's writer (tag `0.2.9.1`,
+    /// `a245c8355b911463f614d821f980bb355d64fc5e`; `Vault::create` and
+    /// `Vault::upsert` as tagged): one profile with three `ignore` entries,
+    /// one `fight`, one `flee`, and no entry for Tree spirit or Strange
+    /// plant. Passphrase `v11c-legacy-fixture`.
+    const LEGACY_0_2_9_VAULT: &[u8] =
+        include_bytes!("../tests/fixtures/legacy-0.2.9-policies.vault");
+    const LEGACY_0_2_9_PASS: &str = "v11c-legacy-fixture";
+
+    /// The profiles a vault file holds, decrypted for a test that checks the
+    /// stored spellings.
+    fn decrypted_profiles(file: &[u8], passphrase: &str) -> serde_json::Value {
+        let (salt, rounds, payload) = parse_header(file).unwrap();
+        let key = derive_key(passphrase, &salt, rounds);
+        let plaintext = super::decrypt(&key, payload).unwrap();
+        serde_json::from_slice(&plaintext).unwrap()
+    }
 
     fn tmp_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("274bot-vault-test-{}", std::process::id()));
@@ -791,6 +816,156 @@ mod tests {
         assert_eq!(
             decoded.random_event_policy("Swarm"),
             super::RandomEventPolicy::Flee
+        );
+
+        // 0.2.9 wrote `ignore`; it reads as Flee and the next encode writes
+        // `flee`, not the legacy spelling.
+        let legacy: ProfileSettings = serde_json::from_str(
+            r#"{"lowmem":true,"random_event_policies":{"river troll":"ignore","swarm":"fight"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            legacy.random_event_policy("river troll"),
+            RandomEventPolicy::Flee
+        );
+        assert_eq!(
+            legacy.random_event_policy("swarm"),
+            RandomEventPolicy::Fight
+        );
+        let canonical = serde_json::to_string(&legacy).unwrap();
+        assert!(canonical.contains(r#""river troll":"flee""#), "{canonical}");
+        assert!(!canonical.contains("ignore"), "{canonical}");
+
+        // An unknown value is a typed read error, never a silent reset.
+        let unknown: Result<ProfileSettings, _> =
+            serde_json::from_str(r#"{"lowmem":true,"random_event_policies":{"shade":"taunt"}}"#);
+        assert!(unknown.is_err(), "an unknown policy is rejected");
+    }
+
+    #[test]
+    fn legacy_0_2_9_ignore_reads_as_flee_and_the_next_save_writes_canonical() {
+        let path = tmp_path("legacy-0.2.9-policies.vault");
+        std::fs::write(&path, LEGACY_0_2_9_VAULT).unwrap();
+
+        let mut vault = Vault::unlock(&path, LEGACY_0_2_9_PASS).unwrap();
+        let settings = &vault.get("alice").unwrap().settings;
+        for event in ["river troll", "rock golem", "watchman"] {
+            assert_eq!(
+                settings.random_event_policy(event),
+                RandomEventPolicy::Flee,
+                "{event}: a 0.2.9 ignore reads as Flee"
+            );
+        }
+        assert_eq!(
+            settings.random_event_policy("swarm"),
+            RandomEventPolicy::Fight,
+            "a saved Fight stays Fight"
+        );
+        assert_eq!(
+            settings.random_event_policy("zombie"),
+            RandomEventPolicy::Flee
+        );
+        assert_eq!(
+            settings.random_event_policy("tree spirit"),
+            RandomEventPolicy::Flee,
+            "a missing entry keeps the default"
+        );
+        assert_eq!(
+            settings.random_event_policy("strange plant"),
+            RandomEventPolicy::Flee,
+            "a missing entry keeps the default"
+        );
+        assert_eq!(
+            settings.random_event_policies.len(),
+            5,
+            "every stored key survives the conversion"
+        );
+
+        // The next ordinary save (an unchanged profile) rewrites the file in
+        // the current format.
+        let profile = vault.get("alice").unwrap().clone();
+        vault.upsert(profile).unwrap();
+
+        let reopened = Vault::unlock(&path, LEGACY_0_2_9_PASS).unwrap();
+        let saved = &reopened.get("alice").unwrap().settings;
+        assert_eq!(
+            saved.random_event_policy("river troll"),
+            RandomEventPolicy::Flee
+        );
+        assert_eq!(saved.random_event_policy("swarm"), RandomEventPolicy::Fight);
+        assert_eq!(saved.random_event_policies.len(), 5);
+
+        let raw = decrypted_profiles(&std::fs::read(&path).unwrap(), LEGACY_0_2_9_PASS);
+        let stored = raw["alice"]["settings"]["random_event_policies"]
+            .as_object()
+            .expect("the policy map");
+        assert_eq!(
+            stored.len(),
+            5,
+            "each map value is converted on its own key"
+        );
+        assert_eq!(stored["river troll"], "flee");
+        assert_eq!(stored["rock golem"], "flee");
+        assert_eq!(stored["watchman"], "flee");
+        assert_eq!(stored["swarm"], "fight");
+        assert_eq!(stored["zombie"], "flee");
+        assert!(
+            !raw.to_string().contains("ignore"),
+            "the save wrote no legacy spelling: {raw}"
+        );
+    }
+
+    #[test]
+    fn unknown_policy_is_rejected_while_ignore_still_reads_as_flee() {
+        // The legacy spelling is the one accepted non-current value.
+        let accepted: ProfileSettings = serde_json::from_str(
+            r#"{"lowmem":false,"random_event_policies":{"river troll":"ignore"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            accepted.random_event_policy("river troll"),
+            RandomEventPolicy::Flee,
+            "the deserialize-only alias reads ignore as Flee"
+        );
+
+        let path = tmp_path("unknown-policy.vault");
+        let salt = [0x5au8; SALT_LEN];
+        let key = derive_key(PASS, &salt, super::PBKDF2_ROUNDS);
+        let plaintext = serde_json::json!({
+            "alice": {
+                "username": "alice",
+                "password": "pw",
+                "uid": 1,
+                "settings": {
+                    "lowmem": false,
+                    "random_event_policies": {"river troll": "taunt"}
+                }
+            }
+        })
+        .to_string();
+        let blob = build_blob(&salt, &key, plaintext.as_bytes(), super::PBKDF2_ROUNDS).unwrap();
+        std::fs::write(&path, &blob).unwrap();
+
+        match Vault::unlock(&path, PASS) {
+            Err(VaultError::Corrupt(reason)) => {
+                assert!(
+                    reason.contains("deserialize profiles"),
+                    "a typed read error from the profile decode: {reason}"
+                );
+                assert!(
+                    reason.contains("line 1 column"),
+                    "the reader reports where decoding failed: {reason}"
+                );
+            }
+            other => panic!(
+                "an unknown policy opened: {:?}",
+                other.err().map(|error| error.to_string())
+            ),
+        }
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            blob,
+            "the reader leaves an unsupported file untouched"
         );
     }
 

@@ -99,7 +99,7 @@ pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Ou
 pub use prefs::UiPreferences;
 pub use profile_draft::{
     CurePoison, GuardianPolicy, ProfileDraft, ProfileView, SettingsDraft, SurvivalDraft,
-    SurvivalSettings, GUARDIAN_EVENTS, SURVIVAL_FIELDS,
+    SurvivalSettings, GUARDIAN_EVENTS, GUARDIAN_FIGHT_UNAVAILABLE, SURVIVAL_FIELDS,
 };
 pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRefused};
 pub use profile_form::{

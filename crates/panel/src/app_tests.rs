@@ -4317,6 +4317,140 @@ impl dear_imgui_rs::ClipboardBackend for DrawnText {
         value.clone_into(&mut self.0.borrow_mut());
     }
 }
+
+/// The ImGui id of the window `name`, or `None` before its first frame.
+fn imgui_window_id(name: &str) -> Option<dear_imgui_rs::sys::ImGuiID> {
+    use std::ffi::CString;
+
+    let name = CString::new(name).unwrap();
+    // SAFETY: the caller binds the frame's context; the name outlives the call.
+    let window = unsafe { dear_imgui_rs::sys::igFindWindowByName(name.as_ptr()) };
+    if window.is_null() {
+        None
+    } else {
+        // SAFETY: `window` is alive for the bound context's frame.
+        Some(unsafe { (*window).ID })
+    }
+}
+
+/// The id `label` gets under `seed` (a window's or popup's id-stack top).
+fn imgui_item_id(label: &str, seed: dear_imgui_rs::sys::ImGuiID) -> dear_imgui_rs::sys::ImGuiID {
+    use std::ffi::CString;
+
+    let label = CString::new(label).unwrap();
+    // SAFETY: pure hashing over a NUL-terminated label.
+    unsafe { dear_imgui_rs::sys::igGetIDWithSeed_Str(label.as_ptr(), std::ptr::null(), seed) }
+}
+
+/// One real frame of the panel's Guardian policy control. `activate` queues
+/// an ImGui item activation (the operator's click path) before the control
+/// draws; the frame's drawn text is appended to `drawn`. Returns the
+/// control's own changed flag.
+fn guardian_policy_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    policy: &mut frontend_core::GuardianPolicy,
+    activate: Option<dear_imgui_rs::sys::ImGuiID>,
+) -> bool {
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([600.0, 320.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    let changed;
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        changed = ui
+            .window("guardian-policy")
+            .size([420.0, 220.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                if let Some(id) = activate {
+                    // SAFETY: the frame's context is bound; the id names an
+                    // item the control draws later this frame or the popup
+                    // draws it, and Dear ImGui queues the activation for the
+                    // next frame.
+                    unsafe { dear_imgui_rs::sys::igActivateItemByID(id) };
+                }
+                super::random_event_policy_combo(ui, "river troll", policy)
+            })
+            .unwrap_or(false);
+        ui.log_finish();
+    }
+    ctx.render();
+    changed
+}
+
+/// The panel's policy control is the real combo widget: exactly Flee and
+/// Fight are listed, a saved Fight stays visible and saved, picking Flee
+/// applies, and the disabled Fight choice is refused by the widget itself.
+#[test]
+fn guardian_policy_combo_offers_two_choices_and_refuses_fight() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = crate::test_support::imgui_context();
+    ctx.io_mut()
+        .set_backend_flags(BackendFlags::RENDERER_HAS_TEXTURES);
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+
+    // A previously saved Fight is shown and stays saved.
+    let mut policy = frontend_core::GuardianPolicy::Fight;
+    assert!(!guardian_policy_frame(&mut ctx, &mut policy, None));
+    let text = drawn.0.take();
+    assert!(
+        text.contains("Fight (not available yet)"),
+        "a saved Fight stays visible:\n{text}"
+    );
+    assert!(!text.contains("Ignore"), "no Ignore label draws:\n{text}");
+    assert_eq!(policy, frontend_core::GuardianPolicy::Fight);
+
+    let window = imgui_window_id("guardian-policy").expect("the policy window drew");
+    let combo = imgui_item_id("##random-event-policy-river troll", window);
+
+    // Opening the combo is the control's own activation path.
+    guardian_policy_frame(&mut ctx, &mut policy, Some(combo));
+    guardian_policy_frame(&mut ctx, &mut policy, None);
+    guardian_policy_frame(&mut ctx, &mut policy, None);
+    let opened = drawn.0.take();
+    assert!(
+        !opened.is_empty(),
+        "the policy control draws its preview and its options"
+    );
+    assert!(
+        opened.matches("Fight (not available yet)").count() == 2,
+        "the saved preview plus exactly one Fight option:\n{opened}"
+    );
+    assert!(opened.contains("Flee"), "the Flee option draws:\n{opened}");
+    assert!(
+        !opened.contains("Ignore"),
+        "no Ignore option draws:\n{opened}"
+    );
+
+    // Picking Flee applies. Dear ImGui draws a combo's open list in the
+    // recycled `##Combo_<depth>` popup window; this control has one combo,
+    // at depth 0.
+    let popup = imgui_window_id("##Combo_00").expect("the combo popup drew");
+    let flee = imgui_item_id("Flee", popup);
+    guardian_policy_frame(&mut ctx, &mut policy, Some(flee));
+    let changed = guardian_policy_frame(&mut ctx, &mut policy, None);
+    assert!(changed, "the frame reports the applied choice");
+    assert_eq!(policy, frontend_core::GuardianPolicy::Flee);
+    drawn.0.take();
+
+    // Reopening shows the current Flee and the one Fight option; activating
+    // the disabled Fight choice changes nothing.
+    guardian_policy_frame(&mut ctx, &mut policy, Some(combo));
+    guardian_policy_frame(&mut ctx, &mut policy, None);
+    guardian_policy_frame(&mut ctx, &mut policy, None);
+    drawn.0.take();
+    let popup = imgui_window_id("##Combo_00").expect("the combo popup drew again");
+    let fight = imgui_item_id("Fight (not available yet)", popup);
+    guardian_policy_frame(&mut ctx, &mut policy, Some(fight));
+    let changed = guardian_policy_frame(&mut ctx, &mut policy, None);
+    assert!(
+        !changed,
+        "the disabled Fight choice is refused by the control"
+    );
+    assert_eq!(policy, frontend_core::GuardianPolicy::Flee);
+}
+
 fn draw_status_detail(detail: &frontend_core::SlotDetail, walk: &str, mem: &str) -> String {
     let mut ctx = crate::test_support::imgui_context();
     let drawn = DrawnText::default();
