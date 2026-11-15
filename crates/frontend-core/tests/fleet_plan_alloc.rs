@@ -99,6 +99,17 @@ fn poll_events(d: &mut HeadlessDriver, polls: usize) -> usize {
     events() - before
 }
 
+/// The copy queue's own waiting state: targets still queued for room, and
+/// free native save slots. A copy waits only while targets remain queued and
+/// every save slot is taken; the frame that starts any of them is the
+/// copy's own work, not a waiting frame.
+fn copy_waiting(d: &HeadlessDriver) -> (usize, usize) {
+    (
+        d.models().scripts().copy_queue_waiting_for_test(),
+        d.session().native_copy_room_for_test(),
+    )
+}
+
 const PASSPHRASE: &str = "test-passphrase-01";
 const BOTS: usize = 100;
 
@@ -396,12 +407,15 @@ fn a_100_bot_world_switch_holds_bounded_state_and_quiet_frames_grow_nothing() {
 /// saves in flight are held), its queue is not copied each frame: a frame
 /// makes no more allocation calls than a frame with no copy at all.
 ///
-/// "Waits" is a period of its own: the copy's native preparations free room
-/// as they finish (a frame slept 20 ms after the confirm sees the burst
-/// that copies the remaining queue, about 19,000 calls). The window below
-/// is 20 undelayed frames, which stay inside that period; the serial guard
-/// keeps the sibling 100-bot tests from stretching them and from
-/// saturating the shared worker pool.
+/// "Waits" is the queue's own state, not a length of time: targets remain
+/// queued for room and every native save slot is taken. The window below
+/// measures a frame only while that state holds at both ends of it; the
+/// first frame that starts any of the queue ends the window and is not
+/// measured, because it is the copy's own work (a frame that lets 20 ms of
+/// native preparation pass copies the rest of the queue, about 19,000
+/// calls). A window cut short is reported as short, never as an allocation
+/// regression; the serial guard keeps the sibling 100-bot tests from
+/// stretching frames and from saturating the shared worker pool.
 #[test]
 fn a_full_copy_queue_allocates_nothing_while_it_waits() {
     if !api::test_support::game_data_available() {
@@ -453,15 +467,46 @@ fn a_full_copy_queue_allocates_nothing_while_it_waits() {
         .expect("copy report")
         .pending();
     assert_eq!(waiting, BOTS - 1, "every target waits while saves are held");
-    let waiting_events = poll_events(&mut d, 20);
+    // The window is the queue's waiting state, not a number of frames: a
+    // frame is measured only while targets remain queued and no save slot
+    // is free at both ends of it. The first frame that starts any of the
+    // queue ends it: those allocations are the copy's own work. Frames
+    // measured before that still count, and a window that ends before any
+    // frame is reported as too short rather than as a regression.
+    let mut waiting_events = 0;
+    let mut waiting_frames = 0;
+    let mut ended_early = false;
+    for _ in 0..20 {
+        let (queued_before, room_before) = copy_waiting(&d);
+        if queued_before == 0 || room_before != 0 {
+            ended_early = true;
+            break;
+        }
+        let before = events();
+        d.poll();
+        let (queued_after, room_after) = copy_waiting(&d);
+        if queued_after != queued_before || room_after != 0 {
+            ended_early = true;
+            break;
+        }
+        waiting_events += events() - before;
+        waiting_frames += 1;
+    }
     drop(held);
     eprintln!(
         "FLEET-COPY-QUEUE alloc_calls_20_quiet={baseline_events} \
-         alloc_calls_20_waiting={waiting_events}"
+         waiting_frames={waiting_frames} alloc_calls_waiting={waiting_events} \
+         window_ended_early={ended_early}"
     );
+    if ended_early {
+        eprintln!(
+            "FLEET-COPY-QUEUE window too short: the copy left its waiting state \
+             after {waiting_frames} measured frames"
+        );
+    }
     assert!(
         waiting_events <= baseline_events,
-        "{waiting_events} allocation calls over 20 frames while the copy queue waited, \
-         {baseline_events} with none"
+        "{waiting_events} allocation calls over {waiting_frames} frames while the copy \
+         queue waited, {baseline_events} over 20 with none"
     );
 }
