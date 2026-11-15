@@ -8,7 +8,7 @@ use {
     },
 };
 
-mod common;
+pub mod common;
 
 /// A loaded in-game scene (tile, scene state 2, stats), so the card's
 /// onPaint — where these tests read `reader.npcBox` — runs.
@@ -102,14 +102,16 @@ export default class T extends LoopingBot {{
 }}
 "#
     );
-    LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src, LoadShape::CompatClass, vec![])
+        .expect("spawn native NPC box test isolate")
 }
 
 fn tick(iso: &LoadIsolate, bytes: Vec<u8>, tick: u64) -> serde_json::Value {
     iso.post_snapshot(bytes);
     iso.on_game_tick(tick);
     let _ = iso.probe("true");
-    iso.probe("__probe").unwrap()
+    iso.probe("__probe")
+        .expect("read native NPC box probe result")
 }
 
 const POINTS: [(i32, i32); 8] = [

@@ -12,7 +12,7 @@ use {
     script_js::LoadShape,
 };
 
-mod common;
+pub mod common;
 
 /// Pump the slot's lifecycle observe until it reaches `want` (bounded).
 fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
@@ -162,7 +162,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn watchdog test isolate")
 }
 
 fn tick(iso: &LoadIsolate, n: u64, hold: bool) {

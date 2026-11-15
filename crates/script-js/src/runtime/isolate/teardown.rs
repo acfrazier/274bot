@@ -547,7 +547,11 @@ impl Drop for TickLoopFinish {
 /// claimed the active execution. Pause intent alone blocks only the next
 /// execution; healthy in-budget work already running is allowed to finish.
 pub(super) fn machines_halted(teardown: &Mutex<Teardown>) -> bool {
-    teardown.lock().unwrap().state.halted()
+    teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned")
+        .state
+        .halted()
 }
 
 fn begin_execution(
@@ -559,7 +563,7 @@ fn begin_execution(
 ) -> bool {
     teardown
         .lock()
-        .unwrap()
+        .expect("isolate teardown state mutex is not poisoned")
         .begin_execution(tick, generation, now, honor_pause)
 }
 
@@ -602,7 +606,9 @@ pub(super) fn finish_interruptible_execution(
     v8: &mut impl CancelTerminate,
     teardown: &Mutex<Teardown>,
 ) -> Option<InterruptedExecution> {
-    let mut st = teardown.lock().unwrap();
+    let mut st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     let interrupt = st.state.finish_execution();
     v8.cancel_terminate();
     interrupt
@@ -615,7 +621,9 @@ pub(super) fn fire_execution_interrupt(
     id: u64,
     owner: ExecutionInterrupt,
 ) -> bool {
-    let mut st = teardown.lock().unwrap();
+    let mut st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     if !st.state.fire_interrupt(id, owner) {
         return false;
     }
@@ -640,7 +648,11 @@ pub(super) fn begin_arm(
     teardown: &Mutex<Teardown>,
     owner: ExecutionInterrupt,
 ) -> Option<DeadlineArm> {
-    let (id, started) = teardown.lock().unwrap().state.arm_deadline(owner)?;
+    let (id, started) = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned")
+        .state
+        .arm_deadline(owner)?;
     Some(DeadlineArm {
         id,
         at: started + EXECUTION_WATCHDOG_HORIZON,
@@ -692,9 +704,17 @@ pub(super) fn note_interrupt_consumed(
     teardown: &Mutex<Teardown>,
     consumed_by_call: impl FnOnce() -> bool,
 ) {
-    let interrupted = teardown.lock().unwrap().state.interrupted();
+    let interrupted = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned")
+        .state
+        .interrupted();
     if interrupted && consumed_by_call() {
-        teardown.lock().unwrap().state.mark_consumed();
+        teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned")
+            .state
+            .mark_consumed();
     }
 }
 
@@ -721,7 +741,9 @@ pub(super) fn watchdog_look(
     if !ready {
         return None;
     }
-    let st = teardown.lock().unwrap();
+    let st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     let execution = st.state.probe()?;
     let elapsed = now.saturating_duration_since(execution.started);
     Some(if elapsed <= EXECUTION_WATCHDOG_HORIZON {
@@ -795,7 +817,9 @@ pub(super) fn revoke(teardown: &Mutex<Teardown>) {
 }
 
 pub(super) fn enter_teardown_hook(teardown: &Mutex<Teardown>, now: Instant) -> bool {
-    let mut st = teardown.lock().unwrap();
+    let mut st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     #[cfg(any(test, feature = "test-hooks"))]
     let hook_timeout = st.test_hook_timeout.unwrap_or(ON_STOP_DEADLINE);
     #[cfg(not(any(test, feature = "test-hooks")))]
@@ -804,7 +828,11 @@ pub(super) fn enter_teardown_hook(teardown: &Mutex<Teardown>, now: Instant) -> b
 }
 
 pub(super) fn finish_teardown_hook(teardown: &Mutex<Teardown>) {
-    teardown.lock().unwrap().state.finish_hook();
+    teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned")
+        .state
+        .finish_hook();
 }
 
 pub(super) fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
@@ -823,13 +851,19 @@ pub(super) fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
 }
 
 pub(super) fn take_hook_entry_delay(teardown: &Mutex<Teardown>) -> Option<Duration> {
-    teardown.lock().unwrap().hook_entry_delay.take()
+    teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned")
+        .hook_entry_delay
+        .take()
 }
 
 /// The hook's one absolute deadline, while the hook owns V8. The phase check
 /// and the eventual terminate share the teardown mutex.
 pub(super) fn hook_deadline(teardown: &Mutex<Teardown>) -> Option<Instant> {
-    let st = teardown.lock().unwrap();
+    let st = teardown
+        .lock()
+        .expect("isolate teardown state mutex is not poisoned");
     if st.fail_hook_registration {
         return None;
     }

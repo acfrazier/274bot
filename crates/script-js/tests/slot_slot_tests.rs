@@ -1025,7 +1025,7 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
     });
     assert!(slot.post_snapshot_delta(&input, NativeFactsInput::default(), false));
     slot_tick(slot, n, Some(here));
-    slot.probe("true").unwrap();
+    slot.probe("true").expect("probe slot after held walk tick");
     let (_, game_rows, _) = slot.drain_host_interacts(None);
     assert!(
         game_rows.iter().all(|row| !matches!(

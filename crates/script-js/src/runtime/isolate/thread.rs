@@ -179,7 +179,10 @@ impl Drop for RuntimeLifetime {
 
 /// The isolate thread: create the Runtime, wire the module, hand the
 /// thread-safe isolate handle back, then run the tick loop.
-#[allow(clippy::too_many_arguments)] // channel endpoints plus optional diagnostics
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep channel endpoints and optional diagnostics explicit at isolate-thread entry"
+)]
 pub(super) fn isolate_main(
     source: String,
     card_name: std::sync::Arc<str>,
@@ -240,7 +243,9 @@ pub(super) fn isolate_main(
     let _ = terminate_cell.set(setup_handle.clone());
     let setup_failed = setup.send(SetupMessage::Interrupt(terminate)).is_err();
     {
-        let st = teardown.lock().unwrap();
+        let st = teardown
+            .lock()
+            .expect("isolate teardown state mutex is not poisoned");
         if setup_failed || st.state.is_stopping() {
             setup_handle.terminate_execution();
         }
@@ -782,7 +787,10 @@ impl<'de> serde::Deserialize<'de> for PaintRecord {
 /// Finish the tick's one paint/readback pass and forward changed host facts.
 /// Arguments are the explicit tick identity plus the isolate-owned caches;
 /// keeping them borrowed avoids rebuilding an aggregate on every tick.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep borrowed tick inputs explicit instead of rebuilding an aggregate every tick"
+)]
 fn finish_tick(
     runtime: &mut Runtime,
     out: &Sender<ThreadMsg>,
@@ -1211,7 +1219,10 @@ fn fire_frame_listeners(
 /// next one — at most one `loop()` start per tick. A settling `onStart`
 /// is re-polled after the pump so the first `loop()` follows a successful
 /// one at once; after a failed one it starts on the next tick.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep phase inputs explicit so the tick's ordered phases stay visible"
+)]
 fn run_tick_phases(
     runtime: &mut Runtime,
     runner: &mut Runner,
@@ -1529,7 +1540,10 @@ const CHANNEL_EVENTS_MAX: usize = 64;
 /// generation. The window runs past snapshots: the host posts one before
 /// every tick, so stopping at the first non-Tick would skip nothing. Every
 /// other drained command then runs in its queued order.
-#[allow(clippy::too_many_arguments)] // isolate loop owns queues, gens, teardown, and mode flags
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The isolate loop owns queues, generations, teardown, and mode flags"
+)]
 fn tick_loop(
     mut runtime: Runtime,
     cmds: CmdQueue,
@@ -2833,13 +2847,15 @@ fn tick_loop(
             IsolateCmd::TestBlock { release, entered } => {
                 {
                     let (lock, cv) = &*entered;
-                    *lock.lock().unwrap() = true;
+                    *lock.lock().expect("test thread gate mutex is not poisoned") = true;
                     cv.notify_all();
                 }
                 let (lock, cv) = &*release;
-                let mut open = lock.lock().unwrap();
+                let mut open = lock.lock().expect("test thread gate mutex is not poisoned");
                 while !*open {
-                    open = cv.wait(open).unwrap();
+                    open = cv
+                        .wait(open)
+                        .expect("test thread gate mutex is not poisoned");
                 }
             }
             IsolateCmd::Stop { invoke_hook } => {

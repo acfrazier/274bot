@@ -10,7 +10,7 @@ mod local_game_data;
 
 fn facts(revision: ClientRevision) -> api::game_data::QuestIdentityFacts {
     api::game_data::for_revision(revision)
-        .unwrap()
+        .expect("load quest-identity test data")
         .quest_identity()
         .expect("landed family")
         .clone()
@@ -369,14 +369,21 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 }
 
 fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
-    let data = api::game_data::for_revision(revision).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let data = api::game_data::for_revision(revision).expect("load quest-facts test data");
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .expect("spawn quest-facts test isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let value = iso.probe("globalThis.__probe").unwrap();
+    let value = iso
+        .probe("globalThis.__probe")
+        .expect("read quest-facts probe result");
     iso.join();
-    serde_json::from_str(value.as_str().unwrap()).unwrap()
+    serde_json::from_str(
+        value
+            .as_str()
+            .expect("quest-facts probe result is a JSON string"),
+    )
+    .expect("parse quest-facts probe result")
 }
 
 fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {

@@ -4,7 +4,7 @@
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -162,7 +162,7 @@ export default class T extends LoopingBot {
             let mut inv: Vec<_> = (0..filler)
                 .map(|slot| ItemRowInput {
                     id: 526,
-                    slot: i32::try_from(slot).unwrap(),
+                    slot: i32::try_from(slot).expect("inventory slot fits in i32"),
                     component_id: 3214,
                     ..ItemRowInput::nc(Some("Bones"), 1)
                 })
@@ -170,7 +170,7 @@ export default class T extends LoopingBot {
             if held > 0 {
                 inv.push(ItemRowInput {
                     id: 379,
-                    slot: i32::try_from(filler).unwrap(),
+                    slot: i32::try_from(filler).expect("filler inventory slot fits in i32"),
                     component_id: 3214,
                     ..ItemRowInput::nc(Some("Lobster"), held)
                 });
@@ -204,7 +204,7 @@ export default class T extends LoopingBot {
             self.runner.tick_from_input(
                 self.tick,
                 &input,
-                NativeFactsInput {
+                &NativeFactsInput {
                     bank_snapshot_generation: Some(3),
                     ..NativeFactsInput::default()
                 },
@@ -240,7 +240,10 @@ export default class T extends LoopingBot {
                 let clicks = self.step(held, 0);
                 if !clicks.is_empty() {
                     assert_eq!(clicks.len(), 1, "each click waits for its own receipt");
-                    return clicks.into_iter().next().unwrap();
+                    return clicks
+                        .into_iter()
+                        .next()
+                        .expect("exactly one withdrawal click follows the length assertion");
                 }
             }
             let logs = self.runner.slot.drain_logs();
@@ -253,7 +256,9 @@ export default class T extends LoopingBot {
         }
 
         fn result(&self) -> Value {
-            self.runner.probe("globalThis.__gained").unwrap()
+            self.runner
+                .probe("globalThis.__gained")
+                .expect("read gained item count")
         }
 
         fn finish(&mut self, held: i32, filler: usize, expected: i32) {

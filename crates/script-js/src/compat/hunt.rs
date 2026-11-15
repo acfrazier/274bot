@@ -33,12 +33,8 @@ mod teleport_out;
 mod wait;
 
 pub(crate) use acquire::Acquire;
-#[allow(unused_imports)]
-pub(crate) use teleport_out::TeleportOutArgs;
 pub(crate) use teleport_out::{escape_shortfall, TeleportOut};
 pub(crate) use wait::WaitFed;
-#[allow(unused_imports)]
-pub(crate) use wait::WaitFedArgs;
 
 use crate::compat::hunt_fight::{Area, Tile};
 use crate::machine::{AbortReason, Begin, Call, Cx, Ended, Family, Reply, Step, Thrown};

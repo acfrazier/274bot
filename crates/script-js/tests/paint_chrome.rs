@@ -5,7 +5,7 @@ use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script::paint::PaintChromeBand;
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
@@ -97,7 +97,8 @@ fn tick(iso: &LoadIsolate, n: u64) {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn paint chrome test isolate")
 }
 
 const CHROME: &str = r#"

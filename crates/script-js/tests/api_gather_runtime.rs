@@ -126,18 +126,19 @@ fn tick_with_last(
 ) -> SnapshotFingerprint {
     let fingerprint = post_snapshot(iso, tick, api_gather, api_gather_outcome, last);
     iso.on_game_tick(tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso.probe("true").expect("complete gather API tick");
     fingerprint
 }
 
 fn isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(BASE_SCRIPT.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(BASE_SCRIPT.into(), LoadShape::NativeTick, vec![])
+        .expect("spawn gather runtime isolate");
     tick(&iso, 1, None, None);
     iso
 }
 
 fn begin(iso: &LoadIsolate, label: &str, settings: &serde_json::Value) {
-    let settings = serde_json::to_string(settings).unwrap();
+    let settings = serde_json::to_string(settings).expect("serialize gather settings");
     let expression = format!(
         r#"(() => {{
           globalThis.__{label}Result = null;
@@ -151,17 +152,21 @@ fn begin(iso: &LoadIsolate, label: &str, settings: &serde_json::Value) {
           return true;
         }})()"#
     );
-    assert_eq!(iso.probe(&expression).unwrap(), true);
+    assert_eq!(
+        iso.probe(&expression)
+            .expect("begin gather runtime request"),
+        true
+    );
 }
 
 fn forward_queued_controls(iso: &LoadIsolate) {
-    let current_tick = iso.probe("__api.tick").unwrap();
+    let current_tick = iso.probe("__api.tick").expect("read gather API tick");
     let current_tick = current_tick
         .as_f64()
         .unwrap_or_else(|| panic!("non-numeric API tick: {current_tick}"))
         as u64;
     iso.on_game_tick(current_tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso.probe("true").expect("complete queued gather controls");
 }
 
 fn begin_and_take_run(
@@ -189,7 +194,9 @@ fn take_single_run(
         })
         .collect();
     assert_eq!(runs.len(), 1, "expected one gather-run in {requests:?}");
-    runs.into_iter().next().unwrap()
+    runs.into_iter()
+        .next()
+        .expect("one gather-run request was queued")
 }
 
 fn counts() -> GatherCounts {
@@ -218,14 +225,15 @@ fn stop_end(token: u64) -> GatherEnd {
 }
 
 fn result(iso: &LoadIsolate, label: &str) -> serde_json::Value {
-    iso.probe(&format!("globalThis.__{label}Result")).unwrap()
+    iso.probe(&format!("globalThis.__{label}Result"))
+        .expect("read gather run result")
 }
 
 fn settles(iso: &LoadIsolate, label: &str) -> u64 {
     iso.probe(&format!("globalThis.__{label}Settles"))
-        .unwrap()
+        .expect("read gather settlement count")
         .as_u64()
-        .unwrap()
+        .expect("gather settlement count is an unsigned integer")
 }
 
 fn status() -> Arc<ScriptStatus> {

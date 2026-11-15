@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 use {script_js::LoadIsolate, script_js::LoadShape};
 
-mod common;
+pub mod common;
 
 fn probe(body: &str) -> Value {
     let source = format!(
@@ -20,10 +20,13 @@ export default class WorldPrimitiveProbe extends LoopingBot {{
 }}
 "#
     );
-    let isolate = LoadIsolate::spawn(source, LoadShape::CompatClass, vec![]).unwrap();
+    let isolate = LoadIsolate::spawn(source, LoadShape::CompatClass, vec![])
+        .expect("spawn world primitive probe isolate");
     common::post_snapshot_input(&isolate, &common::ingame_snapshot());
     isolate.on_game_tick(1);
-    let value = isolate.probe("globalThis.__world").unwrap();
+    let value = isolate
+        .probe("globalThis.__world")
+        .expect("read world primitive probe result");
     assert!(
         isolate.drain_interacts().is_empty(),
         "geometry sends no action"

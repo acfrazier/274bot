@@ -6,11 +6,17 @@ mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
 fn probe_json(src: &str) -> serde_json::Value {
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn combat-start helper isolate");
     iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
+    let value = iso
+        .probe("__probe")
+        .expect("read combat-start helper probe result");
     iso.join();
-    serde_json::from_str(value.as_str().unwrap()).unwrap()
+    let json = value
+        .as_str()
+        .expect("combat-start helper probe result is JSON text");
+    serde_json::from_str(json).expect("parse combat-start helper probe JSON")
 }
 
 #[test]

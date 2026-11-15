@@ -11,7 +11,8 @@ use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn fire test isolate")
 }
 
 fn row<'a>(name: &'a str, id: i32, count: i32, slot: i32) -> ItemRowInput<'a> {

@@ -5,7 +5,7 @@ use {
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
 
-mod common;
+pub mod common;
 
 fn entity<'a>(
     index: i32,

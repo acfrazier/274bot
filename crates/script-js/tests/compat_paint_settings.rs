@@ -1,6 +1,6 @@
 //! Compat cards: posted settings bag values reach `onPaint` after the loaded gate.
 
-mod common;
+pub mod common;
 
 use script_js::{LoadIsolate, LoadShape};
 

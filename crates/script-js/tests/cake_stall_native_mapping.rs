@@ -9,7 +9,7 @@ use {
     script_js::wire::{IsolateBuf, SnapshotFingerprint},
 };
 
-mod common;
+pub mod common;
 use common::post_snapshot_input;
 
 fn post_snapshot_delta(
@@ -213,7 +213,8 @@ export default class T extends LoopingBot {
 "#;
 
 fn spawn() -> LoadIsolate {
-    LoadIsolate::spawn(STEAL.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(STEAL.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn cake-stall isolate")
 }
 
 fn tick(iso: &LoadIsolate, n: u64) {
@@ -239,7 +240,9 @@ fn wait_result(iso: &LoadIsolate) -> serde_json::Value {
     loop {
         tick(iso, n);
         n += 1;
-        let value = iso.probe("globalThis.__result").unwrap();
+        let value = iso
+            .probe("globalThis.__result")
+            .expect("read cake-stall result");
         if !value.is_null() || std::time::Instant::now() > deadline {
             return value;
         }

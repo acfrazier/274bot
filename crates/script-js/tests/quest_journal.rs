@@ -235,7 +235,8 @@ impl Journal {
 
     fn with_script(js: &str) -> Self {
         Self {
-            iso: LoadIsolate::spawn(js.to_string(), LoadShape::NativeTick, vec![]).unwrap(),
+            iso: LoadIsolate::spawn(js.to_string(), LoadShape::NativeTick, vec![])
+                .expect("spawn quest-journal native isolate"),
             buf: IsolateBuf::new(),
             fingerprint: None,
             rows: None,
@@ -285,7 +286,9 @@ impl Journal {
     }
 
     fn probe(&self, expression: &str) -> Json {
-        self.iso.probe(expression).unwrap()
+        self.iso
+            .probe(expression)
+            .expect("read quest-journal probe result")
     }
 
     fn begin(&self, input: Json) -> Json {

@@ -579,8 +579,8 @@ mod v8_tests {
     use serde_json::json;
 
     use super::{clear_all, install};
+    use crate::runtime::snapshot::dispatch_native_events;
     use crate::scene::events::NativeEvent;
-    use crate::snapshot::dispatch_native_events;
 
     const FAST_CHILD: &str = "SCRIPT_EVENT_FAST_TEST_CHILD";
     const FAST_TEST: &str =
@@ -591,9 +591,13 @@ mod v8_tests {
 
     fn setup() -> Runtime {
         crate::runtime::platform::bootstrap_test_v8_platform();
-        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-        install(&mut runtime, Arc::new(AtomicUsize::new(0))).unwrap();
-        runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
+        let mut runtime =
+            Runtime::new(RuntimeOptions::default()).expect("create event callback test runtime");
+        install(&mut runtime, Arc::new(AtomicUsize::new(0)))
+            .expect("install event callback test bindings");
+        runtime
+            .eval::<()>(crate::shim::PRELUDE)
+            .expect("evaluate event callback test prelude");
         runtime
     }
 
@@ -743,7 +747,7 @@ globalThis.__nativeEventShapeFacts = () => {
             .eval::<()>(
                 "globalThis.__rs2b0t_dispatch_native_events(globalThis.__rs2b0t_pending_native_event_batch.splice(0))",
             )
-            .unwrap();
+            .expect("dispatch pending native events");
     }
 
     #[test]

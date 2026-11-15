@@ -13,7 +13,7 @@ use script::native::snapshot_source::{
 use script_js::wire::encode_snapshot_with_native;
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 
 /// Posted widget rows, each with `ITEMS_PER_WIDGET` item rows.
 const WIDGETS: usize = 64;

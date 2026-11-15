@@ -16,8 +16,11 @@ fn probe(src_body: &str, key: &str) -> serde_json::Value {
          {src_body}\n\
          export default class T extends LoopingBot {{ loop() {{}} }}\n"
     );
-    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap();
-    let value = iso.probe(key).unwrap();
+    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![])
+        .expect("spawn native tool-export compatibility isolate");
+    let value = iso
+        .probe(key)
+        .expect("read native tool-export probe result");
     iso.join();
     value
 }

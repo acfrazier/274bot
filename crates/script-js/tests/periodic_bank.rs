@@ -79,7 +79,7 @@ fn side_root(input: &SnapshotInput<'_>) -> i32 {
 fn post_snapshot_input(slot: &mut BankSlot, input: &SnapshotInput<'_>) {
     slot.post_snapshot(
         input,
-        NativeFactsInput {
+        &NativeFactsInput {
             bank_snapshot_generation: input
                 .bank_open
                 .then(|| i64::try_from(input.bank_generation).expect("small fixture generation")),
@@ -93,7 +93,7 @@ fn tick(slot: &mut BankSlot, tick: u64, input: &SnapshotInput<'_>) {
     slot.tick_posted_with_frames(
         tick,
         input,
-        NativeFactsInput {
+        &NativeFactsInput {
             bank_snapshot_generation: input
                 .bank_open
                 .then(|| i64::try_from(input.bank_generation).expect("small fixture generation")),
@@ -173,13 +173,18 @@ fn refused_bank_prerequisite(slot: &mut BankSlot, action: &HostAction, tick: u64
 
     let gate = if supported {
         let catalog = FamilyPreparation::run(|worker| {
-            let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
-            selected.prepare_quests(worker).unwrap();
-            selected.prepare_prereq_steps(worker).unwrap()
+            let selected = api::game_data::for_revision(ClientRevision::R289)
+                .expect("load revision 289 bank-prerequisite test data");
+            selected
+                .prepare_quests(worker)
+                .expect("prepare quest data for bank-prerequisite test");
+            selected
+                .prepare_prereq_steps(worker)
+                .expect("prepare prerequisite data for bank-prerequisite test")
         })
-        .unwrap()
+        .expect("start bank-prerequisite family preparation")
         .join()
-        .unwrap();
+        .expect("bank-prerequisite family worker completes");
         let (_, row) = catalog
             .iter()
             .find(|(_, row)| {

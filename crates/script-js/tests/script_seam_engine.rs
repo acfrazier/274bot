@@ -10,7 +10,7 @@ use script::interact::InteractReq;
 use script::native::snapshot_source::{ChatLineInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 use common::{ingame_snapshot, post_snapshot_input};
 
 fn tile(x: i32, z: i32) -> TileInput {
@@ -29,11 +29,11 @@ fn line(seq: i32, text: &'static str) -> ChatLineInput<'static> {
 fn tick(iso: &LoadIsolate, snap: &SnapshotInput<'_>) {
     post_snapshot_input(iso, snap);
     iso.on_game_tick(snap.tick);
-    let _ = iso.probe("true").unwrap();
+    let _ = iso.probe("true").expect("settle script-seam engine tick");
 }
 
 fn value(iso: &LoadIsolate, expr: &str) -> serde_json::Value {
-    iso.probe(expr).unwrap()
+    iso.probe(expr).expect("read script-seam probe result")
 }
 
 fn walks(reqs: &[InteractReq]) -> Vec<&InteractReq> {

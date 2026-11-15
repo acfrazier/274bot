@@ -15,7 +15,8 @@ use {
 };
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn production API test isolate")
 }
 
 fn panel_row<'a>(
@@ -520,7 +521,7 @@ fn furnace_panel(item: &str, op: Option<&str>) -> (LoadIsolate, Vec<InteractReq>
     iso.probe(&format!(
         "globalThis.__match = {item:?}; globalThis.__op = {op}; true"
     ))
-    .unwrap();
+    .expect("set furnace panel match and operation");
     let ops = [
         "Make".to_string(),
         "Make 5".to_string(),

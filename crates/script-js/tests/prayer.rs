@@ -4,7 +4,7 @@ use script::native::snapshot_source::{
 };
 use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -12,11 +12,13 @@ mod local_game_data;
 use common::post_snapshot_input;
 
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R274)
+        .expect("load revision 274 game data")
 }
 
 fn data_289() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("load revision 289 game data")
 }
 
 fn both_data() -> [std::sync::Arc<api::game_data::SelectedGameData>; 2] {
@@ -110,12 +112,12 @@ fn tick(iso: &LoadIsolate, n: u64) {
 
 fn spawn_v1(src: &str, game_data: std::sync::Arc<api::game_data::SelectedGameData>) -> LoadIsolate {
     LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], game_data)
-        .unwrap()
+        .expect("spawn compatibility prayer isolate")
 }
 
 fn spawn_v2(src: &str, game_data: std::sync::Arc<api::game_data::SelectedGameData>) -> LoadIsolate {
     LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::NativeTick, vec![], game_data)
-        .unwrap()
+        .expect("spawn native prayer isolate")
 }
 
 fn if_button(id: i32) -> InteractReq {
