@@ -2242,7 +2242,7 @@ fn queue_watch_runner() -> (ScenarioRunner, Client) {
 fn a_failed_script_fails_the_pending_final_watch_with_its_own_reason() {
     let (mut runner, _c) = queue_watch_runner();
     let reason = "search_result=Refusal; NoWayOut: ends inside Lesser demon (L82); resolve the condition, then start the Quester again";
-    runner.fail_script(reason);
+    runner.fail_script("alice", reason);
     let RunnerStatus::Failed(message) = runner.status() else {
         panic!(
             "a failed script must fail the run, got {:?}",
@@ -2251,7 +2251,9 @@ fn a_failed_script_fails_the_pending_final_watch_with_its_own_reason() {
     };
     assert!(message.contains(reason), "{message}");
     assert!(
-        message.contains("step 2 (watch the queued Imp Catcher completion)"),
+        message.contains(
+            "step 2 (watch the queued Imp Catcher completion): the script on alice failed"
+        ),
         "{message}"
     );
     assert_eq!(
@@ -2276,11 +2278,11 @@ fn a_script_failure_before_the_script_started_does_not_end_the_run() {
     let mut c = seeded_client();
     let mut runner = ScenarioRunner::new(scenario);
     runner.set_scene_settle(Duration::ZERO);
-    runner.fail_script("before the seed");
+    runner.fail_script("alice", "before the seed");
     assert_eq!(runner.status(), RunnerStatus::Seeding);
     assert_running_for_game_ticks(&mut runner, &mut c, 3, "the preparation step waits");
     assert!(!runner.wants_script_failure());
-    runner.fail_script("before Start");
+    runner.fail_script("alice", "before Start");
     assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 3 });
 }
 
@@ -2293,7 +2295,7 @@ fn a_script_failure_after_the_verdict_changes_nothing() {
     runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert!(!runner.wants_script_failure());
-    runner.fail_script("after the proof");
+    runner.fail_script("alice", "after the proof");
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 

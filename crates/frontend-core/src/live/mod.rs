@@ -146,10 +146,10 @@ where
 struct RunnerState {
     runner: Option<scenario::ScenarioRunner>,
     pending: Vec<host_play::live_start::PendingCatalogStart>,
-    /// Generation the driven slot's accepted Start runs under. Lifecycle
-    /// receipts of older generations belong to earlier runs. `None` until a
-    /// Start is accepted, and again after the scenario's Stop.
-    started_run: Option<u64>,
+    /// Per started script, the generation its accepted Start runs under (slot
+    /// name, generation). Lifecycle receipts of older generations belong to
+    /// earlier runs. An entry ends with its Start, at the scenario's Stop.
+    started_runs: Vec<(String, u64)>,
     start_handle: Option<host_play::ScriptStartHandle>,
     catalog: Option<host_play::catalog_core::CoreWatch>,
     pair: Option<host_play::paired_core::PairWatch>,
@@ -570,7 +570,7 @@ impl RunnerHandle {
         let mut state = self.0.lock().unwrap();
         state.runner.take();
         state.pending.clear();
-        state.started_run = None;
+        state.started_runs.clear();
         state.login_requests.clear();
         state.start_handle = None;
         state.catalog = None;
@@ -588,7 +588,7 @@ impl RunnerHandle {
     pub fn stage(&self, plan: StartPlan) {
         let mut state = self.0.lock().unwrap();
         state.pending = plan.0;
-        state.started_run = None;
+        state.started_runs.clear();
     }
 
     /// Copy staged adapter Starts for a front-end integration test.
@@ -1479,7 +1479,7 @@ impl RunnerHandle {
         let RunnerState {
             runner: runner_slot,
             pending,
-            started_run,
+            started_runs,
             start_handle,
             catalog,
             pair,
@@ -1531,6 +1531,15 @@ impl RunnerHandle {
                                 .is_some_and(|handle| handle.idle(name)),
                         );
                     }
+                    // A script that already failed must not end the run in PASS:
+                    // read every started script's receipt before the runner decides.
+                    forward_script_failures(
+                        runner,
+                        start_handle.as_ref(),
+                        pending,
+                        started_runs,
+                        None,
+                    );
                     tick_with_hold(runner, client, hold);
                     if runner.take_relog_login() {
                         // The Relog step logged a scriptless bot out: post the
@@ -1563,14 +1572,15 @@ impl RunnerHandle {
                             }
                             _ => {}
                         }
+                        // Note the generation of the Start this pump accepted.
+                        forward_script_failures(
+                            runner,
+                            start_handle.as_ref(),
+                            pending,
+                            started_runs,
+                            None,
+                        );
                     }
-                    forward_script_failure(
-                        runner,
-                        start_handle.as_ref(),
-                        pending,
-                        started_run,
-                        name,
-                    );
                 }
             }
         } else if let Some(index) = runner.companion_for(name) {
@@ -1578,37 +1588,55 @@ impl RunnerHandle {
                 // The companion's prep relog wants the operator Login.
                 login_requests.push(name.to_owned());
             }
+            forward_script_failures(
+                runner,
+                start_handle.as_ref(),
+                pending,
+                started_runs,
+                Some(name),
+            );
         }
     }
 }
 
-/// Fail the scenario when its started script ended Failed, with the script's
+/// Fail the scenario when a script it started ended Failed, with the script's
 /// own reason. The scenario's steps watch the game, not the slot, so a script
 /// that blocked or crashed would otherwise leave them waiting out the whole
-/// deadline.
-fn forward_script_failure(
+/// deadline. `only` limits the check to one slot; the driven slot reads every
+/// started script, so a failed companion cannot end in PASS either.
+fn forward_script_failures(
     runner: &mut scenario::ScenarioRunner,
     handle: Option<&host_play::ScriptStartHandle>,
     pending: &[host_play::live_start::PendingCatalogStart],
-    started_run: &mut Option<u64>,
-    name: &str,
+    started_runs: &mut Vec<(String, u64)>,
+    only: Option<&str>,
 ) {
-    if !pending.iter().any(|card| card.slot == name && card.started) {
-        *started_run = None;
-        return;
-    }
+    started_runs.retain(|(slot, _)| {
+        pending
+            .iter()
+            .any(|card| card.started && card.slot == *slot)
+    });
     let Some(handle) = handle.filter(|_| runner.wants_script_failure()) else {
         return;
     };
-    let generation = match *started_run {
-        Some(generation) => generation,
-        None => match handle.started_generation(name) {
-            Some(generation) => *started_run.insert(generation),
-            None => return,
-        },
-    };
-    if let Some(reason) = handle.failure_since(name, generation) {
-        runner.fail_script(&reason);
+    for card in pending
+        .iter()
+        .filter(|card| card.started && only.is_none_or(|slot| card.slot == slot))
+    {
+        let generation = match started_runs.iter().find(|(slot, _)| *slot == card.slot) {
+            Some((_, generation)) => *generation,
+            None => {
+                let Some(generation) = handle.started_generation(&card.slot) else {
+                    continue;
+                };
+                started_runs.push((card.slot.clone(), generation));
+                generation
+            }
+        };
+        if let Some(reason) = handle.failure_since(&card.slot, generation) {
+            runner.fail_script(&card.slot, &reason);
+            return;
+        }
     }
 }
 

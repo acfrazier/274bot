@@ -13,10 +13,13 @@ use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
 use super::{RunnerHandle, RunnerStatus, StartPlan};
 
 const SLOT: &str = "alice";
+const PEER: &str = "bob";
 const WATCH: &str = "watch the queued Imp Catcher completion";
 const NATIVE_REASON: &str = "search_result=Refusal; NoWayOut: ends inside Lesser demon (L82); resolve the condition, then start the Quester again";
 /// The runner waits on its final watch, the second of two steps.
 const ON_THE_FINAL_WATCH: RunnerStatus = RunnerStatus::Running { step: 1, total: 2 };
+/// The runner waits on its final proof after the only step.
+const ON_THE_FINAL_PROOF: RunnerStatus = RunnerStatus::Running { step: 1, total: 1 };
 
 /// Ends its run on the first tick with the flow it was given.
 struct EndsRun(ScriptFlow);
@@ -76,8 +79,26 @@ fn queue_scenario() -> scenario::Scenario {
     }
 }
 
-/// A live runner whose staged Start is already accepted and settled, over a
-/// play with no connection and a synthetic client.
+/// A second owned account, a companion whose script the scenario also starts.
+fn with_peer(mut scenario: scenario::Scenario) -> scenario::Scenario {
+    scenario.seed.profiles.push((PEER, PEER));
+    scenario.companions.push(scenario::Companion {
+        profile: 1,
+        per_frame: Box::new(|_| false),
+    });
+    scenario
+}
+
+/// One Start step, then a final proof that `Rig::prove` makes true: the proof
+/// can become true in the same frame in which a script has already failed.
+fn with_stat_proof(mut scenario: scenario::Scenario) -> scenario::Scenario {
+    scenario.steps.truncate(1);
+    scenario.proof = Proof::Stat { id: 16, min: 2 };
+    scenario
+}
+
+/// A live runner whose staged Starts are already accepted and settled, one for
+/// each owned account, over a play with no connection and a synthetic client.
 struct Rig {
     handle: RunnerHandle,
     play: host_play::Play,
@@ -88,10 +109,25 @@ struct Rig {
 impl Rig {
     /// `None` where the generated game data the native test script needs is
     /// absent (hosted CI).
-    fn new() -> Option<Self> {
+    fn with(scenario: scenario::Scenario) -> Option<Self> {
         if !api::test_support::game_data_available() {
             return None;
         }
+        let cards = scenario
+            .seed
+            .profiles
+            .iter()
+            .map(|(slot, _)| {
+                let mut card = host_play::live_start::PendingCatalogStart::compiled(
+                    *slot,
+                    script::CompiledId("Quester"),
+                    serde_json::Map::new(),
+                );
+                card.started = true;
+                card.settled = true;
+                card
+            })
+            .collect();
         let play = crate::test_support::empty_play(&host_play::PlayOptions {
             host: "127.0.0.1".into(),
             transport: host_play::Transport::Tcp,
@@ -103,19 +139,12 @@ impl Rig {
             lowmem: true,
             mainland: false,
         });
-        let mut runner = ScenarioRunner::with_world(queue_scenario(), None);
+        let mut runner = ScenarioRunner::with_world(scenario, None);
         runner.set_scene_settle(Duration::ZERO);
         let handle = RunnerHandle::default();
         handle.install_scenario_runner_for_test(runner);
         handle.install_play(&play);
-        let mut card = host_play::live_start::PendingCatalogStart::compiled(
-            SLOT,
-            script::CompiledId("Quester"),
-            serde_json::Map::new(),
-        );
-        card.started = true;
-        card.settled = true;
-        handle.stage(StartPlan(vec![card]));
+        handle.stage(StartPlan(cards));
         let mut client = Client::new(ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,
@@ -131,6 +160,7 @@ impl Rig {
         client.map_build_base_x = 3200;
         client.map_build_base_z = 3200;
         client.local_player = Some(ClientPlayer::at(20, 20));
+        client.runenergy = 0;
         Some(Self {
             handle,
             play,
@@ -139,24 +169,37 @@ impl Rig {
         })
     }
 
-    /// Start a native test script on the slot, as the pump's accepted Start does.
-    fn start(&self, flow: ScriptFlow) -> api::selected::RunKey {
+    fn new() -> Option<Self> {
+        Self::with(queue_scenario())
+    }
+
+    /// Start a native test script on `slot`, as the pump's accepted Start does.
+    fn start_on(&self, slot: &str, flow: ScriptFlow) -> api::selected::RunKey {
         self.play
             .script_start_handle()
-            .start_test_script(SLOT, Box::new(EndsRun(flow)), None)
+            .start_test_script(slot, Box::new(EndsRun(flow)), None)
             .expect("the test script starts")
+    }
+
+    fn start(&self, flow: ScriptFlow) -> api::selected::RunKey {
+        self.start_on(SLOT, flow)
+    }
+
+    /// One client frame on `slot`, which the runner drives or owns as companion.
+    fn frame_on(&mut self, slot: &str) {
+        self.handle.frame(
+            &mut self.client,
+            slot,
+            false,
+            ScenarioRunner::tick_with_hold,
+            ScenarioRunner::companion_tick,
+        );
     }
 
     /// One client frame on the driven slot, with one observed game tick.
     fn frame(&mut self) {
         self.client.bump_gens(ServerProt::PLAYER_INFO);
-        self.handle.frame(
-            &mut self.client,
-            SLOT,
-            false,
-            ScenarioRunner::tick_with_hold,
-            ScenarioRunner::companion_tick,
-        );
+        self.frame_on(SLOT);
     }
 
     fn frames(&mut self, count: usize) {
@@ -165,22 +208,40 @@ impl Rig {
         }
     }
 
-    /// One observed game tick on the slot: the script runs its tick.
-    fn slot_tick(&mut self) {
+    /// One observed game tick on `slot`: the script runs its tick.
+    fn slot_tick_on(&mut self, slot: &str) {
         self.slot_tick += 1;
         self.play
             .script_start_handle()
-            .tick_test_script(SLOT, self.slot_tick, &mut self.client);
+            .tick_test_script(slot, self.slot_tick, &mut self.client);
+    }
+
+    fn slot_tick(&mut self) {
+        self.slot_tick_on(SLOT);
+    }
+
+    /// Make the `with_stat_proof` proof true at the next frame.
+    fn prove(&mut self) {
+        self.client.runenergy = 2;
+        self.client.bump_gens(ServerProt::UPDATE_RUNENERGY);
     }
 
     fn status(&self) -> RunnerStatus {
         self.handle.status().expect("an installed runner")
     }
 
-    fn receipt_state(&self) -> Option<script::ScriptTerminalState> {
+    fn receipt_state_of(&self, slot: &str) -> Option<script::ScriptTerminalState> {
         self.play
-            .script_lifecycle_receipt(SLOT)
+            .script_lifecycle_receipt(slot)
             .map(|receipt| receipt.state)
+    }
+
+    fn receipt_state(&self) -> Option<script::ScriptTerminalState> {
+        self.receipt_state_of(SLOT)
+    }
+
+    fn failure(&self) -> String {
+        self.handle.failure_message().expect("the failure message")
     }
 }
 
@@ -206,7 +267,7 @@ fn a_blocked_queue_fails_the_scenario_while_the_final_watch_is_pending() {
     rig.frame();
 
     assert_eq!(rig.status(), RunnerStatus::Failed);
-    let message = rig.handle.failure_message().expect("the failure message");
+    let message = rig.failure();
     assert!(message.contains(NATIVE_REASON), "{message}");
     assert!(message.contains(WATCH), "{message}");
     assert!(
@@ -248,7 +309,7 @@ fn a_failed_receipt_of_an_earlier_run_is_not_this_runs_failure() {
     rig.slot_tick();
     rig.frame();
     assert_eq!(rig.status(), RunnerStatus::Failed);
-    let message = rig.handle.failure_message().expect("the failure message");
+    let message = rig.failure();
     assert!(message.contains(NATIVE_REASON), "{message}");
     assert!(!message.contains("the earlier run blocked"), "{message}");
 }
@@ -301,4 +362,143 @@ fn a_paused_stopped_or_completed_script_does_not_end_the_scenario() {
         RunnerStatus::Failed,
         "the same pump still ends the scenario on a failure"
     );
+}
+
+#[test]
+fn a_failed_script_is_not_hidden_by_the_frame_that_proves_the_scenario() {
+    let Some(mut rig) = Rig::with(with_stat_proof(queue_scenario())) else {
+        return;
+    };
+    rig.start(blocked(NATIVE_REASON));
+    rig.frames(3);
+    assert_eq!(
+        rig.status(),
+        ON_THE_FINAL_PROOF,
+        "the Start step finished and the final proof is pending"
+    );
+
+    rig.slot_tick();
+    assert_eq!(
+        rig.receipt_state(),
+        Some(script::ScriptTerminalState::Failed)
+    );
+    rig.prove();
+    rig.frame();
+
+    assert_eq!(
+        rig.status(),
+        RunnerStatus::Failed,
+        "the script failed before the frame that proves the scenario"
+    );
+    let message = rig.failure();
+    assert!(message.contains(NATIVE_REASON), "{message}");
+    assert!(message.contains(SLOT), "{message}");
+}
+
+#[test]
+fn a_companions_failed_script_ends_the_scenario_from_its_own_frame() {
+    let Some(mut rig) = Rig::with(with_peer(queue_scenario())) else {
+        return;
+    };
+    rig.start(ScriptFlow::Continue);
+    rig.start_on(PEER, blocked(NATIVE_REASON));
+    rig.frames(3);
+    assert_eq!(rig.status(), ON_THE_FINAL_WATCH);
+
+    rig.slot_tick_on(PEER);
+    assert_eq!(
+        rig.receipt_state_of(PEER),
+        Some(script::ScriptTerminalState::Failed)
+    );
+    rig.frame_on(PEER);
+
+    assert_eq!(
+        rig.status(),
+        RunnerStatus::Failed,
+        "a failure of the second owned script must not wait for the scenario cap"
+    );
+    let message = rig.failure();
+    assert!(message.contains(NATIVE_REASON), "{message}");
+    assert!(message.contains(PEER), "{message}");
+}
+
+#[test]
+fn a_companions_failed_script_is_not_hidden_by_the_frame_that_proves_the_scenario() {
+    let Some(mut rig) = Rig::with(with_peer(with_stat_proof(queue_scenario()))) else {
+        return;
+    };
+    rig.start(ScriptFlow::Continue);
+    rig.start_on(PEER, blocked(NATIVE_REASON));
+    rig.frames(3);
+    assert_eq!(rig.status(), ON_THE_FINAL_PROOF);
+
+    rig.slot_tick_on(PEER);
+    rig.prove();
+    rig.frame();
+
+    assert_eq!(
+        rig.status(),
+        RunnerStatus::Failed,
+        "the companion's script failed before the frame that proves the scenario"
+    );
+    let message = rig.failure();
+    assert!(message.contains(NATIVE_REASON), "{message}");
+    assert!(message.contains(PEER), "{message}");
+}
+
+#[test]
+fn a_companions_failed_receipt_of_an_earlier_run_is_not_this_runs_failure() {
+    let Some(mut rig) = Rig::with(with_peer(queue_scenario())) else {
+        return;
+    };
+    rig.start_on(PEER, blocked("the earlier peer run blocked"));
+    rig.slot_tick_on(PEER);
+    assert_eq!(
+        rig.receipt_state_of(PEER),
+        Some(script::ScriptTerminalState::Failed)
+    );
+
+    rig.start(ScriptFlow::Continue);
+    rig.start_on(PEER, blocked(NATIVE_REASON));
+    rig.frames(3);
+    rig.frame_on(PEER);
+    assert_eq!(
+        rig.status(),
+        ON_THE_FINAL_WATCH,
+        "the companion's slot still holds the earlier run's failed receipt"
+    );
+
+    rig.slot_tick_on(PEER);
+    rig.frame_on(PEER);
+    assert_eq!(rig.status(), RunnerStatus::Failed);
+    let message = rig.failure();
+    assert!(message.contains(NATIVE_REASON), "{message}");
+    assert!(!message.contains("the earlier peer run"), "{message}");
+}
+
+#[test]
+fn each_started_script_is_read_under_its_own_start_generation() {
+    let Some(mut rig) = Rig::with(with_peer(queue_scenario())) else {
+        return;
+    };
+    // The driven slot is on its third Start; the companion's slot is on its
+    // first. A failure of the companion's run carries the lower generation.
+    for _ in 0..2 {
+        rig.start(ScriptFlow::Continue);
+        rig.play.script_start_handle().stop(SLOT).unwrap();
+    }
+    let driven = rig.start(ScriptFlow::Continue);
+    let peer = rig.start_on(PEER, blocked(NATIVE_REASON));
+    assert!(driven.run > peer.run, "{driven:?} {peer:?}");
+    rig.frames(3);
+    assert_eq!(rig.status(), ON_THE_FINAL_WATCH);
+
+    rig.slot_tick_on(PEER);
+    rig.frame_on(PEER);
+    assert_eq!(
+        rig.status(),
+        RunnerStatus::Failed,
+        "the driven slot's higher generation must not hide the companion's failure"
+    );
+    assert!(rig.failure().contains(NATIVE_REASON));
 }
