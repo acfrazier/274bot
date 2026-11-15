@@ -294,15 +294,6 @@ fn alphabet() -> Vec<GuardianStep> {
     ]
 }
 
-/// Known defect, excluded from the generated traces until its fix lands: a
-/// compiled script installed while the slot's guardian hold stands panics in
-/// `SlotScript::admit_compiled_owner` (`crates/script/src/slot.rs:1196`,
-/// `assert_eq!(admitted, Admission::Admitted)`; the held seat answers
-/// `Admission::Deferred`). The composed model allows that Start. Set this to
-/// `false` when the fix lands; `a_compiled_start_under_the_guardian_hold_is_admitted`
-/// reproduces it.
-const START_DURING_HOLD_EXCLUDED: bool = true;
-
 /// The shortest composed-model trace to every state within `depth` steps. A
 /// box is one signature: after a Disappear a fresh pass must see the gap before
 /// the next Appear.
@@ -323,12 +314,6 @@ fn generate(depth: usize) -> Vec<Vec<GuardianStep>> {
         }
         for step in &letters {
             if gap && matches!(step, GuardianStep::Appear { .. }) {
-                continue;
-            }
-            if START_DURING_HOLD_EXCLUDED
-                && state.publication().hold
-                && matches!(step, GuardianStep::ScriptStart { .. })
-            {
                 continue;
             }
             let mut next = state.clone();
@@ -421,10 +406,9 @@ fn a_replaced_compiled_runtime_returns_the_claim_through_the_adapter() {
     }
 }
 
-/// The reproduction of the defect `START_DURING_HOLD_EXCLUDED` names: a held
-/// box holds the slot's seat, then a compiled script starts.
+/// A held box holds the slot's seat, then a compiled script starts: the owner
+/// waits through the hold and is admitted when it releases, not at install.
 #[test]
-#[ignore = "known defect: compiled start under the guardian hold panics at slot.rs:1196"]
 fn a_compiled_start_under_the_guardian_hold_is_admitted() {
     if !api::test_support::game_data_available() {
         return;
