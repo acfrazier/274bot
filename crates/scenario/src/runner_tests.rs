@@ -2186,6 +2186,117 @@ fn compiled_start_script_fails_with_the_rejection_reason() {
     }
 }
 
+/// The nightly queue's shape: Start the compiled card, then watch a quest
+/// completion for far longer than a failed script lets the run live.
+fn queue_watch_scenario() -> Scenario {
+    Scenario {
+        name: "queue-watch",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![
+            Step {
+                name: "start the compiled card",
+                kind: StepKind::StartScript,
+                wait: wait(Proof::ScriptRunning, 50),
+            },
+            Step {
+                name: "watch the queued Imp Catcher completion",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: wait(
+                    Proof::QuestDone {
+                        name: "Imp Catcher",
+                    },
+                    24_000,
+                ),
+            },
+        ],
+        proof: Proof::QuestDone {
+            name: "Imp Catcher",
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            deadline: Duration::from_secs(7200),
+            ..ScenarioSettings::default()
+        },
+    }
+}
+
+/// A runner whose Start has settled and that now waits on the final watch.
+fn queue_watch_runner() -> (ScenarioRunner, Client) {
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(queue_watch_scenario());
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert!(runner.on_start_script());
+    runner.observe_script_running();
+    assert_running_for_game_ticks(&mut runner, &mut c, 4, "no quest completes");
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    (runner, c)
+}
+
+#[test]
+fn a_failed_script_fails_the_pending_final_watch_with_its_own_reason() {
+    let (mut runner, _c) = queue_watch_runner();
+    let reason = "search_result=Refusal; NoWayOut: ends inside Lesser demon (L82); resolve the condition, then start the Quester again";
+    runner.fail_script(reason);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!(
+            "a failed script must fail the run, got {:?}",
+            runner.status()
+        );
+    };
+    assert!(message.contains(reason), "{message}");
+    assert!(
+        message.contains("step 2 (watch the queued Imp Catcher completion)"),
+        "{message}"
+    );
+    assert_eq!(
+        runner.evidence().map(|evidence| evidence.outcome),
+        Some("FAIL")
+    );
+}
+
+#[test]
+fn a_script_failure_before_the_script_started_does_not_end_the_run() {
+    let mut scenario = queue_watch_scenario();
+    scenario.steps.insert(
+        0,
+        Step {
+            name: "prepare the account",
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: wait(Proof::Stat { id: 16, min: 999 }, 10_000),
+        },
+    );
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.fail_script("before the seed");
+    assert_eq!(runner.status(), RunnerStatus::Seeding);
+    assert_running_for_game_ticks(&mut runner, &mut c, 3, "the preparation step waits");
+    assert!(!runner.wants_script_failure());
+    runner.fail_script("before Start");
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 3 });
+}
+
+#[test]
+fn a_script_failure_after_the_verdict_changes_nothing() {
+    let mut c = seeded_client();
+    let mut runner = ScenarioRunner::new(start_script_scenario());
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert!(!runner.wants_script_failure());
+    runner.fail_script("after the proof");
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
 #[test]
 fn shot_step_with_the_default_sink_is_a_noop_and_passes() {
     // The headless twin leaves the default (no-op) sink: a Shot step
