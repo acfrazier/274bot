@@ -2901,6 +2901,10 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
         ("not-utf8", vec![b'{', 0xff, 0xfe, b'}']),
         ("not-an-object", b"[1, 2, 3]".to_vec()),
         ("duplicate-and-truncated", br#"{"a":1,"a":"#.to_vec()),
+        (
+            "duplicate-in-a-non-object-root",
+            br#"[{"a":1,"a":2}]"#.to_vec(),
+        ),
     ] {
         let preferences = preferences_at(&scratch, case);
         let path = preferences.path();

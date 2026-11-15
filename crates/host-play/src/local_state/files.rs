@@ -597,9 +597,9 @@ fn script_runtime_settings_identity(
     ))
 }
 
-/// One segment of a value's position in the document: a member's field
-/// name, borrowed from the document text when it holds no escapes, or an
-/// array element's index.
+/// One segment of a value's position in the document: a reference to the
+/// member's field name as the parsing frame holds it (no copy of the
+/// name is made for the path), or an array element's index.
 enum Segment<'a, 'de> {
     Field(&'a Cow<'de, str>),
     Index(usize),
@@ -788,13 +788,13 @@ impl<'de> de::Visitor<'de> for NoDuplicateFields<'_, 'de> {
 }
 
 /// Parses `raw` into a JSON object, refusing a file that names a field
-/// twice in one object at any level. The JSON error wins over the
-/// duplicates: a file whose content is not JSON is refused (and, on a
-/// save-path read, quarantined) as malformed even when it also names a
-/// field twice, so a duplicate is reported only once the document has
-/// parsed whole. Every other read result is the plain `serde_json`
-/// parse: a valid file holds exactly the values it held before the
-/// check.
+/// twice in one object at any level. The shape errors win over the
+/// duplicates: a file whose content is not JSON, or whose root is not an
+/// object, is refused (and, on a save-path read, quarantined) as
+/// malformed even when it also names a field twice, so a duplicate is
+/// reported only for a document that parsed whole into an object. Every
+/// other read result is the plain `serde_json` parse: a valid file holds
+/// exactly the values it held before the check.
 pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, Value>, ReadError> {
     let found = std::cell::RefCell::new(None);
     let mut parser = serde_json::Deserializer::from_str(raw);
@@ -805,12 +805,12 @@ pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, V
     .deserialize(&mut parser)
     .map_err(ReadError::Json)?;
     parser.end().map_err(ReadError::Json)?;
-    if let Some(duplicate) = found.borrow_mut().take() {
-        return Err(duplicate);
-    }
     let Value::Object(document) = document else {
         return Err(ReadError::NotAnObject);
     };
+    if let Some(duplicate) = found.borrow_mut().take() {
+        return Err(duplicate);
+    }
     Ok(document)
 }
 
