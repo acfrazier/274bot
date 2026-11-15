@@ -61,6 +61,14 @@ for 16 more observed game ticks. R289 content sets this combat lockout in
 frames or wall-clock seconds. A fixed 30-second deadline bounds the whole
 shutdown, including Stop. A forced worker close is not a clean logout.
 
+Gatherer cells keep the original cell error when final evidence capture or
+clean logout also fails. All errors appear in the test result. A successful
+cell still requires successful capture and clean logout.
+The capture needs the slot's frame callback. A missing engine can prevent
+that callback from running, so a capture timeout alone does not identify a
+banking failure. Check the selected host and both engine ports before a run.
+An engine source directory does not mean that its service is running.
+
 
 ## Runner receipt cells
 

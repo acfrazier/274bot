@@ -6695,6 +6695,59 @@ fn run_cell(cell: Cell, case: LiveCase) -> Result<(), String> {
     run_cell_with_fixture(cell, case, fixture_plan)
 }
 
+fn finish_live_run(
+    result: Result<(), String>,
+    capture: Result<(), String>,
+    clean_logout: Result<(), String>,
+) -> Result<(), String> {
+    let mut result = result;
+    for follow_up in [capture, clean_logout] {
+        if let Err(error) = follow_up {
+            match &mut result {
+                Ok(()) => result = Err(error),
+                Err(first) => {
+                    first.push_str("; ");
+                    first.push_str(&error);
+                }
+            }
+        }
+    }
+    result
+}
+
+#[test]
+fn final_evidence_failure_keeps_the_cell_failure() {
+    let error = finish_live_run(
+        Err("preparation timed out before the first game tick".into()),
+        Err("final live evidence capture timed out".into()),
+        Ok(()),
+    )
+    .unwrap_err();
+    assert!(error.starts_with("preparation timed out before the first game tick"));
+    assert!(error.contains("final live evidence capture timed out"));
+}
+
+#[test]
+fn logout_failure_keeps_the_cell_and_capture_failures() {
+    let error = finish_live_run(
+        Err("bank trip failed".into()),
+        Err("capture write failed".into()),
+        Err("clean logout failed".into()),
+    )
+    .unwrap_err();
+    assert!(error.starts_with("bank trip failed"));
+    assert!(error.contains("capture write failed"));
+    assert!(error.contains("clean logout failed"));
+}
+
+#[test]
+fn successful_cell_requires_evidence_and_clean_logout() {
+    assert!(finish_live_run(Ok(()), Ok(()), Ok(())).is_ok());
+    assert!(finish_live_run(Ok(()), Err("capture failed".into()), Ok(())).is_err());
+    assert!(finish_live_run(Ok(()), Ok(()), Err("logout failed".into())).is_err());
+    assert!(finish_live_run(Err("cell failed".into()), Ok(()), Ok(())).is_err());
+}
+
 fn run_cell_with_fixture(
     cell: Cell,
     case: LiveCase,
@@ -8532,32 +8585,35 @@ fn run_cell_with_fixture(
             .expect("fixture receipt object"),
     );
     println!("{receipt}");
-    if let Some(root) = std::env::var_os("LIVE_EVIDENCE_DIR") {
-        let epoch = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_secs();
-        let directory = PathBuf::from(root).join(format!("{cell_name}_{account}_{epoch}Z"));
-        *capture_request
-            .lock()
-            .map_err(|_| "capture request poisoned")? = Some((directory.clone(), receipt));
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            if let Some(completion) = capture_result
+    let capture = (|| {
+        if let Some(root) = std::env::var_os("LIVE_EVIDENCE_DIR") {
+            let epoch = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_secs();
+            let directory = PathBuf::from(root).join(format!("{cell_name}_{account}_{epoch}Z"));
+            *capture_request
                 .lock()
-                .map_err(|_| "capture result poisoned")?
-                .take()
-            {
-                completion?;
-                println!("live-evidence={}", directory.display());
-                break;
+                .map_err(|_| "capture request poisoned")? = Some((directory.clone(), receipt));
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                if let Some(completion) = capture_result
+                    .lock()
+                    .map_err(|_| "capture result poisoned")?
+                    .take()
+                {
+                    completion?;
+                    println!("live-evidence={}", directory.display());
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err("final live evidence capture timed out".into());
+                }
+                std::thread::sleep(POLL_INTERVAL);
             }
-            if Instant::now() >= deadline {
-                return Err("final live evidence capture timed out".into());
-            }
-            std::thread::sleep(POLL_INTERVAL);
         }
-    }
+        Ok(())
+    })();
     let clean_logout = if let Some(guard) = logout_guard.as_mut() {
         guard.logout()
     } else {
@@ -8569,8 +8625,7 @@ fn run_cell_with_fixture(
     if let Some(helper_account) = &helper_account {
         play.stop_slot(helper_account);
     }
-    clean_logout?;
-    result?;
+    finish_live_run(result, capture, clean_logout)?;
     let qualification = state.lock().map_err(|_| "live state poisoned")?.qualifies();
     qualification
 }
