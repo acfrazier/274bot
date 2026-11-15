@@ -69,6 +69,8 @@ const GAME_HOST: &str = "127.0.0.1";
 const GAME_PORT: u16 = 43595;
 const ASSET_PORT: u16 = 81;
 const LUMBRIDGE_REGION: i32 = 50;
+// Slot-377 content: `hans`, spawned in Lumbridge's castle courtyard.
+const LUMBRIDGE_HANS_TYPE_ID: usize = 0;
 const TALK_ACTION: &str = "Talk-to";
 
 struct ScratchHome(PathBuf);
@@ -487,7 +489,7 @@ struct NpcChoice {
     distance: u32,
 }
 
-fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Option<NpcChoice> {
+fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: usize) -> Option<NpcChoice> {
     let (x, z, level) = snapshot.tile()?;
     let player_tile = WorldTile { x, z, level };
     let flood = SceneQuery::new(snapshot.scene(), Some(player_tile)).flood_reach()?;
@@ -496,7 +498,7 @@ fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Opti
         .iter()
         .filter_map(|npc| {
             let type_id = npc.r#type?;
-            if wanted_type.is_some_and(|wanted| wanted != type_id)
+            if wanted_type != type_id
                 || npc.network.level != level
                 || !flood.at(&npc.network).1
                 || !npc
@@ -509,7 +511,7 @@ fn nearest_talk_npc(snapshot: &GameSnapshot, wanted_type: Option<usize>) -> Opti
             }
             let distance =
                 u32::try_from(api::query::chebyshev_to(player_tile, npc.network)).ok()?;
-            (distance <= 8).then_some(NpcChoice {
+            Some(NpcChoice {
                 type_id,
                 index: npc.index,
                 tile: npc.network,
@@ -653,12 +655,12 @@ fn run_live_interaction() -> Result<(), String> {
             &mut client,
             &mut snapshot,
             &mut pump,
-            "nearby-numeric-npc",
+            "required-Hans-type-0-absent-or-unreachable",
             Duration::from_secs(20),
-            |state| nearest_talk_npc(state, None).is_some(),
+            |state| nearest_talk_npc(state, LUMBRIDGE_HANS_TYPE_ID).is_some(),
         )?;
-        let choice = nearest_talk_npc(&snapshot, None)
-            .ok_or("no nearby reachable numeric NPC with Talk-to in Lumbridge")?;
+        let choice = nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID)
+            .ok_or("Hans (NPC type 0) is absent or unreachable in the loaded Lumbridge scene")?;
         let target = direct_step_toward(snapshot.scene(), origin, choice.tile)?;
         if !lumbridge(target) || target.level != origin.level {
             return Err(format!(
@@ -705,7 +707,7 @@ fn run_live_interaction() -> Result<(), String> {
             json!({"from": origin, "target": target, "same_loaded_region": true}),
         );
 
-        let current = nearest_talk_npc(&snapshot, Some(choice.type_id));
+        let current = nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID);
         let npc = current
             .and_then(|current| {
                 snapshot
@@ -822,19 +824,17 @@ fn talk_target_snapshot(rows: [(usize, i32, i32); 2]) -> GameSnapshot {
 #[test]
 fn network_coords_live_driver_selects_and_reacquires_the_server_talk_target() {
     let snapshot = talk_target_snapshot([(1, 51, 58), (2, 58, 51)]);
-    for wanted in [None, Some(1)] {
-        let choice = nearest_talk_npc(&snapshot, wanted).expect("server-near Talk target");
-        assert_eq!(choice.index, 1);
-        assert_eq!(
-            choice.tile,
-            WorldTile {
-                x: 51,
-                z: 50,
-                level: 0
-            }
-        );
-        assert_eq!(choice.distance, 1);
-    }
+    let choice = nearest_talk_npc(&snapshot, 1).expect("server-near Talk target");
+    assert_eq!(choice.index, 1);
+    assert_eq!(
+        choice.tile,
+        WorldTile {
+            x: 51,
+            z: 50,
+            level: 0
+        }
+    );
+    assert_eq!(choice.distance, 1);
 }
 
 #[test]
@@ -846,12 +846,10 @@ fn talk_target_selection_rejects_a_nearer_npc_behind_a_closed_wall() {
         scene.collision_flags[(2 * scene.height + z) as usize] = client::dash3d::CollisionFlag::W_W;
     }
     snapshot.seed_scene(scene);
-    for wanted in [None, Some(1)] {
-        let choice = nearest_talk_npc(&snapshot, wanted).expect("farther reachable Talk target");
-        assert_eq!(choice.index, 2);
-    }
+    let choice = nearest_talk_npc(&snapshot, 1).expect("farther reachable Talk target");
+    assert_eq!(choice.index, 2);
     snapshot.seed_npcs(vec![snapshot.npcs()[0].clone()]);
-    assert!(nearest_talk_npc(&snapshot, None).is_none());
+    assert!(nearest_talk_npc(&snapshot, 1).is_none());
 }
 
 #[test]
@@ -860,7 +858,22 @@ fn talk_target_selection_requires_observed_collision() {
     let mut scene = snapshot.scene().clone();
     scene.available = false;
     snapshot.seed_scene(scene);
-    assert!(nearest_talk_npc(&snapshot, None).is_none());
+    assert!(nearest_talk_npc(&snapshot, 1).is_none());
+}
+
+#[test]
+fn talk_target_selection_never_falls_back_to_another_type() {
+    let mut snapshot = talk_target_snapshot([(1, 51, 51), (2, 58, 58)]);
+    assert!(nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID).is_none());
+    let mut npcs = snapshot.npcs().to_vec();
+    npcs[1].r#type = Some(LUMBRIDGE_HANS_TYPE_ID);
+    snapshot.seed_npcs(npcs);
+    assert_eq!(
+        nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID)
+            .expect("only the named type is eligible")
+            .index,
+        2
+    );
 }
 
 #[test]
