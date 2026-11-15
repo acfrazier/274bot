@@ -46,7 +46,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting identity, for bounded failure expiry reporting.
-    pub(crate) const ALL: [Self; 23] = [
+    pub(crate) const ALL: [Self; 21] = [
         Self::Draw(DrawSwitch::CaptureInput),
         Self::Draw(DrawSwitch::SidecarFullRate),
         Self::Draw(DrawSwitch::FocusedFullRate),
@@ -58,9 +58,7 @@ impl Setting {
         Self::Nav(NavPreference::AllowDangerZones),
         Self::Nav(NavPreference::AllowPrereqDialogue),
         Self::Nav(NavPreference::AllowQuestStart),
-        Self::Nav(NavPreference::SurvivableRouting),
         Self::Nav(NavPreference::ScriptScopeNoticeAck),
-        Self::Nav(NavPreference::SurvivableRoutingNoticeAck),
         Self::DangerRouting,
         Self::SessionLog,
         Self::PvpStartFights,

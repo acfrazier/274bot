@@ -137,7 +137,8 @@ impl StagedEntityPages {
             ground,
             self_slot,
         } = self;
-        if npcs.is_none()
+        if generation.is_none()
+            && npcs.is_none()
             && locs.is_none()
             && players.is_none()
             && ground.is_none()
@@ -146,13 +147,16 @@ impl StagedEntityPages {
             return;
         }
 
+        let generation = generation
+            .expect("entity page or local-origin updates capture their posting generation");
+        let here = generation.here;
         let EntityGeneration {
             npcs: native_npcs,
             locs: native_locs,
             players: native_players,
             ground: native_ground,
-            self_slot: _,
-        } = generation.expect("entity page updates capture their posting generation");
+            ..
+        } = generation;
 
         // Defer releasing old V8 globals until after the RefCell borrow ends.
         // This runs on the live isolate thread while its HandleScope is active.
@@ -183,6 +187,7 @@ impl StagedEntityPages {
                 retired.generation.self_slot =
                     std::mem::replace(&mut current.generation.self_slot, next);
             }
+            current.generation.here = here;
         }
         drop(retired);
     }
@@ -332,5 +337,63 @@ mod tests {
                 .expect("replacement loc page"),
             &first_locs
         ));
+    }
+
+    #[test]
+    fn origin_only_commit_updates_network_coords_without_replacing_pages() {
+        let state = Rc::new(RefCell::new(EntityPages::default()));
+        let npcs = Rc::new(Vec::new());
+        let players = Rc::new(Vec::new());
+        let npc_rows = Vec::with_capacity(5);
+        let player_rows = Vec::with_capacity(7);
+        let npc_capacity = npc_rows.capacity();
+        let player_capacity = player_rows.capacity();
+        let old_here = crate::scene::observed::Tile {
+            x: 10,
+            z: 20,
+            level: 0,
+        };
+        StagedEntityPages {
+            generation: Some(EntityGeneration {
+                npcs: Some(npcs.clone()),
+                players: Some(players.clone()),
+                here: Some(old_here),
+                self_slot: 4,
+                ..EntityGeneration::default()
+            }),
+            npcs: Some(npc_rows),
+            players: Some(player_rows),
+            self_slot: Some(4),
+            ..StagedEntityPages::default()
+        }
+        .commit(&state);
+
+        let network_here = crate::scene::observed::Tile {
+            x: 12,
+            z: 22,
+            level: 0,
+        };
+        StagedEntityPages {
+            generation: Some(EntityGeneration {
+                here: Some(network_here),
+                ..EntityGeneration::default()
+            }),
+            ..StagedEntityPages::default()
+        }
+        .commit(&state);
+
+        let pages = state.borrow();
+        assert_eq!(pages.generation.here, Some(network_here));
+        assert_eq!(pages.generation.self_slot, 4);
+        assert!(Rc::ptr_eq(
+            pages.generation.npcs.as_ref().expect("NPC page"),
+            &npcs
+        ));
+        assert!(Rc::ptr_eq(
+            pages.generation.players.as_ref().expect("player page"),
+            &players
+        ));
+        assert_eq!(pages.npcs.capacity(), npc_capacity);
+        assert_eq!(pages.players.capacity(), player_capacity);
     }
 }

@@ -168,7 +168,6 @@ impl TuiApp {
             .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
             .pvp_start_fights(&mut self.pvp_start_fights)
             .script_scope_notice_ack(&mut self.script_scope_notice_ack)
-            .survivable_routing_notice_ack(&mut self.survivable_routing_notice_ack)
             .quester_paths(&mut self.quester_paths);
             pane.title = &self.settings_title;
             pane.notice = self.settings_save.notice();
@@ -555,7 +554,18 @@ impl TuiApp {
         match &self.error {
             Some(message) => {
                 put(buf, &mut x, area.y, right, "msg: ", dim());
-                put(buf, &mut x, area.y, right, message, Style::default());
+                // One line of at most `LINE_MAX` characters, then cut to the
+                // cells left with `…`; a click opens the whole text.
+                let line = frontend_core::notice_line(message);
+                let room = usize::from(right.saturating_sub(x));
+                put(
+                    buf,
+                    &mut x,
+                    area.y,
+                    right,
+                    &crate::text::ellipsize(&line, room),
+                    Style::default(),
+                );
                 self.regions.message = Rect::new(area.x, area.y, area.width, 1);
             }
             None if self.load_order_saving() => {

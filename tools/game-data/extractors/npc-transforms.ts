@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { parsePack, walkContentFiles } from './common.ts';
@@ -50,7 +49,6 @@ export type NpcTransformNpcType = {
     npc_type_id: number;
     category_id: number | null;
     config_state: NpcTransformTypeState;
-    source_refs: number[];
 };
 
 /** An authored numeric NPC option and its source-proven ordered OP/AP handler pair. */
@@ -66,9 +64,8 @@ export type NpcTransformAction = {
     trigger_kind: NpcTransformTriggerKind;
     /** Numeric type or category target of the preferred handler, when applicable. */
     trigger_target_id: number | null;
-    /** Hash of canonical OPNPC-then-APNPC handler behavior, not of the menu label. */
-    operation_fingerprint: string | null;
-    source_refs: number[];
+    /** Parsed ordered OPNPC and APNPC handler operations, not the menu label. */
+    operations: { op: string[] | null; ap: string[] | null } | null;
 };
 
 /** One source-proven scripted type change. Reversion returns to the NPC's original base type. */
@@ -79,7 +76,6 @@ export type NpcTransformEdge = {
     change_mode: NpcTransformChangeMode;
     duration_expression: string;
     reverts_to_base_type: true;
-    source_refs: number[];
 };
 
 /** A source condition that prevents a complete numeric-slot proof. */
@@ -88,7 +84,6 @@ export type NpcTransformUnresolved = {
     scope_slot: number | null;
     reason: NpcTransformUnresolvedReason;
     expression: string | null;
-    source_refs: number[];
 };
 
 /** A proof row for one source-derived, non-hidden numeric NPC option. */
@@ -98,29 +93,20 @@ export type NpcTransformProof = {
     status: NpcTransformStatus;
     reachable_npc_type_ids: number[];
     mismatched_npc_type_ids: number[];
-    evidence_refs: number[];
     unresolved_refs: number[];
-};
-
-export type NpcTransformEngineSourceRefs = {
-    numeric_dispatch: number[];
-    type_change: number[];
-    reversion: number[];
-    static_type_decoder: number[];
 };
 
 export type NpcTransformClosureEvidence = {
     schema: 1;
-    source_spans: SourceSpan[];
     npc_types: NpcTransformNpcType[];
     /** Sorted by (npc_type_id, slot). Only authored, non-hidden options are listed. */
     actions: NpcTransformAction[];
-    /** Sorted by source type, target type, kind, mode, duration and source refs. */
+    /** Sorted by source type, target type, kind, mode and duration. */
     transform_edges: NpcTransformEdge[];
     unresolved: NpcTransformUnresolved[];
     /** Sorted by (npc_type_id, slot), for every listed action. */
     proofs: NpcTransformProof[];
-    engine: { complete: boolean; source_refs: NpcTransformEngineSourceRefs };
+    engine: { complete: boolean };
 };
 
 export type NpcTransformProofInput = {
@@ -131,7 +117,6 @@ export type NpcTransformProofInput = {
     transform_edges: readonly NpcTransformEdge[];
     unresolved: readonly NpcTransformUnresolved[];
     engine_complete: boolean;
-    engine_source_refs: NpcTransformEngineSourceRefs;
 };
 
 type NpcTransformInputFiles = { engine: string[]; content: string[] };
@@ -170,10 +155,6 @@ function npcTransformInputFiles(engineRoot: string, contentRoot: string): NpcTra
     return { engine: sortedUnique(engineFiles), content: sortedUnique([...scripts, ...packs]) };
 }
 
-function hashText(text: string) {
-    return crypto.createHash('sha256').update(text).digest('hex');
-}
-
 function readInputTexts(root: string, files: readonly string[]) {
     const texts = new Map<string, string>();
     for (const relative of files) {
@@ -182,30 +163,7 @@ function readInputTexts(root: string, files: readonly string[]) {
     return texts;
 }
 
-class SourceRegistry {
-    readonly spans: SourceSpan[] = [];
-    private readonly byKey = new Map<string, number>();
-
-    add(span: SourceSpan): number {
-        const key = `${span.file}\0${span.first}\0${span.last}`;
-        const existing = this.byKey.get(key);
-        if (existing !== undefined) return existing;
-        const index = this.spans.length;
-        this.spans.push(span);
-        this.byKey.set(key, index);
-        return index;
-    }
-}
-
-function uniqueRefs(refs: readonly number[]) {
-    return [...new Set(refs)].sort((a, b) => a - b);
-}
-
-function lineSpan(file: string, line: number): SourceSpan {
-    return { file, first: line, last: line };
-}
-
-type PackIdentity = { id: number; name: string; source: SourceSpan };
+type PackIdentity = { id: number; name: string };
 type StrictPack = {
     byName: Map<string, PackIdentity>;
     byId: Map<number, PackIdentity>;
@@ -228,7 +186,7 @@ function parseStrictPack(file: string, text: string): StrictPack {
         if (!/^\d+$/.test(rawId) || !Number.isSafeInteger(id) || !name) throw new Error(`${file}:${index + 1}: invalid packed identity ${value}`);
         if (byName.has(name) || byId.has(id)) throw new Error(`${file}:${index + 1}: ambiguous packed identity ${name}/${id}`);
         if (parsed.get(name) !== id) throw new Error(`${file}:${index + 1}: pack parser disagreement for ${name}`);
-        const entry = { id, name, source: lineSpan(file, index + 1) };
+        const entry = { id, name };
         byName.set(name, entry);
         byId.set(id, entry);
         entries.push(entry);
@@ -239,10 +197,9 @@ function parseStrictPack(file: string, text: string): StrictPack {
 
 type NpcConfigFact = {
     name: string;
-    source: SourceSpan;
-    operations: Map<number, { value: string; source: SourceSpan }[]>;
-    categories: { value: string; source: SourceSpan }[];
-    params: Map<string, { value: string; source: SourceSpan }[]>;
+    operations: Map<number, { value: string }[]>;
+    categories: { value: string }[];
+    params: Map<string, { value: string }[]>;
 };
 
 function configValueLine(raw: string) {
@@ -268,12 +225,11 @@ function parseNpcConfigFile(file: string, text: string) {
         if (line.startsWith('[') && line.endsWith(']')) {
             const name = line.slice(1, -1).trim();
             if (!name) throw new Error(`${file}:${number}: empty NPC config name`);
-            current = { name, source: lineSpan(file, number), operations: new Map(), categories: [], params: new Map() };
+            current = { name, operations: new Map(), categories: [], params: new Map() };
             out.push(current);
             return;
         }
         if (!current) return;
-        current.source.last = number;
         const equals = line.indexOf('=');
         if (equals <= 0) return;
         const key = line.slice(0, equals).trim();
@@ -282,15 +238,15 @@ function parseNpcConfigFile(file: string, text: string) {
         if (op) {
             const slot = Number(op[1]);
             if (!Number.isSafeInteger(slot) || slot < 1) throw new Error(`${file}:${number}: invalid NPC option slot ${key}`);
-            (current.operations.get(slot) ?? current.operations.set(slot, []).get(slot)!).push({ value, source: lineSpan(file, number) });
+            (current.operations.get(slot) ?? current.operations.set(slot, []).get(slot)!).push({ value });
         } else if (key === 'category') {
-            current.categories.push({ value, source: lineSpan(file, number) });
+            current.categories.push({ value });
         } else if (key === 'param') {
             const comma = value.indexOf(',');
             if (comma <= 0) return;
             const name = value.slice(0, comma).trim();
             const paramValue = value.slice(comma + 1).trim();
-            (current.params.get(name) ?? current.params.set(name, []).get(name)!).push({ value: paramValue, source: lineSpan(file, number) });
+            (current.params.get(name) ?? current.params.set(name, []).get(name)!).push({ value: paramValue });
         }
     });
     return out;
@@ -299,7 +255,6 @@ function parseNpcConfigFile(file: string, text: string) {
 type NpcTypeFact = {
     npc_type_id: number;
     name: string;
-    pack_source: SourceSpan;
     config_state: NpcTransformTypeState;
     config: NpcConfigFact | null;
     category_id: number | null;
@@ -335,92 +290,33 @@ function parseTriggerCodes(text: string) {
     return { ap, op, complete };
 }
 
-function findLine(file: string, text: string, expression: RegExp): SourceSpan[] {
-    const out: SourceSpan[] = [];
-    text.split(/\r?\n/).forEach((line, index) => {
-        expression.lastIndex = 0;
-        if (expression.test(line)) out.push(lineSpan(file, index + 1));
-    });
-    return out;
-}
-
-function engineSemantics(engineFiles: ReadonlyMap<string, string>, sources: SourceRegistry) {
-    const sourceRefs: NpcTransformEngineSourceRefs = { numeric_dispatch: [], type_change: [], reversion: [], static_type_decoder: [] };
+function engineSemantics(engineFiles: ReadonlyMap<string, string>) {
     const required = new Set<string>(NPC_TRANSFORM_ENGINE_INPUT_PATHS);
     const files = new Map<string, { relative: string; text: string }>();
     for (const [relative, text] of engineFiles) {
         const logical = relative.startsWith('src/') ? relative.slice('src/'.length) : relative;
         files.set(logical, { relative, text });
     }
-    const find = (logical: string, expression: RegExp) => {
-        const file = files.get(logical);
-        return file ? findLine(file.relative, file.text, expression) : [];
-    };
     const text = (logical: string) => files.get(logical)?.text ?? '';
 
     const npcTypeFile = 'cache/config/NpcType.ts';
     const npcTypeText = text(npcTypeFile);
-    sourceRefs.static_type_decoder = find(npcTypeFile, /code === 18|code >= 30 && code < 40|this\.op\[code - 30\]|category = -1;|Unrecognized npc config code/).map((span) => sources.add(span));
 
     const opHandlerFile = 'network/game/client/handler/OpNpcHandler.ts';
     const opHandlerText = text(opHandlerFile);
-    sourceRefs.numeric_dispatch = [
-        ...find(opHandlerFile, /npc\.type/),
-        ...find(opHandlerFile, /npcType\.op\[message\.op - 1\]/),
-        ...find(opHandlerFile, /ServerTriggerType\.APNPC1 \+ \(message\.op - 1\)/),
-    ].map((span) => sources.add(span));
     const playerFile = 'engine/entity/Player.ts';
     const playerText = text(playerFile);
-    sourceRefs.numeric_dispatch.push(...[
-        ...find(playerFile, /return ScriptProvider\.getByTrigger\(this\.targetOp \+ 7, typeId, categoryId\)/),
-        ...find(playerFile, /return ScriptProvider\.getByTrigger\(this\.targetOp, typeId, categoryId\)/),
-        ...find(playerFile, /const opTrigger = this\.getOpTrigger\(\)/),
-        ...find(playerFile, /const apTrigger = this\.getApTrigger\(\)/),
-        ...find(playerFile, /if \(opTrigger &&/),
-        ...find(playerFile, /else if \(apTrigger &&/),
-    ].map((span) => sources.add(span)));
-
-    const opcodeFile = 'engine/script/ScriptOpcode.ts';
-    const opcodeSpans = find(opcodeFile, /NPC_CHANGETYPE(?:_KEEPALL)?/).map((span) => sources.add(span));
 
     const npcOpsFile = 'engine/script/handlers/NpcOps.ts';
     const npcOpsText = text(npcOpsFile);
-    sourceRefs.type_change = [
-        ...find(npcOpsFile, /ScriptOpcode\.NPC_CHANGETYPE\]/),
-        ...find(npcOpsFile, /ScriptOpcode\.NPC_CHANGETYPE_KEEPALL\]/),
-        ...find(npcOpsFile, /state\.activeNpc\.changeType\(npcType, duration(?:, false)?\)/),
-        ...opcodeSpans.map((index) => sources.spans[index]),
-    ].map((span) => sources.add(span));
 
     const npcFile = 'engine/entity/Npc.ts';
     const npcText = text(npcFile);
     const worldFile = 'engine/World.ts';
     const worldText = text(worldFile);
-    sourceRefs.type_change.push(
-        ...find(npcFile, /changeType\(type: number, duration: number/).map((span) => sources.add(span)),
-        ...find(npcFile, /this\.type = type/).map((span) => sources.add(span)),
-    );
-    sourceRefs.reversion = [
-        ...find(npcFile, /this\.baseType = type/),
-        ...find(npcFile, /this\.resetOnRevert = reset/),
-        ...find(npcFile, /this\.setLifeCycle\(duration\)/),
-        ...find(npcFile, /this\.revertType\(\);/),
-        ...find(npcFile, /private revertType\(\)/),
-        ...find(npcFile, /this\.type = this\.baseType/),
-        ...find(npcFile, /World\.removeNpc\(this, -1\)/),
-        ...find(npcFile, /World\.addNpc\(this, -1, false\)/),
-        ...find(worldFile, /npc\.resetEntity\(true\)/),
-    ].map((span) => sources.add(span));
 
     const providerFile = 'engine/script/ScriptProvider.ts';
     const providerText = text(providerFile);
-    const providerSpans = [
-        ...find(providerFile, /type << 10/),
-        ...find(providerFile, /category << 10/),
-        ...find(providerFile, /return script;/),
-        ...find(providerFile, /return ScriptProvider\.scriptLookup\.get\(trigger\)/),
-    ].map((span) => sources.add(span));
-    sourceRefs.numeric_dispatch.push(...providerSpans);
 
     const triggerFile = 'engine/script/ServerTriggerType.ts';
     const parsedTriggerCodes = parseTriggerCodes(text(triggerFile));
@@ -435,26 +331,18 @@ function engineSemantics(engineFiles: ReadonlyMap<string, string>, sources: Sour
     const apBase = parsedTriggerCodes.ap.get(1);
     const opBase = parsedTriggerCodes.op.get(1);
     const opTriggerOffset = apBase !== undefined && opBase === apBase + 7 && apSlots.every((slot) => parsedTriggerCodes.op.get(slot) === parsedTriggerCodes.ap.get(slot)! + 7);
-    sourceRefs.numeric_dispatch.push(...find(triggerFile, /^\s*(?:AP|OP)NPC\d+\s*=/).map((span) => sources.add(span)));
 
-    const unexpectedMutationSites: SourceSpan[] = [];
+    let hasUnexpectedMutation = false;
     for (const [logical, file] of files) {
-        file.text.split(/\r?\n/).forEach((line, index) => {
-            if (/\b[A-Za-z_$]*[Nn]pc[A-Za-z_$]*\.type\s*=(?!=)/.test(line)) {
-                unexpectedMutationSites.push(lineSpan(file.relative, index + 1));
-            }
+        file.text.split(/\r?\n/).forEach((line) => {
+            if (/\b[A-Za-z_$]*[Nn]pc[A-Za-z_$]*\.type\s*=(?!=)/.test(line)) hasUnexpectedMutation = true;
 
             if (!/\bchangeType\s*\(/.test(line)) return;
             const knownDeclaration = logical === npcFile && /changeType\s*\(\s*type:\s*number\s*,\s*duration:\s*number/.test(line);
             const knownHandler = logical === npcOpsFile && /state\.activeNpc\.changeType\(npcType, duration(?:, false)?\)/.test(line);
-            if (!knownDeclaration && !knownHandler) unexpectedMutationSites.push(lineSpan(file.relative, index + 1));
+            if (!knownDeclaration && !knownHandler) hasUnexpectedMutation = true;
         });
     }
-
-    const typeAssignments = npcText.match(/^[ \t]*this\.type\s*=\s*type\s*;/gm) ?? [];
-    const baseTypeAssignments = npcText.match(/^[ \t]*this\.type\s*=\s*this\.baseType\s*;/gm) ?? [];
-    const allNpcTypeAssignments = npcText.match(/^[ \t]*this\.type\s*=/gm) ?? [];
-    const hasExpectedNpcTypeWrites = typeAssignments.length === 2 && baseTypeAssignments.length === 2 && allNpcTypeAssignments.length === 4;
 
     const opDecoderMatch = /code\s*>=\s*(\d+)\s*&&\s*code\s*<\s*(\d+)[\s\S]*?this\.op\[code\s*-\s*(\d+)\]\s*=\s*dat\.gjstr\(\)/.exec(npcTypeText);
     const opDecoder = opDecoderMatch !== null && Number(opDecoderMatch[1]) === Number(opDecoderMatch[3]);
@@ -491,19 +379,13 @@ function engineSemantics(engineFiles: ReadonlyMap<string, string>, sources: Sour
         /World\.removeNpc\(this, -1\)/.test(npcText) &&
         /World\.addNpc\(this, -1, false\)/.test(npcText) &&
         /npc\.resetEntity\(true\)/.test(worldText) &&
-        /this\.type = this\.baseType/.test(npcText) &&
-        hasExpectedNpcTypeWrites;
-    const hasTypeDecoderGuard = /Unrecognized npc config code/.test(npcTypeText);
+        /this\.type = this\.baseType/.test(npcText);
     const requiredPresent = [...required].every((relative) => {
         const logical = relative.startsWith('src/') ? relative.slice('src/'.length) : relative;
         return files.has(logical);
     });
-    const complete = requiredPresent && opDecoder && triggerCodesComplete && dispatch && playerDispatch && exactFallback && hasChanges && hasReversion && hasTypeDecoderGuard && unexpectedMutationSites.length === 0;
-    sourceRefs.numeric_dispatch = uniqueRefs(sourceRefs.numeric_dispatch);
-    sourceRefs.type_change = uniqueRefs(sourceRefs.type_change);
-    sourceRefs.reversion = uniqueRefs(sourceRefs.reversion);
-    sourceRefs.static_type_decoder = uniqueRefs(sourceRefs.static_type_decoder);
-    return { complete, trigger_codes: parsedTriggerCodes, source_refs: sourceRefs, unexpected_mutation_sites: unexpectedMutationSites.map((span) => sources.add(span)) };
+    const complete = requiredPresent && opDecoder && triggerCodesComplete && dispatch && playerDispatch && exactFallback && hasChanges && hasReversion && !hasUnexpectedMutation;
+    return { complete, trigger_codes: parsedTriggerCodes };
 }
 
 function normalizeScriptCode(raw: string) {
@@ -641,24 +523,23 @@ function sourceCalls(text: string) {
     return calls;
 }
 
-type TriggerTarget = { kind: Exclude<NpcTransformTriggerKind, 'unresolved' | 'none'>; id: number | null; source: SourceSpan | null };
+type TriggerTarget = { kind: Exclude<NpcTransformTriggerKind, 'unresolved' | 'none'>; id: number | null };
 type ScriptTrigger = {
     code: number;
     target: TriggerTarget;
-    source: SourceSpan;
-    fingerprint: string;
+    operations: string[];
 };
 
 function resolveTriggerTarget(target: string | null, global: boolean, npcs: StrictPack, categories: StrictPack): TriggerTarget | null {
-    if ((global && target === null) || target === '_') return { kind: 'global', id: null, source: null };
+    if ((global && target === null) || target === '_') return { kind: 'global', id: null };
     if (target === null) return null;
     const categoryName = target.startsWith('_') ? target.slice(1) : null;
     if (categoryName !== null) {
         const category = categories.byName.get(categoryName);
-        return category ? { kind: 'category', id: category.id, source: category.source } : null;
+        return category ? { kind: 'category', id: category.id } : null;
     }
     const npc = npcs.byName.get(target);
-    return npc ? { kind: 'type', id: npc.id, source: npc.source } : null;
+    return npc ? { kind: 'type', id: npc.id } : null;
 }
 
 function parseContextTypes(
@@ -686,7 +567,6 @@ function parseContextTypes(
 type TriggerSelection = {
     trigger: ScriptTrigger | null;
     reason: NpcTransformUnresolvedReason | null;
-    evidence: ScriptTrigger[];
 };
 
 function selectTriggerForType(
@@ -699,31 +579,20 @@ function selectTriggerForType(
     const category = type.category_id === null ? [] : sameCode.filter((trigger) => trigger.target.kind === 'category' && trigger.target.id === type.category_id);
     const global = sameCode.filter((trigger) => trigger.target.kind === 'global');
     const selected = exact.length > 0 ? exact : !type.category_known ? [] : category.length > 0 ? category : global;
-    if (selected.length === 1) return { trigger: selected[0], reason: null, evidence: selected };
-    if (selected.length > 1) return { trigger: null, reason: 'ambiguous_trigger', evidence: selected };
-    if (!type.category_known && exact.length === 0) return { trigger: null, reason: 'unknown_category', evidence: [] };
-    return { trigger: null, reason: null, evidence: [] };
-}
-
-function scriptOperationFingerprint(operations: readonly string[]) {
-    return hashText(`npc-option-handler-v1\n${operations.join('\n')}`);
-}
-
-function actionFingerprint(op: ScriptTrigger | null, ap: ScriptTrigger | null) {
-    return hashText(`npc-option-handler-pair-v1\n${JSON.stringify([op?.fingerprint ?? null, ap?.fingerprint ?? null])}`);
+    if (selected.length === 1) return { trigger: selected[0], reason: null };
+    if (selected.length > 1) return { trigger: null, reason: 'ambiguous_trigger' };
+    if (!type.category_known && exact.length === 0) return { trigger: null, reason: 'unknown_category' };
+    return { trigger: null, reason: null };
 }
 
 function addUniqueEdge(edges: NpcTransformEdge[], edge: NpcTransformEdge) {
-    const refs = uniqueRefs(edge.source_refs);
-    const normalized = { ...edge, source_refs: refs };
-    const key = JSON.stringify(normalized);
-    if (!edges.some((candidate) => JSON.stringify(candidate) === key)) edges.push(normalized);
+    const key = JSON.stringify(edge);
+    if (!edges.some((candidate) => JSON.stringify(candidate) === key)) edges.push(edge);
 }
 
 function addUniqueUnresolved(rows: NpcTransformUnresolved[], row: NpcTransformUnresolved) {
-    const normalized = { ...row, source_refs: uniqueRefs(row.source_refs) };
-    const key = JSON.stringify(normalized);
-    if (!rows.some((candidate) => JSON.stringify(candidate) === key)) rows.push(normalized);
+    const key = JSON.stringify(row);
+    if (!rows.some((candidate) => JSON.stringify(candidate) === key)) rows.push(row);
 }
 
 function sortTypes(rows: NpcTransformNpcType[]) {
@@ -739,16 +608,14 @@ function sortEdges(rows: NpcTransformEdge[]) {
         || (a.to_npc_type_id ?? -1) - (b.to_npc_type_id ?? -1)
         || a.kind.localeCompare(b.kind)
         || a.change_mode.localeCompare(b.change_mode)
-        || a.duration_expression.localeCompare(b.duration_expression)
-        || a.source_refs.join(',').localeCompare(b.source_refs.join(',')));
+        || a.duration_expression.localeCompare(b.duration_expression));
 }
 
 function sortUnresolved(rows: NpcTransformUnresolved[]) {
     rows.sort((a, b) => (a.scope_npc_type_id ?? -1) - (b.scope_npc_type_id ?? -1)
         || (a.scope_slot ?? -1) - (b.scope_slot ?? -1)
         || a.reason.localeCompare(b.reason)
-        || (a.expression ?? '').localeCompare(b.expression ?? '')
-        || a.source_refs.join(',').localeCompare(b.source_refs.join(',')));
+        || (a.expression ?? '').localeCompare(b.expression ?? ''));
 }
 
 function sortProofs(rows: NpcTransformProof[]) {
@@ -760,7 +627,6 @@ export function proveNpcTransformSlot(input: NpcTransformProofInput): NpcTransfo
     const typeById = new Map(input.npc_types.map((type) => [type.npc_type_id, type]));
     const actionByPair = new Map(input.actions.map((action) => [`${action.npc_type_id}:${action.slot}`, action]));
     const reachable = new Set<number>();
-    const evidence = new Set<number>(input.engine_source_refs.numeric_dispatch);
     const unresolvedRefs = new Set<number>();
     const baseQueue = [input.npc_type_id];
     const baseTypes = new Set<number>([input.npc_type_id]);
@@ -769,17 +635,12 @@ export function proveNpcTransformSlot(input: NpcTransformProofInput): NpcTransfo
     let uncertain = !input.engine_complete;
 
     const initial = actionByPair.get(`${input.npc_type_id}:${input.slot}`);
-    for (const ref of initial?.source_refs ?? []) evidence.add(ref);
-    if (!initial || initial.state !== 'present' || initial.operation_fingerprint === null || initial.trigger_code === null) uncertain = true;
+    if (!initial || initial.state !== 'present' || initial.operations === null || initial.trigger_code === null) uncertain = true;
 
-    if (!input.engine_complete) {
-        for (const refs of Object.values(input.engine_source_refs)) for (const ref of refs) evidence.add(ref);
-    }
     while (baseQueue.length > 0) {
         const current = baseQueue.shift()!;
         for (const edge of input.transform_edges) {
             if (!edge.reverts_to_base_type || edge.to_npc_type_id !== current) continue;
-            for (const ref of edge.source_refs) evidence.add(ref);
             if (edge.from_npc_type_id === null || !typeById.has(edge.from_npc_type_id)) {
                 uncertain = true;
                 continue;
@@ -797,7 +658,6 @@ export function proveNpcTransformSlot(input: NpcTransformProofInput): NpcTransfo
         const current = queue.shift()!;
         for (const edge of input.transform_edges) {
             if (edge.from_npc_type_id !== null && edge.from_npc_type_id !== current) continue;
-            for (const ref of edge.source_refs) evidence.add(ref);
             if (edge.to_npc_type_id === null) {
                 uncertain = true;
                 continue;
@@ -818,32 +678,25 @@ export function proveNpcTransformSlot(input: NpcTransformProofInput): NpcTransfo
         const slotInScope = row.scope_slot === null || row.scope_slot === input.slot;
         if (!inScope || !slotInScope) return;
         unresolvedRefs.add(index);
-        for (const ref of row.source_refs) evidence.add(ref);
         uncertain = true;
     });
 
-    const initialFingerprint = initial?.operation_fingerprint ?? null;
     for (const typeId of reachable) {
         const type = typeById.get(typeId);
         if (!type || type.config_state !== 'complete') {
             uncertain = true;
-            if (type) for (const ref of type.source_refs) evidence.add(ref);
             continue;
         }
         const action = actionByPair.get(`${typeId}:${input.slot}`);
         if (!action) {
-            if (typeId !== input.npc_type_id) {
-                mismatched.add(typeId);
-                for (const ref of type.source_refs) evidence.add(ref);
-            }
+            if (typeId !== input.npc_type_id) mismatched.add(typeId);
             continue;
         }
-        for (const ref of action.source_refs) evidence.add(ref);
-        if (action.state !== 'present' || action.operation_fingerprint === null || action.trigger_code === null) {
+        if (action.state !== 'present' || action.operations === null || action.trigger_code === null) {
             uncertain = true;
             continue;
         }
-        if (initialFingerprint !== null && action.operation_fingerprint !== initialFingerprint) mismatched.add(typeId);
+        if (initial?.operations && JSON.stringify(action.operations) !== JSON.stringify(initial.operations)) mismatched.add(typeId);
     }
 
     let status: NpcTransformStatus;
@@ -858,7 +711,6 @@ export function proveNpcTransformSlot(input: NpcTransformProofInput): NpcTransfo
         status,
         reachable_npc_type_ids: [...reachable].sort((a, b) => a - b),
         mismatched_npc_type_ids: [...mismatched].sort((a, b) => a - b),
-        evidence_refs: [...evidence].sort((a, b) => a - b),
         unresolved_refs: [...unresolvedRefs].sort((a, b) => a - b),
     };
 }
@@ -871,14 +723,12 @@ function scriptCalls(
     paramPack: StrictPack,
     triggerCodes: { ap: ReadonlyMap<number, number>; op: ReadonlyMap<number, number> },
     triggerKinds: ReadonlySet<string>,
-    engine: NpcTransformClosureEvidence['engine'],
-    sources: SourceRegistry,
 ) {
     const actions: NpcTransformAction[] = [];
     const unresolved: NpcTransformUnresolved[] = [];
     const blocksByFile = new Map<string, ScriptBlock[]>();
     const triggers: ScriptTrigger[] = [];
-    const unknownTriggerRefsBySlot = new Map<number, number[]>();
+    const unknownTriggerSlots = new Set<number>();
     for (const [file, sourceText] of contentFiles) {
         const blocks = parseScriptBlocks(file, sourceText);
         blocksByFile.set(file, blocks);
@@ -889,12 +739,11 @@ function scriptCalls(
             const slot = Number(match[2]);
             const code = triggerCodes[lane].get(slot);
             const target = resolveTriggerTarget(block.target, block.global, npcPack, categoryPack);
-            const sourceRef = sources.add(block.source);
             if (code === undefined || !target) {
-                (unknownTriggerRefsBySlot.get(slot) ?? unknownTriggerRefsBySlot.set(slot, []).get(slot)!).push(sourceRef);
+                unknownTriggerSlots.add(slot);
                 continue;
             }
-            triggers.push({ code, target, source: block.source, fingerprint: scriptOperationFingerprint(block.operations) });
+            triggers.push({ code, target, operations: block.operations });
         }
     }
 
@@ -908,15 +757,12 @@ function scriptCalls(
             const conflictingOptions = optionRows.length > 1 && !sameValues(optionRows);
             const opCode = triggerCodes.op.get(slot) ?? null;
             const apCode = triggerCodes.ap.get(slot) ?? null;
-            const operationRefs = optionRows.map((row) => sources.add(row.source));
-            const baseRefs = uniqueRefs([sources.add(type.pack_source), ...operationRefs]);
             if (conflictingOptions) {
                 addUniqueUnresolved(unresolved, {
                     scope_npc_type_id: type.npc_type_id,
                     scope_slot: slot,
                     reason: 'ambiguous_npc_config',
                     expression: `op${slot}`,
-                    source_refs: baseRefs,
                 });
                 actions.push({
                     npc_type_id: type.npc_type_id,
@@ -926,8 +772,7 @@ function scriptCalls(
                     trigger_code: apCode,
                     trigger_kind: 'unresolved',
                     trigger_target_id: null,
-                    operation_fingerprint: null,
-                    source_refs: baseRefs,
+                    operations: null,
                 });
                 continue;
             }
@@ -935,9 +780,8 @@ function scriptCalls(
             let triggerKind: NpcTransformTriggerKind = 'none';
             let targetId: number | null = null;
             let state: NpcTransformActionState = 'present';
-            let fingerprint: string | null = null;
-            const unknownRefs = unknownTriggerRefsBySlot.get(slot) ?? [];
-            if (opCode === null || apCode === null || unknownRefs.length > 0) {
+            let operations: NpcTransformAction['operations'] = null;
+            if (opCode === null || apCode === null || unknownTriggerSlots.has(slot)) {
                 state = 'unknown';
                 triggerKind = 'unresolved';
                 // A slot header with an unresolvable subject keeps unknown_trigger_target:
@@ -947,7 +791,6 @@ function scriptCalls(
                     scope_slot: slot,
                     reason: opCode === null || apCode === null ? 'engine_source_incomplete' : 'unknown_trigger_target',
                     expression: null,
-                    source_refs: [...baseRefs, ...unknownRefs],
                 });
             } else {
                 const op = selectTriggerForType(triggers, opCode, type);
@@ -964,22 +807,12 @@ function scriptCalls(
                         scope_slot: slot,
                         reason: selectionReason ?? 'missing_trigger_handler',
                         expression: null,
-                        source_refs: [
-                            ...baseRefs,
-                            ...op.evidence.map((trigger) => sources.add(trigger.source)),
-                            ...ap.evidence.map((trigger) => sources.add(trigger.source)),
-                        ],
                     });
                 } else {
                     const primary = op.trigger ?? ap.trigger!;
                     triggerKind = primary.target.kind;
                     targetId = primary.target.id;
-                    fingerprint = actionFingerprint(op.trigger, ap.trigger);
-                    for (const matched of [op.trigger, ap.trigger]) {
-                        if (!matched) continue;
-                        baseRefs.push(sources.add(matched.source));
-                        if (matched.target.source !== null) baseRefs.push(sources.add(matched.target.source));
-                    }
+                    operations = { op: op.trigger?.operations ?? null, ap: ap.trigger?.operations ?? null };
                 }
             }
             actions.push({
@@ -990,8 +823,7 @@ function scriptCalls(
                 trigger_code: apCode,
                 trigger_kind: triggerKind,
                 trigger_target_id: targetId,
-                operation_fingerprint: fingerprint,
-                source_refs: uniqueRefs(baseRefs),
+                operations,
             });
         }
     }
@@ -1001,8 +833,6 @@ function scriptCalls(
     for (const [file, sourceText] of contentFiles) {
         const blocks = blocksByFile.get(file) ?? [];
         for (const call of sourceCalls(sourceText)) {
-            const callSource = lineSpan(file, call.line);
-            const callRef = sources.add(callSource);
             const block = blocks.find((candidate) => candidate.source.first <= call.line && candidate.source.last >= call.line);
             const context = block
                 ? parseContextTypes(block.kind, block.target, block.global, triggerKinds, npcPack, categoryPack, npcTypes)
@@ -1014,7 +844,6 @@ function scriptCalls(
                     scope_slot: null,
                     reason: 'unknown_transform_context',
                     expression: block ? `${block.kind},${block.target ?? 'global'}` : 'script context not parsed',
-                    source_refs: [callRef, ...(block ? [sources.add(block.source)] : [])],
                 });
             }
             if (call.malformed || call.args.length < 2 || !call.args[0]) {
@@ -1023,7 +852,6 @@ function scriptCalls(
                     scope_slot: null,
                     reason: 'unsupported_transform_expression',
                     expression: call.args[0] ?? null,
-                    source_refs: [callRef],
                 });
                 addUniqueEdge(edges, {
                     from_npc_type_id: fromIds?.length === 1 ? fromIds[0] : null,
@@ -1032,7 +860,6 @@ function scriptCalls(
                     change_mode: call.name === 'npc_changetype' ? 'reset' : 'keepall',
                     duration_expression: call.args[1] ?? '',
                     reverts_to_base_type: true,
-                    source_refs: [callRef, ...engine.source_refs.type_change, ...engine.source_refs.reversion],
                 });
                 continue;
             }
@@ -1041,12 +868,10 @@ function scriptCalls(
             const paramMatch = NPC_PARAM.exec(targetExpression);
             const kind: NpcTransformEdgeKind = paramMatch ? 'npc_param' : 'scripted';
             const sourceIds = fromIds;
-            const resolvedTargets: { from: number | null; to: number; refs: number[] }[] = [];
+            const resolvedTargets: { from: number | null; to: number }[] = [];
             const unresolvedScopes = new Map<number | null, NpcTransformUnresolvedReason>();
-            const unresolvedSourceRefs: number[] = [];
             let dynamicReason: NpcTransformUnresolvedReason | null = null;
             const nextNpcTypeParam = paramMatch?.[1] === 'next_npc_type' ? paramPack.byName.get('next_npc_type') : undefined;
-            if (nextNpcTypeParam) unresolvedSourceRefs.push(sources.add(nextNpcTypeParam.source));
             if (paramMatch && paramMatch[1] === 'next_npc_type') {
                 if (!sourceIds?.length) {
                     dynamicReason = 'dynamic_transform_target';
@@ -1055,12 +880,7 @@ function scriptCalls(
                 } else {
                     for (const sourceId of sourceIds) {
                         const sourceType = typeById.get(sourceId);
-                        if (sourceType) {
-                            unresolvedSourceRefs.push(sources.add(sourceType.pack_source));
-                            if (sourceType.config) unresolvedSourceRefs.push(sources.add(sourceType.config.source));
-                        }
                         const values = sourceType?.config?.params.get('next_npc_type') ?? [];
-                        unresolvedSourceRefs.push(...values.map((value) => sources.add(value.source)));
                         if (!sourceType || sourceType.config_state !== 'complete' || values.length !== 1 || !values[0].value || values[0].value.toLowerCase() === 'null') {
                             const reason = sourceType?.config_state === 'missing' ? 'missing_npc_config' : 'dynamic_transform_target';
                             unresolvedScopes.set(sourceId, reason);
@@ -1071,23 +891,19 @@ function scriptCalls(
                             unresolvedScopes.set(sourceId, 'dynamic_transform_target');
                             continue;
                         }
-                        resolvedTargets.push({
-                            from: sourceId,
-                            to: target.id,
-                            refs: [sources.add(values[0].source), sources.add(nextNpcTypeParam.source), sources.add(target.source)],
-                        });
+                        resolvedTargets.push({ from: sourceId, to: target.id });
                     }
                 }
             } else if (!paramMatch && INTEGER.test(targetExpression)) {
                 const id = Number(targetExpression);
                 const target = npcPack.byId.get(id);
                 if (target && typeById.has(id)) {
-                    for (const sourceId of sourceIds ?? [null]) resolvedTargets.push({ from: sourceId, to: id, refs: [sources.add(target.source)] });
+                    for (const sourceId of sourceIds ?? [null]) resolvedTargets.push({ from: sourceId, to: id });
                 } else dynamicReason = 'dynamic_transform_target';
             } else if (!paramMatch && /^[A-Za-z][A-Za-z0-9_]*$/.test(targetExpression)) {
                 const target = npcPack.byName.get(targetExpression);
                 if (target && typeById.has(target.id)) {
-                    for (const sourceId of sourceIds ?? [null]) resolvedTargets.push({ from: sourceId, to: target.id, refs: [sources.add(target.source)] });
+                    for (const sourceId of sourceIds ?? [null]) resolvedTargets.push({ from: sourceId, to: target.id });
                 } else dynamicReason = 'dynamic_transform_target';
             } else {
                 dynamicReason = paramMatch ? 'unsupported_transform_expression' : 'dynamic_transform_target';
@@ -1104,7 +920,6 @@ function scriptCalls(
                     change_mode: call.name === 'npc_changetype' ? 'reset' : 'keepall',
                     duration_expression: durationExpression,
                     reverts_to_base_type: true,
-                    source_refs: [callRef, ...target.refs, ...engine.source_refs.type_change, ...engine.source_refs.reversion],
                 });
             }
             if (unresolvedScopes.size === 0 && resolvedTargets.length === 0) {
@@ -1118,14 +933,12 @@ function scriptCalls(
                     change_mode: call.name === 'npc_changetype' ? 'reset' : 'keepall',
                     duration_expression: durationExpression,
                     reverts_to_base_type: true,
-                    source_refs: [callRef, ...unresolvedSourceRefs, ...engine.source_refs.type_change, ...engine.source_refs.reversion],
                 });
                 addUniqueUnresolved(unresolved, {
                     scope_npc_type_id: scope,
                     scope_slot: null,
                     reason,
                     expression: targetExpression,
-                    source_refs: [callRef, ...unresolvedSourceRefs, ...engine.source_refs.type_change, ...engine.source_refs.reversion],
                 });
             }
         }
@@ -1145,7 +958,6 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
     const contentPaths = paths.content;
     const engineFileMap = readInputTexts(resolvedEngine.root, paths.engine);
     const contentTexts = readInputTexts(contentRoot, contentPaths);
-    const sources = new SourceRegistry();
 
     const npcPackText = contentTexts.get('pack/npc.pack');
     const categoryPackText = contentTexts.get('pack/category.pack');
@@ -1156,7 +968,7 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
     const categoryPack = parseStrictPack('pack/category.pack', categoryPackText);
     const paramPack = parseStrictPack('pack/param.pack', paramPackText);
     if (parsePack(scriptPackText).size === 0) throw new Error('npc_transforms: selected script pack is empty');
-    const engine = engineSemantics(engineFileMap, sources);
+    const engine = engineSemantics(engineFileMap);
     const engineText = (relative: string) => engineFileMap.get(`src/${relative}`) ?? engineFileMap.get(relative);
     const triggerText = engineText('engine/script/ServerTriggerType.ts');
     const triggerCodes = engine.trigger_codes;
@@ -1184,28 +996,22 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
         let configState: NpcTransformTypeState = configMatches.length === 0 ? 'missing' : configMatches.length === 1 ? 'complete' : 'ambiguous';
         const config = configState === 'complete' ? configMatches[0] : null;
         let categoryId: number | null = null;
-        const typeSourceRefs = [sources.add(entry.source)];
-        if (configMatches.length > 0) typeSourceRefs.push(...configMatches.map((row) => sources.add(row.source)));
         if (configState !== 'complete') {
             addUniqueUnresolved(unresolved, {
                 scope_npc_type_id: entry.id,
                 scope_slot: null,
                 reason: configState === 'missing' ? 'missing_npc_config' : 'ambiguous_npc_config',
                 expression: entry.name,
-                source_refs: typeSourceRefs,
             });
         }
         if (config) {
             const categoryRows = config.categories;
             if (categoryRows.length === 0) {
                 categoryId = null;
-                typeSourceRefs.push(...engine.source_refs.static_type_decoder);
             } else if (sameValues(categoryRows)) {
-                typeSourceRefs.push(...categoryRows.map((row) => sources.add(row.source)));
                 const category = categoryPack.byName.get(categoryRows[0].value);
                 if (category) {
                     categoryId = category.id;
-                    typeSourceRefs.push(sources.add(category.source));
                 } else {
                     categoryId = null;
                     addUniqueUnresolved(unresolved, {
@@ -1213,7 +1019,6 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
                         scope_slot: null,
                         reason: 'unknown_category',
                         expression: categoryRows[0].value,
-                        source_refs: [sources.add(categoryRows[0].source), ...typeSourceRefs],
                     });
                 }
             } else {
@@ -1223,13 +1028,12 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
                     scope_slot: null,
                     reason: 'ambiguous_npc_config',
                     expression: 'conflicting category fields',
-                    source_refs: [...categoryRows.map((row) => sources.add(row.source)), ...typeSourceRefs],
                 });
             }
         }
-        const fact: NpcTypeFact = { npc_type_id: entry.id, name: entry.name, pack_source: entry.source, config_state: configState, config, category_id: categoryId, category_known: config !== null && (config.categories.length === 0 || categoryId !== null) };
+        const fact: NpcTypeFact = { npc_type_id: entry.id, name: entry.name, config_state: configState, config, category_id: categoryId, category_known: config !== null && (config.categories.length === 0 || categoryId !== null) };
         typeFacts.push(fact);
-        npcTypes.push({ npc_type_id: entry.id, category_id: categoryId, config_state: configState, source_refs: uniqueRefs(typeSourceRefs) });
+        npcTypes.push({ npc_type_id: entry.id, category_id: categoryId, config_state: configState });
     }
     sortTypes(npcTypes);
 
@@ -1242,27 +1046,22 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
         paramPack,
         triggerCodes,
         triggerKinds,
-        { complete: engine.complete, source_refs: engine.source_refs },
-        sources,
     );
     const actions = scans.actions;
     unresolved.push(...scans.unresolved);
 
     sortActions(actions);
     const transformEdges = scans.edges;
-    for (const row of unresolved) row.source_refs = uniqueRefs(row.source_refs);
     sortEdges(transformEdges);
     sortUnresolved(unresolved);
 
     const engineComplete = engine.complete;
     if (!engineComplete) {
-        const missingRefs = [...engine.source_refs.numeric_dispatch, ...engine.source_refs.type_change, ...engine.source_refs.reversion, ...engine.source_refs.static_type_decoder, ...engine.unexpected_mutation_sites];
         addUniqueUnresolved(unresolved, {
             scope_npc_type_id: null,
             scope_slot: null,
             reason: 'engine_source_incomplete',
             expression: 'required NPC dispatch, transform, reversion or type decoder semantics did not match',
-            source_refs: missingRefs,
         });
         sortUnresolved(unresolved);
     }
@@ -1275,21 +1074,16 @@ export function extractNpcTransformClosure(engineRoot: string, contentRoot: stri
         transform_edges: transformEdges,
         unresolved,
         engine_complete: engineComplete,
-        engine_source_refs: engine.source_refs,
     }));
     sortProofs(proofs);
 
     return {
         schema: 1,
-        source_spans: sources.spans,
         npc_types: npcTypes,
         actions,
         transform_edges: transformEdges,
         unresolved,
         proofs,
-        engine: {
-            complete: engineComplete,
-            source_refs: engine.source_refs,
-        },
+        engine: { complete: engineComplete },
     };
 }

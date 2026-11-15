@@ -595,9 +595,11 @@ pub(super) fn current_web_action<'a>(
     snapshot: &GameSnapshot,
     edge: &TransportEdge,
     edges: Option<&'a [TransportEdge]>,
+    quest_evidence: Option<&nav_planner::quest_gates::QuestEvidence>,
 ) -> Result<&'a TransportEdge, WebCutFailure> {
     let edges = edges.ok_or(WebCutFailure::PackedTransportEdgesUnavailable)?;
-    let state = nav_planner::world_state::WorldState::from_snapshot(snapshot);
+    let mut state = nav_planner::world_state::WorldState::from_snapshot(snapshot);
+    state.quest_evidence = quest_evidence.cloned();
     nav_planner::executor_adapter::select_web_action(edges.iter(), edge, |candidate| {
         state.allows(candidate)
     })
@@ -944,7 +946,12 @@ impl FollowRun {
                     self.transport = Some(hop);
                     return Poll::Watching;
                 };
-                let action = match current_web_action(snapshot, &edge, options.edges) {
+                let action = match current_web_action(
+                    snapshot,
+                    &edge,
+                    options.edges,
+                    options.quest_evidence,
+                ) {
                     Ok(action) => action,
                     Err(reason) => {
                         fire_leg(options, &hop.leg, LegPhase::Failed);
@@ -1000,7 +1007,12 @@ impl FollowRun {
             return match target {
                 Some(target) => {
                     let action = if is_slashable_web(&edge) {
-                        match current_web_action(snapshot, &edge, options.edges) {
+                        match current_web_action(
+                            snapshot,
+                            &edge,
+                            options.edges,
+                            options.quest_evidence,
+                        ) {
                             Ok(action) => action,
                             Err(reason) => {
                                 fire_leg(options, &hop.leg, LegPhase::Failed);

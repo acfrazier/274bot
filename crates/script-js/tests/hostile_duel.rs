@@ -536,7 +536,10 @@ fn clue_duel_both_roles_challenge_the_named_visible_partner() {
         return;
     }
     let challenge = ["Challenge".to_string()];
-    let player = npc_row(Some("Helper_Name"), false, 0, -1, 1, &challenge);
+    let mut player = npc_row(Some("Helper_Name"), false, 0, -1, 1, &challenge);
+    player.size = 1;
+    player.nx = 2656;
+    player.nz = 3298;
     let mut snapshot = base_snapshot();
     snapshot.here = Some(TileInput {
         x: 3368,
@@ -555,6 +558,65 @@ fn clue_duel_both_roles_challenge_the_named_visible_partner() {
     }
 }
 
+#[test]
+fn network_coords_duel_membership_uses_remote_pathhead_and_requires_local_origin() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
+    let challenge = ["Challenge".to_string()];
+    let mut in_pen = npc_row(Some("Helper_Name"), false, 0, -1, 1, &challenge);
+    in_pen.x = 2656;
+    in_pen.z = 3298;
+    in_pen.size = 1;
+    in_pen.nx = 3374;
+    in_pen.nz = 3250;
+    let mut snapshot = base_snapshot();
+    snapshot.here = Some(TileInput {
+        x: 3368,
+        z: 3274,
+        level: 0,
+    });
+    snapshot.players = std::slice::from_ref(&in_pen);
+    assert!(
+        run_handshake("Helper_Name", true, &snapshot).is_empty(),
+        "the server path head is inside a pen although the rendered player tile is outside"
+    );
+
+    let mut outside = npc_row(Some("Helper_Name"), false, 0, -1, 1, &challenge);
+    outside.x = 3374;
+    outside.z = 3250;
+    outside.size = 1;
+    outside.nx = 3368;
+    outside.nz = 3274;
+    snapshot.players = std::slice::from_ref(&outside);
+    assert_eq!(
+        run_handshake("Helper_Name", true, &snapshot),
+        vec![script::interact::InteractReq::Player {
+            name: "Helper_Name".into(),
+            action: "Challenge".into(),
+        }],
+        "the network path head is outside the pen although the rendered tile is inside"
+    );
+
+    snapshot.here = None;
+    assert!(
+        run_handshake("Helper_Name", true, &snapshot).is_empty(),
+        "a missing local server tile cannot start a challenge"
+    );
+
+    snapshot.here = Some(TileInput {
+        x: 3368,
+        z: 3274,
+        level: 0,
+    });
+    let mut unknown = npc_row(Some("Helper_Name"), false, 0, -1, 1, &challenge);
+    unknown.size = 0;
+    snapshot.players = std::slice::from_ref(&unknown);
+    assert!(
+        run_handshake("Helper_Name", true, &snapshot).is_empty(),
+        "a size-zero player has no network tile"
+    );
+}
 #[test]
 fn clue_duel_rejects_wrong_partner_and_any_stake() {
     if !crate::local_game_data::local_game_data_available(274) {

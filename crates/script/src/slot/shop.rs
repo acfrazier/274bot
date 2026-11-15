@@ -256,7 +256,7 @@ impl SlotScript {
                 }
             }
             if should_poll && run.handle.is_none() {
-                let request = BuyRequest::ById {
+                let request = BuyRequest {
                     item_id,
                     quantity: run.args.quantity,
                 };

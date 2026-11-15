@@ -24,6 +24,14 @@ use crate as map_host;
 #[path = "../../tests/support/map_fixture.rs"]
 mod map_fixture;
 use map_fixture::MapFixture;
+#[path = "../../tests/support/map_play_fixture.rs"]
+mod map_play_fixture;
+
+impl MapFixture {
+    fn play(&self, origin: Tile) -> crate::Play {
+        map_play_fixture::play(&self.template, origin)
+    }
+}
 
 fn bound_context(play: &crate::Play) -> MapContext {
     MapContext {
@@ -36,10 +44,9 @@ fn bound_context(play: &crate::Play) -> MapContext {
 
 fn routing_test_admission() -> crate::admission::Admission {
     crate::admission::Admission::manual(
-        FindOptions::default(),
+        crate::WalkGlobals::default().manual_decision(false),
         Default::default(),
         0,
-        crate::WalkGlobals::default(),
     )
 }
 
@@ -55,7 +62,6 @@ fn digest(n: u8) -> Digest {
 fn identity() -> CatalogueIdentity {
     CatalogueIdentity {
         revision: 289,
-        content: digest(1),
         policy: digest(2),
     }
 }
@@ -417,6 +423,39 @@ fn missing_sources_do_not_invent_banks() {
     assert!(catalogue
         .entries()
         .all(|e| !matches!(e.kind(), PoiKind::Bank)));
+}
+
+#[test]
+fn grouped_transport_rows_above_entry_limit_build_and_search() {
+    const RAW_ROWS: usize = 16_385;
+    let mut world = world(t(0, 0, 0), 12, &[]);
+    world.graph.edges = (0..RAW_ROWS)
+        .map(|index| {
+            edge(
+                TransportKind::Ladder,
+                wt(3, 4, 0),
+                wt(4 + (index % 4) as i32, 4, 1),
+            )
+        })
+        .collect();
+
+    let catalogue = Catalogue::new(Arc::new(world), identity(), None, None).unwrap();
+    assert_eq!(catalogue.entries().len(), 1);
+    let entry = catalogue.entries().next().expect("one displayed transport");
+    assert_eq!(entry.transports().count(), RAW_ROWS);
+
+    let mut search = Search::default();
+    search.update(&catalogue, "LADDER").unwrap();
+    assert_eq!(search.results().len(), 1);
+    assert_eq!(
+        catalogue
+            .entry(search.results()[0])
+            .expect("search result")
+            .transports()
+            .count(),
+        RAW_ROWS,
+        "search keeps every transport alternative"
+    );
 }
 
 #[test]
@@ -1007,8 +1046,71 @@ fn bound_host_walk_arms_and_rejects_a_foreign_world_pack_without_replacing_the_r
     assert_eq!(arm.route_generation, generation);
 }
 
+/// DANGER-SIMPLIFY R2-F2: a manual WalkTo is admitted from the one danger
+/// decision. The global level or the one-walk control is the user's override
+/// (Proceed, every zone); otherwise the walk has no danger permission.
 #[test]
-fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_catalogue_identity() {
+fn manual_walk_admission_is_the_manual_danger_decision() {
+    use script::native::RiskPolicy;
+    for global in [false, true] {
+        for this_walk in [false, true] {
+            let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
+            let origin = t(3201, 3201, 0);
+            let play = fixture.play(origin);
+            let mut globals = crate::WalkGlobals::default();
+            globals.set_danger_level(if global {
+                crate::DangerLevel::Always
+            } else {
+                crate::DangerLevel::Never
+            });
+            play.set_walk_globals(globals);
+            let ctx = bound_context(&play);
+            let loaded_world = play.world().unwrap();
+            let arms = Arc::new(Mutex::new(HashMap::new()));
+            let mut model = MapModel::default();
+            model.bind(ctx);
+            model.select_tile(&loaded_world, t(3205, 3206, 0));
+            let options = globals.manual_options(this_walk);
+            let command = model
+                .confirm(ActionKind::Walk, &ctx, Some(origin), options)
+                .unwrap();
+            let snapshot = api::snapshot::GameSnapshot::new();
+            assert!(matches!(
+                play.map_walk(
+                    command,
+                    &ctx,
+                    &snapshot,
+                    &WorldState::empty(),
+                    &BankRows::default(),
+                    Default::default(),
+                    &arms,
+                ),
+                Ok(WalkActionOutcome::Walking(_))
+            ));
+            let arms = arms.lock().unwrap();
+            let arm = arms["alice"].lock().unwrap();
+            let decision = arm.admission.as_deref().expect("armed admission").decision;
+            let overridden = global || this_walk;
+            assert_eq!(
+                decision.permitted, overridden,
+                "global={global}, this_walk={this_walk}"
+            );
+            assert_eq!(
+                decision.policy,
+                if overridden {
+                    RiskPolicy::Proceed
+                } else {
+                    RiskPolicy::Avoid
+                },
+                "global={global}, this_walk={this_walk}"
+            );
+            assert_eq!(decision, globals.manual_decision(this_walk));
+        }
+    }
+}
+
+#[test]
+fn ready_catalogue_retains_searchable_normalized_access() {
     use crate::map_cache::{
         fixture::CountingMapProducer, MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus,
         MapProfileDescriptor,
@@ -1020,7 +1122,7 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_cata
     let identity = identity();
     let key = identity.key().unwrap();
     let cache_root = MapCacheRoot::from_root(fixture.root.join("map-cache"));
-    let directory = cache_root.catalogue_dir(identity).unwrap();
+    let directory = cache_root.catalogue_dir(identity.revision);
     std::fs::create_dir_all(&directory).unwrap();
     let document = ClientPois {
         schema: 1,
@@ -1056,13 +1158,8 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_cata
         serde_json::to_vec(&receipt).unwrap(),
     )
     .unwrap();
-    let descriptor = MapProfileDescriptor::new(
-        identity.revision,
-        identity.content,
-        digest(4),
-        identity.policy,
-    )
-    .unwrap();
+    let descriptor =
+        MapProfileDescriptor::new(identity.revision, digest(4), identity.policy).unwrap();
     let manager = MapDemandManager::new(cache_root, Arc::new(CountingMapProducer::default()));
     let handle = manager
         .request(descriptor, MapDemand::CatalogueOnly)
@@ -1089,18 +1186,6 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_cata
     }
     let ready_map = handle.ready().unwrap();
     let ready = Arc::clone(&ready_map.catalogue);
-    assert!(matches!(
-        Catalogue::from_ready(
-            Arc::clone(&world),
-            CatalogueIdentity {
-                content: digest(99),
-                ..identity
-            },
-            Some(Arc::clone(&ready_map.catalogue)),
-            None,
-        ),
-        Err(nav_planner::map::MapError::Identity)
-    ));
     let catalogue = Catalogue::from_ready(
         Arc::clone(&world),
         identity,
@@ -1699,11 +1784,11 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
 fn group_walk_reasons_label_stale_and_members_only_separately() {
     let reason = |error| WalkSlotOutcomeKind::Failed(error).reason();
     assert_eq!(
-        reason(ActionError::BlockedByZones { detail: None }),
+        reason(ActionError::BlockedByZones { zones: None }),
         Some("blocked by danger zones")
     );
     assert_eq!(
-        ActionError::BlockedByZones { detail: None }.to_string(),
+        ActionError::BlockedByZones { zones: None }.to_string(),
         "No path without crossing a danger zone; tick \"Route through danger zones\" to walk anyway"
     );
     assert_eq!(reason(ActionError::Blocked), Some("destination blocked"));
@@ -1785,10 +1870,9 @@ fn incomplete_search_does_not_clear_existing_walk_arm() {
         ..FindOptions::default()
     };
     let admission = crate::admission::Admission::manual(
-        options,
+        crate::WalkGlobals::default().manual_decision(options.zones.is_all()),
         Default::default(),
         23,
-        crate::WalkGlobals::default(),
     );
     let failure = crate::arm_walk_on(
         &world,
@@ -2131,4 +2215,211 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         .route
         .is_none());
     assert_eq!(play.script_state("alice"), script::RunState::Idle);
+}
+
+fn zone_items(count: usize) -> Vec<String> {
+    (0..count)
+        .map(|i| {
+            format!(
+                "Ogre (L53) at 2567,{} level 0 [ogre@2567,{},0]",
+                3000 + i,
+                3000 + i
+            )
+        })
+        .collect()
+}
+
+/// Every `ActionError` variant, with the payload shapes that matter.
+fn every_action_error() -> Vec<ActionError> {
+    vec![
+        ActionError::NoSelection,
+        ActionError::Blocked,
+        ActionError::NoOrigin,
+        ActionError::OriginNotStandable,
+        ActionError::NoFocus,
+        ActionError::Stale,
+        ActionError::NoNavigation,
+        ActionError::NoPath,
+        ActionError::SearchIncomplete {
+            detail: "search_result=BudgetExhausted ".repeat(40),
+        },
+        ActionError::BlockedByZones { zones: None },
+        ActionError::BlockedByZones {
+            zones: Some(BlockedZones::new(zone_items(99))),
+        },
+        ActionError::InsufficientItems {
+            detail: "3 more Coins (need 3, carrying 0); ".repeat(30),
+        },
+        ActionError::RiskRefused {
+            refusal: script::native::WalkRefusal::NoRouteWithinBounds {
+                tried: 3,
+                last: None,
+            },
+            detail: format!("blocked by danger zones: {}", zone_items(99).join(", ")),
+        },
+        ActionError::MembersOnly,
+        ActionError::Unauthorized,
+        ActionError::WrongAction,
+        ActionError::InvalidCoordinates,
+        ActionError::RunningScript,
+    ]
+}
+
+#[test]
+fn action_error_summary_is_short_for_every_variant() {
+    for error in every_action_error() {
+        let summary = error.summary();
+        assert!(
+            summary.chars().count() <= api::hostlog::SUMMARY_CHARS,
+            "{}: {} characters: {summary}",
+            error.log_tag(),
+            summary.chars().count()
+        );
+        assert!(!summary.contains(['\n', '\r', '\t']), "{summary}");
+        assert!(!summary.is_empty(), "{}", error.log_tag());
+        // The tag is the variant name and nothing of its payload.
+        assert!(
+            error.log_tag().chars().all(|c| c.is_ascii_alphanumeric()),
+            "{}",
+            error.log_tag()
+        );
+        assert!(!error.log_tag().contains("ogre"), "{}", error.log_tag());
+    }
+    // `Display` is the script-facing text and does not change.
+    assert_eq!(
+        ActionError::NoPath.to_string(),
+        "No path to the selected destination with these routing options"
+    );
+    assert_eq!(
+        ActionError::BlockedByZones {
+            zones: Some(BlockedZones::new(vec!["Ogre [ogre@1,2,0]".into(), "Bear [bear@3,4,0]".into()])),
+        }
+        .to_string(),
+        "blocked by danger zones: Ogre [ogre@1,2,0], Bear [bear@3,4,0]; tick \"Route through danger zones\" to walk anyway"
+    );
+    assert_eq!(
+        ActionError::InsufficientItems {
+            detail: "1 more Coins".into()
+        }
+        .to_string(),
+        "Insufficient route supplies: 1 more Coins"
+    );
+}
+
+#[test]
+fn blocked_by_zones_summary_counts_zones_and_detail_keeps_every_key() {
+    let items = zone_items(99);
+    let error = ActionError::BlockedByZones {
+        zones: Some(BlockedZones::new(items.clone())),
+    };
+    let summary = error.summary();
+    assert!(
+        summary.starts_with("Blocked by 99 danger zones"),
+        "{summary}"
+    );
+    assert!(
+        !summary.contains("ogre@"),
+        "no zone key in the summary: {summary}"
+    );
+    assert_eq!(error.detail_items(), items, "every key, in route order");
+    let one = ActionError::BlockedByZones {
+        zones: Some(BlockedZones::new(items[..1].to_vec())),
+    };
+    assert!(
+        one.summary().starts_with("Blocked by 1 danger zone;"),
+        "{}",
+        one.summary()
+    );
+    // A short typed detail the summary already shows is not logged again.
+    let incomplete = ActionError::SearchIncomplete {
+        detail: "search_result=BudgetExhausted".into(),
+    };
+    assert!(incomplete.detail_items().is_empty());
+    assert!(incomplete
+        .summary()
+        .ends_with("search_result=BudgetExhausted"));
+}
+
+#[test]
+fn walk_refusal_detail_is_logged_once_per_bot_per_event() {
+    let log_mark = crate::walk_map::test_log::mark();
+    let items = zone_items(99);
+    let members = crate::WorldMembersFact::Unknown;
+    for slot in ["zone-alice", "zone-bob"] {
+        let run = |error: ActionError| {
+            let _ = WalkRequest {
+                slot: Some(slot),
+                origin: Some(t(2567, 3000, 0)),
+                destination: Some(t(3208, 3213, 0)),
+                options: FindOptions::default(),
+                map_members: false,
+                members: &members,
+            }
+            .run(|| Err(error));
+        };
+        run(ActionError::BlockedByZones {
+            zones: Some(BlockedZones::new(items.clone())),
+        });
+        // A refusal with nothing to add writes no detail line.
+        run(ActionError::NoPath);
+    }
+    let records = crate::walk_map::test_log::records_since(log_mark);
+    for slot in ["zone-alice", "zone-bob"] {
+        let lines: Vec<&str> = records
+            .iter()
+            .filter(|(record_slot, _)| record_slot == slot)
+            .map(|(_, message)| message.as_str())
+            .collect();
+        for key in &items {
+            let key = key.rsplit('[').next().unwrap().trim_end_matches(']');
+            assert_eq!(
+                lines.iter().filter(|line| line.contains(key)).count(),
+                1,
+                "{slot}: {key} is written once: {lines:#?}"
+            );
+        }
+        for line in &lines {
+            assert!(
+                line.len() <= api::hostlog::LINE_BYTES,
+                "{} bytes",
+                line.len()
+            );
+            if line.starts_with("WalkTo origin=") || line.starts_with("WalkTo outcome=") {
+                assert!(
+                    !line.contains("ogre@"),
+                    "receipts carry no zone key: {line}"
+                );
+            }
+        }
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("refused=BlockedByZones")),
+            "{lines:#?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("WalkTo outcome=aborted")
+                    && line.contains("reason=BlockedByZones")),
+            "{lines:#?}"
+        );
+        let detail_lines: Vec<&&str> = lines
+            .iter()
+            .filter(|line| line.starts_with("WalkTo refused detail (BlockedByZones): "))
+            .collect();
+        assert!(
+            detail_lines.len() > 1 && detail_lines.len() <= 16,
+            "{} detail lines",
+            detail_lines.len()
+        );
+        assert_eq!(
+            detail_lines
+                .iter()
+                .filter(|line| line.contains("[1/"))
+                .count(),
+            1,
+            "one packed group per refusal"
+        );
+    }
 }

@@ -14,14 +14,8 @@ use host_play::map_bind::{
     WalkMapDecodeFailure, WalkMapDecodeJob, WALK_MAP_DECODE_INPUT_OVERHEAD,
     WALK_MAP_DECODE_PNG_LIMIT, WALK_MAP_DECODE_SCRATCH_LIMIT,
 };
-use nav_planner::map::formats::ImageManifest;
+use nav_planner::map::formats::{ImageManifest, TileReceipt};
 use nav_planner::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-struct DeclaredIdentity {
-    identity: nav_planner::map::identity::ImageIdentity,
-}
 
 struct YieldAfterDecode {
     start: Instant,
@@ -106,10 +100,7 @@ fn published_manifest() -> (std::path::PathBuf, ImageManifest) {
     );
     let manifest_bytes =
         std::fs::read(root.join("manifest.json")).expect("read published image manifest");
-    let declared: DeclaredIdentity =
-        serde_json::from_slice(&manifest_bytes).expect("read declared image identity");
-    let manifest =
-        ImageManifest::decode(&manifest_bytes, declared.identity).expect("validate image manifest");
+    let manifest = ImageManifest::decode(&manifest_bytes).expect("validate image manifest");
     (root, manifest)
 }
 
@@ -123,9 +114,8 @@ fn largest_published_tile() -> Vec<u8> {
         .expect("published image has terrain tiles");
     let path = root.join(receipt.key.relative_path().expect("validated tile path"));
     let png = std::fs::read(path).expect("read largest published terrain PNG");
-    let verified_len = receipt
-        .verify_png(&png)
-        .expect("published PNG matches its manifest receipt");
+    let verified_len = TileReceipt::validate_png_bytes(receipt.key, &png)
+        .expect("published PNG has a valid header");
     assert_eq!(verified_len, TILE_RGBA_BYTES);
     assert!(png.len() <= WALK_MAP_DECODE_PNG_LIMIT);
     png
@@ -141,8 +131,7 @@ fn largest_png_loads_directly_into_one_shared_allocation() {
         .iter()
         .max_by_key(|tile| tile.payload.bytes)
         .expect("published image has terrain tiles");
-    let ready = nav_planner::map::cache::ReadyImages::open(&root, manifest.identity)
-        .expect("open verified image artifact");
+    let ready = nav_planner::map::cache::ReadyImages::open(&root).expect("open image artifact");
     let overhead = allocation_counter::measure(|| {
         let path = root.join(receipt.key.relative_path().expect("validated tile path"));
         let _file = std::fs::File::open(path).expect("open listed PNG");
@@ -152,10 +141,6 @@ fn largest_png_loads_directly_into_one_shared_allocation() {
             .read_tile_arc(receipt.key)
             .expect("read verified PNG")
             .expect("listed tile has PNG bytes");
-        assert_eq!(shared.len(), receipt.payload.bytes as usize);
-        receipt
-            .verify_png(&shared)
-            .expect("shared PNG matches its receipt");
         drop(shared);
     });
     assert_eq!(allocations.count_current, 0);

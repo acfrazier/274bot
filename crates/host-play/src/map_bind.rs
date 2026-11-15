@@ -132,8 +132,7 @@ pub(crate) fn ship_map_bundle(
 ) -> Result<ShippedMapBundle, MapCacheError> {
     let (image, catalogue) = map_artifact_policies()?;
     let descriptor =
-        MapProfileDescriptor::new(input.revision(), input.content(), image, catalogue)?
-            .with_input(input)?;
+        MapProfileDescriptor::new(input.revision(), image, catalogue)?.with_input(input)?;
     let shipped = ShippedMap::at(out.join(SHIPPED_MAP_DIR));
     for (what, description) in [
         (
@@ -199,8 +198,8 @@ pub(crate) fn ship_map_bundle(
         drop(handle);
         manager.reap();
         Ok(ShippedMapBundle {
-            images: shipped.ship_images_from(&root, descriptor.image_identity())?,
-            catalogue: shipped.ship_catalogue_from(&root, descriptor.catalogue_identity())?,
+            images: shipped.ship_images_from(&root, descriptor.revision())?,
+            catalogue: shipped.ship_catalogue_from(&root, descriptor.revision())?,
         })
     })();
     match (result, fs::remove_dir_all(&scratch)) {
@@ -428,7 +427,6 @@ pub fn load_navpois(profile: &ServerProfile) -> Option<Arc<ServicePois>> {
 mod tests {
     use super::*;
     use crate::map_cache::{MapCacheRoot, MapProfileDescriptor};
-    use nav_planner::map::identity::Digest;
 
     #[test]
     fn artifact_policies_are_stable() {
@@ -445,7 +443,7 @@ mod tests {
         );
         let manager = MapDemandManager::new(root, Arc::new(NativeMapProducer::new()));
         let (image, catalogue) = map_artifact_policies().unwrap();
-        let descriptor = MapProfileDescriptor::new(289, Digest([1; 32]), image, catalogue).unwrap();
+        let descriptor = MapProfileDescriptor::new(289, image, catalogue).unwrap();
         assert!(matches!(
             manager.request_catalogue(descriptor),
             Err(MapCacheError::NoPreparedCache)

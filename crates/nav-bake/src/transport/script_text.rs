@@ -56,6 +56,23 @@ pub(super) fn parse_script_header(
     Some(ScriptHeader { kind, name, tail })
 }
 
+/// Whether `count` parsed declarations of the named script is exactly one.
+/// A hand-modelled behaviour keyed by `what` applies only to a single
+/// declaration: none or several give no edge, and the reason is logged.
+pub(super) fn declared_once(what: &str, count: usize) -> bool {
+    match count {
+        1 => true,
+        0 => {
+            eprintln!("derive_transports: {what} is not declared; no edge");
+            false
+        }
+        n => {
+            eprintln!("derive_transports: {what} is declared {n} times; no edge");
+            false
+        }
+    }
+}
+
 pub(super) enum ScriptBlockLine<'a, T> {
     Header {
         value: T,
@@ -145,9 +162,11 @@ pub(super) fn normalized_body(body: &str) -> String {
 
 /// Every `[oploc1,_<category>]` category handler in a script text →
 /// `(category, body)` (the category without its `_`). These inline bodies use
-/// the shared accumulator's raw tail and preceding-newline policy.
+/// the shared accumulator's raw tail and preceding-newline policy. A header
+/// inside a `/* */` comment is not a declaration.
 pub(super) fn oploc1_category_bodies(text: &str) -> Vec<(String, String)> {
-    super::script_text::collect_script_blocks(text, |raw| {
+    let text = super::rs2_syntax::strip_block_comments(text);
+    super::script_text::collect_script_blocks(&text, |raw| {
         let line = raw
             .split_once("//")
             .map_or(raw, |(before, _)| before)
@@ -516,6 +535,26 @@ mod tests {
                 ("next".to_string(), "\n@next;".to_string()),
                 ("last".to_string(), " ~last;".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn block_comments_go_but_strings_and_line_comments_are_skipped() {
+        use crate::transport::rs2_syntax::strip_block_comments;
+        assert_eq!(
+            strip_block_comments("[a]\n/* one\n[b] two */\n[c] /* x */ y\n"),
+            "[a]\n \n\n[c]   y\n"
+        );
+        // A marker in a string or a `//` comment is not a comment; the `//`
+        // text itself stays for the callers' line readers.
+        let kept = "say(\"a /* b\"); // c /* d\n[e]\n";
+        assert_eq!(strip_block_comments(kept), kept);
+        // An unterminated comment removes the rest; an unterminated string
+        // ends at its line.
+        assert_eq!(strip_block_comments("[a]\n/* [b]\n[c]"), "[a]\n \n");
+        assert_eq!(
+            strip_block_comments("say(\"a\n/* x */ [b]"),
+            "say(\"a\n  [b]"
         );
     }
 }

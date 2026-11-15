@@ -2172,6 +2172,7 @@ mod tests {
         inp.set_enabled(false);
         inp.enqueue_script_mouse(true, 382.5, 251.5, 0);
         let mut shell = client::client::GameShell::new();
+        shell.apply_mouse_move(10, 20);
         inp.consume_native_frame(&mut shell);
         assert_eq!(
             (
@@ -2182,8 +2183,8 @@ mod tests {
             (1, 382, 251)
         );
         assert_eq!(shell.mouse_button, 1);
-        assert_eq!(shell.mouse_x, 382);
-        assert_eq!(shell.mouse_y, 251);
+        assert_eq!(shell.mouse_x, 10);
+        assert_eq!(shell.mouse_y, 20);
         inp.enqueue_script_mouse(false, 382.5, 251.5, 0);
         inp.consume_native_frame(&mut shell);
         assert_eq!(shell.mouse_button, 0);

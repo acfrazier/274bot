@@ -40,7 +40,8 @@ pub use reachability::{
 pub use route::{LegView, RoutePlanLease, RouteView};
 pub use transport::TransportView;
 pub use zones::{
-    BoundZoneExempt, BoundZoneKey, WildernessView, ZoneKindView, ZoneTableView, ZoneView,
+    BoundZoneExempt, BoundZoneKey, MultiwayView, WildernessView, ZoneKindView, ZoneTableView,
+    ZoneView,
 };
 
 pub use crate::arrival::ArrivalKind;
@@ -282,6 +283,11 @@ impl NavLease {
     /// Borrowed wilderness membership/level facts.
     pub fn wilderness(&self) -> WildernessView<'_> {
         WildernessView::new(&self.world.graph.wilderness)
+    }
+
+    /// Borrowed multi-combat map cells.
+    pub fn multiway(&self) -> MultiwayView<'_> {
+        MultiwayView::new(&self.world.graph.multiway)
     }
 }
 

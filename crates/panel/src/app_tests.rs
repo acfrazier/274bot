@@ -4317,6 +4317,140 @@ impl dear_imgui_rs::ClipboardBackend for DrawnText {
         value.clone_into(&mut self.0.borrow_mut());
     }
 }
+
+/// The ImGui id of the window `name`, or `None` before its first frame.
+fn imgui_window_id(name: &str) -> Option<dear_imgui_rs::sys::ImGuiID> {
+    use std::ffi::CString;
+
+    let name = CString::new(name).unwrap();
+    // SAFETY: the caller binds the frame's context; the name outlives the call.
+    let window = unsafe { dear_imgui_rs::sys::igFindWindowByName(name.as_ptr()) };
+    if window.is_null() {
+        None
+    } else {
+        // SAFETY: `window` is alive for the bound context's frame.
+        Some(unsafe { (*window).ID })
+    }
+}
+
+/// The id `label` gets under `seed` (a window's or popup's id-stack top).
+fn imgui_item_id(label: &str, seed: dear_imgui_rs::sys::ImGuiID) -> dear_imgui_rs::sys::ImGuiID {
+    use std::ffi::CString;
+
+    let label = CString::new(label).unwrap();
+    // SAFETY: pure hashing over a NUL-terminated label.
+    unsafe { dear_imgui_rs::sys::igGetIDWithSeed_Str(label.as_ptr(), std::ptr::null(), seed) }
+}
+
+/// One real frame of the panel's Guardian policy control. `activate` queues
+/// an ImGui item activation (the operator's click path) before the control
+/// draws; the frame's drawn text is appended to `drawn`. Returns the
+/// control's own changed flag.
+fn guardian_policy_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    policy: &mut frontend_core::GuardianPolicy,
+    activate: Option<dear_imgui_rs::sys::ImGuiID>,
+) -> bool {
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([600.0, 320.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    let changed;
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        changed = ui
+            .window("guardian-policy")
+            .size([420.0, 220.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                if let Some(id) = activate {
+                    // SAFETY: the frame's context is bound; the id names an
+                    // item the control draws later this frame or the popup
+                    // draws it, and Dear ImGui queues the activation for the
+                    // next frame.
+                    unsafe { dear_imgui_rs::sys::igActivateItemByID(id) };
+                }
+                super::random_event_policy_combo(ui, "river troll", policy)
+            })
+            .unwrap_or(false);
+        ui.log_finish();
+    }
+    ctx.render();
+    changed
+}
+
+/// The panel's policy control is the real combo widget: exactly Flee and
+/// Fight are listed, a saved Fight stays visible and saved, picking Flee
+/// applies, and the disabled Fight choice is refused by the widget itself.
+#[test]
+fn guardian_policy_combo_offers_two_choices_and_refuses_fight() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = crate::test_support::imgui_context();
+    ctx.io_mut()
+        .set_backend_flags(BackendFlags::RENDERER_HAS_TEXTURES);
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+
+    // A previously saved Fight is shown and stays saved.
+    let mut policy = frontend_core::GuardianPolicy::Fight;
+    assert!(!guardian_policy_frame(&mut ctx, &mut policy, None));
+    let text = drawn.0.take();
+    assert!(
+        text.contains("Fight (not available yet)"),
+        "a saved Fight stays visible:\n{text}"
+    );
+    assert!(!text.contains("Ignore"), "no Ignore label draws:\n{text}");
+    assert_eq!(policy, frontend_core::GuardianPolicy::Fight);
+
+    let window = imgui_window_id("guardian-policy").expect("the policy window drew");
+    let combo = imgui_item_id("##random-event-policy-river troll", window);
+
+    // Opening the combo is the control's own activation path.
+    guardian_policy_frame(&mut ctx, &mut policy, Some(combo));
+    guardian_policy_frame(&mut ctx, &mut policy, None);
+    guardian_policy_frame(&mut ctx, &mut policy, None);
+    let opened = drawn.0.take();
+    assert!(
+        !opened.is_empty(),
+        "the policy control draws its preview and its options"
+    );
+    assert!(
+        opened.matches("Fight (not available yet)").count() == 2,
+        "the saved preview plus exactly one Fight option:\n{opened}"
+    );
+    assert!(opened.contains("Flee"), "the Flee option draws:\n{opened}");
+    assert!(
+        !opened.contains("Ignore"),
+        "no Ignore option draws:\n{opened}"
+    );
+
+    // Picking Flee applies. Dear ImGui draws a combo's open list in the
+    // recycled `##Combo_<depth>` popup window; this control has one combo,
+    // at depth 0.
+    let popup = imgui_window_id("##Combo_00").expect("the combo popup drew");
+    let flee = imgui_item_id("Flee", popup);
+    guardian_policy_frame(&mut ctx, &mut policy, Some(flee));
+    let changed = guardian_policy_frame(&mut ctx, &mut policy, None);
+    assert!(changed, "the frame reports the applied choice");
+    assert_eq!(policy, frontend_core::GuardianPolicy::Flee);
+    drawn.0.take();
+
+    // Reopening shows the current Flee and the one Fight option; activating
+    // the disabled Fight choice changes nothing.
+    guardian_policy_frame(&mut ctx, &mut policy, Some(combo));
+    guardian_policy_frame(&mut ctx, &mut policy, None);
+    guardian_policy_frame(&mut ctx, &mut policy, None);
+    drawn.0.take();
+    let popup = imgui_window_id("##Combo_00").expect("the combo popup drew again");
+    let fight = imgui_item_id("Fight (not available yet)", popup);
+    guardian_policy_frame(&mut ctx, &mut policy, Some(fight));
+    let changed = guardian_policy_frame(&mut ctx, &mut policy, None);
+    assert!(
+        !changed,
+        "the disabled Fight choice is refused by the control"
+    );
+    assert_eq!(policy, frontend_core::GuardianPolicy::Flee);
+}
+
 fn draw_status_detail(detail: &frontend_core::SlotDetail, walk: &str, mem: &str) -> String {
     let mut ctx = crate::test_support::imgui_context();
     let drawn = DrawnText::default();
@@ -4663,6 +4797,74 @@ fn panel_parameter_rows_show_fact_errors_and_keep_saved_values() {
     assert!(text.contains("FamilyUnavailable"), "{text}");
     assert!(text.contains("saved-bank"), "{text}");
     assert_eq!(bag.get("bank"), Some(&serde_json::json!("saved-bank")));
+}
+
+#[test]
+fn panel_quester_rows_show_allow_unqualified_guides_and_let_a_draft_be_picked_when_on() {
+    let _guard = crate::test_support::imgui_context_guard();
+    frontend_core::test_support::scripts::reset_quester_registry();
+    let mut session = crate::session::Session::new();
+    let schema = frontend_core::test_support::scripts::TestSchema::quester_card();
+    let selection = ScriptChoice::compiled(frontend_core::scripts::CompiledCardId::QUESTER);
+    let loadouts = frontend_core::scripts::Loadouts::default();
+    let quests_def = schema.schema_ref().get("quests").unwrap();
+    let draft = "druid";
+    let compact = |text: &str| {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+    };
+    for allowed in [false, true] {
+        let mut bag = serde_json::Map::new();
+        bag.insert("quests".into(), serde_json::json!(["priest", draft]));
+        bag.insert("include_draft_guides".into(), serde_json::json!(allowed));
+        let options =
+            frontend_core::scripts::resolve_parameter_options(quests_def, &bag, &loadouts, None)
+                .unwrap();
+        assert_eq!(
+            options.selectable().iter().any(|value| value == draft),
+            allowed,
+            "a draft guide is pickable only while Allow unqualified guides is on"
+        );
+        assert!(
+            options
+                .label_for(draft)
+                .contains("Path has not been qualified by live testing."),
+            "the picker still says the guide is unqualified: {}",
+            options.label_for(draft)
+        );
+
+        let mut ctx = dock_host_context();
+        let drawn = DrawnText::default();
+        ctx.set_clipboard_backend(drawn.clone());
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 900.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("Allow unqualified guides row")
+                .size([420.0, 800.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    super::script_parameter_rows(
+                        ui,
+                        &mut session,
+                        &selection,
+                        None,
+                        schema.schema_ref(),
+                        bag.clone(),
+                    );
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+        let text = drawn.0.take();
+        assert!(
+            compact(&text).contains("Allowunqualifiedguides"),
+            "allowed={allowed}: the panel's Quester settings list the row: {text}"
+        );
+    }
 }
 
 #[test]
@@ -7248,10 +7450,8 @@ fn nav_routing_rows_fit_the_docked_width_at_every_danger_level() {
         );
         // The scope note, three checkboxes, the bank-fetch scope, the
         // prerequisite note, the two prerequisite checkboxes, the
-        // drop-down's label and the drop-down, plus the note under a held
-        // level and the Always warning.
-        let notes = usize::from(frontend_core::walk_permissions::danger_routing_held(level))
-            + usize::from(level == frontend_core::DangerLevel::Always);
+        // drop-down's label and the drop-down, plus the Always warning.
+        let notes = usize::from(level == frontend_core::DangerLevel::Always);
         assert_eq!(routing.items.len(), 10 + notes, "routing rows at {level:?}");
         for (index, item) in routing.items.iter().enumerate() {
             let [min_x, _, max_x, _] = *item;
@@ -7306,6 +7506,100 @@ fn nav_danger_routing_drop_down_stores_each_picked_level() {
         assert!(changed, "picking {target:?} reports a change");
         assert_eq!(nav.danger_level(), target, "the picked entry is stored");
     }
+}
+
+/// The Nav config Danger routing drop-down offers all three levels. Picking
+/// Always in the open popup submits `SetDangerLevel(Always)`.
+#[test]
+fn nav_danger_routing_drop_down_offers_three_levels_and_always_submits_set_danger_level() {
+    use frontend_core::{DangerLevel, OperatorCommand};
+
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-danger-three");
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let before = session.ui.nav.clone();
+    assert_eq!(before.danger_level(), DangerLevel::Never);
+    let mut nav = before.clone();
+
+    let (routing, _) = nav_routing_frame(&mut ctx, &mut nav);
+    let combo = rect_centre(routing.items[DANGER_ROUTING_COMBO_ROW]);
+    for pressed in [false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, combo, pressed);
+    }
+    let mut choices = Vec::new();
+    for _ in 0..8 {
+        let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, combo, false);
+        choices = routing.choices;
+        if !choices.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(
+        choices.len(),
+        3,
+        "the open drop-down lists exactly three items"
+    );
+    assert_eq!(
+        frontend_core::walk_permissions::DANGER_ROUTING_LEVELS.map(DangerLevel::label),
+        ["Never", "When survivable", "Always"]
+    );
+
+    let always = rect_centre(choices[2]);
+    for pressed in [false, false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, always, pressed);
+    }
+    assert_eq!(nav.danger_level(), DangerLevel::Always);
+
+    crate::session::take_submitted_commands();
+    super::commit_nav_settings(&mut session, &before, nav).unwrap();
+    assert_eq!(
+        crate::session::take_submitted_commands(),
+        vec![OperatorCommand::SetDangerLevel(DangerLevel::Always)]
+    );
+}
+
+/// Selecting the middle entry commits exactly one global danger-level command.
+#[test]
+fn nav_danger_routing_drop_down_submits_when_survivable() {
+    use frontend_core::{DangerLevel, OperatorCommand};
+
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-danger-middle");
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let before = session.ui.nav.clone();
+    let mut nav = before.clone();
+
+    let (routing, _) = nav_routing_frame(&mut ctx, &mut nav);
+    let combo = rect_centre(routing.items[DANGER_ROUTING_COMBO_ROW]);
+    for pressed in [false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, combo, pressed);
+    }
+    let mut choices = Vec::new();
+    for _ in 0..8 {
+        let (routing, _) = nav_routing_pointer_frame(&mut ctx, &mut nav, combo, false);
+        choices = routing.choices;
+        if choices.len() == 3 {
+            break;
+        }
+    }
+    assert_eq!(choices.len(), 3, "the open drop-down lists every level");
+
+    let middle = rect_centre(choices[1]);
+    for pressed in [false, false, true, false] {
+        nav_routing_pointer_frame(&mut ctx, &mut nav, middle, pressed);
+    }
+    assert_eq!(nav.danger_level(), DangerLevel::WhenSurvivable);
+
+    crate::session::take_submitted_commands();
+    super::commit_nav_settings(&mut session, &before, nav).unwrap();
+    assert_eq!(
+        crate::session::take_submitted_commands(),
+        vec![OperatorCommand::SetDangerLevel(DangerLevel::WhenSurvivable)]
+    );
 }
 
 /// One headless frame of the render-all warning with the pointer at `point`,
@@ -7576,9 +7870,7 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
                     Some(serde_json::Value::Bool(false)),
                 );
             },
-            draw: |ui, s| {
-                crate::fleet_toolbar::header(ui, s, "fleet");
-            },
+            draw: super::fleet_section,
         },
         Surface {
             name: "rail preview fold",
@@ -9126,73 +9418,276 @@ fn the_panel_top_line_keeps_a_login_notice_through_retry_states_until_it_expires
     println!("LOGIN_NOTICE_PANEL_TOP {seen:#?}\nLOGIN_NOTICE_PANEL_EXPIRED {banner}");
 }
 
-/// IDLEFIX-028: a bot with no script whose connection dropped stays logged
-/// out, and the banner and the status rows say why (the same words as the
-/// terminal app, which reads the same `frontend-core` state line).
+/// The panel driver for a dim catalog card: the Browse card draws the typed
+/// reason in the operator's terms. A retired card reads `unavailable: …`; an
+/// unresolved import reads `failed import: …`. The two cards make the kinds
+/// observable in one frame.
+#[cfg(feature = "js")]
 #[test]
-fn the_panel_says_why_a_bot_with_no_script_is_logged_out() {
-    panel_shows_the_park(
-        host_play::SlotArm::exit_while_idle_for_test,
-        "ogged out: disconnected while idle (Log in to connect)",
-    );
-}
-
-/// Only the client's own idle request makes a server logout an idle logout;
-/// any other one reads as a logout by the server.
-#[test]
-fn the_panel_calls_only_a_requested_logout_an_idle_logout() {
-    panel_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(true),
-        "ogged out: idle logout by the server (Log in to connect)",
-    );
-    panel_shows_the_park(
-        |arm| arm.exit_by_server_logout_for_test(false),
-        "ogged out by the server (Log in to connect)",
-    );
-}
-
-fn panel_shows_the_park(exit: impl Fn(&host_play::SlotArm), state: &str) {
-    use crate::session::{Session, SlotIo};
-    use frontend_core::surface::{FrameBuf, SlotInput};
-    use host_play::{SlotArm, StartupPhase};
+fn browse_card_draws_policy_holds_and_import_failures_apart() {
+    use crate::session::Session;
 
     let _guard = crate::test_support::imgui_context_guard();
-    let mut s = Session::new();
-    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
-        host: "127.0.0.1".into(),
-        transport: client::Transport::Tcp,
-        port: 1,
-        cache_dir: "/tmp".into(),
-        lowmem: true,
-        mainland: false,
-    });
-    let arm = SlotArm::new(2, true);
-    play.attach_arm("bob", Arc::clone(&arm));
-    s.core.fleet_mut().add("bob");
-    s.core.insert_slot_io(
-        "bob",
-        SlotIo {
-            input: SlotInput::new(),
-            pixels: FrameBuf::new(),
-        },
-    );
-    s.set_focus_for_test("bob");
-    s.core.set_play(Some(play));
-    arm.complete_login_for_test();
-    exit(&arm);
-    {
-        let play = s.core.play_for_test().unwrap();
-        play.statuses.lock().unwrap().push(host_play::SlotStatus {
-            username: "bob".into(),
-            login_latched: true,
-            login_latch_reason: arm.login_latch_reason(),
-            startup_phase: StartupPhase::Queueing,
-            startup_phase_started: Instant::now(),
-            ..host_play::SlotStatus::default()
-        });
+    let dir = TestDir::new("browse-dim-reasons");
+    let root = dir.join("rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("Woodcutter")).unwrap();
+    std::fs::create_dir_all(scripts.join("AccountLeveler")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import Woodcutter from './Woodcutter/Woodcutter.js';\n\
+         import AccountLeveler from './AccountLeveler/AccountLeveler.js';\n\
+         ScriptRegistry.register({ name: 'Woodcutter', create: () => new Woodcutter() });\n\
+         ScriptRegistry.register({ name: 'AccountLeveler', create: () => new AccountLeveler() });\n",
+    )
+    .unwrap();
+    let body = "import { Game } from '../../api/game/Game.js';\n\
+                export default class T extends LoopingBot { loop() {} }";
+    std::fs::write(scripts.join("Woodcutter/Woodcutter.ts"), body).unwrap();
+    std::fs::write(
+        scripts.join("AccountLeveler/AccountLeveler.ts"),
+        "import x from '../../event/webwalk/Something.js';\n\
+         export default class T extends LoopingBot { loop() {} }",
+    )
+    .unwrap();
+
+    let mut session = Session::new();
+    session
+        .scripts
+        .register_catalog(&root, &dir.join("rs2b0t-path"))
+        .expect("fixture catalog registers");
+
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for _ in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("browse")
+                .size([520.0, 600.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    for card in session.scripts.browse_cards() {
+                        if matches!(card.name(), "Woodcutter" | "AccountLeveler") {
+                            super::browse_script_card(ui, &session, card, 480.0);
+                        }
+                    }
+                });
+            ui.log_finish();
+        }
+        ctx.render();
     }
-    s.core.poll_at(Instant::now());
-    let (banner, status) = draw_banner_and_status(&s);
-    assert!(banner.contains(state), "{banner}");
-    assert!(status.contains(state), "{status}");
+    let text = drawn.0.take();
+    assert!(
+        text.contains("unavailable: replaced by the native Gatherer"),
+        "a retired card reads as unavailable:\n{text}"
+    );
+    assert!(
+        text.contains("failed import: ../../event/webwalk/Something.js"),
+        "an unsupported import names its specifier:\n{text}"
+    );
+    assert!(
+        !text.contains("failed import: replaced by the native Gatherer"),
+        "a policy hold is never a failed import:\n{text}"
+    );
+    assert!(
+        !text.contains("unavailable: ../../event/webwalk/Something.js"),
+        "an import failure is never a policy hold:\n{text}"
+    );
+}
+
+/// A walk refusal that names 99 danger zones, as a script's park reason.
+fn zone_reason() -> String {
+    let zones: Vec<String> = (0..99)
+        .map(|i| {
+            format!(
+                "Ogre (L53) at 2567,{} level 0 [ogre@2567,{},0]",
+                3000 + i,
+                3000 + i
+            )
+        })
+        .collect();
+    format!(
+        "blocked by danger zones: {}; to allow it, set Danger routing to Always in Nav config",
+        zones.join(", ")
+    )
+}
+
+fn parked_detail(reason: &str) -> frontend_core::SlotDetail {
+    let status = frontend_core::test_support::scripts::NativeStatus::working(
+        frontend_core::scripts::CompiledCardId::lookup("Quester").unwrap(),
+    )
+    .with_text_field("action_state", "Action", "blocked")
+    .with_text_field("block_reason", "Blocked", reason);
+    let mut parked = frontend_core::SlotDetail::default();
+    parked.row_mut().set_phase(frontend_core::Phase::Ready);
+    parked.row_mut().set_script(ScriptRunState::Running);
+    parked.set_state("ingame scene 2");
+    status.attach_to(parked)
+}
+
+/// The Status card shows a parked script's reason as one short line with no
+/// later zone, and offers the whole text under a collapsed "Full reason"
+/// header with a Copy button; opened, the header holds the whole text. A
+/// reason that is already one short line gets no header.
+#[test]
+fn the_status_and_script_panes_show_the_short_reason() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let reason = zone_reason();
+    let parked = parked_detail(&reason);
+    let shown = draw_status_detail(&parked, "—", "lowmem");
+    assert!(
+        shown.contains("reason") && shown.contains("blocked by danger zones"),
+        "{shown}"
+    );
+    assert!(
+        !shown.contains("2567,3050"),
+        "only the first 100 characters: {shown}"
+    );
+    assert!(shown.contains("Full reason"), "{shown}");
+    assert!(
+        !shown.contains("Copy"),
+        "the header starts collapsed: {shown}"
+    );
+
+    // Open the header: it holds the whole reason (the child window wraps it).
+    let line = parked.script_phase().unwrap().reason().unwrap();
+    assert!(line.is_cut());
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([500.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("reason").build(|| {
+            ui.set_next_item_open(true);
+            super::full_reason(ui, line, "test-reason");
+        });
+        ui.log_finish();
+    }
+    ctx.render();
+    let open = drawn.0.take();
+    drop(ctx);
+    assert!(open.contains("Copy"), "{open}");
+    assert!(open.contains("blocked by danger zones"), "{open}");
+
+    let whole = draw_status_detail(&parked_detail("no step for stage"), "—", "lowmem");
+    assert!(
+        whole.contains("no step for stage") && !whole.contains("Full reason"),
+        "{whole}"
+    );
+}
+
+/// A 6,360-character refusal on the panel's top line is one line of at most
+/// `LINE_MAX` characters with no zone item after the first 112 characters.
+#[test]
+fn the_banner_for_a_99_zone_refusal_is_short() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut session = crate::session::Session::new();
+    session.error = Some(zone_reason());
+    let (banner, _) = draw_banner_and_status(&session);
+    // The first line is the test window's title.
+    let lines: Vec<&str> = banner
+        .lines()
+        .filter(|line| !line.trim().is_empty() && *line != "banner")
+        .collect();
+    assert_eq!(lines.len(), 1, "{banner:?}");
+    assert!(
+        lines[0].chars().count() <= frontend_core::LINE_MAX,
+        "{}",
+        lines[0]
+    );
+    assert!(lines[0].ends_with('…'), "{}", lines[0]);
+    assert!(!banner.contains("2567,3050"), "{banner}");
+}
+
+/// Draw the real strip headings with a physical pointer and button state.
+fn heading_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    point: [f32; 2],
+    down: bool,
+) -> ([f32; 2], [f32; 2], bool) {
+    ctx.io_mut().add_mouse_pos_event(point);
+    ctx.io_mut()
+        .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, down);
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    crate::fleet::take_layout();
+    let mut target = [0.0; 2];
+    let active = {
+        let ui = ctx.frame();
+        ui.window("heading driver")
+            .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+            .size([600.0, 700.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::section_open(ui, session, "status");
+                target = rect_centre([
+                    ui.item_rect_min()[0],
+                    ui.item_rect_min()[1],
+                    ui.item_rect_max()[0],
+                    ui.item_rect_max()[1],
+                ]);
+                super::fleet_section(ui, session);
+            });
+        ui.drag_drop_payload().is_some()
+    };
+    ctx.render();
+    let source = rect_centre(crate::fleet::take_layout().fold_header);
+    (source, target, active)
+}
+
+#[test]
+fn fleet_heading_click_and_drag_keep_the_header_while_its_fold_saves() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("heading-dnd");
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let (release, failing) = hold_writes(&session);
+    failing.store(false, std::sync::atomic::Ordering::SeqCst);
+    session.ui.fleet_toolbar_open = false;
+    session.ui.section_order = vec!["status".into(), "fleet".into()];
+    let mut ctx = dock_host_context();
+    let away = [1200.0, 700.0];
+    let mut source = [0.0; 2];
+    for _ in 0..3 {
+        (source, _, _) = heading_frame(&mut ctx, &mut session, away, false);
+    }
+    for down in [false, true, false] {
+        let (_, _, active) = heading_frame(&mut ctx, &mut session, source, down);
+        assert!(!active, "a plain click must not start a heading drag");
+    }
+    assert!(session.ui.fleet_toolbar_open, "the click opens the toolbar");
+    assert!(session.panel_member_pending(&["fleet_toolbar_open"]));
+
+    heading_frame(&mut ctx, &mut session, source, false);
+    heading_frame(&mut ctx, &mut session, source, true);
+    let dragged = [source[0] + 40.0, source[1]];
+    let (_, target, active) = heading_frame(&mut ctx, &mut session, dragged, true);
+    assert!(
+        active,
+        "dragging the header starts its payload while Saving… is drawn"
+    );
+    heading_frame(&mut ctx, &mut session, target, true);
+    heading_frame(&mut ctx, &mut session, target, true);
+    heading_frame(&mut ctx, &mut session, target, false);
+    let order = super::resolve_heading_order(&session.ui.section_order);
+    assert!(
+        order.iter().position(|id| id == "fleet") < order.iter().position(|id| id == "status"),
+        "the Fleet payload reorders the actual headings: {order:?}"
+    );
+    let saved_open = serde_json::json!(session.ui.fleet_toolbar_open);
+    drop(release);
+    await_preference(&mut session, "fleet_toolbar_open", saved_open);
+    let saved_order = serde_json::to_value(&session.ui.section_order).unwrap();
+    await_preference(&mut session, "section_order", saved_order);
 }

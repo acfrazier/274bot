@@ -70,6 +70,13 @@ impl PredicatePlan for AlwaysPredicate {
     }
 }
 
+struct UnknownPredicate;
+impl PredicatePlan for UnknownPredicate {
+    fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth {
+        Truth::Unknown
+    }
+}
+
 struct AtomicPredicate(Arc<AtomicBool>);
 impl PredicatePlan for AtomicPredicate {
     fn evaluate(&self, _: &PredicateContext<'_, '_>) -> Truth {
@@ -181,6 +188,7 @@ fn compiled_step(
         hazard,
         hazard_source: hazard.map(|_| Arc::from(RAILING_SOURCE)),
         attempt_budget: None,
+        failure_signal: None,
     }
 }
 
@@ -790,6 +798,7 @@ fn install_make_document(document: &mut PathDocument) {
         advances: Some(false),
         max_attempts: None,
         stop: None,
+        failure_signal: None,
         skip_if: PredicateDocument::Any(Vec::new()),
         settle: PredicateDocument::Fact {
             kind: "item_count_at_least".to_owned(),
@@ -1455,6 +1464,232 @@ fn a_real_step_transition_removes_the_old_hazard() {
     );
     assert!(script.survival_action.is_none());
     assert!(script.survival.parked().is_none());
+}
+
+#[test]
+fn a_local_hazard_bite_precedes_automatic_stage_supply_banking() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for (held_food, reserved) in [(1, 0), (0, 0), (1, 1), (8, 4), (4, 4)] {
+        let hazard = StepHazard {
+            of: HazardStat::None,
+            mul: 0,
+            div: 1,
+            plus: 7,
+            cap: None,
+        };
+        let (mut script, mut snapshot, counts) = fixture("interact", Some(hazard));
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let (lease, zone) = crate::combat::risk::provisioning_cross_fixture();
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let header = document.quest.as_mut().unwrap();
+        header.items.clear();
+        header.tools.clear();
+        header.coin_float = 0;
+        header.loadouts.clear();
+        header.owns_inventory = true;
+        if reserved > 0 {
+            header.items.push(super::super::path::QuestItemDocument {
+                obj: "lobster".into(),
+                qty: reserved as u32,
+                kind: super::super::path::QuestItemKindDocument::MustHave,
+                acquire: None,
+                from_stage: None,
+            });
+        }
+        document.roles[0].sequences[0].cross = vec![super::super::path::RequiredZoneDocument {
+            id: zone,
+            name: "Ice warrior crossing".into(),
+            reason: "Exercise stage supplies before a local hazard.".into(),
+        }];
+        let compiled = super::super::compile::compile_uncached_for_test_with_zones(
+            &document,
+            &selected,
+            &script.quests,
+            lease.zones().unwrap(),
+        )
+        .unwrap();
+        let compiled = Arc::try_unwrap(compiled).ok().expect("test path is unique");
+        let protected_id = lobster_id(&script);
+        let plan = &mut Arc::get_mut(&mut script.path)
+            .expect("test path is unique")
+            .provisioning;
+        *plan = compiled.provisioning;
+        plan.bank = None;
+        assert_eq!(
+            crate::combat::FoodReserve::reserved(
+                plan.food_reserves.as_deref().unwrap_or(&[]),
+                protected_id,
+            ),
+            reserved
+        );
+        assert!(plan.survival.is_some());
+
+        let mut ledger = None;
+        let mut output = CapturedOutput::default();
+        let can_bite = held_food > reserved;
+        let frames = [
+            (20, 14, held_food),
+            (21, 14, held_food),
+            (22, 26, held_food - 1),
+        ];
+        for &(tick, hp, food) in &frames[..if can_bite { 3 } else { 1 }] {
+            let frame = TestFrame {
+                tick,
+                hp,
+                hp_max: 40,
+                poison: PoisonState::Clear,
+                cure: CurePoison::Never,
+            };
+            seed_frame(&mut snapshot, tick, hp, 40);
+            snapshot.seed_stats(
+                [
+                    (3, "hitpoints", i32::from(hp), 40),
+                    (1, "defence", 1, 1),
+                    (5, "prayer", 1, 1),
+                ]
+                .into_iter()
+                .map(|(index, name, effective, base)| StatView {
+                    index,
+                    name: name.into(),
+                    effective,
+                    base,
+                    xp: 0,
+                    used: true,
+                })
+                .collect(),
+            );
+            set_inventory(&script, &mut snapshot, 0, food, 0);
+            with_frame_tick(
+                &mut script,
+                &snapshot,
+                &mut ledger,
+                frame,
+                &mut output,
+                |script, native| script.tick(native).expect("Quester tick"),
+            );
+            if !can_bite {
+                assert_eq!(eat_count(&ledger, &output), 0);
+                assert!(script.survival.parked().is_none());
+                assert!(
+                    script.provisioner.bank_starts() > 0,
+                    "missing or protected-only food must leave preparation able to refill"
+                );
+            } else if tick < 22 {
+                assert_eq!(
+                    script.provisioner.bank_starts(),
+                    0,
+                    "stage supplies cannot start banking before the bite applies"
+                );
+                assert_eq!(counts.began.load(Ordering::Relaxed), 0);
+                assert_eq!(eat_count(&ledger, &output), 1);
+            } else {
+                assert!(
+                    script.provisioner.bank_starts() > 0,
+                    "automatic stage supplies still run after the bite"
+                );
+                assert_eq!(eat_count(&ledger, &output), 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn hazard_preparation_does_not_commit_skips_before_provisioning() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut script, mut snapshot, _) = fixture("interact", None);
+    let skipped = Arc::new(AtomicBool::new(true));
+    let first_begins = Arc::new(AtomicUsize::new(0));
+    let hazard_begins = Arc::new(AtomicUsize::new(0));
+    let mut first = compiled_step(
+        "pending-predicate",
+        "interact",
+        Arc::new(PendingPlan(Arc::clone(&first_begins))),
+        None,
+        Arc::new(NeverPredicate),
+    );
+    first.skip_if = Arc::new(AtomicPredicate(Arc::clone(&skipped)));
+    let hazard = compiled_step(
+        "next-hazard",
+        "interact",
+        Arc::new(PendingPlan(Arc::clone(&hazard_begins))),
+        Some(RAILING_HAZARD),
+        Arc::new(NeverPredicate),
+    );
+    replace_steps(&mut script, vec![first, hazard]);
+    let mut ledger = None;
+    let mut output = CapturedOutput::default();
+    set_inventory(&script, &mut snapshot, 0, 1, 0);
+    let mut frame = TestFrame {
+        tick: 20,
+        hp: 6,
+        hp_max: 40,
+        poison: PoisonState::Clear,
+        cure: CurePoison::Never,
+    };
+    drive(&mut script, &mut snapshot, &mut ledger, frame, &mut output);
+    assert_eq!(script.cursor, 0, "a hazard preview does not commit skips");
+    assert_eq!(script.selected_hazard.hazard, None);
+    assert_eq!(first_begins.load(Ordering::Relaxed), 0);
+    assert_eq!(hazard_begins.load(Ordering::Relaxed), 0);
+
+    skipped.store(false, Ordering::Relaxed);
+    frame.tick = 21;
+    frame.hp = 40;
+    set_inventory(&script, &mut snapshot, 0, 0, 0);
+    drive(&mut script, &mut snapshot, &mut ledger, frame, &mut output);
+    assert_eq!(first_begins.load(Ordering::Relaxed), 1);
+    assert_eq!(hazard_begins.load(Ordering::Relaxed), 0);
+    assert_eq!(script.selected_hazard.hazard, None);
+}
+
+#[test]
+fn an_unknown_predecessor_does_not_arm_a_lower_priority_hazard() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut script, mut snapshot, _) = fixture("interact", None);
+    let first_begins = Arc::new(AtomicUsize::new(0));
+    let hazard_begins = Arc::new(AtomicUsize::new(0));
+    let mut first = compiled_step(
+        "unknown-predicate",
+        "interact",
+        Arc::new(PendingPlan(Arc::clone(&first_begins))),
+        None,
+        Arc::new(NeverPredicate),
+    );
+    first.skip_if = Arc::new(UnknownPredicate);
+    let hazard = compiled_step(
+        "lower-priority-hazard",
+        "interact",
+        Arc::new(PendingPlan(Arc::clone(&hazard_begins))),
+        Some(RAILING_HAZARD),
+        Arc::new(NeverPredicate),
+    );
+    replace_steps(&mut script, vec![first, hazard]);
+    let mut ledger = None;
+    let mut output = CapturedOutput::default();
+    drive(
+        &mut script,
+        &mut snapshot,
+        &mut ledger,
+        TestFrame {
+            tick: 20,
+            hp: 6,
+            hp_max: 40,
+            poison: PoisonState::Clear,
+            cure: CurePoison::Never,
+        },
+        &mut output,
+    );
+    assert_eq!(script.selected_hazard.hazard, None);
+    assert_eq!(script.cursor, 0);
+    assert_eq!(eat_count(&ledger, &output), 0);
+    assert_eq!(first_begins.load(Ordering::Relaxed), 0);
+    assert_eq!(hazard_begins.load(Ordering::Relaxed), 0);
 }
 
 #[test]

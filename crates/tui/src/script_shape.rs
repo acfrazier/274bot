@@ -13,7 +13,7 @@ use frontend_core::scripts::{
     CardRuntime, CardSource, CompiledCardId, ScriptChoice, ScriptRunState, StatusView,
 };
 #[cfg(feature = "js")]
-use frontend_core::scripts::{LoadStage, LoadedCard};
+use frontend_core::scripts::{LoadedCard, UnloadReason};
 use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
@@ -34,7 +34,7 @@ pub const SCRIPT_BULK_BUTTONS: [&str; 2] = ["Start fleet", "Stop fleet"];
 /// same commands the buttons emit, reachable when the pane is clipped.
 /// Pause also toggles Resume.
 #[cfg(feature = "js")]
-pub const SCRIPT_KEYS: [(&str, char); 10] = [
+pub const SCRIPT_KEYS: [(&str, char); 11] = [
     ("Browse", 'b'),
     ("Start", 't'),
     ("Pause", 'P'),
@@ -45,6 +45,7 @@ pub const SCRIPT_KEYS: [(&str, char); 10] = [
     ("Cancel", 'C'),
     ("Start fleet", 'T'),
     ("Stop fleet", 'E'),
+    ("Failures", 'F'),
 ];
 #[cfg(not(feature = "js"))]
 pub const SCRIPT_KEYS: [(&str, char); 7] = [
@@ -62,6 +63,7 @@ pub fn script_key(label: &str) -> char {
     let command = match label {
         "Resume" => "Pause",
         "Confirm" => "Reload",
+        other if other.starts_with("Failed ") => "Failures",
         other => other,
     };
     SCRIPT_KEYS
@@ -81,6 +83,11 @@ pub fn script_command_for_key(key: char) -> Option<&'static str> {
 /// Columns a `[Label k]` button takes, without the gap after it.
 fn button_width(label: &str) -> u16 {
     label.len() as u16 + 4
+}
+
+/// The load-failure button's label: `Failed 7`.
+pub fn failures_label(count: usize) -> String {
+    format!("Failed {count}")
 }
 
 fn push_button(row: &mut String, label: &str) {
@@ -138,7 +145,7 @@ pub struct BrowseCard {
     pub kind: CardRuntime,
     pub source: CardSource,
     #[cfg(feature = "js")]
-    pub unloadable: Option<String>,
+    pub unloadable: Option<UnloadReason>,
 }
 
 #[cfg(feature = "js")]
@@ -151,7 +158,7 @@ impl From<LoadedCard<'_>> for BrowseCard {
             tags: card.tags().to_owned(),
             kind: card.runtime(),
             source: card.source(),
-            unloadable: card.unloadable().map(str::to_owned),
+            unloadable: card.unloadable().cloned(),
         }
     }
 }
@@ -174,7 +181,7 @@ impl<'a> From<frontend_core::scripts::BrowseCard<'a>> for BrowseCard {
             kind: card.kind(),
             source: card.source(),
             #[cfg(feature = "js")]
-            unloadable: card.unloadable().map(str::to_owned),
+            unloadable: card.unloadable().cloned(),
         }
     }
 }
@@ -291,16 +298,11 @@ pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>
         )));
     }
     #[cfg(feature = "js")]
-    if let Some(spec) = card.unloadable.as_deref() {
-        // An `unloadable` card always fails import resolution with this
-        // diagnostic (`JsLibrary::note_card_outcome`), the same text the
-        // panel wraps on the selected card.
+    if let Some(reason) = &card.unloadable {
+        // One line in the operator's terms: an unresolved import is a failed
+        // import; a catalog policy hold is unavailable for another reason.
         out.push(Line::from(Span::styled(
-            format!("    failed {}", LoadStage::ImportResolution.as_str()),
-            style,
-        )));
-        out.push(Line::from(Span::styled(
-            format!("    unloadable import: {spec}"),
+            format!("    {}", reason.line()),
             style,
         )));
     }
@@ -365,6 +367,10 @@ pub enum ScriptClick {
     ImportCatalog,
     /// `[Params]` row when the selected card has a settings schema.
     Params,
+    /// `[Failed N]`: open the load-failure list.
+    Failures,
+    /// The cut park reason row: show the whole reason.
+    Reason,
     /// A miss.
     None,
 }
@@ -384,13 +390,16 @@ pub struct ScriptPane<'a> {
     #[cfg(feature = "js")]
     pub reload_confirm: bool,
     pub native_status: Option<StatusView<'a>>,
+    /// How many script cards failed to load: `[Failed N F]` opens the list
+    /// while it is more than zero.
+    pub failure_count: usize,
     pub walk_risk: Option<&'a str>,
     pub start_zones: Option<&'a frontend_core::scripts::QuesterStartZones>,
     pub start_zones_error: Option<&'a str>,
     pub start_zone_scroll: u16,
 }
 
-fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
+pub(crate) fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
     let width = usize::from(width.max(1));
     lines
         .iter()
@@ -438,6 +447,7 @@ impl<'a> ScriptPane<'a> {
             #[cfg(feature = "js")]
             reload_confirm: false,
             native_status: None,
+            failure_count: 0,
             walk_risk: None,
             start_zones: None,
             start_zones_error: None,
@@ -460,6 +470,11 @@ impl<'a> ScriptPane<'a> {
 
     pub fn with_native_status(mut self, status: Option<StatusView<'a>>) -> Self {
         self.native_status = status;
+        self
+    }
+
+    pub fn with_load_failures(mut self, count: usize) -> Self {
+        self.failure_count = count;
         self
     }
 
@@ -564,6 +579,25 @@ impl<'a> ScriptPane<'a> {
         })
     }
 
+    /// Where the park reason's row sits in `area` when it is cut (a click
+    /// there opens the whole text), `None` when the pane shows it whole or
+    /// shows no reason.
+    pub fn reason_hit(&self, area: Rect) -> Option<Rect> {
+        if !self.bulk_row_shown() {
+            return None;
+        }
+        let reason = script_status_reason(self.native_status?)?;
+        if !reason.is_cut() {
+            return None;
+        }
+        let inner = Block::default().borders(Borders::ALL).inner(area);
+        let lines = self.prefix_lines(inner.width);
+        // Everything before the reason line: state, buttons, bulk row.
+        let before = wrapped_line_count(&lines[..3], inner.width);
+        let y = inner.y.checked_add(u16::try_from(before).ok()?)?;
+        (y < inner.bottom()).then(|| Rect::new(inner.x, y, inner.width, 1))
+    }
+
     /// The click inside the pane. Buttons live on the second inner line;
     /// Browse picker rows follow the state + buttons lines when the
     /// picker is open.
@@ -592,6 +626,22 @@ impl<'a> ScriptPane<'a> {
                 Some(label) => return ScriptClick::Button(label),
                 None => {}
             }
+            if self.failure_count > 0 {
+                let before = params
+                    .into_iter()
+                    .chain(self.bulk_buttons())
+                    .map(|label| button_width(label) + 1)
+                    .sum::<u16>();
+                let start = inner.x + before;
+                if col >= start && col < start + button_width(&failures_label(self.failure_count)) {
+                    return ScriptClick::Failures;
+                }
+            }
+        }
+        if self.reason_hit(area).is_some_and(|rect| {
+            col >= rect.x && col < rect.right() && row >= rect.y && row < rect.bottom()
+        }) {
+            return ScriptClick::Reason;
         }
         if self.browse_open {
             let list_top = inner.y + 2;
@@ -624,7 +674,9 @@ impl<'a> ScriptPane<'a> {
         }
         ScriptClick::None
     }
-    fn prefix_lines(&self) -> Vec<Line<'a>> {
+    /// The lines above the picker or disclosure, for an inner width of
+    /// `width` cells (the park reason is cut to one row of it).
+    fn prefix_lines(&self, width: u16) -> Vec<Line<'a>> {
         let state = script_status_label(self.state, self.native_status);
         let selection = self.sel.map_or("—", ScriptChoice::label);
         let mut buttons = String::new();
@@ -643,10 +695,17 @@ impl<'a> ScriptPane<'a> {
             for label in self.bulk_buttons() {
                 push_button(&mut row, label);
             }
+            if self.failure_count > 0 {
+                push_button(&mut row, &failures_label(self.failure_count));
+            }
             lines.push(Line::from(row));
             if let Some(status) = self.native_status {
                 if let Some(reason) = script_status_reason(status) {
-                    lines.push(Line::from(reason));
+                    // One row: at most `SUMMARY_MAX` characters, then the
+                    // cells left. The whole text is one click away.
+                    lines.push(Line::from(
+                        crate::text::ellipsize(&reason.as_str(), usize::from(width)).into_owned(),
+                    ));
                 }
                 for (label, value) in script_status_rows(status) {
                     lines.push(Line::from(format!("{label}: {value}")));
@@ -664,6 +723,12 @@ impl<'a> ScriptPane<'a> {
             lines.push(Line::from(frontend_core::scripts::START_ZONE_SCOPE_TITLE));
             match self.start_zones {
                 Some(zones) => {
+                    if let Some(warning) = zones.unqualified_warning() {
+                        lines.push(Line::styled(
+                            warning,
+                            Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+                        ));
+                    }
                     lines.push(Line::from(zones.notice()));
                     if !zones.is_empty() {
                         lines.push(Line::from(
@@ -708,8 +773,8 @@ impl<'a> ScriptPane<'a> {
         }
     }
 
-    fn content_lines(&self) -> Vec<Line<'a>> {
-        let mut lines = self.prefix_lines();
+    fn content_lines(&self, width: u16) -> Vec<Line<'a>> {
+        let mut lines = self.prefix_lines(width);
         if self.start_zone_disclosure_shown() {
             lines.extend(self.start_zone_lines());
         } else if self.browse_open {
@@ -744,17 +809,25 @@ impl<'a> ScriptPane<'a> {
         lines
     }
 
-    pub fn max_vertical_scroll(&self, area: Rect) -> u16 {
+    /// Return the maximum offset and PageUp/PageDown step in rendered rows.
+    pub fn vertical_scroll_limits(&self, area: Rect) -> (u16, u16) {
         if !self.start_zone_disclosure_shown() {
-            return 0;
+            return (0, 1);
         }
         let inner = Block::default().borders(Borders::ALL).inner(area);
-        let prefix_count = wrapped_line_count(&self.prefix_lines(), inner.width);
+        let prefix_count = wrapped_line_count(&self.prefix_lines(inner.width), inner.width)
+            .min(usize::from(inner.height));
         let available = usize::from(inner.height).saturating_sub(prefix_count);
         let content_count = wrapped_line_count(&self.start_zone_lines(), inner.width);
-        content_count
+        let max_scroll = content_count
             .saturating_sub(available)
-            .min(usize::from(u16::MAX)) as u16
+            .min(usize::from(u16::MAX)) as u16;
+        let page_step = available.saturating_sub(1).max(1) as u16;
+        (max_scroll, page_step)
+    }
+
+    pub fn max_vertical_scroll(&self, area: Rect) -> u16 {
+        self.vertical_scroll_limits(area).0
     }
 }
 
@@ -778,7 +851,7 @@ impl Widget for ScriptPane<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
         if self.start_zone_disclosure_shown() {
-            let prefix_lines = self.prefix_lines();
+            let prefix_lines = self.prefix_lines(inner.width);
             let prefix_height = wrapped_line_count(&prefix_lines, inner.width)
                 .min(usize::from(inner.height)) as u16;
             let prefix_area = Rect::new(inner.x, inner.y, inner.width, prefix_height);
@@ -799,7 +872,7 @@ impl Widget for ScriptPane<'_> {
                 ))
                 .render(list_area, buf);
         } else {
-            Paragraph::new(self.content_lines())
+            Paragraph::new(self.content_lines(inner.width))
                 .wrap(Wrap { trim: false })
                 .render(inner, buf);
         }
@@ -812,6 +885,8 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::Terminal;
 
+    #[cfg(feature = "js")]
+    use frontend_core::scripts::UnloadReason;
     use frontend_core::scripts::{
         CardRuntime, CardSource, CompiledCardId, ScriptChoice, ScriptRunState,
     };
@@ -972,7 +1047,9 @@ mod tests {
     #[test]
     fn unloadable_card_detail_lines_use_dim_style() {
         let mut card = sample_file_card();
-        card.unloadable = Some("../../event/webwalk/Something.js".into());
+        card.unloadable = Some(UnloadReason::Retired(
+            "replaced by the native Gatherer".into(),
+        ));
         let lines = card_detail_lines(&card, false);
         assert!(
             lines.iter().all(|l| {
@@ -988,7 +1065,9 @@ mod tests {
     #[test]
     fn unloadable_card_detail_lines_name_the_failing_specifier() {
         let mut card = sample_file_card();
-        card.unloadable = Some("../../event/webwalk/Something.js".into());
+        card.unloadable = Some(UnloadReason::UnsupportedImport(
+            "../../event/webwalk/Something.js".into(),
+        ));
         // Selection must not change the rows: click mapping and section
         // height both count the unselected shape.
         for selected in [false, true] {
@@ -1003,14 +1082,41 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
             assert!(
-                text.contains("failed import"),
-                "stage line (panel parity): {text:?}"
+                text.contains("failed import: ../../event/webwalk/Something.js"),
+                "one line names the specifier: {text:?}"
             );
             assert!(
-                text.contains("unloadable import: ../../event/webwalk/Something.js"),
-                "diagnostic names the specifier: {text:?}"
+                !text.contains("unavailable:"),
+                "an import failure is not a policy hold: {text:?}"
             );
         }
+    }
+
+    #[cfg(feature = "js")]
+    #[test]
+    fn retired_card_detail_lines_explain_unavailability() {
+        let mut card = sample_file_card();
+        card.unloadable = Some(UnloadReason::Retired(
+            "replaced by the native Gatherer".into(),
+        ));
+        let text = card_detail_lines(&card, false)
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("unavailable: replaced by the native Gatherer"),
+            "{text:?}"
+        );
+        assert!(
+            !text.contains("failed import"),
+            "a policy hold is not an import failure: {text:?}"
+        );
     }
 
     /// The bad-import error must survive the pane's wrap at the PTY sizes
@@ -1023,19 +1129,32 @@ mod tests {
         ghost.name = "K0DiscScriptGhost".into();
         ghost.description = String::new();
         ghost.tags = Vec::new();
-        ghost.unloadable = Some("../../event/webwalk/Something.js".into());
-        let cards = vec![ghost];
+        ghost.unloadable = Some(UnloadReason::UnsupportedImport(
+            "../../event/webwalk/Something.js".into(),
+        ));
+        let mut retired = sample_file_card();
+        retired.name = "Woodcutter".into();
+        retired.description = String::new();
+        retired.tags = Vec::new();
+        retired.unloadable = Some(UnloadReason::Retired(
+            "replaced by the native Gatherer".into(),
+        ));
+        let cards = vec![ghost, retired];
         let sel = ScriptChoice::loaded(CardSource::File, "K0DiscScriptGhost");
-        for (w, h) in [(120, 40), (80, 24), (40, 24)] {
+        for (w, h) in [(120, 40), (80, 24)] {
             let pane = ScriptPane::new(ScriptRunState::Idle, Some(&sel), &cards, &[], true, false);
             let text = render(pane, w, h);
             assert!(
-                text.contains("failed import"),
-                "{w}x{h}: stage line wraps into view"
+                text.contains("failed import: ../../event/webwalk/Something.js"),
+                "{w}x{h}: the import failure names its specifier"
             );
             assert!(
-                text.contains("../../event/webwalk/Something.js"),
-                "{w}x{h}: full specifier stays readable"
+                text.contains("unavailable: replaced by the native Gatherer"),
+                "{w}x{h}: the policy hold reads as unavailable"
+            );
+            assert!(
+                !text.contains("unavailable: ../../event/webwalk/Something.js"),
+                "{w}x{h}: an import failure is never a policy hold"
             );
         }
     }

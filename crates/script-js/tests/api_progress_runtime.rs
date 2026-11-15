@@ -25,6 +25,16 @@ export function tick(api) {
 }
 "#;
 
+const DRAGON_SCRIPT: &str = r#"
+import { DRAGON_STAGE, readDragonProgress } from '../../api/ai/quests/defs/dragonslayer/journal.js';
+export const apiVersion = 2;
+export function tick(api) {
+    globalThis.__api = api;
+    globalThis.__DRAGON_STAGE = DRAGON_STAGE;
+    globalThis.__readDragonProgress = readDragonProgress;
+}
+"#;
+
 fn post_snapshot(iso: &LoadIsolate, tick: u64, api_progress: Option<&ProgressPage>) {
     let input = SnapshotInput {
         tick,
@@ -120,6 +130,12 @@ fn isolate() -> LoadIsolate {
 }
 fn journal_isolate() -> LoadIsolate {
     let iso = LoadIsolate::spawn(JOURNAL_SCRIPT.into(), LoadShape::NativeTick, vec![]).unwrap();
+    tick(&iso, 1, None);
+    iso
+}
+
+fn dragon_isolate() -> LoadIsolate {
+    let iso = LoadIsolate::spawn(DRAGON_SCRIPT.into(), LoadShape::NativeTick, vec![]).unwrap();
     tick(&iso, 1, None);
     iso
 }
@@ -400,6 +416,134 @@ fn compat_v1_questlog__quests_journal__contract() {
     );
     assert_eq!(result(&iso, "missing"), serde_json::json!([]));
     assert_eq!(settles(&iso, "missing"), 1);
+    iso.join();
+}
+
+fn dragon_journal_page(token: u64, quest: &str, lines: &[&str]) -> ProgressPage {
+    let run = RunKey {
+        slot: 17,
+        run: 9,
+        session: 3,
+    };
+    let evidence = |tick| EvidenceStamp {
+        run,
+        tick,
+        sequence: tick,
+    };
+    ProgressPage::JournalDone {
+        token,
+        result: Some(Arc::new(JournalEvidence {
+            quest: Arc::from(quest),
+            root: 8134,
+            lines: lines.iter().map(|line| Arc::<str>::from(*line)).collect(),
+            colour: Some(0xf8f800),
+            acquired: evidence(10),
+            closed: evidence(12),
+        })),
+    }
+}
+
+/// Starts `readDragonProgress` and returns the one native read it asks for.
+fn begin_dragon_read(iso: &LoadIsolate, label: &str) -> u64 {
+    let expression = format!(
+        r#"(() => {{
+          globalThis.__{label}Result = null;
+          globalThis.__{label}Settles = 0;
+          globalThis.__{label}Promise = __readDragonProgress().then((result) => {{
+            globalThis.__{label}Result = result === undefined ? 'undefined' : result;
+            globalThis.__{label}Settles += 1;
+          }});
+          return true;
+        }})()"#
+    );
+    assert_eq!(iso.probe(&expression).unwrap(), true);
+    forward_queued_controls(iso);
+    let requests = iso.drain_interacts();
+    assert_eq!(requests.len(), 1, "one native call: {requests:?}");
+    let InteractReq::ProgressRead {
+        request_id,
+        name,
+        journal_only,
+    } = &requests[0]
+    else {
+        panic!("readDragonProgress did not request a progress read: {requests:?}");
+    };
+    assert_eq!(name, "Dragon Slayer");
+    assert!(*journal_only);
+    *request_id
+}
+
+#[test]
+fn read_dragon_progress_returns_the_stage_rust_resolves() {
+    let iso = dragon_isolate();
+    let token = begin_dragon_read(&iso, "ship");
+    tick(&iso, 2, Some(&ProgressPage::Reading { token }));
+    assert_eq!(settles(&iso, "ship"), 0);
+
+    let repaired = dragon_journal_page(
+        token,
+        "dragon",
+        &[
+            "@str@The Guildmaster of the Champions' Guild said his friend",
+            "@str@I have repaired my ship using wooden planks and steel",
+            "@dbl@I still need to find a @dre@captain@dbl@ for my ship.",
+        ],
+    );
+    tick(&iso, 3, Some(&repaired));
+    assert_eq!(result(&iso, "ship"), serde_json::json!({ "stage": 7 }));
+    assert_eq!(settles(&iso, "ship"), 1);
+
+    let token = begin_dragon_read(&iso, "done");
+    tick(
+        &iso,
+        4,
+        Some(&dragon_journal_page(
+            token,
+            "dragon",
+            &["@red@QUEST COMPLETE!"],
+        )),
+    );
+    assert_eq!(result(&iso, "done"), serde_json::json!({ "stage": 10 }));
+    iso.join();
+}
+
+#[test]
+fn read_dragon_progress_has_no_stage_when_the_read_gives_none() {
+    let iso = dragon_isolate();
+
+    let token = begin_dragon_read(&iso, "unmatched");
+    let page = dragon_journal_page(token, "dragon", &["Something else entirely."]);
+    tick(&iso, 2, Some(&page));
+    assert_eq!(result(&iso, "unmatched"), serde_json::json!("undefined"));
+
+    let token = begin_dragon_read(&iso, "missing");
+    let page = ProgressPage::JournalDone {
+        token,
+        result: None,
+    };
+    tick(&iso, 3, Some(&page));
+    assert_eq!(result(&iso, "missing"), serde_json::json!("undefined"));
+
+    let token = begin_dragon_read(&iso, "refused");
+    let page = ProgressPage::Refused {
+        token,
+        reason: Arc::from("busy"),
+    };
+    tick(&iso, 4, Some(&page));
+    assert_eq!(result(&iso, "refused"), serde_json::json!("undefined"));
+    iso.join();
+}
+
+#[test]
+fn dragon_stage_constants_are_the_content_stages() {
+    let iso = dragon_isolate();
+    let served = iso.probe("globalThis.__DRAGON_STAGE").unwrap();
+    let expected: serde_json::Map<String, serde_json::Value> =
+        script::quest_journal::dragon_stage::DragonStage::ALL
+            .iter()
+            .map(|stage| (stage.upstream_name().to_owned(), stage.value().into()))
+            .collect();
+    assert_eq!(served, serde_json::Value::Object(expected));
     iso.join();
 }
 

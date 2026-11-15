@@ -14,9 +14,12 @@
 //! JSON, or JSON that is not an object) is quarantined on a save-path read
 //! and a fresh document is started ([`corrupt_preferences`],
 //! [`corrupt_script_runtime_settings`]); every other refusal leaves the file
-//! unchanged. Duplicate loadout names are refused rather than renamed apart.
-//! Recognized pre-0.2.8 shapes are refused as a whole, never rewritten or
-//! partially loaded. The service logs each changed refusal with its file path.
+//! unchanged. Duplicate loadout names are refused rather than renamed apart,
+//! and a preferences file that names a field twice in one object is refused
+//! whole rather than read keeping the last value.
+//! A hint document from before schema 1 is refused as a whole, never
+//! rewritten or partially loaded. The service logs each changed refusal with
+//! its file path.
 //! A file whose content the service cannot represent whole (a hint field it
 //! does not know, a loadout row it cannot write back as read, a preference or
 //! setting it cannot hold as a row) is read but never rewritten
@@ -31,6 +34,7 @@
 //! processes on one `HOME`, or two compositions in one process) never
 //! interleave on one file.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read};
@@ -41,15 +45,16 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::walk_permissions::WalkGlobals;
 use api::bank_memory::{HintRowsError, MAX_HINT_ROWS};
 use api::identity::DurableTimestamp;
-use api::loadout::{loadouts_have_pre_0_2_8_shape, parse_loadout, Loadout};
+use api::loadout::{parse_loadout, Loadout};
 use api::local_state::{
     AccountKey, ContentScope, DomainIdentity, ErrorCode, FailureReason, LeaseSnapshot, LoadoutEdit,
     LoadoutOp, LocalStateDomain, PreferenceChange, PreferenceRow, RuntimeSettingsEdit,
     RuntimeSettingsRow, ValidationReason, MAX_RUNTIME_SETTINGS_ROWS,
 };
 use script::native::PvpGlobals;
+use serde::de::{self, DeserializeSeed};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{map::Entry, Map, Value};
 use sha2::{Digest, Sha256};
 use vault::read_private_file;
 /// The explicit state root, `<home>/.274bot`, resolved once by the
@@ -443,6 +448,15 @@ pub(super) enum ReadError {
     ScriptSettingsRow { index: usize },
     #[error("script runtime settings contains a duplicate namespace/key")]
     DuplicateScriptSetting,
+    /// A field named twice in one object of the document, at any level:
+    /// `object` is that object as the refusal names it (`the top level`,
+    /// `the object "nav"`) and `field` is the name named twice. Which of
+    /// the two values was meant is unknown, so the file is refused whole.
+    /// It is reported only for a document that parses whole: a file whose
+    /// content is not JSON is refused as that JSON error, even when it
+    /// also names a field twice.
+    #[error("field {field:?} is named twice in {object}; edit the file to remove one of them")]
+    DuplicateField { object: String, field: String },
     #[error("rows: {0}")]
     Rows(#[from] HintRowsError),
     /// Loadout names key the rows, so no edit can safely identify a row in
@@ -467,6 +481,7 @@ impl ReadError {
             | ReadError::TooManyScriptSettings { .. }
             | ReadError::ScriptSettingsRow { .. }
             | ReadError::DuplicateScriptSetting
+            | ReadError::DuplicateField { .. }
             | ReadError::Rows(_)
             | ReadError::SharedNames { .. } => FailureReason::Schema,
             ReadError::Identity { .. }
@@ -496,6 +511,7 @@ impl ReadError {
             | ReadError::TooManyScriptSettings { .. }
             | ReadError::ScriptSettingsRow { .. }
             | ReadError::DuplicateScriptSetting
+            | ReadError::DuplicateField { .. }
             | ReadError::SharedNames { .. } => false,
         }
     }
@@ -508,6 +524,10 @@ impl ReadError {
 ///  "revision":289,"content":"lostcity-289",
 ///  "observed_at_unix":1759700000,"rows":[[379,12],[995,3400]]}
 /// ```
+///
+/// A schema 1 document without `revision` and `content` is also in the
+/// 0.2.8 format: 0.2.8 read it under the scope that asks and stamped the
+/// scope on its next write. This build does the same.
 #[derive(Debug, Serialize, Deserialize)]
 struct HintDocument {
     schema_version: u32,
@@ -577,6 +597,223 @@ fn script_runtime_settings_identity(
     ))
 }
 
+/// One segment of a value's position in the document: a reference to the
+/// member's field name as the parsing frame holds it (no copy of the
+/// name is made for the path), or an array element's index.
+enum Segment<'a, 'de> {
+    Field(&'a Cow<'de, str>),
+    Index(usize),
+}
+
+/// Where a value sits in the document, as a chain of the parsing frames'
+/// own segments: the root object's members sit at their name alone, a
+/// nested object's member at `parent.name`, an array element at
+/// `array[index]`. The chain lives on the parsing frames' stacks, so a
+/// deep document costs no path text while it parses; a refusal builds the
+/// text once, for its message.
+struct Position<'a, 'de> {
+    parent: Option<&'a Position<'a, 'de>>,
+    segment: Segment<'a, 'de>,
+}
+
+impl Position<'_, '_> {
+    /// The position's path as a refusal names it: `nav[0].rows`.
+    fn path(&self) -> String {
+        let mut frames = Vec::new();
+        let mut cursor = Some(self);
+        while let Some(position) = cursor {
+            frames.push(position);
+            cursor = position.parent;
+        }
+        let mut path = String::new();
+        for frame in frames.iter().rev() {
+            match &frame.segment {
+                Segment::Field(name) => {
+                    if !path.is_empty() {
+                        path.push('.');
+                    }
+                    path.push_str(name);
+                }
+                Segment::Index(index) => {
+                    path.push('[');
+                    path.push_str(&index.to_string());
+                    path.push(']');
+                }
+            }
+        }
+        path
+    }
+}
+
+/// The object a refusal names from a position: the document's root
+/// object is `the top level`, a member's object `the object "nav"`.
+fn object_phrase(position: Option<&Position>) -> String {
+    match position {
+        None => "the top level".to_owned(),
+        Some(position) => format!("the object {:?}", position.path()),
+    }
+}
+
+/// A `Value` parse that refuses a file naming a field twice in one
+/// object. `serde_json` builds its maps silently keeping the last value,
+/// so the check walks the parse itself, carrying the first duplicate out
+/// through `found` because a `serde_json` deserializer can only return
+/// its own error: the parse is not interrupted, so a document that does
+/// not parse whole is refused as the JSON error even when it also names
+/// a field twice.
+struct NoDuplicateFields<'a, 'de> {
+    object: Option<&'a Position<'a, 'de>>,
+    found: &'a std::cell::RefCell<Option<ReadError>>,
+}
+
+impl<'de> de::DeserializeSeed<'de> for NoDuplicateFields<'_, 'de> {
+    type Value = Value;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> de::Visitor<'de> for NoDuplicateFields<'_, 'de> {
+    type Value = Value;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Number(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Number(value.into()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        // A non-finite float cannot appear in JSON text; the same
+        // fallback `serde_json` uses keeps the parse total.
+        Ok(serde_json::Number::from_f64(value).map_or(Value::Null, Value::Number))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(value.to_owned()))
+    }
+
+    fn visit_unit<E>(self) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Null)
+    }
+
+    fn visit_seq<A>(self, mut access: A) -> Result<Value, A::Error>
+    where
+        A: de::SeqAccess<'de>,
+    {
+        let mut elements = Vec::new();
+        loop {
+            let position = Position {
+                parent: self.object,
+                segment: Segment::Index(elements.len()),
+            };
+            let element = match access.next_element_seed(NoDuplicateFields {
+                object: Some(&position),
+                found: self.found,
+            })? {
+                Some(element) => element,
+                None => break,
+            };
+            elements.push(element);
+        }
+        Ok(Value::Array(elements))
+    }
+
+    fn visit_map<A>(self, mut access: A) -> Result<Value, A::Error>
+    where
+        A: de::MapAccess<'de>,
+    {
+        let mut fields = Map::new();
+        while let Some(field) = access.next_key::<Cow<'de, str>>()? {
+            let value = access.next_value_seed(NoDuplicateFields {
+                object: Some(&Position {
+                    parent: self.object,
+                    segment: Segment::Field(&field),
+                }),
+                found: self.found,
+            })?;
+            // A repeated field is refused once its second value has
+            // parsed: a value that does not parse is the JSON error. The
+            // first duplicate stands (a later one names the same file no
+            // better), and the map keeps the last value while the parse
+            // walks on.
+            match fields.entry(field.into_owned()) {
+                Entry::Occupied(mut entry) => {
+                    if self.found.borrow().is_none() {
+                        *self.found.borrow_mut() = Some(ReadError::DuplicateField {
+                            object: object_phrase(self.object),
+                            field: entry.key().clone(),
+                        });
+                    }
+                    entry.insert(value);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(value);
+                }
+            }
+        }
+        Ok(Value::Object(fields))
+    }
+}
+
+/// Parses `raw` into a JSON object, refusing a file that names a field
+/// twice in one object at any level. The shape errors win over the
+/// duplicates: a file whose content is not JSON, or whose root is not an
+/// object, is refused (and, on a save-path read, quarantined) as
+/// malformed even when it also names a field twice, so a duplicate is
+/// reported only for a document that parsed whole into an object. Every
+/// other read result is the plain `serde_json` parse: a valid file holds
+/// exactly the values it held before the check.
+pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, Value>, ReadError> {
+    let found = std::cell::RefCell::new(None);
+    let mut parser = serde_json::Deserializer::from_str(raw);
+    let document = NoDuplicateFields {
+        object: None,
+        found: &found,
+    }
+    .deserialize(&mut parser)
+    .map_err(ReadError::Json)?;
+    parser.end().map_err(ReadError::Json)?;
+    let Value::Object(document) = document else {
+        return Err(ReadError::NotAnObject);
+    };
+    if let Some(duplicate) = found.borrow_mut().take() {
+        return Err(duplicate);
+    }
+    Ok(document)
+}
+
 /// Read `key`'s current file under `root`: `Ok(None)` when there is no
 /// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file.
 pub(super) fn read(
@@ -610,9 +847,7 @@ pub(super) fn read(
             }))
         }
         StoreKey::Preferences => {
-            let Value::Object(document) = serde_json::from_str(&raw)? else {
-                return Err(ReadError::NotAnObject);
-            };
+            let document = object_without_duplicate_fields(&raw)?;
             let projection = project_preferences(document);
             let (rows, unrepresentable) = preference_rows(&projection.document);
             Ok(Some(ReadDocument {
@@ -671,7 +906,9 @@ pub(super) fn read(
             match (&document.revision, &document.content) {
                 (Some(found_revision), Some(found_content))
                     if found_revision == revision && found_content == content => {}
-                (None, None) => return Err(ReadError::UnsupportedSavedFormat),
+                // No scope recorded: read it under the scope that asks.
+                // The next write stamps the scope.
+                (None, None) => {}
                 _ => {
                     return Err(ReadError::Scope {
                         revision: document.revision,
@@ -784,6 +1021,18 @@ pub(super) fn read(
         }
     }
 }
+
+/// Whether `raw` is a complete hint document from before schema 1: the
+/// shape [`read`] refuses as [`ReadError::UnsupportedSavedFormat`]. The
+/// startup probe uses this same check, so the probe and the reader agree.
+pub(crate) fn hint_has_pre_0_2_8_shape(raw: &str) -> bool {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .as_ref()
+        .and_then(unversioned_hint_identity)
+        .is_some()
+}
+
 /// Profile and account from a complete pre-schema hint document. This
 /// recognizes the old envelope without copying the JSON tree, so identity
 /// mismatches still take precedence over its unsupported format.
@@ -827,12 +1076,11 @@ pub(super) fn current_digest(
 }
 
 /// The rows a loadouts document holds, and whether a rewrite keeps all of
-/// it. Malformed current-schema rows are skipped; because the resulting
-/// rows are not everything the file holds, the service never rewrites it.
+/// it. A row 0.2.8 read in an older shape (array `worn`, string `carry`
+/// rows) or skipped as malformed is read or skipped the same way here; then
+/// the rows read are not everything the file holds, and the service never
+/// rewrites it.
 fn loadout_rows(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
-    if loadouts_have_pre_0_2_8_shape(raw.as_bytes()) {
-        return Err(ReadError::UnsupportedSavedFormat);
-    }
     let Value::Array(elements) = serde_json::from_str(raw)? else {
         return Err(ReadError::NotAnArray);
     };

@@ -1,3 +1,5 @@
+#[cfg(feature = "test-support")]
+use std::cell::RefCell;
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use client::config::{Cache, ObjType};
@@ -8,9 +10,58 @@ use parking_lot::RwLock;
 static CLIENT_CACHE: LazyLock<RwLock<Option<Weak<Cache>>>> = LazyLock::new(|| RwLock::new(None));
 static ITEM_ICON_PIX3D: LazyLock<Mutex<Pix3DDraw>> =
     LazyLock::new(|| Mutex::new(Pix3DDraw::default()));
+#[cfg(feature = "test-support")]
+struct ClientCacheTestOverride {
+    active: bool,
+    cache: Option<Weak<Cache>>,
+}
 
-pub(super) fn publish(cache: &Arc<Cache>) {
-    let mut current = CLIENT_CACHE.write();
+#[cfg(feature = "test-support")]
+std::thread_local! {
+    static CLIENT_CACHE_TEST_OVERRIDE: RefCell<ClientCacheTestOverride> =
+        const { RefCell::new(ClientCacheTestOverride { active: false, cache: None }) };
+}
+
+#[cfg(feature = "test-support")]
+fn with_test_cache<R>(f: impl FnOnce(&mut Option<Weak<Cache>>) -> R) -> Option<R> {
+    CLIENT_CACHE_TEST_OVERRIDE.with(|override_cache| {
+        let mut override_cache = override_cache.borrow_mut();
+        override_cache.active.then(|| f(&mut override_cache.cache))
+    })
+}
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+#[must_use]
+pub struct ClientAdapterCacheTestIsolation(std::marker::PhantomData<std::rc::Rc<()>>);
+
+#[cfg(feature = "test-support")]
+impl Drop for ClientAdapterCacheTestIsolation {
+    fn drop(&mut self) {
+        let _ = CLIENT_CACHE_TEST_OVERRIDE.try_with(|override_cache| {
+            let mut override_cache = override_cache.borrow_mut();
+            override_cache.active = false;
+            override_cache.cache = None;
+        });
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn isolate_client_adapter_cache_for_tests() -> ClientAdapterCacheTestIsolation {
+    CLIENT_CACHE_TEST_OVERRIDE.with(|override_cache| {
+        let mut override_cache = override_cache.borrow_mut();
+        assert!(
+            !override_cache.active,
+            "client adapter cache test isolation cannot be nested"
+        );
+        override_cache.active = true;
+        override_cache.cache = None;
+    });
+    ClientAdapterCacheTestIsolation(std::marker::PhantomData)
+}
+
+fn publish_to(current: &mut Option<Weak<Cache>>, cache: &Arc<Cache>) {
     if current
         .as_ref()
         .is_some_and(|current| current.as_ptr() == Arc::as_ptr(cache))
@@ -18,6 +69,15 @@ pub(super) fn publish(cache: &Arc<Cache>) {
         return;
     }
     *current = Some(Arc::downgrade(cache));
+}
+
+pub(super) fn publish(cache: &Arc<Cache>) {
+    #[cfg(feature = "test-support")]
+    if with_test_cache(|current| publish_to(current, cache)).is_some() {
+        return;
+    }
+    let mut current = CLIENT_CACHE.write();
+    publish_to(&mut current, cache);
 }
 
 /// Shared immutable item pixels for a synchronous ClientAdapter read.
@@ -69,10 +129,15 @@ impl ClientAdapterCache {
     }
 }
 
-/// Upgrade the process-wide cache handle; GameSnapshot refreshes it from the
-/// same Client whose facts are posted to the isolate.
+/// Upgrade the selected client cache handle; GameSnapshot refreshes it from the
+/// same Client whose facts are posted to the isolate. Test-support scopes use
+/// a per-thread handle so parallel tests cannot replace one another's cache.
 #[doc(hidden)]
 pub fn client_adapter_cache() -> Option<ClientAdapterCache> {
+    #[cfg(feature = "test-support")]
+    if let Some(cache) = with_test_cache(|current| current.as_ref().and_then(Weak::upgrade)) {
+        return cache.map(ClientAdapterCache);
+    }
     CLIENT_CACHE
         .read()
         .as_ref()
@@ -94,11 +159,50 @@ pub fn set_client_adapter_cache_for_tests(cache: Arc<Cache>) {
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub fn clear_client_adapter_cache_for_tests(cache: &Arc<Cache>) {
+    if with_test_cache(|current| {
+        if current
+            .as_ref()
+            .is_some_and(|current| current.as_ptr() == Arc::as_ptr(cache))
+        {
+            *current = None;
+        }
+    })
+    .is_some()
+    {
+        return;
+    }
     let mut current = CLIENT_CACHE.write();
     if current
         .as_ref()
         .is_some_and(|current| current.as_ptr() == Arc::as_ptr(cache))
     {
         *current = None;
+    }
+}
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scoped_cache_publication_does_not_free_a_stale_process_cache() {
+        let stale = Arc::new(Cache::default());
+        let mut process_cache = CLIENT_CACHE.write();
+        let previous = (*process_cache).replace(Arc::downgrade(&stale));
+        drop(stale);
+
+        let fresh = Arc::new(Cache::default());
+        let _isolation = isolate_client_adapter_cache_for_tests();
+        let measured = allocation_counter::measure(|| publish(&fresh));
+
+        let cache_matches =
+            client_adapter_cache().is_some_and(|cached| Arc::ptr_eq(&cached.0, &fresh));
+        drop(_isolation);
+        *process_cache = previous;
+
+        assert_eq!(measured.bytes_total, 0, "{measured:?}");
+        assert_eq!(measured.count_total, 0, "{measured:?}");
+        assert_eq!(measured.bytes_current, 0, "{measured:?}");
+        assert_eq!(measured.count_current, 0, "{measured:?}");
+        assert!(cache_matches);
     }
 }

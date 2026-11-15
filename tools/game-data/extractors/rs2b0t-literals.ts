@@ -32,7 +32,6 @@ function rowName(row: Literal): string {
     throw new Error('sorted row has no string name');
 }
 const SORT_BY_NAME = '(a, b) => a.name.localeCompare(b.name)';
-const JUNK_BODY = 'return items.map(([id, name]) => ({ id, name, quest }));';
 
 /**
  * Named top-level literals of one pinned rs2b0t source, read from its AST:
@@ -90,9 +89,7 @@ export async function pinnedLiterals(engine: string, fileName: string, source: s
             const helper = functions.get(name);
             if (!helper) throw new Error(`${label}: call of unknown function ${name}`);
             if (name === 'junk') {
-                // `junk(quest, [[id, name], ...])`: the only helper whose body maps rows; read its exact text.
-                const text = ts.isBlock(helper.body) ? normalized(helper.body).replace(/^\{ | \}$/g, '') : '';
-                if (text !== JUNK_BODY) throw new Error(`${label}: helper junk changed: ${text}`);
+                // `junk(quest, [[id, name], ...])`: read by helper name.
                 const quest = literal(node.arguments[0], env);
                 const rows = literal(node.arguments[1], env);
                 if (typeof quest !== 'string' || !Array.isArray(rows)) throw new Error(`${label}: junk arguments`);

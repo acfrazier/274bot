@@ -12074,6 +12074,16 @@
       "nav_consuming": true
     },
     {
+      "module": "api/ai/quests/data/quests.js",
+      "family_id": "quests",
+      "nav_consuming": true
+    },
+    {
+      "module": "api/ai/quests/defs/dragonslayer/journal.js",
+      "family_id": "questlog",
+      "nav_consuming": false
+    },
+    {
       "module": "api/ai/quests/defs/murder/areas.js",
       "family_id": "quests",
       "nav_consuming": true
@@ -12644,6 +12654,11 @@
       "nav_consuming": true
     },
     {
+      "module": "runtime/desktopStorage.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
       "module": "runtime/randomevents/eventEvade.js",
       "family_id": "runtime",
       "nav_consuming": true
@@ -12665,6 +12680,11 @@
     },
     {
       "module": "runtime/ScriptActivity.js",
+      "family_id": "runtime",
+      "nav_consuming": true
+    },
+    {
+      "module": "runtime/ScriptContext.js",
       "family_id": "runtime",
       "nav_consuming": true
     },

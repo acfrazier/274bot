@@ -269,18 +269,17 @@ pub(super) fn targets_me(row: &Value, self_slot: Option<i32>) -> bool {
 
 /// The frozen spawn filter over this call's posted npc page: a row whose
 /// posted display name is one of the row family's cap-documented wizards,
-/// whose posted actions carry `Attack`, and whose distance from this call's
-/// posted `here` is inside the frozen radius on that same level. The row that
-/// targets the player wins, else the nearest, then posted order — the scan
-/// only replaces its best on a strict improvement, exactly like the landed
-/// loc picker.
+/// whose posted actions carry `Attack`, and whose network path head is inside
+/// the frozen radius of this call's network `here`. The row that targets the
+/// player wins, else the nearest, then posted order — the scan only replaces
+/// its best on a strict improvement, exactly like the landed loc picker.
 ///
-/// A row without an index, without a posted name, without the action, or
-/// without the marshalled tile that `npc_distance` needs matches nothing, and
-/// a page with no match picks nothing: the encounter waits rather than
-/// Attacking the nearest anything. The name compared is the posted one and the
-/// name the verb carries is that same posted string — no frozen debugname is
-/// ever substituted for it.
+/// A row without an index, without a posted name, without the action, without
+/// a valid network tile, or without the posted local tile matches nothing. A
+/// page with no match picks nothing: the encounter waits rather than Attacking
+/// the nearest anything. The name compared is the posted one and the name the
+/// verb carries is that same posted string — no frozen debugname is ever
+/// substituted for it.
 pub(super) fn pick_npc<'a>(
     npc_type: Option<i32>,
     names: &[&str],
@@ -308,7 +307,7 @@ pub(super) fn pick_npc<'a>(
         if !posted_action(row, ATTACK) {
             continue;
         }
-        let Some(distance) = npc_distance(row, here) else {
+        let Some((_, distance)) = npc_distance(row, here) else {
             continue;
         };
         if distance > i64::from(GUARDIAN_RADIUS) {
@@ -328,27 +327,59 @@ pub(super) fn pick_npc<'a>(
     best.map(|(index, name, _, _)| (index, name))
 }
 
-/// The distance the spawn filter reads for one posted npc row: the posted
-/// `distance` when the row carried one, else the Chebyshev distance from this
-/// call's posted `here` to the row's own posted `x`/`z` tile — the same
-/// level-first `max(|dx|, |dz|)` measure the landed loc picker reads its own
-/// rows with.
-///
-/// The same level is part of the membership whichever half the distance comes
-/// from: a row on another level than the posted `here` is not the wizard this
-/// Dig spawned. A call that posted no `here`, and a row that did not post the
-/// marshalled `x`/`z`/`level` tile, have no distance here at all — `None`, so
-/// the row matches nothing rather than being measured against an invented
-/// base.
-pub(super) fn npc_distance(row: &Value, here: Option<Tile>) -> Option<i64> {
+/// The posted NPC's network path head. Native cards supply private `_nx`/`_nz`
+/// path heads; compatibility echoes resolve against the shared typed scene row.
+/// Missing or incomplete network facts never fall back to rendered coordinates.
+fn npc_network_tile(row: &Value) -> Option<Tile> {
+    let index = posted_i32(row, "index")?;
+    let tile = if row.get("_nx").is_some() || row.get("_nz").is_some() {
+        observed::network_tile(
+            posted_i32(row, "_nx")?,
+            posted_i32(row, "_nz")?,
+            posted_i32(row, "level")?,
+            posted_i32(row, "size")?,
+        )
+    } else {
+        observed::with(|scene| {
+            scene
+                .since_login()
+                .npcs()?
+                .iter()
+                .find(|candidate| candidate.index == index)?
+                .network_tile()
+        })
+    }?;
+    Some(Tile {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+    })
+}
+
+fn observed_tile(tile: Tile) -> observed::Tile {
+    observed::Tile {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+    }
+}
+
+/// The path-head distance the native pickers use. Both the local tile and the
+/// target's network tile must be posted; the page's compatibility distance and
+/// rendered `x`/`z` never supply a coordinate or a fallback.
+pub(super) fn npc_distance(row: &Value, here: Option<Tile>) -> Option<(Tile, i64)> {
     let here = here?;
-    if posted_i32(row, "level") != Some(here.level) {
+    let tile = npc_network_tile(row)?;
+    if posted_i32(row, "level") != Some(tile.level) || here.level != tile.level {
         return None;
     }
-    match posted_i32(row, "distance") {
-        Some(distance) => Some(i64::from(distance)),
-        None => Some(chebyshev(posted_tile(row)?, here)),
-    }
+    Some((
+        tile,
+        i64::from(observed::network_distance(
+            observed_tile(here),
+            observed_tile(tile),
+        )),
+    ))
 }
 
 /// A posted `{ x, z, level }` value — the wrapper's `here` tile or one posted
@@ -659,8 +690,9 @@ pub(super) fn named_row<'a>(
 }
 
 /// One posted npc row the talk arm has picked: the posted scene index the host
-/// matches, the posted name and posted talk action the verb carries, the posted
-/// tile a walk would go to, and the measure the pick was ranked by.
+/// matches, the posted name and posted talk action the verb carries, the
+/// network path head a walk would go to, and the measure the pick was ranked
+/// by.
 pub(super) struct TalkPick<'a> {
     pub(super) index: i32,
     pub(super) name: &'a str,
@@ -670,10 +702,9 @@ pub(super) struct TalkPick<'a> {
 }
 
 /// The identity-only picker: the nearest posted row that names this step's npc
-/// and lists a talk action, measured the landed way — the posted `distance`
-/// when the row carried one, else the Chebyshev distance from this call's
-/// posted `here` to the row's own posted tile, on that same level. The scan
-/// only replaces its best on a strict improvement, so ties keep posted order.
+/// and lists a talk action, ranked by network distance from this call's posted
+/// `here`. The scan only replaces its best on a strict improvement, so ties
+/// keep posted order.
 ///
 /// The five steps whose jm2 spawn is not unique take this read, and it is the
 /// posted page's own answer: no alias, no first-in-file row and no frozen
@@ -688,7 +719,7 @@ pub(super) fn pick_talk<'a>(
         let Some((index, posted, action)) = named_row(row, identity) else {
             continue;
         };
-        let Some(distance) = npc_distance(row, Some(here)) else {
+        let Some((tile, distance)) = npc_distance(row, Some(here)) else {
             continue;
         };
         let better = match &best {
@@ -700,7 +731,7 @@ pub(super) fn pick_talk<'a>(
                 index,
                 name: posted,
                 action,
-                tile: posted_tile(row),
+                tile: Some(tile),
                 distance,
             });
         }
@@ -709,9 +740,9 @@ pub(super) fn pick_talk<'a>(
 }
 
 /// The unique-spawn picker: the nearest posted row that names this npc, lists a
-/// talk action, stands on the published spawn's own level, and is inside the
-/// frozen `ARRIVE_RADIUS` of that spawn — by the row's own posted tile, or by
-/// the posted `distance` the page carries to this player.
+/// talk action, has a valid network path head on the published spawn's level,
+/// and is within the frozen radius either of the local network tile or the
+/// published spawn. Ranking is always the local-to-target network distance.
 ///
 /// The radius is part of the membership and not only of the verb: a wanderer
 /// outside it is not this step's npc, so the arm keeps the published tile and
@@ -725,25 +756,26 @@ pub(super) fn pick_at_spawn<'a>(
     identity: &NpcIdentity<'_>,
     page: &'a [Value],
     spawn: Tile,
+    here: Option<Tile>,
 ) -> Option<TalkPick<'a>> {
     let mut best: Option<TalkPick<'a>> = None;
     for row in page {
         let Some((index, posted, action)) = named_row(row, identity) else {
             continue;
         };
-        if posted_i32(row, "level") != Some(spawn.level) {
-            continue;
-        }
-        let tile = posted_tile(row);
-        let distance = posted_i32(row, "distance").map(i64::from);
-        let near = distance.is_some_and(|distance| distance <= i64::from(ARRIVE_RADIUS))
-            || tile.is_some_and(|tile| chebyshev(tile, spawn) <= i64::from(ARRIVE_RADIUS));
-        if !near {
-            continue;
-        }
-        let Some(distance) = distance.or_else(|| tile.map(|tile| chebyshev(tile, spawn))) else {
+        let Some((tile, distance)) = npc_distance(row, here) else {
             continue;
         };
+        if tile.level != spawn.level {
+            continue;
+        }
+        let spawn_distance = i64::from(observed::network_distance(
+            observed_tile(tile),
+            observed_tile(spawn),
+        ));
+        if distance > i64::from(ARRIVE_RADIUS) && spawn_distance > i64::from(ARRIVE_RADIUS) {
+            continue;
+        }
         let better = match &best {
             None => true,
             Some(best) => distance < best.distance,
@@ -753,7 +785,7 @@ pub(super) fn pick_at_spawn<'a>(
                 index,
                 name: posted,
                 action,
-                tile,
+                tile: Some(tile),
                 distance,
             });
         }
@@ -763,22 +795,21 @@ pub(super) fn pick_at_spawn<'a>(
 
 /// The keeper pick over this call's posted npc page: the posted row whose own
 /// packed id — or, failing that, whose posted display name — is the keeper this
-/// key row names, that lists the posted `Attack`, and that stands on the
-/// published spawn's own level inside the frozen `ARRIVE_RADIUS` of that tile.
+/// key row names, that lists the posted `Attack`, and that has a valid network
+/// path head on the published spawn's level inside the frozen radius of either
+/// the local network tile or the spawn.
 ///
 /// The sibling of `pick_at_spawn`, and never a reuse of it: the identity here is
 /// the keeper's packed type and the action is `Attack`, where the talk arm's own
-/// pick reads a `talk_op` over its family's npc. The radius is part of the
-/// membership and not only of the verb, so a keeper further off is not this
-/// tile's and the hunt waits at the published tile instead of chasing it.
-/// Nearest wins and ties keep posted order — the scan only replaces its best on
-/// a strict improvement. A row with no posted index, no posted name, no
-/// `Attack`, another level, no distance and no marshalled tile matches nothing.
+/// pick reads a `talk_op` over its family's npc. Ranking uses local-to-target
+/// network distance; ties keep posted order. Missing local or network facts
+/// match nothing.
 pub(super) fn pick_keeper<'a>(
     id: i32,
     name: &str,
     page: &'a [Value],
     spawn: Tile,
+    here: Option<Tile>,
 ) -> Option<(i32, &'a str)> {
     let mut best: Option<(i32, &'a str, i64)> = None;
     for row in page {
@@ -796,19 +827,19 @@ pub(super) fn pick_keeper<'a>(
         if !named || !posted_action(row, ATTACK) {
             continue;
         }
-        if posted_i32(row, "level") != Some(spawn.level) {
-            continue;
-        }
-        let tile = posted_tile(row);
-        let distance = posted_i32(row, "distance").map(i64::from);
-        let near = distance.is_some_and(|distance| distance <= i64::from(ARRIVE_RADIUS))
-            || tile.is_some_and(|tile| chebyshev(tile, spawn) <= i64::from(ARRIVE_RADIUS));
-        if !near {
-            continue;
-        }
-        let Some(distance) = distance.or_else(|| tile.map(|tile| chebyshev(tile, spawn))) else {
+        let Some((tile, distance)) = npc_distance(row, here) else {
             continue;
         };
+        if tile.level != spawn.level {
+            continue;
+        }
+        let spawn_distance = i64::from(observed::network_distance(
+            observed_tile(tile),
+            observed_tile(spawn),
+        ));
+        if distance > i64::from(ARRIVE_RADIUS) && spawn_distance > i64::from(ARRIVE_RADIUS) {
+            continue;
+        }
         let better = match &best {
             None => true,
             Some((_, _, best)) => distance < *best,

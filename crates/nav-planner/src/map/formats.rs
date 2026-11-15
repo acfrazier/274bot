@@ -104,24 +104,15 @@ pub struct ClientPois {
     pub records: Rows<PoiRecord, MAX_POIS>,
 }
 impl ClientPois {
-    pub fn decode(bytes: &[u8], expected: CatalogueIdentity) -> Result<Self, MapError> {
-        super::preflight(
-            bytes,
-            MAX_JSON_BYTES,
-            expected,
-            "client-pois",
-            CATALOGUE_SCHEMA,
-        )?;
+    pub fn decode(bytes: &[u8]) -> Result<Self, MapError> {
+        super::preflight(bytes, MAX_JSON_BYTES, "client-pois", CATALOGUE_SCHEMA)?;
         let document: Self = super::json(bytes, MAX_JSON_BYTES)?;
-        document.validate(expected)?;
+        document.validate()?;
         Ok(document)
     }
-    pub fn validate(&self, expected: CatalogueIdentity) -> Result<(), MapError> {
+    pub fn validate(&self) -> Result<(), MapError> {
         super::version("client-pois", self.schema, CATALOGUE_SCHEMA)?;
-        self.identity.key()?;
-        if self.identity != expected {
-            return Err(MapError::Identity);
-        }
+        super::revision(self.identity.revision)?;
         if self.coverage.npc_placements != CoverageLevel::Unavailable
             || self.coverage.place_labels != CoverageLevel::Unavailable
             || self.coverage.bank_services == CoverageLevel::Complete
@@ -147,7 +138,7 @@ impl ClientPois {
         Ok(())
     }
     pub fn encode(&self) -> Result<Vec<u8>, MapError> {
-        self.validate(self.identity)?;
+        self.validate()?;
         encode_json(self)
     }
 }
@@ -163,16 +154,14 @@ pub struct CatalogueManifest {
     pub payload: PayloadReceipt,
 }
 impl CatalogueManifest {
-    pub fn decode(bytes: &[u8], expected: CatalogueIdentity) -> Result<Self, MapError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, MapError> {
         let manifest: Self = super::json(bytes, MAX_JSON_BYTES)?;
-        manifest.validate(expected)?;
+        manifest.validate()?;
         Ok(manifest)
     }
-    pub fn validate(&self, expected: CatalogueIdentity) -> Result<(), MapError> {
+    pub fn validate(&self) -> Result<(), MapError> {
         super::version("catalogue manifest", self.schema, CATALOGUE_SCHEMA)?;
-        if self.identity != expected || self.key != expected.key()? {
-            return Err(MapError::Identity);
-        }
+        super::revision(self.identity.revision)?;
         if self.record_count as usize > MAX_POIS {
             return Err(MapError::Limit("POI count"));
         }
@@ -180,15 +169,14 @@ impl CatalogueManifest {
         Ok(())
     }
     pub fn read_payload(&self, bytes: &[u8]) -> Result<ClientPois, MapError> {
-        self.payload.verify(bytes, MAX_JSON_BYTES as u32)?;
-        let pois = ClientPois::decode(bytes, self.identity)?;
+        let pois = ClientPois::decode(bytes)?;
         if pois.records.as_slice().len() != self.record_count as usize {
             return Err(MapError::Invalid("POI receipt count"));
         }
         Ok(pois)
     }
     pub fn encode(&self) -> Result<Vec<u8>, MapError> {
-        self.validate(self.identity)?;
+        self.validate()?;
         encode_json(self)
     }
 }
@@ -214,8 +202,14 @@ impl TileReceipt {
     /// Verify compressed bytes and IHDR BEFORE a PNG decoder allocates pixels.
     /// The decoder must still verify PNG chunks/CRC and impose this output size.
     pub fn verify_png(&self, bytes: &[u8]) -> Result<usize, MapError> {
-        self.key.bounds()?;
         self.payload.verify(bytes, MAX_PNG_BYTES)?;
+        Self::validate_png_bytes(self.key, bytes)
+    }
+
+    /// Parse the PNG header of a non-release cache payload; no receipt is
+    /// compared.
+    pub fn validate_png_bytes(key: TileKey, bytes: &[u8]) -> Result<usize, MapError> {
+        key.bounds()?;
         if bytes.len() < 33 {
             return Err(MapError::Truncated);
         }
@@ -261,22 +255,17 @@ pub struct ImageManifest {
     pub tiles: Rows<TileReceipt, MAX_IMAGE_TILES>,
 }
 impl ImageManifest {
-    pub fn decode(bytes: &[u8], expected: ImageIdentity) -> Result<Self, MapError> {
+    pub fn decode(bytes: &[u8]) -> Result<Self, MapError> {
         // Header-only pass: no tile vector or pixel buffer is allocated.
         #[derive(Deserialize)]
         struct Header {
             schema: u16,
-            identity: ImageIdentity,
-            key: ImageKey,
             max_lod: u8,
             interior: u32,
             gutter: u32,
         }
         let header: Header = super::json(bytes, MAX_JSON_BYTES)?;
         super::version("image manifest", header.schema, IMAGE_SCHEMA)?;
-        if header.identity != expected || header.key != expected.key()? {
-            return Err(MapError::Identity);
-        }
         if header.max_lod > MAX_LOD
             || header.interior != TILE_INTERIOR
             || header.gutter != TILE_GUTTER
@@ -284,14 +273,12 @@ impl ImageManifest {
             return Err(MapError::Invalid("raster dimensions/LOD"));
         }
         let manifest: Self = super::json(bytes, MAX_JSON_BYTES)?;
-        manifest.validate(expected)?;
+        manifest.validate()?;
         Ok(manifest)
     }
-    pub fn validate(&self, expected: ImageIdentity) -> Result<(), MapError> {
+    pub fn validate(&self) -> Result<(), MapError> {
         super::version("image manifest", self.schema, IMAGE_SCHEMA)?;
-        if self.identity != expected || self.key != expected.key()? {
-            return Err(MapError::Identity);
-        }
+        super::revision(self.identity.revision)?;
         self.extent.validate()?;
         if self.max_lod > MAX_LOD || self.interior != TILE_INTERIOR || self.gutter != TILE_GUTTER {
             return Err(MapError::Invalid("raster dimensions/LOD"));
@@ -333,8 +320,6 @@ impl ImageManifest {
             }
             seen_lods[usize::from(tile.key.plane)] |= 1 << tile.key.lod;
         }
-        // Every represented plane has a base and every coarser level. Sparse
-        // holes are legal, but a silently omitted plane/LOD is not publication.
         for plane in self.planes.as_slice() {
             if seen_lods[usize::from(plane.plane)] != (1u32 << (self.max_lod + 1)) - 1 {
                 return Err(MapError::Invalid("missing plane/LOD"));
@@ -363,7 +348,7 @@ impl ImageManifest {
             .map(|index| &self.tiles.as_slice()[index])
     }
     pub fn encode(&self) -> Result<Vec<u8>, MapError> {
-        self.validate(self.identity)?;
+        self.validate()?;
         encode_json(self)
     }
 }
@@ -401,16 +386,15 @@ impl ShippedImages {
         shipped.read_manifest(manifest_bytes)?;
         Ok(shipped)
     }
-    /// A shipped description for exactly `expected`; another client cache or
-    /// bake policy is [`MapError::Identity`].
-    pub fn decode(bytes: &[u8], expected: ImageIdentity) -> Result<Self, MapError> {
+    /// Decode the release's own asset description, not the current game input.
+    pub fn decode(bytes: &[u8]) -> Result<Self, MapError> {
         let shipped: Self = super::json(bytes, MAX_SHIPPED_IMAGES_BYTES)?;
-        shipped.validate(expected)?;
+        shipped.validate()?;
         Ok(shipped)
     }
-    pub fn validate(&self, expected: ImageIdentity) -> Result<(), MapError> {
+    pub fn validate(&self) -> Result<(), MapError> {
         super::version("shipped images", self.schema, SHIPPED_IMAGES_SCHEMA)?;
-        if self.identity != expected || self.key != expected.key()? {
+        if self.key != self.identity.key()? {
             return Err(MapError::Identity);
         }
         self.manifest.validate(MAX_JSON_BYTES as u32)?;
@@ -425,9 +409,12 @@ impl ShippedImages {
     /// The image manifest these receipts describe: exactly the pinned bytes,
     /// in canonical encoding, listing exactly the pinned tile totals.
     pub fn read_manifest(&self, bytes: &[u8]) -> Result<ImageManifest, MapError> {
-        self.validate(self.identity)?;
+        self.validate()?;
         self.manifest.verify(bytes, MAX_JSON_BYTES as u32)?;
-        let manifest = ImageManifest::decode(bytes, self.identity)?;
+        let manifest = ImageManifest::decode(bytes)?;
+        if manifest.identity != self.identity || manifest.key != self.key {
+            return Err(MapError::Identity);
+        }
         let tiles = manifest.tiles.as_slice();
         if tiles.len() != self.tiles as usize
             || tiles
@@ -444,7 +431,7 @@ impl ShippedImages {
         Ok(manifest)
     }
     pub fn encode(&self) -> Result<Vec<u8>, MapError> {
-        self.validate(self.identity)?;
+        self.validate()?;
         encode_json(self)
     }
 }
@@ -481,16 +468,15 @@ impl ShippedCatalogue {
         shipped.read_manifest(manifest_bytes)?;
         Ok(shipped)
     }
-    /// A shipped description for exactly `expected`; another client cache or
-    /// derive policy is [`MapError::Identity`].
-    pub fn decode(bytes: &[u8], expected: CatalogueIdentity) -> Result<Self, MapError> {
+    /// Decode the release's own asset description, not the current game input.
+    pub fn decode(bytes: &[u8]) -> Result<Self, MapError> {
         let shipped: Self = super::json(bytes, MAX_SHIPPED_CATALOGUE_BYTES)?;
-        shipped.validate(expected)?;
+        shipped.validate()?;
         Ok(shipped)
     }
-    pub fn validate(&self, expected: CatalogueIdentity) -> Result<(), MapError> {
+    pub fn validate(&self) -> Result<(), MapError> {
         super::version("shipped catalogue", self.schema, SHIPPED_CATALOGUE_SCHEMA)?;
-        if self.identity != expected || self.key != expected.key()? {
+        if self.key != self.identity.key()? {
             return Err(MapError::Identity);
         }
         self.manifest.validate(MAX_JSON_BYTES as u32)?;
@@ -506,9 +492,12 @@ impl ShippedCatalogue {
     /// bytes, in canonical encoding, listing exactly the pinned record
     /// count and payload size.
     pub fn read_manifest(&self, bytes: &[u8]) -> Result<CatalogueManifest, MapError> {
-        self.validate(self.identity)?;
+        self.validate()?;
         self.manifest.verify(bytes, MAX_JSON_BYTES as u32)?;
-        let manifest = CatalogueManifest::decode(bytes, self.identity)?;
+        let manifest = CatalogueManifest::decode(bytes)?;
+        if manifest.identity != self.identity || manifest.key != self.key {
+            return Err(MapError::Identity);
+        }
         if manifest.record_count != self.records || manifest.payload.bytes != self.payload_bytes {
             return Err(MapError::Invalid("shipped catalogue totals"));
         }
@@ -518,7 +507,7 @@ impl ShippedCatalogue {
         Ok(manifest)
     }
     pub fn encode(&self) -> Result<Vec<u8>, MapError> {
-        self.validate(self.identity)?;
+        self.validate()?;
         encode_json(self)
     }
 }

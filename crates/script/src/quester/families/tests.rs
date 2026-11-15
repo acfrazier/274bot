@@ -60,6 +60,7 @@ pub(crate) fn with_tick_snapshots<R>(
         tick,
         &mut Output,
         None,
+        None,
         next_snapshot,
         None,
         |native, later, _| f(native, later),
@@ -79,6 +80,7 @@ pub(crate) fn with_tick_output<R>(
         ledger,
         tick,
         output,
+        None,
         None,
         snapshot,
         None,
@@ -100,6 +102,7 @@ pub(crate) fn with_tick_reach<R>(
         ledger,
         tick,
         &mut Output,
+        None,
         None,
         snapshot,
         None,
@@ -140,6 +143,7 @@ pub(crate) fn with_tick_scene_bank<R>(
         tick,
         &mut Output,
         bank,
+        None,
         snapshot,
         None,
         |native, _, _| f(native),
@@ -217,6 +221,7 @@ pub(crate) fn with_tick_reach_snapshots<R>(
         tick,
         &mut Output,
         None,
+        None,
         next_snapshot,
         None,
         |native, _, later| f(native, later),
@@ -239,6 +244,7 @@ pub(crate) fn with_tick_world<R>(
         tick,
         &mut Output,
         None,
+        None,
         snapshot,
         None,
         |native, _, _| f(native),
@@ -260,6 +266,30 @@ pub(crate) fn with_tick_bank<R>(
         tick,
         &mut Output,
         bank,
+        None,
+        snapshot,
+        None,
+        |native, _, _| f(native),
+    )
+}
+
+pub(crate) fn with_tick_shop<R>(
+    snapshot: &GameSnapshot,
+    facts: &Arc<api::service_pick::ShopKeeperFacts>,
+    bank: Option<&api::bank_memory::BankMemory>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        bank,
+        Some(facts),
         snapshot,
         None,
         |native, _, _| f(native),
@@ -282,6 +312,7 @@ pub(crate) fn with_tick_output_bank<R>(
         tick,
         output,
         bank,
+        None,
         snapshot,
         None,
         |native, _, _| f(native),
@@ -305,6 +336,7 @@ pub(crate) fn with_tick_collision<R>(
         tick,
         &mut Output,
         None,
+        None,
         snapshot,
         Some(collision),
         |native, _, _| f(native),
@@ -321,6 +353,7 @@ fn with_tick_output_reach<R>(
     tick: u64,
     output: &mut dyn NativeOutput,
     bank: Option<&api::bank_memory::BankMemory>,
+    shop_keepers: Option<&Arc<api::service_pick::ShopKeeperFacts>>,
     next_snapshot: &GameSnapshot,
     collision: Option<nav_planner::contract::CollisionView<'_>>,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
@@ -348,6 +381,7 @@ fn with_tick_output_reach<R>(
         actions: &mut actions,
         cx: crate::native::ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -355,6 +389,7 @@ fn with_tick_output_reach<R>(
             evidence,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers,
             wilderness: None,
             revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(snapshot), evidence)
@@ -388,6 +423,7 @@ fn with_tick_output_reach<R>(
                 reach: None,
                 reach_flood: None,
                 bank_memory: bank,
+                shop_keepers,
                 collision,
                 hold: false,
                 world_members,
@@ -447,12 +483,14 @@ pub(crate) fn with_tick_budget_output<R>(
         cx: crate::native::ActionContext {
             stage_cross: None,
             walk_prereq: Default::default(),
+            protected_items: None,
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
             wilderness: None,
             revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(snapshot), evidence),
@@ -478,6 +516,7 @@ pub(crate) fn with_tick_budget_output<R>(
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
                 walk_danger: Some(&crate::native::AllowWalkDanger),
                 wilderness: None,
+                shop_keepers: None,
                 pvp_globals: None,
                 selected: Some(&data),
                 reach: None,
@@ -1816,7 +1855,10 @@ fn reach_walks_through_an_open_door_instead_of_closing_it() {
             assert_eq!(request.radius, 1);
         }
         HostEffect::Interaction(request) => panic!("open door recovery must walk, got {request:?}"),
-        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) | HostEffect::ServerOrdered(_) => {
+        HostEffect::BankPick(_)
+        | HostEffect::ServicePick(_)
+        | HostEffect::AssessWalk(_)
+        | HostEffect::ServerOrdered(_) => {
             panic!("open door recovery cannot select a bank or advisory")
         }
     }
@@ -2621,7 +2663,10 @@ fn closed_door_recovery_walks_to_an_operable_side_before_opening() {
         HostEffect::Interaction(request) => {
             panic!("door must be approached before Open, got {request:?}")
         }
-        HostEffect::BankPick(_) | HostEffect::AssessWalk(_) | HostEffect::ServerOrdered(_) => {
+        HostEffect::BankPick(_)
+        | HostEffect::ServicePick(_)
+        | HostEffect::AssessWalk(_)
+        | HostEffect::ServerOrdered(_) => {
             panic!("door approach cannot select a bank or advisory")
         }
     }
@@ -4701,7 +4746,7 @@ fn npc_near_uses_observed_tiles_and_preserves_unknown() {
 }
 
 #[test]
-fn spatial_predicates_use_the_network_tile() {
+fn network_coords_spatial_predicates_use_both_actor_network_tiles() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -4738,7 +4783,7 @@ fn spatial_predicates_use_the_network_tile() {
             r#type: Some(npc_id as usize),
             name: Some("Sir Vyvin".into()),
             actions: vec![],
-            tile: network,
+            tile: rendered,
             distance: 0,
             animation: -1,
             animation_frame: 0,
@@ -4788,6 +4833,7 @@ fn resolved_npc_alias_matches_type_and_sends_display_and_observed_index() {
     compile_context_test(|cx| {
         let row = cx.selected.npc_by_config("king_bolren").unwrap();
         let mut s = ready();
+        s.seed_local_player(local_player(tile(2541, 3170)));
         s.seed_npcs(vec![api::snapshot::NpcView {
             index: 42,
             r#type: Some(row.id as usize),
@@ -4900,6 +4946,7 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
             yaw: 0,
         };
         let mut far = ready();
+        far.seed_local_player(local_player(tile(2534, 3170)));
         far.seed_npcs(vec![npc(8)]);
         let plan = compile_talk(
             test_args::<TalkArgs>(serde_json::json!({"npc":"king_bolren"})),
@@ -4937,6 +4984,7 @@ fn dialogue_approaches_a_distant_npc_before_talking() {
         }
 
         let mut near = ready();
+        near.seed_local_player(local_player(tile(2541, 3170)));
         near.seed_npcs(vec![npc(1)]);
         assert!(with_tick(&near, &mut ledger, 4, |t| {
             with_step(t, |cx| run.poll(cx))
@@ -5066,6 +5114,7 @@ fn use_on_chases_a_distant_npc_without_returning_to_the_initial_anchor() {
             }
             HostEffect::Interaction(_)
             | HostEffect::BankPick(_)
+            | HostEffect::ServicePick(_)
             | HostEffect::AssessWalk(_)
             | HostEffect::ServerOrdered(_) => {
                 panic!("used the item before approaching the NPC")
@@ -5102,6 +5151,7 @@ fn use_on_reports_fresh_server_escape_without_waiting_for_product_timeout() {
         compile_context_test(|cx| {
             let row = cx.selected.npc_by_config("sheepunsheered").unwrap();
             let mut snapshot = ready();
+            snapshot.seed_local_player(local_player(tile(3199, 3276)));
             snapshot.seed_npcs(vec![api::snapshot::NpcView {
                 index: 42,
                 r#type: Some(row.id as usize),
@@ -7161,6 +7211,7 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
         return;
     }
     let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(3184, 3273)));
     snapshot.seed_chat_modal(-1, vec![]);
     let npc = api::snapshot::NpcView {
         index: 7,
@@ -7212,6 +7263,7 @@ fn dialogue_open_clock_starts_after_approaching_the_npc() {
             .unwrap()
     });
     snapshot.seed_npcs(vec![api::snapshot::NpcView { distance: 1, ..npc }]);
+    snapshot.seed_local_player(local_player(tile(3188, 3273)));
     with_tick(&snapshot, &mut ledger, 32, |t| {
         assert!(t.actions.poll(&handle, &mut t.cx).is_pending());
     });
@@ -7314,6 +7366,7 @@ fn dialogue_adjacent_click_first_frame_of_the_page_tick_is_not_a_timeout() {
         return;
     }
     let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(3188, 3273)));
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_npcs(vec![fred_npc(1, tile(3189, 3273))]);
     let mut ledger = None;
@@ -7369,6 +7422,7 @@ fn dialogue_adjacent_click_deadline_counts_from_the_engine_read_tick() {
         return;
     }
     let mut snapshot = ready();
+    snapshot.seed_local_player(local_player(tile(3188, 3273)));
     snapshot.seed_chat_modal(-1, vec![]);
     snapshot.seed_npcs(vec![fred_npc(1, tile(3189, 3273))]);
     let mut ledger = None;
@@ -7692,6 +7746,7 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
         seed_dialogue_combat(&mut snapshot, false);
         let mut player = snapshot.local_player().unwrap().clone();
         player.player.actor.tile = tile(3188, 3273);
+        player.player.network = tile(3188, 3273);
         snapshot.seed_local_player(player);
         snapshot.seed_npcs(vec![api::snapshot::NpcView {
             index: 42,
@@ -7724,6 +7779,10 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
         }]);
         // The posted flood covers both actors; the closed barrier leaves the
         // NPC without a wall-valid adjacent dequeue rank.
+        let mut reachable = vec![0];
+        reachable[0] = 1 << 7;
+        let mut exact_rank = vec![u16::MAX; 9];
+        exact_rank[7] = 0;
         let blocked = api::query::ReachQueryView {
             available: true,
             base_x: 3186,
@@ -7732,9 +7791,9 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
             width: 3,
             height: 3,
             walkable: vec![0x1ff],
-            reachable: vec![0],
+            reachable,
             reachable_adj: vec![0],
-            exact_rank: vec![u16::MAX; 9],
+            exact_rank,
             adjacent_rank: vec![u16::MAX; 9],
             step: vec![0; 9],
             canlight: vec![],
@@ -7796,7 +7855,7 @@ fn dialogue_nearby_blocked_npc_keeps_approaching_until_clipping_allows_talk() {
             "do not cancel the door approach and talk while clipping remains blocked"
         );
         let mut opened = blocked;
-        opened.reachable[0] = 1 << 1;
+        opened.reachable[0] |= 1 << 1;
         opened.reachable_adj[0] = 1 << 1;
         opened.exact_rank[1] = 0;
         opened.adjacent_rank[1] = 0;
@@ -8365,6 +8424,8 @@ fn talk_expected_combat_rejects_unknown_npc_config() {
 mod chooser_tests;
 #[path = "extension_tests.rs"]
 mod extension_tests;
+#[path = "network_coords_tests.rs"]
+mod network_coords_tests;
 fn with_loadout_context<R>(f: impl FnOnce(&CompileContext<'_>) -> R) -> R {
     compile_context_test(|base| {
         let row = api::loadout::Loadout::new("cook/disguise")

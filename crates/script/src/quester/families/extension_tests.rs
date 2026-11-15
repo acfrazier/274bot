@@ -2235,14 +2235,17 @@ fn reach_scene_operations_require_accepted_receipt() {
     ] {
         for accepted in [false, true] {
             let mut snapshot = ready();
-            snapshot.seed_locs(vec![loc(1000, "Door", "Open")]);
+            let mut door = loc(1000, "Door", "Open");
+            door.distance = 1;
+            snapshot.seed_local_player(local_player(tile(3166, 3308)));
+            snapshot.seed_locs(vec![door]);
             snapshot.seed_npcs(vec![api::snapshot::NpcView {
                 index: 42,
                 r#type: Some(1000),
                 name: Some("Guard".into()),
                 actions: vec![Some("Open".into())],
                 tile: tile(3167, 3308),
-                distance: 3,
+                distance: 1,
                 animation: -1,
                 animation_frame: 0,
                 pose_animation: -1,

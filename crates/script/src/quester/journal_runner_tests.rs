@@ -721,6 +721,97 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
 }
 
 #[test]
+fn owned_combat_stage_scans_unknown_bank_before_starting_combat() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let quests = Arc::new(QuestCatalog::from_identity(data.quest_identity()).unwrap());
+    let document = serde_json::from_slice(include_bytes!(
+        "../../paths/289/fixtures/combat_melee_food_only.json"
+    ))
+    .unwrap();
+    let path = super::super::compile::compile_uncached_for_test(&document, &data, &quests).unwrap();
+    assert!(path.provisioning.owns_inventory);
+    assert!(path.provisioning.survival.is_some());
+    let here = api::WorldTile {
+        x: 2458,
+        z: 3303,
+        level: 0,
+    };
+    let mut script = Quester::new(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        Arc::clone(&path),
+        data,
+        quests,
+        Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+            api::named_banks::NamedBank::new("Test bank", here),
+        ])),
+    );
+    script.stage = Some(path.colour_not_started.clone());
+    script.needs_read = false;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_inventory(Vec::new(), 28);
+    snapshot.seed_equipment(Vec::new());
+    snapshot.seed_local_player(super::super::families::tests::local_player(here));
+    snapshot.seed_tile(here);
+    snapshot.seed_world(api::snapshot::WorldStateView::default());
+    snapshot.seed_npcs(Vec::new());
+    snapshot.seed_players(Vec::new());
+    snapshot.seed_projectiles(Vec::new());
+    snapshot.seed_hitmarks(api::snapshot::HitmarksView {
+        marks: [api::snapshot::HitmarkView {
+            value: 0,
+            kind: 0,
+            cycle: 0,
+        }; 4],
+        loop_cycle: 0,
+    });
+    snapshot.seed_varps(vec![VarpView {
+        index: 173,
+        value: 0,
+    }]);
+    snapshot.seed_stats(
+        (0..25)
+            .map(|index| api::snapshot::StatView {
+                index,
+                name: api::snapshot::stat_name(index as usize).into(),
+                effective: 40,
+                base: 40,
+                xp: 0,
+                used: api::snapshot::stat_used(index as usize),
+            })
+            .collect(),
+    );
+    let cursor = (script.seq_index, script.step_index);
+    let mut ledger = None;
+    for tick in 1..=2 {
+        assert_eq!(
+            with_tick(&snapshot, &mut ledger, tick, |native| {
+                assert!(crate::combat::frame::Frame::borrow(native.cx.snapshot()).is_some());
+                assert_eq!(
+                    native.cx.snapshot().stock().banked_origin(),
+                    api::bank_memory::Origin::Unknown
+                );
+                script.tick(native).unwrap()
+            }),
+            ScriptFlow::Continue
+        );
+        assert!(script.step.is_none(), "combat must wait for the bank scan");
+        assert_eq!((script.seq_index, script.step_index), cursor);
+    }
+    assert_eq!(script.provisioner.bank_starts(), 1);
+    let outbox = &ledger.as_ref().unwrap().outbox;
+    assert_eq!(outbox.len(), 1);
+    assert!(matches!(outbox[0].effect, HostEffect::BankPick(_)));
+}
+
+#[test]
 fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_hold() {
     if !api::test_support::game_data_available() {
         return;
@@ -882,6 +973,19 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
                 .collect()
         };
         snapshot.seed_varps(prayers(original.varp));
+
+        // This test starts after an observed-empty bank check. Unknown bank
+        // evidence is covered separately by the pre-combat scan regression.
+        let mut bank = api::bank_memory::BankMemory::default();
+        snapshot.seed_bank_observation(1, 0, Some(Vec::new()), Vec::new());
+        bank.track(&snapshot, 0);
+        snapshot.seed_bank_observation(-1, 0, None, Vec::new());
+        let drive =
+            |script: &mut Quester, snapshot: &GameSnapshot, ledger: &mut Ledger, tick: u64| {
+                with_tick_bank(snapshot, Some(&bank), ledger, tick, |t| {
+                    script.tick(t).unwrap()
+                })
+            };
 
         let mut ledger = None;
         assert_eq!(
@@ -2737,6 +2841,7 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
             advances: Some(false),
             max_attempts: None,
             stop: None,
+            failure_signal: None,
             skip_if: PredicateDocument::Any(vec![]),
             settle: bank_empty.clone(),
             hazard: None,
@@ -2761,6 +2866,7 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                failure_signal: None,
                 skip_if: PredicateDocument::Any(vec![]),
                 settle: bank_known,
                 hazard: None,
@@ -2783,6 +2889,7 @@ fn nested_bank_fixture(owns_inventory: bool) -> NestedBankFixture {
                 advances: Some(false),
                 max_attempts: None,
                 stop: None,
+                failure_signal: None,
                 skip_if: bank_empty.clone(),
                 settle: bank_empty.clone(),
                 hazard: None,

@@ -3,12 +3,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use nav_planner::collision::WorldCollision;
-use nav_planner::tile::Tile;
+
 use nav_planner::world::NavWorld;
 
 use super::map_host;
 use map_host::profile::ProfileEnvironment;
-use map_host::{Play, ProfileOptions, SharedClientTemplate, SlotArm, SlotStatus};
+use map_host::{ProfileOptions, SharedClientTemplate};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -92,28 +92,6 @@ impl MapFixture {
         let profile = selected.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
         Self { root, template }
-    }
-
-    pub fn play(&self, origin: Tile) -> Play {
-        let mut play = map_host::run_prepared_template(
-            self.template.validate_for_play().unwrap(),
-            false,
-            vec![],
-            |_| (None, None),
-            |_, _, _| {},
-        )
-        .unwrap();
-        play.attach_arm("alice", SlotArm::new(1, false));
-        play.focus("alice");
-        play.statuses.lock().unwrap().push(SlotStatus {
-            username: "alice".into(),
-            ingame: true,
-            tile_x: origin.x,
-            tile_z: origin.z,
-            tile_level: origin.level,
-            ..Default::default()
-        });
-        play
     }
 }
 

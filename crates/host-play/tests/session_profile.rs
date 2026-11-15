@@ -1654,10 +1654,9 @@ fn public_profile_routes_lumbridge_to_ardougne() {
         }
         .run(|| {
             let admission = host_play::admission::Admission::manual(
-                FindOptions::default(),
+                host_play::WalkGlobals::default().manual_decision(false),
                 Default::default(),
                 0,
-                host_play::WalkGlobals::default(),
             );
             host_play::arm_walk_on(
                 &world,

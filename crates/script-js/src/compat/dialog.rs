@@ -727,6 +727,9 @@ mod tests {
             index: 2,
             target_kind,
             target_index,
+            network_size: 0,
+            network_x: 0,
+            network_z: 0,
         }
     }
 
@@ -754,6 +757,11 @@ mod tests {
         observed::post(obs.tick, |post| {
             post.session(obs.ingame)
                 .self_slot(LOCAL_SLOT)
+                .here(observed::Tile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                })
                 .hold(obs.hold)
                 .ours(obs.ours)
                 .chat_modal_id(obs.chat_modal_id)
@@ -768,6 +776,12 @@ mod tests {
                         .iter()
                         .map(|npc| observed::EntityRow {
                             index: npc.index,
+                            x: 1,
+                            z: 0,
+                            level: 0,
+                            size: 1,
+                            nx: 1,
+                            nz: 0,
                             name: Some(npc.name.clone()),
                             distance: npc.distance,
                             actions: npc.actions.clone(),

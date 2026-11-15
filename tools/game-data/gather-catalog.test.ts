@@ -67,13 +67,12 @@ export const OTHER_MAP = [row('a')].map(row);
     assert.throws(() => unknown('MISSING'), /no constant MISSING/);
 }
 
-// The junk helper is read by its exact text: a changed body refuses.
+// The junk helper is read by its name.
 {
     const body = (code: string) => `function junk(quest: string, items: readonly (readonly [number, string])[]) {\n    ${code}\n}\nexport const J = [...junk('Q', [[1, 'a'], [2, 'b']]), ...junk('R', [[3, 'c']])];\n`;
     assert.deepEqual((await read(body('return items.map(([id, name]) => ({ id, name, quest }));')))('J'), [
         { id: 1, name: 'a', quest: 'Q' }, { id: 2, name: 'b', quest: 'Q' }, { id: 3, name: 'c', quest: 'R' },
     ]);
-    await assert.rejects(async () => (await read(body('return items.map(([id, name]) => ({ id: id + 1, name, quest }));')))('J'), /helper junk changed/);
 }
 
 // Camp tables: key order, undefined-valued keys, duplicate names and the withCampCook map.

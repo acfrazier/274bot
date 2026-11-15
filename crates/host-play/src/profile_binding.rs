@@ -114,8 +114,7 @@ impl ProfileSelection {
     pub fn map_members(&self) -> bool {
         self.world_members.map_members()
     }
-    /// Bind may attach generated facts only when this is true; cache identity
-    /// still has to match, and local worlds also require source-file hashes.
+    /// Bind may attach generated facts only when this is true.
     pub fn supported_server(&self) -> bool {
         self.supported_server
     }

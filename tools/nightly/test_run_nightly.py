@@ -27,6 +27,7 @@ import io
 import hashlib
 import gc
 import os
+import re
 import shutil
 import socket
 import stat
@@ -559,6 +560,14 @@ class RunBranchLocalDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             events = []
+            local_inputs = {}
+            for revision in ("274", "289"):
+                for kind in ("ENGINE", "CONTENT"):
+                    path = root / f"{revision}-{kind.lower()}"
+                    path.mkdir()
+                    local_inputs[f"NIGHTLY_GAME_DATA_{revision}_{kind}"] = str(path)
+            bun = root / "bun"
+            bun.write_text("#!/bin/sh\n", encoding="utf-8")
 
             def fake_update_tree(_branch, tree, _build_log):
                 generator = tree / "tools" / "local-data" / "build.py"
@@ -583,6 +592,7 @@ class RunBranchLocalDataTests(unittest.TestCase):
                 return []
 
             patches = [
+                mock.patch.dict(os.environ, {**local_inputs, "BUN_EXECUTABLE": str(bun)}),
                 mock.patch.object(rn, "ROOT", root),
                 mock.patch.object(rn, "STEPS", ["lanes"]),
                 mock.patch.object(rn, "REVISION", "289"),
@@ -928,15 +938,17 @@ class LaneEnvironmentTests(unittest.TestCase):
             generator = tree / "tools" / "local-data" / "build.py"
             generator.parent.mkdir(parents=True)
             generator.write_text("# generator\n", encoding="utf-8")
-            engine_289 = root / "engine-289"
-            content_289 = root / "content-289"
-            engine_289.mkdir()
-            content_289.mkdir()
-            local_289_inputs = {
-                "NIGHTLY_GAME_DATA_289_ENGINE": str(engine_289),
-                "NIGHTLY_GAME_DATA_289_CONTENT": str(content_289),
-            }
-            with mock.patch.dict(os.environ, local_289_inputs):
+            roots = {}
+            local_inputs = {}
+            for revision in ("274", "289"):
+                for kind in ("engine", "content"):
+                    path = root / f"{kind}-{revision}"
+                    path.mkdir()
+                    roots[(revision, kind.upper())] = path.resolve()
+                    local_inputs[f"NIGHTLY_GAME_DATA_{revision}_{kind.upper()}"] = str(path)
+            bun = root / "bun"
+            bun.write_text("#!/bin/sh\n", encoding="utf-8")
+            with mock.patch.dict(os.environ, {**local_inputs, "BUN_EXECUTABLE": str(bun)}):
                 for revision in ("289", "274"):
                     pack = tree / "target" / "local-data" / "nav" / revision / "274bot.navpack"
                     pack.parent.mkdir(parents=True)
@@ -950,13 +962,18 @@ class LaneEnvironmentTests(unittest.TestCase):
                                 for key in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK"):
                                     self.assertEqual(extra[key], str(pack))
                                 self.assertEqual(
-                                    extra["ISOLATED_289_ENGINE_DIR"], str(engine_289.resolve())
-                                )
+                                    extra["ISOLATED_289_ENGINE_DIR"], str(roots[("289", "ENGINE")]))
                                 self.assertEqual(
-                                    extra["ISOLATED_289_CONTENT_DIR"], str(content_289.resolve())
-                                )
+                                    extra["ISOLATED_289_CONTENT_DIR"], str(roots[("289", "CONTENT")]))
+                                self.assertEqual(extra["RS2VM_BUN"], str(bun.resolve()))
+                                for source_revision in ("274", "289"):
+                                    for kind in ("ENGINE", "CONTENT"):
+                                        self.assertEqual(
+                                            extra[f"RS2VM_{kind}_{source_revision}"],
+                                            str(roots[(source_revision, kind)]),
+                                        )
 
-    def test_post_adr_289_lanes_default_local_assets_to_pristine_engine(self):
+    def test_post_adr_289_lanes_default_289_assets_to_pristine_engine(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             tree = root / "post-adr"
@@ -972,27 +989,40 @@ class LaneEnvironmentTests(unittest.TestCase):
             content_289 = pristine / "content"
             engine_289.mkdir(parents=True)
             content_289.mkdir()
+            engine_274 = root / "engine-274"
+            content_274 = root / "content-274"
+            engine_274.mkdir()
+            content_274.mkdir()
+            bun = root / "bun"
+            bun.write_text("#!/bin/sh\n", encoding="utf-8")
             with mock.patch.object(rn, "REVISION", "289"):
                 with mock.patch.object(rn, "ENGINE_PRISTINE", pristine):
                     with mock.patch.dict(os.environ, {
+                            "NIGHTLY_GAME_DATA_274_ENGINE": str(engine_274),
+                            "NIGHTLY_GAME_DATA_274_CONTENT": str(content_274),
                             "NIGHTLY_GAME_DATA_289_ENGINE": "",
                             "NIGHTLY_GAME_DATA_289_CONTENT": "",
+                            "BUN_EXECUTABLE": str(bun),
                     }):
                         env = rn.lane_asset_env(tree)
-        self.assertEqual(env["ISOLATED_289_ENGINE_DIR"], str(engine_289.resolve()))
-        self.assertEqual(env["ISOLATED_289_CONTENT_DIR"], str(content_289.resolve()))
+        self.assertEqual(env["RS2VM_ENGINE_289"], str(engine_289.resolve()))
+        self.assertEqual(env["RS2VM_CONTENT_289"], str(content_289.resolve()))
+        self.assertEqual(env["RS2VM_ENGINE_274"], str(engine_274.resolve()))
+        self.assertEqual(env["RS2VM_CONTENT_274"], str(content_274.resolve()))
 
     def test_pre_adr_test_lanes_keep_the_reference_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
             tree = Path(tmp) / "pre-adr"
             tree.mkdir()
-            fixture = Path(tmp) / "274bot-289-v18.navpack"
+            fixture = Path(tmp) / "274bot-289-v19.navpack"
             with mock.patch.object(rn, "NAV_FIXTURE", fixture):
                 env = rn.lane_asset_env(tree)
         for key in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK"):
             self.assertEqual(env[key], str(fixture))
-        self.assertNotIn("ISOLATED_289_ENGINE_DIR", env)
-        self.assertNotIn("ISOLATED_289_CONTENT_DIR", env)
+        for revision in ("274", "289"):
+            for kind in ("ENGINE", "CONTENT"):
+                self.assertNotIn(f"RS2VM_{kind}_{revision}", env)
+        self.assertNotIn("RS2VM_BUN", env)
 
     def test_post_adr_missing_pack_or_flags_uses_generator_diagnostic(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1013,6 +1043,33 @@ class LaneEnvironmentTests(unittest.TestCase):
                         RuntimeError,
                         f"local-data generator omitted required output: {flags}"):
                     rn.lane_asset_env(tree)
+
+    def test_post_adr_missing_exact_revision_root_uses_exact_root_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tree = root / "post-adr"
+            generator = tree / "tools" / "local-data" / "build.py"
+            generator.parent.mkdir(parents=True)
+            generator.write_text("# generator\n", encoding="utf-8")
+            pack = tree / "target" / "local-data" / "nav" / "274" / "274bot.navpack"
+            pack.parent.mkdir(parents=True)
+            pack.write_bytes(b"pack")
+            pack.with_suffix(".navflags").write_bytes(b"flags")
+            engine_274 = root / "engine-274"
+            content_274 = root / "content-274"
+            engine_274.mkdir()
+            content_274.mkdir()
+            with mock.patch.object(rn, "REVISION", "274"):
+                with mock.patch.object(rn, "ENGINE_PRISTINE", root / "unused-pristine"):
+                    with mock.patch.dict(os.environ, {
+                            "NIGHTLY_GAME_DATA_274_ENGINE": str(engine_274),
+                            "NIGHTLY_GAME_DATA_274_CONTENT": str(content_274),
+                            "NIGHTLY_GAME_DATA_289_ENGINE": "",
+                            "NIGHTLY_GAME_DATA_289_CONTENT": "",
+                    }):
+                        with self.assertRaisesRegex(
+                                RuntimeError, "missing local-data input GAME_DATA_289_ENGINE"):
+                            rn.lane_asset_env(tree)
 
 
 class SeedLaneHomeTests(unittest.TestCase):
@@ -1048,11 +1105,22 @@ class SeedLaneHomeTests(unittest.TestCase):
 
 class CellCapTests(unittest.TestCase):
     def test_long_cells_keep_a_cap_above_their_proven_walls(self):
-        # 2026-10-21 summary.json walls: jive_kbd 2543.0 s (Linux verdict),
-        # quester_queue 1987.9 s (Linux pass).
+        # 2026-10-21 summary.json wall: jive_kbd 2543.0 s (Linux verdict).
         self.assertGreater(rn.cell_cap_s("jive_kbd"), 2543)
-        self.assertGreater(rn.cell_cap_s("quester_queue"), 1988)
         self.assertEqual(rn.cell_cap_s("walk"), rn.CELL_CAP_S)
+
+    def test_queue_cap_outlasts_its_scenario_deadline(self):
+        # A cap at or below the scenario deadline turns every failing queue run
+        # into an outer-cap TIMEOUT with no verdict (Windows 2026-11-12).
+        self.assertGreater(rn.cell_cap_s("quester_queue"), rn.QUESTER_QUEUE_DEADLINE_S + 15)
+
+    def test_queue_deadline_matches_the_scenario_source(self):
+        source = Path(__file__).resolve().parents[2] / "crates/scenario/src/scenarios/quester.rs"
+        if not source.is_file():
+            self.skipTest("runner copy without the product tree (self-update sandbox)")
+        match = re.search(r"QUEUE_DEADLINE: Duration = Duration::from_secs\((\d+)\)", source.read_text())
+        self.assertIsNotNone(match)
+        self.assertEqual(int(match.group(1)), rn.QUESTER_QUEUE_DEADLINE_S)
 
     def test_parse_cell_caps_overrides_and_refuses_bad_entries(self):
         caps = rn.parse_cell_caps("jive_kbd=4000, other=900", {"jive_kbd": 3600})
@@ -1385,6 +1453,29 @@ class CellsFileTests(unittest.TestCase):
 
 
 class LocalDataRunnerTests(unittest.TestCase):
+    def test_bank_access_facts_are_required_before_caching_local_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tree = root / "tree"
+            for relative in rn.LOCAL_DATA_REQUIRED_OUTPUTS:
+                output = tree / relative
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text("generated\n", encoding="utf-8")
+            bank_files = [
+                Path(f"crates/api/data/game-data/{revision}/bank_npcs.json")
+                for revision in ("274", "289")
+            ]
+            for relative in bank_files:
+                self.assertIn(relative, rn.LOCAL_DATA_REQUIRED_OUTPUTS)
+                output = tree / relative
+                output.unlink()
+                with self.assertRaisesRegex(RuntimeError, "omitted required output: .*bank_npcs.json"):
+                    rn._store_local_data_cache(root / "cache" / "entry", tree, "identity")
+                output.write_text("generated\n", encoding="utf-8")
+            rn._store_local_data_cache(root / "cache" / "entry", tree, "identity")
+            for relative in bank_files:
+                self.assertTrue((root / "cache" / "entry" / "outputs" / relative).is_file())
+
     def make_inputs(self, root: Path):
         tree = root / "tree"
         for relative, contents in (
@@ -1552,11 +1643,23 @@ class PurgedGameDataRestoreTests(unittest.TestCase):
             git("commit", "-qm", "head", cwd=tree)
         return tree, parent, git("rev-parse", "HEAD", cwd=tree)
 
-    def write_archive(self, directory: Path, commit: str, *, digest=None) -> Path:
+    def write_archive(self, directory: Path, commit: str, *, digest=None,
+                      parent_headers: tuple[str, ...] = (),
+                      parent_file=None) -> Path:
         directory.mkdir(parents=True, exist_ok=True)
         archive_path = directory / f"{commit}.tar"
         payload = b'{"revision":274}\n'
         with tarfile.open(archive_path, "w") as bundle:
+            for name in parent_headers:
+                member = tarfile.TarInfo(name)
+                member.type = tarfile.DIRTYPE
+                member.mode = 0o755
+                bundle.addfile(member)
+            if parent_file is not None:
+                member = tarfile.TarInfo(parent_file)
+                member.mode = 0o644
+                member.size = 1
+                bundle.addfile(member, io.BytesIO(b"x"))
             member = tarfile.TarInfo("crates/api/data/game-data/274.json")
             member.mode = 0o644
             member.size = len(payload)
@@ -1570,6 +1673,31 @@ class PurgedGameDataRestoreTests(unittest.TestCase):
         )
         (directory / "README.md").write_text("archive instructions\n", encoding="utf-8")
         return archive_path
+
+    def test_archive_accepts_directory_headers_for_crates_parents(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tree, _parent, head = self.make_tree(root)
+            archive_dir = root / "purged-data"
+            self.write_archive(
+                archive_dir, head, parent_headers=("crates", "crates/api")
+            )
+
+            selected = rn.restore_purged_game_data(tree, archive_dir)
+
+            self.assertEqual(selected, head)
+            self.assertTrue((tree / "crates/api/data/game-data/274.json").is_file())
+
+    def test_archive_rejects_files_at_crates_parent_paths(self):
+        for parent in ("crates", "crates/api"):
+            with self.subTest(parent=parent), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                tree, _parent, head = self.make_tree(root)
+                archive_dir = root / "purged-data"
+                self.write_archive(archive_dir, head, parent_file=parent)
+
+                with self.assertRaisesRegex(RuntimeError, "unsafe purged-data archive member"):
+                    rn.restore_purged_game_data(tree, archive_dir)
 
     def test_pre_adr_tree_restores_head_archive_without_running_generator(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1692,6 +1820,58 @@ class BuildFailureTests(unittest.TestCase):
         rows = {row["cell"]: row for row in summary["cells"]}
         self.assertEqual(sorted(rows), ["cook_bot", "walk"])
         for row in rows.values():
+            self.assertEqual(row["result"], "NOT_RUN")
+            self.assertIn("build failed", row["reason"])
+
+    def test_missing_frontend_binary_writes_summary_and_done_without_engine(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+
+        def fake_update_tree(_branch, tree, _build_log):
+            catalog = tree / rn.CATALOG_RS
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text(
+                'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n'
+                '    Entry::new("cook_bot"),\n];\n', encoding="utf-8")
+            return "b" * 40, "b" * 9
+
+        def empty_build(_tree, _target, _run_dir, _build_log, *, data_prepared=False):
+            return {}
+
+        engine_starts: list = []
+        patches = [
+            mock.patch.object(rn, "ROOT", root),
+            mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+            mock.patch.object(rn, "STEPS", ["tui"]),
+            mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+            mock.patch.object(rn, "update_tree", fake_update_tree),
+            mock.patch.object(rn, "build", empty_build),
+            mock.patch.object(rn, "guard_disk", lambda _branch, _primary: None),
+            mock.patch.object(rn, "engine_start",
+                              lambda run_dir: engine_starts.append(run_dir) or (True, "started")),
+            mock.patch.object(rn, "engine_stop", lambda _run_dir: None),
+            mock.patch.object(rn, "log", lambda _message: None),
+        ]
+        for patch in patches:
+            patch.start()
+        try:
+            run_dir = rn.run_branch("dev", 1, None, None, latency_bands=[])
+        finally:
+            for patch in patches:
+                patch.stop()
+        self.assertEqual(engine_starts, [])
+        self.assertTrue((run_dir / "DONE").is_file())
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertFalse(summary["build"]["ok"])
+        self.assertTrue(summary["build"]["ran"])
+        self.assertEqual(
+            summary["build"]["error"],
+            "build did not produce required binary: tui-play",
+        )
+        self.assertEqual(summary["engine"]["status"], "not started (build failed)")
+        self.assertTrue(summary["steps"]["tui"]["status"].startswith("not run: "))
+        for row in summary["cells"]:
             self.assertEqual(row["result"], "NOT_RUN")
             self.assertIn("build failed", row["reason"])
 

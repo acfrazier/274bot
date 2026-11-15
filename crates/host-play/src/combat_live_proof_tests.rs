@@ -1126,6 +1126,47 @@ fn preparation_steps(
         }
         Case::M3 => steps.push(wear_step(RUNE_SCIMITAR_ID)),
         Case::M4 => {
+            // An unread bank now triggers stage-supply preparation. Seed and
+            // observe this account's empty bank before draining HP, so the four
+            // held lobsters are all the food available. Preparation still runs
+            // and reports its shortfall, but has nothing to fetch. A bank
+            // detour would let the HP8 encounter fixture regenerate first.
+            steps.push(cheat_step(
+                "clear the M4 account bank before the measured encounter",
+                "~clearbank".to_owned(),
+                Proof::SideTabAvailable { index: 3 },
+            ));
+            steps.push(cheat_step(
+                "load the M4 account bank before the measured encounter",
+                "~bank".to_owned(),
+                Proof::BankOpen,
+            ));
+            steps.push(Step {
+                name: "observe the empty M4 account bank before the measured encounter",
+                kind: StepKind::Await {
+                    evidence: "fresh empty M4 account bank",
+                    ready: Box::new(|snapshot| {
+                        snapshot.bank_loaded()
+                            && snapshot.bank_component_id() >= 0
+                            && snapshot.bank().iter().all(|row| row.count <= 0)
+                    }),
+                    summary: None,
+                },
+                wait: Wait {
+                    arm: Proof::BankOpen,
+                    budget_ticks: 120,
+                },
+            });
+            steps.push(Step {
+                name: "close the M4 account bank before draining Hitpoints",
+                kind: StepKind::Perform {
+                    send: Box::new(|client, _| api::interact::close_modal(client)),
+                },
+                wait: Wait {
+                    arm: Proof::BankClosed,
+                    budget_ticks: 120,
+                },
+            });
             steps.push(cheat_step(
                 "drain Hitpoints to eight before hostile-area teleport",
                 "~stat_drain hitpoints 22 0".to_owned(),
@@ -10621,6 +10662,10 @@ fn m4_declares_the_tree_crossing_without_a_poison_fixture() {
             .position(|step| step.name == name)
             .unwrap()
     };
+    let clear_bank = index("clear the M4 account bank before the measured encounter");
+    let load_bank = index("load the M4 account bank before the measured encounter");
+    let empty_bank = index("observe the empty M4 account bank before the measured encounter");
+    let close_bank = index("close the M4 account bank before draining Hitpoints");
     let drain = index("drain Hitpoints to eight before hostile-area teleport");
     let stand = index("stand at the quest start");
     let start = scenario
@@ -10628,6 +10673,21 @@ fn m4_declares_the_tree_crossing_without_a_poison_fixture() {
         .iter()
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .unwrap();
+    assert!(clear_bank < load_bank && load_bank < empty_bank && empty_bank < close_bank);
+    assert!(close_bank < drain);
+    assert_eq!(scenario.steps[empty_bank].wait.arm, Proof::BankOpen);
+    let StepKind::Await { ready, .. } = &scenario.steps[empty_bank].kind else {
+        panic!("M4 must observe its own empty bank before draining HP");
+    };
+    let mut bank = GameSnapshot::new();
+    assert!(!ready(&bank), "an unseen bank is not known empty");
+    bank.seed_bank_observation(1, 1, None, Vec::new());
+    assert!(!ready(&bank), "an open but unread bank is not known empty");
+    bank.seed_bank_observation(1, 2, Some(Vec::new()), Vec::new());
+    assert!(ready(&bank), "a loaded empty bank satisfies the seed");
+    bank.seed_bank_observation(-1, 2, Some(Vec::new()), Vec::new());
+    assert!(!ready(&bank), "a closed bank cannot satisfy the load proof");
+    assert_eq!(scenario.steps[close_bank].wait.arm, Proof::BankClosed);
     assert!(drain < stand && stand < start);
 }
 

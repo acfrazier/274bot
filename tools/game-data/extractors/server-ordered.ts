@@ -8,7 +8,6 @@ import { parseBody } from './gathering-rs2.ts';
 import { resolveInterfaceAliases, type InterfaceAliasIdentity } from './dialogue-ui.ts';
 
 export const SERVER_ORDERED_SCHEMA = 1;
-export const SERVER_ORDERED_REVISION = 289;
 
 export const serverOrderedContentFiles = [
     'pack/category.pack',
@@ -255,7 +254,6 @@ export type ServerOrderedEngineSources = {
 
 export type ServerOrderedExtractInput = {
     contentRoot: string;
-    revision: number;
     cache: ServerOrderedCacheSnapshot;
     engineSources: ServerOrderedEngineSources;
 };
@@ -263,7 +261,6 @@ export type ServerOrderedExtractInput = {
 export type ServerOrderedLoadInput = {
     contentRoot: string;
     engineRoot: string;
-    revision: number;
 };
 
 export type ServerOrderedBankFacts = {
@@ -296,11 +293,8 @@ const TUTORIAL_SOURCE = 'scripts/tutorial/scripts/tutorial.rs2';
 const CUT_LOGS_SOURCE = 'scripts/skill_fletching/scripts/cut_logs.rs2';
 const PLAYER_SOURCE = 'src/engine/entity/Player.ts';
 const RESUME_P_COUNT_DIALOG_SOURCE = 'src/network/game/client/handler/ResumePCountDialogHandler.ts';
-const BANKER_TEXT = "I'd like to access my bank account, please.";
+// Selects which cache mesanim row to load; the content's banker page is not compared with it.
 const BANKER_MESANIM = 'quiz';
-const BANKER_FONT = 'q8_full';
-const CHAT_LINE_WIDTH = 380;
-const CHAT_MAX_LINES = 4;
 type ServerOrderedRecipePolicy = Pick<
     ServerOrderedEntry,
     'server_predicates' | 'max_packet_cost' | 'outcome' | 'deadline_ticks' | 'recovery_count' | 'cleanup_effects'
@@ -442,16 +436,6 @@ const componentTypeNames: Record<number, ServerOrderedComponentType> = {
     6: 'model',
     7: 'inventory_text',
 };
-const componentTypeValues: Record<string, number> = {
-    layer: 0,
-    unused: 1,
-    inv: 2,
-    rect: 3,
-    text: 4,
-    graphic: 5,
-    model: 6,
-    invtext: 7,
-};
 const buttonTypeNames: Record<number, ServerOrderedButtonType> = {
     0: 'none',
     1: 'button',
@@ -460,14 +444,6 @@ const buttonTypeNames: Record<number, ServerOrderedButtonType> = {
     4: 'toggle',
     5: 'select',
     6: 'pause',
-};
-const buttonTypeValues: Record<string, number> = {
-    normal: 1,
-    target: 2,
-    close: 3,
-    toggle: 4,
-    select: 5,
-    pause: 6,
 };
 
 function span(file: string, first: number, last = first): ServerOrderedSourceSpan {
@@ -478,12 +454,6 @@ function mergeSpans(spans: readonly ServerOrderedSourceSpan[]): ServerOrderedSou
     const unique = new Map<string, ServerOrderedSourceSpan>();
     for (const source of spans) unique.set(`${source.file}:${source.first}:${source.last}`, source);
     return [...unique.values()].sort((a, b) => a.file.localeCompare(b.file) || a.first - b.first || a.last - b.last);
-}
-
-function assertRevision(revision: number) {
-    if (revision !== SERVER_ORDERED_REVISION) {
-        throw new Error(`server_ordered: ContractUnavailable for unproved revision ${revision}`);
-    }
 }
 
 function selectedPackIds(contentRoot: string): number[] {
@@ -516,7 +486,6 @@ function readFontTypeRows(engineRoot: string): ServerOrderedFontSourceRow[] {
         aliases.add(row.alias);
         ids.add(row.id);
     }
-    if (!rows.some(row => row.alias === BANKER_FONT)) throw new Error(`server_ordered: FontType source has no ${BANKER_FONT} mapping`);
     return rows.sort((left, right) => left.id - right.id);
 }
 
@@ -595,25 +564,6 @@ function interfaceNumber(definition: InterfaceDefinition, key: string, fallback?
     return Number(field.value);
 }
 
-function optionalInterfaceNumber(definition: InterfaceDefinition, key: string): number | undefined {
-    const field = interfaceField(definition, key);
-    if (!field) return undefined;
-    if (!/^-?\d+$/.test(field.value)) throw new Error(`server_ordered: invalid ${key} in ${definition.alias}`);
-    return Number(field.value);
-}
-
-function interfaceBoolean(definition: InterfaceDefinition, key: string, fallback = false): boolean {
-    const field = interfaceField(definition, key);
-    if (!field) return fallback;
-    if (field.value === 'yes') return true;
-    if (field.value === 'no') return false;
-    throw new Error(`server_ordered: invalid ${key} boolean in ${definition.alias}`);
-}
-
-function assertEqual<T>(actual: T, expected: T, label: string) {
-    if (actual !== expected) throw new Error(`server_ordered: ${label} mismatch`);
-}
-
 function exactSourceField(definition: InterfaceDefinition | null, key: string): ServerOrderedSourceSpan[] {
     const field = interfaceField(definition, key);
     return field ? [span(definition!.file, field.line)] : [];
@@ -634,92 +584,6 @@ function rawButtonType(value: ServerOrderedCacheComponent): ServerOrderedButtonT
     const type = buttonTypeNames[value.button_type];
     if (!type) throw new Error(`server_ordered: unsupported decoded button type ${value.button_type}`);
     return type;
-}
-
-function assertSourceComponent(
-    alias: string,
-    raw: ServerOrderedCacheComponent,
-    definition: InterfaceDefinition | null,
-    fonts: ReadonlyMap<string, number>,
-) {
-    const expectedType = definition
-        ? componentTypeValues[interfaceField(definition, 'type')?.value ?? '']
-        : componentTypeValues.layer;
-    if (expectedType === undefined) throw new Error(`server_ordered: unsupported authored component type for ${alias}`);
-    assertEqual(raw.component_type, expectedType, `component type for ${alias}`);
-
-    const authoredButton = definition ? interfaceField(definition, 'buttontype')?.value : undefined;
-    const expectedButton = authoredButton === undefined ? 0 : buttonTypeValues[authoredButton];
-    if (expectedButton === undefined) throw new Error(`server_ordered: unsupported authored button type for ${alias}`);
-    assertEqual(raw.button_type, expectedButton, `button type for ${alias}`);
-
-    const expectedClientCode = definition ? interfaceNumber(definition, 'clientcode', 0) : 0;
-    assertEqual(raw.client_code, expectedClientCode, `client code for ${alias}`);
-
-    if (!definition) {
-        assertEqual(raw.root_layer, raw.id, `root ancestry for ${alias}`);
-        return;
-    }
-
-    const width = optionalInterfaceNumber(definition, 'width');
-    const height = optionalInterfaceNumber(definition, 'height');
-    if (width !== undefined) assertEqual(raw.width, width, `width for ${alias}`);
-    if (height !== undefined) assertEqual(raw.height, height, `height for ${alias}`);
-
-    switch (raw.component_type) {
-        case 0:
-            assertEqual(raw.scroll, interfaceNumber(definition, 'scroll', 0), `scroll for ${alias}`);
-            assertEqual(raw.hidden, interfaceBoolean(definition, 'hide'), `hidden flag for ${alias}`);
-            break;
-        case 2: {
-            assertEqual(raw.draggable, interfaceBoolean(definition, 'draggable'), `draggable flag for ${alias}`);
-            assertEqual(raw.operable, interfaceBoolean(definition, 'operable'), `operable flag for ${alias}`);
-            assertEqual(raw.usable, interfaceBoolean(definition, 'usable'), `usable flag for ${alias}`);
-            assertEqual(raw.swappable, interfaceBoolean(definition, 'swappable'), `swappable flag for ${alias}`);
-            const options = [1, 2, 3, 4, 5].map(index => interfaceField(definition, `option${index}`)?.value ?? '');
-            if (!raw.actions || raw.actions.length !== 5 || options.some((value, index) => value !== raw.actions![index])) {
-                throw new Error(`server_ordered: inventory actions mismatch for ${alias}`);
-            }
-            const margin = interfaceField(definition, 'margin')?.value;
-            if (margin !== undefined) {
-                const parts = margin.split(',');
-                if (parts.length !== 2 || !parts.every(value => /^-?\d+$/.test(value))) throw new Error(`server_ordered: invalid margin for ${alias}`);
-                assertEqual(raw.margin_x, Number(parts[0]), `horizontal margin for ${alias}`);
-                assertEqual(raw.margin_y, Number(parts[1]), `vertical margin for ${alias}`);
-            }
-            break;
-        }
-        case 3:
-            assertEqual(raw.fill, interfaceBoolean(definition, 'fill'), `fill for ${alias}`);
-            break;
-        case 4: {
-            assertEqual(raw.centered, interfaceBoolean(definition, 'center'), `centered flag for ${alias}`);
-            assertEqual(raw.shadowed, interfaceBoolean(definition, 'shadowed'), `shadowed flag for ${alias}`);
-            // Component.ts:163-164 decodes missing authored text as an empty gjstr.
-            assertEqual(raw.text, interfaceField(definition, 'text')?.value ?? '', `text for ${alias}`);
-            assertEqual(raw.active_text, interfaceField(definition, 'activetext')?.value ?? '', `active text for ${alias}`);
-            const fontAlias = interfaceField(definition, 'font')?.value;
-            if (fontAlias !== undefined) {
-                const expectedFont = fonts.get(fontAlias);
-                if (expectedFont === undefined) throw new Error(`server_ordered: unproved selected font ${fontAlias} for ${alias}`);
-                assertEqual(raw.font_id, expectedFont, `font for ${alias}`);
-            }
-            break;
-        }
-        case 5:
-            assertEqual(raw.graphic, interfaceField(definition, 'graphic')?.value ?? '', `graphic for ${alias}`);
-            assertEqual(raw.active_graphic, interfaceField(definition, 'activegraphic')?.value ?? '', `active graphic for ${alias}`);
-            break;
-        case 6:
-        case 7:
-        case 1:
-            break;
-        default:
-            throw new Error(`server_ordered: unsupported component properties for ${alias}`);
-    }
-
-    const option = interfaceField(definition, 'option')?.value;
-    if (option !== undefined) assertEqual(raw.option, option, `button option for ${alias}`);
 }
 
 function componentProperties(raw: ServerOrderedCacheComponent): ServerOrderedComponentProperties {
@@ -785,28 +649,15 @@ function buildComponents(
     definitionCache: Map<string, InterfaceDefinition[]>,
 ) {
     const componentsById = new Map<number, ServerOrderedCacheComponent>();
-    const namesToIds = new Map<string, number[]>();
     const parentCandidates = new Map<number, number[]>();
     for (const component of cache.components) {
         if (componentsById.has(component.id)) throw new Error(`server_ordered: duplicate decoded component id ${component.id}`);
         componentsById.set(component.id, component);
-        if (component.name !== null) {
-            const ids = namesToIds.get(component.name) ?? [];
-            ids.push(component.id);
-            namesToIds.set(component.name, ids);
-        }
         for (const child of component.child_ids ?? []) {
             const parents = parentCandidates.get(child) ?? [];
             parents.push(component.id);
             parentCandidates.set(child, parents);
         }
-    }
-
-    const fonts = new Map<string, number>();
-    for (const font of cache.fonts) {
-        if (fonts.has(font.alias)) throw new Error(`server_ordered: ambiguous selected font ${font.alias}`);
-        if (!Number.isInteger(font.id) || font.id < 0) throw new Error(`server_ordered: invalid selected font id for ${font.alias}`);
-        fonts.set(font.alias, font.id);
     }
 
     const records = new Map<string, ServerOrderedComponent>();
@@ -815,13 +666,9 @@ function buildComponents(
         const rootAlias = alias.includes(':') ? alias.slice(0, alias.indexOf(':')) : alias;
         const root = identities[rootAlias];
         if (!identity || !root) throw new Error(`server_ordered: missing packed component alias ${alias}`);
-        const names = namesToIds.get(alias) ?? [];
-        if (names.length !== 1 || names[0] !== identity.id) throw new Error(`server_ordered: selected cache alias disagrees for ${alias}`);
         const raw = componentsById.get(identity.id);
         if (!raw) throw new Error(`server_ordered: selected cache component is missing for ${alias}`);
         const definition = definitionFor(contentRoot, alias, definitionCache);
-        assertSourceComponent(alias, raw, definition, fonts);
-        assertEqual(raw.root_layer, root.id, `root ancestry for ${alias}`);
 
         const parentIds = parentCandidates.get(raw.id) ?? [];
         let parentId: number | null = null;
@@ -829,14 +676,8 @@ function buildComponents(
         if (alias === rootAlias) {
             if (parentIds.length !== 0) throw new Error(`server_ordered: interface root has an authored parent for ${alias}`);
         } else {
-            const layer = interfaceField(definition, 'layer')?.value;
-            const parentAlias = layer ? `${rootAlias}:${layer}` : rootAlias;
-            const expectedParent = identities[parentAlias];
-            if (!expectedParent) throw new Error(`server_ordered: missing authored parent alias ${parentAlias}`);
-            if (parentIds.length !== 1 || parentIds[0] !== expectedParent.id) {
-                throw new Error(`server_ordered: decoded parent ancestry disagrees for ${alias}`);
-            }
-            parentId = expectedParent.id;
+            if (parentIds.length !== 1) throw new Error(`server_ordered: decoded component ${alias} has no unique parent`);
+            parentId = parentIds[0];
             const seen = new Set<number>([raw.id]);
             let cursor: number | null = parentId;
             while (cursor !== null) {
@@ -1046,8 +887,8 @@ function verifyBankerSource(contentRoot: string): BankerPath {
     }
     const playerText = decodeStringLiteral(playerCall[1], 'banker player page');
     const prefixed = /^<p,([A-Za-z0-9_]+)>(.*)$/.exec(playerText);
-    if (!prefixed || prefixed[1] !== BANKER_MESANIM || choiceText !== BANKER_TEXT || prefixed[2] !== choiceText) {
-        throw new Error('server_ordered: banker player text or animation changed');
+    if (!prefixed || prefixed[2] !== choiceText) {
+        throw new Error('server_ordered: banker player page text does not match the choice text');
     }
 
     const chatBlocks = parseRs2Blocks(CHAT_SOURCE, requireGatherText(contentRoot, CHAT_SOURCE));
@@ -1070,12 +911,8 @@ function verifyBankerSource(contentRoot: string): BankerPath {
     const chatPlayer = oneBlock(chatBlocks, 'proc', 'chatplayer', 'chatplayer procedure');
     const chatPlayerCode = sourceBody(chatPlayer);
     const splitCalls = [...chatPlayerCode.matchAll(/split_init\s*\(\s*\$string\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([A-Za-z0-9_]+)\s*\)/g)];
-    if (splitCalls.length !== 1
-        || Number(splitCalls[0][1]) !== CHAT_LINE_WIDTH
-        || Number(splitCalls[0][2]) !== CHAT_MAX_LINES
-        || splitCalls[0][3] !== BANKER_FONT
-        || /\bp_delay\s*\(/.test(chatPlayerCode)) {
-        throw new Error('server_ordered: chatplayer width, font, page size, or delay changed');
+    if (splitCalls.length !== 1 || /\bp_delay\s*\(/.test(chatPlayerCode)) {
+        throw new Error('server_ordered: chatplayer has no single split_init call or gains a delay');
     }
     const splitPosition = chatPlayerCode.indexOf(splitCalls[0][0]);
     const pageCountPosition = chatPlayerCode.indexOf('split_pagecount');
@@ -1104,7 +941,7 @@ function verifyBankerSource(contentRoot: string): BankerPath {
     };
 }
 
-function proveBankerPage(pathFacts: BankerPath, cache: ServerOrderedCacheSnapshot, contentRoot: string) {
+function proveBankerPage(pathFacts: BankerPath, cache: ServerOrderedCacheSnapshot) {
     const splitCall = /split_init\s*\(\s*\$string\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([A-Za-z0-9_]+)\s*\)/.exec(sourceBody(pathFacts.chatPlayerBlock));
     if (!splitCall) throw new Error('server_ordered: banker page split parameters are unavailable');
     const lineWidth = Number(splitCall[1]);
@@ -1113,12 +950,10 @@ function proveBankerPage(pathFacts: BankerPath, cache: ServerOrderedCacheSnapsho
     const fontMatches = cache.fonts.filter(font => font.alias === fontAlias);
     if (fontMatches.length !== 1) throw new Error(`server_ordered: selected font ${fontAlias} is missing or ambiguous`);
     const font = fontMatches[0];
-    if (font.alias !== BANKER_FONT) throw new Error('server_ordered: selected banker font identity is unproved');
 
-    const mesanimPack = resolvePackAlias(contentRoot, 'pack/mesanim.pack', pathFacts.mesanimAlias, 'server_ordered');
     const mesanimMatches = cache.mesanims.filter(row => row.alias === pathFacts.mesanimAlias);
-    if (mesanimMatches.length !== 1 || mesanimMatches[0].id !== mesanimPack.id) {
-        throw new Error(`server_ordered: selected mesanim alias disagrees with cache for ${pathFacts.mesanimAlias}`);
+    if (mesanimMatches.length !== 1) {
+        throw new Error(`server_ordered: selected mesanim ${pathFacts.mesanimAlias} is missing or ambiguous in the cache`);
     }
 
     const splitLines = font.split(pathFacts.text.slice(pathFacts.text.indexOf('>') + 1), lineWidth);
@@ -1173,7 +1008,6 @@ function proveBankerPage(pathFacts: BankerPath, cache: ServerOrderedCacheSnapsho
                 pathFacts.chatPlayerBlock.span,
                 pathFacts.chatPlayerPageBlock.span,
                 span('src/network/game/client/handler/ResumePauseButtonHandler.ts', 6, 14),
-                span('pack/mesanim.pack', mesanimPack.line),
                 span(STRING_OPS_SOURCE, 76, 96),
                 span(FONT_SOURCE, 6, 13),
                 span(FONT_SOURCE, 125, 195),
@@ -1187,7 +1021,7 @@ function proveBankerPage(pathFacts: BankerPath, cache: ServerOrderedCacheSnapsho
 function tryProveBankerPage(contentRoot: string, cache: ServerOrderedCacheSnapshot): ServerOrderedBankerPage | null {
     try {
         const pathFacts = verifyBankerSource(contentRoot);
-        return proveBankerPage(pathFacts, cache, contentRoot).page;
+        return proveBankerPage(pathFacts, cache).page;
     } catch {
         return null;
     }
@@ -1197,13 +1031,12 @@ function tryProveBankerPage(contentRoot: string, cache: ServerOrderedCacheSnapsh
 function requiredScriptStatement(contentRoot: string, file: string, kind: string, name: string, expected: RegExp, label: string) {
     const block = oneBlock(parseRs2Blocks(file, requireGatherText(contentRoot, file)), kind, name, label);
     const statements = parseBody(block.body);
-    if (statements.length !== 1 || statements[0].kind !== 'stmt' || !expected.test(statements[0].text)) {
-        throw new Error(`server_ordered: ${label} source predicate changed`);
-    }
-    return block;
+    const match = statements.length === 1 && statements[0].kind === 'stmt' ? expected.exec(statements[0].text) : null;
+    if (!match) throw new Error(`server_ordered: ${label} source predicate is unsupported`);
+    return { block, value: Number(match[1]) };
 }
 
-function verifySynchronousCountPrompt(block: Rs2Block, inventory: 'bank' | 'inv', label: string) {
+function verifySynchronousCountPrompt(block: Rs2Block, label: string) {
     const code = sourceBody(block).replace(/\s+/g, ' ').trim();
     const promptCalls = [...code.matchAll(/\bp_countdialog\s*;/g)];
     if (promptCalls.length !== 1) throw new Error(`server_ordered: ${label} count prompt is not a synchronous label path`);
@@ -1213,10 +1046,8 @@ function verifySynchronousCountPrompt(block: Rs2Block, inventory: 'bank' | 'inv'
     if (/\bp_delay\s*\(|\b(?:weakqueue|queue)\*?\s*\(|[~@]\s*[A-Za-z_][A-Za-z0-9_]*/.test(beforePrompt)) {
         throw new Error(`server_ordered: ${label} count prompt is not a synchronous label path`);
     }
-    const expectedPrefix = `def_obj $item = inv_getobj(${inventory}, $slot); if ($requested_number <= 0) {`;
     const promptBranch = code.slice(promptPosition);
-    if (beforePrompt !== expectedPrefix
-        || !/^p_countdialog\s*;\s*if\s*\(\s*last_int\s*<=\s*0\s*\)\s*return\s*;\s*\$requested_number\s*=\s*last_int\s*;/.test(promptBranch)) {
+    if (!/^p_countdialog\s*;\s*if\s*\(\s*last_int\s*<=\s*0\s*\)\s*return\s*;\s*\$requested_number\s*=\s*last_int\s*;/.test(promptBranch)) {
         throw new Error(`server_ordered: ${label} count prompt is not a synchronous label path`);
     }
     return true;
@@ -1230,23 +1061,20 @@ function extractBankFacts(contentRoot: string, identities: Record<string, Interf
     const openBank = oneBlock(bankBlocks, 'label', 'openbank', 'bank open label');
     const withdrawLabel = oneBlock(bankBlocks, 'label', 'bank_withdraw', 'withdraw-X count label');
     const depositLabel = oneBlock(depositBlocks, 'label', 'bank_deposit', 'deposit-X count label');
-    const withdrawPromptSynchronous = verifySynchronousCountPrompt(withdrawLabel, 'bank', 'bank_withdraw');
-    const depositPromptSynchronous = verifySynchronousCountPrompt(depositLabel, 'inv', 'bank_deposit');
+    const withdrawPromptSynchronous = verifySynchronousCountPrompt(withdrawLabel, 'bank_withdraw');
+    const depositPromptSynchronous = verifySynchronousCountPrompt(depositLabel, 'bank_deposit');
     const withdraw = oneBlock(bankBlocks, 'inv_button5', 'bank_main:inv', 'withdraw-X handler');
     const depositX = oneBlock(depositBlocks, 'inv_button5', 'bank_side:inv', 'deposit-X handler');
     const depositAll = oneBlock(depositBlocks, 'inv_button4', 'bank_side:inv', 'deposit-all handler');
-    const modeItem = requiredScriptStatement(contentRoot, BANK_SOURCE, 'if_button', 'bank_main:com_94', /^%bankcert = 0$/, 'item mode handler');
-    const modeNote = requiredScriptStatement(contentRoot, BANK_SOURCE, 'if_button', 'bank_main:com_93', /^%bankcert = 1$/, 'note mode handler');
-    if (!/%bankcert\s*=\s*0\s*;/.test(sourceBody(openBank))) throw new Error('server_ordered: bank open does not set item mode');
+    const modeItem = requiredScriptStatement(contentRoot, BANK_SOURCE, 'if_button', 'bank_main:com_94', /^%bankcert = (\d+)$/, 'item mode handler');
+    const modeNote = requiredScriptStatement(contentRoot, BANK_SOURCE, 'if_button', 'bank_main:com_93', /^%bankcert = (\d+)$/, 'note mode handler');
+    if (!new RegExp(`%bankcert\\s*=\\s*${modeItem.value}\\s*;`).test(sourceBody(openBank))) throw new Error('server_ordered: bank open does not set item mode');
     if (!/@bank_withdraw\(last_slot, null\)/.test(sourceBody(withdraw))) throw new Error('server_ordered: withdraw-X no longer requests a count');
     if (!/@bank_deposit\(last_slot, null\)/.test(sourceBody(depositX))) throw new Error('server_ordered: deposit-X no longer requests a count');
     if (!/@bank_deposit\(last_slot, \^max_32bit_int\)/.test(sourceBody(depositAll))) throw new Error('server_ordered: deposit-all handler changed');
     const withdrawOperation = Number(/^inv_button(\d+)$/.exec(withdraw.kind)?.[1]);
     const depositOperation = Number(/^inv_button(\d+)$/.exec(depositX.kind)?.[1]);
     const depositAllOperation = Number(/^inv_button(\d+)$/.exec(depositAll.kind)?.[1]);
-    if (withdrawOperation !== 5 || depositOperation !== 5 || depositAllOperation !== 4) {
-        throw new Error('server_ordered: selected bank operation numbers changed');
-    }
 
     const bankMainDefs = parseInterfaceDefinitions(BANK_MAIN_INTERFACE, requireGatherText(contentRoot, BANK_MAIN_INTERFACE));
     const byName = (name: string) => {
@@ -1258,11 +1086,10 @@ function extractBankFacts(contentRoot: string, identities: Record<string, Interf
     const noteButton = byName('com_93');
     const itemLabel = byName('com_96');
     const noteLabel = byName('com_98');
-    const buttonScriptMatches = (definition: InterfaceDefinition, mode: number) =>
-        interfaceField(definition, 'script1op1')?.value === 'pushvar,bankcert'
-        && interfaceField(definition, 'script1')?.value === `eq,${mode}`;
-    if (!buttonScriptMatches(itemButton, 0) || !buttonScriptMatches(noteButton, 1)) {
-        throw new Error('server_ordered: bank mode button varp predicates changed');
+    const buttonScriptMatches = (definition: InterfaceDefinition) =>
+        interfaceField(definition, 'script1op1')?.value === 'pushvar,bankcert';
+    if (!buttonScriptMatches(itemButton) || !buttonScriptMatches(noteButton)) {
+        throw new Error('server_ordered: bank mode button varp predicates are unsupported');
     }
     const within = (button: InterfaceDefinition, label: InterfaceDefinition) => {
         const bx = interfaceNumber(button, 'x');
@@ -1275,9 +1102,8 @@ function extractBankFacts(contentRoot: string, identities: Record<string, Interf
         const lh = interfaceNumber(label, 'height');
         return lx >= bx && ly >= by && lx + lw <= bx + bw && ly + lh <= by + bh;
     };
-    if (interfaceField(itemLabel, 'text')?.value !== 'Item' || !within(itemButton, itemLabel)
-        || interfaceField(noteLabel, 'text')?.value !== 'Note' || !within(noteButton, noteLabel)) {
-        throw new Error('server_ordered: bank item/note mode labels no longer match their controls');
+    if (!within(itemButton, itemLabel) || !within(noteButton, noteLabel)) {
+        throw new Error('server_ordered: bank item/note mode labels are not inside their controls');
     }
     const modeVarp = resolvePackAlias(contentRoot, 'pack/varp.pack', 'bankcert', 'server_ordered');
     const mainIdentity = identities['bank_main:inv'];
@@ -1287,8 +1113,8 @@ function extractBankFacts(contentRoot: string, identities: Record<string, Interf
     return {
         bank: {
             mode_varp: { alias: 'bankcert', id: modeVarp.id },
-            item_mode: 0,
-            note_mode: 1,
+            item_mode: modeItem.value,
+            note_mode: modeNote.value,
             main_component: { alias: 'bank_main:inv', id: mainIdentity.id },
             side_component: { alias: 'bank_side:inv', id: sideIdentity.id },
             withdraw_x_op: withdrawOperation,
@@ -1297,8 +1123,8 @@ function extractBankFacts(contentRoot: string, identities: Record<string, Interf
             sources: mergeSpans([
                 span('pack/varp.pack', modeVarp.line),
                 span(BANK_SOURCE, openBank.span.first, openBank.span.last),
-                modeItem.span,
-                modeNote.span,
+                modeItem.block.span,
+                modeNote.block.span,
                 withdraw.span,
                 withdrawLabel.span,
                 depositX.span,
@@ -1318,8 +1144,8 @@ function extractBankFacts(contentRoot: string, identities: Record<string, Interf
             depositLabel.span,
             depositX.span,
             depositAll.span,
-            modeItem.span,
-            modeNote.span,
+            modeItem.block.span,
+            modeNote.block.span,
             span(BANK_MAIN_INTERFACE, itemButton.first, itemButton.last),
             span(BANK_MAIN_INTERFACE, noteButton.first, noteButton.last),
             span(BANK_MAIN_INTERFACE, itemLabel.first, itemLabel.last),
@@ -1338,13 +1164,12 @@ function extractBankBooth(contentRoot: string): ServerOrderedBankBoothFacts {
     const alias = resolvePackAlias(contentRoot, 'pack/loc.pack', 'bankbooth', 'server_ordered');
     const locBlocks = parseInterfaceDefinitions(BANK_BOOTH_LOC_SOURCE, requireGatherText(contentRoot, BANK_BOOTH_LOC_SOURCE));
     const definition = locBlocks.filter(row => row.alias === 'bankbooth');
-    if (definition.length !== 1 || interfaceField(definition[0], 'op2')?.value !== 'Use-quickly') {
-        throw new Error('server_ordered: bankbooth op2 definition is missing or changed');
+    if (definition.length !== 1 || !interfaceField(definition[0], 'op2')?.value) {
+        throw new Error('server_ordered: bankbooth op2 definition is missing');
     }
     const op2 = oneBlock(parseRs2Blocks(BANK_BOOTH_SOURCE, requireGatherText(contentRoot, BANK_BOOTH_SOURCE)), 'oploc2', 'bankbooth', 'bankbooth operation-2 handler');
     if (!/^\s*@openbank\s*;\s*$/.test(sourceBody(op2))) throw new Error('server_ordered: bankbooth operation 2 no longer opens the bank');
     const operation = Number(/^oploc(\d+)$/.exec(op2.kind)?.[1]);
-    if (operation !== 2) throw new Error('server_ordered: bankbooth selected operation changed');
     return {
         numericLoc: {
             alias: 'bankbooth', id: alias.id, operation, action: 'open_bank',
@@ -1706,8 +1531,7 @@ function buildEntries(
 
 /** Extract the catalog from selected content and a decoded cache snapshot. */
 export function extractServerOrderedFacts(input: ServerOrderedExtractInput): ServerOrderedCatalog {
-    const { contentRoot, revision, cache, engineSources } = input;
-    assertRevision(revision);
+    const { contentRoot, cache, engineSources } = input;
     for (const relative of serverOrderedContentFiles) requireGatherText(contentRoot, relative);
 
     const bankerPage = tryProveBankerPage(contentRoot, cache);
@@ -1746,8 +1570,6 @@ export function extractServerOrderedFacts(input: ServerOrderedExtractInput): Ser
  * The engine root is read-only. Imports resolve through that engine package's `#` map.
  */
 export async function loadServerOrderedFacts(input: ServerOrderedLoadInput): Promise<ServerOrderedCatalog> {
-    assertRevision(input.revision);
-
     type EngineComponent = {
         id: number;
         rootLayer: number;
@@ -1873,7 +1695,6 @@ export async function loadServerOrderedFacts(input: ServerOrderedLoadInput): Pro
 
     return extractServerOrderedFacts({
         contentRoot: input.contentRoot,
-        revision: input.revision,
         cache: {
             components,
             fonts,

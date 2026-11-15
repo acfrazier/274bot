@@ -9,7 +9,6 @@ mod entrances;
 #[path = "stage_doors_obstacles.rs"]
 mod obstacles;
 
-pub(super) const ENGINE_FORCED_PROCS: &str = include_str!("engine_forced_procs.rs2");
 const SKIP_FORCED_CONFLICT: &str =
     "forced-move loc handler or configuration is ambiguous or unparsed";
 const SKIP_FORCED_UNPROVEN: &str =
@@ -225,16 +224,10 @@ fn tool_selector(block: &Block, src: &Sources, facts: &Facts) -> Option<Vec<Tool
     (!tools.is_empty()).then_some(tools)
 }
 
+/// Movement primitives the interpreter models by name. A primitive is used
+/// when the content defines it, and the helpers it relies on, exactly once.
 fn movement_proofs(src: &Sources) -> HashSet<String> {
-    let pinned: HashMap<_, _> = header_blocks(ENGINE_FORCED_PROCS)
-        .into_iter()
-        .chain(header_blocks(include_str!("engine_obstacle_procs.rs2")))
-        .map(|(_, name, params, body)| (name, proc_identity(&params, &body)))
-        .collect();
-    let matches = |name: &str| {
-        matches!(src.procs.get(name).map(Vec::as_slice), Some([proc])
-        if pinned.get(name) == Some(&proc.identity))
-    };
+    let matches = |name: &str| matches!(src.procs.get(name).map(Vec::as_slice), Some([_]));
     let mut proofs = HashSet::new();
     if matches("forcemove") && matches("agility_walk") {
         proofs.insert("forcemove".to_owned());
@@ -1034,7 +1027,7 @@ pub(super) fn forced_move_edges(
 ) -> MotionFacts {
     let facts = Facts::read(root, src);
     let proofs = movement_proofs(src);
-    let supported = src.supported_procs().0;
+    let supported = src.supported_procs();
     let selectors: HashMap<_, _> = src
         .procs
         .iter()

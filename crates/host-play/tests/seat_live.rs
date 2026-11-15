@@ -314,9 +314,9 @@ fn start_fixture(random_events: bool) -> LiveCell {
         account,
         fixture,
     };
-    // The fixture logs its scriptless bot out to complete the tutorial (phase
-    // 3); the approved scriptless policy then parks it, so post the operator's
-    // explicit Login once after that logout.
+    // The fixture logs its bot out to complete the tutorial (phase 3). Post a
+    // real one-shot Login once after that logout; an unlatched slot with
+    // auto-login would also reconnect by itself.
     let mut login_posted = false;
     wait_until(&live, "fixture ready", Duration::from_secs(240), |live| {
         let state = live

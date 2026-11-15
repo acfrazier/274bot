@@ -1133,6 +1133,25 @@ fn t4_never_fires_beside_the_opponent_or_without_an_alternative() {
 }
 
 #[test]
+fn t4_uses_player_network_coords_for_out_of_reach_wait() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    scene.players[0].actor.tile = tile(3345, 3250);
+    scene.refresh();
+    for tick in 3..=13 {
+        step(&mut harness, &mut scene, tick);
+        assert_eq!(
+            converging_to(&harness),
+            None,
+            "the rendered gap cannot count as out-of-reach while the network tile is adjacent (tick {tick})"
+        );
+    }
+}
+
+#[test]
 fn t4_waits_out_a_swing_onset_inside_the_window() {
     if !api::test_support::game_data_available() {
         return;
@@ -1813,6 +1832,36 @@ fn t3_returns_to_the_preferred_style_only_when_the_opponent_shows_no_protect_and
             ..
         }
     ));
+}
+
+#[test]
+fn t3_melee_preference_uses_player_network_coords() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    protect(&mut scene, MELEE_PROTECT);
+    let mut tick = 3;
+    while harness.machine.switches() == 0 {
+        step(&mut harness, &mut scene, tick);
+        tick += 1;
+        assert!(tick < 20);
+    }
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
+
+    scene.players[0].actor.tile = tile(3341, 3250);
+    scene.players[0].network = tile(3346, 3250);
+    scene.refresh();
+    protect(&mut scene, 0);
+    for t in tick..tick + 20 {
+        step(&mut harness, &mut scene, t);
+        assert_eq!(
+            converging_to(&harness),
+            None,
+            "a rendered-adjacent player outside network melee reach must not trigger T3 (tick {t})"
+        );
+    }
 }
 
 // --- Review F1: fallback ammunition in the pack/worn gap --------------------

@@ -37,7 +37,7 @@ const npcSections = load('.npc');
 const objSections = load('.obj');
 const bonusNames = ['stab', 'slash', 'crush'];
 const allBonusNames = [...bonusNames, 'magic', 'range'];
-const source = (section: Section) => `${spanRef(section.span)} sha256=${sourceFile(content, section.span.file).sha256}`;
+const source = (section: Section) => spanRef(section.span);
 const npcs = selected.npc_names.rows.flatMap((row: { id: number; config: string }) => {
     const section = npcSections.get(row.config);
     if (!section) return [];
@@ -56,7 +56,6 @@ const requirements = new Map<string, { attack: number; strength: number; defence
 for (const file of walkContentFiles(path.join(content, 'scripts/levelrequire/scripts'), '.rs2')) {
     if (!/^tier\d+\.rs2$/.test(path.basename(file))) continue;
     const relative = path.relative(content, file);
-    const digest = sourceFile(content, relative).sha256;
     const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
     for (const [index, line] of lines.entries()) {
         const match = /^\s*\[opheld2,([^\]]+)\]\s*@([a-z0-9_]+)\(([^)]*)\)/i.exec(line);
@@ -79,7 +78,7 @@ for (const file of walkContentFiles(path.join(content, 'scripts/levelrequire/scr
             );
         });
         requirement.quest_gated ||= gate.includes('quest');
-        requirement.source = `${relative}:${index + 1} sha256=${digest}`;
+        requirement.source = `${relative}:${index + 1}`;
         requirements.set(config, requirement);
     }
 }
@@ -109,7 +108,7 @@ const foodSource = (relative: string, row: string) => {
     let end = lines.findIndex((line, index) => index > start && /^\s*\[[^\]]+\]\s*$/.test(line));
     if (end < 0) end = lines.length;
     while (end > start + 1 && !lines[end - 1].trim()) end--;
-    return `${relative}:${start + 1}-${end} sha256=${sourceFile(content, relative).sha256}`;
+    return `${relative}:${start + 1}-${end}`;
 };
 const foods = selected.consumption.flatMap((fact: {
     action: string;

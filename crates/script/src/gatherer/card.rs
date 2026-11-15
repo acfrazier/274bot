@@ -16,7 +16,10 @@ pub const CARD: CompiledCard = CompiledCard {
     name: "Gatherer",
     description: "Gather selected woodcutting, mining and fishing resources from live observation.",
     category: "Gathering",
-    schema_version: 4,
+    schema_version: 5,
+    // Schema 4 is 0.2.8's. Schema 5 only added `buyTools`, which a schema 4
+    // save lacks and so takes its default (on).
+    reads_schema_versions: &[4],
     schema,
     per_account_settings: &[],
     prepare,

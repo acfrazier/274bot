@@ -453,10 +453,9 @@ fn qualifies_real_bank_route_adapter_search_latency() {
         request.opts.allow_bank_fetch = true;
         request.opts.allow_wilderness = true;
         request.admission = crate::admission::Admission::manual(
-            request.opts,
+            crate::WalkGlobals::default().manual_decision(request.opts.zones.is_all()),
             Default::default(),
             1,
-            crate::WalkGlobals::default(),
         );
         request.state = Some(Arc::new(WorldState {
             stats: (0..25).map(|skill| (skill, 99)).collect(),
@@ -576,10 +575,9 @@ fn real_prerequisite_route_fits_checked_admission() {
         request.opts.allow_bank_fetch = bank_fetch;
         request.opts.allow_wilderness = true;
         request.admission = crate::admission::Admission::manual(
-            request.opts,
+            crate::WalkGlobals::default().manual_decision(request.opts.zones.is_all()),
             Default::default(),
             1,
-            crate::WalkGlobals::default(),
         );
         request.prereq_catalog = prerequisite.then(|| Arc::clone(&catalog));
         request.state = Some(Arc::new(WorldState::empty()));

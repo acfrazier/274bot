@@ -59,6 +59,9 @@ fn in_child(name: &str) -> bool {
 
 #[test]
 fn quest_junk_rows_have_fast_properties_and_bound_v8_heap() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     if !in_child(TEST_NAME) {
         return;
     }
@@ -74,13 +77,13 @@ fn quest_junk_rows_have_fast_properties_and_bound_v8_heap() {
         rows >= banked,
         "every banked id matches at least one table row"
     );
-    runtime.eval::<usize>("__repeat(1)").unwrap();
+    runtime.eval::<usize>("__repeat(1000)").unwrap();
     let baseline = collected_used_heap(&mut runtime);
     let kept = runtime.eval::<usize>("__repeat(1000)").unwrap();
     assert_eq!(kept, rows * 1000);
     let after = collected_used_heap(&mut runtime);
     let growth = after.saturating_sub(baseline);
-    // Findings are transient: after collection nothing per call is retained.
+    // The warm-up lets V8 finish optimizing so the measured run sees only retained findings.
     // Allow 64 bytes per table row for V8's own transition and IC caches.
     let limit = 64 * rows + 16_384;
     println!("quest junk V8 heap rows={rows} baseline={baseline} after={after} growth={growth} limit={limit}");

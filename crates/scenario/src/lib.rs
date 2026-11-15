@@ -31,6 +31,7 @@ mod scenarios;
 pub mod shot;
 pub mod teardown;
 pub mod tutorial;
+mod ui_actions;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -478,6 +479,11 @@ pub enum StepKind {
     /// An explicit [`Proof::LoggedOut`] arm completes on the observed
     /// off-world frame; every other arm also requires the new online session.
     Relog,
+    /// Select the exact product's Make-X control from an already-open
+    /// production panel through the normal interaction API.
+    MakeProduct { product_id: i32 },
+    /// Answer the currently observed Make-X quantity prompt.
+    EnterAmount { value: i32 },
     /// Like [`StepKind::Perform`], but re-sends once per observed game
     /// tick (one `PLAYER_INFO`) until `wait.arm` holds (`getvar` polls,
     /// sticky `setvar tutorial`). Client cycles do not re-send it.
@@ -632,10 +638,10 @@ pub struct Scenario {
 pub struct Companion {
     pub profile: usize,
     /// The client-cycle hook. `true` requests the host's explicit Login for
-    /// this slot: a bot with no script stays parked after its logout, so a
-    /// fixture that relogs (the shared tutorial seed) must be logged in by
-    /// the operator's own intent. The request is one-shot; the driver reads
-    /// it through [`ScenarioRunner::companion_tick`].
+    /// this slot, a real one-shot command: a fixture that relogs (the shared
+    /// tutorial seed) posts it for its own relog, though an unlatched slot
+    /// with auto-login would also reconnect by itself. The request is
+    /// one-shot; the driver reads it through [`ScenarioRunner::companion_tick`].
     pub per_frame: Box<dyn FnMut(&mut Client) -> bool + Send>,
 }
 

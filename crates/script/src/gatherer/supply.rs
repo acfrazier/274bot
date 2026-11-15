@@ -1,19 +1,12 @@
-//! Fixed-capacity supply planning for Gatherer bank trips.
+//! Gatherer supply admission and immutable acquisition needs.
 //!
-//! Trip admission ([`SupplyPlan::plan`]) reads the frame's [`Stock`]: the
-//! pack and worn pages decide whether a trip is due, and the account's bank
-//! memory decides what that trip will find (design-bank-snapshot §2.4). The
-//! withdrawal batch is rebuilt from the live rows at the loaded bank
-//! ([`SupplyPlan::from_loaded_bank`]), which wins over the memory. Plans
-//! contain exact final inventory counts, so rune decisions stay latched
-//! across the whole withdrawal batch instead of changing as each rune arrives.
+//! The acquisition core owns bank planning and wear. This module prepares
+//! selected supply facts, lists needs, and decides when a trip is due.
 
 use super::card::Prepared;
 use super::settings::{GathererSettings, Skill};
-use crate::acquire::{unbankable_index, UNBANKABLE_ALIASES};
-use crate::bank::ops;
-use crate::native::ConfigError;
-use api::bank_memory::Origin;
+use crate::acquire::{unbankable_index, Need, NeedKind, Presence, SourceSet, UNBANKABLE_ALIASES};
+use crate::native::{ActionError, ConfigError};
 use api::game_data::{SelectedGameData, TeleportSpell};
 use api::gather_methods::{known_rows, GatherCatalog, GatherMethod};
 use api::selected::{Knowledge, SkillMinimum, Truth};
@@ -23,7 +16,6 @@ use std::sync::Arc;
 
 const COINS_ID: i32 = 995;
 const MAX_RESERVE_RUNES: usize = 3;
-const MAX_PLAN_ITEMS: usize = 10;
 const MAX_PROTECTED_IDS: usize = 10 + UNBANKABLE_ALIASES.len();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -635,282 +627,256 @@ pub fn bank_deposit_ids(prepared: &Prepared, tool_id: i32, inventory: &[ItemView
     Arc::from(ids)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SupplyItem {
-    pub id: i32,
-    pub name: Arc<str>,
-    /// Exact final inventory count to reach, not an amount to add.
-    pub target: i32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SupplyPlan {
-    items: [Option<SupplyItem>; MAX_PLAN_ITEMS],
-    len: u8,
-    missing: Option<Arc<str>>,
-    kit_missing: bool,
-}
-
-impl Default for SupplyPlan {
-    fn default() -> Self {
-        Self {
-            items: std::array::from_fn(|_| None),
-            len: 0,
-            missing: None,
-            kit_missing: false,
-        }
-    }
-}
+/// Gatherer supply admission and need production over the acquisition core.
+pub struct SupplyPlan;
 
 impl SupplyPlan {
-    /// Return the first gating item that has no usable stock in inventory or
-    /// the bank the plan was built from. Executable withdrawals remain in the
-    /// plan.
-    pub fn missing(&self) -> Option<&Arc<str>> {
-        self.missing.as_ref()
-    }
-
-    /// The optional technique kit cannot reach one held knife and log.
-    /// It never becomes a gating missing item or a trip by itself.
-    pub fn kit_missing(&self) -> bool {
-        self.kit_missing
-    }
-
-    fn note_missing(&mut self, missing: Arc<str>) {
-        if self.missing.is_none() {
-            self.missing = Some(missing);
-        }
-    }
-
-    /// Trip admission (design-bank-snapshot §2.4, F1/N7). The pack and worn
-    /// pages decide whether a trip is due; the bank memory decides what it
-    /// will find. `Unknown` learns by walking (`TripToLearn`); a `Hint` always
-    /// earns the trip it predicts, short or not, because only the open bank
-    /// can verify it; only a `Session`-observed bank that cannot serve a
-    /// gating item fails in place (`Missing`) — that trip would end in the
-    /// same `supply-missing` after the walk. Unposted pages are never due.
-    pub fn plan(prepared: &Prepared, stats: &[StatView], stock: Stock<'_>) -> SupplyVerdict {
-        if !Self::due(prepared, stats, stock) {
-            return SupplyVerdict::NotDue;
-        }
-        let Some(bank) = stock.bank.filter(|bank| bank.known()) else {
-            return SupplyVerdict::TripToLearn;
-        };
-        let plan = Self::build(prepared, stats, stock, |id| bank.count(id).unwrap_or(0));
-        match (bank.origin(), plan.missing()) {
-            (Origin::Session, Some(missing)) => SupplyVerdict::Missing(Arc::clone(missing)),
-            _ => SupplyVerdict::Trip(plan),
-        }
-    }
-
-    /// Coins are deliberately absent from trip admission: they top up only
-    /// during a trip already required for another reason.
-    fn due(prepared: &Prepared, stats: &[StatView], stock: Stock<'_>) -> bool {
+    /// Return whether posted pack and worn pages require an acquisition trip.
+    ///
+    /// Coins never admit a trip. Bank knowledge does not admit a trip. An
+    /// unworn selected tool admits a trip only when its own wield gate passes.
+    pub fn due(prepared: &Prepared, stats: &[StatView], stock: Stock<'_>) -> bool {
         let (Some(inventory), Some(equipment)) = (stock.pack, stock.worn) else {
             return false;
         };
-        best_tool(prepared, stats, inventory, equipment).is_none()
+        let selected_tool = best_tool(prepared, stats, inventory, equipment);
+        selected_tool.is_none()
+            || selected_tool
+                .is_some_and(|tool| !tool.worn && can_wield(prepared, tool.id, inventory, stats))
             || supplies_due(&prepared.supply, &prepared.settings, stock)
     }
 
-    /// Build the entire immutable withdrawal batch from one loaded-bank view.
-    /// `None` means the bank observation is not yet available and is never
-    /// interpreted as an empty bank. The live rows win over any plan the
-    /// bank memory made before the walk.
-    pub fn from_loaded_bank(
-        prepared: &Prepared,
-        stats: &[StatView],
-        inventory: &[ItemView],
-        equipment: &[ItemView],
-        bank: Option<&[ItemView]>,
-    ) -> SupplyPlanResult {
-        let Some(bank) = bank else {
-            return SupplyPlanResult::Pending;
-        };
-        let stock = Stock {
-            pack: Some(inventory),
-            capacity: None,
-            worn: Some(equipment),
-            bank: None,
-        };
-        let plan = Self::build(prepared, stats, stock, |id| ops::count_id(bank, id));
-        if plan.len == 0 {
-            if let Some(missing) = &plan.missing {
-                return SupplyPlanResult::Missing(Arc::clone(missing));
-            }
-        }
-        SupplyPlanResult::Ready(plan)
+    /// The optional technique kit cannot reach one knife and one log from the
+    /// pack and the bank. It never becomes a gating missing item or a trip by
+    /// itself. An unknown bank count reads as none.
+    pub fn tick_kit_missing(prepared: &Prepared, stock: Stock<'_>) -> bool {
+        prepared
+            .supply
+            .tick_kit
+            .as_ref()
+            .is_some_and(|kit| !tick_kit_reachable(kit, stock))
     }
 
-    /// The withdrawal batch over posted pack and worn pages and a bank that
-    /// holds `banked(id)` of each id: the live rows at an open bank, or the
-    /// bank memory before the walk.
-    pub(super) fn build(
+    /// List immutable acquisition needs for the current selected supply facts.
+    ///
+    /// This method does not plan withdrawals, scan bank verdicts, or perform
+    /// bank actions. The caller passes the full request to the acquisition core.
+    pub fn build(
         prepared: &Prepared,
         stats: &[StatView],
         stock: Stock<'_>,
-        banked: impl Fn(i32) -> i32,
-    ) -> Self {
-        let inventory = stock.pack.unwrap_or_default();
-        let equipment = stock.worn.unwrap_or_default();
-        let held = |id| stock.held(id).unwrap_or(0);
-        let mut plan = Self::default();
-        if best_tool(prepared, stats, inventory, equipment).is_none() {
-            if let Some(tool) =
-                best_tool_where(prepared, stats, |id| (banked(id) > 0).then_some(false))
-            {
-                if let Some(name) = tool_name(prepared, tool.id) {
-                    let fact = SupplyItemFact { id: tool.id, name };
-                    top_up(&mut plan, &fact, 1, 1, held(tool.id), banked(tool.id));
-                } else {
-                    plan.note_missing(Arc::from("gathering tool"));
-                }
-            } else {
-                plan.note_missing(preferred_tool_name(prepared, stats));
-            }
+    ) -> Result<Arc<[crate::acquire::Need]>, crate::native::ActionError> {
+        let mut needs = Vec::with_capacity(4 + MAX_RESERVE_RUNES);
+        if let Some(tool) = tool_need(prepared, stats, stock)? {
+            needs.push(tool);
         }
         if let Some(bait) = &prepared.supply.bait {
-            top_up(
-                &mut plan,
-                bait,
-                prepared.settings.bait_target,
-                1,
-                held(bait.id),
-                banked(bait.id),
-            );
+            needs.push(Need {
+                item: bait.id,
+                name: Arc::clone(&bait.name),
+                target: prepared.settings.bait_target,
+                minimum: 1,
+                presence: Presence::Held,
+                kind: NeedKind::Required,
+                sources: purchase_sources(prepared, SourceSet::PACK | SourceSet::BANK),
+                alternatives: Arc::<[i32]>::from([]),
+            });
         }
-        if let Some(food) = &prepared.supply.food {
-            top_up(
-                &mut plan,
-                food,
-                prepared.settings.food_target,
-                if prepared.settings.food_target > 0 {
-                    1
-                } else {
-                    0
-                },
-                held(food.id),
-                banked(food.id),
-            );
+        if prepared.settings.food_target > 0 {
+            if let Some(food) = &prepared.supply.food {
+                needs.push(Need {
+                    item: food.id,
+                    name: Arc::clone(&food.name),
+                    target: prepared.settings.food_target,
+                    minimum: 1,
+                    presence: Presence::Held,
+                    kind: NeedKind::Required,
+                    sources: SourceSet::PACK | SourceSet::BANK,
+                    alternatives: Arc::<[i32]>::from([]),
+                });
+            }
         }
         if prepared.settings.coin_target > 0 {
             if let Some(name) = prepared.supply.coin_name.as_ref() {
-                let coins = SupplyItemFact {
-                    id: COINS_ID,
+                needs.push(Need {
+                    item: COINS_ID,
                     name: Arc::clone(name),
-                };
-                top_up(
-                    &mut plan,
-                    &coins,
-                    prepared.settings.coin_target,
-                    0,
-                    held(COINS_ID),
-                    banked(COINS_ID),
-                );
+                    target: prepared.settings.coin_target,
+                    minimum: 0,
+                    presence: Presence::Held,
+                    kind: NeedKind::Optional,
+                    sources: SourceSet::PACK | SourceSet::BANK,
+                    alternatives: Arc::<[i32]>::from([]),
+                });
             }
         }
         if prepared.settings.reserve_casts > 0 {
             if let Some(reserve) = &prepared.supply.reserve {
                 if !can_afford_cast(reserve, stock) {
                     for rune in reserve.runes() {
-                        let Some(target) =
-                            rune.per_cast.checked_mul(prepared.settings.reserve_casts)
-                        else {
-                            plan.note_missing(Arc::clone(&rune.name));
-                            continue;
-                        };
-                        let fact = SupplyItemFact {
-                            id: rune.id,
+                        let target = rune
+                            .per_cast
+                            .checked_mul(prepared.settings.reserve_casts)
+                            .ok_or_else(|| {
+                                ActionError::Unavailable(Arc::from(format!(
+                                    "reserve rune target overflows for {}",
+                                    rune.name
+                                )))
+                            })?;
+                        needs.push(Need {
+                            item: rune.id,
                             name: Arc::clone(&rune.name),
-                        };
-                        top_up(
-                            &mut plan,
-                            &fact,
                             target,
-                            rune.per_cast,
-                            held(rune.id),
-                            banked(rune.id),
-                        );
+                            minimum: rune.per_cast,
+                            presence: Presence::Held,
+                            kind: NeedKind::Required,
+                            sources: SourceSet::PACK | SourceSet::BANK,
+                            alternatives: Arc::<[i32]>::from([]),
+                        });
                     }
                 }
             }
         }
         if let Some(kit) = &prepared.supply.tick_kit {
-            let knife_held = held(kit.knife.id);
-            let logs_held = held(kit.logs.id);
-            let knife_banked = banked(kit.knife.id).max(0);
-            let logs_banked = banked(kit.logs.id).max(0);
-            if knife_held.saturating_add(knife_banked) < 1
-                || logs_held.saturating_add(logs_banked) < 1
-            {
-                plan.kit_missing = true;
-            } else {
-                top_up(&mut plan, &kit.knife, 1, 1, knife_held, knife_banked);
-                top_up(&mut plan, &kit.logs, 3, 1, logs_held, logs_banked);
+            // The technique kit is optional: it is withdrawn only when the held
+            // and banked counts can complete it, so a missing half never blocks
+            // the run and never leaves a lone Knife or lone Logs in the pack.
+            if tick_kit_reachable(kit, stock) {
+                for (item, target) in [(&kit.knife, 1), (&kit.logs, 3)] {
+                    needs.push(Need {
+                        item: item.id,
+                        name: Arc::clone(&item.name),
+                        target,
+                        minimum: 1,
+                        presence: Presence::Held,
+                        kind: NeedKind::Optional,
+                        sources: SourceSet::PACK | SourceSet::BANK,
+                        alternatives: Arc::<[i32]>::from([]),
+                    });
+                }
             }
         }
-        plan
+        Ok(Arc::from(needs))
     }
+}
 
-    pub fn iter(&self) -> impl Iterator<Item = &SupplyItem> {
-        (0..usize::from(self.len))
-            .map(|index| self.items[index].as_ref().expect("dense supply plan"))
+fn tool_need(
+    prepared: &Prepared,
+    stats: &[StatView],
+    stock: Stock<'_>,
+) -> Result<Option<Need>, ActionError> {
+    let alternatives = usable_tool_ids(prepared, stats);
+    let Some(&first) = alternatives.first() else {
+        return Ok(None);
+    };
+    let fallback = alternatives
+        .iter()
+        .copied()
+        .find(|&id| wield_gate_met(prepared, id, stats))
+        .unwrap_or(first);
+    let carried = match (stock.pack, stock.worn) {
+        (Some(inventory), Some(equipment)) => best_tool(prepared, stats, inventory, equipment),
+        _ => None,
+    };
+    let selected = carried.or_else(|| {
+        best_tool_where(prepared, stats, |id| {
+            stock
+                .banked(id)
+                .is_some_and(|count| count > 0)
+                .then_some(false)
+        })
+    });
+    let item = selected.map_or(fallback, |tool| tool.id);
+    let name = prepared
+        .selected
+        .item_by_id(item)
+        .and_then(|item| item.name.as_deref())
+        .filter(|name| !name.trim().is_empty())
+        .map(Arc::from)
+        .ok_or_else(|| {
+            ActionError::Unavailable(Arc::from(format!(
+                "selected cache has no name for gathering item {item}"
+            )))
+        })?;
+    Ok(Some(Need {
+        item,
+        name,
+        target: 1,
+        minimum: 1,
+        presence: if wield_gate_met(prepared, item, stats) {
+            Presence::Wielded
+        } else {
+            Presence::Carried
+        },
+        kind: NeedKind::Required,
+        sources: purchase_sources(
+            prepared,
+            SourceSet::PACK | SourceSet::WORN | SourceSet::BANK,
+        ),
+        alternatives: Arc::from(alternatives),
+    }))
+}
+
+fn purchase_sources(prepared: &Prepared, carried: SourceSet) -> SourceSet {
+    if prepared.settings.buy_tools {
+        carried | SourceSet::SHOP
+    } else {
+        carried
     }
+}
 
-    pub fn to_withdrawals(&self) -> Arc<[crate::bank::Withdrawal]> {
-        self.iter()
-            .map(|item| crate::bank::Withdrawal {
-                id: item.id,
-                name: Arc::clone(&item.name),
-                target: item.target,
-            })
-            .collect()
-    }
-
-    fn push(&mut self, item: SupplyItem) {
-        if let Some(existing) = self.items[..usize::from(self.len)]
-            .iter_mut()
-            .filter_map(Option::as_mut)
-            .find(|existing| existing.id == item.id)
-        {
-            existing.target = existing.target.max(item.target);
-            return;
+fn usable_tool_ids(prepared: &Prepared, stats: &[StatView]) -> Vec<i32> {
+    let mut ids = Vec::new();
+    match prepared.settings.skill_kind() {
+        Skill::Woodcutting => {
+            append_static_tool_ids(&mut ids, api::gather_tools::AXES, &prepared.selected, stats)
         }
-        assert!(usize::from(self.len) < MAX_PLAN_ITEMS);
-        self.items[usize::from(self.len)] = Some(item);
-        self.len += 1;
+        Skill::Mining => append_static_tool_ids(
+            &mut ids,
+            api::gather_tools::PICKAXES,
+            &prepared.selected,
+            stats,
+        ),
+        Skill::Fishing => {
+            for &index in prepared.methods.iter() {
+                let Some(method) = prepared.catalog.methods().get(index) else {
+                    continue;
+                };
+                for tool in method_tool_candidates(method, stats) {
+                    if prepared.selected.item_by_id(tool.item).is_some() {
+                        push_tool_id(&mut ids, tool.item);
+                    }
+                }
+            }
+        }
+    }
+    ids
+}
+
+fn append_static_tool_ids(
+    ids: &mut Vec<i32>,
+    candidates: &[api::gather_tools::GatherTool],
+    selected: &SelectedGameData,
+    stats: &[StatView],
+) {
+    for candidate in candidates {
+        if candidate.use_level.is_some_and(|level| {
+            !candidate
+                .use_skill
+                .is_some_and(|skill| meets_named_gate(stats, skill, level))
+        }) {
+            continue;
+        }
+        if let Some(item) = selected.item_by_alias(candidate.alias) {
+            push_tool_id(ids, item.id);
+        }
     }
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "the bounded ten-item supply plan stays inline rather than allocating per trip"
-)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SupplyPlanResult {
-    Pending,
-    Ready(SupplyPlan),
-    Missing(Arc<str>),
-}
-
-/// What trip admission decided ([`SupplyPlan::plan`]; the verbs are
-/// design-bank-snapshot §2.4's Gatherer column).
-#[expect(
-    clippy::large_enum_variant,
-    reason = "trip admission retains its bounded supply plan without a heap allocation"
-)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SupplyVerdict {
-    /// The pack and worn kit lack nothing a trip would fetch.
-    NotDue,
-    /// A trip is due and the known bank memory planned it. The open bank
-    /// re-plans from its live rows ([`SupplyPlan::from_loaded_bank`]).
-    Trip(SupplyPlan),
-    /// A trip is due and the bank was never observed: the trip is the lookup.
-    TripToLearn,
-    /// A trip is due and the bank observed this session cannot serve this
-    /// gating item: fail in place, without a walk.
-    Missing(Arc<str>),
+fn push_tool_id(ids: &mut Vec<i32>, id: i32) {
+    if !ids.contains(&id) {
+        ids.push(id);
+    }
 }
 
 fn supplies_due(supply: &PreparedSupply, settings: &GathererSettings, stock: Stock<'_>) -> bool {
@@ -928,6 +894,21 @@ fn supplies_due(supply: &PreparedSupply, settings: &GathererSettings, stock: Sto
             .is_some_and(|kit| tick_kit_due(kit, stock))
 }
 
+/// One knife and one log are reachable from the pack and a known bank.
+fn tick_kit_reachable(kit: &TickKit, stock: Stock<'_>) -> bool {
+    let held = |id| stock.held(id).unwrap_or(0).max(0);
+    let banked = |id| {
+        stock
+            .bank
+            .filter(|bank| bank.known())
+            .and_then(|bank| bank.count(id))
+            .unwrap_or(0)
+            .max(0)
+    };
+    held(kit.knife.id).saturating_add(banked(kit.knife.id)) >= 1
+        && held(kit.logs.id).saturating_add(banked(kit.logs.id)) >= 1
+}
+
 fn tick_kit_due(kit: &TickKit, stock: Stock<'_>) -> bool {
     let (Some(knife), Some(logs)) = (stock.held(kit.knife.id), stock.held(kit.logs.id)) else {
         return false;
@@ -941,7 +922,7 @@ fn tick_kit_due(kit: &TickKit, stock: Stock<'_>) -> bool {
     })
 }
 
-/// Runes are consumed from the pack: worn runes never pay a cast.
+/// Runes are consumed from the pack; worn runes never pay a cast.
 fn can_afford_cast(reserve: &ReserveSpell, stock: Stock<'_>) -> bool {
     let mut has_cost = false;
     for rune in reserve.runes() {
@@ -953,101 +934,39 @@ fn can_afford_cast(reserve: &ReserveSpell, stock: Stock<'_>) -> bool {
     has_cost
 }
 
-/// Plan `item` toward a final held `target` from `current` held and `banked`
-/// in the bank. The target clamps to what the two can reach; below
-/// `minimum_usable` the item is the plan's missing gate.
-fn top_up(
-    plan: &mut SupplyPlan,
-    item: &SupplyItemFact,
-    target: i32,
-    minimum_usable: i32,
-    current: i32,
-    banked: i32,
-) {
-    if current >= target && current >= minimum_usable {
-        return;
-    }
-    let available = current.saturating_add(banked.max(0));
-    let target = target.min(available);
-    if target > current {
-        plan.push(SupplyItem {
-            id: item.id,
-            name: Arc::clone(&item.name),
-            target,
-        });
-    }
-    if available < minimum_usable {
-        plan.note_missing(Arc::clone(&item.name));
-    }
-}
-
-fn tool_name(prepared: &Prepared, id: i32) -> Option<Arc<str>> {
-    prepared
-        .selected
-        .item_by_id(id)
-        .and_then(|item| item.name.as_deref())
-        .filter(|name| !name.trim().is_empty())
-        .map(Arc::from)
-        .or_else(|| {
-            static_tool_name(&prepared.selected, prepared.settings.skill_kind(), id).map(Arc::from)
-        })
-}
-
-fn preferred_tool_name(prepared: &Prepared, stats: &[StatView]) -> Arc<str> {
+fn wield_gate_met(prepared: &Prepared, tool_id: i32, stats: &[StatView]) -> bool {
     match prepared.settings.skill_kind() {
-        Skill::Woodcutting => preferred_static_tool(api::gather_tools::AXES, stats),
-        Skill::Mining => preferred_static_tool(api::gather_tools::PICKAXES, stats),
-        Skill::Fishing => prepared
-            .methods
-            .iter()
-            .filter_map(|&index| prepared.catalog.methods().get(index))
-            .flat_map(|method| known_rows(&method.tools))
-            .find(|tool| tool.use_gate.is_none_or(|gate| meets_gate(stats, gate)))
-            .and_then(|tool| tool_name(prepared, tool.item))
-            .unwrap_or_else(|| Arc::from("fishing tool")),
+        Skill::Woodcutting => {
+            static_wield_gate(api::gather_tools::AXES, &prepared.selected, tool_id, stats)
+        }
+        Skill::Mining => static_wield_gate(
+            api::gather_tools::PICKAXES,
+            &prepared.selected,
+            tool_id,
+            stats,
+        ),
+        Skill::Fishing => false,
     }
-}
-
-fn preferred_static_tool(
-    candidates: &[api::gather_tools::GatherTool],
-    stats: &[StatView],
-) -> Arc<str> {
-    candidates
-        .iter()
-        .find(|candidate| {
-            candidate.use_level.is_none_or(|level| {
-                candidate
-                    .use_skill
-                    .is_some_and(|skill| meets_named_gate(stats, skill, level))
-            })
-        })
-        .map(|candidate| Arc::from(candidate.name))
-        .unwrap_or_else(|| Arc::from("gathering tool"))
-}
-
-fn static_tool_name(selected: &SelectedGameData, skill: Skill, id: i32) -> Option<&'static str> {
-    let rows = match skill {
-        Skill::Woodcutting => api::gather_tools::AXES,
-        Skill::Mining => api::gather_tools::PICKAXES,
-        Skill::Fishing => return None,
-    };
-    rows.iter()
-        .find(|candidate| {
-            selected
-                .item_by_alias(candidate.alias)
-                .is_some_and(|item| item.id == id)
-        })
-        .map(|candidate| candidate.name)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::acquire::{
+        self, AcquirePlan, AcquireRequest, AcquireVerdict, BankChoice, BankStage, CloseBank,
+        CoinPolicy, VendorChoice, WorldFacts,
+    };
+    use api::bank_memory::{BankMemory, ObservedAt, Origin};
     use api::obj_names::ItemDefView;
+    use api::quest_progress::EvidenceStamp;
     use api::snapshot::{ItemActionFamily, ItemContainer};
     use serde_json::json;
 
-    fn prepare(settings: crate::native::SettingsBag) -> Arc<Prepared> {
+    const FISHING_ROD: i32 = 307;
+
+    fn prepare(mut settings: crate::native::SettingsBag) -> Arc<Prepared> {
+        // These pre-G1 cases exercise bank-only acquisition by design.
+        settings.entry("buyTools").or_insert(json!(false));
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let config = api::selected::FamilyPreparation::run(move |families| {
             crate::slot::prepare_config(
@@ -1169,269 +1088,122 @@ mod tests {
         }
     }
 
+    fn with_bank<'a>(
+        held: &'a [ItemView],
+        worn: &'a [ItemView],
+        bank: &'a BankMemory,
+    ) -> Stock<'a> {
+        Stock {
+            bank: Some(bank),
+            ..pages(held, worn)
+        }
+    }
+
     fn due(prepared: &Prepared, stats: &[StatView], held: &[ItemView], worn: &[ItemView]) -> bool {
         SupplyPlan::due(prepared, stats, pages(held, worn))
     }
 
-    #[test]
-    fn tick_kit_preparation_does_not_decide_method_or_tool_applicability() {
-        if !api::test_support::game_data_available() {
-            return;
+    fn stamp() -> EvidenceStamp {
+        EvidenceStamp {
+            run: api::selected::RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
         }
-        let prepared = prepare(crate::native::SettingsBag::new());
-        for (skill, method) in [
-            ("Woodcutting", "woodcutting.normal"),
-            ("Mining", "mining.copper"),
-            ("Fishing", "fishing.category_633.op1"),
-        ] {
-            let mut settings = crate::native::SettingsBag::new();
-            settings.insert("skill".into(), json!(skill));
-            settings.insert("tickMethod".into(), json!("Knife"));
-            let mut settings = GathererSettings::from_bag(&settings).unwrap();
-            let index = prepared
-                .catalog
-                .methods()
-                .iter()
-                .position(|row| row.id.0.as_ref() == method)
-                .unwrap();
-            // Exercise the supply boundary directly: the full card still
-            // rejects incomplete native methods for their existing reasons.
-            let supply = PreparedSupply::prepare(
-                &mut settings,
-                &prepared.selected,
-                &prepared.catalog,
-                &[index],
-            )
-            .unwrap();
-            let kit = supply.tick_kit.as_ref().unwrap();
-            assert_eq!(kit.knife.name.as_ref(), "Knife");
-            assert_eq!(kit.logs.name.as_ref(), "Logs");
-            assert_ne!(kit.knife.id, kit.logs.id);
-        }
-        assert!(prepared.supply.tick_kit.is_none());
     }
 
-    #[test]
-    fn tick_kit_trips_only_for_unknown_or_usable_bank_stock() {
-        if !api::test_support::game_data_available() {
-            return;
+    fn request(needs: Arc<[Need]>) -> AcquireRequest {
+        AcquireRequest {
+            needs,
+            deposit: None,
+            bank: BankChoice {
+                bank: None,
+                explicit: None,
+                required: false,
+                preferences: Default::default(),
+            },
+            stage: BankStage::Planned,
+            partial_ok: false,
+            close: CloseBank::LeaveOpen,
+            vendor: VendorChoice::None,
+            coins: CoinPolicy::None,
+            walk: crate::native::WalkOptions::default(),
+            required_after: stamp(),
         }
-        let mut settings = crate::native::SettingsBag::new();
-        settings.insert("tickMethod".into(), json!("Knife"));
-        let prepared = prepare(settings);
-        let kit = prepared.supply.tick_kit.as_ref().unwrap();
-        let stats = stats(&prepared);
-        let (tool_id, tool_name) = known_tool(&prepared);
-        let held = [item(tool_id, &tool_name, 1, ItemContainer::Inventory)];
-        for origin in [Origin::Hint, Origin::Session] {
-            for logs in [1, 10] {
-                let bank = memory(&[(kit.knife.id, 1), (kit.logs.id, logs)], origin);
-                let stock = with_bank(&held, &[], &bank);
-                let SupplyVerdict::Trip(plan) = SupplyPlan::plan(&prepared, &stats, stock) else {
-                    panic!("a bank holding the usable kit must admit its trip");
-                };
-                assert_eq!(
-                    targets(&plan),
-                    vec![(kit.knife.id, 1), (kit.logs.id, logs.min(3))]
+    }
+
+    fn core_plan_needs(needs: Arc<[Need]>, stock: Stock<'_>) -> AcquireVerdict {
+        let request = request(needs);
+        acquire::plan::plan(&request, &stock, WorldFacts::default())
+            .unwrap_or_else(|_| panic!("the acquisition core rejected the test request"))
+    }
+
+    fn core_plan(prepared: &Prepared, stats: &[StatView], stock: Stock<'_>) -> AcquireVerdict {
+        let needs = SupplyPlan::build(prepared, stats, stock)
+            .unwrap_or_else(|_| panic!("the supply builder rejected the selected facts"));
+        core_plan_needs(needs, stock)
+    }
+
+    fn planned(verdict: AcquireVerdict) -> AcquirePlan {
+        match verdict {
+            AcquireVerdict::Plan(plan) => plan,
+            AcquireVerdict::Satisfied => panic!("expected acquisition work"),
+            AcquireVerdict::Blocked(block) => {
+                panic!("expected acquisition work, got {}", block.message)
+            }
+        }
+    }
+
+    fn targets(plan: &AcquirePlan) -> Vec<(i32, i32)> {
+        plan.withdrawals[..plan.withdrawal_count]
+            .iter()
+            .flatten()
+            .map(|item| (item.id, item.target))
+            .collect()
+    }
+
+    fn tool_need(needs: &[Need]) -> &Need {
+        needs
+            .iter()
+            .find(|need| need.sources.contains(SourceSet::WORN))
+            .expect("a usable gathering tool need")
+    }
+
+    /// A memory holding rows the way the host fills it.
+    fn memory(rows: &[(i32, i32)], origin: Origin) -> BankMemory {
+        let mut memory = BankMemory::default();
+        match origin {
+            Origin::Unknown => {}
+            Origin::Hint => memory.load_hint(rows.to_vec(), 1).unwrap(),
+            Origin::Session => {
+                let bank: Vec<ItemView> = rows
+                    .iter()
+                    .map(|&(id, count)| item(id, "banked", count, ItemContainer::Bank))
+                    .collect();
+                memory.observe(
+                    &bank,
+                    64,
+                    ObservedAt {
+                        unix_secs: 1,
+                        tick: 1,
+                        bank_session: 1,
+                    },
                 );
-                assert!(!plan.kit_missing());
-                assert_eq!(plan.missing(), None);
-            }
-            for rows in [vec![], vec![(kit.knife.id, 1)], vec![(kit.logs.id, 3)]] {
-                let bank = memory(&rows, origin);
-                let stock = with_bank(&held, &[], &bank);
-                assert_eq!(
-                    SupplyPlan::plan(&prepared, &stats, stock),
-                    SupplyVerdict::NotDue,
-                    "a known incomplete kit is not a trip or a gating missing item"
-                );
-                let plan =
-                    SupplyPlan::build(&prepared, &stats, stock, |id| bank.count(id).unwrap_or(0));
-                assert!(plan.kit_missing());
-                assert_eq!(plan.missing(), None);
-                assert!(targets(&plan).is_empty());
             }
         }
-        let unknown = memory(&[], Origin::Unknown);
-        assert_eq!(
-            SupplyPlan::plan(&prepared, &stats, with_bank(&held, &[], &unknown)),
-            SupplyVerdict::TripToLearn
-        );
-        let empty = memory(&[], Origin::Session);
-        let loaded = SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &[], Some(&[]));
-        let SupplyPlanResult::Ready(plan) = loaded else {
-            panic!("an unavailable optional kit must not fail a loaded-bank plan");
-        };
-        assert!(plan.kit_missing());
-        assert_eq!(plan.missing(), None);
-        let stocked = [
-            held[0].clone(),
-            item(kit.knife.id, &kit.knife.name, 1, ItemContainer::Inventory),
-            item(kit.logs.id, &kit.logs.name, 1, ItemContainer::Inventory),
-        ];
-        let stock = with_bank(&stocked, &[], &empty);
-        assert_eq!(
-            SupplyPlan::plan(&prepared, &stats, stock),
-            SupplyVerdict::NotDue
-        );
-        let plan = SupplyPlan::build(&prepared, &stats, stock, |_| 0);
-        assert!(!plan.kit_missing());
-        assert!(targets(&plan).is_empty());
-        let knife_held = &stocked[..2];
-        let logs_banked = memory(&[(kit.logs.id, 3)], Origin::Session);
-        let SupplyVerdict::Trip(plan) =
-            SupplyPlan::plan(&prepared, &stats, with_bank(knife_held, &[], &logs_banked))
-        else {
-            panic!("a held knife and banked logs form a usable kit");
-        };
-        assert_eq!(targets(&plan), vec![(kit.logs.id, 3)]);
-        assert!(!plan.kit_missing());
+        memory
     }
 
-    #[test]
-    fn supply_tool_selection_uses_effective_levels_for_boosts_and_drains() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let mut settings = crate::native::SettingsBag::new();
-        settings.insert("skill".into(), json!("Mining"));
-        let prepared = prepare(settings);
-        let held = [item(1275, "Rune pickaxe", 1, ItemContainer::Inventory)];
-        let mut stats = stats(&prepared);
-        let mining = stats.iter_mut().find(|stat| stat.index == 14).unwrap();
-        mining.base = 40;
-        mining.effective = 41;
-        assert_eq!(best_tool(&prepared, &stats, &held, &[]).unwrap().id, 1275);
-        let mining = stats.iter_mut().find(|stat| stat.index == 14).unwrap();
-        mining.base = 41;
-        mining.effective = 40;
-        assert!(best_tool(&prepared, &stats, &held, &[]).is_none());
-        assert!(!meets_gate(
-            &stats,
-            SkillMinimum {
-                skill: 14,
-                level: 41
-            }
-        ));
-    }
-
-    #[test]
-    fn partial_supplies_do_not_admit_a_trip_and_loaded_bank_plan_targets_final_counts() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
+    /// Draynor's sardine/herring bait method.
+    fn bait_fishing(bait_target: i32) -> Arc<Prepared> {
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
-        settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
-        settings.insert("baitTarget".into(), json!(10));
-        settings.insert("food".into(), json!("Lobster"));
-        settings.insert("foodTarget".into(), json!(5));
-        settings.insert("coinTarget".into(), json!(500));
-        let prepared = prepare(settings);
-        let bait = prepared.supply.bait.as_ref().unwrap();
-        let food = prepared.supply.food.as_ref().unwrap();
-        let coins = prepared.supply.coin_name.as_deref().unwrap();
-        let (tool_id, tool_name) = known_tool(&prepared);
-        let held = vec![
-            item(tool_id, &tool_name, 1, ItemContainer::Inventory),
-            item(bait.id, &bait.name, 3, ItemContainer::Inventory),
-            item(food.id, &food.name, 2, ItemContainer::Inventory),
-            item(COINS_ID, coins, 100, ItemContainer::Inventory),
-        ];
-        let stats = stats(&prepared);
-        let equipment = [];
-        assert!(!due(&prepared, &stats, &held, &equipment));
-
-        let bank = vec![
-            item(bait.id, &bait.name, 7, ItemContainer::Bank),
-            item(food.id, &food.name, 3, ItemContainer::Bank),
-            item(COINS_ID, coins, 400, ItemContainer::Bank),
-        ];
-        assert_eq!(
-            SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &equipment, None),
-            SupplyPlanResult::Pending
-        );
-        let plan =
-            match SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &equipment, Some(&bank)) {
-                SupplyPlanResult::Ready(plan) => plan,
-                other => panic!("expected a complete bank plan, got {other:?}"),
-            };
-        assert_eq!(
-            plan.iter()
-                .map(|item| (item.id, item.target))
-                .collect::<Vec<_>>(),
-            vec![(bait.id, 10), (food.id, 5), (COINS_ID, 500)]
-        );
-        assert_eq!(
-            plan.to_withdrawals()
-                .iter()
-                .map(|item| (item.id, item.target))
-                .collect::<Vec<_>>(),
-            vec![(bait.id, 10), (food.id, 5), (COINS_ID, 500)]
-        );
-
-        let mut empty_bait = held.clone();
-        empty_bait[1].count = 0;
-        assert!(due(&prepared, &stats, &empty_bait, &equipment));
-        let bank_without_bait = &bank[1..];
-        let partial = match SupplyPlan::from_loaded_bank(
-            &prepared,
-            &stats,
-            &held,
-            &equipment,
-            Some(bank_without_bait),
-        ) {
-            SupplyPlanResult::Ready(plan) => plan,
-            other => panic!("above-zero bait must not gate the loaded-bank plan: {other:?}"),
-        };
-        assert_eq!(partial.missing(), None);
-        assert_eq!(
-            partial
-                .iter()
-                .map(|item| (item.id, item.target))
-                .collect::<Vec<_>>(),
-            vec![(food.id, 5), (COINS_ID, 500)]
-        );
-    }
-
-    #[test]
-    fn current_and_partial_bank_stock_limits_the_supply_target() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let mut settings = crate::native::SettingsBag::new();
-        settings.insert("skill".into(), json!("Fishing"));
-        settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
-        settings.insert("baitTarget".into(), json!(10));
-        settings.insert("food".into(), json!("Lobster"));
-        settings.insert("foodTarget".into(), json!(5));
-        let prepared = prepare(settings);
-        let bait = prepared.supply.bait.as_ref().unwrap();
-        let food = prepared.supply.food.as_ref().unwrap();
-        let (tool_id, tool_name) = known_tool(&prepared);
-        let held = vec![
-            item(tool_id, &tool_name, 1, ItemContainer::Inventory),
-            item(bait.id, &bait.name, 3, ItemContainer::Inventory),
-        ];
-        let bank = [item(bait.id, &bait.name, 2, ItemContainer::Bank)];
-        let stats = stats(&prepared);
-        let equipment = [];
-
-        assert!(due(&prepared, &stats, &held, &equipment));
-        let plan =
-            match SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &equipment, Some(&bank)) {
-                SupplyPlanResult::Ready(plan) => plan,
-                other => panic!("partial usable bait stock must remain available: {other:?}"),
-            };
-        assert!(plan
-            .missing()
-            .is_some_and(|missing| missing.as_ref() == food.name.as_ref()));
-        assert_eq!(
-            plan.iter()
-                .map(|item| (item.id, item.target))
-                .collect::<Vec<_>>(),
-            vec![(bait.id, 5)]
-        );
+        settings.insert("fishingMethod".into(), json!("fishing.saltfish.op3"));
+        settings.insert("baitTarget".into(), json!(bait_target));
+        prepare(settings)
     }
 
     #[test]
@@ -1474,75 +1246,550 @@ mod tests {
     }
 
     #[test]
-    fn missing_gating_supply_keeps_tool_withdrawal_and_does_not_gate_on_empty_coins() {
+    fn tool_use_uses_effective_level_and_wield_uses_base_level() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Mining"));
+        let prepared = prepare(settings);
+        let held = [item(1275, "Rune pickaxe", 1, ItemContainer::Inventory)];
+        let mut mining_stats = stats(&prepared);
+        let mining = mining_stats
+            .iter_mut()
+            .find(|stat| stat.index == 14)
+            .unwrap();
+        mining.base = 40;
+        mining.effective = 41;
+        assert_eq!(
+            best_tool(&prepared, &mining_stats, &held, &[]).unwrap().id,
+            1275
+        );
+
+        let mining = mining_stats
+            .iter_mut()
+            .find(|stat| stat.index == 14)
+            .unwrap();
+        mining.base = 41;
+        mining.effective = 40;
+        assert!(best_tool(&prepared, &mining_stats, &held, &[]).is_none());
+        assert!(!meets_gate(
+            &mining_stats,
+            SkillMinimum {
+                skill: 14,
+                level: 41
+            }
+        ));
+
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let axe = [item(1359, "Rune axe", 1, ItemContainer::Inventory)];
+        let mut attack_stats = stats(&prepared);
+        {
+            let attack = attack_stats
+                .iter_mut()
+                .find(|stat| stat.index == 0)
+                .unwrap();
+            attack.base = 39;
+            attack.effective = 99;
+        }
+        assert!(!can_wield(&prepared, 1359, &axe, &attack_stats));
+        {
+            let attack = attack_stats
+                .iter_mut()
+                .find(|stat| stat.index == 0)
+                .unwrap();
+            attack.base = 40;
+            attack.effective = 1;
+        }
+        assert!(can_wield(&prepared, 1359, &axe, &attack_stats));
+    }
+
+    #[test]
+    fn shop_tool_tiers_exclude_items_beyond_the_mining_use_level() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Mining"));
+        settings.insert("buyTools".into(), json!(true));
+        let prepared = prepare(settings);
+        let mut stats = stats(&prepared);
+        let mining = stats.iter_mut().find(|stat| stat.index == 14).unwrap();
+        mining.base = 1;
+        mining.effective = 1;
+        let needs = SupplyPlan::build(&prepared, &stats, pages(&[], &[])).unwrap();
+        let tool = tool_need(&needs);
+        let rune = prepared.selected.item_by_alias("rune_pickaxe").unwrap().id;
+        let steel = prepared.selected.item_by_alias("steel_pickaxe").unwrap().id;
+        let iron = prepared.selected.item_by_alias("iron_pickaxe").unwrap().id;
+        let bronze = prepared
+            .selected
+            .item_by_alias("bronze_pickaxe")
+            .unwrap()
+            .id;
+
+        assert_eq!(tool.item, iron);
+        assert_eq!(tool.presence, Presence::Wielded);
+        assert!(!tool.alternatives.contains(&rune));
+        assert!(!tool.alternatives.contains(&steel));
+        assert!(tool.alternatives.contains(&iron));
+        assert!(tool.alternatives.contains(&bronze));
+    }
+
+    #[test]
+    fn the_best_held_usable_tier_stays_selected_when_it_cannot_be_worn() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let mut stats = stats(&prepared);
+        let attack = stats.iter_mut().find(|stat| stat.index == 0).unwrap();
+        attack.base = 1;
+        attack.effective = 1;
+        let held = [
+            item(1351, "Bronze axe", 1, ItemContainer::Inventory),
+            item(1359, "Rune axe", 1, ItemContainer::Inventory),
+        ];
+
+        let choice = best_tool(&prepared, &stats, &held, &[]).unwrap();
+        assert_eq!(choice.id, 1359);
+        assert!(!choice.worn);
+        assert!(!can_wield(&prepared, choice.id, &held, &stats));
+        assert!(!due(&prepared, &stats, &held, &[]));
+
+        let needs = SupplyPlan::build(&prepared, &stats, pages(&held, &[])).unwrap();
+        let tool = tool_need(&needs);
+        assert_eq!(tool.item, 1359);
+        assert_eq!(tool.presence, Presence::Carried);
+        assert_eq!(tool.kind, NeedKind::Required);
+        assert_eq!(tool.target, 1);
+        assert_eq!(tool.minimum, 1);
+        assert!(tool.alternatives.contains(&1359));
+        assert!(matches!(
+            core_plan_needs(needs, pages(&held, &[])),
+            AcquireVerdict::Satisfied
+        ));
+    }
+
+    #[test]
+    fn a_held_wieldable_tool_is_due_and_the_core_owns_wear() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let stats = stats(&prepared);
+        let axe = [item(1351, "Bronze axe", 1, ItemContainer::Inventory)];
+        assert!(due(&prepared, &stats, &axe, &[]));
+
+        let needs = SupplyPlan::build(&prepared, &stats, pages(&axe, &[])).unwrap();
+        let tool = tool_need(&needs);
+        assert_eq!(tool.item, 1351);
+        assert_eq!(tool.presence, Presence::Wielded);
+        let plan = planned(core_plan_needs(needs, pages(&axe, &[])));
+        assert_eq!(plan.wear_count, 1);
+        assert_eq!(plan.wears[0], Some(1351));
+        assert_eq!(plan.withdrawal_count, 0);
+
+        let worn = [item(1351, "Bronze axe", 1, ItemContainer::Equipment)];
+        assert!(!due(&prepared, &stats, &[], &worn));
+        assert!(matches!(
+            core_plan(&prepared, &stats, pages(&[], &worn)),
+            AcquireVerdict::Satisfied
+        ));
+    }
+
+    #[test]
+    fn best_banked_tool_uses_selected_name_and_core_withdraws_that_tier() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let mut stats = stats(&prepared);
+        let attack = stats.iter_mut().find(|stat| stat.index == 0).unwrap();
+        attack.base = 1;
+        attack.effective = 1;
+        let bank = memory(&[(1351, 1), (1359, 1)], Origin::Session);
+        let stock = with_bank(&[], &[], &bank);
+
+        let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
+        let tool = tool_need(&needs);
+        assert_eq!(tool.item, 1359);
+        let expected_name = prepared
+            .selected
+            .item_by_id(1359)
+            .and_then(|item| item.name.as_deref())
+            .unwrap();
+        assert_eq!(tool.name.as_ref(), expected_name);
+        assert_eq!(tool.presence, Presence::Carried);
+        let rune_rank = tool.alternatives.iter().position(|&id| id == 1359).unwrap();
+        let bronze_rank = tool.alternatives.iter().position(|&id| id == 1351).unwrap();
+        assert!(rune_rank < bronze_rank);
+
+        let plan = planned(core_plan_needs(needs, stock));
+        assert_eq!(targets(&plan), vec![(1359, 1)]);
+    }
+
+    #[test]
+    fn absent_tool_uses_the_best_usable_wieldable_tier_as_primary_need() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let mut stats = stats(&prepared);
+        stats.iter_mut().find(|stat| stat.index == 0).unwrap().base = 1;
+        let needs = SupplyPlan::build(&prepared, &stats, pages(&[], &[])).unwrap();
+        let tool = tool_need(&needs);
+        let best = tool
+            .alternatives
+            .iter()
+            .copied()
+            .find(|&id| wield_gate_met(&prepared, id, &stats))
+            .expect("at least one usable tier meets the wield gate");
+        let expected_name = prepared
+            .selected
+            .item_by_id(best)
+            .and_then(|item| item.name.as_deref())
+            .unwrap();
+
+        assert_eq!(tool.item, best);
+        assert_eq!(tool.name.as_ref(), expected_name);
+        assert!(
+            tool.alternatives.contains(&1359),
+            "Rune remains a usable tier"
+        );
+        assert_eq!(tool.presence, Presence::Wielded);
+    }
+
+    #[test]
+    fn skill_use_gate_removes_higher_pickaxe_tiers_before_purchase_selection() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Mining"));
+        let prepared = prepare(settings);
+        let mut stats = stats(&prepared);
+        stats.iter_mut().find(|stat| stat.index == 0).unwrap().base = 1;
+        let mining = stats.iter_mut().find(|stat| stat.index == 14).unwrap();
+        mining.base = 1;
+        mining.effective = 1;
+        let needs = SupplyPlan::build(&prepared, &stats, pages(&[], &[])).unwrap();
+        let tool = tool_need(&needs);
+        let iron = prepared.selected.item_by_alias("iron_pickaxe").unwrap().id;
+        let rune = prepared.selected.item_by_alias("rune_pickaxe").unwrap().id;
+
+        assert_eq!(tool.item, iron);
+        assert!(!tool.alternatives.contains(&rune));
+        assert!(tool.alternatives.contains(&iron));
+    }
+
+    #[test]
+    fn a_better_worn_tool_wins_over_a_lower_packed_tier() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let mut stats = stats(&prepared);
+        stats.iter_mut().find(|stat| stat.index == 0).unwrap().base = 40;
+        let pack = [item(1351, "Bronze axe", 1, ItemContainer::Inventory)];
+        let worn = [item(1359, "Rune axe", 1, ItemContainer::Equipment)];
+
+        let choice = best_tool(&prepared, &stats, &pack, &worn).unwrap();
+        assert_eq!(choice.id, 1359);
+        assert!(choice.worn);
+        assert!(!due(&prepared, &stats, &pack, &worn));
+
+        let needs = SupplyPlan::build(&prepared, &stats, pages(&pack, &worn)).unwrap();
+        let tool = tool_need(&needs);
+        assert_eq!(tool.item, 1359);
+        assert_eq!(tool.presence, Presence::Wielded);
+        assert!(matches!(
+            core_plan_needs(needs, pages(&pack, &worn)),
+            AcquireVerdict::Satisfied
+        ));
+    }
+
+    #[test]
+    fn unposted_pack_or_worn_pages_do_not_admit_a_trip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let stats = stats(&prepared);
+        assert!(!SupplyPlan::due(&prepared, &stats, Stock::default()));
+        assert!(!SupplyPlan::due(
+            &prepared,
+            &stats,
+            Stock {
+                pack: Some(&[]),
+                capacity: Some(28),
+                worn: None,
+                bank: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn fishing_tool_needs_stay_carried_for_every_content_defined_tool() {
         if !api::test_support::game_data_available() {
             return;
         }
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
-        settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
+        let mut prepared = prepare(settings);
+        let catalog = Arc::clone(&prepared.catalog);
+        let prepared = Arc::get_mut(&mut prepared).expect("test owns the prepared config");
+        let mut tested_tools = std::collections::BTreeSet::new();
+        for (index, method) in catalog
+            .methods()
+            .iter()
+            .enumerate()
+            .filter(|(_, method)| method.skill == api::gather_methods::GatherSkill::Fishing)
+        {
+            // Exercise tool semantics even when unrelated method facts prevent selection.
+            prepared.methods = Arc::from([index]);
+            prepared.settings.fishing_method = method.id.0.to_string();
+            prepared.supply = PreparedSupply::prepare(
+                &mut prepared.settings,
+                &prepared.selected,
+                &catalog,
+                &prepared.methods,
+            )
+            .unwrap();
+            let stats = stats(prepared);
+            for tool in known_rows(&method.tools) {
+                let name = prepared
+                    .selected
+                    .item_by_id(tool.item)
+                    .unwrap()
+                    .name
+                    .as_deref()
+                    .unwrap();
+                let mut held = vec![item(tool.item, name, 1, ItemContainer::Inventory)];
+                if let Some(bait) = &prepared.supply.bait {
+                    held.push(item(
+                        bait.id,
+                        &bait.name,
+                        prepared.settings.bait_target,
+                        ItemContainer::Inventory,
+                    ));
+                }
+                let stock = pages(&held, &[]);
+                let choice = best_tool(prepared, &stats, &held, &[]).unwrap();
+                assert_eq!(choice.id, tool.item, "{}", method.id.0);
+                assert!(!choice.worn);
+                assert!(!can_wield(prepared, choice.id, &held, &stats));
+                assert!(!due(prepared, &stats, &held, &[]));
+
+                let needs = SupplyPlan::build(prepared, &stats, stock).unwrap();
+                let tool_need = tool_need(&needs);
+                assert_eq!(tool_need.item, tool.item, "{}", method.id.0);
+                assert_eq!(tool_need.presence, Presence::Carried, "{}", method.id.0);
+                assert!(tool_need.sources.contains(SourceSet::PACK));
+                assert!(tool_need.sources.contains(SourceSet::WORN));
+                assert!(tool_need.sources.contains(SourceSet::BANK));
+                assert!(matches!(
+                    core_plan_needs(needs, stock),
+                    AcquireVerdict::Satisfied
+                ));
+
+                held.remove(0);
+                let bank = memory(&[(tool.item, 1)], Origin::Session);
+                let stock = with_bank(&held, &[], &bank);
+                assert!(due(prepared, &stats, &held, &[]));
+                let plan = planned(core_plan(prepared, &stats, stock));
+                assert_eq!(targets(&plan), vec![(tool.item, 1)], "{}", method.id.0);
+                tested_tools.insert(tool.item);
+            }
+        }
+        for alias in [
+            "net",
+            "big_net",
+            "lobster_pot",
+            "harpoon",
+            "fishing_rod",
+            "fly_fishing_rod",
+            "oily_fishing_rod",
+            "tbwt_karambwan_vessel_loaded_with_karambwanji",
+        ] {
+            let id = prepared.selected.item_by_alias(alias).unwrap().id;
+            assert!(
+                tested_tools.contains(&id),
+                "missing fishing tool coverage: {alias}"
+            );
+        }
+    }
+
+    #[test]
+    fn need_builder_preserves_tool_bait_food_and_optional_coin_contracts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Fishing"));
+        settings.insert("fishingMethod".into(), json!("fishing.saltfish.op3"));
         settings.insert("baitTarget".into(), json!(10));
         settings.insert("food".into(), json!("Lobster"));
         settings.insert("foodTarget".into(), json!(5));
         settings.insert("coinTarget".into(), json!(500));
         let prepared = prepare(settings);
         let bait = prepared.supply.bait.as_ref().unwrap();
+        let food = prepared.supply.food.as_ref().unwrap();
+        let coin_name = prepared.supply.coin_name.as_deref().unwrap();
         let (tool_id, tool_name) = known_tool(&prepared);
-        let held = [];
-        let bank = [item(tool_id, &tool_name, 1, ItemContainer::Bank)];
+        let held = vec![
+            item(tool_id, &tool_name, 1, ItemContainer::Inventory),
+            item(bait.id, &bait.name, 3, ItemContainer::Inventory),
+            item(food.id, &food.name, 2, ItemContainer::Inventory),
+            item(COINS_ID, coin_name, 100, ItemContainer::Inventory),
+        ];
         let stats = stats(&prepared);
-        let equipment = [];
-        assert!(due(&prepared, &stats, &held, &equipment));
+        let stock = pages(&held, &[]);
+        assert!(!SupplyPlan::due(&prepared, &stats, stock));
 
-        let plan =
-            match SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &equipment, Some(&bank)) {
-                SupplyPlanResult::Ready(plan) => plan,
-                other => panic!("available tool withdrawal must precede a missing gate: {other:?}"),
-            };
-        assert!(plan
-            .missing()
-            .is_some_and(|missing| missing.as_ref() == bait.name.as_ref()));
-        assert_eq!(
-            plan.to_withdrawals()
-                .iter()
-                .map(|item| (item.id, item.target))
-                .collect::<Vec<_>>(),
-            vec![(tool_id, 1)]
+        let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
+        assert_eq!(needs.len(), 4);
+        let tool = tool_need(&needs);
+        assert_eq!((tool.target, tool.minimum), (1, 1));
+        assert_eq!(tool.kind, NeedKind::Required);
+        assert_eq!(tool.presence, Presence::Carried);
+        for source in [SourceSet::PACK, SourceSet::WORN, SourceSet::BANK] {
+            assert!(tool.sources.contains(source));
+        }
+        assert!(!tool.sources.contains(SourceSet::SHOP));
+
+        let bait_need = needs.iter().find(|need| need.item == bait.id).unwrap();
+        assert_eq!((bait_need.target, bait_need.minimum), (10, 1));
+        assert_eq!(bait_need.kind, NeedKind::Required);
+        assert_eq!(bait_need.presence, Presence::Held);
+        assert!(bait_need.sources.contains(SourceSet::PACK));
+        assert!(bait_need.sources.contains(SourceSet::BANK));
+        assert!(!bait_need.sources.contains(SourceSet::WORN));
+        assert!(!bait_need.sources.contains(SourceSet::SHOP));
+
+        let food_need = needs.iter().find(|need| need.item == food.id).unwrap();
+        assert_eq!((food_need.target, food_need.minimum), (5, 1));
+        assert_eq!(food_need.kind, NeedKind::Required);
+        assert_eq!(food_need.presence, Presence::Held);
+        assert!(food_need.sources.contains(SourceSet::PACK));
+        assert!(food_need.sources.contains(SourceSet::BANK));
+        assert!(!food_need.sources.contains(SourceSet::WORN));
+        assert!(!food_need.sources.contains(SourceSet::SHOP));
+
+        let coin_need = needs.iter().find(|need| need.item == COINS_ID).unwrap();
+        assert_eq!(coin_need.name.as_ref(), coin_name);
+        assert_eq!((coin_need.target, coin_need.minimum), (500, 0));
+        assert_eq!(coin_need.kind, NeedKind::Optional);
+        assert_eq!(coin_need.presence, Presence::Held);
+        assert!(coin_need.sources.contains(SourceSet::PACK));
+        assert!(coin_need.sources.contains(SourceSet::BANK));
+        assert!(!coin_need.sources.contains(SourceSet::WORN));
+        assert!(!coin_need.sources.contains(SourceSet::SHOP));
+
+        let bank = memory(
+            &[(bait.id, 7), (food.id, 3), (COINS_ID, 400)],
+            Origin::Session,
         );
+        let plan = planned(core_plan_needs(needs, with_bank(&held, &[], &bank)));
+        assert_eq!(
+            targets(&plan),
+            vec![(bait.id, 10), (food.id, 5), (COINS_ID, 500)]
+        );
+
+        let empty_bait = [
+            item(tool_id, &tool_name, 1, ItemContainer::Inventory),
+            item(bait.id, &bait.name, 0, ItemContainer::Inventory),
+            item(food.id, &food.name, 2, ItemContainer::Inventory),
+        ];
+        assert!(due(&prepared, &stats, &empty_bait, &[]));
     }
 
     #[test]
-    fn zero_optional_coin_target_neither_admits_nor_gates() {
+    fn a_usable_minimum_allows_a_partial_bank_withdrawal() {
         if !api::test_support::game_data_available() {
             return;
         }
-        let mut settings = crate::native::SettingsBag::new();
-        settings.insert("coinTarget".into(), json!(0));
-        let prepared = prepare(settings);
-        let held = [item(1351, "Bronze axe", 1, ItemContainer::Inventory)];
+        let prepared = bait_fishing(10);
+        let bait = prepared.supply.bait.as_ref().unwrap();
+        let (tool_id, tool_name) = known_tool(&prepared);
+        let held = [
+            item(tool_id, &tool_name, 1, ItemContainer::Inventory),
+            item(bait.id, &bait.name, 3, ItemContainer::Inventory),
+        ];
+        let bank = memory(&[(bait.id, 2)], Origin::Session);
         let stats = stats(&prepared);
-        let equipment = [];
 
-        assert!(!due(&prepared, &stats, &held, &equipment));
-        let plan =
-            match SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &equipment, Some(&[])) {
-                SupplyPlanResult::Ready(plan) => plan,
-                other => panic!("zero-target optional coins must not gate: {other:?}"),
-            };
-        assert_eq!(plan.missing(), None);
-        assert_eq!(plan.iter().count(), 0);
+        let plan = planned(core_plan(&prepared, &stats, with_bank(&held, &[], &bank)));
+
+        assert_eq!(targets(&plan), vec![(bait.id, 5)]);
     }
 
     #[test]
-    fn coins_top_up_only_when_an_unrelated_supply_trip_is_already_due() {
+    fn session_hint_and_unknown_bank_origins_follow_core_verdicts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = bait_fishing(10);
+        let (tool_id, tool_name) = known_tool(&prepared);
+        let held = [item(tool_id, &tool_name, 1, ItemContainer::Inventory)];
+        let stats = stats(&prepared);
+        assert!(due(&prepared, &stats, &held, &[]));
+
+        let session = memory(&[], Origin::Session);
+        assert!(matches!(
+            core_plan(&prepared, &stats, with_bank(&held, &[], &session)),
+            AcquireVerdict::Blocked(_)
+        ));
+
+        for origin in [Origin::Hint, Origin::Unknown] {
+            let bank = memory(&[], origin);
+            let plan = planned(core_plan(&prepared, &stats, with_bank(&held, &[], &bank)));
+            assert!(plan.scan, "{origin:?} must require a bank scan");
+            assert_eq!(plan.withdrawal_count, 0);
+        }
+
+        let plan = planned(core_plan(&prepared, &stats, pages(&held, &[])));
+        assert!(plan.scan, "an absent bank must require a bank scan");
+    }
+
+    #[test]
+    fn a_hint_partial_bank_plans_what_it_knows_and_still_scans() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = bait_fishing(10);
+        let bait = prepared.supply.bait.as_ref().unwrap();
+        let (tool_id, tool_name) = known_tool(&prepared);
+        let held = [item(tool_id, &tool_name, 1, ItemContainer::Inventory)];
+        let stats = stats(&prepared);
+        let hint = memory(&[(bait.id, 3)], Origin::Hint);
+        let hinted = planned(core_plan(&prepared, &stats, with_bank(&held, &[], &hint)));
+        assert!(hinted.scan);
+        assert_eq!(targets(&hinted), vec![(bait.id, 3)]);
+
+        let session = memory(&[(bait.id, 3)], Origin::Session);
+        let observed = planned(core_plan(
+            &prepared,
+            &stats,
+            with_bank(&held, &[], &session),
+        ));
+        assert!(!observed.scan);
+        assert_eq!(targets(&observed), vec![(bait.id, 3)]);
+    }
+
+    #[test]
+    fn coins_never_admit_a_trip_and_optional_coin_shortage_never_blocks() {
         if !api::test_support::game_data_available() {
             return;
         }
         let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), json!("Fishing"));
+        settings.insert("fishingMethod".into(), json!("fishing.saltfish.op1"));
         settings.insert("coinTarget".into(), json!(500));
         let prepared = prepare(settings);
-        let held = vec![
-            item(1351, "Bronze axe", 1, ItemContainer::Inventory),
+        let (tool_id, tool_name) = known_tool(&prepared);
+        let held = [
+            item(tool_id, &tool_name, 1, ItemContainer::Inventory),
             item(
                 COINS_ID,
                 prepared.supply.coin_name.as_deref().unwrap(),
@@ -1550,30 +1797,38 @@ mod tests {
                 ItemContainer::Inventory,
             ),
         ];
-        let stats = stats(&prepared);
-        let equipment = [];
-        assert!(!due(&prepared, &stats, &held, &equipment));
-        let bank = [item(
-            COINS_ID,
-            prepared.supply.coin_name.as_deref().unwrap(),
-            400,
-            ItemContainer::Bank,
-        )];
-        let plan =
-            match SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &equipment, Some(&bank)) {
-                SupplyPlanResult::Ready(plan) => plan,
-                other => panic!("expected coin top-up plan, got {other:?}"),
-            };
-        assert_eq!(
-            plan.iter()
-                .map(|item| (item.id, item.target))
-                .collect::<Vec<_>>(),
-            vec![(COINS_ID, 500)]
-        );
+        let current_stats = stats(&prepared);
+        assert!(!due(&prepared, &current_stats, &held, &[]));
+
+        let bank = memory(&[(COINS_ID, 400)], Origin::Session);
+        let plan = planned(core_plan(
+            &prepared,
+            &current_stats,
+            with_bank(&held, &[], &bank),
+        ));
+        assert_eq!(targets(&plan), vec![(COINS_ID, 500)]);
+
+        let empty = memory(&[], Origin::Session);
+        assert!(matches!(
+            core_plan(&prepared, &current_stats, with_bank(&held, &[], &empty)),
+            AcquireVerdict::Satisfied
+        ));
+
+        let mut zero_settings = crate::native::SettingsBag::new();
+        zero_settings.insert("skill".into(), json!("Fishing"));
+        zero_settings.insert("fishingMethod".into(), json!("fishing.saltfish.op1"));
+        zero_settings.insert("coinTarget".into(), json!(0));
+        let no_coins = prepare(zero_settings);
+        let zero_stats = stats(&no_coins);
+        let (zero_tool, zero_name) = known_tool(&no_coins);
+        let zero_held = [item(zero_tool, &zero_name, 1, ItemContainer::Inventory)];
+        assert!(!due(&no_coins, &zero_stats, &zero_held, &[]));
+        let needs = SupplyPlan::build(&no_coins, &zero_stats, pages(&zero_held, &[])).unwrap();
+        assert!(needs.iter().all(|need| need.item != COINS_ID));
     }
 
     #[test]
-    fn reserve_latches_all_runes_only_below_one_cast_and_protects_the_batch() {
+    fn reserve_batch_lists_every_rune_at_a_fixed_target_and_ignores_worn_runes() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -1583,7 +1838,7 @@ mod tests {
             .iter()
             .find(|spell| {
                 spell.available()
-                    && !spell.runes.is_empty()
+                    && spell.runes.len() > 1
                     && spell
                         .runes
                         .iter()
@@ -1597,52 +1852,106 @@ mod tests {
         let prepared = prepare(settings);
         let reserve = prepared.supply.reserve.as_ref().unwrap();
         let rune_rows: Vec<_> = reserve.runes().cloned().collect();
+        assert!(rune_rows.len() > 1);
         let mut held = vec![item(1359, "Rune axe", 1, ItemContainer::Inventory)];
-        held.extend(
-            rune_rows
-                .iter()
-                .map(|rune| item(rune.id, &rune.name, rune.per_cast, ItemContainer::Inventory)),
-        );
-        let bank: Vec<_> = rune_rows
-            .iter()
-            .map(|rune| item(rune.id, &rune.name, 10_000, ItemContainer::Bank))
-            .collect();
-        let stats = stats(&prepared);
-        let equipment = [];
-        assert!(!due(&prepared, &stats, &held, &equipment));
-        let plan =
-            match SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &equipment, Some(&bank)) {
-                SupplyPlanResult::Ready(plan) => plan,
-                other => panic!("expected ready rune plan, got {other:?}"),
-            };
-        assert_eq!(plan.iter().count(), 0);
+        held.push(item(
+            rune_rows[0].id,
+            &rune_rows[0].name,
+            rune_rows[0].per_cast,
+            ItemContainer::Inventory,
+        ));
+        let bank_rows: Vec<_> = rune_rows.iter().map(|rune| (rune.id, 10_000)).collect();
+        let bank = memory(&bank_rows, Origin::Session);
+        let mut stats = stats(&prepared);
+        stats.iter_mut().find(|stat| stat.index == 0).unwrap().base = 1;
+        let stock = with_bank(&held, &[], &bank);
+        assert!(due(&prepared, &stats, &held, &[]));
 
-        let first_rune = rune_rows[0].id;
-        held.iter_mut()
-            .find(|item| item.def.id == first_rune)
-            .unwrap()
-            .count -= 1;
-        assert!(due(&prepared, &stats, &held, &equipment));
-        let plan =
-            match SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &equipment, Some(&bank)) {
-                SupplyPlanResult::Ready(plan) => plan,
-                other => panic!("expected complete rune refill batch, got {other:?}"),
-            };
-        assert_eq!(plan.iter().count(), rune_rows.len());
+        let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
+        let rune_needs: Vec<_> = needs
+            .iter()
+            .filter(|need| rune_rows.iter().any(|rune| rune.id == need.item))
+            .collect();
+        assert_eq!(rune_needs.len(), rune_rows.len());
         for rune in &rune_rows {
-            assert_eq!(
-                plan.iter().find(|item| item.id == rune.id).unwrap().target,
-                rune.per_cast * 5
-            );
+            let need = rune_needs.iter().find(|need| need.item == rune.id).unwrap();
+            assert_eq!(need.name, rune.name);
+            assert_eq!(need.target, rune.per_cast * 5);
+            assert_eq!(need.minimum, rune.per_cast);
+            assert_eq!(need.presence, Presence::Held);
+            assert_eq!(need.kind, NeedKind::Required);
+            assert!(need.sources.contains(SourceSet::PACK));
+            assert!(need.sources.contains(SourceSet::BANK));
+            assert!(!need.sources.contains(SourceSet::WORN));
+            assert!(!need.sources.contains(SourceSet::SHOP));
         }
 
-        let protected = protected_ids(&prepared, 1359);
-        assert!(protected.as_slice().contains(&1359));
-        assert!(protected.as_slice().contains(&COINS_ID));
+        let plan = planned(core_plan_needs(needs, stock));
+        let mut expected: Vec<_> = rune_rows
+            .iter()
+            .map(|rune| (rune.id, rune.per_cast * 5))
+            .collect();
+        expected.sort_unstable_by_key(|row| row.0);
+        let mut actual = targets(&plan);
+        actual.sort_unstable_by_key(|row| row.0);
+        assert_eq!(actual, expected);
+
+        let full_cast: Vec<_> =
+            std::iter::once(item(1359, "Rune axe", 1, ItemContainer::Inventory))
+                .chain(
+                    rune_rows.iter().map(|rune| {
+                        item(rune.id, &rune.name, rune.per_cast, ItemContainer::Inventory)
+                    }),
+                )
+                .collect();
+        assert!(!due(&prepared, &stats, &full_cast, &[]));
+        let full_needs = SupplyPlan::build(&prepared, &stats, pages(&full_cast, &[])).unwrap();
         assert!(rune_rows
             .iter()
-            .all(|rune| protected.as_slice().contains(&rune.id)));
-        assert!(protected.as_slice().len() <= MAX_PROTECTED_IDS);
+            .all(|rune| full_needs.iter().all(|need| need.item != rune.id)));
+
+        let worn_runes: Vec<_> = rune_rows
+            .iter()
+            .map(|rune| item(rune.id, &rune.name, rune.per_cast, ItemContainer::Equipment))
+            .collect();
+        let axe = [item(1359, "Rune axe", 1, ItemContainer::Inventory)];
+        assert!(due(&prepared, &stats, &axe, &worn_runes));
+        assert!(!can_afford_cast(reserve, pages(&axe, &worn_runes)));
+    }
+
+    #[test]
+    fn reserve_target_overflow_returns_a_typed_action_error() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let spell = selected
+            .teleports()
+            .iter()
+            .find(|spell| {
+                spell.available()
+                    && spell.runes.iter().any(|rune| rune.count > 1)
+                    && spell
+                        .runes
+                        .iter()
+                        .all(|rune| rune.id >= 0 && !rune.name.trim().is_empty() && rune.count > 0)
+            })
+            .unwrap()
+            .clone();
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("reserveTeleport".into(), json!(spell.name));
+        settings.insert("reserveCasts".into(), json!(1));
+        let mut prepared = prepare(settings);
+        Arc::get_mut(&mut prepared)
+            .expect("the test owns its prepared configuration")
+            .settings
+            .reserve_casts = i32::MAX;
+        let stats = stats(&prepared);
+        let held = [item(1359, "Rune axe", 1, ItemContainer::Inventory)];
+
+        let result = SupplyPlan::build(&prepared, &stats, pages(&held, &[]));
+
+        assert!(matches!(result, Err(ActionError::Unavailable(_))));
     }
 
     #[test]
@@ -1799,7 +2108,7 @@ mod tests {
             .clone();
         let mut settings = crate::native::SettingsBag::new();
         settings.insert("skill".into(), json!("Fishing"));
-        settings.insert("fishingMethod".into(), json!("fishing.freshfish.op1"));
+        settings.insert("fishingMethod".into(), json!("fishing.saltfish.op3"));
         settings.insert("baitTarget".into(), json!(10));
         settings.insert("food".into(), json!("Lobster"));
         settings.insert("foodTarget".into(), json!(5));
@@ -1885,6 +2194,114 @@ mod tests {
     /// incidental random-event item that the trip banks (the fish bank soak
     /// oracle, `host-play/tests/gatherer_live.rs` `bank_conservation_tests`).
     #[test]
+    fn tick_kit_preparation_does_not_decide_method_or_tool_applicability() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        for (skill, method) in [
+            ("Woodcutting", "woodcutting.normal"),
+            ("Mining", "mining.copper"),
+            ("Fishing", "fishing.category_633.op1"),
+        ] {
+            let mut settings = crate::native::SettingsBag::new();
+            settings.insert("skill".into(), json!(skill));
+            settings.insert("tickMethod".into(), json!("Knife"));
+            let mut settings = GathererSettings::from_bag(&settings).unwrap();
+            let index = prepared
+                .catalog
+                .methods()
+                .iter()
+                .position(|row| row.id.0.as_ref() == method)
+                .unwrap();
+            // Exercise the supply boundary directly: the full card still
+            // rejects incomplete native methods for their existing reasons.
+            let supply = PreparedSupply::prepare(
+                &mut settings,
+                &prepared.selected,
+                &prepared.catalog,
+                &[index],
+            )
+            .unwrap();
+            let kit = supply.tick_kit.as_ref().unwrap();
+            assert_eq!(kit.knife.name.as_ref(), "Knife");
+            assert_eq!(kit.logs.name.as_ref(), "Logs");
+            assert_ne!(kit.knife.id, kit.logs.id);
+        }
+        assert!(prepared.supply.tick_kit.is_none());
+    }
+
+    #[test]
+    fn tick_kit_trips_only_for_unknown_or_usable_bank_stock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("tickMethod".into(), json!("Knife"));
+        let prepared = prepare(settings);
+        let kit = prepared.supply.tick_kit.as_ref().unwrap();
+        let stats = stats(&prepared);
+        let (tool_id, tool_name) = known_tool(&prepared);
+        // The tool is worn, so only the optional kit can admit a trip.
+        let worn = [item(tool_id, &tool_name, 1, ItemContainer::Equipment)];
+        let held: [ItemView; 0] = [];
+        for origin in [Origin::Hint, Origin::Session] {
+            for logs in [1, 10] {
+                let bank = memory(&[(kit.knife.id, 1), (kit.logs.id, logs)], origin);
+                let stock = with_bank(&held, &worn, &bank);
+                assert!(
+                    SupplyPlan::due(&prepared, &stats, stock),
+                    "a bank holding the usable kit must admit its trip"
+                );
+                let plan = planned(core_plan(&prepared, &stats, stock));
+                assert_eq!(
+                    targets(&plan),
+                    vec![(kit.knife.id, 1), (kit.logs.id, logs.min(3))]
+                );
+                assert!(!SupplyPlan::tick_kit_missing(&prepared, stock));
+            }
+            for rows in [vec![], vec![(kit.knife.id, 1)], vec![(kit.logs.id, 3)]] {
+                let bank = memory(&rows, origin);
+                let stock = with_bank(&held, &worn, &bank);
+                assert!(
+                    !SupplyPlan::due(&prepared, &stats, stock),
+                    "a known incomplete kit is not a trip or a gating missing item"
+                );
+                assert!(SupplyPlan::tick_kit_missing(&prepared, stock));
+                let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
+                assert!(needs
+                    .iter()
+                    .all(|need| need.item != kit.knife.id && need.item != kit.logs.id));
+            }
+        }
+        let unknown = memory(&[], Origin::Unknown);
+        assert!(
+            SupplyPlan::due(&prepared, &stats, with_bank(&held, &worn, &unknown)),
+            "an unknown bank is learned by walking"
+        );
+        let empty = memory(&[], Origin::Session);
+        let stocked = [
+            item(kit.knife.id, &kit.knife.name, 1, ItemContainer::Inventory),
+            item(kit.logs.id, &kit.logs.name, 1, ItemContainer::Inventory),
+        ];
+        let stock = with_bank(&stocked, &worn, &empty);
+        assert!(!SupplyPlan::due(&prepared, &stats, stock));
+        assert!(!SupplyPlan::tick_kit_missing(&prepared, stock));
+        let knife_held = &stocked[..1];
+        let logs_banked = memory(&[(kit.logs.id, 3)], Origin::Session);
+        let stock = with_bank(knife_held, &worn, &logs_banked);
+        assert!(
+            SupplyPlan::due(&prepared, &stats, stock),
+            "a held knife and banked logs form a usable kit"
+        );
+        assert_eq!(
+            targets(&planned(core_plan(&prepared, &stats, stock))),
+            vec![(kit.logs.id, 3)]
+        );
+        assert!(!SupplyPlan::tick_kit_missing(&prepared, stock));
+    }
+
+    #[test]
     fn bank_deposit_keeps_held_antipoison_doses() {
         if !api::test_support::game_data_available() {
             return;
@@ -1918,536 +2335,13 @@ mod tests {
     }
 
     #[test]
-    fn reserve_gate_requires_one_complete_cast_from_combined_stock() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let spell = selected
-            .teleports()
-            .iter()
-            .find(|spell| {
-                spell.available()
-                    && spell.runes.iter().any(|rune| rune.count > 1)
-                    && spell
-                        .runes
-                        .iter()
-                        .all(|rune| rune.id >= 0 && !rune.name.trim().is_empty() && rune.count > 0)
-            })
-            .unwrap()
-            .clone();
-        let mut settings = crate::native::SettingsBag::new();
-        settings.insert("reserveTeleport".into(), json!(spell.name));
-        settings.insert("reserveCasts".into(), json!(5));
-        let prepared = prepare(settings);
-        let reserve = prepared.supply.reserve.as_ref().unwrap();
-        let rune = reserve.runes().find(|rune| rune.per_cast > 1).unwrap();
-        let mut held = vec![item(1351, "Bronze axe", 1, ItemContainer::Inventory)];
-        held.extend(reserve.runes().map(|other| {
-            let count = if other.id == rune.id {
-                0
-            } else {
-                other.per_cast
-            };
-            item(other.id, &other.name, count, ItemContainer::Inventory)
-        }));
-        let stats = stats(&prepared);
-        let equipment = [];
-        let partial_bank = [item(
-            rune.id,
-            &rune.name,
-            rune.per_cast - 1,
-            ItemContainer::Bank,
-        )];
-
-        assert!(due(&prepared, &stats, &held, &equipment));
-        let partial = match SupplyPlan::from_loaded_bank(
-            &prepared,
-            &stats,
-            &held,
-            &equipment,
-            Some(&partial_bank),
-        ) {
-            SupplyPlanResult::Ready(plan) => plan,
-            other => panic!("fractional rune stock should be withdrawn before failure: {other:?}"),
-        };
-        assert!(partial
-            .missing()
-            .is_some_and(|missing| missing.as_ref() == rune.name.as_ref()));
-        assert_eq!(
-            partial
-                .iter()
-                .map(|item| (item.id, item.target))
-                .collect::<Vec<_>>(),
-            vec![(rune.id, rune.per_cast - 1)]
-        );
-        assert!(matches!(
-            SupplyPlan::from_loaded_bank(&prepared, &stats, &held, &equipment, Some(&[])),
-            SupplyPlanResult::Missing(missing) if missing.as_ref() == rune.name.as_ref()
-        ));
-        held.iter_mut()
-            .find(|item| item.def.id == rune.id)
-            .unwrap()
-            .count = rune.per_cast - 1;
-
-        let exactly_one_cast = [item(rune.id, &rune.name, 1, ItemContainer::Bank)];
-        let usable = match SupplyPlan::from_loaded_bank(
-            &prepared,
-            &stats,
-            &held,
-            &equipment,
-            Some(&exactly_one_cast),
-        ) {
-            SupplyPlanResult::Ready(plan) => plan,
-            other => panic!("one full cast of combined runes is usable: {other:?}"),
-        };
-        assert_eq!(usable.missing(), None);
-        assert_eq!(
-            usable
-                .iter()
-                .map(|item| (item.id, item.target))
-                .collect::<Vec<_>>(),
-            vec![(rune.id, rune.per_cast)]
-        );
-    }
-
-    #[test]
-    fn axe_and_pickaxe_handles_are_not_usable_gathering_tools() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        for (skill, handle_id, handle_name) in [
-            ("Woodcutting", 492, "Axe handle"),
-            ("Mining", 466, "Pickaxe handle"),
-        ] {
-            let mut settings = crate::native::SettingsBag::new();
-            settings.insert("skill".into(), json!(skill));
-            let prepared = prepare(settings);
-            let stats = stats(&prepared);
-            let handle = [item(handle_id, handle_name, 1, ItemContainer::Inventory)];
-            let (tool_id, tool_name) = known_tool(&prepared);
-
-            assert_eq!(best_tool(&prepared, &stats, &handle, &[]), None);
-            assert!(due(&prepared, &stats, &handle, &[]));
-            let bank = [item(tool_id, &tool_name, 1, ItemContainer::Bank)];
-            let plan =
-                match SupplyPlan::from_loaded_bank(&prepared, &stats, &handle, &[], Some(&bank)) {
-                    SupplyPlanResult::Ready(plan) => plan,
-                    other => panic!("loaded real tool should replace {handle_name}: {other:?}"),
-                };
-            assert_eq!(plan.missing(), None);
-            assert_eq!(
-                plan.iter()
-                    .map(|item| (item.id, item.target))
-                    .collect::<Vec<_>>(),
-                vec![(tool_id, 1)]
-            );
-        }
-    }
-
-    #[test]
-    fn best_tool_is_selected_before_wieldability_and_bank_choice_is_best_first() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let prepared = prepare(crate::native::SettingsBag::new());
-        let mut stats = stats(&prepared);
-        let attack = stats.iter_mut().find(|stat| stat.index == 0).unwrap();
-        attack.base = 1;
-        attack.effective = 1;
-        let held = vec![
-            item(1351, "Bronze axe", 1, ItemContainer::Inventory),
-            item(1359, "Rune axe", 1, ItemContainer::Inventory),
-        ];
-        let choice = best_tool(&prepared, &stats, &held, &[]).unwrap();
-        assert_eq!(choice.id, 1359);
-        assert!(!choice.worn);
-        assert!(!can_wield(&prepared, choice.id, &held, &stats));
-        let protected = protected_ids(&prepared, choice.id);
-        assert!(protected.as_slice().contains(&1359));
-        assert!(!protected.as_slice().contains(&1351));
-
-        let bank = vec![
-            item(1351, "Bronze axe", 1, ItemContainer::Bank),
-            item(1359, "Rune axe", 1, ItemContainer::Bank),
-        ];
-        let plan = match SupplyPlan::from_loaded_bank(&prepared, &stats, &[], &[], Some(&bank)) {
-            SupplyPlanResult::Ready(plan) => plan,
-            other => panic!("expected bank tool plan, got {other:?}"),
-        };
-        assert_eq!(
-            plan.iter()
-                .map(|item| (item.id, item.target))
-                .collect::<Vec<_>>(),
-            vec![(1359, 1)]
-        );
-    }
-
-    #[test]
-    fn every_content_defined_fishing_tool_is_inventory_ready_without_wielding() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let mut settings = crate::native::SettingsBag::new();
-        settings.insert("skill".into(), json!("Fishing"));
-        let mut prepared = prepare(settings);
-        let catalog = Arc::clone(&prepared.catalog);
-        let prepared = Arc::get_mut(&mut prepared).expect("test owns the prepared config");
-        let mut tested_tools = std::collections::BTreeSet::new();
-        for (index, method) in catalog
-            .methods()
-            .iter()
-            .enumerate()
-            .filter(|(_, method)| method.skill == api::gather_methods::GatherSkill::Fishing)
-        {
-            // Exercise tool/supply semantics even for content methods whose
-            // unrelated quest/form facts keep the whole method unselectable.
-            prepared.methods = Arc::from([index]);
-            prepared.settings.fishing_method = method.id.0.to_string();
-            prepared.supply = PreparedSupply::prepare(
-                &mut prepared.settings,
-                &prepared.selected,
-                &catalog,
-                &prepared.methods,
-            )
-            .unwrap();
-            let stats = stats(prepared);
-            for tool in known_rows(&method.tools) {
-                let name = prepared
-                    .selected
-                    .item_by_id(tool.item)
-                    .unwrap()
-                    .name
-                    .as_deref()
-                    .unwrap();
-                let mut held = vec![item(tool.item, name, 1, ItemContainer::Inventory)];
-                if let Some(bait) = &prepared.supply.bait {
-                    held.push(item(bait.id, &bait.name, 1, ItemContainer::Inventory));
-                }
-                let choice = best_tool(prepared, &stats, &held, &[]).unwrap();
-                assert_eq!(choice.id, tool.item, "{}", method.id.0);
-                assert!(!choice.worn);
-                assert!(!can_wield(prepared, choice.id, &held, &stats));
-                assert!(!due(prepared, &stats, &held, &[]));
-                assert!(protected_ids(prepared, choice.id)
-                    .as_slice()
-                    .contains(&tool.item));
-                assert!(matches!(
-                    &SupplyPlan::from_loaded_bank(prepared, &stats, &held, &[], Some(&[])),
-                    SupplyPlanResult::Ready(plan) if plan.iter().next().is_none()
-                ));
-
-                // A lost tool must still use the same bank stock machinery.
-                held.remove(0);
-                assert!(due(prepared, &stats, &held, &[]));
-                let bank = [item(tool.item, name, 1, ItemContainer::Bank)];
-                let plan =
-                    match SupplyPlan::from_loaded_bank(prepared, &stats, &held, &[], Some(&bank)) {
-                        SupplyPlanResult::Ready(plan) => plan,
-                        other => panic!(
-                            "{} tool stock must admit withdrawal: {other:?}",
-                            method.id.0
-                        ),
-                    };
-                assert_eq!(plan.missing(), None);
-                assert_eq!(plan.to_withdrawals()[0].id, tool.item);
-                assert_eq!(plan.to_withdrawals()[0].target, 1);
-                tested_tools.insert(tool.item);
-            }
-        }
-        for alias in [
-            "net",
-            "big_net",
-            "lobster_pot",
-            "harpoon",
-            "fishing_rod",
-            "fly_fishing_rod",
-            "oily_fishing_rod",
-            "tbwt_karambwan_vessel_loaded_with_karambwanji",
-        ] {
-            let id = prepared.selected.item_by_alias(alias).unwrap().id;
-            assert!(
-                tested_tools.contains(&id),
-                "missing fishing tool coverage: {alias}"
-            );
-        }
-    }
-
-    // ---- trip admission over the bank memory (design-bank-snapshot §7 S4) ----
-
-    const FISHING_ROD: i32 = 307;
-
-    /// Draynor's sardine/herring Bait method: a fishing rod and one bait a catch.
-    fn bait_fishing(bait_target: i32) -> Arc<Prepared> {
-        let mut settings = crate::native::SettingsBag::new();
-        settings.insert("skill".into(), json!("Fishing"));
-        settings.insert("fishingMethod".into(), json!("fishing.saltfish.op3"));
-        settings.insert("baitTarget".into(), json!(bait_target));
-        prepare(settings)
-    }
-
-    /// A memory holding `rows` the way the host fills it: an open-bank
-    /// observe for `Session`, a hint-file load for `Hint`.
-    fn memory(rows: &[(i32, i32)], origin: Origin) -> api::bank_memory::BankMemory {
-        let mut memory = api::bank_memory::BankMemory::default();
-        match origin {
-            Origin::Unknown => {}
-            Origin::Hint => memory.load_hint(rows.to_vec(), 1).unwrap(),
-            Origin::Session => {
-                let bank: Vec<ItemView> = rows
-                    .iter()
-                    .map(|&(id, count)| item(id, "banked", count, ItemContainer::Bank))
-                    .collect();
-                memory.observe(
-                    &bank,
-                    64,
-                    api::bank_memory::ObservedAt {
-                        unix_secs: 1,
-                        tick: 1,
-                        bank_session: 1,
-                    },
-                );
-            }
-        }
-        memory
-    }
-
-    fn with_bank<'a>(
-        held: &'a [ItemView],
-        worn: &'a [ItemView],
-        bank: &'a api::bank_memory::BankMemory,
-    ) -> Stock<'a> {
-        Stock {
-            bank: Some(bank),
-            ..pages(held, worn)
-        }
-    }
-
-    fn targets(plan: &SupplyPlan) -> Vec<(i32, i32)> {
-        plan.iter().map(|item| (item.id, item.target)).collect()
-    }
-
-    #[test]
-    fn session_zero_bait_is_missing_in_place_and_hint_zero_bait_earns_the_trip() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let prepared = bait_fishing(10);
-        let bait = prepared.supply.bait.clone().unwrap();
-        let stats = stats(&prepared);
-        let rod = [item(
-            FISHING_ROD,
-            "Fishing rod",
-            1,
-            ItemContainer::Inventory,
-        )];
-        let session = memory(&[(COINS_ID, 40)], Origin::Session);
-        assert_eq!(
-            SupplyPlan::plan(&prepared, &stats, with_bank(&rod, &[], &session)),
-            SupplyVerdict::Missing(Arc::clone(&bait.name)),
-            "a bank seen this session without bait fails without a walk"
-        );
-
-        // D4: a hint is advisory, so its predicted shortage is verified by
-        // exactly one trip, never refused in place.
-        let hint = memory(&[(COINS_ID, 40)], Origin::Hint);
-        match SupplyPlan::plan(&prepared, &stats, with_bank(&rod, &[], &hint)) {
-            SupplyVerdict::Trip(plan) => {
-                assert_eq!(plan.missing(), Some(&bait.name));
-                assert!(targets(&plan).is_empty());
-            }
-            other => panic!("a hint shortage must earn its verifying trip: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn an_unknown_bank_trips_to_learn() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let prepared = bait_fishing(10);
-        let stats = stats(&prepared);
-        let rod = [item(
-            FISHING_ROD,
-            "Fishing rod",
-            1,
-            ItemContainer::Inventory,
-        )];
-        assert_eq!(
-            SupplyPlan::plan(&prepared, &stats, pages(&rod, &[])),
-            SupplyVerdict::TripToLearn,
-            "no memory attached"
-        );
-        let unknown = memory(&[], Origin::Unknown);
-        assert_eq!(
-            SupplyPlan::plan(&prepared, &stats, with_bank(&rod, &[], &unknown)),
-            SupplyVerdict::TripToLearn,
-            "a memory never observed"
-        );
-        assert_eq!(
-            SupplyPlan::plan(&prepared, &stats, Stock::default()),
-            SupplyVerdict::NotDue,
-            "unposted pages decide nothing"
-        );
-    }
-
-    /// Bug 9: a bank of 3 of 10 bait used to cost two trips (the clamped top
-    /// up, then a trip that found 0). The trip still targets 3; the next due
-    /// check is a `Session` shortage, decided in place.
-    #[test]
-    fn three_of_ten_bait_trips_for_three_then_misses_in_place() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let prepared = bait_fishing(10);
-        let bait = prepared.supply.bait.clone().unwrap();
-        let stats = stats(&prepared);
-        let rod = [item(
-            FISHING_ROD,
-            "Fishing rod",
-            1,
-            ItemContainer::Inventory,
-        )];
-        for origin in [Origin::Hint, Origin::Session] {
-            let bank = memory(&[(bait.id, 3)], origin);
-            match SupplyPlan::plan(&prepared, &stats, with_bank(&rod, &[], &bank)) {
-                SupplyVerdict::Trip(plan) => {
-                    assert_eq!(targets(&plan), vec![(bait.id, 3)], "{origin:?}");
-                    assert_eq!(plan.missing(), None, "{origin:?}");
-                }
-                other => panic!("{origin:?}: 3 banked bait is one trip, got {other:?}"),
-            }
-        }
-
-        // The open bank mirrored the withdrawal into the memory.
-        let after = memory(&[], Origin::Session);
-        let stocked = [
-            item(FISHING_ROD, "Fishing rod", 1, ItemContainer::Inventory),
-            item(bait.id, &bait.name, 3, ItemContainer::Inventory),
-        ];
-        assert_eq!(
-            SupplyPlan::plan(&prepared, &stats, with_bank(&stocked, &[], &after)),
-            SupplyVerdict::NotDue
-        );
-        assert_eq!(
-            SupplyPlan::plan(&prepared, &stats, with_bank(&rod, &[], &after)),
-            SupplyVerdict::Missing(Arc::clone(&bait.name)),
-            "the bait ran out: no second trip"
-        );
-    }
-
-    #[test]
-    fn the_open_bank_replan_overrides_a_stale_memory_plan() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let prepared = bait_fishing(10);
-        let bait = prepared.supply.bait.clone().unwrap();
-        let stats = stats(&prepared);
-        let rod = [item(
-            FISHING_ROD,
-            "Fishing rod",
-            1,
-            ItemContainer::Inventory,
-        )];
-        let stale = memory(&[(bait.id, 20)], Origin::Hint);
-        let SupplyVerdict::Trip(remembered) =
-            SupplyPlan::plan(&prepared, &stats, with_bank(&rod, &[], &stale))
-        else {
-            panic!("a hinted surplus is acted on");
-        };
-        assert_eq!(targets(&remembered), vec![(bait.id, 10)]);
-
-        // Stale positive: the open bank has none, so the one trip ends here.
-        assert_eq!(
-            SupplyPlan::from_loaded_bank(&prepared, &stats, &rod, &[], Some(&[])),
-            SupplyPlanResult::Missing(Arc::clone(&bait.name))
-        );
-        let live = [item(bait.id, &bait.name, 4, ItemContainer::Bank)];
-        match SupplyPlan::from_loaded_bank(&prepared, &stats, &rod, &[], Some(&live)) {
-            SupplyPlanResult::Ready(plan) => assert_eq!(targets(&plan), vec![(bait.id, 4)]),
-            other => panic!("the live rows win over the memory: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_tool_only_in_the_memory_is_planned_and_a_session_absent_tool_is_missing() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let prepared = bait_fishing(1);
-        let bait = prepared.supply.bait.clone().unwrap();
-        let stats = stats(&prepared);
-        let held = [item(bait.id, &bait.name, 5, ItemContainer::Inventory)];
-        let banked_rod = memory(&[(FISHING_ROD, 1)], Origin::Session);
-        let SupplyVerdict::Trip(plan) =
-            SupplyPlan::plan(&prepared, &stats, with_bank(&held, &[], &banked_rod))
-        else {
-            panic!("a banked rod is fetched");
-        };
-        assert_eq!(targets(&plan), vec![(FISHING_ROD, 1)]);
-        let no_rod = memory(&[(COINS_ID, 1)], Origin::Session);
-        assert!(matches!(
-            SupplyPlan::plan(&prepared, &stats, with_bank(&held, &[], &no_rod)),
-            SupplyVerdict::Missing(_)
-        ));
-        let worn_rod = [item(
-            FISHING_ROD,
-            "Fishing rod",
-            1,
-            ItemContainer::Equipment,
-        )];
-        assert_eq!(
-            SupplyPlan::plan(&prepared, &stats, with_bank(&held, &worn_rod, &no_rod)),
-            SupplyVerdict::NotDue,
-            "a worn tool needs no trip"
-        );
-    }
-
-    #[test]
-    fn worn_runes_never_pay_a_reserve_cast() {
-        if !api::test_support::game_data_available() {
-            return;
-        }
-        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
-        let spell = selected
-            .teleports()
-            .iter()
-            .find(|spell| {
-                spell.available()
-                    && !spell.runes.is_empty()
-                    && spell
-                        .runes
-                        .iter()
-                        .all(|rune| rune.id >= 0 && !rune.name.trim().is_empty() && rune.count > 0)
-            })
-            .unwrap()
-            .clone();
-        let mut settings = crate::native::SettingsBag::new();
-        settings.insert("reserveTeleport".into(), json!(spell.name));
-        settings.insert("reserveCasts".into(), json!(5));
-        let prepared = prepare(settings);
-        let reserve = prepared.supply.reserve.as_ref().unwrap();
-        let runes: Vec<ItemView> = reserve
-            .runes()
-            .map(|rune| item(rune.id, &rune.name, rune.per_cast, ItemContainer::Equipment))
-            .collect();
-        let axe = [item(1359, "Rune axe", 1, ItemContainer::Inventory)];
-        let stats = stats(&prepared);
-        assert!(due(&prepared, &stats, &axe, &runes));
-        assert!(!can_afford_cast(reserve, pages(&axe, &runes)));
-    }
-
-    /// Bug 8: a worn requirement item satisfies `method_ready`, the way a worn
-    /// tool already did.
-    #[test]
     fn a_worn_requirement_item_satisfies_method_ready() {
         if !api::test_support::game_data_available() {
             return;
         }
         const AMULET: i32 = 1704;
         let prepared = bait_fishing(10);
-        let bait = prepared.supply.bait.clone().unwrap();
+        let bait = prepared.supply.bait.as_ref().unwrap();
         let mut method = prepared
             .catalog
             .method("fishing.saltfish.op3")
@@ -2499,15 +2393,13 @@ mod tests {
         assert!(ledger.is_none());
     }
 
-    /// FLOOR: the admission read path allocates nothing — not while idle with
-    /// a known memory attached, and not when the memory plans a bait trip.
     #[test]
-    fn trip_admission_over_a_known_memory_allocates_nothing() {
+    fn unchanged_due_polls_over_known_memory_allocate_nothing() {
         if !api::test_support::game_data_available() {
             return;
         }
         let prepared = bait_fishing(10);
-        let bait = prepared.supply.bait.clone().unwrap();
+        let bait = prepared.supply.bait.as_ref().unwrap();
         let stats = stats(&prepared);
         let stocked = [
             item(FISHING_ROD, "Fishing rod", 1, ItemContainer::Inventory),
@@ -2520,26 +2412,93 @@ mod tests {
             ItemContainer::Inventory,
         )];
         let session = memory(&[(bait.id, 30), (COINS_ID, 40)], Origin::Session);
-        let empty = memory(&[(COINS_ID, 40)], Origin::Session);
+        let stock = with_bank(&stocked, &[], &session);
         let idle = allocation_counter::measure(|| {
             for _ in 0..1_000 {
-                let verdict =
-                    SupplyPlan::plan(&prepared, &stats, with_bank(&stocked, &[], &session));
-                assert_eq!(verdict, SupplyVerdict::NotDue);
-            }
-        });
-        assert_eq!(idle.bytes_total, 0, "idle admission allocates nothing");
-        let due = allocation_counter::measure(|| {
-            for _ in 0..100 {
-                let trip = SupplyPlan::plan(&prepared, &stats, with_bank(&rod, &[], &session));
-                assert!(matches!(trip, SupplyVerdict::Trip(_)));
-                let missing = SupplyPlan::plan(&prepared, &stats, with_bank(&rod, &[], &empty));
-                assert!(matches!(missing, SupplyVerdict::Missing(_)));
+                assert!(!SupplyPlan::due(&prepared, &stats, stock));
             }
         });
         assert_eq!(
-            due.bytes_total, 0,
-            "a memory-planned bait verdict allocates nothing"
+            idle.bytes_total, 0,
+            "unchanged admission polls allocate nothing"
         );
+
+        let due = allocation_counter::measure(|| {
+            for _ in 0..1_000 {
+                assert!(SupplyPlan::due(
+                    &prepared,
+                    &stats,
+                    with_bank(&rod, &[], &session)
+                ));
+            }
+        });
+        assert_eq!(due.bytes_total, 0, "due admission polls allocate nothing");
+    }
+
+    #[test]
+    fn buy_tools_adds_shops_only_to_gathering_tools_and_bait() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for enabled in [false, true] {
+            let mut settings = crate::native::SettingsBag::new();
+            settings.insert("skill".into(), json!("Fishing"));
+            settings.insert("fishingMethod".into(), json!("fishing.saltfish.op3"));
+            settings.insert("buyTools".into(), json!(enabled));
+            settings.insert("food".into(), json!("Trout"));
+            settings.insert("foodTarget".into(), json!(3));
+            settings.insert("coinTarget".into(), json!(10));
+            let prepared = prepare(settings);
+            let stats = stats(&prepared);
+            let bank = memory(&[], Origin::Session);
+            let needs = SupplyPlan::build(&prepared, &stats, with_bank(&[], &[], &bank)).unwrap();
+            let bait = prepared.supply.bait.as_ref().unwrap();
+            assert!(needs.iter().any(|need| need.item == FISHING_ROD));
+            assert!(needs.iter().any(|need| need.item == bait.id));
+            assert!(needs.iter().any(|need| need.item == COINS_ID));
+            assert!(needs.iter().any(|need| need.item != FISHING_ROD
+                && need.item != bait.id
+                && need.item != COINS_ID));
+            for need in needs.iter() {
+                let tool_or_bait = need.item == FISHING_ROD || need.item == bait.id;
+                assert_eq!(
+                    need.sources.contains(SourceSet::SHOP),
+                    enabled && tool_or_bait,
+                    "id={} enabled={enabled}",
+                    need.item
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn buy_tools_keeps_held_and_session_banked_tiers_ahead_of_shops() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("buyTools".into(), json!(true));
+        let prepared = prepare(settings);
+        let stats = stats(&prepared);
+        for held in [false, true] {
+            let bank = memory(if held { &[] } else { &[(1351, 1)] }, Origin::Session);
+            let pack = [item(1351, "Bronze axe", 1, ItemContainer::Inventory)];
+            let stock = with_bank(if held { &pack } else { &[] }, &[], &bank);
+            let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
+            let mut request = request(needs);
+            request.vendor = VendorChoice::Nearest;
+            request.coins = CoinPolicy::ForPurchase {
+                sources: SourceSet::PACK | SourceSet::BANK,
+            };
+            let verdict = acquire::plan::plan(&request, &stock, WorldFacts::default()).unwrap();
+            let plan = planned(verdict);
+            assert!(plan.purchases.iter().all(Option::is_none));
+            if held {
+                assert_eq!(plan.wear_count, 1);
+                assert_eq!(plan.withdrawal_count, 0);
+            } else {
+                assert_eq!(targets(&plan), [(1351, 1)]);
+            }
+        }
     }
 }

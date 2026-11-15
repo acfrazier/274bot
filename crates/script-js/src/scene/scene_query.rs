@@ -15,6 +15,7 @@ pub(crate) struct EntityGeneration {
     pub locs: Option<Rc<Vec<SceneRow>>>,
     pub players: Option<Rc<Vec<PlayerRow>>>,
     pub ground: Option<Rc<Vec<SceneRow>>>,
+    pub here: Option<observed::Tile>,
     pub self_slot: i32,
 }
 
@@ -27,6 +28,7 @@ pub(crate) fn entity_generation() -> EntityGeneration {
             locs: lens.shared_locs(),
             players: lens.shared_players(),
             ground: lens.shared_ground(),
+            here: lens.here(),
             self_slot: lens.self_slot().unwrap_or_default(),
         }
     })
@@ -77,19 +79,31 @@ impl<'a> EntityFacts<'a> {
         }
     }
 
-    pub(crate) fn tile(self) -> observed::Tile {
+    /// The native path-head tile for actor decisions. NPC/player rendered
+    /// projections and their cached mixed distances remain compatibility facts.
+    pub(crate) fn native_tile(self) -> Option<observed::Tile> {
         match self {
-            Self::Npc(row) => row.tile(),
-            Self::Player(row) => row.tile(),
-            Self::Scene(row) => row.tile(),
+            Self::Npc(row) => row.network_tile(),
+            Self::Player(row) => row.network_tile(),
+            Self::Scene(row) => Some(row.tile()),
         }
     }
 
-    pub(crate) fn distance(self) -> i32 {
+    /// Native rank/radius distance. Static scene rows keep their posted scalar;
+    /// actors require both path-head coordinates and a posted local origin.
+    pub(crate) fn native_distance(self, origin: Option<observed::Tile>) -> Option<i32> {
         match self {
-            Self::Npc(row) => row.distance,
-            Self::Player(row) => row.distance,
-            Self::Scene(row) => row.distance,
+            Self::Npc(row) => {
+                let origin = origin?;
+                let tile = row.network_tile()?;
+                Some(observed::network_distance(origin, tile))
+            }
+            Self::Player(row) => {
+                let origin = origin?;
+                let tile = row.network_tile()?;
+                Some(observed::network_distance(origin, tile))
+            }
+            Self::Scene(row) => Some(row.distance),
         }
     }
 

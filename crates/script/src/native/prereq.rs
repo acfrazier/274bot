@@ -16,11 +16,10 @@ pub struct PrereqAllow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrereqStepIdentity {
     pub id: Arc<str>,
-    pub source: Arc<str>,
 }
 impl std::fmt::Display for PrereqStepIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({})", self.id, self.source)
+        f.write_str(&self.id)
     }
 }
 

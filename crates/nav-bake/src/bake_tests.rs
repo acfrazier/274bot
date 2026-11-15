@@ -62,6 +62,7 @@ fn a_missing_door_config_fails_the_bake() {
     std::fs::write(&config_jag, b"").unwrap();
     let gates = root.join("content/scripts/general_use/configs/gates.loc");
     let game_data_dir = root.join("game-data");
+    let engine_dir = root.join("engine");
     let request = BakeRequest {
         revision: None,
         game_data_dir: &game_data_dir,
@@ -69,6 +70,8 @@ fn a_missing_door_config_fails_the_bake() {
         doors_dir: &doors,
         gates: &gates,
         config_jag: &config_jag,
+        engine_dir: &engine_dir,
+        nav_shadow: false,
         server_loc_dat_377: None,
         require_all_door_configs: true,
     };

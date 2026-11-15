@@ -647,6 +647,53 @@ impl ThreatSet {
         protect: Option<StyleObs>,
         corpse: Option<ActorRef>,
     ) -> Option<i32> {
+        self.total_except(tables, tick, (shield, antifire), protect, corpse, |_| 1)
+    }
+
+    /// The most damage that can land before a bite sent now takes effect:
+    /// each live attacker's residual hit once per attack it can make inside
+    /// the bite delay ([`policy::hits_before_bite`]). It is never below
+    /// [`Self::danger`] and is `None` when the danger is unknown.
+    pub fn burst(
+        &self,
+        frame: &Frame<'_>,
+        tables: &CombatTables,
+        tick: u16,
+        shield: bool,
+        antifire: bool,
+    ) -> Option<i32> {
+        self.burst_with(
+            tables,
+            tick,
+            shield,
+            antifire,
+            select::active_protect(frame, tables),
+        )
+    }
+
+    /// [`Self::burst`] under a planned protection.
+    pub(crate) fn burst_with(
+        &self,
+        tables: &CombatTables,
+        tick: u16,
+        shield: bool,
+        antifire: bool,
+        protect: Option<StyleObs>,
+    ) -> Option<i32> {
+        self.total_except(tables, tick, (shield, antifire), protect, None, |threat| {
+            super::policy::hits_before_bite(threat.rate)
+        })
+    }
+
+    fn total_except(
+        &self,
+        tables: &CombatTables,
+        tick: u16,
+        (shield, antifire): (bool, bool),
+        protect: Option<StyleObs>,
+        corpse: Option<ActorRef>,
+        hits: impl Fn(&Threat) -> i32,
+    ) -> Option<i32> {
         if self.has_unknown(tick) {
             return None;
         }
@@ -661,7 +708,7 @@ impl ThreatSet {
                 threat.style
             };
             let residual = select::residual(threat, style, protect, tables, shield, antifire)?;
-            total = total.saturating_add(residual);
+            total = total.saturating_add(residual.saturating_mul(hits(threat)));
         }
         Some(total)
     }
@@ -965,7 +1012,7 @@ impl ThreatSet {
             }
         }
         for player in frame.players {
-            if tile_chebyshev(player.actor.tile, src) > max_distance {
+            if tile_chebyshev(player.network, src) > max_distance {
                 continue;
             }
             let Some(index) = u16::try_from(player.index).ok() else {
@@ -1027,8 +1074,8 @@ impl ThreatSet {
                 .style_spotanim(projectile.spotanim)
                 .filter(|row| row.where_ == StyleWhere::Projectile)
                 .map_or(StyleObs::Unknown, |row| select::style_from_mask(row.style));
-            // Fine-pixel launch coords often decode one tile off the rendered
-            // NPC. Prefer an exact tile/network hit; if none, the unique
+            // Projectile source coordinates can decode one tile away from the
+            // NPC path head. Prefer an exact network-tile hit; if none, the unique
             // adjacent facing actor.
             let actor = match self.take_launcher(frame, projectile.src, 0) {
                 Ok(Some(actor)) => actor,
@@ -1464,7 +1511,7 @@ fn tile_chebyshev(a: WorldTile, b: WorldTile) -> u32 {
 }
 
 fn npc_launch_distance(npc: &NpcView, src: WorldTile) -> u32 {
-    tile_chebyshev(npc.tile, src).min(tile_chebyshev(npc.network, src))
+    tile_chebyshev(npc.network, src)
 }
 
 fn npc_main_style(row: &api::game_data::NpcNameRow) -> StyleObs {

@@ -347,6 +347,8 @@ fn serve(
         );
         let _ = stream.write_all(body);
         let _ = stream.flush();
+        // The client waits for EOF. TLS must send close_notify before TCP closes.
+        let _ = stream.shutdown();
         return;
     }
     if String::from_utf8_lossy(&head)
@@ -359,8 +361,21 @@ fn serve(
     while matches!(stream.read(&mut rest), Ok(n) if n > 0) {}
 }
 
-trait ReadWrite: Read + Write {}
-impl<T: Read + Write> ReadWrite for T {}
+trait ReadWrite: Read + Write {
+    fn shutdown(&mut self) -> std::io::Result<()>;
+}
+
+impl ReadWrite for TcpStream {
+    fn shutdown(&mut self) -> std::io::Result<()> {
+        TcpStream::shutdown(self, std::net::Shutdown::Write)
+    }
+}
+
+impl ReadWrite for native_tls::TlsStream<TcpStream> {
+    fn shutdown(&mut self) -> std::io::Result<()> {
+        native_tls::TlsStream::shutdown(self)
+    }
+}
 
 /// Counts the preparation attempts: each fill reports `PreparingCache 0/1`
 /// when it starts.

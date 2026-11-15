@@ -6,11 +6,14 @@ pub mod gather;
 pub mod item_arg;
 pub mod partner;
 pub mod progress_predicates;
+pub mod prompt;
 pub mod reach;
 pub mod s2;
 pub mod setting;
 pub mod thieve;
 pub mod timed_ground;
+
+pub(crate) use s2::begin_survival_loadout;
 
 use super::compile::{
     AcquisitionTraceOutcome, CompileContext, CompileError, PredicateContext, PredicatePlan,
@@ -106,6 +109,20 @@ pub fn handlers() -> &'static [super::compile::StepHandler] {
         super::compile::step!("partner", 1, Default, partner::Args, partner::compile),
         super::compile::step!("gather", 1, Explicit, gather::Args, gather::compile),
         super::compile::step!("thieve", 1, Explicit, thieve::Args, thieve::compile),
+        super::compile::step!(
+            "answer_count",
+            1,
+            Explicit,
+            prompt::AnswerCountArgs,
+            prompt::compile_answer_count
+        ),
+        super::compile::step!(
+            "if_button",
+            1,
+            Explicit,
+            prompt::IfButtonArgs,
+            prompt::compile_if_button
+        ),
     ];
     HANDLERS
 }
@@ -762,7 +779,7 @@ impl PredicatePlan for NpcPresent {
             Some(npcs) => truth(npcs.value.iter().any(|npc| {
                 npc.r#type == Some(self.id as usize)
                     && match (here, self.radius) {
-                        (Some(here), Some(radius)) => reach::within(here, npc.tile, radius),
+                        (Some(here), Some(radius)) => reach::within(here, npc.network, radius),
                         _ => true,
                     }
             })),
@@ -3412,10 +3429,12 @@ impl UseOnRun {
             self.chase_rewalks -= 1;
             return true;
         };
-        let needs = !self.area().contains(npc.tile, npc.distance)
+        let needs = !self
+            .area()
+            .contains(npc.network, reach::npc_distance(cx, npc))
             || reach::npc_adjacent(cx, npc)
             || (reach::reach_known(cx) && reach::npc_route_steps(cx, npc).is_none())
-            || !reach::within(npc.tile, goal, 1);
+            || !reach::within(npc.network, goal, 1);
         if needs {
             if self.chase_rewalks == 0 {
                 return false;
@@ -3793,7 +3812,7 @@ impl StepRun for UseOnRun {
                             reach::Pick::None => return Poll::Pending,
                         };
                         let (npc_tile, npc_index, adjacent) = (
-                            npc.tile,
+                            npc.network,
                             npc.index,
                             reachable && reach::npc_adjacent(&cx.tick.cx, npc),
                         );

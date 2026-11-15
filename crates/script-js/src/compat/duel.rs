@@ -361,7 +361,10 @@ fn handshake_tick(
             if !matches!(current, Screen::Offer | Screen::Confirm) {
                 state.opened_at = None;
                 state.validated_offer = false;
-                if pen_at(scene.here().unwrap_or_default()).is_some() {
+                let Some(here) = scene.here() else {
+                    return true;
+                };
+                if pen_at(here).is_some() {
                     return true;
                 }
                 let now = Instant::now();
@@ -375,7 +378,9 @@ fn handshake_tick(
                     players.iter().find(|player| {
                         duel_name(player.name_or_empty()) == expected
                             && !player.in_combat
-                            && pen_at(player.tile()).is_none()
+                            && player
+                                .network_tile()
+                                .is_some_and(|tile| pen_at(tile).is_none())
                     })
                 });
                 if let Some(target) = target {

@@ -1534,6 +1534,156 @@ fn follow_step_fails_without_a_nav_world() {
     }
 }
 
+fn hero_stage_route_runner(fresh_login: bool) -> Option<ScenarioRunner> {
+    use api::game_data::GameDataError;
+    use api::selected::{ClientRevision, InclusiveRange, QuestGate, StageWindow};
+    use api::snapshot::QuestStatusView;
+
+    let selected = match api::game_data::for_revision(ClientRevision::R289) {
+        Ok(selected) => selected,
+        Err(GameDataError::LocalDataUnavailable) => {
+            eprintln!("SKIP: selected R289 quest data is not built");
+            return None;
+        }
+        Err(error) => panic!("selected R289 quest data: {error}"),
+    };
+    let catalog = Arc::new(
+        api::quest_facts::QuestCatalog::from_identity(selected.quest_identity())
+            .expect("selected quest identity"),
+    );
+    let hero = catalog.quest("hero").expect("Hero's Quest identity");
+    // heroes_entrance.rs2:5-7 accepts >=15. Ordinary completion is
+    // deliberately weaker because Grip's queued writer can regress it.
+    assert!(!hero.colour_authoritative);
+    let gate = QuestGate::Window(StageWindow {
+        quest: hero.id.clone(),
+        signal: hero.varp.clone(),
+        values: InclusiveRange {
+            min: Some(15),
+            max: Some(15),
+        },
+    });
+    let display = hero.display.to_string();
+    let mut world = NavWorld::from_grid(&StepGrid::fixture_door_corridor());
+    for edge in &mut world.graph.edges {
+        edge.quest_gates = Some(
+            nav_planner::quest_gates::QuestGates::new([gate.clone()]).expect("valid stage gate"),
+        );
+    }
+    let destination = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    let mut runner =
+        ScenarioRunner::with_world(follow_scenario(destination, 120), Some(Arc::new(world)));
+    runner.set_quest_catalog(Some(catalog));
+    runner.snapshot.seed_ingame(2);
+    runner.snapshot.seed_tick(1);
+    runner.snapshot.seed_player_info_generation(1);
+    runner.snapshot.seed_tile(WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    });
+    runner.snapshot.seed_quest_statuses(
+        vec![QuestStatusView {
+            component_id: 1,
+            name: display,
+            colour: 0x00F800,
+        }],
+        true,
+    );
+    if fresh_login {
+        runner.snapshot.begin_fresh_login_quest_colours();
+    }
+    Some(runner)
+}
+
+#[test]
+fn scenario_route_retains_selected_fresh_login_quest_evidence() {
+    let Some(mut runner) = hero_stage_route_runner(true) else {
+        return;
+    };
+    let destination = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    runner
+        .arm_route(destination, FindOptions::default())
+        .expect("qualified completion proves the door's stage window");
+    assert_eq!(runner.armed_route().unwrap().dest, destination);
+    let evidence = runner
+        .route_quest_evidence
+        .as_ref()
+        .expect("the traveller retains the route's owned evidence");
+    assert!(evidence.owned_provider_bytes() > 0);
+    let gate = runner.nav_world.as_ref().unwrap().graph.edges[0]
+        .quest_gates
+        .as_ref()
+        .unwrap()
+        .gates()[0]
+        .clone();
+    assert_eq!(evidence.test(&gate), api::selected::Truth::True);
+    runner.set_quest_catalog(None);
+    runner.snapshot.seed_quest_statuses(Vec::new(), false);
+    assert_eq!(
+        runner.route_quest_evidence.as_ref().unwrap().test(&gate),
+        api::selected::Truth::True,
+        "the admitted route owns its evidence independently of later frame storage"
+    );
+    runner.begin_step(runner.snapshot.gens().session);
+    assert!(runner.route_quest_evidence.is_none());
+}
+
+#[test]
+fn scenario_route_does_not_promote_unqualified_green_or_missing_selected_data() {
+    for (fresh_login, selected_data) in [(false, true), (true, false)] {
+        let Some(mut runner) = hero_stage_route_runner(fresh_login) else {
+            return;
+        };
+        if !selected_data {
+            runner.set_quest_catalog(None);
+        }
+        let error = runner
+            .arm_route(
+                WorldTile {
+                    x: 4,
+                    z: 0,
+                    level: 0,
+                },
+                FindOptions::default(),
+            )
+            .expect_err("unknown quest evidence must not authorize a stage window");
+        assert!(error.contains("NoPath"), "{error}");
+        assert!(runner.route_quest_evidence.is_none());
+    }
+}
+
+#[test]
+fn scenario_route_does_not_restore_fresh_login_proof_after_a_colour_change() {
+    let Some(mut runner) = hero_stage_route_runner(true) else {
+        return;
+    };
+    let mut row = runner.snapshot.quest_statuses()[0].clone();
+    row.colour = 0xF80000;
+    runner.snapshot.seed_quest_statuses(vec![row.clone()], true);
+    row.colour = 0x00F800;
+    runner.snapshot.seed_quest_statuses(vec![row], true);
+    let error = runner
+        .arm_route(
+            WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+            FindOptions::default(),
+        )
+        .expect_err("a later green row cannot restore the cold-login proof");
+    assert!(error.contains("NoPath"), "{error}");
+}
+
 // --- Dialog-janitor steps (`DrainDialogs`) ---
 
 /// A `DrainDialogs` step whose arm never holds: the fixture has no
@@ -1750,8 +1900,8 @@ fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
 }
 
 /// A companion hook's `true` is a one-shot host-login request: the driver
-/// reads it from the tick and posts the slot's operator Login, which the
-/// scriptless park policy needs after a prep relog's logout.
+/// reads it from the tick and posts the slot's operator Login, a real
+/// one-shot command for a prep relog's logout.
 #[test]
 fn companion_tick_surfaces_a_one_shot_host_login_request() {
     let scenario = Scenario {
@@ -2183,7 +2333,7 @@ fn relog_presses_the_logout_button_while_ingame() {
     );
     assert!(
         runner.relog_login_wanted(),
-        "a scriptless relog needs the host's explicit Login"
+        "the Relog step requests the host's explicit Login after its logout"
     );
     assert!(
         runner.take_relog_login(),
@@ -3206,7 +3356,7 @@ fn maze_episode_recovers_baseline_after_observer_begins_unready() {
     runner.set_scene_settle(Duration::ZERO);
     runner.snapshot.rebuild(&c);
     runner.phase = Phase::Running;
-    runner.begin_step();
+    runner.begin_step(c.gens.session);
     assert_eq!(
         runner.maze_episode.as_ref().unwrap().return_tile,
         None,
@@ -5125,4 +5275,359 @@ fn ground_item_absence_proof_bounds_ids_area_level_and_loaded_player() {
     c.ingame = false;
     runner.snapshot.rebuild(&c);
     assert!(!proof.check(&runner.snapshot, None));
+}
+
+#[test]
+fn receipt_records_step_intention_and_observed_result() {
+    let mut runner = ScenarioRunner::with_world(stat_scenario(0, 10), None);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    let receipt = serde_json::to_value(runner.evidence().expect("terminal")).unwrap();
+    let events = receipt["events"]
+        .as_array()
+        .expect("ordered receipt events");
+    assert_eq!(events[0]["event"], "STEP");
+    assert_eq!(events[0]["ordinal"], 1);
+    assert_eq!(events[0]["name"], "set run energy");
+    assert_eq!(events[0]["why"], events[0]["name"]);
+    assert_eq!(events[0]["why_source"], "step-name");
+    assert_eq!(events[1]["event"], "DISPATCH");
+    assert_eq!(events[1]["result"], "accepted");
+    assert_eq!(events[2]["event"], "OBSERVED");
+    assert_eq!(receipt["outcome"], "PASS");
+    assert_eq!(receipt["manifest"]["actor"], "test");
+    assert_eq!(receipt["manifest"]["revision"], 274);
+}
+
+#[test]
+fn receipt_records_refused_closure_without_claiming_observation() {
+    let mut scenario = stat_scenario(0, 10);
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(|_, _| false),
+    };
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    let receipt = serde_json::to_value(runner.evidence().expect("terminal")).unwrap();
+    let events = receipt["events"]
+        .as_array()
+        .expect("ordered receipt events");
+    assert_eq!(events[0]["event"], "STEP");
+    assert_eq!(events[1]["event"], "DISPATCH");
+    assert_eq!(events[1]["result"], "refused");
+    assert!(events.iter().all(|event| event["event"] != "OBSERVED"));
+    assert_eq!(receipt["outcome"], "FAIL");
+}
+
+#[test]
+fn receipt_can_disarm_rearm_and_bind_a_replacement_session() {
+    let mut runner = ScenarioRunner::with_world(stat_scenario(0, 10), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.set_receipt_recording(false);
+    assert!(runner.receipt_manifest_mut().is_none());
+    runner.set_receipt_recording(true);
+    let mut client = seeded_client();
+    runner.bind_receipt(&client);
+    let first = client.gens.session;
+    client.gens.session += 1;
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    let receipt = runner.evidence().unwrap().run_receipt.as_ref().unwrap();
+    assert_eq!(receipt.manifest.sessions, [first, first + 1]);
+    assert_eq!(receipt.events[0].session, first + 1);
+}
+
+#[test]
+fn receipt_retention_overflow_is_explicit_and_bounded() {
+    let mut runner = ScenarioRunner::with_world(stat_scenario(0, 10), None);
+    for _ in 0..crate::evidence::MAX_RECEIPT_EVENTS + 5 {
+        runner.receipt_event("STEP", "legacy-closure", None, None);
+    }
+    let receipt = runner.run_receipt.as_ref().unwrap();
+    assert_eq!(receipt.events.len(), crate::evidence::MAX_RECEIPT_EVENTS);
+    assert!(!receipt.manifest.complete);
+    assert_eq!(receipt.manifest.dropped_events, 5);
+}
+
+#[test]
+fn receipt_session_overflow_retains_the_current_event_identity() {
+    let mut runner = ScenarioRunner::with_world(stat_scenario(0, 10), None);
+    let mut client = seeded_client();
+    for _ in 0..crate::evidence::MAX_RECEIPT_EVENTS + 2 {
+        client.gens.session += 1;
+        runner.bind_receipt(&client);
+    }
+    runner.receipt_event("STEP", "legacy-closure", None, None);
+    let receipt = runner.run_receipt.as_ref().unwrap();
+    assert_eq!(
+        receipt.manifest.sessions.len(),
+        crate::evidence::MAX_RECEIPT_EVENTS
+    );
+    assert!(!receipt.manifest.complete);
+    assert_eq!(receipt.events[0].session, client.gens.session);
+}
+
+#[test]
+fn quantity_action_baselines_arm_once_and_are_discarded_on_session_change() {
+    let scenario = crate::scenarios::fletching_make_x_scenario();
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    let mut client = seeded_client();
+    set_inv(&mut client, &[(946, 1), (1511, 2)]);
+    client.stat_xp[9] = 500;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+    runner.snapshot.rebuild(&client);
+    runner.snapshot.seed_transmission_ready(true, false);
+    runner.phase = Phase::Running;
+    runner.begin_step(client.gens.session);
+
+    assert_eq!(runner.delta_baselines.len(), 2);
+    assert!(runner.delta_baselines.iter().any(|baseline| {
+        baseline.kind == crate::proof::DeltaBaselineKind::InventoryItem && baseline.id == 52
+    }));
+    assert!(runner.delta_baselines.iter().any(|baseline| {
+        baseline.kind == crate::proof::DeltaBaselineKind::StatXp && baseline.id == 9
+    }));
+
+    runner.step = 1;
+    runner.begin_step(client.gens.session);
+    assert_eq!(runner.delta_baselines.len(), 3);
+    assert!(runner.delta_baselines.iter().any(|baseline| {
+        baseline.kind == crate::proof::DeltaBaselineKind::InventoryItem && baseline.id == 1511
+    }));
+
+    runner.step_sent = true;
+    client.gens.session += 1;
+    runner.tick_inner(&mut client, false);
+    assert!(runner.delta_baselines.is_empty());
+}
+
+const QUANTITY_MAKE_X_BUTTON: i32 = 602;
+
+fn quantity_runner() -> (ScenarioRunner, Client, std::net::TcpListener) {
+    use client::config::if_type::ButtonType;
+
+    // Only attachment is needed: tick queues real driver packets in Client.out,
+    // without flushing a socket or running a client/engine loop.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut client = seeded_client();
+    client.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    client.push_iface(IfType {
+        r#type: ComponentType::TYPE_INV,
+        obj_ops: true,
+        ..Default::default()
+    });
+    quantity_inventory(&mut client, &[(946, 1), (1511, 2)]);
+    client.stat_xp[9] = 500;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+    client.set_iface(
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601, QUANTITY_MAKE_X_BUTTON]),
+            ..Default::default()
+        },
+    );
+    client.set_iface(
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_MODEL,
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        601,
+        IfTypeMut {
+            model1_type: 4,
+            model1_id: 52,
+            ..Default::default()
+        },
+    );
+    client.set_iface(
+        QUANTITY_MAKE_X_BUTTON as usize,
+        IfType {
+            id: QUANTITY_MAKE_X_BUTTON,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_TEXT,
+            button_text: "Make X".into(),
+            ..Default::default()
+        },
+    );
+    client.set_iface_mut(
+        QUANTITY_MAKE_X_BUTTON as usize,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_OK,
+            ..Default::default()
+        },
+    );
+    client.chat_modal_id = 600;
+    client.bump_gens(ServerProt::IF_OPENCHAT);
+
+    let mut runner =
+        ScenarioRunner::with_world(crate::scenarios::fletching_make_x_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut client);
+    assert!(matches!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, .. }
+    ));
+    assert!(runner.step_sent, "Make-X click must be accepted");
+    assert!(runner.snapshot.inventory_ready());
+    assert!(!runner.snapshot.count_dialog_open());
+    assert_quantity_packets(&client, None);
+    (runner, client, listener)
+}
+
+fn assert_quantity_packets(client: &Client, amount: Option<i32>) {
+    let mut expected = vec![ClientProt::IF_BUTTON.id as u8];
+    expected.extend_from_slice(&(QUANTITY_MAKE_X_BUTTON as u16).to_be_bytes());
+    if let Some(value) = amount {
+        expected.push(ClientProt::RESUME_P_COUNTDIALOG.id as u8);
+        expected.extend_from_slice(&value.to_be_bytes());
+    }
+    assert_eq!(
+        &client.out.data()[..client.out.pos],
+        expected,
+        "record exactly the Make-X click and, only when allowed, the count command"
+    );
+}
+
+fn quantity_open_prompt(runner: &mut ScenarioRunner, client: &mut Client) {
+    client.apply_p_countdialog();
+    runner.tick(client);
+    assert!(runner.snapshot.count_dialog_open());
+    assert!(matches!(
+        runner.status(),
+        RunnerStatus::Running { step: 1, .. }
+    ));
+    assert!(
+        !runner.step_sent,
+        "amount dispatch belongs to the next poll"
+    );
+    assert_quantity_packets(client, None);
+}
+
+fn quantity_submit_amount(runner: &mut ScenarioRunner, client: &mut Client) {
+    runner.tick(client);
+    assert!(matches!(
+        runner.status(),
+        RunnerStatus::Running { step: 1, .. }
+    ));
+    assert!(runner.step_sent);
+    assert_quantity_packets(client, Some(2));
+    assert!(!client.dialog_input_open, "real driver submits the prompt");
+}
+
+fn quantity_inventory(client: &mut Client, rows: &[(i32, i32)]) {
+    set_inv(client, rows);
+    let component = client
+        .iface_id(|iface| iface.r#type == ComponentType::TYPE_INV)
+        .unwrap();
+    client.side_icon[3] = component as i32;
+    let mut full = (component as u16).to_be_bytes().to_vec();
+    full.push(rows.len() as u8);
+    for &(id, count) in rows {
+        full.extend_from_slice(&((id + 1) as u16).to_be_bytes());
+        full.push(count as u8);
+    }
+    client.handle_packet(
+        ServerProt::UPDATE_INV_FULL,
+        &mut client::io::Packet::new(full),
+    );
+}
+
+fn quantity_result(client: &mut Client, shafts: i32, logs_left: i32, xp: i32) {
+    quantity_inventory(client, &[(946, 1), (1511, logs_left), (52, shafts)]);
+    client.stat_xp[9] = 500 + xp;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+}
+
+fn assert_quantity_failure(runner: &ScenarioRunner, predicate: &str, expected: &str) {
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("expected {expected}, got {:?}", runner.status());
+    };
+    assert!(message.contains(expected), "{message}");
+    let evidence = runner.evidence().expect("terminal failure evidence");
+    assert_eq!(evidence.outcome, "FAIL");
+    assert_eq!(evidence.predicate, predicate);
+    assert!(
+        evidence.message.as_deref().unwrap().contains(expected),
+        "{:?}",
+        evidence.message
+    );
+}
+
+#[test]
+fn fletching_make_x_fails_when_amount_prompt_never_opens() {
+    let (mut runner, mut client, _listener) = quantity_runner();
+    for _ in 0..20 {
+        if matches!(runner.status(), RunnerStatus::Failed(_)) {
+            break;
+        }
+        assert!(!runner.snapshot.count_dialog_open());
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+    }
+    assert_quantity_failure(
+        &runner,
+        "amount_prompt",
+        "step 1 (select arrow shafts Make X): amount_prompt not seen within 20 game ticks",
+    );
+    assert_eq!(runner.game_ticks_waited, 20);
+    assert!(!client.dialog_input_open);
+    assert_quantity_packets(&client, None);
+}
+
+#[test]
+fn fletching_make_x_fails_when_prompt_closes_before_amount() {
+    let (mut runner, mut client, _listener) = quantity_runner();
+    quantity_open_prompt(&mut runner, &mut client);
+    client.dialog_input_open = false;
+    runner.tick(&mut client);
+    assert_quantity_failure(
+        &runner,
+        "input_consumed(1511)>=2",
+        "step 2 (enter two logs): AnswerCount: refused NoCountDialog",
+    );
+    assert_quantity_packets(&client, None);
+}
+
+#[test]
+fn fletching_make_x_fails_on_one_log_result() {
+    let (mut runner, mut client, _listener) = quantity_runner();
+    quantity_open_prompt(&mut runner, &mut client);
+    quantity_submit_amount(&mut runner, &mut client);
+    quantity_result(&mut client, 15, 1, 5);
+    for _ in 0..30 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+    }
+    assert_quantity_failure(
+        &runner,
+        "input_consumed(1511)>=2",
+        "step 2 (enter two logs): input_consumed(1511)>=2 not seen within 30 game ticks",
+    );
+    assert_eq!(runner.game_ticks_waited, 30);
+    assert_quantity_packets(&client, Some(2));
+}
+
+#[test]
+fn fletching_make_x_passes_with_two_log_result() {
+    let (mut runner, mut client, _listener) = quantity_runner();
+    quantity_open_prompt(&mut runner, &mut client);
+    quantity_submit_amount(&mut runner, &mut client);
+    quantity_result(&mut client, 30, 0, 10);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let evidence = runner.evidence().expect("terminal pass evidence");
+    assert_eq!(evidence.outcome, "PASS");
+    assert_eq!(evidence.message, None);
+    assert_quantity_packets(&client, Some(2));
 }

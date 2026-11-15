@@ -547,7 +547,7 @@ pub struct ReturnObservation<'a> {
     pub here: WorldTile,
     pub now: u64,
     pub skill_stat: i32,
-    pub avoided: &'a [AvoidedTile; MAX_AVOID],
+    pub avoided: &'a [AvoidedTile],
     /// Packed collision used to keep Area r=1 return stands off tiles with
     /// no legal goals. `None` skips the filter (unit fixtures without a pack).
     pub collision: Option<nav_planner::contract::CollisionView<'a>>,
@@ -636,7 +636,7 @@ pub fn classify_placement(
     spot: &GatherSpot,
     method: &GatherMethod,
     scene: PlacementScene<'_>,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     now: u64,
 ) -> PlacementClass {
     let PlacementScene {
@@ -679,7 +679,7 @@ fn classify_fishing_placement(
     method: &GatherMethod,
     scene: PlacementScene<'_>,
     here: WorldTile,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     now: u64,
 ) -> PlacementClass {
     if matches!(spot.entity, EntityId::Loc(_)) {
@@ -708,7 +708,10 @@ fn classify_fishing_placement(
     let Some(targets) = known_targets(method) else {
         return PlacementClass::Absent;
     };
-    for npc in npcs.iter().filter(|npc| region_contains(bounds, npc.tile)) {
+    for npc in npcs
+        .iter()
+        .filter(|npc| region_contains(bounds, npc.network))
+    {
         let Some(id) = npc_type_id(npc) else {
             continue;
         };
@@ -728,7 +731,7 @@ fn classify_fishing_placement(
         }
     }
     if npcs.iter().any(|npc| {
-        region_contains(bounds, npc.tile)
+        region_contains(bounds, npc.network)
             && npc_type_id(npc).is_some_and(|id| {
                 spot.entity == EntityId::Npc(id)
                     && targets.iter().any(|target| {
@@ -750,7 +753,7 @@ pub fn select(
     method_indices: &[usize],
     settings: &GathererSettings,
     area: WorkArea,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     observation: SelectionObservation<'_>,
 ) -> SelectionResult {
     select_with_access(
@@ -790,7 +793,7 @@ fn select_with_access(
     method_indices: &[usize],
     settings: &GathererSettings,
     area: WorkArea,
-    avoided: &[AvoidedTile; MAX_AVOID],
+    avoided: &[AvoidedTile],
     observation: SelectionObservation<'_>,
     quest_snapshot: Option<api::snapshot::SnapshotView<'_>>,
 ) -> SelectionResult {
@@ -879,20 +882,25 @@ fn select_with_access(
                 let Some(bounds) = movement_bounds(spot) else {
                     continue;
                 };
-                for npc in npcs.iter().filter(|npc| region_contains(bounds, npc.tile)) {
-                    if access == AccessPolicy::Possible && !area.contains(npc.tile) {
+                for npc in npcs
+                    .iter()
+                    .filter(|npc| region_contains(bounds, npc.network))
+                {
+                    if access == AccessPolicy::Possible && !area.contains(npc.network) {
                         continue;
                     }
                     let Some(type_id) = npc_type_id(npc) else {
                         continue;
                     };
-                    if spot.entity != EntityId::Npc(type_id) || is_avoided(npc.tile, avoided, now) {
+                    if spot.entity != EntityId::Npc(type_id)
+                        || is_avoided(npc.network, avoided, now)
+                    {
                         continue;
                     }
                     let Ok(index) = i32::try_from(npc.index) else {
                         continue;
                     };
-                    if !danger.allows_live(npc.tile, spot.entity, snapshot) {
+                    if !danger.allows_live(npc.network, spot.entity, snapshot) {
                         continue;
                     }
                     fishing.reset_live(method_index, spot.id.0);
@@ -904,9 +912,9 @@ fn select_with_access(
                             method,
                             spot,
                             PlacementClass::Live,
-                            npc.tile,
+                            npc.network,
                             index,
-                            distance(here, npc.tile),
+                            distance(here, npc.network),
                         ),
                         skill_stat,
                     );
@@ -1624,17 +1632,18 @@ fn npc_type_id(npc: &NpcView) -> Option<i32> {
 }
 
 fn has_hazard_npc(npcs: &[NpcView], hazard_npcs: &[i32], tile: WorldTile) -> bool {
-    npcs.iter()
-        .any(|npc| npc.tile == tile && npc_type_id(npc).is_some_and(|id| hazard_npcs.contains(&id)))
+    npcs.iter().any(|npc| {
+        npc.network == tile && npc_type_id(npc).is_some_and(|id| hazard_npcs.contains(&id))
+    })
 }
 
-fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile; MAX_AVOID], now: u64) -> bool {
+fn is_avoided(tile: WorldTile, avoided: &[AvoidedTile], now: u64) -> bool {
     avoided
         .iter()
         .any(|entry| u64::from(entry.until) > now && entry.tile == tile)
 }
 
-fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile; MAX_AVOID]) -> u64 {
+fn avoid_until(spot: &GatherSpot, skill: GatherSkill, avoided: &[AvoidedTile]) -> u64 {
     avoided
         .iter()
         .filter(|entry| {
@@ -3561,7 +3570,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn fishing_spots_use_movement_boxes_and_do_not_target_hazards() {
+    fn fishing_spots_network_coords_use_path_heads_in_movement_and_hazards() {
         let bounds = SceneRegionInput {
             min_x: 3290,
             min_z: 3290,
@@ -3610,7 +3619,14 @@ pub(crate) mod tests {
                 PlacementScene {
                     world: &world,
                     locs: &[],
-                    npcs: &[npc(42, 309, target_tile)],
+                    npcs: &[{
+                        let mut npc = npc(42, 309, target_tile);
+                        npc.tile = WorldTile {
+                            x: target_tile.x + 20,
+                            ..target_tile
+                        };
+                        npc
+                    }],
                     hazard_npcs: &[],
                 },
                 area.anchor,
@@ -3642,7 +3658,14 @@ pub(crate) mod tests {
                 PlacementScene {
                     world: &world,
                     locs: &[],
-                    npcs: &[npc(43, 900, target_tile)],
+                    npcs: &[{
+                        let mut npc = npc(43, 900, target_tile);
+                        npc.tile = WorldTile {
+                            x: target_tile.x + 20,
+                            ..target_tile
+                        };
+                        npc
+                    }],
                     hazard_npcs: &[900],
                 },
                 area.anchor,
@@ -3695,7 +3718,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn selected_fishing_target_uses_npc_type_index_and_live_tile() {
+    fn selected_fishing_target_network_coords_use_npc_path_head() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -3771,7 +3794,13 @@ pub(crate) mod tests {
             ..GathererSettings::default()
         };
         let world = scene_around(tile);
-        let observed_npcs = [npc(42, type_index, tile)];
+        let mut observed = npc(42, type_index, tile);
+        observed.tile = WorldTile {
+            x: bounds.max_x + 1,
+            z: tile.z,
+            level: tile.level,
+        };
+        let observed_npcs = [observed];
         let selected = select(
             &catalog,
             &[method_index],
@@ -3817,7 +3846,9 @@ pub(crate) mod tests {
         .into_iter()
         .find(|moved| *moved != tile && area.contains(*moved) && region_contains(bounds, *moved))
         .expect("a moved fishing instance remains in its eligible movement box");
-        let moved_npc = [npc(43, type_index, moved_tile)];
+        let mut moved = npc(43, type_index, moved_tile);
+        moved.tile = tile;
+        let moved_npc = [moved];
         let reacquired = select(
             &catalog,
             &[method_index],
@@ -5654,6 +5685,54 @@ pub(crate) mod tests {
                 plan.products[..usize::from(plan.products_len)].contains(gem),
                 "incidental gem product {gem} missing from target yield"
             );
+        }
+    }
+
+    /// "Iron" spans a fast-handler method (regular rocks) and a normal-handler method (Haunted Mine veins).
+    /// Selection offers a rock only under the method whose handler it really runs, so a plan's method index
+    /// always carries the right tick behaviour.
+    #[test]
+    fn each_iron_rock_is_offered_under_exactly_the_method_of_its_own_handler() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let catalog = real_catalog();
+        let iron: Vec<&GatherMethod> = catalog.methods_for_resource("iron").collect();
+        assert_eq!(
+            iron.iter()
+                .map(|method| (method.id.0.as_ref(), method.tick_arm.delay_drop))
+                .collect::<Vec<_>>(),
+            [("mining.iron", false), ("mining.iron.get_ore_normal", true)]
+        );
+        let rocks = |method: &GatherMethod| -> Vec<&str> {
+            api::gather_methods::known_rows(&method.targets)
+                .iter()
+                .filter(|target| target.class == TargetClass::Resource)
+                .filter_map(|target| catalog.alias(target.entity))
+                .collect()
+        };
+        let regular = rocks(iron[0]);
+        let haunted = rocks(iron[1]);
+        assert!(regular.contains(&"ironrock1") && regular.contains(&"ironrock2"));
+        for vein in ["loc_4982", "loc_4983", "loc_4984"] {
+            assert!(haunted.contains(&vein), "{vein} runs mining_rock_normal");
+        }
+        assert!(
+            haunted.iter().all(|alias| !regular.contains(alias)),
+            "no rock is a target of both iron methods"
+        );
+        for method in iron {
+            let own = rocks(method);
+            for spot in complete_spots(method).expect("complete iron placements") {
+                if known_resource_target(method, spot.entity) {
+                    let alias = catalog.alias(spot.entity).expect("placed rocks are named");
+                    assert!(
+                        own.contains(&alias),
+                        "{} offers {alias}, which is not its own rock",
+                        method.id.0
+                    );
+                }
+            }
         }
     }
 

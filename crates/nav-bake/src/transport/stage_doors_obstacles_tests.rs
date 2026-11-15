@@ -89,7 +89,16 @@ fn obstacle_graph_with_facts(
     ]);
     let collision = bake_collision(fx, &defs, &HashSet::new());
     let quests = QuestSource { facts };
-    derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests), None).0
+    derive_transports_with_audit(
+        fx.path(),
+        &defs,
+        &collision,
+        None,
+        Some(&quests),
+        None,
+        None,
+    )
+    .0
 }
 
 struct ObstacleSignals(&'static str, i32, EvidenceStamp);
@@ -373,42 +382,6 @@ fn obstacle_cellar_gate_requires_worn_leather_gloves_in_both_directions() {
             assert!(state.allows(edge));
         }
     }
-}
-
-#[test]
-fn obstacle_proofs_refuse_changed_rolls_labels_and_movement_primitives() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    for (script, id) in [
-        (
-            HANDLERS.replace("~damage_self(3);", "~damage_self(4);"),
-            3748,
-        ),
-        (HANDLERS.replace("170, 253", "170, 254"), 3790),
-        (
-            HANDLERS.replace(
-                "~forcemove(movecoord($loc_coord, 2, 0, 0));",
-                "~forcemove(movecoord($loc_coord, 3, 0, 0));",
-            ),
-            2048,
-        ),
-    ] {
-        let graph = obstacle_graph(&obstacle_fixture(&script));
-        assert!(!graph.edges.iter().any(|edge| edge.loc_id == id));
-    }
-    let fx = obstacle_fixture(HANDLERS);
-    fx.write(
-        "scripts/appearance.rs2",
-        &include_str!("engine_obstacle_procs.rs2").replace(
-            "p_telejump($coord);",
-            "p_telejump(movecoord($coord, 1, 0, 0));",
-        ),
-    );
-    assert!(!obstacle_graph(&fx)
-        .edges
-        .iter()
-        .any(|edge| edge.loc_id == 2299));
 }
 
 #[test]

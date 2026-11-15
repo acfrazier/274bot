@@ -1752,10 +1752,6 @@ impl Family for WalkResilient {
             set_last_outcome(Some(WalkExecutorOutcome::Failed));
             return Begin::Refuse(reason);
         }
-        if opts.cross_zones.len() > 8 {
-            set_last_outcome(Some(WalkExecutorOutcome::Failed));
-            return Begin::Refuse("crossZones: more than 8 zone ids".into());
-        }
         if interrupted(cx) {
             set_last_outcome(Some(WalkExecutorOutcome::Interrupted));
             return Begin::Done(false);

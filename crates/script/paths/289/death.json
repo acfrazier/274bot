@@ -1859,6 +1859,7 @@
           "required": [],
           "terminal": false,
           "recovery_entry": null,
+          "order": "ordered",
           "steps": [
             {
               "id": "withdraw-blurberry-special",
@@ -2051,35 +2052,26 @@
               }
             },
             {
-              "id": "GAP-harold-dice-gamble",
-              "kind": "wait",
+              "id": "gamble-talk-harold",
+              "kind": "talk",
               "version": 1,
+              "advances": false,
               "args": {
-                "until": {
-                  "Any": [
-                    {
-                      "Fact": {
-                        "kind": "has_item",
-                        "version": 1,
-                        "args": {
-                          "obj": "death_iou"
-                        }
-                      }
-                    },
-                    {
-                      "Fact": {
-                        "kind": "has_item",
-                        "version": 1,
-                        "args": {
-                          "obj": "death_combination"
-                        }
-                      }
-                    }
-                  ]
+                "npc": "death_guard_equiproom",
+                "anchor": {
+                  "tile": [
+                    2905,
+                    3539,
+                    1
+                  ],
+                  "source": "C maps/m45_55.jm2:8246 (death_guard_equiproom 1078, Toad and Chicken first floor)"
                 },
-                "max_ticks": 20
+                "leash": 4,
+                "prefer": [
+                  "Would you like to gamble?"
+                ]
               },
-              "comment": "GAP: the gamble (death_guard_equiproom.rs2:207-249,70-124) needs 'Would you like to gamble?' then a p_countdialog stake (101..1000 coins, more than Harold's 100-coin purse, at most the coins carried), the death_dice main interface roll button (death_dice:com_28), a click-to-continue, and a win (automatic when very drunk, else player 2d6 > Harold's 2d6, ties lose and the stake goes to Harold). No Quester family answers a count dialog or clicks a custom main interface, so this step only waits 20 ticks for an IOU and fails with 'wait exhausted'; as a top-level step the parked Step field shows this id. Replace with the gamble family when it lands.",
+              "comment": "death_guard_equiproom.rs2:18-23,207-227: at stage 50 (very drunk) Harold's menu has 'Would you like to gamble?', then three pages ('Shure!', 'Place your betsh pleashe!', '*giggle*'), if_close, p_delay(0) and p_countdialog. The talk ends when the chat is closed; the count dialog is answered by the next step.",
               "skip_if": {
                 "Any": [
                   {
@@ -2103,6 +2095,21 @@
                 ]
               },
               "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "gamble-stake",
+              "kind": "answer_count",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "value": 101,
+                "max_ticks": 4,
+                "source": "death_guard_equiproom.rs2:227-249 p_countdialog, bet 1..1000 (:230,:235) and at most the coins carried (:239); Harold's purse is 100 (death_ig_commander.rs2:112), so a win with a stake over 100 sets harold_lostall (:135-137) and ends in the IOU (:153-168); max_ticks 4 = p_delay(0) (1 tick, :226) plus the observation tick"
+              },
+              "comment": "Stake 101 coins: one more than Harold's 100-coin purse, inside the 300-coin float. A very drunk Harold always loses (death_guard_equiproom.rs2:134).",
+              "skip_if": {
                 "Any": [
                   {
                     "Fact": {
@@ -2123,6 +2130,170 @@
                     }
                   }
                 ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "gamble-drain-stake-pages",
+              "kind": "talk",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "continue_only": true,
+                "gap_ticks": 1
+              },
+              "comment": "death_guard_equiproom.rs2:243-249: Harold's page 'Right...er...here goes...' (a sober Harold has two pages), then harold_roll opens the death_dice main interface (:87). The Continue that opens the interface ends the talk.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_iou"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "gamble-roll",
+              "kind": "if_button",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "component": 8421,
+                "max_ticks": 12,
+                "source": "death_dice:com_28 (pack/interface.pack:8422) 'Roll Dice!', handled by [if_button,death_dice:com_28] (death_guard_equiproom.rs2:46-47); its layer com_27 is unhidden at :99 after three p_delay(2) (:88,:92,:97), 9 ticks, so max_ticks is 12"
+              },
+              "comment": "Press 'Roll Dice!' once Harold's roll is done and the button layer is shown.",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_iou"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "All": []
+              }
+            },
+            {
+              "id": "gamble-continue",
+              "kind": "if_button",
+              "version": 1,
+              "advances": false,
+              "args": {
+                "component": 8423,
+                "max_ticks": 10,
+                "source": "death_dice:com_30 (pack/interface.pack:8424), a buttontype=pause component under com_29; com_29 is unhidden at :122 after two p_delay(2) (:107,:112), 6 ticks, then p_pausebutton waits (:123), so max_ticks is 10"
+              },
+              "comment": "Press the dice interface's Continue... (a pause button, so the resume press is sent). The script then runs if_close (:124).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_iou"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Not": {
+                  "Fact": {
+                    "kind": "modal_open",
+                    "version": 1,
+                    "args": {}
+                  }
+                }
+              }
+            },
+            {
+              "id": "gamble-drain-result",
+              "kind": "talk",
+              "version": 1,
+              "advances": true,
+              "args": {
+                "continue_only": true,
+                "gap_ticks": 1
+              },
+              "comment": "death_guard_equiproom.rs2:148-186: the haroldgamble_end queue runs once the dice interface is closed. Harold: 'Um...not enough money.', 'Heresh shome of it.' (coins), 'I owe you the resht!' and the IOU, with two item pages (:170-182). %death_equiproom becomes 55 (:179).",
+              "skip_if": {
+                "Any": [
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_iou"
+                      }
+                    }
+                  },
+                  {
+                    "Fact": {
+                      "kind": "has_item",
+                      "version": 1,
+                      "args": {
+                        "obj": "death_combination"
+                      }
+                    }
+                  }
+                ]
+              },
+              "settle": {
+                "Fact": {
+                  "kind": "stage_in",
+                  "version": 1,
+                  "args": {
+                    "quest": "death",
+                    "any": [
+                      "death:55"
+                    ]
+                  }
+                }
               }
             }
           ]

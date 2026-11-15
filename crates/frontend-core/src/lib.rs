@@ -19,6 +19,7 @@
 #[cfg(feature = "memory-profile")]
 pub mod bench;
 pub mod bot_projection;
+pub mod brief;
 pub mod bulk;
 pub mod capacity;
 pub mod command;
@@ -67,6 +68,7 @@ pub mod walk_map;
 pub mod walk_permissions;
 
 pub use bot_projection::{BotProjection, LogoutEligibility, StopEligibility};
+pub use brief::{notice_line, Brief, LogTarget, LINE_MAX, LOG_POINTER, SUMMARY_MAX};
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
 pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
@@ -97,7 +99,7 @@ pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Ou
 pub use prefs::UiPreferences;
 pub use profile_draft::{
     CurePoison, GuardianPolicy, ProfileDraft, ProfileView, SettingsDraft, SurvivalDraft,
-    SurvivalSettings, GUARDIAN_EVENTS, SURVIVAL_FIELDS,
+    SurvivalSettings, GUARDIAN_EVENTS, GUARDIAN_FIGHT_UNAVAILABLE, SURVIVAL_FIELDS,
 };
 pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRefused};
 pub use profile_form::{
@@ -134,11 +136,14 @@ pub use session::{
 pub use setting::{Setting, SettingStatus};
 pub use slot_view::{SlotView, StatusBuf};
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
-pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};
+pub use views::{
+    FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, ReasonLine, SlotDetail,
+};
 pub use walk_permissions::{
-    DangerLevel, WalkGlobals, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE, DANGER_THIS_WALK_LABEL,
-    GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, PREREQ_PERMISSION_LABELS, PREREQ_SCOPE_NOTE,
-    ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE, SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
+    danger_routing_tooltip, DangerLevel, WalkGlobals, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE,
+    DANGER_ROUTING_LEVELS, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS,
+    NEVER_DANGER_NOTE, PREREQ_PERMISSION_LABELS, PREREQ_SCOPE_NOTE, ROUTING_SCOPE_NOTE,
+    SCRIPT_SCOPE_NOTICE,
 };
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 
 use crate::game_data::Transmission;
 use crate::prereq_knowledge::Observation;
-use crate::quest_facts::QuestCatalog;
+use crate::quest_facts::{QuestCatalog, QuestFacts};
 use crate::selected::{FactKey, InclusiveRange, Knowledge, QuestGate, RunKey, SignalRange, Truth};
 use crate::snapshot::{Observed, QuestListStatus, QuestStatusView, SnapshotView};
 use std::sync::Arc;
@@ -89,17 +89,18 @@ pub fn quest_list_status(
 ) -> Option<Observed<QuestListStatus>> {
     let facts = quests.quest(quest).ok()?;
     let rows = snapshot.quest_statuses()?;
-    let status = status_for_display(&facts.display, rows.value)?;
+    let (_, status) = status_for_display(&facts.display, rows.value)?;
     Some(Observed {
         value: status,
         stamp: rows.stamp,
     })
 }
 
-fn status_for_display(display: &str, rows: &[QuestStatusView]) -> Option<QuestListStatus> {
+fn status_for_display(display: &str, rows: &[QuestStatusView]) -> Option<(usize, QuestListStatus)> {
     rows.iter()
-        .find(|row| row.name.eq_ignore_ascii_case(display))
-        .map(QuestStatusView::status)
+        .enumerate()
+        .find(|(_, row)| row.name.eq_ignore_ascii_case(display))
+        .map(|(index, row)| (index, row.status()))
 }
 
 /// Borrowed ordinary quest-list evaluation for a runner poll. The caller must
@@ -116,20 +117,17 @@ pub fn observe_quest_gate(
         QuestGate::Window(window) => window.quest.0.as_ref(),
     };
     let facts = quests.quest(quest_id).ok()?;
-    let status = status_for_display(&facts.display, rows.value).unwrap_or(QuestListStatus::Unknown);
+    let (index, status) = status_for_display(&facts.display, rows.value)
+        .unwrap_or((usize::MAX, QuestListStatus::Unknown));
     let truth = if !rows.stamp.meets(required_after) {
         Truth::Unknown
     } else {
         match gate {
             QuestGate::Complete(_) => status_truth(status),
-            QuestGate::Window(window) if window.signal == facts.varp => stage_colour_range(
-                status,
-                facts.complete,
-                facts.stage_domain,
-                facts.colour_authoritative,
-                facts.transmission,
-            )
-            .map_or(Truth::Unknown, |possible| window.values.test(&possible)),
+            QuestGate::Window(window) if window.signal == facts.varp => {
+                stage_colour_range(status, facts, snapshot.quest_green_since_fresh_login(index))
+                    .map_or(Truth::Unknown, |possible| window.values.test(&possible))
+            }
             QuestGate::Window(_) => Truth::Unknown,
         }
     };
@@ -149,15 +147,29 @@ fn status_truth(status: QuestListStatus) -> Truth {
 
 fn stage_colour_range(
     status: QuestListStatus,
-    complete: i32,
-    stage_domain: Option<InclusiveRange>,
-    colour_authoritative: bool,
-    transmission: Transmission,
+    facts: &QuestFacts,
+    green_since_login: bool,
 ) -> Option<InclusiveRange> {
-    if !colour_authoritative || transmission != Transmission::NotTransmitted || complete <= 0 {
+    let complete = facts.complete;
+    if facts.transmission != Transmission::NotTransmitted || complete <= 0 {
         return None;
     }
-    let domain = stage_domain?;
+    if status == QuestListStatus::Complete {
+        let range = if green_since_login {
+            facts
+                .completion_range_after_login
+                .or(facts.completion_range)
+        } else {
+            facts.completion_range
+        };
+        if let Some(range) = range {
+            return Some(range);
+        }
+    }
+    if !facts.colour_authoritative {
+        return None;
+    }
+    let domain = facts.stage_domain?;
     let (Some(domain_min), Some(domain_max)) = (domain.min, domain.max) else {
         return None;
     };
@@ -202,10 +214,7 @@ struct QuestListStatusEvidence {
     quest: FactKey,
     status: QuestListStatus,
     signal: FactKey,
-    complete: i32,
-    stage_domain: Option<InclusiveRange>,
-    colour_authoritative: bool,
-    transmission: Transmission,
+    stage_range: Option<InclusiveRange>,
 }
 /// Evidence copied from one observed quest-list frame. It retains only
 /// canonical quest facts needed for complete and stage-window evaluation.
@@ -228,15 +237,19 @@ impl QuestListEvidenceProvider {
         };
         let statuses = quests
             .iter()
-            .map(|facts| QuestListStatusEvidence {
-                quest: facts.id.clone(),
-                status: status_for_display(&facts.display, observed.value)
-                    .unwrap_or(QuestListStatus::Unknown),
-                signal: facts.varp.clone(),
-                complete: facts.complete,
-                stage_domain: facts.stage_domain,
-                colour_authoritative: facts.colour_authoritative,
-                transmission: facts.transmission,
+            .map(|facts| {
+                let (index, status) = status_for_display(&facts.display, observed.value)
+                    .unwrap_or((usize::MAX, QuestListStatus::Unknown));
+                QuestListStatusEvidence {
+                    quest: facts.id.clone(),
+                    status,
+                    signal: facts.varp.clone(),
+                    stage_range: stage_colour_range(
+                        status,
+                        facts,
+                        snapshot.quest_green_since_fresh_login(index),
+                    ),
+                }
             })
             .collect();
         Self {
@@ -270,14 +283,9 @@ impl EvidenceProvider for QuestListEvidenceProvider {
             };
             match gate {
                 QuestGate::Complete(_) => status_truth(status.status),
-                QuestGate::Window(window) if window.signal == status.signal => stage_colour_range(
-                    status.status,
-                    status.complete,
-                    status.stage_domain,
-                    status.colour_authoritative,
-                    status.transmission,
-                )
-                .map_or(Truth::Unknown, |possible| window.values.test(&possible)),
+                QuestGate::Window(window) if window.signal == status.signal => status
+                    .stage_range
+                    .map_or(Truth::Unknown, |possible| window.values.test(&possible)),
                 QuestGate::Window(_) => Truth::Unknown,
             }
         };
@@ -291,6 +299,11 @@ impl EvidenceProvider for QuestListEvidenceProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn captured_quest_rows_retain_only_one_stage_range() {
+        // Measured 56 B plus the default 64 B headroom (AGENTS.md tripwire rule).
+        assert!(std::mem::size_of::<QuestListStatusEvidence>() <= 120);
+    }
 
     #[test]
     fn reconnect_and_causal_changes_invalidate_but_idle_ticks_do_not() {
@@ -601,8 +614,20 @@ mod quest_list_tests {
         expected: Truth,
     ) {
         let facts = quests.quest(quest).unwrap();
-        let observed = stamp(run(), 10, 4);
         let snapshot = snapshot(vec![row(facts.display.to_string(), colour)], true);
+        assert_window_from_snapshot(quests, quest, &snapshot, min, max, expected);
+    }
+
+    fn assert_window_from_snapshot(
+        quests: &QuestCatalog,
+        quest: &str,
+        snapshot: &GameSnapshot,
+        min: i32,
+        max: i32,
+        expected: Truth,
+    ) {
+        let facts = quests.quest(quest).unwrap();
+        let observed = stamp(run(), 10, 4);
         let gate = QuestGate::Window(StageWindow {
             quest: facts.id.clone(),
             signal: facts.varp.clone(),
@@ -611,19 +636,125 @@ mod quest_list_tests {
                 max: Some(max),
             },
         });
-        let provider = evidence(quests, &snapshot, observed);
+        let provider = evidence(quests, snapshot, observed);
         assert_eq!(provider.test_gate(&gate, observed), expected);
         assert_eq!(
             observe_quest_gate(
                 quests,
                 &gate,
-                SnapshotView::new(Some(&snapshot), observed),
+                SnapshotView::new(Some(snapshot), observed),
                 observed,
             )
             .unwrap()
             .truth,
             expected
         );
+    }
+
+    #[test]
+    fn completed_hero_window_requires_unchanged_fresh_login_green() {
+        let Some(quests) = catalog() else {
+            return;
+        };
+        let facts = quests.quest("hero").unwrap();
+        // The queued Grip writer can set stage 5 without a delivery guard.
+        // A cold login clears it; direct writes still obey their prerequisites.
+        assert!(!facts.colour_authoritative);
+        assert!(facts.completion_range.unwrap().min.unwrap() <= 5);
+        assert_eq!(
+            facts.completion_range_after_login,
+            Some(InclusiveRange {
+                min: Some(15),
+                max: Some(15)
+            })
+        );
+        for colour in [0x00F800, 0xF8F800, 0xF80000] {
+            assert_window_from_colour(&quests, "hero", colour, 15, 15, Truth::Unknown);
+            let mut snapshot = snapshot(vec![row(facts.display.to_string(), colour)], true);
+            snapshot.seed_tick(1);
+            snapshot.begin_fresh_login_quest_colours();
+            let expected = if colour == 0x00F800 {
+                Truth::True
+            } else {
+                Truth::Unknown
+            };
+            assert_window_from_snapshot(&quests, "hero", &snapshot, 15, 15, expected);
+        }
+    }
+
+    #[test]
+    fn later_green_cannot_create_or_restore_the_login_proof() {
+        let Some(quests) = catalog() else {
+            return;
+        };
+        let display = quests.quest("hero").unwrap().display.to_string();
+        let mut snapshot = snapshot(vec![row(display.clone(), 0xF8F800)], true);
+        snapshot.seed_tick(1);
+        snapshot.begin_fresh_login_quest_colours();
+        snapshot.seed_quest_statuses(vec![row(display.clone(), 0x00F800)], true);
+        assert_window_from_snapshot(&quests, "hero", &snapshot, 15, 15, Truth::Unknown);
+        snapshot.begin_fresh_login_quest_colours();
+        assert_window_from_snapshot(&quests, "hero", &snapshot, 15, 15, Truth::True);
+        snapshot.seed_quest_statuses(vec![row(display.clone(), 0xF80000)], true);
+        snapshot.seed_quest_statuses(vec![row(display, 0x00F800)], true);
+        assert_window_from_snapshot(&quests, "hero", &snapshot, 15, 15, Truth::Unknown);
+    }
+
+    #[test]
+    fn login_proof_waits_for_player_info_and_does_not_cross_a_session_reset() {
+        let Some(quests) = catalog() else {
+            return;
+        };
+        let display = quests.quest("hero").unwrap().display.to_string();
+        let mut snapshot = snapshot(vec![row(display.clone(), 0x00F800)], true);
+        snapshot.begin_fresh_login_quest_colours();
+        assert_window_from_snapshot(&quests, "hero", &snapshot, 15, 15, Truth::Unknown);
+        snapshot.seed_tick(1);
+        snapshot.seed_quest_statuses(vec![row(display.clone(), 0x00F800)], true);
+        assert_window_from_snapshot(&quests, "hero", &snapshot, 15, 15, Truth::True);
+        snapshot.reset_session(client::client::ClientGens::default());
+        snapshot.seed_ingame(2);
+        snapshot.seed_tick(1);
+        snapshot.seed_quest_statuses(vec![row(display, 0x00F800)], true);
+        assert_window_from_snapshot(&quests, "hero", &snapshot, 15, 15, Truth::Unknown);
+    }
+
+    #[test]
+    fn retained_pre_login_green_cannot_seed_a_later_green_proof() {
+        let Some(quests) = catalog() else {
+            return;
+        };
+        let display = quests.quest("hero").unwrap().display.to_string();
+        let mut snapshot = snapshot(vec![row(display.clone(), 0x00F800)], true);
+        snapshot.begin_fresh_login_quest_colours();
+        snapshot.seed_quest_statuses(vec![row(display.clone(), 0xF80000)], true);
+        snapshot.seed_tick(1);
+        snapshot.seed_quest_statuses(vec![row(display.clone(), 0xF80000)], true);
+        snapshot.seed_quest_statuses(vec![row(display, 0x00F800)], true);
+        assert_window_from_snapshot(&quests, "hero", &snapshot, 15, 15, Truth::Unknown);
+    }
+
+    #[test]
+    fn weak_colour_proves_only_windows_covering_every_later_value() {
+        let Some(selected) = crate::game_data::test_data(ClientRevision::R289) else {
+            return;
+        };
+        let mut identity = selected.quest_identity().unwrap().clone();
+        let row = identity
+            .rows
+            .iter_mut()
+            .find(|row| row.id == "hero")
+            .unwrap();
+        row.colour_authoritative = false;
+        row.completion_range = Some(InclusiveRange {
+            min: Some(8),
+            max: Some(15),
+        });
+        let quests = QuestCatalog::from_identity(Some(&identity)).unwrap();
+        assert_window_from_colour(&quests, "hero", 0x00F800, 8, 15, Truth::True);
+        assert_window_from_colour(&quests, "hero", 0x00F800, 15, 15, Truth::Unknown);
+        assert_window_from_colour(&quests, "hero", 0xF8F800, 15, 15, Truth::Unknown);
+        assert_window_from_colour(&quests, "hero", 0xF80000, 15, 15, Truth::Unknown);
     }
 
     #[test]
@@ -635,10 +766,15 @@ mod quest_list_tests {
     }
 
     #[test]
-    fn window_gate_barrier_unknown_on_green() {
+    fn completed_priest_window_stays_weak_after_reachable_writer() {
         let Some(quests) = catalog() else {
             return;
         };
+        // drezel.rs2:8-12,138-147 can change the completed stage from 60 to 61.
+        // temple_guardian.rs2:1-12 also has a death-event reset; its separate
+        // attack guard does not prove that event unreachable to the extractor.
+        assert!(!quests.quest("priestperil").unwrap().colour_authoritative);
+        assert_window_from_colour(&quests, "priestperil", 0x00F800, 0, 61, Truth::True);
         assert_window_from_colour(&quests, "priestperil", 0x00F800, 61, 61, Truth::Unknown);
     }
 

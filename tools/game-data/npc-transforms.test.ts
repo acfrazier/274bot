@@ -9,7 +9,6 @@ import type {
     NpcTransformAction,
     NpcTransformClosureEvidence,
     NpcTransformEdge,
-    NpcTransformEngineSourceRefs,
     NpcTransformNpcType,
     NpcTransformProofInput,
     NpcTransformUnresolved,
@@ -23,21 +22,13 @@ function writeFixtureFiles(root: string, files: ReadonlyMap<string, string>) {
     }
 }
 
-const engineRefs = (): NpcTransformEngineSourceRefs => ({
-    numeric_dispatch: [1],
-    type_change: [2],
-    reversion: [3],
-    static_type_decoder: [4],
-});
-
 const npcType = (npc_type_id: number): NpcTransformNpcType => ({
     npc_type_id,
     category_id: null,
     config_state: 'complete',
-    source_refs: [npc_type_id],
 });
 
-const action = (npc_type_id: number, operation_fingerprint = 'same-action'): NpcTransformAction => ({
+const action = (npc_type_id: number, handler = 'same-action'): NpcTransformAction => ({
     npc_type_id,
     slot: 1,
     state: 'present',
@@ -45,18 +36,16 @@ const action = (npc_type_id: number, operation_fingerprint = 'same-action'): Npc
     trigger_code: 42,
     trigger_kind: 'type',
     trigger_target_id: npc_type_id,
-    operation_fingerprint,
-    source_refs: [npc_type_id + 10],
+    operations: { op: [handler], ap: null },
 });
 
-const transform = (from_npc_type_id: number | null, to_npc_type_id: number | null, source_refs: number[]): NpcTransformEdge => ({
+const transform = (from_npc_type_id: number | null, to_npc_type_id: number | null): NpcTransformEdge => ({
     from_npc_type_id,
     to_npc_type_id,
     kind: 'scripted',
     change_mode: 'keepall',
     duration_expression: '20',
     reverts_to_base_type: true,
-    source_refs,
 });
 
 function prove(overrides: Partial<NpcTransformProofInput> = {}) {
@@ -68,7 +57,6 @@ function prove(overrides: Partial<NpcTransformProofInput> = {}) {
         transform_edges: [],
         unresolved: [],
         engine_complete: true,
-        engine_source_refs: engineRefs(),
         ...overrides,
     });
 }
@@ -77,20 +65,18 @@ const unchanged = prove();
 assert.equal(unchanged.status, 'unchanged');
 assert.deepEqual(unchanged.reachable_npc_type_ids, [101]);
 assert.deepEqual(unchanged.mismatched_npc_type_ids, []);
-assert.deepEqual(unchanged.evidence_refs, [1, 111]);
 
 const temporaryClosure = prove({
     npc_types: [npcType(101), npcType(202), npcType(303)],
     actions: [action(101), action(202), action(303)],
     transform_edges: [
-        transform(101, 202, [20, 3]),
-        transform(202, 303, [21, 3]),
+        transform(101, 202),
+        transform(202, 303),
     ],
 });
 assert.equal(temporaryClosure.status, 'consistent');
 assert.deepEqual(temporaryClosure.reachable_npc_type_ids, [101, 202, 303]);
 assert.deepEqual(temporaryClosure.mismatched_npc_type_ids, []);
-assert.ok(temporaryClosure.evidence_refs.includes(3), 'the base-type reversion path remains part of the proof');
 
 const sameApDifferentOp = prove({
     npc_types: [npcType(101), npcType(202)],
@@ -98,9 +84,9 @@ const sameApDifferentOp = prove({
         action(101, 'OP=transform-first;AP=shared-ap'),
         action(202, 'OP=other-handler;AP=shared-ap'),
     ],
-    transform_edges: [transform(101, 202, [20])],
+    transform_edges: [transform(101, 202)],
 });
-assert.equal(sameApDifferentOp.status, 'inconsistent', 'the ordered OP/AP fingerprint distinguishes different OP handlers with the same AP handler');
+assert.equal(sameApDifferentOp.status, 'inconsistent', 'different OP handlers with the same AP handler are inconsistent');
 
 function runtimeEvidence(
     baseFingerprint: string,
@@ -109,17 +95,16 @@ function runtimeEvidence(
 ): NpcTransformClosureEvidence {
     return {
         schema: 1,
-        source_spans: [],
         npc_types: [npcType(101), npcType(202)],
         actions: [action(101, baseFingerprint), action(202, temporaryFingerprint)],
-        transform_edges: [transform(101, 202, [20, 3])],
+        transform_edges: [transform(101, 202)],
         unresolved: [],
         proofs,
-        engine: { complete: true, source_refs: engineRefs() },
+        engine: { complete: true },
     };
 }
 
-const reversionEdge = transform(101, 202, [20, 3]);
+const reversionEdge = transform(101, 202);
 const temporaryDifferent = prove({
     npc_type_id: 202,
     npc_types: [npcType(101), npcType(202)],
@@ -152,10 +137,9 @@ const dynamicUnresolved: NpcTransformUnresolved = {
     scope_slot: null,
     reason: 'dynamic_transform_target',
     expression: 'npc_param(next_npc_type)',
-    source_refs: [30],
 };
 const dynamic = prove({
-    transform_edges: [transform(101, null, [20])],
+    transform_edges: [transform(101, null)],
     unresolved: [dynamicUnresolved],
 });
 assert.equal(dynamic.status, 'unavailable');
@@ -165,13 +149,12 @@ assert.deepEqual(dynamic.unresolved_refs, [0]);
 const ambiguousContext = prove({
     npc_types: [npcType(101), npcType(202)],
     actions: [action(101), action(202)],
-    transform_edges: [transform(null, 202, [20])],
+    transform_edges: [transform(null, 202)],
     unresolved: [{
         scope_npc_type_id: null,
         scope_slot: null,
         reason: 'unknown_transform_context',
         expression: 'proc with source context unavailable',
-        source_refs: [31],
     }],
 });
 assert.equal(ambiguousContext.status, 'unavailable');
@@ -181,7 +164,7 @@ assert.deepEqual(ambiguousContext.unresolved_refs, [0]);
 const absentTargetAction = prove({
     npc_types: [npcType(101), npcType(202)],
     actions: [action(101)],
-    transform_edges: [transform(101, 202, [20])],
+    transform_edges: [transform(101, 202)],
 });
 assert.equal(absentTargetAction.status, 'inconsistent', 'a complete target config proves the absent slot is a mismatch');
 assert.deepEqual(absentTargetAction.mismatched_npc_type_ids, [202]);
@@ -348,7 +331,7 @@ return;
     const transformed = actionByPair.get('202:1')!;
     assert.equal(base.state, 'present');
     assert.equal(transformed.state, 'present');
-    assert.notEqual(base.operation_fingerprint, transformed.operation_fingerprint, 'same AP behavior with different OP behavior must have different pair fingerprints');
+    assert.notDeepEqual(base.operations, transformed.operations, 'same AP behavior with different OP behavior must have different parsed handler operations');
     const transformedProof = evidence.proofs.find(({ npc_type_id, slot }) => npc_type_id === 101 && slot === 1)!;
     assert.equal(transformedProof.status, 'inconsistent');
     assert.deepEqual(transformedProof.reachable_npc_type_ids, [101, 202]);
@@ -357,10 +340,6 @@ return;
     assert.equal(temporaryTargetProof.status, 'inconsistent', 'the extracted temporary form must include its different base handler');
     assert.deepEqual(temporaryTargetProof.reachable_npc_type_ids, [101, 202]);
     assert.ok(!runtimeNpcOperations(evidence, [], []).operations.some(({ npc_type_id, slot }) => npc_type_id === 202 && slot === 1));
-    const sharedApHeader = evidence.source_spans.findIndex(({ file, first }) => file === 'scripts/handlers.rs2' && first === 6);
-    assert.ok(sharedApHeader >= 0);
-    assert.ok(base.source_refs.includes(sharedApHeader));
-    assert.ok(transformed.source_refs.includes(sharedApHeader), 'both types resolve the same global AP handler');
 
     const barbarian = actionByPair.get('505:1')!;
     assert.equal(barbarian.trigger_kind, 'type', 'a bare NPC/category name collision resolves to the NPC type');
@@ -368,10 +347,7 @@ return;
     const categoryNpc = actionByPair.get('606:3')!;
     assert.equal(categoryNpc.trigger_kind, 'category', 'only an underscore-prefixed subject selects a category');
     assert.equal(categoryNpc.trigger_target_id, 3);
-    assert.ok(evidence.unresolved.some(({ reason, source_refs }) =>
-        reason === 'unknown_trigger_target'
-        && [16, 18].every(line => source_refs.some(ref => evidence.source_spans[ref]?.first === line)),
-    ), 'category-only bare names and category_ aliases remain unresolved');
+    assert.ok(evidence.unresolved.some(({ reason }) => reason === 'unknown_trigger_target'), 'category-only bare names and category_ aliases remain unresolved');
     const noHandler = actionByPair.get('808:3')!;
     assert.equal(noHandler.state, 'unknown', 'a configured option with no OP/AP handler has no comparable action');
     assert.equal(noHandler.trigger_kind, 'none', 'a configured option with no handler names no trigger target');
@@ -384,23 +360,15 @@ return;
     const opOnly = actionByPair.get('404:3')!;
     assert.equal(opOnly.state, 'present');
     assert.equal(opOnly.trigger_kind, 'type');
-    assert.ok(opOnly.operation_fingerprint, 'an OPNPC-only slot has a complete handler fingerprint');
+    assert.ok(opOnly.operations, 'an OPNPC-only slot has parsed handler operations');
     assert.equal(evidence.proofs.find(({ npc_type_id, slot }) => npc_type_id === 404 && slot === 3)?.status, 'unchanged');
 
     const globalAp = actionByPair.get('303:2')!;
     assert.equal(globalAp.state, 'present');
     assert.equal(globalAp.trigger_kind, 'global', '[apnpc2,_] resolves as the slot-wide global handler');
     assert.equal(globalAp.trigger_target_id, null);
-    assert.ok(globalAp.operation_fingerprint);
+    assert.ok(globalAp.operations);
     assert.equal(evidence.proofs.find(({ npc_type_id, slot }) => npc_type_id === 303 && slot === 2)?.status, 'unchanged');
-
-    const numericDispatchSpans = evidence.engine.source_refs.numeric_dispatch.map((ref) => evidence.source_spans[ref]);
-    const playerDispatchLines = numericDispatchSpans
-        .filter(({ file }) => file === 'src/engine/entity/Player.ts')
-        .map(({ first }) => first)
-        .sort((left, right) => left - right);
-    assert.deepEqual(playerDispatchLines, [4, 7, 10, 11, 12, 14], 'the proof cites OP lookup, AP fallback, and their engine order');
-    assert.ok(numericDispatchSpans.some(({ file }) => file === 'src/engine/script/ScriptProvider.ts'), 'the proof cites type, category, and global trigger precedence');
 } finally {
     fs.rmSync(extractionRoot, { recursive: true, force: true });
 }

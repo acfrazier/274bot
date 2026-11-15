@@ -4,7 +4,7 @@ import path from 'node:path';
 import { integer, parsePack, requireGatherText, walkContentFiles } from './common.ts';
 import { parseRs2Blocks, stripComment, walkContent, type Rs2Block } from './gathering-content.ts';
 import { parseBody, walkStatements, type Node, type Stmt } from './gathering-rs2.ts';
-import { postCompletionProgressWriters } from './prereq-preservation.ts';
+import { parseProgressStatements, postCompletionProgressWriters, questCompletionPrerequisites } from './prereq-preservation.ts';
 const QUEST_IDENTITY_SEEDS = [
     { id: 'cook', component: 'cook' },
     { id: 'runemysteries', component: 'runemysteries' },
@@ -40,6 +40,7 @@ type QuestIdentityOutputRow = {
     varp_id: number;
     complete: number;
     quest_points: number;
+    completion_range_after_login: { min: number; max: number } | null;
     unknown_sides: string[];
     requirements: QuestRequirements;
     members: boolean;
@@ -114,32 +115,6 @@ function parseQuestListText(text: string) {
         out.set(section, display);
     }
     return out;
-}
-
-function parseQuestEnumDisplays(text: string) {
-    const names = new Set<string>();
-    let inQuestNames = false;
-    let saw = false;
-    for (const raw of text.split(/\r?\n/)) {
-        const line = raw.trim();
-        if (!line || line.startsWith('//')) continue;
-        if (line.startsWith('[') && line.endsWith(']')) {
-            const section = line.slice(1, -1);
-            if (inQuestNames && section !== 'quest_names_enum') break;
-            inQuestNames = section === 'quest_names_enum';
-            if (inQuestNames) saw = true;
-            continue;
-        }
-        if (!inQuestNames || !line.startsWith('val=')) continue;
-        const comma = line.indexOf(',');
-        if (comma < 0) throw new Error(`quest.enum: malformed val line ${line}`);
-        const name = line.slice(comma + 1).trim();
-        if (!name) throw new Error(`quest.enum: empty display ${line}`);
-        if (names.has(name)) throw new Error(`quest.enum: duplicate display ${name}`);
-        names.add(name);
-    }
-    if (!saw || names.size === 0) throw new Error('quest.enum: missing [quest_names_enum]');
-    return names;
 }
 
 function scriptHas(text: string, pattern: RegExp, label: string) {
@@ -415,6 +390,7 @@ function questIdentityRowsFor377(
             varp_id: progress.varpId,
             complete: completion.complete,
             quest_points: questPoints ?? -1,
+            completion_range_after_login: null,
             unknown_sides: [...unknownSides].sort(),
             requirements,
             members: entry.members,
@@ -462,6 +438,7 @@ function barcrawlIdentityFor377(content: string, varpPack: ReadonlyMap<string, n
         varp_id: varpId,
         complete,
         quest_points: -1,
+        completion_range_after_login: null,
         unknown_sides: ['quest_points', 'requirements'],
         requirements: emptyMustHave(),
         members: true,
@@ -532,9 +509,12 @@ function questLocalConstant(content: string, component: string, name: string) {
     return values.size === 1 ? [...values][0] : null;
 }
 
+type ProgressRange = { min: number; max: number };
 type ProgressMetadata = {
     colour_authoritative: boolean;
-    stage_domain: { min: number; max: number } | null;
+    completion_range: ProgressRange | null;
+    completion_range_after_login: ProgressRange | null;
+    stage_domain: ProgressRange | null;
     transmission: 'posted_by_content' | 'not_transmitted' | 'unknown';
 };
 
@@ -555,10 +535,12 @@ function progressConstants(content: string, sourceFiles: readonly string[]) {
 }
 
 type ProgressWriter = { block: Rs2Block; line: number; right: string; nodes: Node[] | null };
+type ProgressWriterCensus = { byVariable: Map<string, ProgressWriter[]>; blocks: Rs2Block[] };
 
-export function questProgressWriters(content: string, sourceFiles: readonly string[]) {
+export function questProgressWriters(content: string, sourceFiles: readonly string[]): ProgressWriterCensus {
     const byVariable = new Map<string, ProgressWriter[]>();
     const blocks: Rs2Block[] = [];
+    const noConstants = new Map<string, number>();
     const add = (variable: string, block: Rs2Block, line: number, right: string, nodes: Node[] | null) => {
         const writers = byVariable.get(variable) ?? [];
         if (!writers.some((writer) => writer.block === block && writer.line === line && writer.right === right)) {
@@ -584,7 +566,9 @@ export function questProgressWriters(content: string, sourceFiles: readonly stri
             let nodes: Node[] | null = null;
             try {
                 nodes = parseBody(block.body);
-                walkStatements(nodes, (stmt) => addAssignment(block, stmt.line, stmt.text, nodes));
+                for (const statement of parseProgressStatements(block, '', noConstants, nodes)) {
+                    addAssignment(block, statement.line, statement.text, nodes);
+                }
             } catch {
                 // Physical assignment lines below still cover unparsed switch bodies.
             }
@@ -623,6 +607,7 @@ function varpTransmission(content: string, varp: string, sourceFiles: readonly s
     if (sawYes) return 'posted_by_content';
     return 'not_transmitted';
 }
+
 
 function lastLine(node: Node): number {
     if (node.kind === 'stmt') return node.line;
@@ -678,8 +663,6 @@ function stageDomain(
     let maximum = complete;
     let sawWriter = false;
     let safe = Number.isInteger(complete) && complete >= 0;
-    // Quest-prefixed constants can be bit indices for a different varp.
-    // Only this progress varp's actual writers may extend its completion bound.
     for (const writer of writersByVariable.get(variable) ?? []) {
         sawWriter = true;
         const literal = /^(-?\d+)$/.exec(writer.right);
@@ -757,51 +740,73 @@ function counterIncrementBound(nodes: Node[], variable: string, line: number, co
     return maximum;
 }
 
-/** Capture every production writer once; an opaque or unbounded write leaves its domain unknown. */
-export function captureProgressWriterDomains(content: string): ProgressWriterDomains {
-    const files = questIdentityAnalysisFiles(content);
-    const constants = progressConstants(content, files);
-    const census = questProgressWriters(content, files);
+/** Prove domains from the full writer census, retaining constant writes in opaque control syntax. */
+function progressWriterDomainsFromCensus(
+    constants: ReadonlyMap<string, number | null>,
+    census: ProgressWriterCensus,
+): ProgressWriterDomains {
     const unaccounted = new Set<string>();
-    const possibleWrites = (text: string) =>
-        [...text.matchAll(/%([A-Za-z0-9_]+)\s*(?:=(?!=)|[+*/-]=|\+\+|--)/g)].map((match) => match[1]);
-    for (const block of census.blocks) {
-        const possible = possibleWrites(block.body.map((line) => stripComment(line.text)).join('\n'));
-        if (possible.length === 0) continue;
-        let nodes: Node[];
-        try {
-            nodes = parseBody(block.body);
-        } catch {
-            for (const variable of possible) unaccounted.add(variable);
-            continue;
+    const noConstants = new Map<string, number>();
+    const possibleWrites = (text: string) => {
+        const code = stripComment(text).trim().replace(/^case\s+[^:]+:\s*/, '');
+        const variables = new Set<string>();
+        const lhs = /^([%$][A-Za-z0-9_]+(?:\s*,\s*[%$][A-Za-z0-9_]+)*)\s*(?:=(?!=)|[+*/-]=|\+\+|--)/.exec(code);
+        if (lhs) {
+            for (const match of lhs[1].matchAll(/%([A-Za-z0-9_]+)/g)) variables.add(match[1]);
         }
-        walkStatements(nodes, (statement) => {
-            const assignment = /^([%$][A-Za-z0-9_]+(?:\s*,\s*[%$][A-Za-z0-9_]+)*)\s*=\s*(.+)$/.exec(statement.text);
-            const targets = new Set(assignment ? [...assignment[1].matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]) : []);
-            for (const variable of possibleWrites(statement.text)) {
-                if (!targets.has(variable)) unaccounted.add(variable);
+        const inline = /(?:[;{}]|\)|\belse\b)\s*%([A-Za-z0-9_]+)\s*(?:=(?!=)|[+*/-]=|\+\+|--)/g;
+        for (const match of code.matchAll(inline)) variables.add(match[1]);
+        const prefix = /(?:^|[;{}])\s*(?:\+\+|--)\s*%([A-Za-z0-9_]+)/g;
+        for (const match of code.matchAll(prefix)) variables.add(match[1]);
+        return variables;
+    };
+    const accountWrites = (text: string, block: Rs2Block, line: number, allowParsedWrites = false) => {
+        const code = stripComment(text).trim().replace(/^case\s+[^:]+:\s*/, '');
+        const assignment = /^([%$][A-Za-z0-9_]+(?:\s*,\s*[%$][A-Za-z0-9_]+)*)\s*=(?!=)\s*(.+)$/.exec(code);
+        const targets = new Set(assignment ? [...assignment[1].matchAll(/%([A-Za-z0-9_]+)/g)].map((match) => match[1]) : []);
+        const knownAtLine = (variable: string) => (census.byVariable.get(variable) ?? [])
+            .some((writer) => writer.block === block && writer.line === line);
+        for (const variable of possibleWrites(text)) {
+            if (!targets.has(variable) && !(allowParsedWrites && knownAtLine(variable))) unaccounted.add(variable);
+        }
+    };
+    for (const block of census.blocks) {
+        try {
+            for (const statement of parseProgressStatements(block, '', noConstants)) {
+                accountWrites(statement.text, block, statement.line);
             }
-        });
+        } catch {
+            // The physical lines below still cover direct writes in opaque control syntax.
+        }
+        // A parsed statement can expose another write on the same line.
+        // Only the raw control line may borrow its known AST assignments.
+        for (const raw of block.body) accountWrites(raw.text, block, raw.line, true);
     }
     return (variable: string) => {
         const writers = census.byVariable.get(variable) ?? [];
-        if (writers.length === 0 || unaccounted.has(variable) || writers.some((writer) => writer.nodes === null)) return null;
+        if (writers.length === 0 || unaccounted.has(variable)) return null;
         let maximum = 0;
         for (const writer of writers) {
             const literal = /^-?\d+$/.test(writer.right);
             const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
             let bound: number | null | undefined = literal ? Number(writer.right) : constant ? constants.get(constant[1]) : null;
             if (!literal && !constant && writer.right.replace(/\s+/g, '') === `add(%${variable},1)`) {
-                // A one-time entry guard cannot bound repeated increments.
-                // Require the counter to start at min(limit-current, held)
-                // and to decrease once for each increment, without a yield.
-                bound = counterIncrementBound(writer.nodes!, variable, writer.line, constants);
+                if (!writer.nodes) return null;
+                bound = counterIncrementBound(writer.nodes, variable, writer.line, constants);
             }
             if (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound < 0 || bound > 0x7fffffff) return null;
             maximum = Math.max(maximum, bound);
         }
         return { min: 0, max: maximum };
     };
+}
+
+/** Capture every production writer once; an opaque or unbounded write leaves its domain unknown. */
+export function captureProgressWriterDomains(content: string): ProgressWriterDomains {
+    const files = questIdentityAnalysisFiles(content);
+    const constants = progressConstants(content, files);
+    const census = questProgressWriters(content, files);
+    return progressWriterDomainsFromCensus(constants, census);
 }
 
 function exactColourHelper(questsText: string) {
@@ -845,10 +850,58 @@ function progressMetadata(
             && helperIsExact
             && transmission === 'not_transmitted'
             && domain !== null,
+        completion_range: direct && helperIsExact && transmission === 'not_transmitted' && domain !== null
+            ? { min: complete, max: domain.max } : null,
+        completion_range_after_login: null,
         stage_domain: domain,
         transmission,
     };
 }
+function closePostCompletionRange(
+    blocks: readonly Rs2Block[],
+    variable: string,
+    initial: ProgressRange,
+    constants: ReadonlyMap<string, number>,
+    candidates: readonly ProgressWriter[],
+    completionPrerequisite: string | null,
+    domainForVariable: (name: string) => ProgressRange | null,
+    stageDomain: ProgressRange,
+    afterFreshLogin: boolean,
+) {
+    let range = initial;
+    let hasPossibleWriters = false;
+    for (;;) {
+        const possible = postCompletionProgressWriters(
+            blocks,
+            variable,
+            range,
+            constants,
+            candidates,
+            completionPrerequisite,
+            domainForVariable,
+            afterFreshLogin,
+        );
+        if (possible.length > 0) hasPossibleWriters = true;
+        let min = range.min;
+        let max = range.max;
+        let unknown = false;
+        for (const writer of possible) {
+            const literal = /^-?\d+$/.test(writer.right) ? Number(writer.right) : undefined;
+            const constant = /^\^([A-Za-z0-9_]+)$/.exec(writer.right);
+            const value = literal ?? (constant ? constants.get(constant[1]) : undefined);
+            if (value === undefined) {
+                unknown = true;
+                break;
+            }
+            min = Math.min(min, value);
+            max = Math.max(max, value);
+        }
+        if (unknown) return { range: stageDomain, hasPossibleWriters: true };
+        if (min === range.min && max === range.max) return { range, hasPossibleWriters };
+        range = { min, max };
+    }
+}
+
 
 export function extractQuestIdentityFacts(content: string, revision: number) {
     const quests = requireGatherText(content, 'scripts/general/scripts/quests.rs2');
@@ -884,8 +937,8 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
     const progressConstantMap = progressConstants(content, sourceFiles);
     const progressSources = questProgressWriters(content, sourceFiles);
     const progressWriterIndex = progressSources.byVariable;
+    const progressWriterDomains = progressWriterDomainsFromCensus(progressConstantMap, progressSources);
     const displays = parseQuestListText(questlistText);
-    const enumNames = parseQuestEnumDisplays(requireGatherText(content, 'scripts/general/configs/quest.enum'));
     const seedIds = new Set(QUEST_IDENTITY_SEEDS.map((seed) => seed.id));
     const rows = QUEST_IDENTITY_SEEDS.map((seed) => {
         const found = calls.filter((call) => call.component === seed.component);
@@ -910,20 +963,10 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         if (complete === undefined) throw new Error(`quest.constant: missing ^${seed.id}_complete`);
         if (questPoints === undefined) throw new Error(`quest.constant: missing ^${seed.id}_questpoints`);
         const metadata = progressMetadata(
-            content,
-            seed.id,
-            seed.component,
-            varp,
-            complete,
-            calls,
-            helperIsExact,
-            sourceFiles,
-            progressConstantMap,
-            progressWriterIndex,
+            content, seed.id, seed.component, varp, complete, calls, helperIsExact, sourceFiles, progressConstantMap, progressWriterIndex,
         );
         const display = displays.get(seed.component);
         if (!display) throw new Error(`questlist.if: missing text= for ${seed.component}`);
-        if (!enumNames.has(display)) throw new Error(`quest.enum: display mismatch for ${seed.id}: ${display}`);
         const list = listEntries.find((entry) => entry.component === seed.component);
         const journal = journals.get(seed.component);
         return {
@@ -935,6 +978,8 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             complete,
             quest_points: questPoints,
             colour_authoritative: metadata.colour_authoritative,
+            completion_range: metadata.completion_range,
+            completion_range_after_login: metadata.completion_range_after_login,
             stage_domain: metadata.stage_domain,
             transmission: metadata.transmission,
             unknown_sides: [] as string[],
@@ -993,16 +1038,7 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             ? (constants.get('blackknight_questpoints') ?? 0)
             : (constants.get(`${entry.component}_questpoints`) ?? 0);
         const metadata = progressMetadata(
-            content,
-            entry.component,
-            entry.component,
-            varp,
-            complete,
-            calls,
-            helperIsExact,
-            sourceFiles,
-            progressConstantMap,
-            progressWriterIndex,
+            content, entry.component, entry.component, varp, complete, calls, helperIsExact, sourceFiles, progressConstantMap, progressWriterIndex,
         );
         const journal = journals.get(entry.component);
         rows.push({
@@ -1014,6 +1050,8 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             complete,
             quest_points: questPoints,
             colour_authoritative: metadata.colour_authoritative,
+            completion_range: metadata.completion_range,
+            completion_range_after_login: metadata.completion_range_after_login,
             stage_domain: metadata.stage_domain,
             transmission: metadata.transmission,
             unknown_sides: [],
@@ -1034,6 +1072,8 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
             complete: 2,
             quest_points: 0,
             colour_authoritative: false,
+            completion_range: null,
+            completion_range_after_login: null,
             stage_domain: null,
             transmission: 'unknown',
             unknown_sides: [],
@@ -1049,24 +1089,45 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
     for (const [name, value] of progressConstantMap) {
         if (value !== null) postWriterConstants.set(name, value);
     }
-    const checked = new Set<string>();
-    const postCompletionVariables = new Set<string>();
+    const prerequisiteDomainCache = new Map<string, ProgressMetadata['stage_domain']>();
+    const prerequisiteDomainForVariable = (variable: string) => {
+        if (prerequisiteDomainCache.has(variable)) return prerequisiteDomainCache.get(variable) ?? null;
+        const domain = progressWriterDomains(variable);
+        prerequisiteDomainCache.set(variable, domain);
+        return domain;
+    };
     for (const row of rows) {
-        if (row.varp_id < 0 || row.complete <= 0 || postCompletionVariables.has(row.varp)) continue;
-        const key = `${row.varp}:${row.complete}`;
-        if (checked.has(key)) continue;
-        checked.add(key);
+        const initial = row.completion_range;
+        if (!initial || !row.stage_domain) continue;
         const writers = progressWriterIndex.get(row.varp) ?? [];
-        if (writers.length > 0 && postCompletionProgressWriters(
+        const completionPrerequisite = questCompletionPrerequisites(
+            progressSources.blocks, row.component, postWriterConstants,
+        );
+        const ordinary = closePostCompletionRange(
             progressSources.blocks,
             row.varp,
-            { min: row.complete, max: row.stage_domain?.max ?? 2147483647 },
+            initial,
             postWriterConstants,
             writers,
-        ).length > 0) postCompletionVariables.add(row.varp);
-    }
-    for (const row of rows) {
-        if (postCompletionVariables.has(row.varp)) row.colour_authoritative = false;
+            completionPrerequisite,
+            prerequisiteDomainForVariable,
+            row.stage_domain,
+            false,
+        );
+        row.completion_range = ordinary.range;
+        if (ordinary.hasPossibleWriters) row.colour_authoritative = false;
+        const afterLogin = closePostCompletionRange(
+            progressSources.blocks,
+            row.varp,
+            { min: row.complete, max: row.complete },
+            postWriterConstants,
+            writers,
+            completionPrerequisite,
+            prerequisiteDomainForVariable,
+            row.stage_domain,
+            true,
+        );
+        row.completion_range_after_login = afterLogin.range;
     }
     if (rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
         throw new Error('quest_identity: requirements must stay partial');
@@ -1075,17 +1136,14 @@ export function extractQuestIdentityFacts(content: string, revision: number) {
         class: 'revision-absent';
         alias: string;
         on_revision: number;
-        other_pin_id: number;
         copied: false;
         reason: string;
     }[] = [];
-    if (revision === 274) {
-        if (varpPack.has('routequest')) throw new Error('274: routequest is in varp.pack; do not copy it and do not emit revision-absent');
+    if (revision === 274 && !varpPack.has('routequest')) {
         coverage.push({
             class: 'revision-absent',
             alias: 'routequest',
             on_revision: 274,
-            other_pin_id: 387,
             copied: false,
             reason: '289-only quest, not copied onto 274',
         });

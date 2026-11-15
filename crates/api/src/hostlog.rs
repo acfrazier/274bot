@@ -301,7 +301,129 @@ pub fn debug_enabled() -> bool {
 /// this before formatting, so debug-only categories are free while off.
 #[inline]
 pub fn enabled(category: Category) -> bool {
-    (category.slot_log() && SINK.get().is_some()) || debug_enabled()
+    logged(category) || debug_enabled()
+}
+
+/// Whether a line in `category` reaches the in-app log ring: a sink is
+/// installed and the category is on the slot-log allowlist. Debug stderr
+/// and the per-session file do not count: a front end that points the
+/// operator at "the log" asks this, so the pointer holds with file logging
+/// off (the default).
+#[inline]
+pub fn logged(category: Category) -> bool {
+    category.slot_log() && SINK.get().is_some()
+}
+
+/// Longest summary a front end shows for a notice, in characters. The cause
+/// and the count fit before the cut.
+pub const SUMMARY_CHARS: usize = 100;
+
+/// Longest notice line a front end shows, in characters: a summary, the
+/// ` (see log)` pointer and a margin. At four bytes a character this is 448
+/// bytes, which one packed log line holds.
+pub const LINE_CHARS: usize = 112;
+
+/// `text` cut to at most `max` characters, ending with `…` when it was cut.
+/// Never splits a code point. Borrowed when the text already fits.
+pub fn cut_chars(text: &str, max: usize) -> Cow<'_, str> {
+    let Some((end, _)) = text.char_indices().nth(max) else {
+        return Cow::Borrowed(text);
+    };
+    let keep = max.saturating_sub(1);
+    let at = text.char_indices().nth(keep).map_or(end, |(at, _)| at);
+    let mut out = String::with_capacity(at + '…'.len_utf8());
+    out.push_str(&text[..at]);
+    out.push('…');
+    Cow::Owned(out)
+}
+
+/// Longest message the structured log store keeps, in bytes. The store cuts
+/// a longer line and ends it with `…`; [`pack`] keeps every line under it.
+pub const LINE_BYTES: usize = 512;
+
+/// Longest packed line, in bytes, head and marker included: [`LINE_BYTES`]
+/// minus a margin, because redaction can lengthen a line.
+pub const PACK_BYTES: usize = 480;
+
+/// Width of the widest marker this packer writes (`[100/100] `).
+const PACK_MARKER_BYTES: usize = "[100/100] ".len();
+
+/// The payload never falls below this, however long the head.
+const PACK_MIN_PAYLOAD: usize = 64;
+
+/// `items` as log lines that each fit [`PACK_BYTES`], loses nothing.
+///
+/// The items are flattened (`\n`, `\r` and `\t` become one space, as the
+/// store does), joined with `"; "` and cut into lines. A line ends after a
+/// `"; "` or `", "` when one fits, so an item (and a comma-separated part of
+/// one) stays whole where it can; text longer than a line without either is
+/// cut on a `char` boundary, never inside a code point. The
+/// payloads of all lines, in order and without their markers, concatenate to
+/// exactly the flattened join. Every line of a split result starts with
+/// `[i/n] `; one line has no marker.
+pub fn pack<S: AsRef<str>>(items: &[S]) -> Vec<String> {
+    pack_after_head(items, 0)
+}
+
+fn pack_after_head<S: AsRef<str>>(items: &[S], head_bytes: usize) -> Vec<String> {
+    let limit = PACK_BYTES
+        .saturating_sub(PACK_MARKER_BYTES + head_bytes)
+        .max(PACK_MIN_PAYLOAD);
+    let mut flat = String::new();
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            flat.push_str("; ");
+        }
+        flat.extend(item.as_ref().chars().map(|c| {
+            if matches!(c, '\n' | '\r' | '\t') {
+                ' '
+            } else {
+                c
+            }
+        }));
+    }
+    let mut chunks: Vec<&str> = Vec::new();
+    let mut rest = flat.as_str();
+    while !rest.is_empty() {
+        let end = if rest.len() <= limit {
+            rest.len()
+        } else {
+            let mut cut = limit;
+            while !rest.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            // End the line after the last `"; "` or `", "` that fits, so an
+            // item stays whole where the text has any.
+            rest.as_bytes()[..cut]
+                .windows(2)
+                .rposition(|pair| matches!(pair, [b';' | b',', b' ']))
+                .map_or(cut, |at| at + 2)
+        };
+        let (chunk, tail) = rest.split_at(end);
+        chunks.push(chunk);
+        rest = tail;
+    }
+    let count = chunks.len();
+    if count <= 1 {
+        return chunks.into_iter().map(str::to_owned).collect();
+    }
+    chunks
+        .into_iter()
+        .enumerate()
+        .map(|(index, chunk)| format!("[{}/{count}] {chunk}", index + 1))
+        .collect()
+}
+
+/// One [`emit`] per line of [`pack`]`(items)`, each prefixed with `head`, all
+/// in the same category, level and slot, in order. Nothing is written
+/// when the category goes nowhere.
+pub fn emit_packed<S: AsRef<str>>(to: Emit<'_>, head: &str, items: &[S]) {
+    if !(to.always_stderr || enabled(to.category)) {
+        return;
+    }
+    for line in pack_after_head(items, head.len()) {
+        emit(to, format_args!("{head}{line}"));
+    }
 }
 
 /// A slot's published tick; [`NO_TICK`] until its thread observes one.

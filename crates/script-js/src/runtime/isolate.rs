@@ -9,7 +9,10 @@ mod thread;
 #[path = "isolate/validation.rs"]
 mod validation;
 pub use supervisor::{capacity_status as isolate_capacity_status, IsolateCapacityStatus};
-pub use validation::{ValidationBatch, ValidationError};
+pub use validation::{
+    validation_batch_prefix_len, validation_card_fits, CardValidation, ValidationBatch,
+    ValidationError, MAX_VALIDATION_BATCH_CARDS,
+};
 
 pub use teardown::TeardownProof;
 use teardown::{TeardownPhase, TeardownState};
@@ -896,10 +899,13 @@ impl LoadIsolate {
 
     /// Queue a whole refresh on the single process ValidationSeat. The
     /// receiver owns the original cards, so the UI can fence the result.
+    /// Validation always uses the selected profile's content and bank facts.
     pub fn validate_prepared_batch(
         cards: Vec<crate::library::store::PreparedCard>,
+        game_data: std::sync::Arc<api::game_data::SelectedGameData>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<ValidationBatch, ValidationError> {
-        validation::validate_batch(cards)
+        validation::validate_batch(cards, game_data, named_banks)
     }
 
     #[expect(

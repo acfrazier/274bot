@@ -435,12 +435,12 @@ fn classify_target(
                 && npcs.iter().any(|npc| {
                     npc.index == target.npc_index as usize
                         && npc.r#type.and_then(|id| i32::try_from(id).ok()) == Some(type_id)
-                        && npc.tile == target.tile
+                        && npc.network == target.tile
                 })
             {
                 return TargetObservation::Active;
             }
-            for npc in npcs.iter().filter(|npc| npc.tile == target.tile) {
+            for npc in npcs.iter().filter(|npc| npc.network == target.tile) {
                 let Some(id) = npc.r#type.and_then(|id| i32::try_from(id).ok()) else {
                     continue;
                 };
@@ -474,7 +474,7 @@ fn has_hazard_npc(
     tile: api::snapshot::WorldTile,
 ) -> bool {
     npcs.iter().any(|npc| {
-        npc.tile == tile
+        npc.network == tile
             && npc
                 .r#type
                 .and_then(|id| i32::try_from(id).ok())
@@ -1124,14 +1124,28 @@ mod tests {
             GatherEnd::Hazard
         );
         assert_eq!(
-            classify_target(&target, &method, &[], &[npc(5, 900, tile)], &hazards).end(),
+            classify_target(
+                &target,
+                &method,
+                &[],
+                &[{
+                    let mut hazard = npc(5, 900, tile);
+                    hazard.tile = WorldTile {
+                        x: tile.x + 2,
+                        ..tile
+                    };
+                    hazard
+                }],
+                &hazards
+            )
+            .end(),
             GatherEnd::Hazard,
             "a content-derived ent at the old tree tile is a hazard, not a missing target"
         );
     }
 
     #[test]
-    fn fishing_identity_requires_the_same_type_index_and_tile() {
+    fn fishing_identity_network_coords_require_the_same_type_index_and_path_head() {
         let method = fixture_method();
         let tile = WorldTile {
             x: 3210,
@@ -1139,20 +1153,21 @@ mod tests {
             level: 0,
         };
         let target = target(EntityId::Npc(309), 42, tile);
+        let mut visible = npc(42, 309, tile);
+        visible.tile = WorldTile {
+            x: tile.x + 2,
+            ..tile
+        };
         assert_eq!(
-            classify_target(&target, &method, &[], &[npc(42, 309, tile)], &[901]),
+            classify_target(&target, &method, &[], &[visible], &[901]),
             TargetObservation::Active
         );
+        let mut moved = npc(42, 309, WorldTile { x: 3211, ..tile });
+        moved.tile = tile;
         assert_eq!(
-            classify_target(
-                &target,
-                &method,
-                &[],
-                &[npc(42, 309, WorldTile { x: 3211, ..tile })],
-                &[901],
-            ),
+            classify_target(&target, &method, &[], &[moved], &[901]),
             TargetObservation::Gone,
-            "the same NPC slot after movement ends this attempt for re-acquisition"
+            "the same NPC slot after network movement ends this attempt for re-acquisition"
         );
         assert_eq!(
             classify_target(&target, &method, &[], &[npc(43, 309, tile)], &[901]),

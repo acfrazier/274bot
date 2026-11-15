@@ -112,6 +112,7 @@ fn journal_value(journal: &JournalEvidence) -> serde_json::Value {
         "quest": journal.quest.as_ref(),
         "root": journal.root,
         "lines": lines,
+        "stage": crate::quest_journal::dragon_stage::journal_stage(&journal.quest, &journal.lines),
         "colour": journal.colour,
         "acquired": evidence_value(journal.acquired),
         "closed": evidence_value(journal.closed),

@@ -734,8 +734,32 @@ class Settings:
         self.vm_tool = Path(values["NIGHTLY_MAC_VM_TOOL"]).expanduser().resolve()
         self.source_repo = values.get("NIGHTLY_MAC_SOURCE_REPO", DEFAULT_SOURCE_REPO)
         self.base = values.get("NIGHTLY_MAC_BASE", DEFAULT_BASE)
-        self.status = Path(values.get("NIGHTLY_MAC_STATUS", str(self.runs / ".mac-nightly-running"))).expanduser()
+        self.status = Path(values.get(
+            "NIGHTLY_MAC_STATUS", str(self.runs / ".mac-nightly-running")
+        )).expanduser()
         self.disk_root = Path(values.get("NIGHTLY_MAC_DISK_ROOT", "/Volumes/dev-scratch")).expanduser()
+        jobs = [job.strip() for job in values.get("NIGHTLY_MAC_JOBS", "main,quest").split(",")]
+        if (not jobs or any(not job for job in jobs) or len(set(jobs)) != len(jobs)
+                or any(job not in ("main", "quest") for job in jobs)):
+            raise NightlyError(
+                "NIGHTLY_MAC_JOBS must be a comma-separated list of main and/or quest"
+            )
+        self.jobs = tuple(jobs)
+        steps_value = values.get("NIGHTLY_MAC_STEPS")
+        self.steps: Optional[str] = None
+        if steps_value is not None:
+            steps = [step.strip() for step in steps_value.split(",")]
+            if (not steps or any(not step for step in steps) or len(set(steps)) != len(steps)
+                    or any(step not in ("lanes", "panel", "tui") for step in steps)):
+                raise NightlyError(
+                    "NIGHTLY_MAC_STEPS must be a comma-separated list of lanes, panel, or tui"
+                )
+            self.steps = ",".join(steps)
+        self.lanes = values.get("NIGHTLY_MAC_LANES")
+        if self.lanes is not None:
+            self.lanes = self.lanes.strip()
+            if not self.lanes:
+                raise NightlyError("NIGHTLY_MAC_LANES cannot be empty")
         try:
             self.min_free_gib = int(values.get("NIGHTLY_MAC_MIN_FREE_GIB", str(MIN_FREE_GIB)))
         except ValueError as error:
@@ -759,7 +783,6 @@ class Settings:
             (self.engine_a / "start-289.sh", "Engine A start script"),
             (self.engine_q / "engine/package-lock.json", "Engine Q package lock"),
             (self.engine_q / "start-289q.sh", "Engine Q start script"),
-            (self.root / "fixtures/274bot-289-v18.navpack", "nightly nav fixture"),
             (self.root / "fixtures/inspect.fb", "nightly inspect fixture"),
             (self.isohome, "isohome helper"),
             (self.vm_tool, "mac_vm.py"),
@@ -1606,7 +1629,7 @@ class NightlyOrchestrator:
             "NIGHTLY_FRESH_TREES": "1",
             "NIGHTLY_CATALOG": paths["catalog"],
             "NIGHTLY_NAV_SNAPSHOT": paths["nav_snapshot"],
-            "NIGHTLY_NAV_FIXTURE": f"{paths['fixtures']}/274bot-289-v18.navpack",
+            "NIGHTLY_NAV_FIXTURE": f"{paths['fixtures']}/274bot-289-v19.navpack",
             "NIGHTLY_INSPECT_BASELINE": f"{paths['fixtures']}/inspect.fb",
             "NIGHTLY_QUIET_LOCK": paths["quiet_lock"],
             "NIGHTLY_ISOHOME": tools["isohome"],
@@ -1622,7 +1645,7 @@ class NightlyOrchestrator:
             "NIGHTLY_TARGET_CAP_GB": "32",
             "NIGHTLY_MIN_FREE_GB": "35",
             "NIGHTLY_JOB": job,
-            "NIGHTLY_STEPS": "lanes,panel,tui" if main else "panel,tui",
+            "NIGHTLY_STEPS": self.settings.steps or ("lanes,panel,tui" if main else "panel,tui"),
             "NIGHTLY_PROFILE": "local-289" if main else "local-289q",
             "NIGHTLY_ENGINE_LABEL": "Engine A" if main else "Engine Q",
             "NIGHTLY_GAME_PORT": "44594" if main else "44694",
@@ -1648,6 +1671,8 @@ class NightlyOrchestrator:
         command.extend(f"{key}={value}" for key, value in env.items())
         command.extend([tools["python"], "-u", f"{paths['runner']}/tools/nightly/run_nightly.py",
                         "--branch", branch])
+        if self.settings.lanes is not None:
+            command.extend(["--lanes", self.settings.lanes])
         return command
 
     def export_runs(self) -> None:
@@ -1724,7 +1749,7 @@ class NightlyOrchestrator:
                         self.active_job = branch
                         self.write_status(f"running branch {branch}")
                         log(f"starting exact commit {self.pins[branch]} for {branch}")
-                        for job in ("main", "quest"):
+                        for job in self.settings.jobs:
                             if self.sync_quiet_lock():
                                 log(f"skipped {job} for {branch}; MAC-QUIET.lock is present")
                                 break

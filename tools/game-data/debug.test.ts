@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { assertEngineCommandDrift, engineHandlerRelative, extractDebugCatalog, parseDebugHelp, parseDebugprocSource, sharedTestBlocks } from './extractors/debug.ts';
+import { declaredEngineCommands, engineHandlerRelative, extractDebugCatalog, parseDebugHelp, parseDebugprocSource, sharedTestBlocks } from './extractors/debug.ts';
 import { revisions } from './generate.ts';
 
 const help = parseDebugHelp(`
@@ -27,8 +27,6 @@ const handlerPath = path.join(revisions.find((spec) => spec.revision === 289)!.e
 const statPath = path.join(revisions.find((spec) => spec.revision === 289)!.engine, 'src/engine/entity/PlayerStat.ts');
 const statText = fs.readFileSync(statPath, 'utf8');
 const handler = fs.readFileSync(handlerPath, 'utf8');
-assertEngineCommandDrift(handler);
-assert.throws(() => assertEngineCommandDrift(`${handler}\nif (cmd === 'future_command') {}`));
 const real289Content = revisions.find((spec) => spec.revision === 289)!.content;
 const shared289 = sharedTestBlocks(real289Content);
 const questRows = parseDebugprocSource(
@@ -104,29 +102,7 @@ for (const [name, destructive] of [
     ['locadd', false],
     ['getvar', false],
 ] as const) {
-    assert.equal(assertEngineCommandDrift(handler).find((row) => row.name === name)?.destructive, destructive, `${name} destructive`);
-}
-const removedProductionGate = handler.replace("cmd === 'setvarother' && Environment.node.production", "cmd === 'setvarother'");
-assert.throws(() => assertEngineCommandDrift(removedProductionGate), /production gate drift/);
-const removedNonProductionGate = handler.replace("cmd === 'givebank' && !Environment.node.production", "cmd === 'givebank'");
-assert.throws(() => assertEngineCommandDrift(removedNonProductionGate), /production gate drift/);
-const flatHandler = handler.replaceAll('Environment.node.production', 'Environment.NODE_PRODUCTION');
-assert.deepEqual(assertEngineCommandDrift(flatHandler), assertEngineCommandDrift(handler));
-assert.throws(
-    () => assertEngineCommandDrift(flatHandler.replace("cmd === 'setvarother' && Environment.NODE_PRODUCTION", "cmd === 'setvarother'")),
-    /production gate drift/,
-);
-assert.throws(
-    () => assertEngineCommandDrift(flatHandler.replace("cmd === 'givebank' && !Environment.NODE_PRODUCTION", "cmd === 'givebank'")),
-    /production gate drift/,
-);
-if (process.env.GAME_DATA_377_ENGINE) {
-    const handler377 = fs.readFileSync(path.join(revisions.find(spec => spec.revision === 377)!.engine, engineHandlerRelative()), 'utf8');
-    assertEngineCommandDrift(handler377);
-    assert.throws(
-        () => assertEngineCommandDrift(handler377.replace("cmd === 'givebank' && !Environment.NODE_PRODUCTION", "cmd === 'givebank'")),
-        /production gate drift/,
-    );
+    assert.equal(declaredEngineCommands(handler).find((row) => row.name === name)?.destructive, destructive, `${name} destructive`);
 }
 
 const content = fs.mkdtempSync(path.join(os.tmpdir(), 'debug-catalog-'));

@@ -136,6 +136,17 @@ export default class T extends LoopingBot {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
 }
 
+/// rs2b0t's `reader.questStatuses()` returns `[]` while the quest tab is not loaded (no side-tab
+/// interface, or no rows under it), so `Quests.all()` is an empty list and `Quests.status()` is
+/// `'unknown'`; neither throws. Native supplies that answer, as the fresh Tutorial Island account
+/// posts no quest rows (`quest_statuses_available` is false).
+fn assert_unposted_tab_reads_as_unloaded(value: &serde_json::Value) {
+    assert_eq!(value["unavailable"], false, "{value:?}");
+    assert_eq!(value["all"], serde_json::json!([]), "{value:?}");
+    assert_eq!(value["waterfall"], "unknown", "{value:?}");
+    assert_eq!(value["missing"], "unknown", "{value:?}");
+}
+
 fn tick(iso: &LoadIsolate, bytes: Vec<u8>, tick: u64) -> serde_json::Value {
     iso.post_snapshot(bytes);
     iso.on_game_tick(tick);
@@ -395,7 +406,7 @@ fn a_first_post_without_the_pair_writes_no_property() {
 }
 
 #[test]
-fn changed_snapshot_clears_a_missing_quest_tab_to_unavailable() {
+fn changed_snapshot_clears_a_missing_quest_tab_to_an_unloaded_list() {
     let iso = spawn();
     let rows = [QuestStatusInput {
         name: "Waterfall Quest",
@@ -440,8 +451,7 @@ fn changed_snapshot_clears_a_missing_quest_tab_to_unavailable() {
         false,
     );
     let value = tick(&iso, delta, 3);
-    assert_eq!(value["unavailable"], true);
-    assert!(value["all"].is_null());
+    assert_unposted_tab_reads_as_unloaded(&value);
     iso.join();
 }
 
@@ -500,15 +510,14 @@ fn a_rebuilt_row_with_a_new_id_re_posts_the_quest_tab() {
 }
 
 #[test]
-fn buffer_without_quest_rows_keeps_the_query_explicitly_unavailable() {
+fn buffer_without_quest_rows_reads_as_an_unloaded_list() {
     let iso = spawn();
     let snap = base_snapshot();
     let (_, fingerprint) = encode_snapshot_delta(None, &snap, false);
     let (old_like_delta, _) = encode_snapshot_delta(Some(&fingerprint), &snap, false);
 
     let value = tick(&iso, old_like_delta, 1);
-    assert_eq!(value["unavailable"], true);
-    assert!(value["all"].is_null());
+    assert_unposted_tab_reads_as_unloaded(&value);
     iso.join();
 }
 
@@ -561,8 +570,7 @@ fn separate_isolates_do_not_share_quest_rows() {
     );
 
     assert_eq!(first_value["waterfall"], "complete");
-    assert_eq!(second_value["unavailable"], true);
-    assert!(second_value["all"].is_null());
+    assert_unposted_tab_reads_as_unloaded(&second_value);
     first.join();
     second.join();
 }

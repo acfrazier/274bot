@@ -564,20 +564,27 @@ fn resolve_ladder_stair_rules(
     }
 }
 
-/// Read the canonical animation-only climb helper's delay. A changed helper
-/// with an extra gate or side effect cannot certify a new direct climb.
+/// Read the climb helper's delay: the one top-level literal `p_delay` of
+/// `[proc,climb_ladder]`, which is modelled by name as an animation-only
+/// climb.
 fn climb_helper_ticks(text: &str) -> Option<i32> {
     let bodies = proc_bodies(text, "climb_ladder");
     let [body] = bodies.as_slice() else {
         return None;
     };
-    let flat = normalized_body(body);
-    let delay = flat
-        .strip_prefix(
-            "if($up=true){anim(human_reachforladder,0);}else{anim(human_pickupfloor,0);}p_delay(",
-        )?
-        .strip_suffix(");p_telejump($coord);")?;
-    let delay = int_or_null(delay)?;
+    let mut delays = parse_body(body)?
+        .into_iter()
+        .filter_map(|statement| match statement {
+            Stmt::Call(name, args) if name == "p_delay" => match args.as_slice() {
+                [Expr::Num(delay)] => Some(Some(*delay)),
+                _ => Some(None),
+            },
+            _ => None,
+        });
+    let delay = delays.next()??;
+    if delays.next().is_some() {
+        return None;
+    }
     delay_ticks(delay)
 }
 

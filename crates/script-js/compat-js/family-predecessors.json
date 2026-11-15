@@ -4,7 +4,7 @@
   "frozen_revision": "ae56ccc95ba5681b12f1f66ec2adea14427fe497",
   "base_predecessors": [
     "F0",
-    "T1.3",
+    "T1.3b",
     "T2.1"
   ],
   "families": [
@@ -16,13 +16,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -45,13 +45,13 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.2",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T2.2",
         "T5.1"
@@ -75,12 +75,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -102,12 +102,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -129,12 +129,12 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -156,12 +156,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -183,13 +183,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -212,12 +212,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -239,12 +239,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -266,12 +266,12 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -293,12 +293,12 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -320,12 +320,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -347,13 +347,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -376,12 +376,12 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -403,12 +403,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -430,12 +430,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -457,12 +457,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -484,12 +484,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -511,12 +511,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -538,12 +538,12 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -565,13 +565,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -594,12 +594,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -621,12 +621,12 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -648,12 +648,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -675,12 +675,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -702,12 +702,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -729,12 +729,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -756,12 +756,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -783,12 +783,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -810,12 +810,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -837,13 +837,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -866,12 +866,12 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -893,13 +893,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -922,13 +922,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -951,12 +951,12 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -978,13 +978,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -1007,13 +1007,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -1036,12 +1036,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -1063,13 +1063,13 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1",
         "T5.1"
       ],
@@ -1092,12 +1092,12 @@
       "activation_state": "not-activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {
@@ -1119,12 +1119,12 @@
       "activation_state": "activated",
       "canonical_endpoint_predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "predecessors": [
         "F0",
-        "T1.3",
+        "T1.3b",
         "T2.1"
       ],
       "counts": {

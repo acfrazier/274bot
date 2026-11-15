@@ -20,6 +20,7 @@ pub(crate) mod navigation;
 pub(crate) mod pair;
 pub(crate) mod prayer;
 pub(crate) mod production;
+pub(crate) mod quantity;
 pub(crate) mod quester;
 pub(crate) mod ranging_guild;
 pub(crate) mod render;
@@ -127,6 +128,7 @@ pub(crate) use production::{
     thiever_guard_no_bank_scenario, thiever_scenario, vial_filler_east_scenario,
     vial_filler_scenario, wildy_agility_scenario,
 };
+pub(crate) use quantity::fletching_make_x_scenario;
 pub(crate) use quester::{
     quester_cook_login_scenario, quester_cook_restart_scenario, quester_cook_resume_scenario,
     quester_cook_scenario, quester_path_scenario, quester_queue_scenario,

@@ -13,14 +13,13 @@
 //! map/<revision>/catalogues/<key>/…       the published catalogue directory, byte for byte
 //! ```
 //!
-//! The map cache installs each artifact only for exactly the bound client
-//! cache's identity for that artifact (revision, decoded content, bake or
-//! derive policy); shipped data for any other identity stays on disk,
-//! unused. Installing terrain copies each tile into the key's partial
-//! directory after checking its length and SHA-256 against the shipped
-//! image manifest (itself pinned by the description's receipt), records it
-//! by that receipt and publishes through the same writer and atomic rename
-//! as a local bake, so readers open it like any other ready terrain.
+//! The map cache selects shipped artifacts by revision, without comparing
+//! current content or producer policy. Installing terrain copies each tile
+//! into the revision's partial directory after checking its length and
+//! SHA-256 against the release's own image manifest (itself pinned by the
+//! description's receipt). The same writer records the receipt and publishes
+//! through the same atomic rename as a local bake, so readers open it like
+//! any other ready terrain.
 //! Installing the catalogue checks the shipped manifest against its
 //! description receipt and the payload against the manifest's receipt and
 //! record count, then hands the decoded catalogue to the same writer and
@@ -32,8 +31,9 @@
 //! consented bake to adopt). Shipped files are only ever read.
 
 use super::{
-    atomic_write, read_bounded, BakePlan, BakeWriter, MapBakeCursor, MapBakeCursorOutput,
-    MapBakeCursorStep, MapCacheError, MapCacheRoot, MapProgressSnapshot, MapStage,
+    atomic_write, cache_root_key, read_bounded, ArtifactKind, BakePlan, BakeWriter, MapBakeCursor,
+    MapBakeCursorOutput, MapBakeCursorStep, MapCacheError, MapCacheRoot, MapProgressSnapshot,
+    MapStage,
 };
 use api::work::{Checkpoint, MapBakePhase, StepContext};
 use nav_planner::map::cache::{BakeStage, CompletedUnit, UnitKey};
@@ -108,15 +108,10 @@ impl ShippedMap {
             .join(identity.key()?.0.to_string()))
     }
 
-    /// The terrain shipped for exactly `identity`. `None` when nothing is
-    /// shipped for its revision, or the shipped terrain belongs to another
-    /// client cache or bake policy (it stays on disk, unused).
-    pub fn find_images(
-        &self,
-        identity: ImageIdentity,
-    ) -> Result<Option<ShippedImages>, MapCacheError> {
+    /// Terrain shipped for `revision`; `None` when its description is absent.
+    pub fn find_images(&self, revision: u16) -> Result<Option<ShippedImages>, MapCacheError> {
         let bytes = match read_bounded(
-            &self.images_description_path(identity.revision),
+            &self.images_description_path(revision),
             MAX_SHIPPED_IMAGES_BYTES,
         ) {
             Ok(bytes) => bytes,
@@ -125,22 +120,13 @@ impl ShippedMap {
             }
             Err(error) => return Err(error),
         };
-        match ShippedImages::decode(&bytes, identity) {
-            Ok(shipped) => Ok(Some(shipped)),
-            Err(MapError::Identity) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        Ok(Some(ShippedImages::decode(&bytes)?))
     }
 
-    /// The catalogue shipped for exactly `identity`. `None` when nothing is
-    /// shipped for its revision, or the shipped catalogue belongs to another
-    /// client cache or derive policy (it stays on disk, unused).
-    pub fn find_catalogue(
-        &self,
-        identity: CatalogueIdentity,
-    ) -> Result<Option<ShippedCatalogue>, MapCacheError> {
+    /// Catalogue shipped for `revision`; `None` when its description is absent.
+    pub fn find_catalogue(&self, revision: u16) -> Result<Option<ShippedCatalogue>, MapCacheError> {
         let bytes = match read_bounded(
-            &self.catalogue_description_path(identity.revision),
+            &self.catalogue_description_path(revision),
             MAX_SHIPPED_CATALOGUE_BYTES,
         ) {
             Ok(bytes) => bytes,
@@ -149,29 +135,26 @@ impl ShippedMap {
             }
             Err(error) => return Err(error),
         };
-        match ShippedCatalogue::decode(&bytes, identity) {
-            Ok(shipped) => Ok(Some(shipped)),
-            Err(MapError::Identity) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+        Ok(Some(ShippedCatalogue::decode(&bytes)?))
     }
 
-    /// Release packaging: ship the terrain `root` published for `identity`.
+    /// Release packaging: ship the terrain `root` published for `revision`.
     /// Every tile is checked against its receipt as it is copied, and the
     /// description is written last. Existing shipped terrain is never
     /// replaced.
     pub fn ship_images_from(
         &self,
         root: &MapCacheRoot,
-        identity: ImageIdentity,
+        revision: u16,
     ) -> Result<ShippedImages, MapCacheError> {
         // The shared lease keeps a pruner away while the directory is copied.
         let mut capacity = root.try_acquire_capacity()?.ok_or(MapCacheError::Busy)?;
-        let _ready = root
-            .open_images(identity, &mut capacity)?
+        let ready = root
+            .open_images(revision, &mut capacity)?
             .ok_or(MapCacheError::TerrainNotBaked)?;
+        let identity = ready.manifest().identity;
         drop(capacity);
-        let source = root.image_dir(identity)?;
+        let source = root.image_dir(revision);
         let description = self.images_description_path(identity.revision);
         let target = self.image_dir(identity)?;
         if description.exists() || target.exists() {
@@ -181,7 +164,7 @@ impl ShippedMap {
             )));
         }
         let bytes = read_bounded(&source.join("manifest.json"), MAX_JSON_BYTES)?;
-        let manifest = ImageManifest::decode(&bytes, identity)?;
+        let manifest = ImageManifest::decode(&bytes)?;
         let shipped = ShippedImages::describe(&manifest, &bytes)?;
         let mut buffer = Vec::new();
         for tile in manifest.tiles.as_slice() {
@@ -195,21 +178,22 @@ impl ShippedMap {
     }
 
     /// Release packaging: ship the catalogue `root` published for
-    /// `identity`. The payload is checked against its manifest receipt as
+    /// `revision`. The payload is checked against its manifest receipt as
     /// it is copied, and the description is written last. An existing
     /// shipped catalogue is never replaced.
     pub fn ship_catalogue_from(
         &self,
         root: &MapCacheRoot,
-        identity: CatalogueIdentity,
+        revision: u16,
     ) -> Result<ShippedCatalogue, MapCacheError> {
         // The shared lease keeps a pruner away while the directory is copied.
         let mut capacity = root.try_acquire_capacity()?.ok_or(MapCacheError::Busy)?;
-        let _ready = root
-            .open_catalogue(identity, &mut capacity)?
+        let ready = root
+            .open_catalogue(revision, &mut capacity)?
             .ok_or_else(|| MapCacheError::Message("map catalogue is not baked".into()))?;
+        let identity = ready.manifest().identity;
         drop(capacity);
-        let source = root.catalogue_dir(identity)?;
+        let source = root.catalogue_dir(revision);
         let description = self.catalogue_description_path(identity.revision);
         let target = self.catalogue_dir(identity)?;
         if description.exists() || target.exists() {
@@ -219,9 +203,10 @@ impl ShippedMap {
             )));
         }
         let bytes = read_bounded(&source.join("manifest.json"), MAX_JSON_BYTES)?;
-        let manifest = CatalogueManifest::decode(&bytes, identity)?;
+        let manifest = CatalogueManifest::decode(&bytes)?;
         let shipped = ShippedCatalogue::describe(&manifest, &bytes)?;
         let payload = read_bounded(&source.join("client-pois.json"), MAX_JSON_BYTES)?;
+        manifest.payload.verify(&payload, MAX_JSON_BYTES as u32)?;
         manifest.read_payload(&payload)?;
         atomic_write(&target.join("client-pois.json"), &payload)?;
         atomic_write(&target.join("manifest.json"), &bytes)?;
@@ -245,14 +230,14 @@ impl ShippedSource {
         }
     }
 
-    /// Shipped terrain for exactly `identity`, unless it already proved
-    /// unusable in this process.
-    pub(super) fn images_bundle(&self, identity: ImageIdentity) -> Option<ShippedImages> {
-        let key = identity.key().ok()?.0;
+    /// Shipped terrain for `revision`, unless it already proved unusable in
+    /// this process.
+    pub(super) fn images_bundle(&self, revision: u16) -> Option<ShippedImages> {
+        let key = cache_root_key(revision, ArtifactKind::Images);
         if self.rejected.lock().contains(&key) {
             return None;
         }
-        match self.map.find_images(identity) {
+        match self.map.find_images(revision) {
             Ok(found) => found,
             Err(error) => {
                 self.reject(key, "terrain", &error);
@@ -261,14 +246,14 @@ impl ShippedSource {
         }
     }
 
-    /// Shipped catalogue for exactly `identity`, unless it already proved
-    /// unusable in this process.
-    pub(super) fn catalogue_bundle(&self, identity: CatalogueIdentity) -> Option<ShippedCatalogue> {
-        let key = identity.key().ok()?.0;
+    /// Shipped catalogue for `revision`, unless it already proved unusable
+    /// in this process.
+    pub(super) fn catalogue_bundle(&self, revision: u16) -> Option<ShippedCatalogue> {
+        let key = cache_root_key(revision, ArtifactKind::Catalogue);
         if self.rejected.lock().contains(&key) {
             return None;
         }
-        match self.map.find_catalogue(identity) {
+        match self.map.find_catalogue(revision) {
             Ok(found) => found,
             Err(error) => {
                 self.reject(key, "catalogue", &error);
@@ -279,13 +264,11 @@ impl ShippedSource {
 
     pub(super) fn images_cursor(
         &self,
-        identity: ImageIdentity,
         bundle: ShippedImages,
         partial_dir: Arc<PathBuf>,
     ) -> Result<Box<dyn MapBakeCursor>, MapCacheError> {
         Ok(Box::new(ShippedInstallCursor {
-            source: self.map.image_dir(identity)?,
-            identity,
+            source: self.map.image_dir(bundle.identity)?,
             bundle,
             partial_dir,
             plan: None,
@@ -298,12 +281,10 @@ impl ShippedSource {
 
     pub(super) fn catalogue_cursor(
         &self,
-        identity: CatalogueIdentity,
         bundle: ShippedCatalogue,
     ) -> Result<Box<dyn MapBakeCursor>, MapCacheError> {
         Ok(Box::new(ShippedCatalogueInstallCursor {
-            source: self.map.catalogue_dir(identity)?,
-            identity,
+            source: self.map.catalogue_dir(bundle.identity)?,
             bundle,
             output: None,
         }))
@@ -321,7 +302,6 @@ impl ShippedSource {
 
 struct ShippedInstallCursor {
     source: PathBuf,
-    identity: ImageIdentity,
     bundle: ShippedImages,
     partial_dir: Arc<PathBuf>,
     plan: Option<BakePlan>,
@@ -352,8 +332,7 @@ impl MapBakeCursor for ShippedInstallCursor {
                 Err(error) => return Ok(MapBakeCursorStep::Rejected(error)),
             };
             let manifest = match self.bundle.read_manifest(&bytes) {
-                Ok(manifest) if manifest.identity == self.identity => manifest,
-                Ok(_) => return Ok(MapBakeCursorStep::Rejected(MapError::Identity.into())),
+                Ok(manifest) => manifest,
                 Err(error) => return Ok(MapBakeCursorStep::Rejected(error.into())),
             };
             let plan = BakePlan {
@@ -441,7 +420,6 @@ impl MapBakeCursor for ShippedInstallCursor {
 
 struct ShippedCatalogueInstallCursor {
     source: PathBuf,
-    identity: CatalogueIdentity,
     bundle: ShippedCatalogue,
     output: Option<ClientPois>,
 }
@@ -453,13 +431,11 @@ impl ShippedCatalogueInstallCursor {
     fn read(&self) -> Result<ClientPois, MapCacheError> {
         let bytes = read_bounded(&self.source.join("manifest.json"), MAX_JSON_BYTES)?;
         let manifest = self.bundle.read_manifest(&bytes)?;
-        if manifest.identity != self.identity {
-            return Err(MapError::Identity.into());
-        }
         let payload = read_bounded(
             &self.source.join("client-pois.json"),
             manifest.payload.bytes as usize,
         )?;
+        manifest.payload.verify(&payload, MAX_JSON_BYTES as u32)?;
         Ok(manifest.read_payload(&payload)?)
     }
 }

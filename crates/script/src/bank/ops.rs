@@ -50,7 +50,7 @@ pub fn observed_wait_expired_with_time_bound(
 pub const DEPOSIT_VIEW_MS: u64 = 1_200;
 /// Frozen `for (let guard = 0; guard < 32; guard++)` deposit rounds.
 pub const MAX_DEPOSITS: u8 = 32;
-/// Cap on caller id lists (keep, only, memo, withdrawals).
+/// Cap on bounded transfer lists; shared capacity-deposit keeps are exempt.
 pub const MAX_MEMO: usize = 64;
 
 /// A deposit dispatch or content refusal, distinct from an observed transfer.
@@ -788,6 +788,7 @@ fn same_item_slot<R: BankRow>(main: &R, side: &R) -> bool {
 /// use Deposit-All; unstackables use Deposit-1 so one inventory row is freed.
 pub fn deposit_capacity_next<R: BankRow>(
     keep: &[i32],
+    extra_keep: Option<i32>,
     side: Option<&[R]>,
     pack: Option<&[R]>,
     same_session: bool,
@@ -803,10 +804,9 @@ pub fn deposit_capacity_next<R: BankRow>(
     };
     let mut candidate = false;
     let mut matching_side_row = false;
-    for item in pack
-        .iter()
-        .filter(|item| item.count() > 0 && !keep.contains(&item.id()))
-    {
+    for item in pack.iter().filter(|item| {
+        item.count() > 0 && !keep.contains(&item.id()) && extra_keep != Some(item.id())
+    }) {
         candidate = true;
         let has_side_row = side
             .iter()
@@ -1006,13 +1006,6 @@ pub trait LocRow: OpLabels {
     fn name(&self) -> Option<&str>;
 }
 
-/// An npc row a bank-open decision scans.
-pub trait NpcRow: OpLabels {
-    fn tile(&self) -> WorldTile;
-    fn distance(&self) -> i32;
-    fn name(&self) -> Option<&str>;
-}
-
 impl OpLabels for LocView {
     fn op_len(&self) -> i32 {
         i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
@@ -1048,20 +1041,6 @@ impl OpLabels for NpcView {
 
     fn op_label(&self, one_based: i32) -> Option<&str> {
         self.actions.get(op_index(one_based)?)?.as_deref()
-    }
-}
-
-impl NpcRow for NpcView {
-    fn tile(&self) -> WorldTile {
-        self.tile
-    }
-
-    fn distance(&self) -> i32 {
-        self.distance
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_deref()
     }
 }
 
@@ -1193,10 +1172,15 @@ pub fn booth_catalog<'a, R: LocRow>(
         .min_by_key(|row| (chebyshev(row), row.id()))
 }
 
-/// The first npc standing exactly on `tile`, named `name`.
-pub fn npc_at<'a, R: NpcRow>(rows: &'a [R], tile: WorldTile, name: &str) -> Option<&'a R> {
+/// The first native NPC view whose network path head is exactly `tile`,
+/// named `name` without regard to ASCII case.
+pub fn npc_at<'a>(rows: &'a [NpcView], tile: WorldTile, name: &str) -> Option<&'a NpcView> {
     rows.iter().find(|row| {
-        row.tile() == tile && row.name().is_some_and(|got| got.eq_ignore_ascii_case(name))
+        row.network == tile
+            && row
+                .name
+                .as_deref()
+                .is_some_and(|got| got.eq_ignore_ascii_case(name))
     })
 }
 

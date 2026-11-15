@@ -69,10 +69,7 @@ impl Script for SettlementWalker {
                 loc_id: Some(0),
                 radius: 1,
                 arrival: nav_planner::arrival::ArrivalKind::Reach,
-                options: script::native::WalkOptions {
-                    allow_danger_zones: script::native::WalkBit::Allow,
-                    ..Default::default()
-                },
+                options: script::native::WalkOptions::default(),
                 required_after: tick.cx.evidence(),
                 evidence: None,
                 cross: Box::default(),

@@ -46,8 +46,8 @@ mod keys;
 // - An `if` whose branches only print (or drop items) is skipped without
 //   reading its condition; of two operands that both decide an `|`/`&`,
 //   the one with the cheaper requirement is kept.
-// - A side-effect proc may precede the crossing only when its whole body
-//   matches a pinned passability proof. The Black Knights' aggro proc only
+// - A side-effect proc may precede the crossing only when it is the modelled
+//   `black_knights_aggro` proc. The Black Knights' aggro proc only
 //   selects NPCs, speaks and sets their attack target. It does not gate or
 //   move the player. Other NPC mode changes remain uncertified.
 // - Anything else on the path — a dialog, an unresolved NPC lookup, a key
@@ -68,8 +68,8 @@ mod keys;
 /// of its replacement-loc argument (single doors) or its `^left`/`^right`
 /// side (double doors, which swing `lc_param(loc_type, next_loc_stage)`),
 /// and the `(loc_type, shape, angle, loc_coord)` arguments a proc takes
-/// explicitly instead of reading the active loc. Its body (and every proc
-/// it calls) must equal the pinned engine body in [`ENGINE_DOOR_PROCS`].
+/// explicitly instead of reading the active loc. The proc (and every proc
+/// it calls) must be one of the [`MODELLED_PROCS`].
 struct OpenProc {
     name: &'static str,
     entering: usize,
@@ -78,28 +78,41 @@ struct OpenProc {
     loc_args: Option<[usize; 4]>,
 }
 
-/// The engine procs a crossing ends in (`~open_and_close_*`, `~climb_ladder`,
-/// `~check_axis*`) and every proc they call, verbatim from the 289 content.
-/// A proc is modelled only while the content's body of it and of its whole
-/// call closure equals this text (comments and whitespace aside).
-pub(super) const ENGINE_DOOR_PROCS: &str = include_str!("engine_door_procs.rs2");
+/// The engine procs whose behaviour the interpreter models by name: the procs
+/// a crossing ends in (`~open_and_close_*`, `~climb_ladder`, `~check_axis*`),
+/// the procs they call, and `black_knights_aggro`
+/// (`quest_blackknight/scripts/quest_blackknight.rs2:159-170`), which selects
+/// Black Knights and sets their attack target but does not gate or move the
+/// player (`NpcOps.ts:206-248`). The pack has no per-edge danger field, so
+/// that proc adds no metadata. A name is modelled when the content defines
+/// it exactly once and every proc its body calls is modelled too.
+const MODELLED_PROCS: [&str; 21] = [
+    "open_and_close_door",
+    "open_and_close_door2",
+    "open_and_close_door3",
+    "open_and_close_door_fast",
+    "open_and_close_door_dir",
+    "open_and_close_metal_gate",
+    "open_and_close_metal_gate2",
+    "open_and_close_double_door",
+    "open_and_close_double_door2",
+    "open_and_close_double_door3",
+    "check_axis",
+    "check_axis_locactive",
+    "climb_ladder",
+    "door_open",
+    "door_open_mirrored",
+    "movecoord_loc_return",
+    "door_close",
+    "multiply2",
+    "open_double_doors_left2",
+    "open_double_doors_right2",
+    "black_knights_aggro",
+];
 
-/// `quest_blackknight/scripts/quest_blackknight.rs2:159-170`. Unlike the
-/// general non-moving proof, this exact body permits NPC aggression.
-/// `NpcOps.ts:206-248` changes the NPC's target, not player passability.
-/// The pack has no per-edge danger field, so this proof adds no metadata.
-const PASSABILITY_SIDE_EFFECT_PROCS: &str = r#"
-[proc,black_knights_aggro](coord $first_search_coord, coord $all_search_coord)
-if (npc_find($first_search_coord, aggressive_black_knight, 5, 0) = true) {
-    npc_say("Die intruder!!!");
-}
-npc_findall($all_search_coord, aggressive_black_knight, 5, 0);
-while (npc_findnext = true) {
-    if (npc_getmode ! opplayer2) {
-        npc_setmode(opplayer2);
-    }
-}
-"#;
+/// The 289 engine door and ladder procs, used as synthetic content by tests.
+#[cfg(test)]
+pub(super) const ENGINE_DOOR_PROCS: &str = include_str!("engine_door_procs.rs2");
 
 const fn single(name: &'static str) -> OpenProc {
     OpenProc {
@@ -310,9 +323,10 @@ const STATS: [&str; 21] = [
 /// Jumps followed before an opener is refused (label cycles).
 const MAX_JUMPS: usize = 16;
 
-/// One proc definition: comparable identity plus declared locals and parsed body.
+/// One proc definition: the procs its body calls, and its declared locals and
+/// parsed body.
 struct ProcDef {
-    identity: String,
+    calls: Vec<String>,
     block: Option<Block>,
 }
 
@@ -581,7 +595,7 @@ impl Sources {
                             }))
                     }
                     "proc" => procs.entry(name).or_default().push(ProcDef {
-                        identity: proc_identity(&params, &body),
+                        calls: proc_calls(&body),
                         block: parse_body(&body).map(|body| Block {
                             params,
                             body,
@@ -616,42 +630,34 @@ impl Sources {
         }
     }
 
-    /// Pinned crossing and passability-side-effect procs this content defines
-    /// exactly once with the pinned body and full pinned call closure, plus
-    /// the count of definitions whose bodies have drifted.
-    fn supported_procs(&self) -> (HashSet<String>, usize) {
-        let pinned = pinned_procs();
-        let matches = |name: &str| match (self.procs.get(name).map(Vec::as_slice), pinned.get(name))
-        {
-            (Some([definition]), Some((want, _))) => &definition.identity == want,
-            _ => false,
+    /// The [`MODELLED_PROCS`] this content defines exactly once, and whose
+    /// whole call closure is modelled and defined exactly once too.
+    fn supported_procs(&self) -> HashSet<String> {
+        let defined_once = |name: &str| match self.procs.get(name).map(Vec::as_slice) {
+            Some([definition]) => Some(definition),
+            _ => None,
         };
-        let drifted = pinned
-            .keys()
-            .filter(|name| self.procs.contains_key(*name) && !matches(name))
-            .count();
-        let supported = pinned
-            .keys()
+        MODELLED_PROCS
+            .into_iter()
             .filter(|name| {
                 let mut seen = HashSet::new();
-                let mut pending = vec![name.as_str()];
+                let mut pending = vec![*name];
                 while let Some(n) = pending.pop() {
                     if !seen.insert(n) {
                         continue;
                     }
-                    let Some((_, calls)) = pinned.get(n) else {
-                        return false;
-                    };
-                    if !matches(n) {
+                    if !MODELLED_PROCS.contains(&n) {
                         return false;
                     }
-                    pending.extend(calls.iter().map(String::as_str));
+                    let Some(definition) = defined_once(n) else {
+                        return false;
+                    };
+                    pending.extend(definition.calls.iter().map(String::as_str));
                 }
                 true
             })
-            .cloned()
-            .collect();
-        (supported, drifted)
+            .map(str::to_owned)
+            .collect()
     }
 
     fn has_member_reads(&self, block: &Block) -> bool {
@@ -793,28 +799,14 @@ enum Lookup<'s> {
     Unusable,
 }
 
-/// A proc definition's comparable identity: its parameter names in order
-/// and its body, comments and whitespace removed.
-fn proc_identity(params: &[String], body: &str) -> String {
-    format!("({}){}", params.join(","), normalized_body(body))
-}
-
-/// Pinned movement and passability proofs, with their complete proc closure.
-fn pinned_procs() -> HashMap<String, (String, Vec<String>)> {
-    header_blocks(ENGINE_DOOR_PROCS)
+/// The procs a proc body calls (`~name` tokens).
+fn proc_calls(body: &str) -> Vec<String> {
+    lex(body)
+        .unwrap_or_default()
         .into_iter()
-        .chain(header_blocks(PASSABILITY_SIDE_EFFECT_PROCS))
-        .filter(|(kind, ..)| kind == "proc")
-        .map(|(_, name, params, body)| {
-            let calls = lex(&body)
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|t| match t {
-                    Tok::Word(w) => w.strip_prefix('~').map(str::to_string),
-                    _ => None,
-                })
-                .collect();
-            (name, (proc_identity(&params, &body), calls))
+        .filter_map(|t| match t {
+            Tok::Word(w) => w.strip_prefix('~').map(str::to_string),
+            _ => None,
         })
         .collect()
 }
@@ -869,19 +861,19 @@ fn header_params(after: &str) -> (Vec<String>, &str) {
 
 /// Requirements an evaluated path reads (see the module comment).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct Needs {
-    varps: Vec<(i32, i32)>,
-    skills: Vec<(i32, i32)>,
-    items: Vec<(i32, i32)>,
-    worn: Vec<(i32, i32)>,
-    quests: Vec<api::selected::QuestGate>,
-    forbidden_held: Vec<i32>,
-    forbidden_worn: Vec<i32>,
-    members: bool,
+pub(super) struct Needs {
+    pub(super) varps: Vec<(i32, i32)>,
+    pub(super) skills: Vec<(i32, i32)>,
+    pub(super) items: Vec<(i32, i32)>,
+    pub(super) worn: Vec<(i32, i32)>,
+    pub(super) quests: Vec<api::selected::QuestGate>,
+    pub(super) forbidden_held: Vec<i32>,
+    pub(super) forbidden_worn: Vec<i32>,
+    pub(super) members: bool,
 }
 
 impl Needs {
-    fn merge(&mut self, other: Needs) {
+    pub(super) fn merge(&mut self, other: Needs) {
         self.varps.extend(other.varps);
         self.skills.extend(other.skills);
         self.items.extend(other.items);
@@ -984,7 +976,7 @@ enum Flow {
 /// stand tile (a ladder has none: it is climbed from any side).
 struct Eval<'s> {
     src: &'s Sources,
-    /// The pinned engine procs this content matches ([`Sources::supported_procs`]).
+    /// The modelled engine procs this content defines ([`Sources::supported_procs`]).
     supported: &'s HashSet<String>,
     at: WorldTile,
     stand: Option<WorldTile>,
@@ -1147,7 +1139,7 @@ impl Eval<'_> {
         }
     }
 
-    /// A supported crossing or pinned passability side effect.
+    /// A supported crossing or the modelled passability side effect.
     /// Every other proc remains a refusal.
     fn open(&mut self, proc: &str, args: &[Expr], env: &Env) -> Flow {
         if proc == "black_knights_aggro" {
@@ -1724,6 +1716,7 @@ pub(super) fn stage_door_edges(
     observable: &ObservableGates,
     audit: &mut VarpGateAudit,
     quests: Option<&QuestSource<'_>>,
+    mut shadow: Option<&mut super::nav_shadow::NavShadow>,
 ) {
     let src = Sources::read(content_root, ids, quests);
     let motion_facts = forced::forced_move_edges(
@@ -1738,8 +1731,7 @@ pub(super) fn stage_door_edges(
         observable,
         audit,
     );
-    let (supported, drifted) = src.supported_procs();
-    bump(skipped, SKIP_STAGE_DOOR_PROC_DRIFT, drifted);
+    let supported = src.supported_procs();
     if !OPEN_PROCS.iter().any(|p| supported.contains(p.name)) {
         bump(skipped, SKIP_STAGE_DOOR_PROCS, 1);
         motion_facts.entrances(forced::EntranceArgs {
@@ -1752,6 +1744,9 @@ pub(super) fn stage_door_edges(
             observable,
             audit,
         });
+        if let Some(shadow) = shadow.as_deref_mut() {
+            shadow.run_auxiliary_entries(content_root, collision, observable);
+        }
         return;
     }
     let facts = loc_config_facts(content_root, ids);
@@ -1781,13 +1776,18 @@ pub(super) fn stage_door_edges(
     let mut loc_ids: Vec<i32> = positions.keys().copied().collect();
     loc_ids.sort_unstable();
     for id in loc_ids {
-        if covered.contains(&id)
-            || names
+        let machine_only = names.get(&id).is_some_and(|loc_names| {
+            loc_names.iter().any(|name| {
+                super::nav_shadow::MACHINE_ONLY_SCRIPTED_DOOR_NAMES
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate))
+            })
+        });
+        let stage_owned = !covered.contains(&id)
+            && !machine_only
+            && !names
                 .get(&id)
-                .is_some_and(|ns| ns.iter().any(|n| vertical.contains(*n)))
-        {
-            continue;
-        }
+                .is_some_and(|ns| ns.iter().any(|name| vertical.contains(*name)));
         let placements = &positions[&id];
         if !placements.iter().any(|p| placement_role(p).is_some()) {
             continue;
@@ -1821,6 +1821,12 @@ pub(super) fn stage_door_edges(
         let member_path = src.has_member_reads(handler);
         let emitted = graph.edges.len();
         let mut proven = false;
+        let legacy_handler = shadow.as_ref().map(|_| {
+            format!(
+                "stage-door text evaluator ({} statements)",
+                handler.body.len()
+            )
+        });
         for p in placements {
             let at = WorldTile {
                 x: p.x,
@@ -1848,8 +1854,6 @@ pub(super) fn stage_door_edges(
             match placement_role(p) {
                 Some(Role::Wall(angle_dir)) => {
                     for dir in [angle_dir, opposite(angle_dir)] {
-                        // The stand for the crossing along the angle is the
-                        // loc's own tile; the reverse starts across the wall.
                         let stand = if dir == angle_dir {
                             at
                         } else {
@@ -1860,63 +1864,116 @@ pub(super) fn stage_door_edges(
                                 level: at.level,
                             }
                         };
-                        let Some((Arrival::Door(leaf), needs, _)) = eval(Some(stand)) else {
-                            continue;
-                        };
-                        let leaf = match leaf {
-                            LocRef::Id(leaf) => Some(leaf),
-                            LocRef::NextStage => stage,
-                            LocRef::Itself => None,
+                        let stand_edge_start = graph.edges.len();
+                        if stage_owned {
+                            if let Some((Arrival::Door(leaf), needs, _)) = eval(Some(stand)) {
+                                let leaf = match leaf {
+                                    LocRef::Id(leaf) => Some(leaf),
+                                    LocRef::NextStage => stage,
+                                    LocRef::Itself => None,
+                                }
+                                .filter(|&leaf| leaf != id);
+                                if let Some(to) =
+                                    straight_door_landing(at, angle_dir, dir, collision)
+                                {
+                                    let mut edge =
+                                        gated_edge(TransportKind::Door, id, at, to, needs);
+                                    edge.dir = Some(dir);
+                                    edge.open_loc_id = leaf;
+                                    proven = true;
+                                    if observable.admit_edge(graph, edge, audit) && member_path {
+                                        audit.record_member_path(
+                                            graph.edges.last().expect("admitted edge"),
+                                        );
+                                    }
+                                }
+                            }
                         }
-                        .filter(|&leaf| leaf != id);
-                        let Some(to) = straight_door_landing(at, angle_dir, dir, collision) else {
-                            continue;
+                        let baseline = if stage_owned {
+                            &graph.edges[stand_edge_start..]
+                        } else {
+                            &[]
                         };
-                        let mut edge = gated_edge(TransportKind::Door, id, at, to, needs);
-                        edge.dir = Some(dir);
-                        edge.open_loc_id = leaf;
-                        proven = true;
-                        if observable.admit_edge(graph, edge, audit) && member_path {
-                            audit.record_member_path(graph.edges.last().expect("admitted edge"));
+                        if let Some(shadow) = shadow.as_deref_mut() {
+                            shadow.run_candidate(
+                                super::nav_shadow::CandidateEntry {
+                                    loc_type: id,
+                                    placement: p,
+                                    role_name: "wall",
+                                    direction: Some(dir),
+                                    stand: Some(stand),
+                                    stage_owned,
+                                    legacy_handler: legacy_handler
+                                        .as_deref()
+                                        .expect("shadow handler label is initialized"),
+                                    baseline,
+                                },
+                                collision,
+                                observable,
+                            );
                         }
                     }
                 }
                 Some(Role::Ladder) => {
-                    let Some((Arrival::Climb { to, player_delta }, needs, relative_landing_safe)) =
-                        eval(None)
-                    else {
-                        continue;
-                    };
-                    // `~climb_ladder`'s price is the measured ladders.rs2
-                    // one: `ladder_cellar` runs the same
-                    // `p_arrivedelay; ~climb_ladder(movecoord(coord(), 0, 0, 6400), …)`.
-                    let Some(extra) = extra_ticks("ladder_cellar") else {
-                        continue;
-                    };
-                    let Some(ticks) = edge_ticks(extra) else {
-                        continue;
-                    };
-                    if !in_world_box(&to) {
-                        continue;
+                    let stand_edge_start = graph.edges.len();
+                    if stage_owned {
+                        if let Some((
+                            Arrival::Climb { to, player_delta },
+                            needs,
+                            relative_landing_safe,
+                        )) = eval(None)
+                        {
+                            if let Some(ticks) = extra_ticks("ladder_cellar").and_then(edge_ticks) {
+                                if in_world_box(&to) {
+                                    let relative =
+                                        if needs == Needs::default() && relative_landing_safe {
+                                            player_delta
+                                        } else {
+                                            None
+                                        };
+                                    let mut edge =
+                                        gated_edge(TransportKind::Ladder, id, at, to, needs);
+                                    edge.player_delta = relative;
+                                    edge.ticks = ticks;
+                                    proven = true;
+                                    if observable.admit_edge(graph, edge, audit) && member_path {
+                                        audit.record_member_path(
+                                            graph.edges.last().expect("admitted edge"),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
-                    let relative = if needs == Needs::default() && relative_landing_safe {
-                        player_delta
+                    let baseline = if stage_owned {
+                        &graph.edges[stand_edge_start..]
                     } else {
-                        None
+                        &[]
                     };
-                    let mut edge = gated_edge(TransportKind::Ladder, id, at, to, needs);
-                    // Guarded, dialog-driven, or side-effectful handlers
-                    // retain their anchor landing; only unguarded direct
-                    // `coord` climbs use the existing relative wire mode.
-                    edge.player_delta = relative;
-                    edge.ticks = ticks;
-                    proven = true;
-                    if observable.admit_edge(graph, edge, audit) && member_path {
-                        audit.record_member_path(graph.edges.last().expect("admitted edge"));
+                    if let Some(shadow) = shadow.as_deref_mut() {
+                        shadow.run_candidate(
+                            super::nav_shadow::CandidateEntry {
+                                loc_type: id,
+                                placement: p,
+                                role_name: "ladder",
+                                direction: None,
+                                stand: None,
+                                stage_owned,
+                                legacy_handler: legacy_handler
+                                    .as_deref()
+                                    .expect("shadow handler label is initialized"),
+                                baseline,
+                            },
+                            collision,
+                            observable,
+                        );
                     }
                 }
                 None => {}
             }
+        }
+        if !stage_owned {
+            continue;
         }
         if !proven {
             bump(skipped, SKIP_STAGE_DOOR_UNPROVEN, 1);
@@ -1937,6 +1994,9 @@ pub(super) fn stage_door_edges(
         observable,
         audit,
     });
+    if let Some(shadow) = shadow {
+        shadow.run_auxiliary_entries(content_root, collision, observable);
+    }
 }
 
 /// Loc names with an `[oploc…]` block in `ladders+stairs/scripts/
@@ -1978,7 +2038,7 @@ fn placement_role(p: &Placement) -> Option<Role> {
 /// An edge carrying the evaluated requirements (option 1, one tick; the
 /// caller fills `dir`/`open_loc_id`/`ticks`). Every worn condition on this
 /// path is conjunctive, separate from the graph's any-blade worn gates.
-fn gated_edge(
+pub(super) fn gated_edge(
     kind: TransportKind,
     id: i32,
     at: WorldTile,

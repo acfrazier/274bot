@@ -67,11 +67,16 @@ impl BankDefinition {
         self.skill
             .is_none_or(|(id, minimum)| skill(id).is_some_and(|level| level >= minimum))
             && self.quest.is_none_or(quest_complete)
-            && self.setting.is_none_or(|setting| match setting {
-                "useMageBank" => preferences.use_mage_bank,
-                "useZanarisBank" => preferences.use_zanaris_bank,
-                _ => false,
-            })
+            && self.enabled_by_preferences(preferences)
+    }
+
+    /// Whether the caller enabled this bank's optional setting.
+    pub fn enabled_by_preferences(&self, preferences: BankPreferences) -> bool {
+        self.setting.is_none_or(|setting| match setting {
+            "useMageBank" => preferences.use_mage_bank,
+            "useZanarisBank" => preferences.use_zanaris_bank,
+            _ => false,
+        })
     }
 }
 

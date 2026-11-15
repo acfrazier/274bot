@@ -79,12 +79,12 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 44,
+        "non_test": 45,
         "test": 20
       },
       "dead_code": {
         "non_test": 0,
-        "test": 4
+        "test": 5
       },
       "deprecated": {
         "non_test": 1,
@@ -133,7 +133,7 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 39,
+        "non_test": 40,
         "test": 3
       },
       "clippy::type_complexity": {

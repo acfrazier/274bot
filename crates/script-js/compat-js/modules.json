@@ -448,6 +448,22 @@
     "shim": "clue_tool_acquire.js"
   },
   {
+    "module": "api/ai/quests/defs/dragonslayer/journal.js",
+    "shim": "dragon_journal.js"
+  },
+  {
+    "module": "api/ai/quests/data/quests.js",
+    "shim": "quest_records.js"
+  },
+  {
+    "module": "runtime/desktopStorage.js",
+    "shim": "desktop_storage.js"
+  },
+  {
+    "module": "runtime/ScriptContext.js",
+    "shim": "script_context.js"
+  },
+  {
     "module": "api/ai/quests/exec/primitives.js",
     "shim": "primitives.js"
   },

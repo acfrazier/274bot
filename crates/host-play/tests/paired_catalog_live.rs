@@ -1237,9 +1237,9 @@ fn run_cell(case: PairCase) -> Result<(), String> {
                 pair.1.prep,
             )
         };
-        // Each account logs its scriptless bot out to bind its side tabs; the
-        // approved scriptless policy then parks it, so post the operator's
-        // explicit Login once per account at its relog wait.
+        // Each account logs its bot out to bind its side tabs. Post a real
+        // one-shot Login once per account at its relog wait; an unlatched slot
+        // with auto-login would also reconnect by itself.
         for (index, prep) in [snapshot.3, snapshot.4].into_iter().enumerate() {
             if prep == Prep::WaitRelog && !relog_posted[index] {
                 relog_posted[index] = true;

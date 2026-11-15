@@ -70,9 +70,7 @@ impl PrefRow {
 
 /// The one-time notices [`OperatorCommand::AcknowledgeNotice`] answers
 /// (staged with [`OperatorSession::stage_notice`]). The walk-permission
-/// and danger-routing notices are navigation preferences
-/// ([`NavPreference::ScriptScopeNoticeAck`],
-/// [`NavPreference::SurvivableRoutingNoticeAck`]).
+/// notice is a navigation preference ([`NavPreference::ScriptScopeNoticeAck`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Notice {
     /// "Other profiles keep running in the background": don't show again.

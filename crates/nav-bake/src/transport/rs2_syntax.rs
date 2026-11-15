@@ -155,6 +155,50 @@ fn expr_calls(expr: &Expr, out: &mut Vec<String>) {
     }
 }
 
+/// The comment starting at `text[i]`: `None` when none starts there,
+/// `Some(None)` for a `/* */` comment that never closes, otherwise the index
+/// just past it (a `//` comment stops before its newline).
+fn comment_at(text: &str, i: usize) -> Option<Option<usize>> {
+    let rest = text.get(i..)?;
+    if rest.starts_with("//") {
+        Some(Some(rest.find('\n').map_or(text.len(), |n| i + n)))
+    } else {
+        let body = rest.strip_prefix("/*")?;
+        Some(body.find("*/").map(|n| i + 2 + n + 2))
+    }
+}
+
+/// `text` with every `/* … */` comment removed. Strings and `//` comments
+/// are skipped as in [`lex`], so a `/*` inside either is not a comment;
+/// `//` comments stay for the callers' own line readers. A removed comment
+/// leaves one space and its newlines, so the line structure holds. An
+/// unterminated comment removes the rest of the text.
+pub(super) fn strip_block_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let b = text.as_bytes();
+    let (mut i, mut copied) = (0, 0);
+    while i < b.len() {
+        if let Some(end) = comment_at(text, i) {
+            let end = end.unwrap_or(b.len());
+            if b[i + 1] == b'*' {
+                out.push_str(&text[copied..i]);
+                out.push(' ');
+                out.extend(text[i..end].matches('\n'));
+                copied = end;
+            }
+            i = end;
+        } else if b[i] == b'"' {
+            // A string that never closes is left to its line's end.
+            i = scan_string(text, i)
+                .map_or_else(|| text[i..].find('\n').map_or(b.len(), |n| i + n), |s| s.0);
+        } else {
+            i += 1;
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
 /// Tokens of a script body: `//` and `/* */` comments dropped, strings
 /// (with `<…>` interpolations that may nest strings) one [`Tok::Str`]
 /// carrying the calls of its interpolations. `None` for an unterminated
@@ -167,13 +211,8 @@ pub(super) fn lex(text: &str) -> Option<Vec<Tok>> {
         let c = b[i];
         if c.is_ascii_whitespace() {
             i += 1;
-        } else if b[i..].starts_with(b"//") {
-            while i < b.len() && b[i] != b'\n' {
-                i += 1;
-            }
-        } else if b[i..].starts_with(b"/*") {
-            let end = text[i + 2..].find("*/")?;
-            i += 2 + end + 2;
+        } else if let Some(end) = comment_at(text, i) {
+            i = end?;
         } else if c == b'"' {
             let (end, calls) = scan_string(text, i)?;
             i = end;

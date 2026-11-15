@@ -1,6 +1,7 @@
 //! Typed Path, compiler, colour-only runner, and the Quester card.
 pub mod card;
 pub mod choices;
+pub mod compat_quests;
 pub mod compile;
 pub mod eligibility;
 pub mod families;
@@ -20,6 +21,7 @@ pub mod registry;
 pub mod runner;
 pub mod schema;
 pub mod select;
+mod survival;
 pub mod watchdog;
 
 pub use card::CARD;

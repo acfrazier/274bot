@@ -31,4 +31,4 @@ macro_rules! quest_handlers {
     };
 }
 
-quest_handlers!(totem);
+quest_handlers!(mm, totem);

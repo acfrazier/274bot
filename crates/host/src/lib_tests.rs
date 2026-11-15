@@ -1557,20 +1557,34 @@ fn client_frame_releases_held_keys_when_capture_disabled() {
 #[test]
 fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
     use client::client::{ClientNpc, MiniMenuAction};
-    for (x, y, action, expected) in [
+    for (x, y, action, expected, event_packet) in [
         (
             30,
             51,
             MiniMenuAction::OP_NPC2,
             Some(ManualMoveIntent::WorldMenu),
+            [20, 255, 240, 152, 133],
         ),
-        (30, 51, MiniMenuAction::CANCEL, None),
-        (30, 20, MiniMenuAction::CANCEL, None),
+        (
+            30,
+            51,
+            MiniMenuAction::CANCEL,
+            None,
+            [20, 255, 240, 152, 133],
+        ),
+        (
+            30,
+            20,
+            MiniMenuAction::CANCEL,
+            None,
+            [20, 255, 240, 59, 226],
+        ),
         (
             648,
             83,
             MiniMenuAction::CANCEL,
             Some(ManualMoveIntent::Minimap),
+            [20, 255, 240, 250, 143],
         ),
     ] {
         let mut c = Client::new(cfg());
@@ -1608,32 +1622,26 @@ fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
                 assert_eq!(input.take_manual_move_intent(), expected, "click ({x},{y})");
                 assert_eq!(input.take_manual_move_intent(), None);
                 assert_eq!(client.shell.mouse_button, 0, "Down+Up remains released");
+                assert_eq!(
+                    &client.out.data()[..5],
+                    &event_packet,
+                    "retain the Java click event for ({x},{y})"
+                );
                 if expected == Some(ManualMoveIntent::Minimap) {
-                    assert_eq!(client.out.data()[0], ClientProt::MOVE_MINIMAPCLICK.id as u8);
+                    assert_eq!(client.out.data()[5], ClientProt::MOVE_MINIMAPCLICK.id as u8);
                     assert_eq!(
-                        client.out.pos, 21,
-                        "retain the real minimap packet and extras"
+                        client.out.pos, 26,
+                        "retain the click event and real minimap packet and extras"
                     );
                 } else if expected == Some(ManualMoveIntent::WorldMenu) {
                     assert_eq!(
-                        &client.out.data()[..10],
-                        &[
-                            ClientProt::MOVE_OPCLICK.id as u8,
-                            5,
-                            0,
-                            0,
-                            10,
-                            0,
-                            10,
-                            ClientProt::OPNPC2.id as u8,
-                            0,
-                            42,
-                        ],
-                        "retain the human NPC action and its zero-step approach"
+                        &client.out.data()[..15],
+                        &[20, 255, 240, 152, 133, 138, 5, 0, 0, 10, 0, 10, 233, 0, 42,],
+                        "retain the event, human NPC action and its zero-step approach"
                     );
-                    assert_eq!(client.out.pos, 10);
+                    assert_eq!(client.out.pos, 15);
                 } else {
-                    assert_eq!(client.out.pos, 0, "menu Cancel/dismissal sends no walk");
+                    assert_eq!(client.out.pos, 5, "menu Cancel sends only the click event");
                 }
                 false
             },
@@ -2778,27 +2786,6 @@ fn entity_catchup_does_not_read_packets_write_wire_or_replay_nonentity_timers() 
         std::io::ErrorKind::WouldBlock,
         "catch-up must not flush the queued outbound byte"
     );
-}
-
-/// A bot that parks between game ticks still reaches the Java idle
-/// threshold after 90 s: the host replays the parked cycles into the idle
-/// counter, but only for a client whose host asked for that timer.
-#[test]
-fn entity_catchup_replays_parked_cycles_into_the_idle_timer_only_when_asked_for() {
-    for (asked, expected) in [(false, 100), (true, 129)] {
-        let mut c = Client::new(cfg());
-        c.error_loading = false;
-        c.ingame = true;
-        c.set_external_reconnect_owner(true);
-        c.set_host_idle_timer(asked);
-        c.shell.idle_cycles = 100;
-        let mut slot = SlotLoop::new();
-        let t0 = Instant::now();
-        slot.recover_entity_cycles(&mut c, t0);
-        slot.recover_entity_cycles(&mut c, t0 + Duration::from_millis(600));
-        assert_eq!(c.loop_cycle, 29, "asked={asked}");
-        assert_eq!(c.shell.idle_cycles, expected, "asked={asked}");
-    }
 }
 
 #[test]

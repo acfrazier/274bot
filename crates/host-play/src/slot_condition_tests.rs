@@ -1116,11 +1116,61 @@ fn poison_window_frame_gap_resets() {
         poison_window(&owner),
         PoisonWindow {
             remaining: 31,
-            accepted: false,
+            accepted: true,
             last_reset: WindowReset::FrameGap,
         },
-        "old: a skipped PLAYER_INFO edge had no cause; new: it restarts and records FrameGap"
+        "a skipped edge restarts clean counting without losing dispatch acceptance"
     );
+}
+
+#[test]
+fn poison_window_recovers_after_one_missing_edge() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for accepted in [false, true] {
+        let mut owner = owner();
+        if accepted {
+            let mut client = outgoing_client(client::io::ClientRevision::R289);
+            let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+            queue_packet(&mut client, ClientProt::MOVE_GAMECLICK);
+            owner.observe_dispatch(&client, checkpoint);
+        }
+        owner.observe_frame(&frame(1), &drain(true, true), false);
+        owner.observe_frame(&frame(3), &drain(true, true), false);
+        assert_eq!(
+            poison_window(&owner),
+            PoisonWindow {
+                remaining: CLEAN_TICKS,
+                accepted,
+                last_reset: WindowReset::FrameGap,
+            }
+        );
+        for tick in 4..=33 {
+            owner.observe_frame(&frame(tick), &drain(true, true), false);
+            assert!(matches!(
+                owner.current().unwrap().poison,
+                PoisonState::Unknown { .. }
+            ));
+        }
+        for tick in 34..=42 {
+            owner.observe_frame(&frame(tick), &drain(true, true), false);
+            if accepted {
+                assert_eq!(
+                    owner.current().unwrap().poison,
+                    PoisonState::Clear,
+                    "31 clean edges after the gap must recover without another click"
+                );
+            } else {
+                assert!(matches!(
+                    owner.current().unwrap().poison,
+                    PoisonState::Unknown { .. }
+                ));
+                assert_eq!(poison_window(&owner).remaining, 1);
+                assert!(!poison_window(&owner).accepted);
+            }
+        }
+    }
 }
 
 #[test]
@@ -1611,9 +1661,8 @@ impl script::native::Script for GateIdleScript {
     }
 }
 
-/// A connected, ingame client at `revision` with the local player and the
+/// A connected, in-game client at `revision` with the local player and the
 /// hitpoints row armed once, so the first decode rebuilds those families.
-/// The steady frame the gate measures leaves every generation unchanged.
 fn gate_client(revision: client::io::ClientRevision) -> Client {
     let mut client = outgoing_client(revision);
     client.local_player = Some(client::dash3d::ClientPlayer::at(0, 0));
@@ -1706,12 +1755,15 @@ fn warmed_tick_frame_allocations_gate(revision: client::io::ClientRevision) {
     if !api::test_support::game_data_available() {
         return;
     }
+    // Snapshot publication normally replaces a process-wide Weak cache handle.
+    // Keep the allocation measurement on this test thread's private handle.
+    let _cache_isolation = api::snapshot::isolate_client_adapter_cache_for_tests();
     let mut client = gate_client(revision);
     let mut snapshot = GameSnapshot::new();
     // The first decode rebuilds every armed family once (player, scene, loc,
     // stats); the measured frames leave every generation unchanged.
     host::publish_snapshot(&mut snapshot, &client, drain(false, true));
-    // The same condition-completing fixtures the frame helper seeds.
+    // The condition observer sees the same settled empty inventory each frame.
     snapshot.seed_inventory(Vec::new(), 28);
     snapshot.seed_inventory_packet_generations(Some(0), None);
 
@@ -1726,8 +1778,6 @@ fn warmed_tick_frame_allocations_gate(revision: client::io::ClientRevision) {
         work_scope,
         ..crate::script_runtime::NavBot::default()
     };
-    // The production session start arms the owner's selected tables, so the
-    // observed frame completes the fact and stays clean.
     bot.condition.session_started(
         0,
         0,
@@ -1755,6 +1805,16 @@ fn warmed_tick_frame_allocations_gate(revision: client::io::ClientRevision) {
             tick,
         );
     }
+    assert!(
+        navs.lock()
+            .unwrap()
+            .get("alice")
+            .expect("the gate bot")
+            .condition
+            .current()
+            .is_some(),
+        "the warm frames must publish a completed selected condition fact"
+    );
     // 1,000 unchanged tick frames must allocate nothing.
     let measured = allocation_counter::measure(|| {
         for tick in 33..=1032u64 {
@@ -1770,10 +1830,6 @@ fn warmed_tick_frame_allocations_gate(revision: client::io::ClientRevision) {
             );
         }
     });
-    // The snapshot publishes this client's cache through a process-wide weak handle. Drop it
-    // before this test's client dies, so no later measured frame of a sibling test frees a dead
-    // client's allocation (the handle is replaced on every frame of a different client).
-    api::snapshot::clear_client_adapter_cache_for_tests(&client.cache);
     assert_eq!(
         measured.bytes_total, 0,
         "1,000 unchanged tick frames allocate nothing: {measured:?}"

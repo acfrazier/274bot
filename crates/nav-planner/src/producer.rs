@@ -25,8 +25,8 @@ use api::snapshot::WorldTile;
 use api::work::InputRevision;
 
 use crate::contract::{
-    BoundZoneExempt, BoundZoneKey, CollisionView, ContractError, NavIdentity, NavLease, PackId,
-    RoutePlanLease, RouteView, WildernessView, ZoneTableView,
+    BoundZoneExempt, BoundZoneKey, CollisionView, ContractError, MultiwayView, NavIdentity,
+    NavLease, PackId, RoutePlanLease, RouteView, WildernessView, ZoneTableView,
 };
 use crate::router::{
     CompactRoute, CompactRouteCursor, CompactRouteLeg, CompactTransportStep, Route,
@@ -295,6 +295,13 @@ pub fn zones_view(world: &NavWorld) -> Result<Option<ZoneTableView<'_>>, Contrac
 pub fn wilderness_view(world: &NavWorld) -> Result<WildernessView<'_>, ContractError> {
     identity(world)?;
     Ok(WildernessView::new(&world.graph.wilderness))
+}
+
+/// Borrowed multi-combat map cells (`maps/multiway.csv`), empty when the
+/// pack was built without that table.
+pub fn multiway_view(world: &NavWorld) -> Result<MultiwayView<'_>, ContractError> {
+    identity(world)?;
+    Ok(MultiwayView::new(&world.graph.multiway))
 }
 
 /// What a borrowed route view is served under: the loaded world (its one

@@ -73,7 +73,7 @@ impl Play {
                 "off_debt": bot.walk_guard_off.is_some(),
                 "escape": bot.slot_escape().map(|escape| format!("{escape:?}")),
                 "admission": bot.admission.as_deref().map(|admission| serde_json::json!({
-                    "policy": format!("{:?}", admission.policy),
+                    "policy": format!("{:?}", admission.decision.policy),
                     "prayer": admission.allow.prayer,
                     "food": admission.allow.food,
                     "escape": admission.allow.escape,

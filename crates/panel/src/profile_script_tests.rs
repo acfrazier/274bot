@@ -110,6 +110,14 @@ fn refresh_catalog(s: &mut Session, root: &std::path::Path) -> ReloadOutcome {
     s.take_reload_outcome()
         .expect("catalog refresh must publish an outcome")
 }
+#[cfg(feature = "js")]
+macro_rules! require_script_validation_data {
+    () => {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+    };
+}
 
 /// Pump `name`'s lifecycle until it reaches `want` (Stop returns
 /// before the reap).
@@ -234,7 +242,8 @@ fn focus_restores_assignment_not_other_profile_pending() {
 #[test]
 #[cfg(feature = "js")]
 fn two_profiles_keep_isolated_settings_after_legacy_claim() {
-    let (mut s, dir) = session_with_profiles(&["alice", "bob"]);
+    require_script_validation_data!();
+    let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let store = dir.join("script-settings.json");
     fs::write(&store, r#"{"catalog:SmithingBot":{"bar":"Adamant"}}"#).unwrap();
     s.scripts.set_legacy_store(store);
@@ -353,6 +362,15 @@ fn session_with_play(names: &[&str]) -> (Session, TestDir) {
     s.scripts
         .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
     let mut play = empty_play();
+    #[cfg(feature = "js")]
+    if api::test_support::game_data_available() {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        play.bind_script_test_data(data);
+        let world = nav_planner::world::NavWorld::from_grid(
+            &nav_planner::grid::StepGrid::fixture_open_3x3(),
+        );
+        play.bind_script_test_world(std::sync::Arc::new(world));
+    }
     for name in names {
         play.attach_arm(name, host_play::SlotArm::new(42, false));
         s.core.fleet_mut().add(name);
@@ -729,6 +747,7 @@ fn reload_unchanged_reports_exact_string() {
 #[test]
 #[cfg(feature = "js")]
 fn ui_reload_validation_keeps_the_control_thread_responsive() {
+    require_script_validation_data!();
     let (mut session, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "runaway.ts", BOT_TS);
     session.load_js(&path);
@@ -785,6 +804,7 @@ fn ui_reload_validation_keeps_the_control_thread_responsive() {
 #[cfg(feature = "js")]
 #[test]
 fn catalog_validation_keeps_the_control_thread_responsive() {
+    require_script_validation_data!();
     let (mut session, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-worker");
     fake_catalog(&root, &[("RunawayBot", BOT_TS)]);
@@ -852,6 +872,7 @@ fn catalog_validation_keeps_the_control_thread_responsive() {
 #[test]
 #[cfg(feature = "js")]
 fn external_unchanged_reload_dispatches_validation_once() {
+    require_script_validation_data!();
     let (mut session, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "ExampleBot.ts", BOT_TS);
     session.load_js(&path);
@@ -928,6 +949,7 @@ fn external_unchanged_reload_dispatches_validation_once() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_clicked_warns_before_replacing_running() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "run.ts", BOT_TS);
     s.load_js(&path);
@@ -962,6 +984,7 @@ fn reload_clicked_warns_before_replacing_running() {
 #[test]
 #[cfg(feature = "js")]
 fn reload_commit_gates_pause_during_prep() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "pause.ts", BOT_TS);
     s.load_js(&path);
@@ -1089,6 +1112,7 @@ fn live_settings_reach_running_and_paused() {
 #[test]
 #[cfg(feature = "js")]
 fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog");
     fake_catalog(&root, &[("GoodBot", BOT_TS), ("BadBot", BOT_TS)]);
@@ -1158,7 +1182,87 @@ fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
 
 #[cfg(feature = "js")]
 #[test]
+fn catalog_policy_hold_refresh_records_no_load_failure() {
+    let (mut s, dir) = session_with_play(&["alice"]);
+    let root = dir.join("catalog-policy-hold");
+    fake_catalog(&root, &[("GoodBot", BOT_TS), ("Woodcutter", BOT_TS)]);
+    s.scripts
+        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
+        .unwrap();
+    s.scripts
+        .ensure_card(CardSource::Catalog, "GoodBot")
+        .unwrap();
+    s.scripts
+        .ensure_card(CardSource::Catalog, "Woodcutter")
+        .unwrap();
+    assert!(
+        !s.scripts.load_failures().any(|f| f.name() == "Woodcutter"),
+        "a retired card records no load failure: {:?}",
+        s.scripts.load_failure_count()
+    );
+    fs::write(
+        root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
+        "export default class T extends LoopingBot { override loop() { return; } }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/bot/scripts/Woodcutter/Woodcutter.ts"),
+        "export default class T extends LoopingBot { override loop() { let n = 1; } }\n",
+    )
+    .unwrap();
+    refresh_catalog(&mut s, &root);
+    settle(&mut s);
+    let names: Vec<String> = s
+        .scripts
+        .load_failures()
+        .map(|f| f.name().to_owned())
+        .collect();
+    assert!(
+        !names.iter().any(|name| name == "Woodcutter"),
+        "a changed retired card gains no failure: {names:?}"
+    );
+    let report = s.scripts.catalog_refresh_report().unwrap_or("");
+    assert!(
+        !report.contains("failed"),
+        "the refresh count excludes a policy hold: {report:?}"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn start_refuses_a_retired_catalog_card_without_a_failure_record() {
+    let (mut s, dir) = session_with_play(&["alice"]);
+    let root = dir.join("catalog-retired-start");
+    fake_catalog(&root, &[("Woodcutter", BOT_TS)]);
+    s.scripts
+        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
+        .unwrap();
+    let key = s
+        .scripts
+        .card(CardSource::Catalog, "Woodcutter")
+        .expect("retired card is listed")
+        .identity_key();
+    let err = start_sel(
+        &mut s,
+        "alice",
+        ScriptChoice::loaded(CardSource::Catalog, "Woodcutter"),
+    )
+    .expect_err("Start refuses a retired card");
+    assert!(
+        err.contains("unavailable: replaced by the native Gatherer"),
+        "{err}"
+    );
+    assert_eq!(s.core.script_state("alice"), ScriptRunState::Idle);
+    assert!(
+        s.scripts.load_failure(&key).is_none(),
+        "refusing Start records no load failure"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn catalog_mixed_batch_keeps_two_failures_after_success() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-mixed");
     fake_catalog(
@@ -1325,6 +1429,7 @@ fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
 #[cfg(feature = "js")]
 #[test]
 fn catalog_refresh_warns_before_stopping_running() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-run");
     fake_catalog(&root, &[("RunBot", BOT_TS)]);
@@ -1494,6 +1599,7 @@ fn assert_applied(out: ReloadOutcome, restarted: usize, failed: usize) {
 #[cfg(feature = "js")]
 #[test]
 fn cancel_reload_preserves_running_and_paused_executions() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     s.load_js(&path);
@@ -1530,6 +1636,7 @@ fn cancel_reload_preserves_running_and_paused_executions() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_confirm_does_not_authorize_switched_selection() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path_a = write_bot(&dir, "a.ts", BOT_TS);
     let path_b = write_bot(&dir, "b.ts", BOT_TS);
@@ -1587,6 +1694,7 @@ fn reload_confirm_does_not_authorize_switched_selection() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_warn_survives_focus_only() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path_a = write_bot(&dir, "keep-a.ts", BOT_TS);
     let path_b = write_bot(&dir, "keep-b.ts", BOT_TS);
@@ -1619,6 +1727,7 @@ fn reload_warn_survives_focus_only() {
 #[cfg(feature = "js")]
 #[test]
 fn catalog_confirm_gates_newly_paused() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-pause");
     fake_catalog(&root, &[("PauseBot", BOT_TS)]);
@@ -1680,6 +1789,7 @@ fn catalog_confirm_gates_newly_paused() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_toplevel_throw_fails_before_replacement() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "throw.ts", BOT_TS);
     s.load_js(&path);
@@ -1717,6 +1827,7 @@ fn reload_toplevel_throw_fails_before_replacement() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_missing_named_export_fails_before_replacement() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let sib = write_bot(&dir, "helper.ts", "export function helper() {}\n");
     let src = "import { missingFn } from './helper.js';\nexport default class T extends LoopingBot { override loop() { missingFn(); } }\n";
@@ -1754,6 +1865,7 @@ fn reload_missing_named_export_fails_before_replacement() {
 #[cfg(feature = "js")]
 #[test]
 fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-stale");
     fake_catalog(&root, &[("StaleBot", BOT_TS)]);
@@ -1797,6 +1909,7 @@ fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_removal_skips_target_and_reloads_peer() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     s.load_js(&path);
@@ -1819,6 +1932,7 @@ fn reload_removal_skips_target_and_reloads_peer() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_reports_true_startup_failure_without_aborting_peer() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     s.load_js(&path);
@@ -1843,6 +1957,7 @@ fn reload_reports_true_startup_failure_without_aborting_peer() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_native_stop_skips_target_and_reloads_peer() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     s.load_js(&path);
@@ -1867,6 +1982,7 @@ fn reload_native_stop_skips_target_and_reloads_peer() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_session_stop_skips_target_and_reloads_peer() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     s.load_js(&path);
@@ -1887,6 +2003,7 @@ fn reload_session_stop_skips_target_and_reloads_peer() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_stop_all_clears_pending_without_restart() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     s.load_js(&path);
@@ -1939,6 +2056,7 @@ fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_logout_skips_target_and_reloads_peer() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     s.load_js(&path);
@@ -1974,6 +2092,7 @@ fn reload_logout_skips_target_and_reloads_peer() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_logout_all_skips_replacement() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     s.load_js(&path);
@@ -2015,6 +2134,7 @@ fn reload_logout_all_skips_replacement() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_reassignment_skips_target_and_reloads_peer() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     let other = write_bot(&dir, "other.ts", BOT_TS);
@@ -2051,6 +2171,7 @@ fn reload_reassignment_skips_target_and_reloads_peer() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_new_start_after_stop_is_not_consumed() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     s.load_js(&path);
@@ -2088,6 +2209,7 @@ fn reload_new_start_after_stop_is_not_consumed() {
 #[cfg(feature = "js")]
 #[test]
 fn reload_of_a_running_script_restarts_it() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "restart.ts", BOT_TS);
     s.load_js(&path);
@@ -2296,6 +2418,7 @@ fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
 #[cfg(feature = "js")]
 #[test]
 fn catalog_native_stop_skips_target_and_reloads_peer() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let root = dir.join("catalog-stop");
     fake_catalog(&root, &[("StopBot", BOT_TS)]);

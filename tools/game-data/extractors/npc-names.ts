@@ -277,7 +277,7 @@ function resolveNpcCombatTransforms(
 ) {
     const sources = new Map<string, NpcCombatTransformTarget | null>();
     for (const config of pack.keys()) {
-        sources.set(config, extractNpcCombatTransformTarget(config, blocks.get(config)?.category ?? null, scripts));
+        sources.set(config, extractNpcCombatTransformTarget(config, blocks.get(config)?.category ?? null, scripts, blocks.get(config)?.params));
     }
     const resolved = new Map<string, NpcCombatTransform | null>();
     const active = new Set<string>();
@@ -344,6 +344,18 @@ export function extractNpcNamesFacts(
                 && block.attackrate > 0
                 && !block.forcemulti
                 && poisonSeverityFact === 0;
+            // The shade attack is a shared melee roll with the NPC's resolved stats; it has no
+            // explicit-parameter requirement because the shade rows carry content defaults.
+            const resolvedStrength = block?.strength ?? stats.strength;
+            const resolvedAttackRate = block?.attackrate ?? combatDefaults.attackrate;
+            const shadeMelee = combat.shade_melee
+                && resolvedStrength !== null
+                && resolvedStrength >= 0
+                && (block?.strengthbonus ?? combatDefaults.strengthbonus) !== null
+                && resolvedAttackRate !== null
+                && resolvedAttackRate > 0
+                && !(block?.forcemulti ?? combatDefaults.forcemulti)
+                && poisonSeverityFact === 0;
             combatNpcs.push({
                 config,
                 category: block?.category ?? null,
@@ -390,8 +402,9 @@ export function extractNpcNamesFacts(
                 attackrate: block?.attackrate ?? combatDefaults.attackrate,
                 poison_severity: block?.poison_severity ?? combatDefaults.poison_severity,
                 forcemulti: block?.forcemulti ?? combatDefaults.forcemulti,
-                bespoke: combat.bespoke && !ordinaryMelee,
+                bespoke: combat.bespoke && !ordinaryMelee && !shadeMelee,
                 counter_protect: combat.counter_protect,
+                combat_vars_on_hit: shadeMelee,
             };
         });
     if (rows.length === 0) throw new Error('npc_names: no extracted rows');

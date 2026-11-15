@@ -2109,11 +2109,13 @@ fn capacity_banner(ui: &Ui, session: &Session) {
 /// the notice says it once.
 fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
     let detail = session.core.fleet_view().detail();
+    // A shown line is one line of at most `LINE_MAX` characters: the whole
+    // text of anything longer is in the log (`frontend_core::notice_line`).
     if let Some(err) = &session.error {
-        ui.text_colored(ERROR, err);
+        ui.text_colored(ERROR, frontend_core::notice_line(err));
     }
     if let Some(notice) = detail.and_then(|detail| detail.row().login_notice()) {
-        ui.text_colored(ERROR, sentence_case(notice));
+        ui.text_colored(ERROR, sentence_case(&frontend_core::notice_line(notice)));
     }
     if session.error.is_some() {
         return;
@@ -2144,7 +2146,7 @@ fn slot_banner(ui: &Ui, detail: &frontend_core::SlotDetail) {
     if matches!(phase, Phase::Ready | Phase::Offline) {
         return;
     }
-    let text = sentence_case(detail.state());
+    let text = sentence_case(&frontend_core::notice_line(detail.state()));
     if phase.is_error() {
         ui.text_colored(ERROR, &text);
     } else if let Some(since) = detail.since() {
@@ -2834,14 +2836,19 @@ fn script_section(ui: &Ui, session: &mut Session) {
     if let Some(native) = native {
         kv_row(ui, "status", status);
         if let Some(reason) = frontend_core::views::script_status_reason(native) {
-            ui.text_wrapped(reason);
+            ui.text_wrapped(reason.as_str());
+            full_reason(ui, reason, "script-reason");
         }
         for (label, value) in frontend_core::views::script_status_rows(native) {
             kv_row(ui, label, value);
         }
     } else {
         match session.focused_script_last_error() {
-            Some(err) => kv_row(ui, "status", &format!("{status}: {err}")),
+            Some(err) => kv_row(
+                ui,
+                "status",
+                &format!("{status}: {}", frontend_core::notice_line(&err)),
+            ),
             None => kv_row(ui, "status", status),
         }
     }
@@ -2877,6 +2884,10 @@ fn quester_start_zone_disclosure(ui: &Ui, session: &mut Session, active: bool) {
     ui.text_colored(ACCENT, frontend_core::scripts::START_ZONE_SCOPE_TITLE);
     match session.scripts.quester_start_zone_view() {
         Some(Ok(zones)) => {
+            if let Some(warning) = zones.unqualified_warning() {
+                let _color = ui.push_style_color(StyleColor::Text, WARN);
+                ui.text_wrapped(warning);
+            }
             ui.text_wrapped(zones.notice());
             if !zones.is_empty() {
                 ui.text_disabled(frontend_core::scripts::START_ZONE_PANEL_SCROLL_HINT);
@@ -3088,7 +3099,11 @@ fn browse_script_card(
                     let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                     ui.text_disabled(line);
                 }
-                if let Some(failure) = session.scripts.load_failure(&loaded.identity_key()) {
+                if let Some(reason) = card.unloadable() {
+                    let color = if reason.is_import() { ERROR } else { WARN };
+                    let _color = ui.push_style_color(StyleColor::Text, color);
+                    ui.text_wrapped(reason.line());
+                } else if let Some(failure) = session.scripts.load_failure(&loaded.identity_key()) {
                     ui.text_colored(ERROR, format!("failed {}", failure.stage().as_str()));
                     if selected {
                         ui.text_wrapped(failure.named_line());
@@ -3626,11 +3641,10 @@ fn labelled<'a>(scratch: &'a mut String, label: &str, text: &str) -> &'a str {
     scratch
 }
 
-/// Routing group of the Nav config window: the global routing permissions and
-/// the Danger routing drop-down. The drop-down spans the full width so its
-/// level names never clip at the docked 330 px panel width; the held middle
-/// level explains itself in a wrapped note under the control. Returns whether
-/// a setting changed.
+/// Routing group of the Nav config window: global routing permissions and the
+/// Danger routing drop-down. The drop-down spans the full width so its level
+/// names never clip at the docked 330 px panel width. Its tooltip explains the
+/// held middle level. Returns whether a setting changed.
 fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
     let mut changed = false;
     ui.text_colored(ACCENT, "Routing");
@@ -3711,15 +3725,7 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
     let danger_combo = ui.begin_combo("##danger-routing", danger_level.label());
     #[cfg(test)]
     record_test_routing_item(ui);
-    ui.set_item_tooltip(match danger_level {
-        frontend_core::DangerLevel::Never => {
-            "Danger-zone routes are refused unless this walk or its script overrides."
-        }
-        frontend_core::DangerLevel::WhenSurvivable => {
-            frontend_core::walk_permissions::survivable_routing_tooltip()
-        }
-        frontend_core::DangerLevel::Always => frontend_core::GLOBAL_DANGER_WARNING,
-    });
+    ui.set_item_tooltip(frontend_core::danger_routing_tooltip(danger_level));
     if let Some(_open) = danger_combo {
         for level in frontend_core::walk_permissions::DANGER_ROUTING_LEVELS {
             let selected = level == danger_level;
@@ -3729,6 +3735,7 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
                 .build();
             #[cfg(test)]
             record_test_routing_choice(ui);
+            ui.set_item_tooltip(frontend_core::danger_routing_tooltip(level));
             if picked {
                 changed |= choose_danger_level(nav, level);
             }
@@ -3736,12 +3743,6 @@ fn routing_group(ui: &Ui, nav: &mut crate::nav_settings::NavSettings) -> bool {
                 ui.set_item_default_focus();
             }
         }
-    }
-    if frontend_core::walk_permissions::danger_routing_held(danger_level) {
-        let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
-        ui.text_wrapped(frontend_core::walk_permissions::WHEN_SURVIVABLE_HELD_NOTE);
-        #[cfg(test)]
-        record_test_routing_item(ui);
     }
     if danger_level == frontend_core::DangerLevel::Always {
         let _warning = ui.push_style_color(StyleColor::Text, ERROR);
@@ -3808,20 +3809,6 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     ui,
                     session,
                     Setting::Nav(frontend_core::NavPreference::ScriptScopeNoticeAck),
-                );
-            }
-
-            if !nav.survivable_routing_notice_ack {
-                ui.separator();
-                ui.text_wrapped(frontend_core::walk_permissions::survivable_routing_notice());
-                if ui.button("Dismiss danger-routing notice") {
-                    nav.survivable_routing_notice_ack = true;
-                    changed = true;
-                }
-                setting_feedback_line(
-                    ui,
-                    session,
-                    Setting::Nav(frontend_core::NavPreference::SurvivableRoutingNoticeAck),
                 );
             }
 
@@ -3970,12 +3957,6 @@ fn commit_nav_settings(
             after.script_scope_notice_ack,
         ),
         (
-            P::SurvivableRoutingNoticeAck,
-            "survivable_routing_notice_ack",
-            before.survivable_routing_notice_ack,
-            after.survivable_routing_notice_ack,
-        ),
-        (
             P::PauseScriptOnManualWalkAbort,
             "pause_script_on_manual_walk_abort",
             before.pause_script_on_manual_walk_abort,
@@ -4030,12 +4011,9 @@ fn commit_nav_settings(
     persist_panel_nav_member!(component_flood);
     persist_panel_nav_member!(camera_follow);
 
-    session.route_through_zones = frontend_core::WalkGlobalsView::new(
-        after.walk_globals(),
-        after.script_scope_notice_ack,
-        after.survivable_routing_notice_ack,
-    )
-    .danger_this_walk(session.route_through_zones);
+    session.route_through_zones =
+        frontend_core::WalkGlobalsView::new(after.walk_globals(), after.script_scope_notice_ack)
+            .danger_this_walk(session.route_through_zones);
     session.ui.nav = after;
     match failure {
         Some(error) => Err(error),
@@ -5021,6 +4999,25 @@ fn status_section(ui: &Ui, session: &mut Session) {
     status_detail_rows(ui, d, &walk, &mem);
 }
 
+/// The rest of a park or wait reason the pane's one line cut: a collapsed
+/// "Full reason" header (as the load-failure list has) holds the whole text
+/// and a Copy button. Nothing is drawn when the line shows the whole reason.
+fn full_reason(ui: &Ui, reason: frontend_core::ReasonLine<'_>, id: &str) {
+    if !reason.is_cut() {
+        return;
+    }
+    if ui.collapsing_header(format!("Full reason###{id}"), TreeNodeFlags::NONE) {
+        if ui.button(format!("Copy##{id}-copy")) {
+            if let Ok(mut clip) = arboard::Clipboard::new() {
+                let _ = clip.set_text(reason.full());
+            }
+        }
+        ui.child_window(format!("##{id}-text"))
+            .size([0.0, scale_px(ui, 120.0)])
+            .build(ui, || ui.text_wrapped(reason.full()));
+    }
+}
+
 fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &str) {
     kv_row(ui, "state", d.state());
     if let Some(script) = d.script_phase() {
@@ -5029,7 +5026,8 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
             kv_row(ui, "phase", phase);
         }
         if let Some(reason) = script.reason() {
-            kv_row(ui, "reason", reason);
+            kv_row(ui, "reason", &reason.as_str());
+            full_reason(ui, reason, "status-reason");
         }
     }
     kv_row(
@@ -7523,9 +7521,7 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
     }
     ui.text_wrapped("Off: show event status only; do not handle or hold events.");
     let policies_open = ui.collapsing_header("Policies", TreeNodeFlags::NONE);
-    ui.set_item_tooltip(
-        "Per-event response: Flee is available; Fight and Ignore are disabled, and saved choices are treated as Flee.",
-    );
+    ui.set_item_tooltip(frontend_core::GUARDIAN_FIGHT_UNAVAILABLE);
     if policies_open {
         for (event, label) in frontend_core::GUARDIAN_EVENTS {
             ui.text_disabled(label);
@@ -7755,27 +7751,20 @@ fn random_event_policy_combo(
     event: &str,
     policy: &mut frontend_core::GuardianPolicy,
 ) -> bool {
-    use frontend_core::GuardianPolicy::{Fight, Flee, Ignore};
-
-    let preview = match *policy {
-        Flee => "Flee",
-        Fight => "Fight (not available yet)",
-        Ignore => "Ignore (not available yet)",
-    };
     let id = format!("##random-event-policy-{event}");
     let options = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
     let mut changed = false;
     ui.set_next_item_width(-1.0);
-    if let Some(_open) = ui.begin_combo_with_flags(&id, preview, options) {
-        for (option, label) in [
-            (Flee, "Flee"),
-            (Fight, "Fight (not available yet)"),
-            (Ignore, "Ignore (not available yet)"),
-        ] {
+    if let Some(_open) = ui.begin_combo_with_flags(&id, policy.label(), options) {
+        for option in frontend_core::GuardianPolicy::OPTIONS {
             let selected = option == *policy;
-            let _disabled = (option != Flee).then(|| ui.begin_disabled());
-            if ui.selectable_config(label).selected(selected).build() && option == Flee {
-                *policy = option;
+            let _disabled = (!option.available()).then(|| ui.begin_disabled());
+            if ui
+                .selectable_config(option.label())
+                .selected(selected)
+                .build()
+                && apply_random_event_policy(policy, option)
+            {
                 changed = true;
             }
             if selected {
@@ -7784,6 +7773,20 @@ fn random_event_policy_combo(
         }
     }
     changed
+}
+
+/// Apply one picked policy choice to the draft: a choice that is not
+/// available is refused, picking the current choice changes nothing, and any
+/// other choice replaces it. Returns whether the draft changed.
+fn apply_random_event_policy(
+    policy: &mut frontend_core::GuardianPolicy,
+    option: frontend_core::GuardianPolicy,
+) -> bool {
+    if !option.available() || *policy == option {
+        return false;
+    }
+    *policy = option;
+    true
 }
 
 /// The lamp dialogue's skill names from the client skill table, minus the

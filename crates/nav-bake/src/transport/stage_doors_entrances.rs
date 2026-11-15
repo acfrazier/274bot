@@ -1109,20 +1109,30 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                 .ids
                 .iter()
                 .filter(|(_, value)| **value == id)
-                .map(|(name, _)| Sources::one(&src.oplocs[(option - 1) as usize], name))
-                .filter(|value| !matches!(value, Lookup::Missing))
+                .map(|(name, _)| {
+                    (
+                        name.as_str(),
+                        Sources::one(&src.oplocs[(option - 1) as usize], name),
+                    )
+                })
+                .filter(|(_, value)| !matches!(value, Lookup::Missing))
                 .collect();
-            let handler = match own.as_slice() {
-                [Lookup::Found(block)] => *block,
-                [] => match fact.category.as_ref().map(|name| {
-                    Sources::one(&src.oplocs[(option - 1) as usize], &format!("_{name}"))
-                }) {
-                    Some(Lookup::Found(block)) => block,
-                    _ => continue,
-                },
+            let category_handler: Option<String>;
+            let (handler_name, handler) = match own.as_slice() {
+                [(name, Lookup::Found(block))] => (*name, *block),
+                [] => {
+                    category_handler = fact.category.as_ref().map(|name| format!("_{name}"));
+                    match category_handler
+                        .as_deref()
+                        .map(|name| (name, Sources::one(&src.oplocs[(option - 1) as usize], name)))
+                    {
+                        Some((name, Lookup::Found(block))) => (name, block),
+                        _ => continue,
+                    }
+                }
                 _ => continue,
             };
-            let obstacle = obstacles::classify(handler, src);
+            let obstacle = obstacles::classify(handler_name, handler, src);
             if covered.contains(&(id, option)) && obstacle != Some(obstacles::Class::Ladder) {
                 continue;
             }

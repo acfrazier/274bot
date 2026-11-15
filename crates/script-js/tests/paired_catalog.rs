@@ -61,13 +61,10 @@ fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
             .clone();
         // JiveKQ stays out of operator Start in 0.1.9; its live witness
         // still Starts the card, so it must load all the same.
-        let availability = (name == "JiveKQ")
-            .then_some("dim: JiveKQ is unavailable: four-player qualification incomplete");
-        assert_eq!(
-            card.unloadable.as_deref(),
-            availability,
-            "{name} availability"
-        );
+        let availability = (name == "JiveKQ").then_some(script_js::UnloadReason::Retired(
+            "four-player qualification incomplete".into(),
+        ));
+        assert_eq!(card.unloadable, availability, "{name} availability");
         let siblings = script_js::resolve_sibling_modules(
             &card.path,
             &card.origin,

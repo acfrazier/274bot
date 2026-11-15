@@ -5,8 +5,6 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { bankCatalogJson, cookCatalogJson } from './generate.ts';
 import {
-    assertTrioGiverNpcJoins,
-    assertTalkKeyNpcJoins,
     extractDropFacts,
     extractFacts,
     extractEquipmentNamesFacts,
@@ -29,33 +27,34 @@ import {
     parseIdentifyHerbPairs,
     parseJm2LinkBelow,
     parseJm2NpcPlacements,
-    parseTrioGiverHandlers,
     parseInvShopStock,
     parseObjSections,
     parsePrayerInterface,
-    parseQuestEnumEntry,
 } from './generate.ts';
 
 import { parseJm2LocPlacements, parseMapsquarePath, parsePack, parseRows, parseParamDefinitions } from './extractors/common.ts';
 import { extractGatheringFamily, compareCodepoint, gatherMethodGap, gatherResources, gatherSites, GATHERING_SCHEMA, isKnownGatherTarget, SITE_OVERRIDES, type GatheringFacts, type GatheringFamily, type Know, type MethodWire, type SiteOverride, type TargetWire } from './extractors/gathering.ts';
-import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
+import { parseDbRows, parseSections, stripComments } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
+import { questFixture, writeQuestFixture } from './quest-fixture.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 import { DEBUG_SCHEMA_VERSION, QUESTS_SCHEMA, buildDebugArtifact, categoryName, debugArtifactBytes, extractQuestsFamily, familyBytes, parseGenerationArgs, revisions, runtimeNpcOperations } from './generate.ts';
+import { extractShopFacts, SHOP_INVENTORY_SOURCES, SHOP_KEEPER_SOURCES } from './generate.ts';
 import { extractCombatStyleFacts, parseCombatScripts, extractSpecialWeaponFacts, extractItemCombatBonus, extractMeleeWeaponTiers } from './extractors/combat.ts';
 import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
 import './gather-catalog.test.ts';
+import './extractors/progress-values.test.ts';
 import './quest-junk.test.ts';
-import './extractors/prereq-preservation.test.ts';
-import './extractors/prereq-journal-proof.test.ts';
 import './extractors/prereq-steps.test.ts';
 import './server-ordered.test.ts';
 import './npc-transforms.test.ts';
 import './npc-stat-default.test.ts';
+import './shade-combat.test.ts';
+import './banks.test.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
 import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 import { extractCookSurfaces } from './generate.ts';
@@ -151,21 +150,20 @@ assert.deepEqual(
     const npcIds = [1, 2, 3, 390, 403];
     const evidence: NpcTransformClosureEvidence = {
         schema: 1,
-        source_spans: [{ file: 'scripts/test.rs2', first: 1, last: 2 }],
-        npc_types: npcIds.map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete', source_refs: [0] })),
+        npc_types: npcIds.map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete' })),
         actions: npcIds.map(npc_type_id => ({
             npc_type_id, slot: 1, state: 'present', label: 'Talk-to', trigger_code: 1,
             trigger_kind: 'type', trigger_target_id: npc_type_id,
-            operation_fingerprint: 'a'.repeat(64), source_refs: [0],
+            operations: { op: ['return;'], ap: null },
         })),
         transform_edges: [],
         unresolved: [],
         proofs: [1, 2].map(npc_type_id => ({
             npc_type_id, slot: 1, status: npc_type_id === 1 ? 'unchanged' : 'unavailable',
             reachable_npc_type_ids: [npc_type_id], mismatched_npc_type_ids: [],
-            evidence_refs: [0], unresolved_refs: [],
+            unresolved_refs: [],
         })),
-        engine: { complete: true, source_refs: { numeric_dispatch: [0], type_change: [0], reversion: [0], static_type_decoder: [0] } },
+        engine: { complete: true },
     };
     const target = (id: number): TargetWire => ({
         kind: 'npc', id, op: 1, class: 'resource', respawn: { state: 'known', value: null },
@@ -178,10 +176,10 @@ assert.deepEqual(
     const methods = [fishingMethod, fishingMethod];
     const hazardNpcs = [3];
     const runtime = runtimeNpcOperations(evidence, methods, hazardNpcs);
-    assert.deepEqual(runtime.operations, [{ npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) }]);
+    assert.deepEqual(runtime.operations, [{ npc_type_id: 1, slot: 1 }]);
     assert.deepEqual(runtime.builtin_gatherer_fishing_operations, [
-        { npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) },
-        { npc_type_id: 2, slot: 1, operation_fingerprint: 'a'.repeat(64) },
+        { npc_type_id: 1, slot: 1 },
+        { npc_type_id: 2, slot: 1 },
     ], 'static proof admits only complete ordinary NPC types, even when full closure is unavailable');
     assert.equal(runtime.schema, 2);
     assert.deepEqual(Object.keys(runtime), ['schema', 'operations', 'builtin_gatherer_fishing_operations']);
@@ -1149,14 +1147,39 @@ data=levelrequired,31
 data=runesrequired,earthrune,1,airrune,3,lawrune,1
 data=experience,410
 data=tele_coord,0_50_50_21_18
+[magic_spell_teleother_lumbridge]
+table=magic_spell_table
+data=spell,^teleother_lumbridge
+data=spellcom,magic:com_511
+data=name,Teleother Lumbridge
+data=members,true
+data=levelrequired,74
+data=runesrequired,soulrune,1,lawrune,1,earthrune,1
+data=experience,840
+data=tele_coord,0_50_50_21_18
+data=anim,human_teleport_other_casting
+data=spotanim_origin,teleport_other_casting
+data=spotanim_target,teleport_other_impact,92
+data=sound_cast,tele_other_cast
+data=sound_hit,teleport_all
 `);
 const teleportItems = [
     ...magicItems,
     { id: 9, debugname: 'lawrune', name: 'Law rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
     { id: 10, debugname: 'naturerune', name: 'Nature rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
 ];
+const teleportScripts = path.join(content, 'scripts/skill_magic/scripts/spells');
+fs.mkdirSync(teleportScripts, { recursive: true });
+const teleportScript = path.join(teleportScripts, 'teleport.rs2');
+fs.writeFileSync(teleportScript, `[if_button,magic:varrock_teleport] @magic_teleport(^varrock_teleport);
+[if_button,magic:lumbridge_teleport] @magic_teleport(^lumbridge_teleport);
+[applayert,magic:com_511] @teleother_offer(^teleother_lumbridge);
+/*
+[applayert,magic:varrock_teleport] @commented_cast(^varrock_teleport);
+*/
+`);
 const teleports = extractTeleportSpells(content, teleportItems);
-assert.equal(teleports.length, 2, 'only tele_coord rows are teleports');
+assert.equal(teleports.length, 2, 'only self-teleport tele_coord rows belong in the catalogue');
 assert.equal(teleports[0].name, 'Varrock');
 assert.equal(teleports[0].component_id, 1164);
 assert.equal(teleports[0].level, 25);
@@ -1167,6 +1190,79 @@ assert.deepEqual(teleports[0].runes.map((rune) => [rune.name, rune.count]), [['F
 assert.equal(teleports[1].name, 'Lumbridge');
 assert.equal(teleports[1].component_id, 1167);
 assert.equal(teleports.some((row) => row.spell === 'highlvl_alchemy'), false);
+assert.deepEqual(teleports.map(row => row.source_row), ['magic_spell_teleport_varrock', 'magic_spell_teleport_lumbridge']);
+const teleportRowsFile = path.join(content, 'scripts/skill_magic/configs/magic_spells.dbrow');
+const knownTeleportRows = fs.readFileSync(teleportRowsFile, 'utf8');
+const knownTeleportScript = fs.readFileSync(teleportScript, 'utf8');
+for (const [destination, component] of [['falador', '521'], ['camelot', '541']]) {
+    fs.writeFileSync(teleportRowsFile, knownTeleportRows.replaceAll('teleother_lumbridge', `teleother_${destination}`).replaceAll('com_511', `com_${component}`));
+    fs.writeFileSync(teleportScript, knownTeleportScript.replaceAll('teleother_lumbridge', `teleother_${destination}`).replaceAll('com_511', `com_${component}`));
+    assert.deepEqual(extractTeleportSpells(content, teleportItems), teleports, `Tele Other ${destination} must not enter the self-teleport catalogue`);
+}
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.writeFileSync(teleportScript, knownTeleportScript);
+const ancientTeleports = [
+    ['paddewwa', 179, 54, 'lawrune,2,firerune,1,airrune,1', 640],
+    ['senntisten', 189, 60, 'lawrune,2,soulrune,1,null,null', 700],
+    ['kharyrll', 197, 66, 'lawrune,2,bloodrune,1,null,null', 760],
+    ['lassar', 205, 72, 'lawrune,2,waterrune,4,null,null', 820],
+    ['dareeyak', 213, 78, 'lawrune,2,firerune,3,airrune,2', 880],
+    ['carrallangar', 223, 84, 'lawrune,2,soulrune,2,null,null', 940],
+    ['annakarl', 231, 90, 'lawrune,2,bloodrune,2,null,null', 1000],
+    ['ghorrock', 239, 96, 'lawrune,2,waterrune,8,null,null', 1060],
+] as const;
+const ancientTeleportScript = path.join(teleportScripts, 'ancient_teleport.rs2');
+fs.writeFileSync(ancientTeleportScript, ancientTeleports.map(([destination, component]) =>
+    `[if_button,inter_267:com_${component}] @ancient_teleport(^${destination}_teleport);\n`,
+).join(''));
+fs.appendFileSync(teleportRowsFile, ancientTeleports.map(([destination, , level, runes, experience]) => `[magic_spell_teleport_${destination}]
+table=magic_spell_table
+data=spell,^${destination}_teleport
+data=members,true
+data=levelrequired,${level}
+data=runesrequired,${runes}
+data=experience,${experience}
+data=tele_coord,^${destination}_teleport_arrival
+`).join(''));
+assert.deepEqual(
+    extractTeleportSpells(content, teleportItems),
+    teleports,
+    'all eight Ancient Magicks teleports are excluded by their cast interface',
+);
+fs.rmSync(ancientTeleportScript);
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.writeFileSync(teleportScript, knownTeleportScript.replace('magic:varrock_teleport', 'magic_extra:varrock_teleport'));
+assert.deepEqual(
+    extractTeleportSpells(content, teleportItems),
+    [teleports[1]],
+    'another spellbook interface excludes even a known name with a literal arrival and an available standard component',
+);
+fs.writeFileSync(teleportScript, knownTeleportScript);
+fs.appendFileSync(teleportRowsFile, '[unknown_coordinate_spell]\ndata=spell,^unknown_teleport\ndata=tele_coord,0_50_50_21_18\n');
+assert.throws(
+    () => extractTeleportSpells(content, teleportItems),
+    /unknown_coordinate_spell.*unrecognized teleport trigger/,
+    'a destination and a teleport suffix do not classify an unknown spell',
+);
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.appendFileSync(teleportRowsFile, '[unknown_coordinate_spell]\ndata=spell,^unknown_teleport\ndata=tele_coord,0_50_50_21_18\n');
+for (const trigger of ['if_button2,magic:unknown_teleport', 'if_button,unknown_component']) {
+    fs.writeFileSync(teleportScript, `${knownTeleportScript}[${trigger}] @unknown_cast(^unknown_teleport);\n`);
+    assert.throws(
+        () => extractTeleportSpells(content, teleportItems),
+        /unknown_coordinate_spell.*unrecognized teleport trigger/,
+        'an unknown cast class must fail with the row name',
+    );
+}
+fs.writeFileSync(teleportRowsFile, knownTeleportRows);
+fs.writeFileSync(teleportScript, knownTeleportScript);
+fs.appendFileSync(teleportScript, '[applayert,magic:varrock_teleport] @targeted_cast(^varrock_teleport);\n');
+assert.throws(
+    () => extractTeleportSpells(content, teleportItems),
+    /magic_spell_teleport_varrock.*unrecognized teleport trigger/,
+    'conflicting cast kinds must not select either interpretation',
+);
+fs.writeFileSync(teleportScript, knownTeleportScript);
 
 assert.equal(herbKeyFromName('Guam leaf'), 'guam');
 assert.equal(herbKeyFromName('Dwarf weed'), 'dwarf weed');
@@ -1445,8 +1541,6 @@ assert.throws(
     /expected one .* LOC placement/,
 );
 assert.equal(parseMapsquarePath('maps/m45_75.jm2').mx, 45);
-assert.throws(() => parseQuestEnumEntry('val=37,Murder Mystery\n', 'Murder Mystery'), /\[quest_names_enum\]/);
-assert.equal(parseQuestEnumEntry('[quest_names_enum]\nval=37,Murder Mystery\n', 'Murder Mystery'), 'val=37,Murder Mystery');
 
 const toolFlour = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-tool-flour-'));
 fs.mkdirSync(path.join(toolFlour, 'scripts/areas/area_falador/configs'), { recursive: true });
@@ -1463,8 +1557,8 @@ const toolPickaxes = [{ id: 1265, debugname: 'bronze_pickaxe', name: 'Bronze pic
 const toolNurmof = { id: 594, debugname: 'nurmof', name: 'Nurmof' };
 assert.throws(
     () => extractNurmofEssenceFacts(toolFlour, toolPickaxes, [toolNurmof]),
-    /aubury: pack\/cache join mismatch 553\/undefined/,
-    'a missing decoded Aubury must fail the pack/cache join',
+    /aubury: missing decoded npc/,
+    'a missing decoded Aubury must fail',
 );
 const singleStock = extractNurmofEssenceFacts(
     toolFlour,
@@ -1498,14 +1592,6 @@ const equipmentItems = [
     { alias: 'deathdagger', id: 746, name: 'Black dagger', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
     { alias: 'bronze_arrow', id: 882, name: 'Bronze arrow', cost: 1, stackable: true, members: false, certificate_link: -1, certificate_template: -1, wear_position: 13, wear_position_2: -1, wear_position_3: -1 },
 ];
-const equipmentPack = new Map<string, number>([
-    ['shortbow', 841],
-    ['cert_shortbow', 842],
-    ['unstrung_shortbow', 50],
-    ['black_dagger', 1217],
-    ['deathdagger', 746],
-    ['bronze_arrow', 882],
-]);
 const curated = loadEquipmentNamesCurated();
 
 function isolatedEquipmentRoot(families: typeof curated.families = structuredClone(curated.families)) {
@@ -1517,14 +1603,14 @@ function isolatedEquipmentRoot(families: typeof curated.families = structuredClo
 
 const isolated = isolatedEquipmentRoot();
 assert.deepEqual(loadEquipmentNamesCurated(isolated).families, curated.families);
-const isolatedFacts = extractEquipmentNamesFacts(equipmentItems, equipmentPack, isolated);
+const isolatedFacts = extractEquipmentNamesFacts(equipmentItems, isolated);
 assert.equal(isolatedFacts.crossbows.at(-1)?.requested_name, "Karil's crossbow");
 
 const unknown = isolatedEquipmentRoot({
     ...curated.families,
     bows: [...curated.families.bows, 'Laser gun'],
 });
-const unknownFacts = extractEquipmentNamesFacts([], new Map(), unknown);
+const unknownFacts = extractEquipmentNamesFacts([], unknown);
 assert.equal(unknownFacts.bows.at(-1)?.requested_name, 'Laser gun');
 assert.equal(unknownFacts.bows.at(-1)?.disposition, 'absent');
 
@@ -1540,7 +1626,7 @@ assert.throws(
     'curated duplicate family rows are malformed',
 );
 
-const equipmentFacts = extractEquipmentNamesFacts(equipmentItems, equipmentPack);
+const equipmentFacts = extractEquipmentNamesFacts(equipmentItems);
 const shortbow = equipmentFacts.bows.find((row) => row.requested_name === 'Shortbow');
 assert.equal(shortbow?.disposition, 'resolved');
 assert.equal(shortbow?.alias, 'shortbow');
@@ -1560,19 +1646,19 @@ assert.equal(karil?.absent_class, 'no_exact_selected_match');
 assert.equal(equipmentFacts.exact_name_join.bolts.generic_is_substitute, false);
 
 // revision 377 derives the same equipment rows; only the frozen-bolt note is revision-specific
-const equipmentFacts377 = extractEquipmentNamesFacts(equipmentItems, equipmentPack, repoRoot, 377);
+const equipmentFacts377 = extractEquipmentNamesFacts(equipmentItems, repoRoot, 377);
 assert.deepEqual(equipmentFacts377.bows.map((row) => row.requested_name), equipmentFacts.bows.map((row) => row.requested_name));
 assert.equal(equipmentFacts377.exact_name_join.bolts.note, 'Frozen bolt names are exact queries. Each row derives its selected identity or absence; generic Bolts / Bolts(p) are never substituted for a tier name.');
 
 const noteOnly = extractEquipmentNamesFacts([
     { alias: 'cert_shortbow', id: 842, name: 'Shortbow', cost: 1, stackable: false, members: false, certificate_link: 841, certificate_template: 799, wear_position: -1, wear_position_2: -1, wear_position_3: -1 },
-], new Map([['cert_shortbow', 842]]));
+]);
 assert.equal(noteOnly.bows.find((row) => row.requested_name === 'Shortbow')?.absent_class, 'exact_match_ineligible');
 assert.equal(noteOnly.arrows.find((row) => row.requested_name === 'Dragon arrow')?.absent_class, 'no_exact_selected_match');
 
 const genericBolts = extractEquipmentNamesFacts([
     { alias: 'bolt', id: 877, name: 'Bolts', cost: 1, stackable: true, members: false, certificate_link: -1, certificate_template: -1, wear_position: 13, wear_position_2: -1, wear_position_3: -1 },
-], new Map([['bolt', 877]]));
+]);
 assert.equal(genericBolts.bolts.find((row) => row.requested_name === 'Bronze bolts')?.absent_class, 'no_exact_selected_match');
 assert.equal(genericBolts.bolts.some((row) => row.requested_name === 'Bolts' || row.alias === 'bolt'), false);
 assert.equal(genericBolts.exact_name_join.bolts.generic_display_name, 'Bolts');
@@ -1581,36 +1667,21 @@ assert.throws(
     () => extractEquipmentNamesFacts([
         { alias: 'bronze_scimitar', id: 1, name: 'Bronze scimitar', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
         { alias: 'bronze_scimitar_dup', id: 2, name: 'Bronze scimitar', cost: 1, stackable: false, members: false, certificate_link: -1, certificate_template: -1, wear_position: 3, wear_position_2: -1, wear_position_3: -1 },
-    ], new Map([['bronze_scimitar', 1], ['bronze_scimitar_dup', 2]])),
+    ]),
     /ambiguous joins Bronze scimitar/,
     'duplicate wieldable display names must fail closed at generate time',
 );
 const shortbow377 = equipmentItems.find(item => item.alias === 'shortbow')!;
 const ambiguous377Equipment = extractEquipmentNamesFacts(
     [...equipmentItems, { ...shortbow377, id: 19000, alias: 'quest_shortbow' }],
-    new Map([...equipmentPack, ['quest_shortbow', 19000]]), undefined, 377,
+    undefined, 377,
 ).bows.find(row => row.requested_name === 'Shortbow')!;
 assert.equal(ambiguous377Equipment.disposition, 'ambiguous');
 assert.equal(ambiguous377Equipment.id, undefined, '377 ambiguity does not invent a selected id');
 assert.equal(ambiguous377Equipment.alias, undefined, '377 ambiguity is not a silent preferred variant');
 assert.deepEqual(ambiguous377Equipment.candidates?.map(row => row.alias), ['shortbow', 'quest_shortbow']);
-assert.throws(
-    () => extractEquipmentNamesFacts(equipmentItems, new Map([['shortbow', 999], ['black_dagger', 1217], ['deathdagger', 746], ['bronze_arrow', 882]])),
-    /obj\.pack shortbow=999/,
-    'selected pack id mismatch must fail closed',
-);
-assert.throws(
-    () => extractEquipmentNamesFacts(equipmentItems, undefined as unknown as Map<string, number>),
-    /missing required obj\.pack/,
-    'missing required pack must fail closed',
-);
-assert.throws(
-    () => extractEquipmentNamesFacts(equipmentItems, new Map([['shortbow', 841], ['black_dagger', 1217], ['bronze_arrow', 882]])),
-    /ambiguous joins Black dagger/,
-    'black dagger preference without independent pack support stays ambiguous',
-);
 assert.equal(
-    joinEquipmentName('arrows', 'Dragon arrow', [], equipmentPack).absent_class,
+    joinEquipmentName('arrows', 'Dragon arrow', []).absent_class,
     'no_exact_selected_match',
 );
 
@@ -1620,124 +1691,18 @@ assert.deepEqual(parseGenerationArgs(['--stage', '2', '--revision', '377']), { s
 assert.throws(() => parseGenerationArgs([]), /usage/);
 assert.throws(() => parseGenerationArgs(['--stage', '1', '--revision', '999']), /usage/);
 
-function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
-    const files: Record<string, string> = {
-        'scripts/general/scripts/quests.rs2': `~send_quest_progress_colour($component, $progress, $complete_progress);
-%qp = $questpointrecount;
-~send_quest_progress_colour(questlist:runemysteries, %runemysteries, ^runemysteries_complete);
-~send_quest_progress_colour(questlist:cook, %cookquest, ^cook_complete);
-~send_quest_progress_colour(questlist:zanaris, %zanaris, ^zanaris_complete);
-~send_quest_progress_colour(questlist:waterfall, %waterfall_quest, ^waterfall_complete);
-~send_quest_progress_colour(questlist:murder, %murderquest, ^murder_complete);
-~send_quest_progress_colour(questlist:death, %death_equiproom, ^death_complete);
-~send_quest_progress_colour(questlist:itexam, ~itexam_progress, ^itexam_complete);
-~send_quest_progress_colour(questlist:blackarmgang, %phoenixgang, ^phoenixgang_complete);
-~send_quest_progress_colour(questlist:blackarmgang, %blackarmgang, ^blackarmgang_complete);
-~send_quest_progress_colour(questlist:elemental_workshop, %elemental_workshop_bits, sub(pow(2, ^elemental_workshop_complete), 1));
-~send_quest_progress_colour(questlist:legends, %legendsquest, ^legends_complete);
-~send_quest_progress_colour(questlist:regicide, %regicide_quest, ^regicide_complete);
-`,
-        'scripts/general/configs/quest.constant': `^cook_complete = 2
-^cookquest_not_started = 0
-^cookquest_complete = 7
-^cook_questpoints = 1
-^runemysteries_complete = 6
-^runemysteries_questpoints = 1
-^murder_complete = 2
-^murder_questpoints = 3
-^waterfall_complete = 10
-^waterfall_questpoints = 1
-^death_equiproom_complete = 999
-^death_complete = 80
-^death_questpoints = 1
-^zanaris_complete = 6
-^zanaris_questpoints = 3
-`,
-        'scripts/player/interfaces/questlist.if': `[death]
-y=1
-text=Death Plateau
-[zanaris]
-y=2
-text=Lost City
-[cook]
-y=99
-text=Cook's Assistant
-[runemysteries]
-y=3
-text=Rune Mysteries Quest
-[murder]
-y=4
-text=Murder Mystery
-[waterfall]
-y=5
-text=Waterfall Quest
-`,
-        'pack/varp.pack': `29=cookquest
-63=runemysteries
-192=murderquest
-65=waterfall_quest
-219=death
-314=death_equiproom
-147=zanaris
-101=qp
-`,
-        'pack/npc.pack': `100=cook
-`,
-        'pack/loc.pack': `200=cook_start
-`,
-        'scripts/areas/area_test/scripts/start.rs2': `[opnpc1,cook]
-if (%cookquest = ^cookquest_not_started) {
-    @cook_start;
+function addCookColourMetadata(files: Record<string, string>) {
+    files['scripts/general/scripts/quests.rs2'] += `[proc,send_quest_progress_colour](component $component, int $progress, int $complete_progress)
+if ($progress = 0) {
+    if_setcolour($component, ^red_rgb);
+} else if ($progress >= $complete_progress) {
+    if_setcolour($component, ^green_rgb);
+} else {
+    if_setcolour($component, ^yellow_rgb);
 }
-[label,cook_start]
-%cookquest = 1;
-`,
-        'scripts/general/configs/quest.enum': `[quest_names_enum]
-val=1,Cook's Assistant
-val=13,Rune Mysteries Quest
-val=37,Murder Mystery
-val=50,Waterfall Quest
-val=55,Death Plateau
-val=34,Lost City
-`,
-        'scripts/quests/quest_cook/scripts/quest_cook.rs2': `if(inv_total(inv, pot_flour) > 0 & inv_total(inv, egg) > 0 & inv_total(inv, bucket_milk) > 0) {
-}
-inv_del(inv, egg, 1);
-inv_del(inv, bucket_milk, 1);
-inv_del(inv, pot_flour, 1);
-`,
-        'scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2': `// rope comment is not a requirement list
-if(last_useitem ! rope) {
-}
-if(last_useitem ! rope) {
-}
-`,
-        'scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2': `if(stat(woodcutting) < 36) {
-}
-if(stat(crafting) < 31) {
-}
-if(inv_total(inv, axe) > 0) {
-}
-inv_del(inv, knife, 1);
-if(last_useitem ! dramen_branch) {
-}
-`,
-        'scripts/quests/quest_death/scripts/death_sherpa.rs2': `inv_del(inv, death_climbingboots, 1);
-inv_del(inv, death_secretwaymap, 1);
-inv_del(inv, trout, 1);
-`,
-    };
-    mutate?.(files);
-    for (const [relative, body] of Object.entries(files)) {
-        const absolute = path.join(rootDir, relative);
-        fs.mkdirSync(path.dirname(absolute), { recursive: true });
-        fs.writeFileSync(absolute, body);
-    }
-}
-function questFixture(mutate?: (files: Record<string, string>) => void) {
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quest-identity-'));
-    writeQuestFixture(rootDir, mutate);
-    return rootDir;
+`;
+    files['scripts/quests/quest_cook/configs/quest_cook.varp'] = '[cookquest]\ntransmit=no\n';
+    files['scripts/quests/quest_cook/scripts/complete.rs2'] = '[oploc3,cook_finish]\nif (%cookquest = 1) { %cookquest = ^cook_complete; }\n';
 }
 function assertQuestRows(facts: ReturnType<typeof extractQuestIdentityFacts>) {
     const byId = Object.fromEntries(facts.rows.map((row) => [row.id, row]));
@@ -1777,11 +1742,28 @@ const questRoot = questFixture();
 const quest274 = extractQuestIdentityFacts(questRoot, 274);
 assertQuestRows(quest274);
 assert.equal(quest274.coverage.length, 1);
-assert.deepEqual(quest274.coverage[0], { class: 'revision-absent', alias: 'routequest', on_revision: 274, other_pin_id: 387, copied: false, reason: '289-only quest, not copied onto 274' });
+assert.deepEqual(quest274.coverage[0], { class: 'revision-absent', alias: 'routequest', on_revision: 274, copied: false, reason: '289-only quest, not copied onto 274' });
 assert.equal('display' in quest274.coverage[0] || 'complete' in quest274.coverage[0] || 'quest_points' in quest274.coverage[0], false);
 const quest289 = extractQuestIdentityFacts(questRoot, 289);
 assertQuestRows(quest289);
 assert.deepEqual(quest289.coverage, []);
+
+if (process.env.GAME_DATA_289_CONTENT) {
+    const real289 = extractQuestIdentityFacts(process.env.GAME_DATA_289_CONTENT, 289);
+    const hero = real289.rows.find((row) => row.id === 'hero');
+    assert.ok(hero, 'the real 289 quest rows include Hero');
+    assert.equal(hero.colour_authoritative, false, 'Hero keeps weak raw colour authority for the queued Grip reset');
+    assert.ok(hero.completion_range, 'Hero has a full post-completion range');
+    assert.ok(
+        hero.completion_range.min <= 5 && hero.completion_range.max >= 5,
+        'Hero ordinary range retains the queued Grip reset to 5',
+    );
+    assert.deepEqual(
+        hero.completion_range_after_login,
+        { min: 15, max: 15 },
+        'Hero fresh-login range excludes the pre-completion Grip reset',
+    );
+}
 
 for (const [writer, expected] of [
     ['^cook_complete', { min: 0, max: 2 }],
@@ -1830,16 +1812,7 @@ for (const [entry, writer, maximum, authoritative] of [
     ['if (%cookquest = 5) { @cook_revisit; }', '1', 5, false],
 ] as const) {
     const root = questFixture((files) => {
-        files['scripts/general/scripts/quests.rs2'] += `[proc,send_quest_progress_colour](component $component, int $progress, int $complete_progress)
-if ($progress = 0) {
-    if_setcolour($component, ^red_rgb);
-} else if ($progress >= $complete_progress) {
-    if_setcolour($component, ^green_rgb);
-} else {
-    if_setcolour($component, ^yellow_rgb);
-}
-`;
-        files['scripts/quests/quest_cook/configs/quest_cook.varp'] = '[cookquest]\ntransmit=no\n';
+        addCookColourMetadata(files);
         files['scripts/quests/quest_cook/scripts/quest_cook_progress.rs2'] = `[oploc1,cook_start]
 ${entry}
 [label,cook_revisit]
@@ -1864,6 +1837,191 @@ if (%cookquest = 0) { %cookquest = ${maximum}; }
         fs.rmSync(root, { recursive: true, force: true });
     }
 }
+for (const [guard, authoritative, completionRange, afterLoginRange] of [
+    [
+        '%blackarmgang < ^blackarmgang_complete & %phoenixgang < ^phoenixgang_complete',
+        true,
+        { min: 2, max: 2 },
+        { min: 2, max: 2 },
+    ],
+    [
+        '%phoenixgang < ^phoenixgang_complete',
+        false,
+        { min: 1, max: 2 },
+        { min: 1, max: 2 },
+    ],
+    [
+        '%phoenixgang < ^phoenixgang_complete & npc_find(coord, cook, 10, 0) = true',
+        false,
+        { min: 1, max: 2 },
+        { min: 1, max: 2 },
+    ],
+] as const) {
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/general/configs/quest.constant'] += '^blackarmgang_complete = 12\n^phoenixgang_complete = 34\n';
+        files['scripts/quests/quest_cook/scripts/requirements.rs2'] = `[proc,has_cook_quest_requirements]()(boolean)
+if (%blackarmgang < ^blackarmgang_complete & %phoenixgang < ^phoenixgang_complete) {
+    return(false);
+}
+return(true);
+`;
+        files['scripts/areas/area_test/scripts/prerequisite-writer.rs2'] = `[opnpc1,prerequisite_writer]
+if (${guard}) {
+    %cookquest = 1;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, authoritative, `post-completion writer uses its full content prerequisite: ${guard}`);
+        assert.deepEqual(row?.completion_range, completionRange, `post-completion range includes reachable writes: ${guard}`);
+        assert.deepEqual(row?.completion_range_after_login, afterLoginRange, `fresh-login range preserves prerequisite reachability: ${guard}`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+for (const fixture of [
+    {
+        name: 'pre-completion queue',
+        schedule: 'if (%cookquest < ^cook_complete) {\n    queue(reset_cook, 30, 0);\n}',
+        afterLogin: { min: 2, max: 2 },
+    },
+    {
+        name: 'post-completion queue',
+        schedule: 'if (%cookquest >= ^cook_complete) {\n    queue(reset_cook, 30, 0);\n}',
+        afterLogin: { min: 1, max: 2 },
+    },
+    {
+        name: 'dynamic queue target',
+        schedule: 'queue($dynamic_target, 30, 0);',
+        afterLogin: { min: 1, max: 2 },
+    },
+]) {
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/areas/area_test/scripts/queued-reset.rs2'] = `[opnpc1,schedule_reset]
+${fixture.schedule}
+[queue,reset_cook]
+%cookquest = 1;
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, false, `${fixture.name}: ordinary authority retains queued writes`);
+        assert.deepEqual(row?.completion_range, { min: 1, max: 2 }, `${fixture.name}: ordinary range includes pending queued resets`);
+        assert.deepEqual(row?.completion_range_after_login, fixture.afterLogin, `${fixture.name}: fresh-login range uses empty-queue reachability`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+{
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/general/configs/quest.constant'] += '^left_complete = 12\n^right_complete = 34\n';
+        files['scripts/quests/quest_cook/scripts/requirements.rs2'] = `[proc,has_cook_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    return(false);
+}
+return(true);
+`;
+        files['scripts/quests/quest_cook/scripts/progress-bounds.rs2'] = `[proc,left_progress]()
+def_int $option = ~p_choice2("Choose", 1, "Other", 2);
+switch_int($option) {
+    case 1:
+        if (%leftgang < ^left_complete) %leftgang = ^left_complete;
+    case 2:
+        %leftgang = 1;
+}
+[proc,right_progress]()
+%rightgang = ^right_complete;
+[opnpc1,old_stage_writer]
+if (%cookquest < 2) {
+    switch_int(~old_stage_choice) {
+        case 1:
+            if (%cookquest < 2) %cookquest = 1;
+    }
+}
+[proc,old_stage_choice]()(int)
+%cookquest = 1;
+return(1);
+`;
+        files['scripts/areas/area_test/scripts/bounded-writer.rs2'] = `[opnpc1,bounded_writer]
+if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
+    %cookquest = 1;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, true, 'content-derived prerequisite varp domains exclude the apparent reset');
+        assert.deepEqual(row?.completion_range, { min: 2, max: 2 });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+for (const progressWriter of [
+    `if (%leftgang >= ^left_complete) {
+    return;
+}
+while (true) {
+    %leftgang = add(%leftgang, 1);
+}`,
+    'if (true) { %leftgang = ^left_complete; } %leftgang += 1;',
+]) {
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/general/configs/quest.constant'] += '^left_complete = 12\n^right_complete = 34\n';
+        files['scripts/quests/quest_cook/scripts/requirements.rs2'] = `[proc,has_cook_quest_requirements]()(boolean)
+if (%leftgang < ^left_complete & %rightgang < ^right_complete) {
+    return(false);
+}
+return(true);
+`;
+        files['scripts/quests/quest_cook/scripts/progress-unbounded.rs2'] = `[proc,left_progress]()
+${progressWriter}
+[proc,right_progress]()
+%rightgang = ^right_complete;
+`;
+        files['scripts/areas/area_test/scripts/unbounded-writer.rs2'] = `[opnpc1,unbounded_writer]
+if (%leftgang != ^left_complete & %rightgang < ^right_complete) {
+    %cookquest = 1;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, false, 'an unbounded or unaccounted prerequisite writer keeps the later reset possible');
+        assert.deepEqual(row?.completion_range, { min: 1, max: 2 });
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+{
+    const root = questFixture((files) => {
+        addCookColourMetadata(files);
+        files['scripts/areas/area_test/scripts/transitive-reset.rs2'] = `[opnpc1,transitive_reset]
+if (%cookquest = ^cook_complete) {
+    %cookquest = 1;
+}
+if (%cookquest = 1) {
+    %cookquest = 0;
+}
+`;
+    });
+    try {
+        const row = extractQuestIdentityFacts(root, 289).rows.find((entry) => entry.id === 'cook');
+        assert.equal(row?.colour_authoritative, false, 'a reset reachable after the first post-completion reset keeps authority weak');
+        assert.deepEqual(row?.completion_range, { min: 0, max: 2 }, 'completion range closes over transitive resets');
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
 const questStarts = extractQuestStartFacts(questRoot, quest289.rows, 289);
 assert.equal(questStarts.schema, 1);
 assert.equal(questStarts.revision, 289);
@@ -2062,7 +2220,6 @@ assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete f
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/configs/quest.constant']; }), 274), /quest\.constant/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/player/interfaces/questlist.if']; }), 274), /questlist\.if/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['pack/varp.pack']; }), 274), /varp\.pack/);
-assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/configs/quest.enum']; }), 274), /quest\.enum/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/quests/quest_cook/scripts/quest_cook.rs2']; }), 274), /quest_cook\.rs2/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
     files['pack/varp.pack'] = files['pack/varp.pack'].replace('314=death_equiproom\n', '');
@@ -2080,17 +2237,8 @@ assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
     files['scripts/general/scripts/quests.rs2'] = files['scripts/general/scripts/quests.rs2'].replace('%death_equiproom, ^death_complete', '%death_equiproom, ^death_equiproom_complete');
 }), 274), /constant stem/);
 assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
-    files['scripts/player/interfaces/questlist.if'] = files['scripts/player/interfaces/questlist.if'].replace("text=Rune Mysteries Quest", 'text=Rune Mysteries');
-}), 274), /display mismatch/);
-assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
-    files['scripts/player/interfaces/questlist.if'] = files['scripts/player/interfaces/questlist.if'].replace('text=Lost City', 'text=Lost City Of Zanaris');
-}), 274), /display mismatch/);
-assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
     files['scripts/general/scripts/quests.rs2'] = '// no colour calls\n';
 }), 274), /no extracted rows/);
-assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
-    files['pack/varp.pack'] += '387=routequest\n';
-}), 274), /routequest is in varp\.pack/);
 
 const withExtras = extractQuestIdentityFacts(questFixture((files) => {
     files['scripts/general/scripts/quests.rs2'] += `~send_quest_progress_colour(questlist:routequest, %routequest, ^routequest_complete);
@@ -2115,7 +2263,7 @@ assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'trol
     assert.deepEqual(draft.payload, quest289, 'the family payload is the existing identity extract, unchanged');
     const payload = JSON.parse(JSON.stringify(draft.payload)) as { rows: { id: string }[]; coverage: unknown[] };
     assert.deepEqual(Object.keys(payload).sort(), ['coverage', 'rows'], 'static identity rows plus coverage only');
-    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
+    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'colour_authoritative', 'completion_range', 'completion_range_after_login', 'stage_domain', 'transmission', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
     for (const row of payload.rows) assert.deepEqual(Object.keys(row).sort(), [...rowKeys].sort(), `quest row ${row.id} carries static metadata, not per-account progress`);
     const first = familyBytes(draft, 'quests');
     const envelope = JSON.parse(first);
@@ -2438,19 +2586,9 @@ assert.deepEqual(trailRow(trailFacts, 'trail_clue_easy_vague003').params, [{ key
 assert.equal(trailFacts.rows.some((row) => row.params.some((param) => param.key === 'handler_coord' || param.key === 'coord')), false);
 assert.equal(TRAIL_HANDLER_CONSTANT_COORDS.some((coord) => JSON.stringify(trailFacts).includes(coord)), false);
 
-// fail closed: a missing required input, a missing join, and an id mismatch
+// fail closed: a missing required input and a missing join
 assert.throws(() => extractTrailFacts(trailFixture((files) => { delete files[`${TRAIL_CONFIG}/trail_easy.enum`]; }), trailFixtureItems), /trail_easy\.enum/);
 assert.throws(() => extractTrailFacts(trailFixture((files) => { delete files[`${TRAIL_CONFIG}/trail_casket.obj`]; }), trailFixtureItems), /trail_casket\.obj/);
-assert.throws(() => extractTrailFacts(trailFixture((files) => { delete files['pack/obj.pack']; }), trailFixtureItems), /pack\/obj\.pack/);
-assert.throws(() => extractTrailFacts(trailFixture((files) => {
-    files['pack/obj.pack'] = files['pack/obj.pack'].replace('3554=trail_clue_hard_sextant028\n', '');
-}), trailFixtureItems), /pack\/obj\.pack lacks trail_clue_hard_sextant028/);
-assert.throws(() => extractTrailFacts(trailFixture((files) => {
-    files['pack/obj.pack'] = files['pack/obj.pack'].replace('2714=trail_clue_easy_map001_casket\n', '');
-}), trailFixtureItems), /pack\/obj\.pack lacks trail_clue_easy_map001_casket/);
-assert.throws(() => extractTrailFacts(trailFixture((files) => {
-    files['pack/obj.pack'] = files['pack/obj.pack'].replace('2779=trail_clue_hard_riddle004_casket', '9999=trail_clue_hard_riddle004_casket');
-}), trailFixtureItems), /disagrees with decoded item id/);
 assert.throws(() => extractTrailFacts(trailFixture((files) => {
     files[`${TRAIL_CONFIG}/trail_easy.enum`] += 'val=9,trail_clue_easy_missing\n';
 }), trailFixtureItems), /has no obj block/);
@@ -2721,27 +2859,12 @@ assert.equal(talkKeyFacts.talk.filter((row) => row.npc.alias === 'sailor').lengt
 assert.equal(JSON.stringify(talkKeyFacts).includes('2662'), false, 'a LOC row is not an NPC spawn');
 assert.equal(JSON.stringify(talkKeyFacts).includes('3039'), true, 'the black_heather keeper spawn is the NPC section row');
 
-// decode corroboration: the packed id, alias, and .npc name all have to agree with npc.dat
-const talkKeyNpcs = [
-    { id: 0, debugname: 'hans', name: 'Hans' },
-    { id: 32, debugname: 'ardougne_guard', name: 'Guard' },
-    { id: 202, debugname: 'black_heather', name: 'Black Heather' },
-    { id: 376, debugname: 'captain_tobias', name: 'Captain Tobias' },
-    { id: 669, debugname: 'grandtree_hazelmere', name: 'Hazelmere' },
-    { id: 804, debugname: 'tanner', name: 'Tanner' },
-];
-assert.doesNotThrow(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs));
-assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.map((npc) => (npc.debugname === 'grandtree_hazelmere' ? { ...npc, id: 670 } : npc))), /disagrees with decoded npc id/);
-assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.map((npc) => (npc.debugname === 'hans' ? { ...npc, name: 'Hanz' } : npc))), /disagrees with decoded npc name/);
-assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.filter((npc) => npc.debugname !== 'black_heather')), /npc\.dat lacks black_heather/);
-
 
 // fail closed: missing joins, missing sections, missing names, malformed arms, truncated trees
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { delete files['pack/npc.pack']; }), talkKeyItems), /pack\/npc\.pack/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['pack/npc.pack'] = files['pack/npc.pack'].replace('669=grandtree_hazelmere\n', ''); }), talkKeyItems), /pack\/npc\.pack lacks grandtree_hazelmere/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_gnome/configs/gnome.npc'] = '[somebody_else]\nname=Nobody\n'; }), talkKeyItems), /missing \[grandtree_hazelmere\]/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_gnome/configs/gnome.npc'] = '[grandtree_hazelmere]\nop1=Talk-to\n'; }), talkKeyItems), /has no name/);
-assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['pack/obj.pack'] = files['pack/obj.pack'].replace('2832=trail_clue_medium_riddle001_key\n', ''); }), talkKeyItems), /pack\/obj\.pack lacks trail_clue_medium_riddle001_key/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['maps/m41_48.jm2'] = '==== LOC ====\n0 1 1: 2662 10 1\n'; }), talkKeyItems), /npc 669 has no jm2 NPC spawn/, 'a selected identity with no NPC row must fail');
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['maps/m50_50.jm2'] = '==== NPC ====\n0 7 33: 0 10\n'; }), talkKeyItems), /extra tokens/);
 assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_port_sarim/scripts/sailors.rs2'] = '[opnpc1,_sailor]\nif(inv_total(inv, trail_clue_easy_vague012) > 0) {\n    return;\n}\n'; }), talkKeyItems), /exactly one inner npc_type/);
@@ -2760,13 +2883,6 @@ assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyConfigs, talkKeyItems), 
 /* ------------------------------------------------------------------ *
  * trio_givers: the closed giver set, packed ids, owning .npc names, jm2 tiles
  * ------------------------------------------------------------------ */
-
-// A giver identity is an `opnpc1` header on an exact path: another verb, another
-// part, or a label is not one.
-assert.deepEqual(parseTrioGiverHandlers('[opnpc1,observatory_professor]\n@professor_initial;\n[opnpc1,observatory_professor2]\n'), ['observatory_professor', 'observatory_professor2']);
-assert.deepEqual(parseTrioGiverHandlers('[opnpc2,murphy]\n[apnpc1,brother_kojo]\n[label,professor_glass]\n'), [], 'a trade, approach, or label handler is not the talk-to identity');
-assert.throws(() => parseTrioGiverHandlers('[opnpc1]\n'), /malformed opnpc1 header/);
-assert.throws(() => parseTrioGiverHandlers('[opnpc1,murphy,npc]\n'), /malformed opnpc1 header/);
 
 const TRIO_GIVER_HANDLERS: Record<string, string> = {
     observatory_professor: 'scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2',
@@ -2876,28 +2992,13 @@ assert.deepEqual(multiSpawnTrioGivers.rows[1], { alias: 'murphy', id: 463, name:
 assert.deepEqual(multiSpawnTrioGivers.coverage, [{ class: 'unknown', family: 'trio_givers', alias: 'murphy', reason: 'non-unique jm2 NPC spawn' }]);
 assert.equal(JSON.stringify(multiSpawnTrioGivers).includes('"spawn":null'), false);
 
-// decode corroboration: the packed alias, id, and .npc name must all agree with npc.dat
-const trioGiverNpcs = [
-    { id: 223, debugname: 'brother_kojo', name: 'Brother Kojo' },
-    { id: 463, debugname: 'murphy', name: 'Murphy' },
-    { id: 488, debugname: 'observatory_professor', name: 'Observatory professor' },
-];
-assert.doesNotThrow(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs));
-assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.map((npc) => (npc.debugname === 'murphy' ? { ...npc, id: 464 } : npc))), /disagrees with decoded npc id/);
-assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.map((npc) => (npc.debugname === 'brother_kojo' ? { ...npc, name: 'Brother Kojo?' } : npc))), /disagrees with decoded npc name/);
-assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.filter((npc) => npc.debugname !== 'observatory_professor')), /npc\.dat lacks observatory_professor/);
-
 
 // fail closed: missing files, missing joins, missing names, a lost header, zero hits, truncated trees
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files['pack/npc.pack']; })), /pack\/npc\.pack: required file missing/);
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['pack/npc.pack'] = files['pack/npc.pack'].replace('463=murphy\n', ''); })), /pack\/npc\.pack lacks murphy/);
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_CONFIGS.murphy] = '[murphy_normal]\nname=Murphy\n'; })), /missing \[murphy\]/);
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_CONFIGS.murphy] = '[murphy]\nop1=Talk-to\n'; })), /has no name/);
-assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files[TRIO_GIVER_HANDLERS.murphy]; })), /murphy\.rs2: required file missing/);
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files[TRIO_GIVER_CONFIGS.brother_kojo]; })), /ardougne_east\.npc: required file missing/);
-assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.brother_kojo] = '[opnpc1,brother_kojo2]\n@kojo;\n'; })), /does not declare \[opnpc1,brother_kojo\]/);
-assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.observatory_professor] = '[opnpc1,observatory_professor2]\n@professor_initial;\n'; })), /does not declare \[opnpc1,observatory_professor\]/);
-assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.murphy] += '\n[opnpc1,brother_kojo]\n@kojo;\n'; })), /also declares \[opnpc1,brother_kojo\]/, 'one giver script must not claim another closed identity');
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== NPC ====\n1 3 4: 999\n'; })), /murphy npc 463 has no jm2 NPC spawn/, 'zero hits is not an unknown tile');
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== LOC ====\n1 3 4: 463\n'; })), /murphy npc 463 has no jm2 NPC spawn/, 'a LOC row is not an NPC spawn');
 assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== NPC ====\n1 3 4: 463 10\n'; })), /extra tokens/);
@@ -2932,6 +3033,9 @@ function knownValue<T>(cell: Know<T>, label: string): T {
     return cell.value;
 }
 const targetsOf = (method: MethodWire, cls?: TargetWire['class']) => knownValue(method.targets, `${method.id} targets`).filter((target) => cls === undefined || target.class === cls);
+/** Resource rock names the assertions are about: newer content adds unnamed quest veins (`loc_<id>`, Haunted Mine) to every ore row. */
+const namedRocks = (view: { name(kind: string, id: number): string; method(id: string): MethodWire }, id: string) => targetsOf(view.method(id), 'resource')
+    .map((target) => view.name('loc', target.id)).filter((name) => !/^loc_\d+$/.test(name));
 function listContentFiles(root: string, dir: string, extension: string, out: string[] = []) {
     for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
         if (entry.isDirectory()) listContentFiles(root, `${dir}/${entry.name}`, extension, out);
@@ -3017,12 +3121,36 @@ const mixedIron = extractGatheringFamily(structWoodcuttingFixture((rootDir) => {
         'recol1d=6242\ncategory=mining_rock_fast\nparam=next_loc_stage_mining,rocks1',
         'recol1d=6242\ncategory=mining_rock_normal\nparam=next_loc_stage_mining,rocks1');
 }), 377);
+const ironTargetIds = (family: GatheringFamily) => family.payload.methods.filter((method) => method.resources.includes('iron'))
+    .flatMap((method) => targetsOf(method, 'resource').map((target) => target.id)).sort((a, b) => a - b);
 const mixedIronMethods = mixedIron.payload.methods.filter((method) => method.resources.includes('iron'));
 assert.deepEqual(mixedIronMethods.map((method) => [method.id, method.tick_arm.delay_drop]).sort(),
     [['mining.iron', true], ['mining.iron.get_ore_fast', false]]);
-assert.deepEqual(mixedIronMethods.flatMap((method) => targetsOf(method, 'resource').map((target) => target.id)).sort((a, b) => a - b),
-    targetsOf(baseline.payload.methods.find((method) => method.id === 'mining.iron')!, 'resource').map((target) => target.id).sort((a, b) => a - b),
+assert.deepEqual(ironTargetIds(mixedIron), ironTargetIds(baseline),
     'each incompatible 377 iron target stays available with exactly its own tick timing');
+
+// Revision 289 splits a row by real handler too (the Haunted Mine iron rocks run mining_rock_normal inside the
+// iron row that regular iron runs as mining_rock_fast): one method per handler, each target on its own handler.
+const mixedIron289 = extractGatheringFamily(gatheringFixture((rootDir) => {
+    replaceIn(rootDir, 'scripts/skill_mining/configs/rocks.loc',
+        'recol1d=6242\ncategory=mining_rock_fast\nparam=next_loc_stage_mining,rocks1',
+        'recol1d=6242\ncategory=mining_rock_normal\nparam=next_loc_stage_mining,rocks1');
+}));
+const mixedIron289View = gatherView(mixedIron289);
+const mixedIron289Methods = mixedIron289.payload.methods.filter((method) => method.resources.includes('iron'));
+assert.deepEqual(mixedIron289Methods.map((method) => [method.id, method.tick_arm.delay_drop, method.tick_arm.depletes]).sort(),
+    [['mining.iron', true, true], ['mining.iron.get_ore_fast', false, true]], '289 gives each iron handler its own method');
+const iron289Names = (id: string) => targetsOf(mixedIron289View.method(id), 'resource').map((target) => mixedIron289View.name('loc', target.id));
+assert.ok(iron289Names('mining.iron').includes('ironrock1'), 'the rock whose category is mining_rock_normal runs the delayed method');
+assert.ok(iron289Names('mining.iron.get_ore_fast').includes('ironrock2'), 'the rock whose category is mining_rock_fast runs the immediate method');
+assert.ok(!iron289Names('mining.iron').includes('ironrock2') && !iron289Names('mining.iron.get_ore_fast').includes('ironrock1'), 'no rock appears under another handler');
+assert.deepEqual(ironTargetIds(mixedIron289), ironTargetIds(baseline), 'splitting by handler neither adds nor drops an iron target');
+assert.deepEqual(gatherResources(mixedIron289.payload, new Map([[440, 'Iron ore']])).filter((row) => row.key === 'iron')
+    .map((row) => [row.method, row.methods, row.selectable]), [['mining.iron', ['mining.iron', 'mining.iron.get_ore_fast'], true]],
+    'the iron resource row keeps both methods under one selectable option');
+assert.deepEqual(mixedIron289.payload.methods.filter((method) => method.resources.includes('copper')).map((method) => method.id), ['mining.copper'],
+    'an unmixed row stays one method');
+
 
 function renameWaterfallSpot(rootDir: string) {
     for (const relative of ['pack/loc.pack', 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2',
@@ -3039,27 +3167,8 @@ for (const slot of [1, 2]) {
         baseline.payload.methods.find((method) => method.id === `fishing.loc_2027.op${slot}`)!.tick_arm,
         '377 named waterfall entries retain source-checked timing and roll blocks');
 }
-assert.throws(() => extractGatheringFamily(gatheringFixture(renameWaterfallSpot)), /no reviewed fishing tick specification/,
+assert.throws(() => extractGatheringFamily(gatheringFixture(renameWaterfallSpot)), /no fishing tick specification/,
     'historical revisions do not admit the 377 fishing entry identity');
-const waterfallScript = 'scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2';
-for (const [from, to] of [
-    ['p_oploc(2);\n        return;', 'p_oploc(2);'],
-    ['p_oploc(2);\n        return;', 'p_oploc(1);\n        return;'],
-    ['if (random(5) = 0)', 'if (random(6) = 0)'],
-]) {
-    assert.throws(
-        () => extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, waterfallScript, from, to))),
-        /waterfall recast no longer suppresses one roll animation/,
-        'the Sometimes roll signal requires the authored early return and recast operation',
-    );
-}
-
-const changedContestYield = extractGatheringFamily(gatheringFixture((rootDir) =>
-    replaceIn(rootDir, hemensterFishingScript, 'inv_add(inv, raw_giant_carp, 1);', 'inv_add(inv, raw_sardine, 1);')));
-assert.equal(changedContestYield.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a changed direct yield is not promoted');
-const changedContestLoose = changedContestYield.payload.loose.find((each) => each.gap?.code === 'quest-handler-shape');
-assert.ok(changedContestLoose);
-assert.equal(gatherView(changedContestYield).name('npc', changedContestLoose.id), hemensterSpot);
 const missingContestSource = extractGatheringFamily(gatheringFixture((rootDir) =>
     fs.rmSync(path.join(rootDir, hemensterFishingScript))));
 assert.equal(missingContestSource.payload.methods.some((method) => method.id === hemensterCarpMethod), false, 'a missing quest handler is not promoted');
@@ -3134,12 +3243,17 @@ const changedGemTable = extractGatheringFamily(gatheringFixture((rootDir) => {
 }));
 assert.ok(changedGemTable.payload.incidental_gem_ids.includes(replacementItem[1]), 'the selected mining_gem_table return controls the published object ids');
 
-// A drifted label is not silently trusted: the first direct-output yield (the iron label) changed.
-const drifted = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, mineScript, 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);', 'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);')));
+// A drifted fast-handler yield affects only that method; the normal iron method stays separate.
+const drifted = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, mineScript,
+    'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 1);',
+    'inv_add(inv, db_getfield($data, mining_table:rock_output, 0), 2);')));
 const driftedView = gatherView(drifted);
-assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.targets.state, 'unknown', 'a drifted handler leaves iron unclassified, never an empty known list');
-assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.spots.state, 'unknown');
-assert.equal(drifted.payload.loose.some((each) => driftedView.name('loc', each.id) === 'ironrock1' && each.gap?.code === 'mining-handler-unrecognized'), true);
+assert.equal(drifted.payload.methods.find((each) => each.id === 'mining.iron')?.tick_arm.delay_drop, true,
+    'the unchanged normal handler stays separate');
+assert.equal(drifted.payload.methods.some((each) => each.id === 'mining.iron.get_ore_fast'), false,
+    'a drifted fast handler is not promoted');
+assert.equal(drifted.payload.loose.some((each) => driftedView.name('loc', each.id) === 'ironrock1' && each.gap?.code === 'mining-handler-unrecognized'), true,
+    'the changed fast-handler rock is unclassified');
 assert.equal(family289Rows(drifted, 'mining.iron'), 0);
 assert.equal(family289Rows(drifted, 'mining.copper'), 1, 'unrelated labels still classify');
 
@@ -3188,11 +3302,11 @@ const freshfishEntity = baseline.payload.entities.find((entity) => entity.endsWi
 assert.ok(freshfishEntity, 'the packed freshfish entity fact is retained');
 const freshfishId = Number(freshfishEntity.split(' ')[1]);
 assert.ok(baseline.payload.placements.some((file) => file.file === 'maps/m50_50.jm2' && file.rows.some((row) => row.split(' ')[4] === `n${freshfishId}`)), 'the synthetic NPC placement row is retained with its entity fact');
-assert.deepEqual(targetsOf(baselineView.method('mining.copper'), 'resource').map((target) => baselineView.name('loc', target.id)), ['copperrock1', 'copperrock2', 'newbiecopperrock']);
+assert.deepEqual(namedRocks(baselineView, 'mining.copper'), ['copperrock1', 'copperrock2', 'newbiecopperrock']);
 assert.equal(baselineView.method('mining.copper').targets.state, 'partial');
 const retyped = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, tutScript, 'inv_add(inv, copper_ore, 1);', 'inv_add(inv, logs, 1);')));
 const retypedView = gatherView(retyped);
-assert.deepEqual(targetsOf(retypedView.method('mining.copper'), 'resource').map((target) => retypedView.name('loc', target.id)), ['copperrock1', 'copperrock2']);
+assert.deepEqual(namedRocks(retypedView, 'mining.copper'), ['copperrock1', 'copperrock2']);
 assert.equal(retyped.payload.loose.find((each) => retypedView.name('loc', each.id) === 'newbiecopperrock')?.gap?.code, 'custom-handler');
 assert.equal(family289Rows(retyped, 'mining.copper'), 1, 'the tutorial rock contributes no fixture placements');
 // M-215 R2: promotion is fail-closed on yield cardinality. A second grant beside the unit
@@ -3200,11 +3314,11 @@ assert.equal(family289Rows(retyped, 'mining.copper'), 1, 'the tutorial rock cont
 // to Unknown instead of promoting it as a copper resource.
 const doubled = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, tutScript, 'inv_add(inv, copper_ore, 1);', 'inv_add(inv, copper_ore, 1);\ninv_add(inv, copper_ore, 1);')));
 const doubledView = gatherView(doubled);
-assert.deepEqual(targetsOf(doubledView.method('mining.copper'), 'resource').map((target) => doubledView.name('loc', target.id)), ['copperrock1', 'copperrock2']);
+assert.deepEqual(namedRocks(doubledView, 'mining.copper'), ['copperrock1', 'copperrock2']);
 assert.equal(doubled.payload.loose.find((each) => doubledView.name('loc', each.id) === 'newbiecopperrock')?.gap?.code, 'custom-handler');
 const extraGrant = extractGatheringFamily(gatheringFixture((rootDir) => replaceIn(rootDir, tutScript, 'inv_add(inv, copper_ore, 1);', 'inv_add(inv, copper_ore, 1);\ninv_add(inv, tin_ore, 2);')));
 const extraView = gatherView(extraGrant);
-assert.deepEqual(targetsOf(extraView.method('mining.copper'), 'resource').map((target) => extraView.name('loc', target.id)), ['copperrock1', 'copperrock2']);
+assert.deepEqual(namedRocks(extraView, 'mining.copper'), ['copperrock1', 'copperrock2']);
 assert.equal(extraGrant.payload.loose.find((each) => extraView.name('loc', each.id) === 'newbiecopperrock')?.gap?.code, 'custom-handler');
 
 // Bait must agree between the equipment struct and the roll; an unmodelled guard makes requirements partial.
@@ -3833,6 +3947,68 @@ default=1000
     fs.rmSync(content, { recursive: true });
 }
 
+// The 377 shopkeeper lookup resolves a missing unpacked keeper by section name.
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'shops-377-'));
+    const write = (relative: string, text: string) => {
+        const file = path.join(content, relative);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+    };
+    try {
+        const ordinaryShops = SHOP_INVENTORY_SOURCES
+            .map(({ inv }) => inv)
+            .filter((inv) => inv !== 'death_pub');
+        const ordinaryKeepers = SHOP_KEEPER_SOURCES
+            .flatMap(({ configs }) => [...configs])
+            .filter((config) => config !== 'death_barman');
+        const ownerByConfig = new Map<string, string>();
+        ordinaryKeepers.forEach((config, index) => ownerByConfig.set(config, ordinaryShops[index] ?? 'death_pub'));
+        ownerByConfig.set('death_barman', 'death_pub');
+        const keeperSections = SHOP_KEEPER_SOURCES.flatMap(({ configs }) =>
+            configs.filter((config) => config !== 'death_barman').map((config) => {
+                const shop = ownerByConfig.get(config);
+                if (!shop) throw new Error(`fixture has no shop for ${config}`);
+                return `[${config}]\nname=${config}\nparam=owned_shop,${shop}\nparam=shop_sell_multiplier,1000\nparam=shop_buy_multiplier,0\nparam=shop_delta,10\nparam=shop_title,${config} shop\n`;
+            }),
+        );
+        write('scripts/_unpack/377/all.npc', keeperSections.join('\n'));
+        const deathConfigFile = 'scripts/fixtures/shops/death_barman.npc';
+        write(deathConfigFile, '[death_barman]\nname=Tostig\nparam=owned_shop,death_pub\nparam=shop_sell_multiplier,1000\nparam=shop_buy_multiplier,0\nparam=shop_delta,10\nparam=shop_title,The Toad and Chicken\n');
+        write('scripts/_unpack/377/shops.inv', SHOP_INVENTORY_SOURCES
+            .map(({ inv }) => `[${inv}]\nscope=world\nallstock=no\nstock=fixture_item,1,1`)
+            .join('\n') + '\n');
+        const fixtureItems = [
+            { alias: 'fixture_item', name: 'Fixture item', cost: 1, stackable: false, members: false },
+        ];
+        const shops = extractShopFacts(content, fixtureItems, 377);
+        const deathPub = shops.find(({ inv }) => inv === 'death_pub');
+        assert.ok(deathPub?.keeper_configs.includes('death_barman'));
+        assert.ok(deathPub?.keepers.includes('Tostig'));
+        write(deathConfigFile, '[death_barman]\nname=Tostig\n[death_barman]\n');
+        assert.throws(
+            () => extractShopFacts(content, fixtureItems, 377),
+            (error: unknown) => error instanceof Error
+                && error.message.includes('duplicate [death_barman]')
+                && error.message.includes(deathConfigFile),
+            'repeated section names within one file must identify the source file',
+        );
+        write(deathConfigFile, '[death_barman]\nname=Tostig\nparam=owned_shop,death_pub\nparam=shop_sell_multiplier,1000\nparam=shop_buy_multiplier,0\nparam=shop_delta,10\nparam=shop_title,The Toad and Chicken\n');
+        const duplicateConfigFile = 'scripts/fixtures/other/death_barman.npc';
+        write(duplicateConfigFile, '[death_barman]\n');
+        assert.throws(
+            () => extractShopFacts(content, fixtureItems, 377),
+            (error: unknown) => error instanceof Error
+                && error.message.includes('duplicate [death_barman]')
+                && error.message.includes(deathConfigFile)
+                && error.message.includes(duplicateConfigFile),
+            'duplicate section names must identify both source files',
+        );
+    } finally {
+        fs.rmSync(content, { recursive: true, force: true });
+    }
+}
+
 // The real 377 selected corpus exercises the same source joins, never the
 // 274/289 identity/count/coordinate pins. Optional only for legacy-only runs.
 if (process.env.GAME_DATA_377_CONTENT) {
@@ -3891,7 +4067,7 @@ if (process.env.GAME_DATA_377_CONTENT) {
     assert.deepEqual(payload.spells, magic377.spells);
     assert.deepEqual(payload.staves, magic377.staves);
     assert.deepEqual(payload.herbs, extractHerbFacts(spec377.content, decoded377Items, 377).herbs);
-    const equipment377 = extractEquipmentNamesFacts(payload.items, parsePack(fs.readFileSync(path.join(spec377.content, 'pack/obj.pack'), 'utf8')), repoRoot, 377);
+    const equipment377 = extractEquipmentNamesFacts(payload.items, repoRoot, 377);
     assert.deepEqual(payload.equipment_names, JSON.parse(JSON.stringify(equipment377)), 'the wire omits undefined optional metadata');
     assert.deepEqual(payload.cook_surfaces, extractCookSurfaces(spec377.content, undefined, 377).facts);
     const aliases377 = new Map<number, string>();
@@ -3907,6 +4083,20 @@ if (process.env.GAME_DATA_377_CONTENT) {
         assert.equal(family in payload, false, `${family}: no legacy facts may be substituted on 377`);
         assert.ok(payload.coverage.some((row: { family: string; status: string; reason: string }) => row.family === family && row.status === 'UNKNOWN' && row.reason.length > 0), `${family}: omitted family needs named UNKNOWN coverage`);
     }
+}
+
+// The shared comment lexer keeps physical line positions and quoted comment markers, and drops real comments.
+{
+    const commented = [
+        'def_string $page = "/* literal */ // literal"; // removed',
+        '/* removed',
+        '   removed */',
+        '~quest_journal("Title", $page);',
+    ].join('\n');
+    const uncommented = stripComments(commented);
+    assert.equal(uncommented.split('\n').length, commented.split('\n').length);
+    assert.ok(uncommented.includes('"/* literal */ // literal"'));
+    assert.ok(!uncommented.includes('removed'));
 }
 
 console.log('generate fixture passed');

@@ -45,6 +45,8 @@ pub struct EnterNpc {
     pub name: String,
     pub actions: Vec<String>,
     pub distance: i32,
+    /// The NPC's south-west path-head tile, absent when its size is unknown.
+    pub network: Option<Tile>,
 }
 
 #[derive(Clone, Debug)]
@@ -88,8 +90,9 @@ impl EnterObservation {
     fn from_scene(scene: &Scene) -> Self {
         let empty = Self::empty();
         let latest = scene.latest();
+        let session = scene.since_login();
         Self {
-            here: scene.since_logout().here().map(Tile::from),
+            here: session.here().map(Tile::from),
             ingame: latest.ingame().unwrap_or(empty.ingame),
             hold: latest.hold().unwrap_or(empty.hold),
             ours: latest.ours().unwrap_or(empty.ours),
@@ -118,6 +121,7 @@ impl EnterObservation {
                             name: n.name_or_empty().to_string(),
                             actions: observed::strings(&n.actions),
                             distance: n.distance,
+                            network: n.network_tile().map(Tile::from),
                         })
                         .collect()
                 })
@@ -182,6 +186,10 @@ impl EnterObservation {
                             name: Some(n.name.into()),
                             actions: observed::ops_of(&n.actions),
                             distance: n.distance,
+                            level: n.network.map_or(0, |tile| tile.level),
+                            nx: n.network.map_or(0, |tile| tile.x),
+                            nz: n.network.map_or(0, |tile| tile.z),
+                            size: i32::from(n.network.is_some()),
                             ..EntityRow::default()
                         })
                         .collect(),
@@ -741,13 +749,19 @@ fn fragment_index(options: &[String], fragment: &str) -> Option<usize> {
 }
 
 fn nearest_npc<'a>(obs: &'a EnterObservation, name: &str, action: &str) -> Option<&'a EnterNpc> {
+    let here = obs.here?;
     obs.npcs
         .iter()
         .filter(|n| {
             n.name.eq_ignore_ascii_case(name)
                 && n.actions.iter().any(|a| a.eq_ignore_ascii_case(action))
         })
-        .min_by_key(|n| n.distance)
+        .filter_map(|n| {
+            n.network
+                .map(|target| (n, observed::network_distance(here.into(), target.into())))
+        })
+        .min_by_key(|(_, distance)| *distance)
+        .map(|(npc, _)| npc)
 }
 
 fn loc_by_id(obs: &EnterObservation, id: i32, within: i32) -> Option<&EnterLoc> {
@@ -1486,5 +1500,75 @@ impl HuntKind for Enter {
     fn validate(token: u64, proj: &EnterProj) -> bool {
         let obs = observation();
         with_enter(token, |rt| validate_inner(rt, proj, &obs)).unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn guard_row(
+        index: i32,
+        x: i32,
+        z: i32,
+        nx: i32,
+        nz: i32,
+        distance: i32,
+        size: i32,
+    ) -> EntityRow {
+        EntityRow {
+            index,
+            name: Some("Guard".into()),
+            actions: observed::ops_of(&["Talk-to".to_string()]),
+            x,
+            z,
+            level: 0,
+            nx,
+            nz,
+            size,
+            distance,
+            ..EntityRow::default()
+        }
+    }
+
+    #[test]
+    fn lair_npc_network_coords_drive_rank_and_fail_closed() {
+        let here = observed::Tile {
+            x: 3000,
+            z: 3000,
+            level: 0,
+        };
+        let proj = parse_proj(&json!({
+            "talkGate": {
+                "npc": "Guard",
+                "op": "Talk-to",
+                "choose": "Enter",
+            },
+        }));
+        observed::replace(1, true, |post| {
+            post.session(true).here(here).npcs(vec![
+                guard_row(10, 3001, 3000, 3010, 3000, 1, 1),
+                guard_row(11, 3010, 3000, 3001, 3000, 10, 1),
+            ]);
+        });
+        let effect = talk_attempt(&mut EnterRuntime::new(41), &proj);
+        assert_eq!(effect["kind"], "npc");
+        assert_eq!(effect["index"], 11);
+
+        observed::replace(2, true, |post| {
+            post.session(true)
+                .here(here)
+                .npcs(vec![guard_row(12, here.x, here.z, 3001, here.z, 0, 0)]);
+        });
+        let no_network = talk_attempt(&mut EnterRuntime::new(42), &proj);
+        assert_ne!(no_network["kind"], "npc");
+
+        observed::replace(3, true, |post| {
+            post.session(true)
+                .npcs(vec![guard_row(13, here.x, here.z, 3001, here.z, 0, 1)]);
+        });
+        let no_origin = talk_attempt(&mut EnterRuntime::new(43), &proj);
+        assert_ne!(no_origin["kind"], "npc");
+        observed::on_reset();
     }
 }

@@ -436,8 +436,9 @@ fn wait_for_state(
     }
 }
 
-/// The fixture logs its account out to re-seed the tutorial, and the host parks a bot with no
-/// script after a logout nobody asked it for. An explicit login intent lifts that park.
+/// The fixture logs its account out to re-seed the tutorial. A latched slot
+/// needs an explicit Login, a real one-shot command; an unlatched slot with
+/// auto-login reconnects by itself.
 fn lift_logout_park(play: &Play, account: &str) {
     if let Some(arm) = play.arm(account) {
         if arm.login_latch_reason().is_some() {

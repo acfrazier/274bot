@@ -1,7 +1,8 @@
-//! JSON evidence record: the snapshot at the terminal state plus the
-//! predicate that passed or failed. Each scenario's PASS/FAIL prints one
-//! of these (headed: to the live window's log; headless: to the test
-//! output).
+//! Terminal scenario evidence and an opt-out, bounded dispatch ledger.
+//!
+//! WHY preserves the existing step name. A legacy closure's boolean result
+//! proves only acceptance by that closure, not a packet send or server outcome.
+//! Observed predicates remain separate from dispatch results.
 
 use std::time::Instant;
 
@@ -55,6 +56,9 @@ pub struct Evidence {
     pub seed_deposits: Vec<SeedDepositEvidence>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
+    /// The dispatch ledger is boxed so ordinary runner state holds no inline ring.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub run_receipt: Option<Box<RunReceipt>>,
 }
 
 /// Frame-by-frame protect acknowledgement, in-flight hits, kill, and prayer-off.
@@ -129,6 +133,94 @@ pub struct ChatRow {
     pub username: Option<String>,
 }
 
+/// Receipt retention ceiling. Repeated dispatches cannot grow an unbounded ledger.
+pub const MAX_RECEIPT_EVENTS: usize = 1024;
+
+/// One dispatch boundary or observed result. Ordinals are one-based.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReceiptEvent {
+    pub event: &'static str,
+    pub ordinal: usize,
+    pub name: &'static str,
+    pub why: &'static str,
+    pub why_source: &'static str,
+    /// `legacy-closure` reports its boolean, never inferred wire activity.
+    pub kind: &'static str,
+    pub tick: u32,
+    pub elapsed_ms: u64,
+    pub session: u64,
+    pub tile: Option<[i32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Run identity plus caller-supplied source identities and durable artifact hashes.
+///
+/// Sources and artifacts stay empty unless their producer supplies them. The
+/// runner does not infer a source commit from the current working directory.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReceiptManifest {
+    pub schema: u32,
+    pub run_id: String,
+    pub actor: String,
+    pub revision: Option<i32>,
+    pub sessions: Vec<u64>,
+    pub sources: std::collections::BTreeMap<String, serde_json::Value>,
+    pub artifacts: Vec<serde_json::Value>,
+    /// False means retention overflowed. The gameplay verdict is unchanged.
+    pub complete: bool,
+    pub dropped_events: u64,
+}
+
+/// Owned only by an active scenario receipt request, never by ordinary bot paints.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunReceipt {
+    pub events: Vec<ReceiptEvent>,
+    pub manifest: ReceiptManifest,
+}
+
+impl Default for RunReceipt {
+    fn default() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self {
+            events: Vec::new(),
+            manifest: ReceiptManifest {
+                schema: 1,
+                run_id: format!(
+                    "{}-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos(),
+                    NEXT.fetch_add(1, Ordering::Relaxed),
+                ),
+                actor: String::new(),
+                revision: None,
+                sessions: Vec::new(),
+                sources: std::collections::BTreeMap::new(),
+                artifacts: Vec::new(),
+                complete: true,
+                dropped_events: 0,
+            },
+        }
+    }
+}
+
+impl RunReceipt {
+    pub(crate) fn push(&mut self, event: ReceiptEvent) {
+        if self.events.len() < MAX_RECEIPT_EVENTS {
+            self.events.push(event);
+        } else {
+            self.manifest.complete = false;
+            self.manifest.dropped_events = self.manifest.dropped_events.saturating_add(1);
+        }
+    }
+}
+
 impl Evidence {
     /// The compact JSON record both runners print on PASS/FAIL.
     pub fn to_json(&self) -> String {
@@ -188,6 +280,7 @@ impl Evidence {
             ground_guard: None,
             seed_deposits: Vec::new(),
             scene: snap.scene_state(),
+            run_receipt: None,
         }
     }
 }

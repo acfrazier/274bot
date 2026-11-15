@@ -398,6 +398,22 @@ pub(super) const SHIM_MODULE_SOURCES: &[(&str, &str)] = &[
         include_str!("clue_tool_acquire.js"),
     ),
     (
+        "/rs2b0t/bot/api/ai/quests/defs/dragonslayer/journal.js",
+        include_str!("dragon_journal.js"),
+    ),
+    (
+        "/rs2b0t/bot/api/ai/quests/data/quests.js",
+        include_str!("quest_records.js"),
+    ),
+    (
+        "/rs2b0t/bot/runtime/desktopStorage.js",
+        include_str!("desktop_storage.js"),
+    ),
+    (
+        "/rs2b0t/bot/runtime/ScriptContext.js",
+        include_str!("script_context.js"),
+    ),
+    (
         "/rs2b0t/bot/api/ai/quests/exec/primitives.js",
         include_str!("primitives.js"),
     ),

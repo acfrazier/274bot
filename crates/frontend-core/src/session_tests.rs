@@ -106,7 +106,7 @@ fn empty_play() -> Play {
 #[test]
 fn walk_globals_publish_before_start_and_to_the_current_play() {
     let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
-    let granted = WalkGlobals::new(true, true, true, true, false, true, true);
+    let granted = WalkGlobals::new(true, true, true, true, true, true);
     session.set_walk_globals(granted);
     session.start(vault_with("walk-globals", &[]), empty_play());
     assert_eq!(session.play().unwrap().walk_globals(), granted.to_host());
@@ -1488,6 +1488,90 @@ fn random_event_policy_persists_and_mirrors_after_durable_write() {
 }
 
 #[test]
+fn legacy_0_2_9_ignore_reaches_the_draft_and_running_arm_as_flee() {
+    // Written by 0.2.9.1's own writer: three `ignore` entries, one `fight`,
+    // one `flee`, and two events with no entry. See the vault fixture.
+    const LEGACY: &[u8] = include_bytes!("../../vault/tests/fixtures/legacy-0.2.9-policies.vault");
+    const LEGACY_PASS: &str = "v11c-legacy-fixture";
+
+    let path = vault_path("legacy-0.2.9-ignore");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, LEGACY).unwrap();
+
+    let mut s = OperatorSession::<u32>::new(InstancePermit::SkipLock);
+    s.set_spawn_workers(false);
+    crate::test_support::VaultFixture::unlock(&path, LEGACY_PASS)
+        .start_session(&mut s, empty_play());
+
+    // The typed settings convert at the vault boundary, before any draft.
+    let view = s
+        .vault()
+        .unwrap()
+        .get("alice")
+        .map(crate::ProfileView::new)
+        .unwrap();
+    assert_eq!(
+        view.random_event_policy("river troll"),
+        crate::GuardianPolicy::Flee,
+        "a 0.2.9 ignore reads as Flee"
+    );
+    assert_eq!(
+        view.random_event_policy("swarm"),
+        crate::GuardianPolicy::Fight,
+        "a saved Fight stays Fight"
+    );
+    assert_eq!(
+        view.random_event_policy("tree spirit"),
+        crate::GuardianPolicy::Flee,
+        "a missing entry keeps the default"
+    );
+
+    // A draft built from those settings carries Flee, not a third choice.
+    let draft = view.draft();
+    assert_eq!(
+        draft.settings().random_event_policy("river troll"),
+        crate::GuardianPolicy::Flee
+    );
+    assert_eq!(
+        draft.settings().random_event_policy("swarm"),
+        crate::GuardianPolicy::Fight
+    );
+
+    // Runtime publication: the loaded arm mirrors the converted values.
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let alice = arm(&s, "alice");
+    {
+        let published = alice.random_event_policies.lock().unwrap();
+        assert_eq!(
+            published.get("river troll"),
+            Some(&vault::RandomEventPolicy::Flee)
+        );
+        assert_eq!(
+            published.get("swarm"),
+            Some(&vault::RandomEventPolicy::Fight)
+        );
+        assert_eq!(published.len(), 5, "every stored key is published");
+    }
+
+    // The next ordinary settings save writes canonical values.
+    s.set_random_settings("alice", false, "strength", true)
+        .unwrap();
+    s.flush_writes();
+    let saved = Vault::unlock(&path, LEGACY_PASS).unwrap();
+    let saved_settings = &saved.get("alice").unwrap().settings;
+    assert_eq!(
+        saved_settings.random_event_policy("river troll"),
+        vault::RandomEventPolicy::Flee
+    );
+    assert_eq!(
+        saved_settings.random_event_policy("swarm"),
+        vault::RandomEventPolicy::Fight
+    );
+    assert_eq!(saved_settings.random_event_policies.len(), 5);
+}
+
+#[test]
 fn survival_mirror_reaches_running_slot_within_one_frame() {
     let name = "survival-mirror-alice";
     let mut s = session("survival-mirror", &[(name, 1, false)]);
@@ -2187,6 +2271,62 @@ fn edited_random(s: &OperatorSession<u32>) -> bool {
         .unwrap()
         .settings
         .random_events
+}
+
+/// A vault written by the 0.1.8.1 release code (`a88d07764` vault crate,
+/// passphrase `bot`): alice with every profile field set, bob at defaults.
+const VAULT_0_1_8_1: &[u8] = include_bytes!("../tests/fixtures/vault-0.1.8.1.bin");
+
+#[test]
+fn a_0_1_8_1_vault_loads_spawns_and_saves_through_the_core_unchanged() {
+    let path = vault_path("vault-0181");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, VAULT_0_1_8_1).unwrap();
+    let mut s = OperatorSession::new(InstancePermit::SkipLock);
+    s.set_spawn_workers(false);
+    s.start(Vault::unlock(&path, "bot").unwrap(), empty_play());
+
+    let alice = s.vault().unwrap().get("alice").unwrap().clone();
+    assert_eq!(alice.password, "old-pass");
+    assert_eq!(alice.uid, 274_000_501);
+    assert!(alice.settings.auto_login && !alice.settings.lowmem);
+    assert_eq!(alice.settings.world, Some(2));
+    assert_eq!(alice.settings.tutorial_skipped, Some(true));
+    assert_eq!(alice.settings.raster, vault::RasterMode::Cpu);
+    assert!(!alice.settings.random_events && !alice.settings.lamp_auto);
+    assert_eq!(alice.settings.lamp_skill, "prayer");
+    assert_eq!(
+        alice.settings.script_assignment.as_ref().unwrap().identity,
+        "catalog:Thiever"
+    );
+    assert_eq!(
+        alice.settings.script_settings["catalog:Thiever"]["food"],
+        serde_json::json!("Lobster")
+    );
+
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    let arm = arm(&s, "alice");
+    assert_eq!(arm.uid.load(Ordering::Relaxed), 274_000_501);
+    assert!(arm.wants_login(), "saved auto-login is honoured");
+
+    s.set_random_settings("alice", true, "attack", true)
+        .unwrap();
+    s.flush_writes();
+    let reread = Vault::unlock(&path, "bot").unwrap();
+    let saved = reread.get("alice").unwrap();
+    assert!(saved.settings.random_events);
+    assert_eq!(saved.settings.lamp_skill, "attack");
+    let mut expected = alice.settings.clone();
+    expected.random_events = true;
+    expected.lamp_skill = "attack".into();
+    expected.lamp_auto = true;
+    assert_eq!(
+        saved.settings, expected,
+        "every other field survives the rewrite"
+    );
+    assert_eq!(saved.password, "old-pass");
+    assert_eq!(reread.get("bob"), s.vault().unwrap().get("bob"));
 }
 
 // A profile form's saves settle by their write's operation id: a delayed

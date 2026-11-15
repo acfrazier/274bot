@@ -1,13 +1,18 @@
-use super::ledger::{BankDepositTrace, HostAction, HostCustody, HostEffect};
+use super::ledger::{
+    BankDepositTrace, HostAction, HostCustody, HostEffect, PendingPick, PickChannel, PickReceipt,
+};
 use super::owner::Owner;
 use super::*;
-use crate::native_bank::{BankPickReceipt, BankPickRequest};
+use crate::native_bank::{
+    BankPickReceipt, BankPickRequest, ServicePickReceipt, ServicePickRequest,
+};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
-/// Add the stage's declared grants to this step's declared route grants.
-/// Named consent never enables the blanket danger opt-in.
+/// Add the stage's declared crossings to this step's. A non-empty set is the
+/// script's request to cross danger zones on this walk. The host decides
+/// permission (global override or this request) and keeps the survival check.
+/// The food guard is armed for the whole walk.
 fn apply_stage_cross(request: &mut WalkRequest, stage: Option<&[Arc<str>]>) {
-    let has_stage_scope = stage.is_some();
     if let Some(stage) = stage {
         let duplicates = request
             .cross
@@ -28,9 +33,6 @@ fn apply_stage_cross(request: &mut WalkRequest, stage: Option<&[Arc<str>]>) {
             }
             request.cross = cross.into_boxed_slice();
         }
-    }
-    if has_stage_scope || !request.cross.is_empty() {
-        request.options.allow_danger_zones = WalkBit::Forbid;
     }
     if !request.cross.is_empty() && !request.cure_guard {
         request.food_guard = true;
@@ -275,6 +277,7 @@ impl ActionContext<'_> {
             effect: HostEffect::Interaction(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit,
+            protected_items: None,
         });
         Ok(request_id.get())
     }
@@ -316,6 +319,7 @@ impl ActionContext<'_> {
                 effect: HostEffect::Interaction(request),
                 observed_walk_outcome_seq: self.observed_walk_outcome_seq,
                 bank_deposit: None,
+                protected_items: None,
             });
         }
         owner.set_latest_batch(first_id);
@@ -360,44 +364,74 @@ impl ActionContext<'_> {
             effect: HostEffect::Interaction(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
+            protected_items: None,
         });
         Ok(request_id.get())
     }
 
-    /// Queue one selector-owned bank pick. This computes a route choice; it
-    /// does not consume a game-interaction event.
+    /// Queue one selector-owned bank pick without a game-interaction event.
     pub fn bank_pick(&mut self, request: BankPickRequest) -> Result<u64, ActionError> {
+        self.emit_pick(HostEffect::BankPick(request), PickChannel::Bank)
+    }
+
+    /// Queue a complete-domain service route pick without a game-interaction event.
+    pub fn service_pick(&mut self, request: ServicePickRequest) -> Result<u64, ActionError> {
+        self.emit_pick(HostEffect::ServicePick(request), PickChannel::Service)
+    }
+
+    fn emit_pick(&mut self, effect: HostEffect, channel: PickChannel) -> Result<u64, ActionError> {
         let owner = self.owner()?;
         let ledger = self.ledger.as_mut().expect("owner checked");
         let request_id = ledger.next_id()?;
         owner.set_interaction(request_id);
         ledger.interaction = None;
         ledger.interaction_request = None;
-        ledger.bank_pick = None;
-        ledger.bank_pick_request = Some(request_id);
+        ledger.pick = None;
+        ledger.pick_request = Some(PendingPick {
+            request: request_id,
+            channel,
+        });
         ledger.outbox.push(HostAction {
             custody: HostCustody::owner(owner),
             request_id,
             batch: 0,
-            effect: HostEffect::BankPick(request),
+            effect,
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
+            protected_items: None,
         });
         Ok(request_id.get())
     }
 
+    /// Read only the live matching bank-channel result.
     pub fn bank_pick_receipt(&self, request_id: u64) -> Option<&BankPickReceipt> {
+        match self.pick_receipt(request_id)? {
+            PickReceipt::Bank(receipt) => Some(receipt),
+            PickReceipt::Service(_) => None,
+        }
+    }
+
+    /// Read only the live matching typed service-channel result.
+    pub fn service_pick_receipt(&self, request_id: u64) -> Option<&ServicePickReceipt> {
+        match self.pick_receipt(request_id)? {
+            PickReceipt::Service(receipt) => Some(receipt),
+            PickReceipt::Bank(_) => None,
+        }
+    }
+
+    fn pick_receipt(&self, request_id: u64) -> Option<&PickReceipt> {
         let ledger = self.ledger.as_ref()?;
         let owner = ledger.owner.as_ref()?;
-        if owner.run != self.run() || owner.id.get() != self.action_id || !owner.live() {
+        let pending = ledger.pick_request?;
+        if owner.run != self.run()
+            || owner.id.get() != self.action_id
+            || !owner.interaction_live(pending.request)
+            || pending.request.get() != request_id
+        {
             return None;
         }
-        ledger.bank_pick.as_ref().filter(|receipt| {
-            ledger
-                .bank_pick_request
-                .is_some_and(|id| id.get() == request_id)
-                && receipt.request_id == request_id
-                && receipt.evidence.run == self.run()
+        ledger.pick.as_ref().filter(|receipt| {
+            receipt.request_id() == request_id && receipt.evidence().run == self.run()
         })
     }
 
@@ -447,6 +481,7 @@ impl ActionContext<'_> {
             effect: HostEffect::AssessWalk(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
+            protected_items: self.protected_items.as_ref().map(Arc::clone),
         });
         Ok(request_id.get())
     }
@@ -505,6 +540,7 @@ impl ActionContext<'_> {
             effect: HostEffect::Walk(request),
             observed_walk_outcome_seq: self.observed_walk_outcome_seq,
             bank_deposit: None,
+            protected_items: self.protected_items.as_ref().map(Arc::clone),
         });
         Ok(request_id.get())
     }
@@ -633,9 +669,12 @@ impl ActionContext<'_> {
                 ledger.interaction_request = None;
                 ledger.interaction = None;
             }
-            if ledger.bank_pick_request == Some(request_id) {
-                ledger.bank_pick_request = None;
-                ledger.bank_pick = None;
+            if ledger
+                .pick_request
+                .is_some_and(|pending| pending.request == request_id)
+            {
+                ledger.pick_request = None;
+                ledger.pick = None;
             }
 
             for receipt in &mut ledger.batch_receipts {
@@ -1201,6 +1240,7 @@ mod tests {
         budget.observe(1);
         let mut cx = ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -1212,6 +1252,7 @@ mod tests {
             action_id: owner.id.get(),
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
             wilderness: None,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
@@ -1715,6 +1756,7 @@ mod tests {
         budget.observe(1);
         let mut cx = ActionContext {
             stage_cross: None,
+            protected_items: None,
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -1726,6 +1768,7 @@ mod tests {
             action_id: 0,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            shop_keepers: None,
             wilderness: None,
             active_now,
             wall_now: Instant::now(),
@@ -3178,8 +3221,8 @@ mod tests {
             assert!(request.allow.food);
             assert_eq!(
                 request.options.allow_danger_zones,
-                WalkBit::Forbid,
-                "a step grant must not permit unnamed danger zones"
+                WalkBit::Inherit,
+                "a step crossing is a request carried by `cross`; the option stays inherited"
             );
             assert!(!request.protect);
             drop(handle);
@@ -3214,9 +3257,6 @@ mod tests {
                         request.cross.len(),
                         usize::from(stage_cross) + usize::from(step_cross)
                     );
-                    if stage_cross || step_cross {
-                        assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
-                    }
                     drop(handle);
                 });
             }
@@ -3245,7 +3285,7 @@ mod tests {
                     .collect::<Vec<&str>>(),
                 ["step-zone", "declared-zone"]
             );
-            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Allow);
             assert!(request.protect && request.food_guard);
             let expected_allow = WalkAllow {
                 food: true,
@@ -3262,7 +3302,7 @@ mod tests {
                 panic!("the advisory must use the same stage declaration");
             };
             assert_eq!(request.cross.as_ref(), &[Arc::<str>::from("declared-zone")]);
-            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Inherit);
         });
     }
 
@@ -3279,14 +3319,14 @@ mod tests {
             prelude.cross = vec![Arc::from("prelude-zone")].into_boxed_slice();
             apply_stage_cross(&mut prelude, Some(&[]));
             assert_eq!(prelude.cross.as_ref(), &[Arc::<str>::from("prelude-zone")]);
-            assert_eq!(prelude.options.allow_danger_zones, WalkBit::Forbid);
+            assert_eq!(prelude.options.allow_danger_zones, WalkBit::Inherit);
             let mut next_step = assessment_walk_request(cx.evidence());
             apply_stage_cross(&mut next_step, Some(&[]));
             assert!(
                 next_step.cross.is_empty(),
                 "a fresh step inherits no earlier grants"
             );
-            assert_eq!(request.options.allow_danger_zones, WalkBit::Forbid);
+            assert_eq!(request.options.allow_danger_zones, WalkBit::Inherit);
             let mut ordinary = assessment_walk_request(cx.evidence());
             ordinary.options.allow_danger_zones = WalkBit::Allow;
             apply_stage_cross(&mut ordinary, None);
@@ -3295,7 +3335,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_declared_stage_forbids_zones_the_old_walk_bit_allowed() {
+    fn empty_declared_stage_leaves_the_walk_option_alone() {
         let mut ledger = None;
         with_frame(&mut ledger, Duration::ZERO, |cx| {
             cx.stage_cross = Some(Arc::<[Arc<str>]>::from([]));
@@ -3309,13 +3349,10 @@ mod tests {
             assert!(request.cross.is_empty(), "the stage declares no zones");
             assert_eq!(
                 request.options.allow_danger_zones,
-                WalkBit::Forbid,
-                "an empty declaration must not inherit a previous allow"
+                WalkBit::Allow,
+                "a stage scope neither grants nor forbids danger zones"
             );
-            assert_eq!(
-                RiskPolicy::from(request.options.allow_danger_zones),
-                RiskPolicy::Avoid
-            );
+            assert!(!request.food_guard, "an empty declaration arms no guard");
             drop(handle);
         });
     }
