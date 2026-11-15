@@ -93,6 +93,17 @@ variables as the Cook cell. It seeds only the account's knife, two logs and
 Fletching level, and writes the account witness under `LIVE_EVIDENCE_DIR`.
 It passes on 30 new arrow shafts, two consumed logs and 10 Fletching XP.
 
+`host.menu-377-hans-live` requires Hans (NPC type 0) in the loaded Lumbridge
+scene. It fails rather than selecting a different Talk-to NPC.
+`host.menu-377-trade-duel-loc-live` uses two fresh accounts and the same 377
+resource variables. Supply `PARITY_2C_SERVED_IDENTITY` as a JSON file with
+the engine/content heads and served CRC identity. The cell labels its own
+tutorial and position seeds, then sends Trade with and Challenge through
+normal mouse menus. It checks both chat accepts against raw client rows,
+Crate 356 at (3380,3268,0), and the other player's Trade with slot. Its
+queries and `ObserveMenu` runner must agree. The account JSON and JSONL
+witnesses are written under `LIVE_EVIDENCE_DIR`; the cell computes PASS.
+
 ## Quarantined map cells
 
 These cells stay out of the active map until their fixtures are repaired.

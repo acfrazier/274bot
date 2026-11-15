@@ -4,9 +4,10 @@
 //! They use the canonical `--revision 377` profile with explicit paths
 //! `ENGINE_DIR`, `CLIENT_377_CACHE_DIR`, `CLIENT_UNPACK_DIR`, `NAV_PACK`,
 //! and `NAV_FLAGS`. `WORLD_GAME_PORT` and `WORLD_HTTP_PORT` may select another
-//! local engine. The Make-X cell also requires `PARITY_3B_EVIDENCE_DIR` for its
-//! account receipt. Template preparation uses the production runtime-cache
-//! path in a private home.
+//! local engine. The Make-X cell also requires `PARITY_3B_EVIDENCE_DIR`; the
+//! two-player menu cell requires `PARITY_2C_EVIDENCE_DIR` and a served-identity
+//! JSON file at `PARITY_2C_SERVED_IDENTITY`. Template preparation uses the
+//! production runtime-cache path in a private home.
 //! Numeric NPC selection and reacquisition require a wall-valid adjacent
 //! approach in the observed collision scene.
 //! Pre-Start mainland fixtures request a fresh login after observing logout.
@@ -21,6 +22,7 @@
 //!   CLIENT_377_CACHE_DIR=<377-raw-cache> CLIENT_UNPACK_DIR=<377-decoded-snapshot> \
 //!   NAV_PACK=<377-nav-pack> NAV_FLAGS=<377-nav-flags> \
 //!   PARITY_3B_EVIDENCE_DIR=<evidence-output> \
+//!   PARITY_2C_EVIDENCE_DIR=<evidence-output> PARITY_2C_SERVED_IDENTITY=<identity-json> \
 //!   cargo test --locked -p host-play --features test-support --test revision_377_live \
 //!   -- --ignored --nocapture --test-threads=1
 //! ```
@@ -36,6 +38,9 @@ mod cook;
 
 #[path = "revision_377_live/quantity.rs"]
 mod quantity;
+
+#[path = "revision_377_live/menu.rs"]
+mod menu;
 
 #[path = "revision_377_live/quester.rs"]
 mod quester;

@@ -11,6 +11,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   sending input; the unarmed observer path allocates nothing.
 - The revision-377 attachment live check requires Hans by NPC type and never
   substitutes another nearby Talk-to NPC.
+- A revision-377 live menu cell checks real trade and duel requests, a packed
+  loc Examine target, and a world player's slot through the read-only observer.
 
 ### Breaking changes
 
