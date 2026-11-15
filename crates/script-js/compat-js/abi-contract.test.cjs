@@ -143,6 +143,7 @@ test('unpublished refusal members have no declaration or refusal overlay', () =>
 });
 
 test('module-only families have explicit non-nav predecessor rows without activation credit', () => {
+    assert.deepEqual(predecessors.base_predecessors, ['F0', 'T1.3b', 'T2.1']);
     assert.equal(predecessors.families.length, 41);
     assert.equal(predecessors.families.filter(row => row.activation_state === 'not-activated').length, 31);
     for (const [familyId, modules] of [
@@ -154,7 +155,7 @@ test('module-only families have explicit non-nav predecessor rows without activa
         assert.ok(family, familyId);
         assert.equal(family.nav_consuming, false);
         assert.equal(family.activation_state, 'not-activated');
-        assert.deepEqual(family.predecessors, ['F0', 'T1.3', 'T2.1']);
+        assert.deepEqual(family.predecessors, ['F0', 'T1.3b', 'T2.1']);
         assert.deepEqual(
             contract.typed_modules.filter(row => row.family_id === familyId).map(row => row.module),
             modules,
@@ -698,8 +699,8 @@ test('an unclassified source module fails closed', () => {
 
 test('a missing required predecessor fails graph validation', () => {
     const drift = structuredClone(predecessors);
-    drift.families[0].predecessors = drift.families[0].predecessors.filter(value => value !== 'T1.3');
-    assert.throws(() => validateArtifacts(contract, drift, navFamilies), /missing predecessor T1.3/);
+    drift.families[0].predecessors = drift.families[0].predecessors.filter(value => value !== 'T1.3b');
+    assert.throws(() => validateArtifacts(contract, drift, navFamilies), /missing predecessor T1.3b/);
 });
 
 test('the frozen-source freshness check runs offline', { skip: !frozenRoot }, () => {
