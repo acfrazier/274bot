@@ -249,7 +249,7 @@ const DONE: &str = "done";
 const CALLBACK_HANDOFFS: usize = 4;
 
 /// One live native machine. Never both Combat and ClearPrayers.
-#[allow(
+#[expect(
     clippy::large_enum_variant,
     reason = "Keep the live combat machine inline; size_of::<Sherlock>() stays ≤ 1 KiB."
 )]

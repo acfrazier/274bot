@@ -1114,7 +1114,7 @@ fn after_delay(rt: &mut EnterRuntime, proj: &EnterProj) -> Value {
             Phase::YieldFalse,
         );
     }
-    let door = door.unwrap();
+    let door = door.expect("door location checked before use");
     rt.phase = Phase::AckAct;
     rt.clock.arm(DOOR_MS);
     if let Some(key) = key {

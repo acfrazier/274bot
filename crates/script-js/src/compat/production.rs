@@ -96,7 +96,7 @@ mod compat {
     }
 
     #[derive(Debug, PartialEq, Eq)]
-    #[allow(clippy::enum_variant_names)] // Wait* names encode the phase predicate
+    #[expect(clippy::enum_variant_names, reason = "Wait* names encode the phase predicate")]
     enum Phase {
         MakeX,
         /// Anvil Make-N sent; waiting the main modal identity to leave `before`.

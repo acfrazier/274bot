@@ -887,7 +887,10 @@ impl Walk {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep the walk request fields explicit at the compatibility boundary"
+    )]
     fn begin_with_intent(
         dest: WorldTile,
         radius: i32,
