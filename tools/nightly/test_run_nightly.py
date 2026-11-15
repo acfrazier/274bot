@@ -1034,14 +1034,14 @@ class LaneEnvironmentTests(unittest.TestCase):
             with mock.patch.object(rn, "REVISION", "289"):
                 with self.assertRaisesRegex(
                         RuntimeError,
-                        f"local-data generator omitted required output: {pack}"):
+                        f"local-data generator omitted required output: {re.escape(str(pack))}"):
                     rn.lane_asset_env(tree)
                 pack.parent.mkdir(parents=True)
                 pack.write_bytes(b"pack")
                 flags = pack.with_suffix(".navflags")
                 with self.assertRaisesRegex(
                         RuntimeError,
-                        f"local-data generator omitted required output: {flags}"):
+                        f"local-data generator omitted required output: {re.escape(str(flags))}"):
                     rn.lane_asset_env(tree)
 
     def test_post_adr_missing_exact_revision_root_uses_exact_root_diagnostic(self):
@@ -1424,6 +1424,7 @@ class CellsFileTests(unittest.TestCase):
         patches = [
             mock.patch.object(rn, "ROOT", root),
             mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+            mock.patch.object(rn, "JOB", "main"),
             mock.patch.object(rn, "update_tree", fake_update_tree),
             mock.patch.object(rn, "log", lambda _message: None),
         ]
