@@ -237,6 +237,87 @@ const CLIENT_OBSERVATION_CASES: &[(Proof, &str)] = &[
     ),
 ];
 
+fn assert_unpaired_client_wait_arm_is_refused(proof: Proof, required_step: &str) {
+    let mut scenario = stat_scenario(0, 2);
+    scenario.steps[0].name = "send a probe cheat";
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(|client, _| {
+            let _ = api::interact::cheat(client, "~energy");
+            true
+        }),
+    };
+    scenario.steps[0].wait.arm = proof;
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    client.npc[7] = Some(Box::new(ClientNpc {
+        r#type: Some(0),
+        ..ClientNpc::default()
+    }));
+    client.menu_num_entries = 1;
+    client.menu_action[0] = MiniMenuAction::OP_NPC1;
+    client.menu_param_a[0] = 7;
+    for _ in 0..20 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+    }
+    assert_eq!(client.out.pos, 0, "refusal must precede every action");
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("an unpaired client wait arm must fail at construction");
+    };
+    assert!(
+        message.contains("step 1 (send a probe cheat) wait arm"),
+        "{message}"
+    );
+    assert!(message.contains(required_step), "{message}");
+    assert_eq!(runner.evidence().expect("refusal receipt").ticks, 0);
+}
+
+#[test]
+fn unpaired_menu_wait_arm_is_refused_before_sending() {
+    assert_unpaired_client_wait_arm_is_refused(CLIENT_MENU_PROOF, "requires an ObserveMenu step");
+}
+
+#[test]
+fn unpaired_varbit_wait_arm_is_refused_before_sending() {
+    assert_unpaired_client_wait_arm_is_refused(
+        CLIENT_VARBIT_PROOF,
+        "requires an ObserveVarbit step with the same id",
+    );
+}
+
+#[test]
+fn client_wait_arm_requires_its_own_matching_observer() {
+    for (kind, proof, required_step) in [
+        (
+            StepKind::ObserveVarbit { id: 0 },
+            CLIENT_MENU_PROOF,
+            "requires an ObserveMenu step",
+        ),
+        (
+            StepKind::ObserveMenu,
+            CLIENT_VARBIT_PROOF,
+            "requires an ObserveVarbit step with the same id",
+        ),
+        (
+            StepKind::ObserveVarbit { id: 1 },
+            CLIENT_VARBIT_PROOF,
+            "requires an ObserveVarbit step with the same id",
+        ),
+    ] {
+        let mut scenario = stat_scenario(0, 2);
+        scenario.steps[0].kind = kind;
+        scenario.steps[0].wait.arm = proof;
+        let runner = ScenarioRunner::new(scenario);
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("an observer for another wait arm must be refused");
+        };
+        assert!(message.contains("step 1"), "{message}");
+        assert!(message.contains(required_step), "{message}");
+        assert_eq!(runner.evidence().expect("refusal receipt").ticks, 0);
+    }
+}
+
 fn snapshot_only_refusal_scenario() -> Scenario {
     let mut scenario = stat_scenario(0, 2);
     scenario.seed.mainland = true;
