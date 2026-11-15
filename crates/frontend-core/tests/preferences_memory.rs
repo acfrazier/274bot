@@ -169,6 +169,7 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
     let (release, gate) = mpsc::channel::<()>();
     let gate = Mutex::new(gate);
     let held = Arc::new(AtomicBool::new(false));
+    counter_counts_growth_and_release();
     let baseline = LIVE.load(Ordering::SeqCst);
     PEAK.store(baseline, Ordering::SeqCst);
 
@@ -226,6 +227,14 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
     drop(preferences);
     let retained = LIVE.load(Ordering::SeqCst) - baseline;
     println!("T53_RUST_MEMORY peak={peak} retained={retained}");
+    // The queued patches alone hold 9 x 25 values of 3,800 bytes while the
+    // writer is stalled, so a counter that saw the work reads at least that
+    // much. A peak under the floor means the counter stopped counting.
+    let floor = 9 * 25 * 3_800;
+    assert!(
+        peak >= floor,
+        "peak {peak} < the queued patches' {floor} bytes: the counting allocator saw none of the work"
+    );
     let Some((m_peak, t_peak, m_retained, t_retained)) = TRIPWIRES else {
         return;
     };
@@ -250,4 +259,29 @@ fn preferences_peak_and_retained_rust_memory_stay_within_their_measured_tripwire
     drop(session);
     drop(service);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The counter moves with allocation and back with release: a counter
+/// that ignores its deltas would let every tripwire above pass at zero.
+/// This target runs one test, so no other thread allocates meanwhile.
+fn counter_counts_growth_and_release() {
+    const SIZE: usize = 1 << 20;
+    let before = LIVE.load(Ordering::SeqCst);
+    PEAK.store(before, Ordering::SeqCst);
+    let block = std::hint::black_box(vec![1_u8; SIZE]);
+    let grown = LIVE.load(Ordering::SeqCst) - before;
+    assert!(
+        grown >= SIZE as isize,
+        "the counter grew {grown} bytes for a {SIZE}-byte allocation"
+    );
+    assert!(
+        PEAK.load(Ordering::SeqCst) - before >= SIZE as isize,
+        "the peak did not cover a live {SIZE}-byte allocation"
+    );
+    drop(block);
+    let after = LIVE.load(Ordering::SeqCst) - before;
+    assert!(
+        after < SIZE as isize,
+        "the counter kept {after} bytes after the {SIZE}-byte block was released"
+    );
 }
