@@ -33,11 +33,23 @@ pub enum Family {
     /// continue cap releases it. The handle outlives a missing NPC frame.
     Dialog,
     /// One operation, then a bounded wait for its outcome (Open, Rub, a
-    /// flee walk, a tool refit). Exhausted, it stalls and releases the slot.
+    /// tool refit). Exhausted, it stalls and releases the slot. A replaced
+    /// event releases it.
     Solver,
+    /// A flee from a hostile actor: a solver whose act the next hostile actor
+    /// inherits. The replacement keeps the pending act, and its hold, without
+    /// a release tick, and starts its own bounded wait.
+    Evade,
     /// A trap square: the hold follows the detection while the host walks out;
     /// a bounded number of solver ticks gives the visit up.
     Trap,
+}
+
+impl Family {
+    /// One operation in flight and a bounded wait for its outcome.
+    fn is_solver(self) -> bool {
+        matches!(self, Self::Solver | Self::Evade)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -97,6 +109,11 @@ pub enum GuardianMutation {
     OverlapMasksBox,
     /// A repeated frame poll spends a wait tick.
     FrameConsumesTick,
+    /// A replaced hostile actor's successor does not inherit the pending
+    /// act: the host releases the slot for a tick between two attackers.
+    EvadeReleasesOnReplace,
+    /// The Ent guard holds past its bounded lifetime.
+    GuardNeverExpires,
     /// A replaced session keeps the previous session's active event.
     SessionKeepsActive,
     /// The toggle off still publishes `ours`.
@@ -109,7 +126,7 @@ pub enum GuardianMutation {
 
 impl GuardianMutation {
     /// Every mutation, with the invariant that must catch it.
-    pub const ALL: [(Self, &'static str); 22] = [
+    pub const ALL: [(Self, &'static str); 24] = [
         (Self::StuckGathererHold, "toggle-off-publishes"),
         (Self::StalledHolds, "stalled-hold"),
         (Self::FleeInterrupted, "wait-early"),
@@ -137,6 +154,8 @@ impl GuardianMutation {
         (Self::HoldNotAppliedToSeat, "seat-hold-mismatch"),
         (Self::OverlapMasksBox, "unowned-event"),
         (Self::FrameConsumesTick, "frame-advances"),
+        (Self::EvadeReleasesOnReplace, "evade-handoff"),
+        (Self::GuardNeverExpires, "guard-unbounded"),
         (Self::SessionKeepsActive, "stale-session"),
         (Self::ToggleOffKeepsOurs, "toggle-off-publishes"),
         (Self::DuplicateOpOnReclaim, "duplicate-op"),
@@ -153,6 +172,9 @@ pub struct GuardianBounds {
     pub ids: u8,
     /// Slot sessions.
     pub sessions: u8,
+    /// The alphabet carries the Ent guard's steps and a reduced set of event
+    /// families, so the state graph stays inside the profile caps.
+    pub ent: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -174,7 +196,9 @@ struct Event {
     forced_host: bool,
 }
 
-/// One owner of one episode and the host work it has in flight.
+/// One owner of one episode and the host work it has in flight. `guard` is the
+/// Ent guard's hold (a bounded host guard that needs no detected event); like
+/// the real Guardian's, its latch lives beside the active event.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct Active {
     key: u8,
@@ -182,12 +206,23 @@ struct Active {
     family: Family,
     owner: Owner,
     phase: Phase,
+    guard: bool,
+}
+
+/// The Ent guard's latch: its slot is held for a bounded number of fresh
+/// ticks, then excluded until it is observed gone.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum EntLatch {
+    Absent,
+    Held { ticks: u8 },
+    Expired,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Publication {
     pub claim_script: bool,
     pub handling: bool,
+    pub acting: bool,
     pub ours: bool,
     pub hold: bool,
 }
@@ -201,6 +236,8 @@ pub struct PublicationInputs {
     pub claim_script: bool,
     pub dialog_in_flight: bool,
     pub solver_in_flight: bool,
+    /// The Ent guard holds the slot.
+    pub guard: bool,
     /// The family is stalled (inert): detect-only, never holds.
     pub stalled: bool,
     pub trapped: bool,
@@ -214,11 +251,12 @@ pub fn derive(input: PublicationInputs) -> Publication {
     Publication {
         claim_script: input.claim_script,
         handling,
+        acting: input.solver_in_flight,
         ours: input.toggle && input.detected && !input.stalled,
         hold: input.toggle
             && !input.claim_script
             && !input.stalled
-            && (handling || input.solver_in_flight || (input.trapped && input.detected)),
+            && (handling || input.solver_in_flight || input.guard || input.trapped),
     }
 }
 
@@ -251,6 +289,10 @@ pub enum GuardianStep {
         blocked: bool,
     },
     Frame,
+    /// An Ent stands in the world. It is host work with no detected event.
+    EntAppear,
+    /// The Ent is gone (the tree reverted).
+    EntRemove,
     /// A seat step of the composition (script dispatch, emissions, takes).
     Seat(Step),
 }
@@ -266,6 +308,9 @@ pub struct GuardianState {
     /// The event as the last fresh pass saw it: a repeated frame polls the
     /// same snapshot and cannot see a later change.
     observed: Option<Event>,
+    /// An Ent stands in the world, and as the last fresh pass saw it.
+    ent_world: bool,
+    ent_observed: bool,
     script: Script,
     script_exit: Option<ScriptExit>,
     wants: bool,
@@ -276,6 +321,7 @@ pub struct GuardianState {
     last_sig: Option<u8>,
     knocks: u8,
     active: Option<Active>,
+    ent: EntLatch,
     stale_hold: bool,
     // What the last pass published.
     out: Publication,
@@ -297,6 +343,8 @@ impl GuardianState {
             enabled: true,
             event: None,
             observed: None,
+            ent_world: false,
+            ent_observed: false,
             script: Script::Stopped,
             script_exit: None,
             wants: false,
@@ -306,6 +354,7 @@ impl GuardianState {
             last_sig: None,
             knocks: 0,
             active: None,
+            ent: EntLatch::Absent,
             stale_hold: false,
             out: Publication::default(),
             emitted: false,
@@ -380,6 +429,18 @@ impl GuardianState {
         self.active.map_or(Owner::Host, |active| active.owner)
     }
 
+    /// A Host-owned shell for the current episode with nothing in flight.
+    fn shell(&self, owner: Owner) -> Active {
+        Active {
+            key: self.last_sig.unwrap_or(0),
+            session: self.session,
+            family: self.observed.map_or(Family::Solver, |event| event.family),
+            owner,
+            phase: Phase::Idle,
+            guard: false,
+        }
+    }
+
     fn set_owner(&mut self, owner: Owner) {
         if owner == Owner::Host && self.active.is_none() {
             return;
@@ -387,15 +448,7 @@ impl GuardianState {
         let previous = self.owner();
         match self.active.as_mut() {
             Some(active) => active.owner = owner,
-            None => {
-                self.active = Some(Active {
-                    key: self.last_sig.unwrap_or(0),
-                    session: self.session,
-                    family: self.observed.map_or(Family::Solver, |event| event.family),
-                    owner,
-                    phase: Phase::Idle,
-                });
-            }
+            None => self.active = Some(self.shell(owner)),
         }
         if previous == Owner::Host
             && owner == Owner::Script
@@ -406,12 +459,22 @@ impl GuardianState {
         self.settle();
     }
 
+    /// The Ent guard asks for the hold this pass, or no longer does.
+    fn set_guard(&mut self, guard: bool) {
+        if guard && self.active.is_none() {
+            self.active = Some(self.shell(Owner::Host));
+        }
+        if let Some(active) = self.active.as_mut() {
+            active.guard = guard;
+        }
+        self.settle();
+    }
+
     /// The Host owns the episode and has nothing in flight: no active event.
     fn settle(&mut self) {
-        if self
-            .active
-            .is_some_and(|active| active.owner == Owner::Host && active.phase == Phase::Idle)
-        {
+        if self.active.is_some_and(|active| {
+            active.owner == Owner::Host && active.phase == Phase::Idle && !active.guard
+        }) {
             self.active = None;
         }
     }
@@ -529,6 +592,8 @@ impl GuardianState {
                 self.chat_open = false;
                 // The new session's snapshot has not seen the world yet.
                 self.observed = None;
+                self.ent_observed = false;
+                self.ent = EntLatch::Absent;
             }
             GuardianStep::ChatClose => {
                 if !self.chat_open {
@@ -560,6 +625,18 @@ impl GuardianState {
             }
             GuardianStep::Tick { blocked } => self.tick(true, *blocked),
             GuardianStep::Frame => self.tick(false, false),
+            GuardianStep::EntAppear => {
+                if self.ent_world {
+                    return Err("an Ent already stands".into());
+                }
+                self.ent_world = true;
+            }
+            GuardianStep::EntRemove => {
+                if !self.ent_world {
+                    return Err("no Ent stands".into());
+                }
+                self.ent_world = false;
+            }
             GuardianStep::Seat(step) => {
                 let Some(seat) = self.seat.as_mut() else {
                     return Err("no seat in this composition".into());
@@ -616,6 +693,7 @@ impl GuardianState {
         }
         if fresh {
             self.observed = self.event;
+            self.ent_observed = self.ent_world;
         }
         let event = self.observed;
         if fresh {
@@ -672,6 +750,8 @@ impl GuardianState {
             self.set_owner(Owner::Host);
         }
 
+        let guard = self.ent_pass(fresh);
+        self.set_guard(guard);
         if fresh {
             self.host_pass(blocked);
         } else if self.mutation == GuardianMutation::FrameConsumesTick
@@ -686,7 +766,7 @@ impl GuardianState {
             && before.is_some_and(|active| active.owner == Owner::Script)
             && self.owner() == Owner::Host
             && self.active.is_some_and(|active| {
-                active.family == Family::Solver && matches!(active.phase, Phase::Pending { .. })
+                active.family.is_solver() && matches!(active.phase, Phase::Pending { .. })
             })
         {
             // The pending operation is sent again when the claim comes back.
@@ -719,7 +799,7 @@ impl GuardianState {
                         "time under a script claim spent the host's wait".into(),
                     ));
                 }
-                if now.family == Family::Solver && self.emitted {
+                if now.family.is_solver() && self.emitted {
                     self.violation = Some((
                         "duplicate-op",
                         "the host sent a pending operation a second time".into(),
@@ -734,6 +814,25 @@ impl GuardianState {
                     "a stalled episode started a second budget".into(),
                 ));
             }
+        }
+        // The next hostile actor inherits a pending flee: it is not released
+        // for a tick between two attackers.
+        if fresh
+            && let Some(was) = before
+            && was.family == Family::Evade
+            && was.owner == Owner::Host
+            && was.session == self.session
+            && matches!(was.phase, Phase::Pending { .. })
+            && event.is_some_and(|event| event.family == Family::Evade && event.id != was.key)
+            && !matches!(
+                self.active.map(|active| active.phase),
+                Some(Phase::Pending { .. })
+            )
+        {
+            self.violation = Some((
+                "evade-handoff",
+                "a replaced hostile actor's successor did not inherit the pending flee".into(),
+            ));
         }
 
         // Publish: one derivation from the active event and the live inputs.
@@ -790,7 +889,10 @@ impl GuardianState {
                 }
             }
         }
-        if !enabled || self.owner() != Owner::Host {
+        // The Ent guard holds the slot: like a script claim or a toggle off,
+        // the host's work in flight keeps its place and spends nothing.
+        let guarded = self.active.is_some_and(|active| active.guard);
+        if !enabled || guarded || self.owner() != Owner::Host {
             // A script owns the event, or the toggle is off: the host's work
             // in flight keeps its place and spends nothing. Under a script
             // claim, the mutation lets time count anyway.
@@ -827,6 +929,23 @@ impl GuardianState {
                 // Work for an event that is gone or replaced resolves; the next
                 // pass starts the successor.
                 if active.family != Family::Dialog && gone {
+                    // A hostile actor's successor inherits the flee; any other
+                    // replacement releases the work and the next pass starts
+                    // its own.
+                    if active.family == Family::Evade
+                        && self.mutation != GuardianMutation::EvadeReleasesOnReplace
+                        && let Some(event) = event.filter(|event| event.family == Family::Evade)
+                    {
+                        self.active = Some(Active {
+                            key: event.id,
+                            phase: Phase::Pending {
+                                wait: 0,
+                                unblocked: 0,
+                            },
+                            ..active
+                        });
+                        return;
+                    }
                     self.finish(Phase::Idle);
                     return;
                 }
@@ -846,16 +965,16 @@ impl GuardianState {
                     return;
                 }
                 let counts = !blocked
-                    || active.family != Family::Solver
+                    || !active.family.is_solver()
                     || self.mutation == GuardianMutation::FleeInterrupted;
                 let next_wait = if counts { wait + 1 } else { wait };
-                let next_unblocked = if blocked && active.family == Family::Solver {
+                let next_unblocked = if blocked && active.family.is_solver() {
                     unblocked
                 } else {
                     unblocked + 1
                 };
                 if self.mutation == GuardianMutation::MissingOpenWaitsForever
-                    && active.family == Family::Solver
+                    && active.family.is_solver()
                 {
                     // The wait never ends: the counter saturates below the bound.
                     let capped = next_wait.min(self.bounds.wait.saturating_sub(1));
@@ -904,6 +1023,42 @@ impl GuardianState {
         }
     }
 
+    /// One pass of the Ent guard: whether it holds the slot. Observing the Ent
+    /// latches it for a bounded number of fresh ticks while the host may act,
+    /// then excludes it until it is observed gone.
+    fn ent_pass(&mut self, fresh: bool) -> bool {
+        if !self.ent_observed {
+            self.ent = EntLatch::Absent;
+            return false;
+        }
+        let enabled = self.enabled && self.owner() == Owner::Host;
+        match self.ent {
+            EntLatch::Expired => false,
+            EntLatch::Held { ticks } => {
+                if fresh
+                    && ticks >= self.bounds.wait
+                    && self.mutation != GuardianMutation::GuardNeverExpires
+                {
+                    self.ent = EntLatch::Expired;
+                    return false;
+                }
+                if fresh {
+                    self.ent = EntLatch::Held {
+                        ticks: ticks.saturating_add(1),
+                    };
+                }
+                enabled
+            }
+            EntLatch::Absent if enabled => {
+                self.ent = EntLatch::Held {
+                    ticks: u8::from(fresh),
+                };
+                true
+            }
+            EntLatch::Absent => false,
+        }
+    }
+
     fn finish(&mut self, phase: Phase) {
         if let Some(active) = self.active.as_mut() {
             active.phase = phase;
@@ -923,6 +1078,7 @@ impl GuardianState {
                 wait: 0,
                 unblocked: 0,
             },
+            guard: self.active.is_some_and(|active| active.guard),
         });
         if event.family == Family::Dialog {
             self.chat_open = true;
@@ -950,6 +1106,7 @@ impl GuardianState {
             solver_in_flight: active.is_some_and(|active| {
                 active.family != Family::Dialog && matches!(active.phase, Phase::Pending { .. })
             }),
+            guard: active.is_some_and(|active| active.guard),
             stalled: active.is_some_and(|active| {
                 matches_event(&active) && matches!(active.phase, Phase::Stalled { .. })
             }),
@@ -1020,7 +1177,7 @@ impl GuardianState {
                         "a wait ended without a logged failure".into(),
                     );
                 }
-                if unblocked < self.bounds.wait && active.family == Family::Solver {
+                if unblocked < self.bounds.wait && active.family.is_solver() {
                     return fail(
                         "wait-early",
                         format!(
@@ -1030,6 +1187,17 @@ impl GuardianState {
                     );
                 }
             }
+        }
+        if let EntLatch::Held { ticks } = self.ent
+            && ticks > self.bounds.wait
+        {
+            return fail(
+                "guard-unbounded",
+                format!(
+                    "the Ent guard held {ticks} fresh ticks (bound {})",
+                    self.bounds.wait
+                ),
+            );
         }
         if self.knocks > 1 {
             return fail(
@@ -1095,7 +1263,8 @@ impl GuardianState {
                 // handle's bounded end, and the host stays engaged on it.
                 let host_engaged = self.active.is_some_and(|active| {
                     active.owner == Owner::Host
-                        && ((active.key == event.id && !matches!(active.phase, Phase::Idle))
+                        && (active.guard
+                            || (active.key == event.id && !matches!(active.phase, Phase::Idle))
                             || (active.family == Family::Dialog
                                 && matches!(active.phase, Phase::Pending { .. })))
                 });
@@ -1118,20 +1287,35 @@ impl GuardianState {
 
     pub fn describe(&self) -> String {
         format!(
-            "event={:?} script={:?} enabled={} session={} active={:?} out={:?} knocks={}",
-            self.event, self.script, self.enabled, self.session, self.active, self.out, self.knocks
+            "event={:?} ent={:?}/{:?} script={:?} enabled={} session={} active={:?} out={:?} knocks={}",
+            self.event,
+            self.ent_world,
+            self.ent,
+            self.script,
+            self.enabled,
+            self.session,
+            self.active,
+            self.out,
+            self.knocks
         )
     }
 }
 
 fn alphabet(state: &GuardianState) -> Vec<GuardianStep> {
     let mut out = Vec::new();
-    for (family, forced_host) in [
-        (Family::Dialog, false),
-        (Family::Solver, false),
-        (Family::Solver, true),
-        (Family::Trap, false),
-    ] {
+    let families: &[(Family, bool)] = if state.bounds.ent {
+        &[(Family::Solver, false), (Family::Trap, false)]
+    } else {
+        &[
+            (Family::Dialog, false),
+            (Family::Solver, false),
+            (Family::Solver, true),
+            (Family::Evade, false),
+            (Family::Evade, true),
+            (Family::Trap, false),
+        ]
+    };
+    for &(family, forced_host) in families {
         out.push(GuardianStep::Appear {
             family,
             forced_host,
@@ -1165,6 +1349,9 @@ fn alphabet(state: &GuardianState) -> Vec<GuardianStep> {
         GuardianStep::Tick { blocked: true },
         GuardianStep::Frame,
     ]);
+    if state.bounds.ent {
+        out.extend([GuardianStep::EntAppear, GuardianStep::EntRemove]);
+    }
     if state.seat.is_some() {
         out.extend([
             GuardianStep::Seat(Step::Take),
@@ -1181,13 +1368,16 @@ pub enum GuardianProfile {
     Ownership,
     /// Ownership composed with the seat's guardian hold.
     OwnershipSeat,
+    /// Ownership with the Ent guard, over a reduced set of event families.
+    OwnershipEnt,
     /// A deeper bound for the nightly Linux lane (16 GiB scope).
     Nightly,
 }
 
-pub const GUARDIAN_PROFILES: [GuardianProfile; 3] = [
+pub const GUARDIAN_PROFILES: [GuardianProfile; 4] = [
     GuardianProfile::Ownership,
     GuardianProfile::OwnershipSeat,
+    GuardianProfile::OwnershipEnt,
     GuardianProfile::Nightly,
 ];
 
@@ -1196,6 +1386,7 @@ impl GuardianProfile {
         match self {
             Self::Ownership => "c6-ownership",
             Self::OwnershipSeat => "c6-ownership-seat",
+            Self::OwnershipEnt => "c6-ownership-ent",
             Self::Nightly => "c6-ownership-nightly",
         }
     }
@@ -1204,7 +1395,7 @@ impl GuardianProfile {
     /// well inside the horizon: a closed run is exhaustive, not truncated.
     pub const fn horizon(self) -> usize {
         match self {
-            Self::Ownership | Self::OwnershipSeat => 32,
+            Self::Ownership | Self::OwnershipSeat | Self::OwnershipEnt => 32,
             Self::Nightly => 48,
         }
     }
@@ -1215,18 +1406,26 @@ impl GuardianProfile {
                 wait: 2,
                 ids: 2,
                 sessions: 2,
+                ent: false,
+            },
+            Self::OwnershipEnt => GuardianBounds {
+                wait: 2,
+                ids: 2,
+                sessions: 2,
+                ent: true,
             },
             Self::Nightly => GuardianBounds {
                 wait: 4,
                 ids: 2,
                 sessions: 3,
+                ent: false,
             },
         }
     }
 
     pub fn initial(self, mutation: GuardianMutation) -> GuardianState {
         match self {
-            Self::Ownership => GuardianState::new(self.bounds(), mutation),
+            Self::Ownership | Self::OwnershipEnt => GuardianState::new(self.bounds(), mutation),
             Self::OwnershipSeat | Self::Nightly => GuardianState::composed(self.bounds(), mutation),
         }
     }

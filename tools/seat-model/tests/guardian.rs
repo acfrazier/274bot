@@ -14,6 +14,8 @@ const SEAT_MUTATIONS: [GuardianMutation; 2] = [
 fn profile_for(mutation: GuardianMutation) -> GuardianProfile {
     if SEAT_MUTATIONS.contains(&mutation) {
         GuardianProfile::OwnershipSeat
+    } else if mutation == GuardianMutation::GuardNeverExpires {
+        GuardianProfile::OwnershipEnt
     } else {
         GuardianProfile::Ownership
     }
@@ -32,7 +34,11 @@ fn appear(family: Family) -> GuardianStep {
 
 #[test]
 fn chosen_profiles_close_without_a_cap() {
-    for profile in [GuardianProfile::Ownership, GuardianProfile::OwnershipSeat] {
+    for profile in [
+        GuardianProfile::Ownership,
+        GuardianProfile::OwnershipSeat,
+        GuardianProfile::OwnershipEnt,
+    ] {
         let result =
             explore_guardian_profile(profile, GuardianMutation::None, ExploreLimits::default());
         assert!(
@@ -262,4 +268,110 @@ fn an_exhausted_episode_does_not_mask_the_next_event() {
     )
     .unwrap_err();
     assert_eq!(caught.1.name, "unowned-event");
+}
+
+/// The next hostile actor inherits a pending flee: the hold stays through the
+/// replacement, and the wait starts again. Replacing any other solver releases
+/// the work for the pass.
+#[test]
+fn a_hostile_actor_replaced_by_another_keeps_the_flee_and_its_hold() {
+    let replace = |family| GuardianStep::Replace {
+        family,
+        forced_host: false,
+    };
+    let steps = [
+        appear(Family::Evade),
+        tick(),
+        replace(Family::Evade),
+        tick(),
+    ];
+    let state =
+        run_guardian_trace(GuardianProfile::Ownership, GuardianMutation::None, &steps).unwrap();
+    let out = state.publication();
+    assert!(
+        out.hold && out.acting,
+        "the successor has the flee: {out:?}"
+    );
+    let caught = run_guardian_trace(
+        GuardianProfile::Ownership,
+        GuardianMutation::EvadeReleasesOnReplace,
+        &steps,
+    )
+    .unwrap_err();
+    assert_eq!(caught.1.name, "evade-handoff");
+    // Any other solver releases its work when its event is replaced.
+    let steps = [
+        appear(Family::Solver),
+        tick(),
+        replace(Family::Solver),
+        tick(),
+    ];
+    run_guardian_trace(GuardianProfile::Ownership, GuardianMutation::None, &steps).unwrap();
+    // A flee replaced by another family is released as well.
+    let steps = [appear(Family::Evade), tick(), replace(Family::Trap), tick()];
+    run_guardian_trace(GuardianProfile::Ownership, GuardianMutation::None, &steps).unwrap();
+}
+
+/// `acting` is a published field: a solver in flight acts, a dialog handle
+/// does not.
+#[test]
+fn acting_is_published_for_a_solver_and_not_for_a_dialog() {
+    let state = run_guardian_trace(
+        GuardianProfile::Ownership,
+        GuardianMutation::None,
+        &[appear(Family::Solver), tick()],
+    )
+    .unwrap();
+    assert!(state.publication().acting && !state.publication().handling);
+    let state = run_guardian_trace(
+        GuardianProfile::Ownership,
+        GuardianMutation::None,
+        &[appear(Family::Dialog), tick()],
+    )
+    .unwrap();
+    assert!(state.publication().handling && !state.publication().acting);
+}
+
+/// The Ent guard is host work with no detected event: it holds while the Ent
+/// stands, the toggle is on and the claim is the host's, for a bounded time.
+#[test]
+fn the_ent_guard_holds_for_a_bounded_time_and_follows_the_toggle() {
+    let profile = GuardianProfile::OwnershipEnt;
+    let held = run_guardian_trace(
+        profile,
+        GuardianMutation::None,
+        &[GuardianStep::EntAppear, tick()],
+    )
+    .unwrap();
+    let out = held.publication();
+    assert!(out.hold && !out.ours && !out.acting && !out.claim_script);
+    let off = run_guardian_trace(
+        profile,
+        GuardianMutation::None,
+        &[
+            GuardianStep::EntAppear,
+            tick(),
+            GuardianStep::SetEnabled(false),
+            tick(),
+        ],
+    )
+    .unwrap();
+    assert!(!off.publication().hold, "the toggle off releases the guard");
+    // The bound is two fresh ticks in this profile: the third pass lets go,
+    // and the Ent stays excluded until it is observed gone.
+    let mut steps = vec![GuardianStep::EntAppear];
+    steps.extend([tick(), tick(), tick(), tick()]);
+    let spent = run_guardian_trace(profile, GuardianMutation::None, &steps).unwrap();
+    assert!(!spent.publication().hold, "the guard is bounded");
+    steps.extend([
+        GuardianStep::EntRemove,
+        tick(),
+        GuardianStep::EntAppear,
+        tick(),
+    ]);
+    let again = run_guardian_trace(profile, GuardianMutation::None, &steps).unwrap();
+    assert!(again.publication().hold, "a new Ent is guarded again");
+    let caught =
+        run_guardian_trace(profile, GuardianMutation::GuardNeverExpires, &steps).unwrap_err();
+    assert_eq!(caught.1.name, "guard-unbounded");
 }

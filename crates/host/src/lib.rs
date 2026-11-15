@@ -1449,6 +1449,8 @@ struct SlotLoop {
     /// Random-event guardian (act/hold; the trapped-kind hold and the
     /// `on_random` knock live here).
     guardian: Guardian,
+    /// Slot sessions the guardian has served: the session of its episode keys.
+    guardian_session: u32,
     /// Last status published by the guardian. The 289 idle-timer
     /// interruption consumes this before the next `mainloop` pass.
     guardian_status: RandomStatus,
@@ -1539,6 +1541,7 @@ impl SlotLoop {
             lamp_auto,
             lamp_skill,
             guardian: Guardian::new(),
+            guardian_session: 0,
             guardian_status: RandomStatus::default(),
             head: None,
             attach_error: None,
@@ -1657,7 +1660,8 @@ impl SlotLoop {
     fn after_drain(&mut self, client: &mut Client) -> DrainResult {
         let result = self.pump.drain_client(client);
         if result.session_changed || (!client.ingame && self.snapshot.ingame()) {
-            self.guardian = Guardian::new();
+            self.guardian_session = self.guardian_session.wrapping_add(1);
+            self.guardian = Guardian::in_session(self.guardian_session);
             self.guardian_status = RandomStatus::default();
             self.run_on = false;
             self.run_policy.release_at_session_boundary();

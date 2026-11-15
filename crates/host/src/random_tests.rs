@@ -10,11 +10,13 @@ use std::sync::Arc;
 #[test]
 #[cfg(target_pointer_width = "64")]
 fn guardian_per_bot_state_stays_inline_and_small() {
-    // Bounded box outcomes and the retained failure add 8 inline bytes to the
-    // 936-byte Guardian. The one `ActiveEvent` replaces six ownership cells and
-    // takes the 8 bytes back, with the 8 bytes of the test-only
-    // `last_inputs` publication record counted in.
-    assert_eq!(std::mem::size_of::<Guardian>(), 936);
+    // The base Guardian is 944 bytes. The one `ActiveEvent` replaces the
+    // ownership cells and carries the family phases (box, maze, mime, lamp
+    // redemption) that the Guardian held as separate cells; the lamp's
+    // attempt history and the episode key (session, family, generation)
+    // stay beside it. Together they take 32 bytes less inline, with the
+    // test-only `last_inputs` record counted in.
+    assert_eq!(std::mem::size_of::<Guardian>(), 912);
 }
 
 fn cfg() -> ClientConfig {
@@ -5700,7 +5702,7 @@ fn maze_touches_the_shrine_and_the_hold_lifts_off_square() {
     let mut g = Guardian::new();
     let mut solve = maze::MazeSolve::new(vec![]);
     solve.phase = maze::MazePhase::Touch { pass: 0 };
-    g.maze = Some(solve);
+    g.maze_mut().solve = Some(solve);
     let mut drv = FakeDriver::default();
     let settings = ProfileSettings::default();
     let mut snap = GameSnapshot::new();

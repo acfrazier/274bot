@@ -55,7 +55,7 @@ const BOX_OUTCOME_TICKS: u32 = 3;
 const BOX_MAX_FAILURES: u8 = 3;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum BoxPhase {
+pub(crate) enum BoxPhase {
     #[default]
     Ready,
     Opening {
@@ -71,7 +71,7 @@ enum BoxPhase {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BoxFailure {
+pub(crate) enum BoxFailure {
     OpenTimeout,
     AnswerTimeout,
     WrongAnswer,
@@ -81,8 +81,8 @@ enum BoxFailure {
     AnswerRefused,
 }
 
-#[derive(Debug, Default)]
-struct BoxSolve {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct BoxSolve {
     phase: BoxPhase,
     failures: u8,
     last_failure: Option<BoxFailure>,
@@ -264,13 +264,117 @@ pub(crate) struct DialogHandle {
     pub(crate) continues: u8,
 }
 
-/// The one Guardian event owner. It carries the owner and the host work that
-/// owner has in flight; `claim`, `handling`, `acting`, `ours` and `hold` are
-/// derived from it and from the live inputs. There is no second copy of any
-/// of them. `Guardian::active` is `None` exactly while the Host owns the
-/// event and has nothing in flight.
+/// The identity of one observed episode: the slot session, the detected
+/// family and a generation that every new signature (a new event, a replaced
+/// event, or none) advances. The host replaces the Guardian at every session
+/// boundary and numbers the sessions, so a key from an earlier session never
+/// equals one of this session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EpisodeKey {
+    pub(crate) session: u32,
+    /// The detected family at the signature edge; `None` before any event.
+    pub(crate) kind: Option<RandomKind>,
+    pub(crate) generation: u32,
+}
+
+/// The Maze visit's bounded solver state. It ends with its episode.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct MazeVisit {
+    /// The active solve, `None` while trapped without a route.
+    solve: Option<maze::MazeSolve>,
+    /// Solver ticks spent on this visit ([`maze::SOLVE_TICKS`] cap).
+    ticks: u32,
+    /// The solver gave this visit up with the player still on the square: no
+    /// act, no hold and no `ours` until the player leaves it, so the slot's
+    /// native run sees the trap and blocks instead of staying frozen.
+    stalled: bool,
+}
+
+/// The Mime stage's watch and answer state. It ends with its episode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct MimeStage {
+    /// The last emote anim seq the mime NPC showed.
+    last_seen: Option<i32>,
+    /// The emote button went out for the open chat: no repeat press until the
+    /// chat closes.
+    answered: bool,
+}
+
+/// One lamp redemption in flight (Rub, skill, Confirm, award). Its attempt
+/// history, which outlives the episode, is [`LampHistory`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct LampFlow {
+    /// Rub went out: do not Rub again until the skill IF closes.
+    rubbed: bool,
+    /// The skill button went out: the next tick on the IF presses confirm
+    /// (2831).
+    skill_sent: bool,
+    /// Confirm went out: the redemption is in flight (the server closes the
+    /// IF, consumes the lamp, advances the skill and opens the award
+    /// dialogue).
+    confirmed: bool,
+    /// The configured skill's (xp, base) as the Confirm tick's snapshot read
+    /// them: the reward is witnessed by the advance past this baseline, never
+    /// by a later stale read.
+    reward: Option<(i32, i32)>,
+    /// Award-dialogue continues sent since Confirm ([`MAX_LAMP_DIALOGUE`]).
+    dialog: u32,
+    /// Ticks the current phase has waited without progress
+    /// ([`MAX_LAMP_WAIT`] cap).
+    wait: u32,
+    /// The lamp count when Confirm went out. One unstacked lamp leaves the
+    /// pack per redemption, so the consume is a drop below this baseline.
+    confirm_count: Option<i32>,
+}
+
+/// The bounded phase and outcome evidence of the family that works the event
+/// (design 3.2). It lives and dies with the active event. State that has to
+/// outlive an episode is not here: see the history cells of [`Guardian`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum Family {
+    #[default]
+    None,
+    Box(BoxSolve),
+    Maze(MazeVisit),
+    Mime(MimeStage),
+    Lamp(LampFlow),
+}
+
+impl Family {
+    /// The family gave up this episode: detect-only, no pending operation, no
+    /// `ours` and no hold until the episode ends. A stalled Box ends when its
+    /// event leaves or the server replicates it; a stalled Maze when the
+    /// player leaves the square.
+    fn released(&self) -> bool {
+        match self {
+            Self::Box(solve) => solve.phase == BoxPhase::Stalled,
+            Self::Maze(visit) => visit.stalled,
+            Self::None | Self::Mime(_) | Self::Lamp(_) => false,
+        }
+    }
+
+    /// Nothing worth keeping: the state of a family that has not started.
+    fn is_idle(&self) -> bool {
+        match self {
+            Self::None => true,
+            Self::Box(solve) => *solve == BoxSolve::default(),
+            Self::Maze(visit) => *visit == MazeVisit::default(),
+            Self::Mime(stage) => *stage == MimeStage::default(),
+            Self::Lamp(flow) => *flow == LampFlow::default(),
+        }
+    }
+}
+
+/// The one Guardian event owner (design 3.2). It carries the episode, the
+/// owner, the host work that owner has in flight and the family's bounded
+/// phase; `claim`, `handling`, `acting`, `ours` and `hold` are derived from it
+/// and from the enablement inputs. There is no second copy of any of them.
+/// `Guardian::active` is `None` exactly while the Host owns the event and has
+/// nothing in flight, nothing released and nothing guarded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActiveEvent {
+    /// The episode the event was opened for.
+    pub(crate) key: EpisodeKey,
     pub(crate) owner: Owner,
     /// A dialog handle is in flight (the host is talking it through).
     pub(crate) dialog: Option<DialogHandle>,
@@ -280,32 +384,57 @@ pub(crate) struct ActiveEvent {
     /// the slot like the dialog handle. The value is the kind that act
     /// belongs to.
     pub(crate) solver: Option<RandomKind>,
+    /// The Ent guard holds the slot. The guard's own latch, which outlives the
+    /// episode, is `Guardian::ent`.
+    pub(crate) guard: bool,
+    /// The family's bounded phase, progress and outcome evidence.
+    pub(crate) family: Family,
 }
 
-/// The live inputs of one publication besides the active event.
+impl ActiveEvent {
+    /// A Host-owned shell with nothing in flight.
+    fn new(key: EpisodeKey) -> Self {
+        Self {
+            key,
+            owner: Owner::Host,
+            dialog: None,
+            solver: None,
+            guard: false,
+            family: Family::None,
+        }
+    }
+
+    /// The Host owns the event and has nothing to keep.
+    fn is_spent(&self) -> bool {
+        self.owner == Owner::Host
+            && self.dialog.is_none()
+            && self.solver.is_none()
+            && !self.guard
+            && self.family.is_idle()
+    }
+}
+
+/// The enablement and readiness inputs of one publication besides the active
+/// event: the toggle and what the detector reports. Suppression history
+/// (a parked lamp, a stalled tool) is already part of `detected_ours`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PublicationInputs {
     /// The random-event toggle.
     pub(crate) toggle: bool,
-    /// The detector says the event is owned work (`DetectedRandom::ours`).
+    /// The detector says the event is owned work (`DetectedRandom::ours`) and
+    /// no suppression history says the host gave up on it.
     pub(crate) detected_ours: bool,
-    /// A family the host is not driving right now (stalled or paused lamp,
-    /// stalled tool or box, a trap square it gave up): detect-only.
-    pub(crate) inert_detect: bool,
-    /// A stalled box or an inert trap square never holds.
-    pub(crate) inert_hold: bool,
-    /// The Ent guard holds the slot.
-    pub(crate) ent_hold: bool,
-    /// The detected event is a trapped kind (Maze, Mime).
+    /// The detected event is a trapped kind (Maze, Mime, Box).
     pub(crate) trapped: bool,
 }
 
-/// The ownership fields of the status row. They are computed here and
-/// nowhere else, from the one active event and the live inputs.
+/// The ownership fields of the status row, and `acting`. They are computed
+/// here and nowhere else, from the one active event and the inputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Publication {
     pub(crate) claim: RandomClaim,
     pub(crate) handling: bool,
+    pub(crate) acting: bool,
     pub(crate) ours: bool,
     pub(crate) hold: bool,
 }
@@ -318,19 +447,42 @@ pub(crate) fn derive_publication(
         Some(Owner::Script) => RandomClaim::Handle,
         Some(Owner::Host) | None => RandomClaim::Host,
     };
-    let in_flight = active.is_some_and(|active| active.dialog.is_some());
+    let handling = active.is_some_and(|active| active.dialog.is_some());
     let acting = active.is_some_and(|active| active.solver.is_some());
+    let guard = active.is_some_and(|active| active.guard);
+    let released = active.is_some_and(|active| active.family.released());
     Publication {
         claim,
-        handling: in_flight,
+        handling,
+        acting,
         // Detection alone must not latch pending work: both native
         // eligibility and EventSignal.pending use hold OR ours.
-        ours: inputs.toggle && !inputs.inert_detect && inputs.detected_ours,
+        ours: inputs.toggle && !released && inputs.detected_ours,
         hold: inputs.toggle
             && claim == RandomClaim::Host
-            && !inputs.inert_hold
-            && (in_flight || acting || inputs.ent_hold || inputs.trapped),
+            && !released
+            && (handling || acting || guard || inputs.trapped),
     }
+}
+
+/// The lamp's attempt history. It outlives the episode: a Confirm is never
+/// replayed, so the stall latch and the Rub budget survive another family's
+/// event until the lamp leaves the pack or `lamp_auto` goes off. It holds no
+/// command authority: it only suppresses `ours` and the next Rub.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct LampHistory {
+    /// Rub attempts sent in the current redemption (re-Rubs after a missed
+    /// skill IF, [`MAX_LAMP_RUBS`] cap; reset when a pause starts a new
+    /// episode and when the redemption resolves).
+    rubs: u32,
+    /// Fresh ticks left in a pause before the next Rub. Inert while it counts
+    /// down (no act, no hold, no `ours`), so the script runs between Rub
+    /// attempts.
+    park: u32,
+    /// The redemption failed after Confirm (or the skill is unclickable) with
+    /// the lamp still held: no act and no hold (the status row still detects
+    /// it) until the lamp leaves the pack or `lamp_auto` is switched off.
+    stalled: bool,
 }
 
 /// Per-slot random-event guardian state.
@@ -347,6 +499,9 @@ pub struct Guardian {
     /// Host with nothing in flight: no event, no script, or the script did
     /// not claim it.
     active: Option<ActiveEvent>,
+    /// The episode of the last signature edge. A new generation starts at
+    /// every new, replaced or vanished event.
+    episode: EpisodeKey,
     /// The inputs of the last publication, for the conformance tests.
     #[cfg(test)]
     last_inputs: PublicationInputs,
@@ -360,7 +515,9 @@ pub struct Guardian {
     evade: Option<EvadeState>,
     /// First scene positions survive the spawn's delayed targeting/movement.
     evade_starts: Vec<EvadeSighting>,
-    /// Stop forced Ent chopping and hold until the tree reverts.
+    /// Stop forced Ent chopping and hold until the tree reverts. The latch
+    /// (60-tick cap, expired slot) outlives the episode; the hold it asks for
+    /// is `ActiveEvent::guard`.
     ent: ent::EntGuard,
     /// Lost-tool: the handle was worn, so the reattached tool is re-wielded.
     tool_was_worn: bool,
@@ -378,58 +535,8 @@ pub struct Guardian {
     /// One bounded recovery per handle observation; failure releases the
     /// native Gatherer's missing-tool supply trip instead of holding forever.
     tool_stalled: bool,
-    /// Mime: the last emote anim seq the mime NPC showed.
-    mime_last_seen: Option<i32>,
-    /// Mime: the emote button went out for the open chat — no repeat
-    /// press until the chat closes.
-    mime_answered: bool,
-    /// Content-bounded box outcome waits and the last failed operation.
-    box_solve: BoxSolve,
-    /// Lamp: Rub went out — do not Rub again until the skill IF closes.
-    lamp_rubbed: bool,
-    /// Lamp: Rub attempts sent in the current episode (re-Rubs after a
-    /// missed skill IF, [`MAX_LAMP_RUBS`] cap; reset when a pause starts a
-    /// new episode and when the redemption resolves).
-    lamp_rubs: u32,
-    /// Lamp: the skill button went out — the next tick on the IF presses
-    /// confirm (2831).
-    lamp_skill_sent: bool,
-    /// Lamp: Confirm went out — the redemption is in flight (the server
-    /// closes the IF, consumes the lamp, advances the skill and opens the
-    /// award dialogue).
-    lamp_confirmed: bool,
-    /// Lamp: the configured skill's (xp, base) as the Confirm tick's
-    /// snapshot read them — the reward is witnessed by the advance past
-    /// this baseline, never by a later stale read.
-    lamp_reward: Option<(i32, i32)>,
-    /// Lamp: award-dialogue continues sent since Confirm
-    /// ([`MAX_LAMP_DIALOGUE`] cap).
-    lamp_dialog: u32,
-    /// Lamp: ticks the current phase has waited without progress
-    /// ([`MAX_LAMP_WAIT`] cap).
-    lamp_wait: u32,
-    /// Lamp: the lamp count when Confirm went out. One unstacked lamp
-    /// leaves the pack per redemption, so the consume is a drop below this
-    /// baseline; a sibling lamp left in the pack does not block it.
-    lamp_confirm_count: Option<i32>,
-    /// Lamp: fresh ticks left in a pause before the next Rub. Inert while
-    /// it counts down (no act, no hold, no `ours`), so the script runs
-    /// between Rub attempts.
-    lamp_park: u32,
-    /// Lamp: the redemption failed after Confirm (or the skill is
-    /// unclickable) with the lamp still held — no act and no hold (the
-    /// status row still detects it) until the lamp leaves the pack or
-    /// `lamp_auto` is switched off. Confirm is never replayed.
-    lamp_stalled: bool,
-    /// Maze: the active solve state, None while trapped without a route.
-    maze: Option<maze::MazeSolve>,
-    /// Maze: solver ticks spent on this visit ([`maze::SOLVE_TICKS`] cap).
-    maze_ticks: u32,
-    /// Maze: the solver gave this visit up with the player still on the
-    /// square — no act, no hold and no `ours` until the player leaves it,
-    /// so the slot's native run sees the trap and blocks instead of
-    /// staying frozen.
-    maze_stalled: bool,
+    /// The lamp's attempt history (outlives the episode).
+    lamp: LampHistory,
     /// Strange Plant's bounded server-authenticated ownership probe.
     plant: PlantProbe,
     /// Exact foreign/refused/timed-out identities still present in the scene.
@@ -445,11 +552,21 @@ impl Default for Guardian {
 }
 impl Guardian {
     pub fn new() -> Self {
+        Self::in_session(0)
+    }
+
+    /// A Guardian for slot session `session` (the host numbers them).
+    pub fn in_session(session: u32) -> Self {
         Self {
             last_tick: 0,
             cooldown: HashMap::new(),
             sig: None,
             active: None,
+            episode: EpisodeKey {
+                session,
+                kind: None,
+                generation: 0,
+            },
             #[cfg(test)]
             last_inputs: PublicationInputs::default(),
             chat_seen: 0,
@@ -464,22 +581,7 @@ impl Guardian {
             tool_recovery: None,
             tool_refit_after_sequence: None,
             tool_stalled: false,
-            mime_last_seen: None,
-            mime_answered: false,
-            box_solve: BoxSolve::default(),
-            lamp_rubbed: false,
-            lamp_rubs: 0,
-            lamp_skill_sent: false,
-            lamp_confirmed: false,
-            lamp_reward: None,
-            lamp_dialog: 0,
-            lamp_wait: 0,
-            lamp_confirm_count: None,
-            lamp_park: 0,
-            lamp_stalled: false,
-            maze: None,
-            maze_ticks: 0,
-            maze_stalled: false,
+            lamp: LampHistory::default(),
             plant: PlantProbe::Idle,
             plant_ignored: Vec::new(),
             gear_loss: GearLoss::new(),
@@ -521,6 +623,24 @@ impl Guardian {
             .and_then(|active| active.dialog.as_mut())
     }
 
+    /// The key of the episode being observed.
+    fn key(&self) -> EpisodeKey {
+        self.episode
+    }
+
+    /// The act of `kind` in flight continues for the current episode: the
+    /// same family took over from a replaced event.
+    fn adopt_episode(&mut self, kind: RandomKind) {
+        let episode = self.episode;
+        if let Some(active) = self
+            .active
+            .as_mut()
+            .filter(|active| active.solver == Some(kind))
+        {
+            active.key = episode;
+        }
+    }
+
     /// Hand the current event to `claim`. Host work already in flight
     /// survives a change of owner.
     fn set_claim(&mut self, claim: RandomClaim) {
@@ -535,21 +655,16 @@ impl Guardian {
         self.settle();
     }
 
-    /// The Host has nothing in flight and owns the event: no active event.
+    /// The Host has nothing to keep and owns the event: no active event.
     fn settle(&mut self) {
-        if self.active.as_ref().is_some_and(|active| {
-            active.owner == Owner::Host && active.dialog.is_none() && active.solver.is_none()
-        }) {
+        if self.active.as_ref().is_some_and(ActiveEvent::is_spent) {
             self.active = None;
         }
     }
 
     fn active_mut(&mut self) -> &mut ActiveEvent {
-        self.active.get_or_insert(ActiveEvent {
-            owner: Owner::Host,
-            dialog: None,
-            solver: None,
-        })
+        let key = self.key();
+        self.active.get_or_insert_with(|| ActiveEvent::new(key))
     }
 
     /// A non-dialog act starts for `kind`.
@@ -571,6 +686,113 @@ impl Guardian {
             index: u16::try_from(index).unwrap_or(u16::MAX),
             continues: 0,
         });
+    }
+
+    /// The Ent guard asks for the hold this pass, or no longer does.
+    fn set_guard(&mut self, guard: bool) {
+        if guard {
+            self.active_mut().guard = true;
+        } else if let Some(active) = self.active.as_mut() {
+            active.guard = false;
+        }
+        self.settle();
+    }
+
+    /// The family state, or the idle one while nothing is active.
+    fn family(&self) -> &Family {
+        self.active
+            .as_ref()
+            .map_or(&Family::None, |active| &active.family)
+    }
+
+    /// End the family state that belongs to `kind`, if it is the one active.
+    fn end_family(&mut self, kind: RandomKind) {
+        if let Some(active) = self.active.as_mut() {
+            let matches = matches!(
+                (&active.family, kind),
+                (Family::Box(_), RandomKind::Box)
+                    | (Family::Maze(_), RandomKind::Maze)
+                    | (Family::Mime(_), RandomKind::Mime)
+                    | (Family::Lamp(_), RandomKind::Lamp)
+            );
+            if matches {
+                active.family = Family::None;
+            }
+        }
+        self.settle();
+    }
+
+    /// End whatever family state is active (the event resolved).
+    fn end_any_family(&mut self) {
+        if let Some(active) = self.active.as_mut() {
+            active.family = Family::None;
+        }
+        self.settle();
+    }
+
+    fn box_solve(&self) -> BoxSolve {
+        match self.family() {
+            Family::Box(solve) => *solve,
+            _ => BoxSolve::default(),
+        }
+    }
+
+    fn box_mut(&mut self) -> &mut BoxSolve {
+        let family = &mut self.active_mut().family;
+        if !matches!(family, Family::Box(_)) {
+            *family = Family::Box(BoxSolve::default());
+        }
+        let Family::Box(solve) = family else {
+            unreachable!("the family was just made a box")
+        };
+        solve
+    }
+
+    fn maze_mut(&mut self) -> &mut MazeVisit {
+        let family = &mut self.active_mut().family;
+        if !matches!(family, Family::Maze(_)) {
+            *family = Family::Maze(MazeVisit::default());
+        }
+        let Family::Maze(visit) = family else {
+            unreachable!("the family was just made a maze visit")
+        };
+        visit
+    }
+
+    fn mime_stage(&self) -> MimeStage {
+        match self.family() {
+            Family::Mime(stage) => *stage,
+            _ => MimeStage::default(),
+        }
+    }
+
+    fn mime_mut(&mut self) -> &mut MimeStage {
+        let family = &mut self.active_mut().family;
+        if !matches!(family, Family::Mime(_)) {
+            *family = Family::Mime(MimeStage::default());
+        }
+        let Family::Mime(stage) = family else {
+            unreachable!("the family was just made a mime stage")
+        };
+        stage
+    }
+
+    fn lamp_flow(&self) -> LampFlow {
+        match self.family() {
+            Family::Lamp(flow) => *flow,
+            _ => LampFlow::default(),
+        }
+    }
+
+    fn lamp_flow_mut(&mut self) -> &mut LampFlow {
+        let family = &mut self.active_mut().family;
+        if !matches!(family, Family::Lamp(_)) {
+            *family = Family::Lamp(LampFlow::default());
+        }
+        let Family::Lamp(flow) = family else {
+            unreachable!("the family was just made a lamp flow")
+        };
+        flow
     }
 
     /// One guardian pass per caller frame: detect + publish the status
@@ -677,13 +899,14 @@ impl Guardian {
             // but stops at 28 boxes (macro_event_strange_box.rs2:25-36,319).
             // Only that fresh server signal re-arms an exhausted budget.
             // Keep the last failure until an answer succeeds or the event ends.
-            if self.box_solve.phase == BoxPhase::Stalled
+            if self.box_solve().phase == BoxPhase::Stalled
                 && Self::server_chat_has_after(snap, self.chat_seen, |text| {
                     text == "Oh dear, you have taken so long that the cube has replicated."
                 })
             {
-                self.box_solve.failures = 0;
-                self.box_solve.phase = BoxPhase::Retry;
+                let solve = self.box_mut();
+                solve.failures = 0;
+                solve.phase = BoxPhase::Retry;
             }
             self.chat_seen = head;
             // The dialog ended: the chat is closed and the NPC is gone.
@@ -706,6 +929,11 @@ impl Guardian {
             let sig = ev.as_ref().map(|e| format!("{:?}:{}", e.kind, e.name));
             if sig != self.sig {
                 self.sig = sig;
+                self.episode = EpisodeKey {
+                    session: self.episode.session,
+                    kind: ev.as_ref().map(|event| event.kind),
+                    generation: self.episode.generation.wrapping_add(1),
+                };
                 // A new event is a new claim, whoever held the last.
                 if let Some(active) = self.active.as_mut() {
                     active.owner = Owner::Host;
@@ -814,30 +1042,32 @@ impl Guardian {
             .as_ref()
             .is_some_and(|event| event.kind == RandomKind::Box);
         if !on_box || !settings.random_events {
-            self.box_solve = BoxSolve::default();
+            self.end_family(RandomKind::Box);
         }
         if fresh && self.claim() != RandomClaim::Host {
             // No native action runs under a script claim. Shift the origin
             // by those observed ticks so neither wait spends Host's budget.
             let paused = (tick as u32).wrapping_sub(self.last_tick as u32);
-            match &mut self.box_solve.phase {
-                BoxPhase::Opening { tick } | BoxPhase::Answering { tick, .. } => {
-                    *tick = tick.wrapping_add(paused);
+            if let Some(Family::Box(solve)) = self.active.as_mut().map(|active| &mut active.family)
+            {
+                match &mut solve.phase {
+                    BoxPhase::Opening { tick } | BoxPhase::Answering { tick, .. } => {
+                        *tick = tick.wrapping_add(paused);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
-        let inert_box = on_box && self.box_solve.phase == BoxPhase::Stalled;
 
         // A pause counts down once per game tick; the Rub resumes when it
         // reaches zero.
         if fresh {
-            self.lamp_park = self.lamp_park.saturating_sub(1);
+            self.lamp.park = self.lamp.park.saturating_sub(1);
         }
         // A stalled or paused redemption unlocks on the two operator-visible
         // state changes: the lamp left the pack, or lamp auto went off (the
         // next auto-on redemption starts clean).
-        if (self.lamp_stalled || self.lamp_park > 0) && (!lamp_held(snap) || !settings.lamp_auto) {
+        if (self.lamp.stalled || self.lamp.park > 0) && (!lamp_held(snap) || !settings.lamp_auto) {
             self.clear_lamp();
         }
         // An inert lamp is detect-only: `lamp_auto` off, or a redemption
@@ -852,18 +1082,17 @@ impl Guardian {
             // redemption gave up with the lamp still held.
             self.end_solver();
         }
-        // A trap square the host will not solve (random events off, or a Maze
-        // visit it gave up) is inert like a stalled lamp: the square stays
-        // detected, but nothing holds the slot on a trap the guardian is not
-        // walking out of.
+        // A Maze visit the host gave up is released like a stalled Box: the
+        // square stays detected, but nothing holds the slot on a trap the
+        // guardian is not walking out of. Both families end with their event.
         let on_maze = ev.as_ref().is_some_and(|e| e.kind == RandomKind::Maze);
         if !on_maze {
-            self.maze_ticks = 0;
-            self.maze_stalled = false;
+            self.end_family(RandomKind::Maze);
         }
-        let on_trap_square = on_maze || ev.as_ref().is_some_and(|e| e.kind == RandomKind::Mime);
-        let inert_trap =
-            on_trap_square && (!settings.random_events || (on_maze && self.maze_stalled));
+        if !ev.as_ref().is_some_and(|e| e.kind == RandomKind::Mime) {
+            self.end_family(RandomKind::Mime);
+        }
+        let released = self.family().released();
 
         let ent_hold = self.ent.tick(
             driver,
@@ -872,15 +1101,15 @@ impl Guardian {
             active && settings.random_events && self.claim() == RandomClaim::Host,
             fresh,
         );
+        self.set_guard(ent_hold);
 
         if fresh
             && active
             && settings.random_events
             && self.claim() == RandomClaim::Host
             && !inert_lamp
-            && !inert_box
+            && !released
             && !inert_tool
-            && !inert_trap
             && !ent_hold
         {
             let plant_before_act = self.plant.clone();
@@ -912,19 +1141,15 @@ impl Guardian {
                 && ev
                     .as_ref()
                     .is_some_and(|event| event.kind == RandomKind::LostTool));
-        let inert_trap = inert_trap || (on_maze && self.maze_stalled);
-        // Release exhausted box retries in the same publication.
-        let inert_box = inert_box || self.box_solve.phase == BoxPhase::Stalled;
         let cooldown = ev
             .as_ref()
             .and_then(|e| e.npc_index)
             .is_some_and(|i| binned(i, now_ms, &self.cooldown));
         let inputs = PublicationInputs {
             toggle: settings.random_events,
-            detected_ours: ev.as_ref().is_some_and(|e| e.ours),
-            inert_detect: inert_lamp || inert_tool || inert_box || inert_trap,
-            inert_hold: inert_trap || inert_box,
-            ent_hold,
+            // A parked lamp and a stalled tool are suppression history: the
+            // host gave up on them, so the event is detected but not ours.
+            detected_ours: ev.as_ref().is_some_and(|e| e.ours) && !inert_lamp && !inert_tool,
             trapped: ev.as_ref().is_some_and(|e| is_trapped(e.kind)),
         };
         #[cfg(test)]
@@ -1399,7 +1624,7 @@ impl Guardian {
         // so the drain must run while `detect` already shows nothing (or a
         // newly spawned event). It takes the slot, like the dialog handle,
         // until it completes or gives up.
-        if self.acting_kind() == Some(RandomKind::Lamp) && self.lamp_confirmed {
+        if self.acting_kind() == Some(RandomKind::Lamp) && self.lamp_flow().confirmed {
             self.step_lamp(driver, snap, settings);
             return;
         }
@@ -1436,6 +1661,10 @@ impl Guardian {
                     self.acting_kind() == Some(RandomKind::Evade) && self.evade.is_none(),
                 );
             } else {
+                // The act continues for the successor episode of its family:
+                // an Evade hands its flee to the next hostile actor without a
+                // release tick.
+                self.adopt_episode(ev.kind);
                 self.step_act(driver, snap, settings, ev, now_ms);
             }
             return;
@@ -1539,11 +1768,8 @@ impl Guardian {
         self.tool_handle_base = None;
         self.tool_recovery = None;
         self.tool_refit_after_sequence = None;
-        self.mime_last_seen = None;
-        self.mime_answered = false;
-        self.box_solve = BoxSolve::default();
+        self.end_any_family();
         self.clear_lamp();
-        self.maze = None;
         self.plant = PlantProbe::Idle;
     }
 
@@ -1884,21 +2110,22 @@ impl Guardian {
                 .is_some_and(|n| n.eq_ignore_ascii_case("mime"))
                 && mime_answer(npc.animation).is_some()
             {
-                self.mime_last_seen = Some(npc.animation);
+                self.mime_mut().last_seen = Some(npc.animation);
             }
         }
         // Emote chat up: answer with the last seen emote, then wait for
         // the chat to close (a still-open chat must not re-press).
+        let stage = self.mime_stage();
         if snap.modals().chat == MIME_IF_ROOT {
-            if !self.mime_answered {
-                if let Some(answer) = self.mime_last_seen.and_then(mime_answer) {
+            if !stage.answered {
+                if let Some(answer) = stage.last_seen.and_then(mime_answer) {
                     press(driver, MIME_IF_BUTTONS[answer]);
-                    self.mime_answered = true;
+                    self.mime_mut().answered = true;
                 }
             }
             return;
         }
-        self.mime_answered = false;
+        self.mime_mut().answered = false;
     }
 
     /// Solve boxes from their modal, inventory and server-message outcomes.
@@ -1912,12 +2139,12 @@ impl Guardian {
             .map(|item| item.count.max(0))
             .sum();
         if count == 0 {
-            self.box_solve = BoxSolve::default();
+            self.end_family(RandomKind::Box);
             self.end_solver();
             return;
         }
         let tick = snap.tick();
-        match self.box_solve.phase {
+        match self.box_solve().phase {
             BoxPhase::Stalled => {
                 self.end_solver();
                 return;
@@ -1934,7 +2161,7 @@ impl Guardian {
                         )
                     });
                 if succeeded {
-                    self.box_solve = BoxSolve {
+                    *self.box_mut() = BoxSolve {
                         phase: BoxPhase::Retry,
                         ..BoxSolve::default()
                     };
@@ -1958,11 +2185,11 @@ impl Guardian {
             }
             _ => {}
         }
-        if snap.modals().main == CUBE_IF_ROOT && self.box_solve.phase != BoxPhase::Retry {
-            let started = match self.box_solve.phase {
+        if snap.modals().main == CUBE_IF_ROOT && self.box_solve().phase != BoxPhase::Retry {
+            let started = match self.box_solve().phase {
                 BoxPhase::Opening { tick } => tick,
                 _ => {
-                    self.box_solve.phase = BoxPhase::Opening { tick };
+                    self.box_mut().phase = BoxPhase::Opening { tick };
                     tick
                 }
             };
@@ -1980,7 +2207,7 @@ impl Guardian {
                 return;
             };
             if press(driver, CUBE_IF_BUTTONS[answer]) {
-                self.box_solve.phase = BoxPhase::Answering {
+                self.box_mut().phase = BoxPhase::Answering {
                     tick,
                     count,
                     sequence: snap.chat_lines().first().map_or(0, |line| line.sequence),
@@ -1999,26 +2226,26 @@ impl Guardian {
         };
         let mut ix = Interactions::new(snap, driver);
         match ix.interact(OpTarget::Item(held), ActionSpec::Label("Open".to_string())) {
-            SendResult::Sent { .. } => self.box_solve.phase = BoxPhase::Opening { tick },
+            SendResult::Sent { .. } => self.box_mut().phase = BoxPhase::Opening { tick },
             SendResult::Refused { reason, .. } => self.fail_box(BoxFailure::OpenRefused(reason)),
         }
     }
 
     fn fail_box(&mut self, failure: BoxFailure) {
-        self.box_solve.failures += 1;
-        self.box_solve.last_failure = Some(failure);
-        if self.box_solve.failures >= BOX_MAX_FAILURES {
-            self.box_solve.phase = BoxPhase::Stalled;
+        let solve = self.box_mut();
+        solve.failures += 1;
+        solve.last_failure = Some(failure);
+        if solve.failures >= BOX_MAX_FAILURES {
+            solve.phase = BoxPhase::Stalled;
+            let (failures, last_failure) = (solve.failures, solve.last_failure);
             self.end_solver();
             api::host_log!(
                 Category::RandomEvent,
                 Level::Warn,
-                "strange box: stopped after {} failed attempts; last failure: {:?}",
-                self.box_solve.failures,
-                self.box_solve.last_failure
+                "strange box: stopped after {failures} failed attempts; last failure: {last_failure:?}"
             );
         } else {
-            self.box_solve.phase = BoxPhase::Retry;
+            solve.phase = BoxPhase::Retry;
         }
     }
 
@@ -2037,20 +2264,21 @@ impl Guardian {
             self.end_solver();
             return;
         }
-        self.maze_ticks += 1;
-        if self.maze_ticks > maze::SOLVE_TICKS {
+        let visit = self.maze_mut();
+        visit.ticks += 1;
+        if visit.ticks > maze::SOLVE_TICKS {
             api::host_log!(
                 Category::RandomEvent,
                 Level::Warn,
                 "maze: still inside after {} solver ticks at ({px},{pz}); giving the Maze up and releasing the slot",
                 maze::SOLVE_TICKS
             );
-            self.maze = None;
-            self.maze_stalled = true;
+            visit.solve = None;
+            visit.stalled = true;
             self.end_solver();
             return;
         }
-        if self.maze.is_none() {
+        if visit.solve.is_none() {
             let me = (px, pz);
             match maze::select_route(maze::graph(), me) {
                 Some(doors) => {
@@ -2062,7 +2290,7 @@ impl Guardian {
                         doors[0].0,
                         doors[0].1
                     );
-                    self.maze = Some(maze::MazeSolve::new(doors));
+                    visit.solve = Some(maze::MazeSolve::new(doors));
                 }
                 None => {
                     api::host_log!(
@@ -2075,7 +2303,7 @@ impl Guardian {
             return;
         }
         let keep = step_maze_phase(
-            self.maze.as_mut().expect("checked above"),
+            visit.solve.as_mut().expect("checked above"),
             driver,
             snap,
             (px, pz),
@@ -2086,7 +2314,7 @@ impl Guardian {
                 Level::Warn,
                 "maze: pass gave up; restarting the route from ({px},{pz})"
             );
-            self.maze = None;
+            self.maze_mut().solve = None;
         }
     }
 
@@ -2119,7 +2347,7 @@ impl Guardian {
             return;
         }
         let lamp_here = lamp_held(snap);
-        if self.lamp_confirmed {
+        if self.lamp_flow().confirmed {
             // Confirm is out: the redemption is in flight.
             self.step_lamp_redeem(driver, snap, settings);
             return;
@@ -2132,8 +2360,8 @@ impl Guardian {
             return;
         }
         if snap.modals().main == LAMP_IF_ROOT {
-            self.lamp_wait = 0;
-            if !self.lamp_skill_sent {
+            self.lamp_flow_mut().wait = 0;
+            if !self.lamp_flow().skill_sent {
                 let Some(btn) = lamp_skill_button(&settings.lamp_skill) else {
                     // An unknown `lamp_skill` cannot be clicked at all.
                     // No click (fail closed) — and no endless hold behind
@@ -2148,25 +2376,27 @@ impl Guardian {
                     return;
                 };
                 press(driver, btn);
-                self.lamp_skill_sent = true;
+                self.lamp_flow_mut().skill_sent = true;
                 return;
             }
             // The skill press has settled: confirm, and take the reward
             // baseline from *this* tick's snapshot.
-            self.lamp_reward = stat_by_name(snap, &settings.lamp_skill).map(|s| (s.xp, s.base));
-            self.lamp_dialog = 0;
-            self.lamp_wait = 0;
-            self.lamp_confirmed = true;
-            self.lamp_confirm_count = Some(lamp_count(snap));
+            let reward = stat_by_name(snap, &settings.lamp_skill).map(|s| (s.xp, s.base));
+            let flow = self.lamp_flow_mut();
+            flow.reward = reward;
+            flow.dialog = 0;
+            flow.wait = 0;
+            flow.confirmed = true;
+            flow.confirm_count = Some(lamp_count(snap));
             press(driver, LAMP_IF_CONFIRM);
             return;
         }
-        self.lamp_skill_sent = false;
-        if self.lamp_rubbed {
+        self.lamp_flow_mut().skill_sent = false;
+        if self.lamp_flow().rubbed {
             // Waiting for the skill IF to open after the Rub.
-            self.lamp_wait += 1;
-            if self.lamp_wait > MAX_LAMP_WAIT {
-                if self.lamp_rubs < MAX_LAMP_RUBS {
+            self.lamp_flow_mut().wait += 1;
+            if self.lamp_flow().wait > MAX_LAMP_WAIT {
+                if self.lamp.rubs < MAX_LAMP_RUBS {
                     // The Rub may have hit a stale slot (a script burial
                     // resolving after the snapshot it was built from
                     // compacts the pack and shifts the lamp, so the server
@@ -2177,7 +2407,7 @@ impl Guardian {
                         Category::RandomEvent,
                         Level::Info,
                         "lamp: the skill interface never opened; re-rubbing (rub {} of {})",
-                        self.lamp_rubs + 1,
+                        self.lamp.rubs + 1,
                         MAX_LAMP_RUBS,
                     );
                     self.pause_lamp(LAMP_RETRY_COOLDOWN);
@@ -2189,7 +2419,7 @@ impl Guardian {
                         MAX_LAMP_RUBS,
                         LAMP_STALL_COOLDOWN,
                     );
-                    self.lamp_rubs = 0;
+                    self.lamp.rubs = 0;
                     self.pause_lamp(LAMP_STALL_COOLDOWN);
                 }
             }
@@ -2202,9 +2432,10 @@ impl Guardian {
         let mut ix = Interactions::new(snap, driver);
         match ix.interact(OpTarget::Item(lamp), ActionSpec::Label("Rub".to_string())) {
             SendResult::Sent { .. } => {
-                self.lamp_rubbed = true;
-                self.lamp_wait = 0;
-                self.lamp_rubs += 1;
+                let flow = self.lamp_flow_mut();
+                flow.rubbed = true;
+                flow.wait = 0;
+                self.lamp.rubs += 1;
             }
             SendResult::Refused { .. } => self.end_solver(),
         }
@@ -2224,10 +2455,11 @@ impl Guardian {
         snap: &GameSnapshot,
         settings: &ProfileSettings,
     ) {
-        let consumed = self
-            .lamp_confirm_count
+        let flow = self.lamp_flow();
+        let consumed = flow
+            .confirm_count
             .is_some_and(|before| lamp_count(snap) < before);
-        let rewarded = reward_landed(snap, &settings.lamp_skill, self.lamp_reward);
+        let rewarded = reward_landed(snap, &settings.lamp_skill, flow.reward);
         let chat = chat_is_open(snap);
         if consumed {
             if rewarded && !chat {
@@ -2238,17 +2470,18 @@ impl Guardian {
                 self.end_solver();
                 return;
             }
-            if chat && self.lamp_dialog < MAX_LAMP_DIALOGUE {
+            if chat && flow.dialog < MAX_LAMP_DIALOGUE {
                 let mut ix = Interactions::new(snap, driver);
                 if matches!(ix.continue_dialog(None), SendResult::Sent { .. }) {
-                    self.lamp_dialog += 1;
-                    self.lamp_wait = 0;
+                    let flow = self.lamp_flow_mut();
+                    flow.dialog += 1;
+                    flow.wait = 0;
                     return;
                 }
             }
         }
-        self.lamp_wait += 1;
-        if self.lamp_wait <= MAX_LAMP_WAIT {
+        self.lamp_flow_mut().wait += 1;
+        if self.lamp_flow().wait <= MAX_LAMP_WAIT {
             return;
         }
         if consumed {
@@ -2274,35 +2507,27 @@ impl Guardian {
         }
     }
 
-    /// Drop the lamp flow state (a resolved, consumed or abandoned lamp).
+    /// Drop the lamp flow and its history (a resolved, consumed or abandoned
+    /// lamp).
     fn clear_lamp(&mut self) {
-        self.lamp_rubbed = false;
-        self.lamp_rubs = 0;
-        self.lamp_skill_sent = false;
-        self.lamp_confirmed = false;
-        self.lamp_confirm_count = None;
-        self.lamp_reward = None;
-        self.lamp_dialog = 0;
-        self.lamp_wait = 0;
-        self.lamp_park = 0;
-        self.lamp_stalled = false;
+        self.lamp = LampHistory::default();
+        self.end_family(RandomKind::Lamp);
     }
 
     /// Pause the Rub flow for `ticks` fresh ticks: the lamp is inert while
-    /// the pause counts down, so the script runs between attempts. The
-    /// episode counter `lamp_rubs` survives the pause; the caller resets it
-    /// when a new episode starts.
+    /// the pause counts down, so the script runs between attempts. The Rub
+    /// budget `rubs` survives the pause; the caller resets it when a new
+    /// episode starts.
     fn pause_lamp(&mut self, ticks: u32) {
-        self.lamp_rubbed = false;
-        self.lamp_wait = 0;
-        self.lamp_park = ticks;
+        self.end_family(RandomKind::Lamp);
+        self.lamp.park = ticks;
         self.end_solver();
     }
 
     /// A stalled redemption or a paused Rub: detected, but not acted on or
     /// held until it resolves.
     fn lamp_inert(&self) -> bool {
-        self.lamp_stalled || self.lamp_park > 0
+        self.lamp.stalled || self.lamp.park > 0
     }
 
     /// Give up on this lamp: release the hold, keep the latch that stops
@@ -2310,7 +2535,7 @@ impl Guardian {
     /// `lamp_auto` goes off.
     fn stall_lamp(&mut self) {
         self.clear_lamp();
-        self.lamp_stalled = true;
+        self.lamp.stalled = true;
         self.end_solver();
     }
 
