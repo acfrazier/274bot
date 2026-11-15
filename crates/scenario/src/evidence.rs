@@ -14,9 +14,8 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub struct Evidence {
     pub scenario: String,
-    /// `"PASS"`, `"FAIL"`, or `"UNAVAILABLE"` (the cell needs an engine
-    /// test patch the engine lacks; `message` names it). The runner reports
-    /// UNAVAILABLE as a failed status, so harnesses still exit non-zero.
+    /// `"PASS"`, `"FAIL"`, `"UNAVAILABLE"`, or `"INVALID"`. Only an explicit
+    /// PASS is successful; unavailable capabilities and interference exit non-zero.
     pub outcome: &'static str,
     /// The proof / arm predicate that passed or failed.
     pub predicate: String,
@@ -54,6 +53,9 @@ pub struct Evidence {
     /// Native seed-deposit attempts and their final bank proof, in observation order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub seed_deposits: Vec<SeedDepositEvidence>,
+    /// Opt-in measured-window and combat/transit records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interference: Option<Box<crate::interference::InterferenceEvidence>>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
     /// The dispatch ledger is boxed so ordinary runner state holds no inline ring.
@@ -222,6 +224,15 @@ impl RunReceipt {
 }
 
 impl Evidence {
+    /// Only the literal successful verdict can produce a successful exit.
+    pub fn is_pass(&self) -> bool {
+        self.outcome == "PASS"
+    }
+
+    pub fn exit_code(&self) -> i32 {
+        i32::from(!self.is_pass())
+    }
+
     /// The compact JSON record both runners print on PASS/FAIL.
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|e| {
@@ -279,6 +290,7 @@ impl Evidence {
             random_event: None,
             ground_guard: None,
             seed_deposits: Vec::new(),
+            interference: None,
             scene: snap.scene_state(),
             run_receipt: None,
         }

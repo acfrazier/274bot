@@ -732,6 +732,31 @@ fn a_real_panel_core_pass_is_valid_and_keeps_the_shots_contract() {
 }
 
 #[test]
+fn invalid_is_non_pass_even_with_a_pass_prefix_and_zero_exit() {
+    let case = core_case("thiever");
+    for outcome in ["INVALID", "UNAVAILABLE", "unknown"] {
+        let output = panel_core_pass("script_thiever", "thiever").replace(
+            "\"outcome\":\"PASS\"",
+            &format!("\"outcome\":\"{outcome}\""),
+        );
+        let verdict = validate(&case, &parse(&output), Some(0), &[capture_record()]);
+        assert!(
+            matches!(verdict, Verdict::SharedFailure { .. }),
+            "{outcome}: {verdict:?}"
+        );
+    }
+    let output = "FAIL: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"INVALID\",\"message\":\"combat in measured window\"}\n";
+    let verdict = validate(&case, &parse(output), Some(1), &[]);
+    assert!(
+        matches!(verdict, Verdict::CaseFailure { reason } if reason.contains("combat in measured window"))
+    );
+    assert!(matches!(
+        validate(&case, &parse(output), Some(0), &[]),
+        Verdict::SharedFailure { .. }
+    ));
+}
+
+#[test]
 fn shared_signals_are_detected_from_child_output() {
     let receipts = parse("FATAL: engine unavailable\n");
     assert_eq!(receipts.shared_signals, vec!["engine unavailable"]);

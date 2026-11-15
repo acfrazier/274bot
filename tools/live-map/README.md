@@ -104,6 +104,18 @@ Crate 356 at (3380,3268,0), and the other player's Trade with slot. Its
 queries and `ObserveMenu` runner must agree. The account JSON and JSONL
 witnesses are written under `LIVE_EVIDENCE_DIR`; the cell computes PASS.
 
+`host.interference-377-measured-live` uses those 377 resource variables and
+`LIVE_EVIDENCE_DIR`. It creates a fresh account for each of two cases and
+labels only its own tutorial and position seeds. Both cases pick real
+Nettles without gloves through the normal location interaction. The sting
+removes two of the picker's Hitpoints and changes no shared world state.
+Outside a measured window the receipt discloses the hit and the child exits
+0 with PASS. Inside it the receipt says INVALID and the child exits non-zero.
+The supervising test passes only after checking both actual child exits
+and their typed interference records. Its receipt files include the exact
+child command, verdict and exit code. A failure before the tested step is
+a fixture failure, not proof of INVALID.
+
 ## Quarantined map cells
 
 These cells stay out of the active map until their fixtures are repaired.

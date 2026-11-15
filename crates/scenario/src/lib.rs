@@ -20,6 +20,7 @@
 mod catalog;
 pub mod evidence;
 pub mod fixture;
+pub mod interference;
 pub mod proof;
 mod quest_fast;
 pub mod quest_watch;
@@ -53,6 +54,7 @@ pub use fixture::{
     run_prepared_has_setup_cheats, FixtureAccount, FixtureIdentity, FixtureMode,
     OfflinePrepareOpts,
 };
+pub use interference::CombatExpectation;
 pub use proof::Proof;
 pub use runner::{RunnerStatus, ScenarioRunner};
 pub(crate) use scenarios::script_live_seed_steps;
@@ -594,6 +596,14 @@ pub enum StepKind {
     /// Read the current menu's typed operation and target entries while this
     /// step is armed. It accepts an immutable client view and sends nothing.
     ObserveMenu,
+    /// Begin a named interval over existing read-only combat, HP and target views.
+    /// Transit outside an interval is disclosed but does not invalidate the run.
+    BeginMeasuredWindow {
+        name: &'static str,
+        expectation: CombatExpectation,
+    },
+    /// End the matching interval. Missing or mismatched boundaries are non-pass.
+    EndMeasuredWindow { name: &'static str },
     /// Host starts the catalog isolate (`script_start_load`) or compiled
     /// card (`start_compiled`) once when the live pump sees this step.
     /// No-op on the client. File cards wait a one-game-tick arm; compiled

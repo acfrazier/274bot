@@ -18,6 +18,7 @@ use crate::evidence::{
     Evidence, GroundGuardEvidence, GroundGuardItem, ReceiptEvent, ReceiptManifest, RunReceipt,
     SeedDepositEvidence,
 };
+use crate::interference::CombatObserver;
 use crate::proof::{DeltaBaseline, Proof};
 use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
 #[cfg(test)]
@@ -50,6 +51,7 @@ enum TerminalOutcome {
     Pass,
     Fail(String),
     Unavailable(String),
+    Invalid(String),
 }
 
 struct TerminalCleanup {
@@ -539,6 +541,8 @@ pub struct ScenarioRunner {
     terminal_cleanup: Option<TerminalCleanup>,
     /// A scenario requests a receipt by default. Disarming drops the entire owner.
     run_receipt: Option<Box<RunReceipt>>,
+    /// Allocated only for scenarios that explicitly request measured windows.
+    combat_observer: Option<Box<CombatObserver>>,
 }
 
 impl ScenarioRunner {
@@ -598,6 +602,16 @@ impl ScenarioRunner {
             scenario.seed.mainland || scenario.settings.require_mainland_base;
         let engine_speed_ms = scenario.settings.nav.engine_speed_ms;
         let receipt_prefixes = receipt_prefixes(&scenario);
+        let combat_observer = scenario
+            .steps
+            .iter()
+            .any(|step| {
+                matches!(
+                    step.kind,
+                    StepKind::BeginMeasuredWindow { .. } | StepKind::EndMeasuredWindow { .. }
+                )
+            })
+            .then(Box::default);
         Self {
             scenario,
             snapshot: GameSnapshot::new(),
@@ -659,6 +673,7 @@ impl ScenarioRunner {
             shot_sink: None,
             terminal_cleanup: None,
             run_receipt: Some(Box::default()),
+            combat_observer,
         }
     }
 
@@ -1053,15 +1068,18 @@ impl ScenarioRunner {
 
     pub fn status(&self) -> RunnerStatus {
         match self.phase {
-            Phase::Done => match self.evidence.as_ref().map(|e| e.outcome) {
-                Some("FAIL" | "UNAVAILABLE") => RunnerStatus::Failed(
-                    self.evidence
-                        .as_ref()
-                        .and_then(|e| e.message.clone())
-                        .unwrap_or_default(),
-                ),
-                _ => RunnerStatus::Passed,
-            },
+            Phase::Done => {
+                if self.evidence.as_ref().is_some_and(Evidence::is_pass) {
+                    RunnerStatus::Passed
+                } else {
+                    RunnerStatus::Failed(
+                        self.evidence
+                            .as_ref()
+                            .and_then(|evidence| evidence.message.clone())
+                            .unwrap_or_else(|| "missing or non-pass terminal evidence".into()),
+                    )
+                }
+            }
             Phase::Seeding => RunnerStatus::Seeding,
             Phase::Running => RunnerStatus::Running {
                 step: self.step,
@@ -1102,6 +1120,21 @@ impl ScenarioRunner {
         self.delta_baselines
             .retain(|baseline| baseline.session == client.gens.session);
         let dirty = self.snapshot.rebuild(client);
+        CombatObserver::observe(
+            self.combat_observer.as_deref_mut(),
+            &self.snapshot,
+            client.gens.session,
+        );
+        if !matches!(self.phase, Phase::Cleaning) {
+            if let Some(reason) = self
+                .combat_observer
+                .as_ref()
+                .and_then(|observer| observer.invalid_reason())
+            {
+                self.finish_invalid(reason);
+                return;
+            }
+        }
         // Observed game ticks since the last poll: `snapshot.tick()`
         // advances once per `PLAYER_INFO` (the server's world cycle),
         // never on a client cycle or a dirty snapshot alone. Step
@@ -2318,6 +2351,22 @@ impl ScenarioRunner {
     /// it).
     fn send_current(&mut self, client: &mut Client) -> Result<&'static str, String> {
         match &self.scenario.steps[self.step].kind {
+            StepKind::BeginMeasuredWindow { name, expectation } => {
+                self.combat_observer
+                    .as_mut()
+                    .ok_or("measured-window observer was not armed")?
+                    .begin(name, *expectation)
+                    .map_err(str::to_owned)?;
+                Ok("no-send")
+            }
+            StepKind::EndMeasuredWindow { name } => {
+                self.combat_observer
+                    .as_mut()
+                    .ok_or("measured-window observer was not armed")?
+                    .end(name)
+                    .map_err(str::to_owned)?;
+                Ok("no-send")
+            }
             StepKind::Perform { send } | StepKind::Repeat { send } => {
                 if send(client, &self.snapshot) {
                     Ok("accepted")
@@ -2627,6 +2676,13 @@ impl ScenarioRunner {
     }
 
     fn finish_pass(&mut self) {
+        if let Some(observer) = self.combat_observer.as_mut() {
+            observer.terminal();
+            if let Some(reason) = observer.invalid_reason() {
+                self.finish_invalid(reason);
+                return;
+            }
+        }
         if let Some(speed_ms) = self.scenario.settings.teardown_world_speed_ms {
             self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Pass);
             return;
@@ -2643,6 +2699,20 @@ impl ScenarioRunner {
             return;
         }
         self.record_fail(msg);
+    }
+
+    fn finish_invalid(&mut self, reason: &str) {
+        if matches!(self.phase, Phase::Cleaning) {
+            return;
+        }
+        if let Some(observer) = self.combat_observer.as_mut() {
+            observer.terminal();
+        }
+        if let Some(speed_ms) = self.scenario.settings.teardown_world_speed_ms {
+            self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Invalid(reason.to_owned()));
+        } else {
+            self.record_terminal("INVALID", reason);
+        }
     }
 
     /// The cell needs an engine test patch this engine lacks: end the run
@@ -2759,16 +2829,22 @@ impl ScenarioRunner {
     }
 
     fn fail_terminal_cleanup(&mut self, reason: &str) {
-        let message = match self.terminal_cleanup.take().map(|cleanup| cleanup.outcome) {
+        let outcome = self.terminal_cleanup.take().map(|cleanup| cleanup.outcome);
+        let invalid = matches!(&outcome, Some(TerminalOutcome::Invalid(_)));
+        let message = match outcome {
             Some(TerminalOutcome::Pass) => {
                 format!("could not restore world speed to 600ms: {reason}")
             }
-            Some(TerminalOutcome::Fail(original) | TerminalOutcome::Unavailable(original)) => {
+            Some(
+                TerminalOutcome::Fail(original)
+                | TerminalOutcome::Unavailable(original)
+                | TerminalOutcome::Invalid(original),
+            ) => {
                 format!("{original}; additionally could not restore world speed to 600ms: {reason}")
             }
             None => format!("could not restore world speed to 600ms: {reason}"),
         };
-        self.record_fail(&message);
+        self.record_terminal(if invalid { "INVALID" } else { "FAIL" }, &message);
     }
 
     fn complete_terminal(&mut self, outcome: TerminalOutcome) {
@@ -2776,6 +2852,7 @@ impl ScenarioRunner {
             TerminalOutcome::Pass => self.record_pass(),
             TerminalOutcome::Fail(message) => self.record_fail(&message),
             TerminalOutcome::Unavailable(message) => self.record_terminal("UNAVAILABLE", &message),
+            TerminalOutcome::Invalid(message) => self.record_terminal("INVALID", &message),
         }
     }
 
@@ -2843,6 +2920,13 @@ impl ScenarioRunner {
     }
 
     fn record_pass(&mut self) {
+        if let Some(observer) = self.combat_observer.as_mut() {
+            observer.terminal();
+            if let Some(reason) = observer.invalid_reason() {
+                self.record_terminal("INVALID", reason);
+                return;
+            }
+        }
         self.phase = Phase::Done;
         self.fire_terminal_shot();
         let mut evidence = Evidence::terminal(
@@ -2863,6 +2947,10 @@ impl ScenarioRunner {
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
         evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
+        evidence.interference = self
+            .combat_observer
+            .take()
+            .map(|observer| Box::new((*observer).into_evidence()));
         self.receipt_event(
             "TERMINAL",
             "predicate",
@@ -2884,6 +2972,24 @@ impl ScenarioRunner {
     }
 
     fn record_terminal(&mut self, outcome: &'static str, msg: &str) {
+        if let Some(observer) = self.combat_observer.as_mut() {
+            observer.terminal();
+        }
+        // Cleanup errors may add a diagnostic but can never erase interference.
+        let outcome = if self
+            .combat_observer
+            .as_ref()
+            .is_some_and(|observer| observer.invalid_reason().is_some())
+            || matches!(
+                self.terminal_cleanup
+                    .as_ref()
+                    .map(|cleanup| &cleanup.outcome),
+                Some(TerminalOutcome::Invalid(_))
+            ) {
+            "INVALID"
+        } else {
+            outcome
+        };
         self.phase = Phase::Done;
         self.fire_terminal_shot();
         // The most recent reached Await may carry a read-only
@@ -2912,6 +3018,10 @@ impl ScenarioRunner {
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
         evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
+        evidence.interference = self
+            .combat_observer
+            .take()
+            .map(|observer| Box::new((*observer).into_evidence()));
         self.receipt_event(
             "TERMINAL",
             "predicate",

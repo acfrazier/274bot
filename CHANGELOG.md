@@ -7,6 +7,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Scenario runner
 
+- Scenarios can name measured windows. Unexpected damage, combat or targeting
+  inside a window makes the run INVALID, never a pass or successful exit,
+  even after cleanup. The receipt keeps the same events outside a window.
+  A cell can explicitly label its own deliberate death instead of treating
+  it as interference.
 - `ObserveMenu` checks exact menu operations and structured targets without
   sending input; the unarmed observer path allocates nothing.
 - The revision-377 attachment live check requires Hans by NPC type and never

@@ -618,6 +618,18 @@ pub fn validate(
             format!("{live} PASS evidence is not a JSON object"),
         );
     }
+    if pass
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("outcome"))
+        .and_then(Value::as_str)
+        != Some("PASS")
+    {
+        return shared(
+            "receipt",
+            format!("{live} PASS line carries non-pass evidence: {}", pass.line),
+        );
+    }
     match evidence_scenario(pass) {
         Some(observed) if observed == scenario => {}
         Some(observed) => {

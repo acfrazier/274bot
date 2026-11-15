@@ -68,6 +68,201 @@ fn stat_scenario(min: i32, budget: u32) -> Scenario {
 }
 
 #[test]
+fn terminal_status_accepts_only_an_explicit_pass() {
+    for outcome in ["INVALID", "UNAVAILABLE", "FAIL", "unknown"] {
+        let mut runner = ScenarioRunner::with_world(stat_scenario(0, 2), None);
+        runner.record_terminal(outcome, "non-pass receipt");
+        assert!(
+            matches!(runner.status(), RunnerStatus::Failed(_)),
+            "{outcome} must never fall through to Passed"
+        );
+        assert!(!runner.evidence().unwrap().is_pass());
+        assert_eq!(runner.evidence().unwrap().exit_code(), 1);
+    }
+    let mut runner = ScenarioRunner::with_world(stat_scenario(0, 2), None);
+    runner.phase = Phase::Done;
+    assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+}
+
+fn measured_scenario(expectation: crate::CombatExpectation, outside_first: bool) -> Scenario {
+    let mut scenario = stat_scenario(0, 12);
+    let mut steps = vec![];
+    if outside_first {
+        steps.push(Step {
+            name: "wait for disclosed transit damage",
+            kind: StepKind::Shot { label: "transit" },
+            wait: wait(Proof::StatAtMost { id: 3, max: 8 }, 12),
+        });
+    }
+    steps.push(Step {
+        name: "Begin",
+        kind: StepKind::BeginMeasuredWindow {
+            name: "product",
+            expectation,
+        },
+        wait: wait(Proof::IngameScene2, 2),
+    });
+    if !outside_first {
+        steps.push(Step {
+            name: "ordinary measured observation",
+            kind: StepKind::Shot { label: "quiet" },
+            wait: wait(Proof::StatAtMost { id: 3, max: 8 }, 12),
+        });
+    }
+    steps.push(Step {
+        name: "End",
+        kind: StepKind::EndMeasuredWindow { name: "product" },
+        wait: wait(Proof::IngameScene2, 2),
+    });
+    scenario.steps = steps;
+    scenario.proof = Proof::StatAtMost { id: 3, max: 8 };
+    scenario
+}
+
+fn measure_own_damage(runner: &mut ScenarioRunner) -> Client {
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    client.stat_effective_level[3] = 10;
+    runner.tick(&mut client);
+    client.stat_effective_level[3] = 8;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    client
+}
+
+#[test]
+fn measured_windows_never_send_and_the_same_transit_damage_does_not_invalidate() {
+    for outside_first in [true, false] {
+        let expected = if outside_first { "PASS" } else { "INVALID" };
+        let mut runner = ScenarioRunner::with_world(
+            measured_scenario(crate::CombatExpectation::Quiet, outside_first),
+            None,
+        );
+        let mut client = measure_own_damage(&mut runner);
+        advance_game_ticks_until_done(&mut runner, &mut client);
+        assert_eq!(
+            client.out.pos, 0,
+            "Begin/End and armed combat observation must never send"
+        );
+        let evidence = runner.evidence().unwrap();
+        assert_eq!(evidence.outcome, expected);
+        assert_eq!(evidence.exit_code(), i32::from(!outside_first));
+        assert_eq!(
+            matches!(runner.status(), RunnerStatus::Passed),
+            outside_first
+        );
+        let combat = evidence.interference.as_ref().unwrap();
+        assert_eq!(combat.windows.len(), 1);
+        assert_eq!(
+            combat.windows[0].start.hitpoints,
+            Some(if outside_first { 8 } else { 10 })
+        );
+        assert_eq!(combat.windows[0].end.unwrap().hitpoints, Some(8));
+        assert_eq!(
+            combat.windows[0].end_reason,
+            Some(if outside_first { "end" } else { "terminal" })
+        );
+        assert_eq!(combat.windows[0].valid, outside_first);
+        assert!(combat
+            .events
+            .iter()
+            .any(|event| event.reason == "hitpoints-decreased"
+                && event.classification
+                    == if outside_first {
+                        "transit"
+                    } else {
+                        "interference"
+                    }));
+        runner.tick(&mut client);
+        assert_eq!(runner.evidence().unwrap().outcome, expected);
+    }
+}
+
+#[test]
+fn deliberately_labelled_haunted_mine_death_is_not_interference() {
+    let mut runner = ScenarioRunner::with_world(
+        measured_scenario(
+            crate::CombatExpectation::LabelledDeath {
+                label: "Haunted Mine own-account ordinary death",
+            },
+            false,
+        ),
+        None,
+    );
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    client.stat_effective_level[3] = 10;
+    runner.tick(&mut client);
+    client.stat_effective_level[3] = 0;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let combat = runner.evidence().unwrap().interference.as_ref().unwrap();
+    assert_eq!(combat.invalid_reason, None);
+    assert!(combat.events.iter().any(|event| event.reason == "death"
+        && event.classification == "labelled_death"
+        && event.label == Some("Haunted Mine own-account ordinary death")));
+    assert_eq!(client.out.pos, 0);
+}
+
+#[test]
+fn invalid_is_sticky_through_cleanup_success_failure_and_terminal_polls() {
+    for cleanup_fails in [false, true] {
+        let mut scenario = measured_scenario(crate::CombatExpectation::Quiet, false);
+        scenario.settings.teardown_world_speed_ms = Some(600);
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        let mut client = measure_own_damage(&mut runner);
+        assert!(matches!(runner.phase, Phase::Cleaning));
+        assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+        if cleanup_fails {
+            runner.fail_terminal_cleanup("retirement failed");
+        } else {
+            let outcome = runner.terminal_cleanup.take().unwrap().outcome;
+            runner.complete_terminal(outcome);
+        }
+        assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+        let evidence = runner.evidence().unwrap();
+        assert_eq!(evidence.outcome, "INVALID");
+        assert_eq!(evidence.exit_code(), 1);
+        assert!(!evidence.is_pass());
+        if cleanup_fails {
+            assert!(evidence
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("retirement failed"));
+        }
+        runner.tick(&mut client);
+        assert_eq!(runner.evidence().unwrap().outcome, "INVALID");
+        assert_eq!(
+            client.out.pos, 0,
+            "this unit test must never send a world-speed command"
+        );
+    }
+}
+
+#[test]
+fn an_unclosed_measured_window_cannot_become_a_terminal_pass() {
+    let mut scenario = measured_scenario(crate::CombatExpectation::Quiet, false);
+    scenario.steps.truncate(1);
+    scenario.proof = Proof::IngameScene2;
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    client.stat_effective_level[3] = 10;
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+    let evidence = runner.evidence().unwrap();
+    assert_eq!(evidence.outcome, "INVALID");
+    assert_eq!(
+        evidence.interference.as_ref().unwrap().invalid_reason,
+        Some("measured-window-not-ended")
+    );
+    assert_eq!(evidence.exit_code(), 1);
+}
+
+#[test]
 fn observe_menu_is_armed_typed_and_never_sends() {
     let menu_proof = Proof::MenuHasEntry {
         operation: api::snapshot::MenuOperation::NpcOption(1),
