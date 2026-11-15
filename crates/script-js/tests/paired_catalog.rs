@@ -20,7 +20,7 @@ fn wait_ready(isolate: &LoadIsolate) {
 
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -29,7 +29,7 @@ mod local_game_data;
 fn scratch() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-paired-catalog-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create paired catalog scratch directory");
     dir
 }
 

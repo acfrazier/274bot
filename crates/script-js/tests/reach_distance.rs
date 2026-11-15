@@ -7,7 +7,7 @@ use {
 
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 use common::post_snapshot_input;
 
 fn base_snapshot() -> SnapshotInput<'static> {

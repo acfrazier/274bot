@@ -605,7 +605,9 @@ fn froze_across_grace() {
     on_pause();
     RUNTIME.with(|rt| {
         let mut rt = rt.borrow_mut();
-        let frozen_at = Instant::now() - Duration::from_millis(KILL_GRACE_MS + 1);
+        let frozen_at = Instant::now()
+            .checked_sub(Duration::from_millis(KILL_GRACE_MS + 1))
+            .expect("test freeze timestamp is in the past");
         rt.clock.frozen_at = Some(frozen_at);
         if let Some(guardian) = rt.guardian.as_mut() {
             guardian.lost_since = Some(frozen_at);
@@ -1382,7 +1384,7 @@ fn the_sextant_casket_is_the_open_and_not_the_packed_clue() {
         call(&data, token, both.clone(), json!({}))["kind"],
         "callback.setStatus"
     );
-    let open = call(&data, token, both.clone(), json!({}));
+    let open = call(&data, token, both, json!({}));
     assert_eq!(open["kind"], "held", "{open}");
     assert_eq!(open["name"], "Casket", "{open}");
     assert_eq!(open["action"], "Open", "{open}");
@@ -1567,7 +1569,7 @@ fn collecting_closes_the_posted_reward_then_takes_the_casket_overflow() {
         json!(28),
         json!(6960),
     );
-    let closed = call(&data, token, json!([]), scene.clone());
+    let closed = call(&data, token, json!([]), scene);
     assert_eq!(closed["kind"], "close-modal", "{closed}");
     assert_eq!(closed["token"], json!(token), "{closed}");
     assert!(closed.get("reason").is_none(), "{closed}");
@@ -1730,7 +1732,7 @@ fn collecting_leaves_for_the_next_scroll_and_re_arms_the_gate() {
 
     // And the landed report for the new row follows, with the progress
     // line of the row identify returned — never of the casket.
-    let mut gate = scene.clone();
+    let mut gate = scene;
     gate["resume"] = json!(true);
     let logged = call(&data, token, page, gate);
     assert_eq!(logged["kind"], "callback.log", "{logged}");
@@ -1893,7 +1895,7 @@ fn a_full_pack_drops_one_food_row_then_takes() {
         &data,
         token,
         json!([]),
-        pages(loot.clone(), pack.clone(), json!(2), json!(-1)),
+        pages(loot, pack, json!(2), json!(-1)),
     );
     assert_eq!(dropped["kind"], "held", "{dropped}");
     assert_eq!(dropped["name"], "Slice of cake", "{dropped}");
@@ -1942,7 +1944,7 @@ fn a_full_pack_drops_the_shark_on_a_hard_casket() {
         token,
         json!([]),
         pages(
-            loot.clone(),
+            loot,
             json!([inv(1895, "Slice of cake", 1), inv(1200, "Rune scimitar", 1)]),
             json!(2),
             json!(-1),
@@ -2081,7 +2083,7 @@ fn a_posted_main_is_closed_and_an_omitted_slot_is_not() {
         &data,
         token,
         json!([]),
-        json!({ "here": loot_tile(), "ground": loot.clone(), "inv": [], "inv_size": 28 }),
+        json!({ "here": loot_tile(), "ground": loot, "inv": [], "inv_size": 28 }),
     );
     assert_eq!(omitted["kind"], "obj", "{omitted}");
     // A malformed id is not a close either.
@@ -2625,7 +2627,7 @@ fn a_coord_only_map_row_walks_to_its_decoded_tile_and_digs_the_spade() {
     let dig = call(
         &data,
         token,
-        page.clone(),
+        page,
         json!({ "here": here(3177, 3360, 0), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
     );
     assert_eq!(dig["kind"], "held", "{dig}");
@@ -2710,7 +2712,7 @@ fn a_produced_casket_opens_and_the_dig_row_re_arms() {
         call(&data, token, both.clone(), scene.clone())["kind"],
         "callback.setStatus"
     );
-    let open = call(&data, token, both.clone(), scene.clone());
+    let open = call(&data, token, both, scene.clone());
     assert_eq!(open["kind"], "held", "{open}");
     assert_eq!(open["name"], "Casket", "{open}");
     assert_eq!(open["action"], "Open", "{open}");
@@ -3022,12 +3024,7 @@ fn a_guarded_row_walks_then_digs_the_spade_and_that_dig_is_the_spawn() {
     // The encounter is live: the same row and the same arrived scene are
     // the fight now, so a page with no wizard waits instead of Digging
     // again.
-    let idle = call(
-        &data,
-        token,
-        page.clone(),
-        fight_scene(json!([]), json!({})),
-    );
+    let idle = call(&data, token, page, fight_scene(json!([]), json!({})));
     assert_eq!(idle["kind"], "wait", "{idle}");
     assert!(idle.get("action").is_none(), "{idle}");
     // A frozen call in the spawn stage burned nothing: the encounter is
@@ -3504,7 +3501,7 @@ fn a_wizard_that_leaves_without_an_attack_is_a_wait_not_a_redig() {
     let posted = call(
         &data,
         token,
-        page.clone(),
+        page,
         fight_scene(json!([npc(9, WIZARD, 3, 0, 10)]), json!({ "varp95": 0 })),
     );
     assert_eq!(posted["kind"], "wait", "{posted}");
@@ -3577,7 +3574,7 @@ fn the_overlay_is_only_raised_behind_a_posted_spawn() {
         &data,
         token,
         page.clone(),
-        fight_scene(wizard.clone(), json!({ "varp95": 0 })),
+        fight_scene(wizard, json!({ "varp95": 0 })),
     );
     assert_eq!(owned["kind"], "wait", "{owned}");
     assert!(owned.get("index").is_none(), "{owned}");
@@ -3934,7 +3931,7 @@ fn a_different_held_step_drops_the_guarded_encounter() {
     assert_eq!(re_armed["kind"], "callback.enabled", "{re_armed}");
     let logged = call(&data, token, other.clone(), json!({ "resume": true }));
     assert_eq!(logged["kind"], "callback.log", "{logged}");
-    let _ = call(&data, token, other.clone(), json!({}));
+    let _ = call(&data, token, other, json!({}));
     // Back to the guarded row: the gate re-arms again, and the next steady
     // call is the spawn again — a walk and a Dig, never the old Attack.
     let back = call(
@@ -3950,7 +3947,7 @@ fn a_different_held_step_drops_the_guarded_encounter() {
     let reborn = call(
         &data,
         token,
-        guard_page.clone(),
+        guard_page,
         fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
     );
     assert_eq!(reborn["kind"], "held", "{reborn}");
@@ -3981,7 +3978,7 @@ fn the_guarded_redig_repeats_and_its_casket_opens() {
     let redig = call(
         &data,
         token,
-        clue_page.clone(),
+        clue_page,
         fight_scene(json!([]), combat_report_page(id, "killed")),
     );
     assert_eq!(redig["kind"], "held", "{redig}");
@@ -4007,7 +4004,7 @@ fn the_guarded_redig_repeats_and_its_casket_opens() {
         call(&data, token, both.clone(), scene.clone())["kind"],
         "callback.setStatus"
     );
-    let open = call(&data, token, both.clone(), scene.clone());
+    let open = call(&data, token, both, scene);
     assert_eq!(open["kind"], "held", "{open}");
     assert_eq!(open["action"], OPEN, "{open}");
     // A `none-held` right after a guarded Dig is the landed abort, and the
@@ -4182,7 +4179,7 @@ fn a_sextant_row_acquires_the_trio_in_the_frozen_order() {
 
     // The chat opens on the closed handler's own option, posted third: the
     // answer carries that posted 1-based slot and nothing else.
-    let mut chat = arrived.clone();
+    let mut chat = arrived;
     chat["chat_modal_id"] = json!(968);
     chat["chat_options"] = json!([
         option("Can you tell me about Treasure Trails?", 2),
@@ -4500,7 +4497,7 @@ fn the_trio_pick_is_the_unique_spawn_rule_and_never_a_lookalike() {
     let named = call(
         &data,
         token,
-        page.clone(),
+        page,
         json!({
             "here": here_tile,
             "npcs": [unfield(talk_npc(6, id, name, tile, 1, &["Talk-to"]), "id")],
@@ -5143,7 +5140,7 @@ fn rows_without_their_own_held_box_keep_their_own_arm() {
     // the pack: identified, then idle.
     let page = json!([[PUZZLE_RIDDLE_NO_BOX, 1], [PUZZLE_BOX, 1]]);
     let token = steady(&data, PUZZLE_RIDDLE_NO_BOX);
-    let idle = call(&data, token, page.clone(), board_page(&solved_board(), 7));
+    let idle = call(&data, token, page, board_page(&solved_board(), 7));
     assert_eq!(idle["kind"], "wait", "{idle}");
     // The riddle's own box is not on this page: not a puzzle step either,
     // so the solved board it posts is not closed by this arm.
@@ -5804,7 +5801,7 @@ fn a_unique_spawn_talk_step_walks_to_the_published_tile_and_then_talks() {
     let off_level = call(
         &data,
         token,
-        page.clone(),
+        page,
         talk_scene(here(3207, 3233, 1), on_tile, json!({})),
     );
     assert_eq!(off_level["kind"], "walk-near", "{off_level}");
@@ -7072,7 +7069,7 @@ fn the_owned_keeper_gone_inside_the_grace_is_the_kill_and_walks_back() {
     let taken = call(
         &data,
         token,
-        page.clone(),
+        page,
         key_scene(arrived, json!({ "ground": [dropped] })),
     );
     assert_eq!(taken["kind"], "obj", "{taken}");
@@ -7111,8 +7108,8 @@ fn a_keeper_gone_outside_the_grace_is_a_wait_and_never_a_lost_encounter() {
     let idle = call(
         &data,
         token,
-        page.clone(),
-        key_scene(arrived.clone(), json!({ "ground": [dropped] })),
+        page,
+        key_scene(arrived, json!({ "ground": [dropped] })),
     );
     assert_eq!(idle["kind"], "wait", "{idle}");
     assert_eq!(token_of(&idle), token, "{idle}");
@@ -7160,7 +7157,7 @@ fn a_freeze_across_the_keeper_grace_still_ends_in_the_kill() {
     let dropped = ground(KEEPER_KEY, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]);
     let mut report = combat_report_page(combat_id, "killed");
     report["ground"] = json!([dropped]);
-    let taken = call(&data, token, page.clone(), key_scene(arrived, report));
+    let taken = call(&data, token, page, key_scene(arrived, report));
     assert_eq!(taken["kind"], "obj", "{taken}");
     assert_eq!(taken["action"], TAKE, "{taken}");
 }
@@ -7188,7 +7185,7 @@ fn the_key_take_reads_the_posted_key_row_at_the_spawn() {
         &data,
         token,
         page.clone(),
-        key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        key_scene(arrived.clone(), json!({ "npcs": [posted] })),
     );
     assert_eq!(attacked["kind"], "combat", "{attacked}");
     let combat_id = attacked["id"].as_u64().expect("id") as u32;
@@ -7269,7 +7266,7 @@ fn the_key_take_reads_the_posted_key_row_at_the_spawn() {
         key_scene(
             arrived.clone(),
             json!({
-                "ground": [dropped.clone()],
+                "ground": [dropped],
                 "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
                 "inv_size": 1,
             }),
@@ -7278,7 +7275,7 @@ fn the_key_take_reads_the_posted_key_row_at_the_spawn() {
     assert_eq!(full["kind"], "wait", "{full}");
 
     // No posted slot count: the pack's fullness is not invented for it.
-    let mut unknown = key_scene(arrived.clone(), json!({ "ground": [dropped.clone()] }));
+    let mut unknown = key_scene(arrived.clone(), json!({ "ground": [dropped] }));
     unknown.as_object_mut().expect("object").remove("inv_size");
     let waited = call(&data, token, page.clone(), unknown);
     assert_eq!(waited["kind"], "wait", "{waited}");
@@ -7287,7 +7284,7 @@ fn the_key_take_reads_the_posted_key_row_at_the_spawn() {
     let taken = call(
         &data,
         token,
-        page.clone(),
+        page,
         key_scene(arrived, json!({ "ground": [dropped] })),
     );
     assert_eq!(taken["kind"], "obj", "{taken}");
@@ -7374,13 +7371,13 @@ fn the_key_hunt_emits_only_walk_npc_obj_wait_and_yield() {
         // Not arrived: the walk.
         key_scene(here(spawn.x - 30, spawn.z, spawn.level), json!({})),
         // Arrived with the keeper posted: the one Attack.
-        key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        key_scene(arrived.clone(), json!({ "npcs": [posted] })),
         // Posted and alive: the wait.
-        key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        key_scene(arrived.clone(), json!({ "npcs": [posted] })),
         // The kill and the key it dropped: the Take.
         key_scene(
             arrived.clone(),
-            json!({ "npcs": [dying], "ground": [dropped.clone()] }),
+            json!({ "npcs": [dying], "ground": [dropped] }),
         ),
         // The key in hand: the original riddle's idle.
         key_scene(
@@ -7410,9 +7407,9 @@ fn the_key_hunt_emits_only_walk_npc_obj_wait_and_yield() {
     );
 
     // The posted `hold || ours` interrupt still wins over the hunt.
-    let mut interrupt = key_scene(arrived.clone(), json!({ "npcs": [posted] }));
+    let mut interrupt = key_scene(arrived, json!({ "npcs": [posted] }));
     interrupt["hold"] = json!(true);
-    let yielded = call(&data, token, page.clone(), interrupt);
+    let yielded = call(&data, token, page, interrupt);
     assert_eq!(yielded["kind"], "yield", "{yielded}");
     assert_eq!(token_of(&yielded), token, "{yielded}");
     assert!(!yielded.to_string().contains("clue solved"), "{yielded}");
@@ -7494,7 +7491,7 @@ fn a_different_held_step_drops_the_key_hunt() {
         &data,
         token,
         page.clone(),
-        key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        key_scene(arrived.clone(), json!({ "npcs": [posted] })),
     );
     assert_eq!(attacked["kind"], "combat", "{attacked}");
 
@@ -7504,12 +7501,12 @@ fn a_different_held_step_drops_the_key_hunt() {
         &data,
         token,
         other.clone(),
-        key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        key_scene(arrived.clone(), json!({ "npcs": [posted] })),
     );
     assert_eq!(re_armed["kind"], "callback.enabled", "{re_armed}");
     let logged = call(&data, token, other.clone(), json!({ "resume": true }));
     assert_eq!(logged["kind"], "callback.log", "{logged}");
-    let _ = call(&data, token, other.clone(), json!({}));
+    let _ = call(&data, token, other, json!({}));
 
     // Back to the key riddle: the gate re-arms again, and the next steady
     // call is the hunt's own start — the posted keeper is Attacked again
@@ -7518,7 +7515,7 @@ fn a_different_held_step_drops_the_key_hunt() {
         &data,
         token,
         page.clone(),
-        key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        key_scene(arrived.clone(), json!({ "npcs": [posted] })),
     );
     assert_eq!(back["kind"], "callback.enabled", "{back}");
     let logged = call(&data, token, page.clone(), json!({ "resume": true }));
@@ -7527,7 +7524,7 @@ fn a_different_held_step_drops_the_key_hunt() {
     let reborn = call(
         &data,
         token,
-        page.clone(),
+        page,
         key_scene(arrived, json!({ "npcs": [posted] })),
     );
     assert_eq!(reborn["kind"], "combat", "{reborn}");
@@ -7714,7 +7711,7 @@ fn gate_toll_never_shops_an_unnamed_or_different_short_or_a_held_pass() {
 
     for (case, held, short) in [
         ("unnamed", page.clone(), json!([])),
-        ("coins", page.clone(), coins),
+        ("coins", page, coins),
         ("already-held", packed, named),
     ] {
         on_reset();
@@ -8254,7 +8251,7 @@ fn the_strip_approaches_the_diagonal_booth_before_depositing() {
     let walked_on = call(
         &data,
         token,
-        page.clone(),
+        page,
         json!({
             "inv": json!([]),
             "bank_open": false,
@@ -8410,14 +8407,14 @@ fn the_restore_runs_before_the_whole_three_step_latch() {
     let casket = casket_of(&data, CLUE);
     let token = opened(&data, casket);
     let pack = json!([inv(HELM, "Rune full helm", 1)]);
-    let scene = pages(json!([]), pack.clone(), json!(28), json!(-1));
+    let scene = pages(json!([]), pack, json!(28), json!(-1));
     let waiting = call(&data, token, json!([]), scene.clone());
     assert_eq!(waiting["kind"], "wait", "{waiting}");
     assert_no_completion(&waiting);
     force_bound();
     // The collect is over and the reclaim owns the token: the pack's own
     // name goes back on, and no completion kind rides it.
-    let wear_back = call(&data, token, json!([]), scene.clone());
+    let wear_back = call(&data, token, json!([]), scene);
     assert_eq!(wear_back["kind"], "wear", "{wear_back}");
     assert_eq!(wear_back["name"], "Rune full helm", "{wear_back}");
     assert_eq!(wear_back["token"], token, "{wear_back}");
@@ -8468,7 +8465,7 @@ fn the_restore_reopens_for_each_missing_name_at_the_bank() {
     let plate = call(
         &data,
         token,
-        page.clone(),
+        page,
         json!({ "equipment": json!([worn(1181, "Rune platebody", 4)]) }),
     );
     assert_eq!(plate["kind"], "unequip", "{plate}");
@@ -8480,7 +8477,7 @@ fn the_restore_reopens_for_each_missing_name_at_the_bank() {
     let casket = casket_of(&data, CLUE);
     let token = opened(&data, casket);
     let scene = pages(json!([]), json!([]), json!(28), json!(-1));
-    let _ = call(&data, token, json!([]), scene.clone());
+    let _ = call(&data, token, json!([]), scene);
     force_bound();
     let banked = json!({
         "here": loot_tile(),
@@ -8491,7 +8488,7 @@ fn the_restore_reopens_for_each_missing_name_at_the_bank() {
         "equipment": json!([]),
         "nearest_booth": booth_page(),
     });
-    let walked = call(&data, token, json!([]), banked.clone());
+    let walked = call(&data, token, json!([]), banked);
     assert_eq!(walked["kind"], "walk-nearest-bank", "{walked}");
     assert_no_completion(&walked);
     // Arrived beside the posted booth: its own open, and then the claim.
@@ -8508,7 +8505,7 @@ fn the_restore_reopens_for_each_missing_name_at_the_bank() {
             Some((2810, 3350, 0)),
         ),
     });
-    let opened_booth = call(&data, token, json!([]), arrived.clone());
+    let opened_booth = call(&data, token, json!([]), arrived);
     assert_eq!(opened_booth["kind"], "open-booth", "{opened_booth}");
     let open = json!({
         "here": here(2810, 3350, 0),
@@ -8520,7 +8517,7 @@ fn the_restore_reopens_for_each_missing_name_at_the_bank() {
         "nearest_booth": booth_page(),
         "bank_open": true,
     });
-    let claimed = call(&data, token, json!([]), open.clone());
+    let claimed = call(&data, token, json!([]), open);
     assert_eq!(claimed["kind"], "withdraw", "{claimed}");
     assert_eq!(claimed["name"], "Rune full helm", "{claimed}");
     assert_eq!(claimed["action"], "Withdraw-1", "{claimed}");
@@ -8629,7 +8626,7 @@ fn a_name_that_will_not_go_back_on_stays_listed_and_logs() {
     let casket = casket_of(&data, CLUE);
     let token = opened(&data, casket);
     let scene = pages(json!([]), json!([]), json!(28), json!(-1));
-    let _ = call(&data, token, json!([]), scene.clone());
+    let _ = call(&data, token, json!([]), scene);
     force_bound();
     // The restore attempt reaches the booth after its packed nearest-bank
     // walk, then issues the booth's own open using the native approach facts.
@@ -8675,7 +8672,7 @@ fn a_name_that_will_not_go_back_on_stays_listed_and_logs() {
     assert_eq!(claimed["kind"], "withdraw", "{claimed}");
     assert_eq!(claimed["name"], "Rune full helm", "{claimed}");
     assert_eq!(claimed["action"], "Withdraw-1", "{claimed}");
-    let closed = call(&data, token, json!([]), open.clone());
+    let closed = call(&data, token, json!([]), open);
     assert_eq!(closed["kind"], "close", "{closed}");
     let down = json!({
         "here": loot_tile(),
@@ -8733,7 +8730,7 @@ fn owns_equipment_reads_the_list_and_retry_clears_only_the_latch() {
     let live = call(
         &data,
         token,
-        page.clone(),
+        page,
         json!({
             "equipment": json!([]),
             "inv": json!([inv(HELM, "Rune full helm", 1)]),
@@ -8798,7 +8795,7 @@ fn a_connection_boundary_keeps_the_stripped_list_and_a_stop_clears_it() {
     let helm = call(
         &data,
         token,
-        page.clone(),
+        page,
         json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
     );
     assert_eq!(helm["kind"], "unequip", "{helm}");
@@ -8868,12 +8865,12 @@ fn a_full_pack_is_made_room_for_before_the_reclaim_claim() {
         "bank_open": true,
     });
     let _ = call(&data, token, page.clone(), banked.clone());
-    let deposited = call(&data, token, page.clone(), banked.clone());
+    let deposited = call(&data, token, page.clone(), banked);
     assert_eq!(deposited["kind"], "deposit", "{deposited}");
     let _ = call(
         &data,
         token,
-        page.clone(),
+        page,
         json!({ "inv": json!([]), "bank_open": true, "nearest_booth": booth_page() }),
     );
     // The collect runs to its bound with the pack full of loot: 28 posted
@@ -8889,7 +8886,7 @@ fn a_full_pack_is_made_room_for_before_the_reclaim_claim() {
         "main_modal_id": -1,
         "equipment": json!([]),
     });
-    let _ = call(&data, token, json!([]), scene.clone());
+    let _ = call(&data, token, json!([]), scene);
     force_bound();
     // The bank trip first, then the make-room deposit, and only then the
     // claim: the frozen `restoreStrippedGear` order.
@@ -8903,7 +8900,7 @@ fn a_full_pack_is_made_room_for_before_the_reclaim_claim() {
         "nearest_booth": booth_page(),
         "bank_open": true,
     });
-    let room = call(&data, token, json!([]), open.clone());
+    let room = call(&data, token, json!([]), open);
     assert_eq!(room["kind"], "deposit", "{room}");
     assert_eq!(
         room["name"], "Big bones",
@@ -8929,7 +8926,7 @@ fn a_full_pack_is_made_room_for_before_the_reclaim_claim() {
     // pass, the interface closes, and what is still missing is the named
     // log — the list keeps it, so the latch stays blocked. No second
     // deposit of the same row and no unbounded loop.
-    let stuck = call(&data, token, json!([]), freed.clone());
+    let stuck = call(&data, token, json!([]), freed);
     assert_eq!(stuck["kind"], "close", "{stuck}");
     let down = json!({
         "here": here(2810, 3350, 0),
@@ -9321,7 +9318,7 @@ fn shantay_network_coords_gate_the_native_trade() {
         token,
         1,
         page.clone(),
-        json!({ "here": away, "walk_missing_carry": short.clone() }),
+        json!({ "here": away, "walk_missing_carry": short }),
     );
     assert_eq!(original["kind"], "walk-near", "{original}");
     let to_shop = call_native_server_heads(
@@ -9329,7 +9326,7 @@ fn shantay_network_coords_gate_the_native_trade() {
         token,
         2,
         page.clone(),
-        json!({ "here": away, "walk_missing_carry": short.clone() }),
+        json!({ "here": away, "walk_missing_carry": short }),
     );
     assert_eq!(to_shop["kind"], "walk-near", "{to_shop}");
 
@@ -9344,7 +9341,7 @@ fn shantay_network_coords_gate_the_native_trade() {
         json!({
             "here": spawn,
             "npcs": [rendered_near],
-            "walk_missing_carry": short.clone(),
+            "walk_missing_carry": short,
         }),
     );
     assert_eq!(outside["kind"], "wait", "{outside}");
@@ -9359,7 +9356,7 @@ fn shantay_network_coords_gate_the_native_trade() {
         json!({
             "here": spawn,
             "npcs": [unknown_size],
-            "walk_missing_carry": short.clone(),
+            "walk_missing_carry": short,
         }),
     );
     assert_eq!(unknown["kind"], "wait", "{unknown}");

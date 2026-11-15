@@ -2,9 +2,9 @@
 //! `SlotScript` bank seat. It posts the script-facing page and supplies a
 //! native `GameSnapshot`; it synthesizes no bank operation or result.
 
-#![allow(
+#![expect(
     dead_code,
-    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
+    reason = "Shared across integration-test binaries; each binary uses only its needed helper subset"
 )]
 
 use std::sync::Arc;
@@ -137,15 +137,13 @@ impl BankSlot {
     }
 
     /// Publish a typed surface page while updating the matching native view.
-    pub fn post_snapshot(&mut self, input: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
+    pub fn post_snapshot(&mut self, input: &SnapshotInput<'_>, native: &NativeFactsInput<'_>) {
         let native = self.with_slot_bank_selection(native);
-        self.post_snapshot_with_observations_inner(input, native, input, native);
+        self.post_snapshot_with_observations_inner(input, &native, input, &native);
     }
 
-    fn with_slot_bank_selection<'a>(
-        &self,
-        mut native: NativeFactsInput<'a>,
-    ) -> NativeFactsInput<'a> {
+    fn with_slot_bank_selection<'a>(&self, native: &NativeFactsInput<'a>) -> NativeFactsInput<'a> {
+        let mut native = *native;
         native.bank_selection = self.slot.bank_selection_input();
         native
     }
@@ -157,29 +155,29 @@ impl BankSlot {
     pub fn post_snapshot_with_observations(
         &mut self,
         surface_input: &SnapshotInput<'_>,
-        surface_native: NativeFactsInput<'_>,
+        surface_native: &NativeFactsInput<'_>,
         native_input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
     ) {
         let native = self.with_slot_bank_selection(native);
         self.post_snapshot_with_observations_inner(
             surface_input,
             surface_native,
             native_input,
-            native,
+            &native,
         );
     }
 
     fn post_snapshot_with_observations_inner(
         &mut self,
         surface_input: &SnapshotInput<'_>,
-        surface_native: NativeFactsInput<'_>,
+        surface_native: &NativeFactsInput<'_>,
         native_input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
     ) {
         assert!(
             self.slot
-                .post_snapshot_delta(surface_input, surface_native, false),
+                .post_snapshot_delta(surface_input, *surface_native, false),
             "SlotScript rejected snapshot"
         );
         self.held = native_input.hold;
@@ -201,7 +199,7 @@ impl BankSlot {
         &mut self,
         tick: u64,
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
     ) {
         let snapshot = std::mem::replace(&mut self.native_snapshot, GameSnapshot::new());
         self.run_game_tick(tick, &snapshot);
@@ -214,7 +212,7 @@ impl BankSlot {
         &mut self,
         tick: u64,
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
         snapshot: &GameSnapshot,
     ) {
         self.post_snapshot(input, native);
@@ -228,7 +226,7 @@ impl BankSlot {
         &mut self,
         tick: u64,
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
     ) {
         self.post_snapshot(input, native);
         self.tick_posted_with_frames(tick, input, native);
@@ -238,7 +236,7 @@ impl BankSlot {
         &mut self,
         tick: u64,
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
         snapshot: &GameSnapshot,
     ) {
         self.post_snapshot(input, native);
@@ -264,7 +262,7 @@ impl BankSlot {
         &mut self,
         tick: u64,
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
         snapshot: &GameSnapshot,
     ) {
         for _ in 0..8 {
@@ -384,7 +382,7 @@ impl BankSlot {
 pub(crate) fn update_native_snapshot(
     snapshot: &mut GameSnapshot,
     input: &SnapshotInput<'_>,
-    native: NativeFactsInput<'_>,
+    native: &NativeFactsInput<'_>,
     bank_component: Option<i32>,
 ) {
     use api::obj_names::ItemDefView;
@@ -501,7 +499,7 @@ pub(crate) fn update_native_snapshot(
 
     fn local_player(
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
     ) -> Option<LocalPlayerView> {
         let here = input.here?;
         let tile = tile(here.x, here.z, here.level);

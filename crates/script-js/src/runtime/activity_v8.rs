@@ -1610,15 +1610,18 @@ globalThis.__activityTestOverrides = { food: 'Shark' };
 
     fn setup() -> Runtime {
         crate::runtime::platform::bootstrap_test_v8_platform();
-        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-        cb::install_ops(&mut runtime).unwrap();
+        let mut runtime =
+            Runtime::new(RuntimeOptions::default()).expect("create Activity V8 test runtime");
+        cb::install_ops(&mut runtime).expect("install Activity V8 test operations");
         cb::install(
             &mut runtime,
             "__rs2b0t_activity_test_build_data",
             build_activity_data,
         )
-        .unwrap();
-        runtime.eval::<()>(SETUP).unwrap();
+        .expect("install Activity V8 test callback");
+        runtime
+            .eval::<()>(SETUP)
+            .expect("evaluate Activity V8 test setup");
         runtime
     }
 

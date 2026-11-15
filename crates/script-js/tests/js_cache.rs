@@ -7,14 +7,14 @@ use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::
 
 fn temp_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-js-cache-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create JS-cache test scratch directory");
     dir
 }
 
 fn scratch(name: &str) -> PathBuf {
     let dir = temp_dir().join(name);
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create JS-cache fixture directory");
     dir
 }
 
@@ -32,9 +32,9 @@ export default class Burier extends LoopingBot {
 fn write_file(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
+        std::fs::create_dir_all(parent).expect("create JS-cache fixture parent directory");
     }
-    std::fs::write(&path, body).unwrap();
+    std::fs::write(&path, body).expect("write JS-cache fixture file");
     path
 }
 
@@ -49,7 +49,7 @@ fn object_mtime(cache: &JsCache, sha: &str) -> std::time::SystemTime {
 fn first_import_writes_cache_object() {
     let dir = scratch("first_import");
     let cache_root = dir.join("js-cache");
-    let cache = JsCache::new(cache_root.clone());
+    let cache = JsCache::new(cache_root);
     let origin = write_file(&dir, "bot.ts", CLASS_TS);
 
     let cached = cache
@@ -122,7 +122,7 @@ fn mutated_origin_produces_new_object_and_refresh_keeps_one_card() {
     let path = write_file(&dir, "tickbot.ts", CLASS_TS);
 
     let card = lib.load(&path).expect("load ts bot");
-    let old_sha = card.sha256.clone();
+    let old_sha = card.sha256;
     assert_eq!(lib.cards().len(), 1);
 
     let mutated = CLASS_TS.replace("600", "601");
@@ -383,8 +383,10 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
 fn write_two_card_catalog(dir: &std::path::Path) -> std::path::PathBuf {
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
-    std::fs::create_dir_all(scripts.join("BoneBurier")).unwrap();
-    std::fs::create_dir_all(scripts.join("ShopRunner")).unwrap();
+    std::fs::create_dir_all(scripts.join("BoneBurier"))
+        .expect("create BoneBurier catalog script directory");
+    std::fs::create_dir_all(scripts.join("ShopRunner"))
+        .expect("create ShopRunner catalog script directory");
     std::fs::write(
         scripts.join("index.ts"),
         r#"
@@ -394,17 +396,17 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
 ScriptRegistry.register({ name: 'ShopRunner', create: () => new ShopRunner() });
 "#,
     )
-    .unwrap();
+    .expect("write JS-cache catalog index");
     std::fs::write(
         scripts.join("BoneBurier/BoneBurier.ts"),
         "export default class BoneBurier extends LoopingBot { override loop() {} }",
     )
-    .unwrap();
+    .expect("write BoneBurier catalog script");
     std::fs::write(
         scripts.join("ShopRunner/ShopRunner.ts"),
         "export default class ShopRunner extends LoopingBot { override loop() {} }",
     )
-    .unwrap();
+    .expect("write ShopRunner catalog script");
     root
 }
 

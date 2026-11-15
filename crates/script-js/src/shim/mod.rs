@@ -15,8 +15,6 @@ pub(crate) use modules::{filter_gated_modules_for_card, shim_import_provider};
 #[doc(hidden)]
 pub use modules::{filter_gated_modules_for_card_test, filter_gated_modules_for_test};
 pub use modules::{remap_catalog_imports, shim_modules, BOT_MODULE, MAIN_MODULE, PRELUDE};
-#[allow(unused_imports)]
-pub(crate) use modules::{remap_hash_bot, remap_rs2b0t_api};
 #[cfg(test)]
 pub use rows::RejectedRow;
 pub use rows::{MaybeInteractReq, QueuedRow};

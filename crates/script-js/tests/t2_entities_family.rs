@@ -122,7 +122,8 @@ fn empty_snapshot<'a>(tick: u64) -> SnapshotInput<'a> {
 fn tick(iso: &LoadIsolate, snapshot: &SnapshotInput<'_>) -> serde_json::Value {
     iso.post_snapshot(encode_snapshot(snapshot));
     iso.on_game_tick(snapshot.tick);
-    iso.probe("__probe").unwrap()
+    iso.probe("__probe")
+        .expect("read entity-family probe result")
 }
 
 const ENTITY_API: &str = r#"
@@ -401,14 +402,15 @@ fn actor_snapshot<'a>(
 
 fn query_batch_tick(iso: &LoadIsolate, tick: u64, iterations: u32) -> serde_json::Value {
     iso.probe(&format!("globalThis.__queryIterations = {iterations}"))
-        .unwrap();
+        .expect("set entity query iteration count");
     let mut snapshot = empty_snapshot(tick);
     let actions = ["Attack".to_string()];
     let npcs = [entity(1, 9, Some("Goblin"), (3201, 3201, 0), 1, &actions)];
     snapshot.npcs = &npcs;
     iso.post_snapshot(encode_snapshot(&snapshot));
     iso.on_game_tick(tick);
-    iso.probe("__queryResult").unwrap()
+    iso.probe("__queryResult")
+        .expect("read entity query batch result")
 }
 
 const QUERY_BATCH_API: &str = r#"

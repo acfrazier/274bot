@@ -71,7 +71,10 @@ static REGISTRY: std::sync::OnceLock<std::sync::Mutex<Vec<std::sync::Weak<Counte
     std::sync::OnceLock::new();
 pub fn registered() -> Arc<Counters> {
     let counters = Arc::new(Counters::default());
-    let mut rows = REGISTRY.get_or_init(Default::default).lock().unwrap();
+    let mut rows = REGISTRY
+        .get_or_init(Default::default)
+        .lock()
+        .expect("memory profile registry mutex is not poisoned");
     rows.retain(|r| r.strong_count() > 0);
     rows.push(Arc::downgrade(&counters));
     counters
@@ -79,7 +82,10 @@ pub fn registered() -> Arc<Counters> {
 /// Includes detached isolate threads until their real resources are released.
 /// Weak registration never keeps an isolate or its counters alive.
 pub fn snapshots() -> Vec<serde_json::Value> {
-    let mut rows = REGISTRY.get_or_init(Default::default).lock().unwrap();
+    let mut rows = REGISTRY
+        .get_or_init(Default::default)
+        .lock()
+        .expect("memory profile registry mutex is not poisoned");
     rows.retain(|r| r.strong_count() > 0);
     rows.iter()
         .filter_map(|r| r.upgrade())

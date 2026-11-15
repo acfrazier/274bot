@@ -350,7 +350,7 @@ fn interrupt_watch_keeps_skip_and_seen() {
     }
     assert!(skip_contains(token, 7));
     assert!(seen_contains(token, 7));
-    call("interruptWatch", token, p.clone(), None);
+    call("interruptWatch", token, p, None);
     assert_eq!(last_hp(token), Some(-1));
     assert!(skip_contains(token, 7));
     assert!(seen_contains(token, 7));
@@ -469,7 +469,7 @@ fn pause_hold_does_not_elapse_fight_skip_or_sighting() {
     for _ in 0..16 {
         let step = call("next", token, p.clone(), reply.take());
         if step["kind"] == "npc" {
-            let _ = call("next", token, p.clone(), Some(json!({ "queued": false })));
+            let _ = call("next", token, p, Some(json!({ "queued": false })));
             break;
         }
         reply = None;

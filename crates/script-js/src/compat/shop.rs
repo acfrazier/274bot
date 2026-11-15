@@ -1183,7 +1183,11 @@ mod tests {
     }
 
     fn expire(clock: &mut InstantTaskClock) {
-        clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+        clock.deadline = Some(
+            Instant::now()
+                .checked_sub(Duration::from_millis(1))
+                .expect("test deadline is in the past"),
+        );
     }
 
     /// One step: `None` while it waits, else the settle value; plus the ops.

@@ -98,24 +98,38 @@ fn post_inv(iso: &LoadIsolate, tick: u64, inv: &[ItemRowInput<'_>]) {
 }
 
 fn probe_v2(src: &str, revision: ClientRevision) -> serde_json::Value {
-    let data = api::game_data::for_revision(revision).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let data = api::game_data::for_revision(revision).expect("load supply-helper test data");
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .expect("spawn NativeTick supply-helper isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
-    let value = iso.probe("globalThis.__probe").unwrap();
+    let value = iso
+        .probe("globalThis.__probe")
+        .expect("read NativeTick supply-helper result");
     iso.join();
-    serde_json::from_str(value.as_str().unwrap()).unwrap()
+    serde_json::from_str(
+        value
+            .as_str()
+            .expect("NativeTick supply-helper result is a JSON string"),
+    )
+    .expect("parse NativeTick supply-helper result")
 }
 
 fn probe_compat(src: &str, revision: ClientRevision) -> serde_json::Value {
-    let data = api::game_data::for_revision(revision).unwrap();
+    let data = api::game_data::for_revision(revision).expect("load supply-helper test data");
     let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::CompatClass, vec![], data)
-        .unwrap();
+        .expect("spawn CompatClass supply-helper isolate");
     iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
+    let value = iso
+        .probe("__probe")
+        .expect("read CompatClass supply-helper result");
     iso.join();
-    serde_json::from_str(value.as_str().unwrap()).unwrap()
+    serde_json::from_str(
+        value
+            .as_str()
+            .expect("CompatClass supply-helper result is a JSON string"),
+    )
+    .expect("parse CompatClass supply-helper result")
 }
 
 #[test]

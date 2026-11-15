@@ -11,7 +11,7 @@ use {
     script_js::wire::{encode_snapshot, encode_snapshot_delta},
 };
 
-mod common;
+pub mod common;
 
 const COMMON_FIELDS: [&str; 23] = [
     "index",
@@ -389,7 +389,10 @@ const SAVE_IDENTITIES: &str = r#"(() => {
 })()"#;
 
 fn expected_keys(row: &serde_json::Value) -> &'static [&'static str] {
-    if row["network"].as_bool().unwrap() {
+    if row["network"]
+        .as_bool()
+        .expect("entity row includes its network-shape flag")
+    {
         &NPC_FIELDS
     } else {
         &COMMON_FIELDS
@@ -470,7 +473,9 @@ fn main() {
     assert_eq!(facts["npcs"][0]["networkZ"], 3201);
     assert_eq!(facts["npcs"][0]["tile"], serde_json::json!([3200, 3200, 1]));
     assert_eq!(facts["npcs"][0]["actions"], serde_json::json!(["Attack"]));
-    assert!(!facts["npcs"][1]["network"].as_bool().unwrap());
+    assert!(!facts["npcs"][1]["network"]
+        .as_bool()
+        .expect("second NPC network-shape flag is boolean"));
     assert!(facts["npcs"][1]["name"].is_null());
     assert!(facts["locs"][1]["name"].is_null());
     assert!(facts["players"][0]["name"].is_null());

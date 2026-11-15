@@ -12,7 +12,7 @@ use {
 };
 
 fn spawn_ready(source: String, shape: LoadShape, siblings: Vec<(String, String)>) -> LoadIsolate {
-    let iso = LoadIsolate::spawn(source, shape, siblings).unwrap();
+    let iso = LoadIsolate::spawn(source, shape, siblings).expect("spawn event-test isolate");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match iso.poll_ready() {

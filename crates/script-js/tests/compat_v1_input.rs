@@ -1,6 +1,6 @@
 //! Compat v1 removal tests for the eight uncalled Input verbs.
 
-mod common;
+pub mod common;
 
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::json;

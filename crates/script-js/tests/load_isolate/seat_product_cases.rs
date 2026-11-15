@@ -21,7 +21,8 @@ fn seat_execution() -> api::identity::ExecutionId {
 }
 
 fn spawn_owned_ready(js: String, shape: LoadShape, siblings: Vec<(String, String)>) -> LoadIsolate {
-    let iso = LoadIsolate::spawn_with_execution(js, shape, siblings, seat_execution()).unwrap();
+    let iso = LoadIsolate::spawn_with_execution(js, shape, siblings, seat_execution())
+        .expect("spawn owner-bound seat-product isolate");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match iso.poll_ready() {
@@ -58,11 +59,11 @@ fn post_test_tick_with_native(
     iso: &LoadIsolate,
     snapshot: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
-    native: NativeFactsInput<'_>,
+    native: &NativeFactsInput<'_>,
 ) {
     snapshot.tick = tick;
     iso.post_snapshot(script_js::wire::encode_snapshot_with_native(
-        snapshot, native,
+        snapshot, *native,
     ));
     iso.on_game_tick(tick);
     let _ = iso
@@ -86,11 +87,11 @@ fn post_test_snapshot_with_native(
     snapshot: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     evidence_sequence: u64,
-    native: NativeFactsInput<'_>,
+    native: &NativeFactsInput<'_>,
 ) {
     snapshot.tick = tick;
     iso.post_snapshot(script_js::wire::encode_snapshot_with_native(
-        snapshot, native,
+        snapshot, *native,
     ));
     iso.on_snapshot_change_at(tick, 0, evidence_sequence);
     let _ = iso
@@ -233,7 +234,7 @@ export function tick(api) {
                 &mut snapshot,
                 tick,
                 1,
-                NativeFactsInput {
+                &NativeFactsInput {
                     seat_page: Some(live_page),
                     ..NativeFactsInput::default()
                 },
@@ -262,7 +263,7 @@ export function tick(api) {
                 &mut snapshot,
                 tick,
                 2,
-                NativeFactsInput {
+                &NativeFactsInput {
                     seat_page: Some(terminal_page),
                     ..NativeFactsInput::default()
                 },
@@ -395,7 +396,7 @@ export function tick(api) {
         &iso,
         &mut snapshot,
         2,
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(seat_page),
             ..NativeFactsInput::default()
         },
@@ -533,7 +534,7 @@ export function tick(api) {
                     &iso,
                     &mut snapshot,
                     tick,
-                    NativeFactsInput {
+                    &NativeFactsInput {
                         seat_page: Some(seat_page),
                         ..NativeFactsInput::default()
                     },
@@ -562,7 +563,7 @@ export function tick(api) {
                     &iso,
                     &mut snapshot,
                     tick,
-                    NativeFactsInput {
+                    &NativeFactsInput {
                         seat_page: Some(seat_page),
                         ..NativeFactsInput::default()
                     },
@@ -752,7 +753,7 @@ export function tick(api) {
         &iso,
         &mut snapshot,
         2,
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(live_page),
             ..NativeFactsInput::default()
         },
@@ -804,7 +805,7 @@ export function tick(api) {
         &iso,
         &mut snapshot,
         6,
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(promoted_page),
             ..NativeFactsInput::default()
         },
@@ -826,7 +827,7 @@ export function tick(api) {
         &iso,
         &mut snapshot,
         7,
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(terminal_page),
             ..NativeFactsInput::default()
         },
@@ -917,7 +918,7 @@ export function tick(api) {
         &iso,
         &mut snapshot,
         2,
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(live_page),
             ..NativeFactsInput::default()
         },
@@ -961,7 +962,7 @@ export function tick(api) {
         &iso,
         &mut snapshot,
         3,
-        NativeFactsInput {
+        &NativeFactsInput {
             api_progress: Some(&progress_page),
             seat_page: Some(terminal_page),
             ..NativeFactsInput::default()
@@ -1054,7 +1055,7 @@ export default class T extends LoopingBot {
         &iso,
         &mut snapshot,
         2,
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(hunt_page),
             ..NativeFactsInput::default()
         },
@@ -1127,7 +1128,7 @@ export default class T extends LoopingBot {
         &iso,
         &mut snapshot,
         armed_at + 1,
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(live_page),
             ..NativeFactsInput::default()
         },
@@ -1235,7 +1236,7 @@ export function tick() {
         &iso,
         &mut snapshot,
         started_at + 1,
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(live_page),
             ..NativeFactsInput::default()
         },
@@ -1279,7 +1280,7 @@ export function tick() {
         &iso,
         &mut snapshot,
         started_at + 6,
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(terminal_page),
             ..NativeFactsInput::default()
         },

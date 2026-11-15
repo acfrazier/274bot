@@ -91,7 +91,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn supervisor mapping test isolate")
 }
 
 fn tick(iso: &LoadIsolate, n: u64) {

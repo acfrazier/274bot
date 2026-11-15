@@ -1,7 +1,7 @@
 use {script_js::LoadIsolate, script_js::LoadShape};
 
 #[path = "common/mod.rs"]
-mod common;
+pub mod common;
 
 fn skills_isolate() -> LoadIsolate {
     let source = r#"
@@ -22,7 +22,7 @@ export default class SkillsFixture extends LoopingBot {
     assert_eq!(
         isolate
             .probe("globalThis.__skillsDirect === globalThis.__skillsRoot")
-            .unwrap(),
+            .expect("read Skills module identity result"),
         true,
         "the root barrel and served Skills module share one exported object"
     );

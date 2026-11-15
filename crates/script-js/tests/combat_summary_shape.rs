@@ -27,7 +27,7 @@ use script::native::snapshot_source::NativeFactsInput;
 use script_js::wire::{encode_snapshot_delta_with_native, SnapshotFingerprint};
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 
 const BASE_SCRIPT: &str = r#"
 export const apiVersion = 2;

@@ -624,8 +624,8 @@ mod tests {
         }
     }
 
-    fn observe(input: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
-        let bytes = encode_snapshot_with_native(input, native);
+    fn observe(input: &SnapshotInput<'_>, native: &NativeFactsInput<'_>) {
+        let bytes = encode_snapshot_with_native(input, *native);
         let snap = Snapshot::from_bytes(&bytes).expect("snapshot");
         observed::apply(&snap);
         on_snapshot(&snap);
@@ -785,7 +785,7 @@ mod tests {
         let npcs = [rendered_near, network_near];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
 
         let obs = observed::with(Observation::from_scene);
         let target = talk_target(&obs.npcs, "Traiborn").expect("network target");
@@ -809,7 +809,7 @@ mod tests {
         rendered_far.nz = 5;
         let npcs = [rendered_far];
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let obs = observed::with(Observation::from_scene);
         assert!(
             owned_adjacent(&obs, "Traiborn"),
@@ -824,7 +824,7 @@ mod tests {
         let npcs = [npc("Traiborn", &actions, 2, 6, 5, 1, true)];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         observed::with(|scene| {
             let posted = scene.since_login().npcs().unwrap();
             let name = posted[0].name.as_ref().unwrap();
@@ -848,7 +848,7 @@ mod tests {
         let mut snap = base();
         snap.here = None;
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let obs = observed::with(Observation::from_scene);
         assert!(talk_target(&obs.npcs, "Traiborn").is_none());
 
@@ -861,7 +861,7 @@ mod tests {
             level: 0,
         });
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let obs = observed::with(Observation::from_scene);
         assert!(talk_target(&obs.npcs, "Traiborn").is_none());
     }
@@ -874,7 +874,7 @@ mod tests {
         let mut snap = base();
         snap.npcs = &npcs;
         snap.chat_modal_id = 968;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let step = begin_named("Traiborn", 10, 10, None);
         assert_eq!(step["status"], "done");
         assert_ne!(step["kind"], "walk-near");
@@ -889,7 +889,7 @@ mod tests {
         let mut snap = base();
         snap.npcs = &npcs;
         snap.chat_modal_id = 968;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let step = begin_named("Traiborn", 5, 5, None);
         assert_eq!(step["status"], "retry");
         assert_ne!(step["kind"], "npc");
@@ -904,7 +904,7 @@ mod tests {
         snap.npcs = &npcs;
         snap.chat_continue = true;
         snap.chat_modal_id = -1;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let step = begin_named("Traiborn", 5, 5, None);
         assert_eq!(step["kind"], "npc");
         assert_eq!(step["action"], "Talk-to");
@@ -913,7 +913,7 @@ mod tests {
     #[test]
     fn missing_npc_already_inside_close_in_retries() {
         reset();
-        observe(&base(), NativeFactsInput::default());
+        observe(&base(), &NativeFactsInput::default());
         let step = begin_named("Traiborn", 6, 5, None);
         assert_eq!(step["status"], "retry");
         assert_ne!(step["kind"], "walk-near");
@@ -928,7 +928,7 @@ mod tests {
             z: 0,
             level: 0,
         });
-        observe(&far, NativeFactsInput::default());
+        observe(&far, &NativeFactsInput::default());
         let walk = begin_named("Traiborn", 20, 20, None);
         assert_eq!(walk["kind"], "walk-near");
         assert_eq!(walk["radius"], 3);
@@ -940,7 +940,7 @@ mod tests {
             level: 0,
         });
         far.tick = 2;
-        observe(&far, NativeFactsInput::default());
+        observe(&far, &NativeFactsInput::default());
         let after = next_token(&walk);
         assert_eq!(after["status"], "retry");
     }
@@ -957,13 +957,13 @@ mod tests {
             level: 0,
         });
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let walk = begin_named("Traiborn", 5, 5, None);
         assert_eq!(walk["kind"], "walk-near");
         assert_eq!(walk["radius"], 1);
         let request_id = walk["request_id"].as_u64().unwrap();
         snap.tick = 2;
-        observe(&snap, fail_native(request_id, 5, 5, 1));
+        observe(&snap, &fail_native(request_id, 5, 5, 1));
         let scene = next_token(&walk);
         assert_eq!(scene["kind"], "walk-to");
         assert!(scene["status"].is_null(), "the ladder walks on");
@@ -976,13 +976,13 @@ mod tests {
         let npcs = [npc("Traiborn", &actions, 4, 6, 5, 1, true)];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, None);
         assert_eq!(talk["kind"], "npc");
         assert_eq!(talk["action"], "Talk-to");
         snap.tick = 2;
         snap.chat_modal_id = 241;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         assert_eq!(next_token(&talk)["status"], "done");
     }
 
@@ -994,15 +994,15 @@ mod tests {
         let mut snap = base();
         snap.npcs = &npcs;
         snap.chat_continue = true;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, None);
         assert_eq!(talk["kind"], "npc");
         snap.tick = 2;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         assert_eq!(next_token(&talk)["kind"], "wait");
         snap.tick = 3;
         snap.chat_modal_id = 241;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         assert_eq!(next_token(&talk)["status"], "done");
     }
 
@@ -1020,18 +1020,18 @@ mod tests {
         let mut snap = base();
         snap.npcs = &npcs;
         snap.chat_lines = &stale;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, None);
         assert_eq!(talk["kind"], "npc");
         snap.tick = 2;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         assert_eq!(next_token(&talk)["kind"], "wait");
     }
 
     fn fresh_cant_reach(snap: &mut SnapshotInput<'_>, lines: &'static [ChatLineInput<'static>]) {
         snap.tick += 1;
         snap.chat_lines = lines;
-        observe(snap, NativeFactsInput::default());
+        observe(snap, &NativeFactsInput::default());
     }
 
     const CANT_REACH: &[ChatLineInput<'static>] = &[ChatLineInput {
@@ -1050,7 +1050,7 @@ mod tests {
         let npcs = [npc("Traiborn", &actions, 4, 8, 5, 2, false)];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, None);
         assert_eq!(talk["kind"], "npc");
         fresh_cant_reach(&mut snap, CANT_REACH);
@@ -1068,7 +1068,7 @@ mod tests {
         let npcs = [npc("Traiborn", &actions, 4, 6, 5, 1, true)];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, Some(0));
         assert_eq!(talk["kind"], "npc");
         let tick = next_token(&talk);
@@ -1085,7 +1085,7 @@ mod tests {
         let npcs = [npc("Traiborn", &actions, 4, 6, 5, 1, true)];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let mut page = begin_named("Traiborn", 5, 5, Some(0));
         let mut talks = 1;
         for _ in 0..40 {
@@ -1111,7 +1111,7 @@ mod tests {
         ];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, None);
         assert_eq!(talk["index"], 11);
     }
@@ -1123,7 +1123,7 @@ mod tests {
         let npcs = [npc("Traiborn", &actions, 4, 6, 5, 1, true)];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, Some(60_000));
         assert_eq!(talk["kind"], "npc");
         assert_eq!(next_token(&talk)["kind"], "wait", "inside openMs");
@@ -1140,17 +1140,17 @@ mod tests {
         let npcs = [npc("Traiborn", &actions, 4, 6, 5, 1, true)];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, None);
         machine::on_pause();
         assert_eq!(next_token(&talk)["kind"], "wait");
         machine::on_resume();
         snap.ours = true;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         assert_eq!(next_token(&talk)["status"], "retry");
 
         snap.ours = false;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let again = begin_named("Traiborn", 5, 5, None);
         assert_eq!(again["kind"], "npc");
         machine::on_reset();
@@ -1165,12 +1165,12 @@ mod tests {
         let npcs = [npc("Traiborn", &actions, 4, 6, 5, 1, true)];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, None);
         snap.hold = true;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         snap.hold = false;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         assert_eq!(next_token(&talk)["status"], "retry");
     }
 
@@ -1183,7 +1183,7 @@ mod tests {
             z: 0,
             level: 0,
         });
-        observe(&far, NativeFactsInput::default());
+        observe(&far, &NativeFactsInput::default());
         let first = begin_named("Traiborn", 20, 20, None);
         let token = first["request_id"].as_u64().expect("close-in walk");
         let Started::Running(_) = machine::start(
@@ -1213,7 +1213,7 @@ mod tests {
         let npcs = [npc("Traiborn", &actions, 4, 6, 5, 1, true)];
         let mut snap = base();
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let first = begin_named("Traiborn", 5, 5, None);
         let second = begin_named("Traiborn", 5, 5, None);
         assert_ne!(first["token"], second["token"]);
@@ -1232,7 +1232,7 @@ mod tests {
         snap.tick += 1;
         observe(
             snap,
-            fail_native_at(seq, request_id, x as i32, z as i32, radius as i32),
+            &fail_native_at(seq, request_id, x as i32, z as i32, radius as i32),
         );
         let scene = next_token(walk);
         assert_eq!(
@@ -1278,7 +1278,7 @@ mod tests {
             z: 0,
             level: 0,
         });
-        observe(&far, NativeFactsInput::default());
+        observe(&far, &NativeFactsInput::default());
         let walk = begin_named("Traiborn", 20, 20, None);
         let after = ladder_pass(&walk, &mut far, 1);
         assert_eq!(
@@ -1296,7 +1296,7 @@ mod tests {
             z: 0,
             level: 0,
         });
-        observe(&far, NativeFactsInput::default());
+        observe(&far, &NativeFactsInput::default());
         let walk = begin_named("Traiborn", 20, 20, None);
         let probe = passes_to_probe(walk, &mut far);
         crate::scene::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), false);
@@ -1312,7 +1312,7 @@ mod tests {
             z: 0,
             level: 0,
         });
-        observe(&far, NativeFactsInput::default());
+        observe(&far, &NativeFactsInput::default());
         let walk = begin_named("Traiborn", 20, 20, None);
         let probe = passes_to_probe(walk, &mut far);
         crate::scene::inspect_wait::settle_for_tests(probe["request_id"].as_u64().unwrap(), true);
@@ -1336,7 +1336,7 @@ mod tests {
             level: 0,
         });
         snap.npcs = &npcs;
-        observe(&snap, NativeFactsInput::default());
+        observe(&snap, &NativeFactsInput::default());
         let walk = begin_named("Traiborn", 20, 20, None);
         assert_eq!(walk["radius"], 1);
         let probe = passes_to_probe(walk, &mut snap);

@@ -10,12 +10,13 @@ mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
-    api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
+    api::game_data::for_revision(client::io::ClientRevision::R289)
+        .expect("load revision 289 shop test data")
 }
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data())
-        .unwrap()
+        .expect("spawn shop buyout test isolate")
 }
 
 fn tick(iso: &LoadIsolate) {

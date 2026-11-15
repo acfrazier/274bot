@@ -887,7 +887,7 @@ fn policy_s2_pending_or_refused_raise_never_becomes_cleanup_ownership() {
 
         let (flow, _) = drive(&mut script, &world, &mut ledger, 1);
         flow.expect("Combat prayer raise");
-        let prayer_buttons: Vec<i32> = ledger
+        assert!(ledger
             .as_ref()
             .unwrap()
             .test_outbox()
@@ -898,8 +898,7 @@ fn policy_s2_pending_or_refused_raise_never_becomes_cleanup_ownership() {
                 }
                 _ => None,
             })
-            .collect();
-        assert!(prayer_buttons.contains(&replacement.button_com));
+            .any(|component_id| component_id == replacement.button_com));
         if refused {
             complete_outbox(&mut ledger, 1, false);
         }

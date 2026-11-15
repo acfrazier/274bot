@@ -20,7 +20,7 @@ use script_js::{JsLibrary, LoadIsolate, LoadShape};
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -29,7 +29,7 @@ mod local_game_data;
 /// Spawn and wait (bounded) for setup to finish. `spawn` returns before V8
 /// setup, so tests that time JS against the wall clock start from Ready.
 fn spawn_ready(js: String, shape: LoadShape, siblings: Vec<(String, String)>) -> LoadIsolate {
-    let iso = LoadIsolate::spawn(js, shape, siblings).unwrap();
+    let iso = LoadIsolate::spawn(js, shape, siblings).expect("spawn load-isolate test instance");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match iso.poll_ready() {
@@ -164,19 +164,19 @@ impl Out for OutSink {
 /// per-test scratch subdir so parallel tests never share files.
 fn temp_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-script-load-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create load-isolate test scratch directory");
     dir
 }
 
 fn scratch(name: &str) -> PathBuf {
     let dir = temp_dir().join(name);
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create load-isolate fixture directory");
     dir
 }
 
 fn write_file(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, source).unwrap();
+    std::fs::write(&path, source).expect("write load-isolate fixture file");
     path
 }
 
@@ -452,7 +452,7 @@ fn update_native_bank_snapshot(
     bank_slot::update_native_snapshot(
         snapshot,
         input,
-        script::native::snapshot_source::NativeFactsInput {
+        &script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(snapshot_generation),
             side_modal_id: Some(side_root),
             ..Default::default()
@@ -542,7 +542,7 @@ fn tick_bank_slot_with_component(
     slot.tick(
         tick,
         input,
-        script::native::snapshot_source::NativeFactsInput {
+        &script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(snapshot_generation),
             side_modal_id: Some(side_root),
             ..Default::default()
@@ -1269,7 +1269,7 @@ fn wait_for_cut_restart(
 
 fn assert_cut_restarts(source: String, shape: LoadShape, pause: bool, label: &str) {
     let mut slot = SlotScript::new();
-    start_js_surface(&mut slot, source, shape).unwrap();
+    start_js_surface(&mut slot, source, shape).expect("start script for runaway restart test");
     wait_slot_state(&mut slot, script::RunState::Running);
     let generation = slot.runtime_generation();
     let mut driver = NullDriver::default();
@@ -1306,12 +1306,14 @@ fn assert_cut_restarts(source: String, shape: LoadShape, pause: bool, label: &st
     dispatch_slot_tick(&mut slot, &mut driver, next_tick);
     slot.probe("true").expect("fresh runtime must answer");
     assert_eq!(
-        slot.probe("globalThis.__entries || 0").unwrap(),
+        slot.probe("globalThis.__entries || 0")
+            .expect("read entry count from restarted runtime"),
         1,
         "{label}: entries must advance in the fresh runtime"
     );
     assert_eq!(
-        slot.probe("globalThis.__maxActive || 0").unwrap(),
+        slot.probe("globalThis.__maxActive || 0")
+            .expect("read active lifecycle count from restarted runtime"),
         1,
         "{label}: fresh runtime must keep one lifecycle flight"
     );
@@ -1495,7 +1497,11 @@ fn assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
     iso.on_game_tick(1);
     iso.probe("true")
         .expect("first lifecycle call parks on its long wait");
-    assert_eq!(iso.probe("__entries").unwrap(), 1);
+    assert_eq!(
+        iso.probe("__entries")
+            .expect("read entries after side continuation"),
+        1
+    );
 
     // Tick 2 settles only the side wait. Its continuation runs long enough
     // for either Pause's shared runaway bound or the dispatch watchdog.
@@ -1525,19 +1531,26 @@ fn assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
     let first = if pause { 3 } else { 4 };
     for tick in first..=7 {
         iso.on_game_tick(tick);
-        iso.probe("true").unwrap();
+        iso.probe("true")
+            .expect("settle next side-continuation tick");
     }
     assert_eq!(
-        iso.probe("__maxActive").unwrap(),
+        iso.probe("__maxActive")
+            .expect("read active side-continuation count"),
         1,
         "an ambiguous cut must not reset the parked lifecycle flight"
     );
     assert_eq!(
-        iso.probe("__entries").unwrap(),
+        iso.probe("__entries")
+            .expect("read side-continuation entry count"),
         2,
         "the next lifecycle call starts only after the original settles"
     );
-    assert_eq!(iso.probe("__done").unwrap(), 1);
+    assert_eq!(
+        iso.probe("__done")
+            .expect("read completed side-continuation count"),
+        1
+    );
     let logs = iso.drain_logs();
     assert!(
         logs.iter()
@@ -1671,7 +1684,11 @@ export async function tick() {
     );
     iso.on_game_tick(1);
     iso.probe("true").expect("first native tick parks");
-    assert_eq!(iso.probe("__entries").unwrap(), 1);
+    assert_eq!(
+        iso.probe("__entries")
+            .expect("read entries after native paint interruption"),
+        1
+    );
 
     iso.on_game_tick(2);
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -1686,7 +1703,7 @@ export async function tick() {
         iso.resume();
         iso.probe("true").expect("Resume must be observed");
         iso.on_game_tick(3);
-        iso.probe("true").unwrap();
+        iso.probe("true").expect("settle resumed native paint tick");
     } else {
         thread::sleep(Duration::from_millis(650));
         iso.on_game_tick(3);
@@ -1695,17 +1712,23 @@ export async function tick() {
     }
     for tick in 4..=5 {
         iso.on_game_tick(tick);
-        iso.probe("true").unwrap();
+        iso.probe("true").expect("settle next native paint tick");
     }
 
     assert_eq!(
-        iso.probe("__entries").unwrap(),
+        iso.probe("__entries")
+            .expect("read entries after native paint interruption"),
         2,
         "paint interruption must not reset the parked tick"
     );
-    assert_eq!(iso.probe("__done").unwrap(), 2);
     assert_eq!(
-        iso.probe("__maxActive").unwrap(),
+        iso.probe("__done")
+            .expect("read completed native paint count"),
+        2
+    );
+    assert_eq!(
+        iso.probe("__maxActive")
+            .expect("read active native paint count"),
         1,
         "the parked tick must remain single-flight"
     );
@@ -3305,13 +3328,13 @@ export default class T extends LoopingBot {
         side_modal_id: Some(-1),
         ..Default::default()
     };
-    slot.snapshot_change(1, &input, closed_native, &snapshot);
+    slot.snapshot_change(1, &input, &closed_native, &snapshot);
     assert_eq!(
         slot.probe("globalThis.__opened ?? null").unwrap(),
         serde_json::Value::Null
     );
 
-    slot.snapshot_change(1, &input, closed_native, &snapshot);
+    slot.snapshot_change(1, &input, &closed_native, &snapshot);
     assert_eq!(
         slot.probe("globalThis.__opened ?? null").unwrap(),
         serde_json::Value::Null
@@ -3324,7 +3347,7 @@ export default class T extends LoopingBot {
     slot.snapshot_change(
         1,
         &input,
-        script::native::snapshot_source::NativeFactsInput {
+        &script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(1),
             side_modal_id: Some(SIDE_ROOT),
             ..Default::default()
@@ -3409,13 +3432,13 @@ export default class T extends LoopingBot {
         ..Default::default()
     };
     slot.slot.pause();
-    slot.snapshot_change(1, &input, native, &snapshot);
+    slot.snapshot_change(1, &input, &native, &snapshot);
     assert_eq!(
         slot.probe("globalThis.__opened ?? null").unwrap(),
         serde_json::Value::Null
     );
     slot.slot.resume();
-    slot.snapshot_change(1, &input, native, &snapshot);
+    slot.snapshot_change(1, &input, &native, &snapshot);
     assert_eq!(
         slot.probe("globalThis.__opened").unwrap(),
         serde_json::json!(1)
@@ -3429,7 +3452,7 @@ export default class T extends LoopingBot {
         serde_json::json!(1)
     );
     assert_eq!(slot.probe("globalThis.__paints ?? 0").unwrap(), paints);
-    slot.snapshot_change(1, &input, native, &snapshot);
+    slot.snapshot_change(1, &input, &native, &snapshot);
     assert_eq!(
         slot.probe("globalThis.__loops").unwrap(),
         serde_json::json!(1)
@@ -5496,7 +5519,7 @@ export default class T extends LoopingBot {
     slot.tick(
         2,
         &input,
-        script::native::snapshot_source::NativeFactsInput {
+        &script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(10),
             side_modal_id: Some(SIDE_ROOT),
             ..Default::default()
@@ -5515,7 +5538,7 @@ export default class T extends LoopingBot {
     slot.tick(
         3,
         &input,
-        script::native::snapshot_source::NativeFactsInput {
+        &script::native::snapshot_source::NativeFactsInput {
             bank_snapshot_generation: Some(11),
             side_modal_id: Some(SIDE_ROOT),
             ..Default::default()
@@ -7335,7 +7358,7 @@ export default class T extends LoopingBot { loop() {} }
             ),
         ])),
     )
-    .unwrap()
+    .expect("spawn nearest-bank facade isolate")
 }
 
 #[test]

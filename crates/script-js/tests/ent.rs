@@ -3,7 +3,7 @@
 use script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 #[path = "common/local_api_asset.rs"]
 mod local_api_asset;
 #[path = "common/local_game_data.rs"]
@@ -91,7 +91,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn ent test isolate")
 }
 
 fn probe_loop(iso: &LoadIsolate, snap: &SnapshotInput<'_>) -> serde_json::Value {

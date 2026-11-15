@@ -367,8 +367,18 @@ fn scan_registers(src: &str) -> Vec<RegisterInfo> {
 
 fn extract_braced_block(src: &str, open: usize) -> Option<String> {
     let mut i = open;
-    while i < src.len() && src[i..].chars().next().unwrap().is_whitespace() {
-        i += src[i..].chars().next().unwrap().len_utf8();
+    while i < src.len()
+        && src[i..]
+            .chars()
+            .next()
+            .expect("source contains a character at this valid byte offset")
+            .is_whitespace()
+    {
+        i += src[i..]
+            .chars()
+            .next()
+            .expect("source contains a character at this valid byte offset")
+            .len_utf8();
     }
     if i >= src.len() || !src[i..].starts_with('{') {
         return None;
@@ -377,12 +387,19 @@ fn extract_braced_block(src: &str, open: usize) -> Option<String> {
     let mut j = i;
     let mut in_str: Option<char> = None;
     while j < src.len() {
-        let c = src[j..].chars().next().unwrap();
+        let c = src[j..]
+            .chars()
+            .next()
+            .expect("source contains a character at this valid byte offset");
         if let Some(q) = in_str {
             if c == '\\' {
                 j += c.len_utf8();
                 if j < src.len() {
-                    j += src[j..].chars().next().unwrap().len_utf8();
+                    j += src[j..]
+                        .chars()
+                        .next()
+                        .expect("source contains a character at this valid byte offset")
+                        .len_utf8();
                 }
                 continue;
             }

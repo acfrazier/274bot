@@ -17,6 +17,7 @@ struct Counting;
 /// is parked on the probe barrier while it does.
 static EVENTS: AtomicUsize = AtomicUsize::new(0);
 
+// SAFETY: Every operation forwards the original pointer and layout unchanged to `System`.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         EVENTS.fetch_add(1, Ordering::Relaxed);
@@ -53,10 +54,13 @@ export default class T extends LoopingBot {
 
 /// Events one tick costs end to end: dispatch, script and the probe barrier that proves it finished.
 fn tick_events(iso: &LoadIsolate, tick: u64, checks: u32) -> (usize, serde_json::Value) {
-    iso.probe(&format!("globalThis.__n = {checks}")).unwrap();
+    iso.probe(&format!("globalThis.__n = {checks}"))
+        .expect("set allocation-check iteration count");
     let before = EVENTS.load(Ordering::Relaxed);
     iso.on_game_tick(tick);
-    let hits = iso.probe("globalThis.__probe").unwrap();
+    let hits = iso
+        .probe("globalThis.__probe")
+        .expect("read allocation-check result");
     (EVENTS.load(Ordering::Relaxed) - before, hits)
 }
 

@@ -285,7 +285,7 @@ impl SurfaceRun for JsSurfaceRun {
             self.ipc.encode_snapshot_delta_with_native_and_evidence(
                 self.last_snapshot.as_ref(),
                 input,
-                native,
+                &native,
                 force_banks,
             );
         self.post_encoded_snapshot(bytes, fingerprint, evidence_changed)
@@ -302,7 +302,7 @@ impl SurfaceRun for JsSurfaceRun {
             self.ipc.encode_snapshot_wake_with_native_and_evidence(
                 self.last_snapshot.as_mut(),
                 input,
-                native,
+                &native,
                 force_banks,
                 preserve_inv,
             );
@@ -550,7 +550,7 @@ pub(crate) mod tests {
         run.ipc.encode_snapshot_delta_with_native_and_evidence(
             run.last_snapshot.as_ref(),
             input,
-            NativeFactsInput::default(),
+            &NativeFactsInput::default(),
             false,
         )
     }

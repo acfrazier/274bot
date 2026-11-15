@@ -33,7 +33,7 @@ fn paint_slot(source: &str, incarnation: u64) -> SlotScript {
         loadouts: Arc::default(),
         wilderness_rules: script::surface::no_wilderness(),
     })
-    .unwrap();
+    .expect("start held-fold test surface");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match slot.poll_start() {
@@ -141,7 +141,7 @@ fn paint_tick(slot: &mut SlotScript, tick: u64, held: bool) {
     assert!(slot.post_snapshot_delta(&input, NativeFactsInput::default(), false));
     slot.with_surface_run_for_test(|run| run.on_game_tick_at(tick, 0))
         .expect("active JS surface");
-    slot.probe("true").unwrap();
+    slot.probe("true").expect("run held-fold test tick");
 }
 
 fn take_batches(slot: &mut SlotScript) -> Vec<QueuedSeatBatch> {

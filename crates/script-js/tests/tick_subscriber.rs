@@ -6,7 +6,7 @@
 use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
@@ -93,7 +93,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn tick-subscriber test isolate")
 }
 
 fn post_tick(iso: &LoadIsolate, tick: u64, hold: bool) {
@@ -106,9 +107,9 @@ fn post_tick(iso: &LoadIsolate, tick: u64, hold: bool) {
 
 fn fires(iso: &LoadIsolate) -> i64 {
     iso.probe("globalThis.__fires || 0")
-        .unwrap()
+        .expect("read tick-subscriber firing count")
         .as_i64()
-        .unwrap()
+        .expect("tick-subscriber firing count is an integer")
 }
 
 fn tick_error_logs(iso: &LoadIsolate) -> Vec<String> {

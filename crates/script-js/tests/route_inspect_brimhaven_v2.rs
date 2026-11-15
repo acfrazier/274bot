@@ -28,7 +28,7 @@ fn scratch() -> std::path::PathBuf {
         "274bot-route-inspect-brimhaven-v2-{}-{n}",
         std::process::id()
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&dir).expect("create route-inspect scratch directory");
     dir
 }
 
@@ -110,10 +110,10 @@ fn live_like_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
     }
 }
 
-fn post_tick(iso: &LoadIsolate, tick: u64, here: TileInput, facts: NativeFactsInput<'_>) {
+fn post_tick(iso: &LoadIsolate, tick: u64, here: TileInput, facts: &NativeFactsInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot_with_native(
         &live_like_snapshot(tick, here),
-        facts,
+        *facts,
     ));
     iso.on_game_tick(tick);
     let _ = iso.probe("true");
@@ -141,7 +141,7 @@ fn inspect_routes(iso: &LoadIsolate) -> Vec<InteractReq> {
 #[test]
 fn actual_example_begins_and_settles_on_published_native_snapshot() {
     let iso = load_actual_example();
-    post_tick(&iso, 1, PIER, NativeFactsInput::default());
+    post_tick(&iso, 1, PIER, &NativeFactsInput::default());
 
     let hidden = iso
         .probe("globalThis.__rs_api.snapshot.scene_state")
@@ -231,14 +231,14 @@ fn actual_example_begins_and_settles_on_published_native_snapshot() {
         },
         ..Default::default()
     };
-    post_tick(&iso, 2, PIER, settled_facts);
+    post_tick(&iso, 2, PIER, &settled_facts);
     assert!(
         !iso.stopped(),
         "settled token must not stop: {:?}",
         iso.script_stop_receipt()
     );
 
-    post_tick(&iso, 3, PIER, settled_facts);
+    post_tick(&iso, 3, PIER, &settled_facts);
     let snap0 = inspect_routes(&iso);
     assert!(
         snap0
@@ -302,15 +302,15 @@ fn inspect_facts<'a>(
 fn actual_example_stops_on_bank_arrival_without_walk_outcome_seq() {
     let iso = load_actual_example();
     let hops = barnaby_hops();
-    post_tick(&iso, 1, PIER, NativeFactsInput::default());
+    post_tick(&iso, 1, PIER, &NativeFactsInput::default());
     let begun = inspect_routes(&iso);
     let token = match begun.as_slice() {
         [InteractReq::InspectRoute { request_id, .. }] if *request_id != 0 => *request_id,
         other => panic!("expected token inspect-route, got {other:?}"),
     };
 
-    post_tick(&iso, 2, PIER, inspect_facts(1, token, &hops));
-    post_tick(&iso, 3, PIER, inspect_facts(1, token, &hops));
+    post_tick(&iso, 2, PIER, &inspect_facts(1, token, &hops));
+    post_tick(&iso, 3, PIER, &inspect_facts(1, token, &hops));
     assert!(
         inspect_routes(&iso)
             .iter()
@@ -319,9 +319,9 @@ fn actual_example_stops_on_bank_arrival_without_walk_outcome_seq() {
     );
 
     let id0 = inspect_facts(2, 0, &hops);
-    post_tick(&iso, 4, PIER, id0);
+    post_tick(&iso, 4, PIER, &id0);
     // snapshot0-wait consumes id0 then returns; walk-send is the next tick.
-    post_tick(&iso, 5, PIER, id0);
+    post_tick(&iso, 5, PIER, &id0);
     let walks: Vec<_> = iso
         .drain_interacts()
         .into_iter()
@@ -363,7 +363,7 @@ fn actual_example_stops_on_bank_arrival_without_walk_outcome_seq() {
     );
 
     // Still on the pier; seq unchanged — must keep waiting, not accept near-bank.
-    post_tick(&iso, 6, PIER, id0);
+    post_tick(&iso, 6, PIER, &id0);
     assert!(
         !iso.stopped(),
         "must not stop at the pier when walk_outcome_seq stays 0: {:?}",
@@ -371,7 +371,7 @@ fn actual_example_stops_on_bank_arrival_without_walk_outcome_seq() {
     );
 
     // Exact LIVE terminal tile. Host does not bump walk_outcome_seq on success.
-    post_tick(&iso, 7, BANK, id0);
+    post_tick(&iso, 7, BANK, &id0);
     let receipt = iso.script_stop_receipt();
     assert!(
         iso.stopped(),
@@ -424,7 +424,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(source.into(), LoadShape::CompatClass, vec![]).unwrap();
-    post_tick(&iso, 1, PIER, NativeFactsInput::default());
+    post_tick(&iso, 1, PIER, &NativeFactsInput::default());
     assert!(
         iso.probe("globalThis.__walked").unwrap().as_bool().unwrap(),
         "the same-tile walk completes"
@@ -487,8 +487,8 @@ export default class T extends LoopingBot {
         },
         ..Default::default()
     };
-    post_tick(&iso, 2, PIER, settled);
-    post_tick(&iso, 3, PIER, settled);
+    post_tick(&iso, 2, PIER, &settled);
+    post_tick(&iso, 3, PIER, &settled);
     assert_eq!(
         iso.probe("globalThis.__probe").unwrap(),
         serde_json::json!({

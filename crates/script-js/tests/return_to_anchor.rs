@@ -3,7 +3,7 @@
 use script::native::snapshot_source::TileInput;
 use script_js::{LoadIsolate, LoadShape};
 
-mod common;
+pub mod common;
 use common::{ingame_snapshot, post_snapshot_input};
 
 fn validate_at(anchor_z: i32) -> serde_json::Value {
@@ -20,7 +20,8 @@ export default class T extends LoopingBot {{
 }}
 "#
     );
-    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(src, LoadShape::CompatClass, vec![])
+        .expect("spawn return-to-anchor test isolate");
     let mut snap = ingame_snapshot();
     snap.here = Some(TileInput {
         x: 3222,
@@ -29,7 +30,9 @@ export default class T extends LoopingBot {{
     });
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    let valid = iso.probe("globalThis.__valid").unwrap();
+    let valid = iso
+        .probe("globalThis.__valid")
+        .expect("read return-to-anchor validation result");
     iso.join();
     valid
 }
