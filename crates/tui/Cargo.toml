@@ -15,6 +15,7 @@ libc = "0.2"
 nav-planner = { path = "../nav-planner" }
 ratatui = "0.30"
 serde_json = "1.0.140"
+luau-probe = { path = "../luau-probe", optional = true }
 
 [dev-dependencies]
 api = { path = "../api", features = ["test-support"] }
@@ -33,6 +34,7 @@ path = "src/main.rs"
 [features]
 default = ["js"]
 js = ["frontend-core/js"]
+luau-probe = ["dep:luau-probe"]
 memory-profile = ["frontend-core/memory-profile"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.

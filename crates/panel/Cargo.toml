@@ -24,6 +24,7 @@ wgpu = "29"
 winit = "0.30"
 pollster = "0.4"
 png = "0.18"
+luau-probe = { path = "../luau-probe", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
@@ -68,6 +69,7 @@ harness = false
 [features]
 default = ["js"]
 js = ["frontend-core/js"]
+luau-probe = ["dep:luau-probe"]
 render-diagnostics = ["client/render-diagnostics", "frontend-core/render-diagnostics"]
 memory-profile = ["frontend-core/memory-profile"]
 # CPU diagnostic: use System directly, report allocator metrics unavailable.

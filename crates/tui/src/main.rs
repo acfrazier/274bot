@@ -10,6 +10,10 @@ static ALLOCATOR: frontend_core::process::BenchmarkAllocator =
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    #[cfg(feature = "luau-probe")]
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--luau-probe")) {
+        return luau_probe::run_cli();
+    }
     if let Err(error) = frontend_core::process::bootstrap() {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
         return ExitCode::FAILURE;

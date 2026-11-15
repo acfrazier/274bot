@@ -16,6 +16,10 @@ fn parse_args() -> panel::PanelArgs {
 }
 
 fn main() -> std::process::ExitCode {
+    #[cfg(feature = "luau-probe")]
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--luau-probe")) {
+        return luau_probe::run_cli();
+    }
     frontend_core::process::bootstrap().expect("protected V8 bootstrap on process main thread");
     let args = parse_args();
     // Before any slot starts: a Finder-launched app gets 256 open files.

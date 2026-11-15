@@ -1,0 +1,10 @@
+[package]
+name = "luau-probe"
+version.workspace = true
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+# mlua-sys enables luau0-src for the Luau backend, so no system Luau install is needed.
+mlua = { version = "=0.12.2", default-features = false, features = ["luau", "send"] }
