@@ -1,6 +1,7 @@
 //! Generated Host JS types (`host-js/index.d.ts`) from our verb tables.
 //! Snapshot fields, [`script::interact::InteractReq`] ops, and nav
-//! [`crate::FindOptions`] — not rs2b0t names. NativeTick Load is planned for a later release.
+//! [`crate::FindOptions`] — not rs2b0t names. NativeTick Load uses a checked
+//! `manifest` export.
 
 use script::card::SettingDef;
 use script::gatherer::settings::schema;

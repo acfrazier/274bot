@@ -397,7 +397,12 @@ impl ScriptDeclarationError {
                 "unpaired surrogate escape is not allowed".into()
             }
             DeclarationReason::Manifest(ManifestReason::MissingDeclaration) => {
-                "native JavaScript and TypeScript scripts require a manifest".into()
+                "native JavaScript and TypeScript scripts require a manifest.\n\
+                 Remove separate apiVersion, SETTINGS, and hostCapabilities exports.\n\
+                 Add this named export:\n\
+                 export const manifest = { apiVersion: 2, name: 'My script', version: '1', author: 'Your name', description: 'What it does', category: 'Examples', tags: [], settings: {}, capabilities: [] };\n\
+                 Move your old SETTINGS object into manifest.settings. Keep export function tick(api) or export async function tick(api). Remove a native default export. Do not reference manifest at runtime."
+                    .into()
             }
             DeclarationReason::Manifest(ManifestReason::MissingField(field)) => {
                 format!("required field {} is missing", quote(field))
@@ -514,14 +519,15 @@ impl ScriptDeclarationError {
 
 impl fmt::Display for ScriptDeclarationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let path = self.path.display().to_string();
         write!(
             f,
             "{}:{}:{} {} at {}: {}",
-            self.path.display(),
+            escape_diagnostic_text(&path),
             self.line,
             self.column,
             self.code(),
-            self.field_path,
+            escape_diagnostic_text(&self.field_path),
             self.reason_text()
         )
     }
@@ -586,7 +592,35 @@ impl From<UnresolvedModuleError> for ExtractionError {
 }
 
 fn quote(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| format!("\"{value}\""))
+    let escaped = escape_diagnostic_text(value);
+    format!("\"{escaped}\"")
+}
+
+fn escape_diagnostic_text(value: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            character
+                if matches!(
+                    character as u32,
+                    0x0000..=0x001f
+                        | 0x007f..=0x009f
+                        | 0x2028..=0x2029
+                        | 0x202a..=0x202e
+                        | 0x2066..=0x2069
+                ) =>
+            {
+                write!(escaped, "\\u{{{:X}}}", character as u32)
+                    .expect("writing a diagnostic escape to a String");
+            }
+            character => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 fn line_column(source: &str, byte: usize) -> (usize, usize) {

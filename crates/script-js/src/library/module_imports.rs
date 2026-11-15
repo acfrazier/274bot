@@ -160,4 +160,9 @@ import './h.js';
             ]
         );
     }
+
+    #[test]
+    fn bom_source_still_yields_module_imports() {
+        assert_eq!(runtime("\u{feff}import './sibling.js';"), ["./sibling.js"]);
+    }
 }

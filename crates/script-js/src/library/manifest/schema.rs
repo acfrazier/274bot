@@ -101,7 +101,7 @@ pub(super) fn project_settings(
 
         let min = optional_number(properties, "min", ty, source, path, &setting_path)?;
         let max = optional_number(properties, "max", ty, source, path, &setting_path)?;
-        if let (Some(min_value), Some(max_value)) = (min.as_deref(), max.as_deref()) {
+        if let (Some(min_value), Some(max_value)) = (min, max) {
             if min_value > max_value {
                 return Err(setting_error(
                     path,
@@ -113,13 +113,7 @@ pub(super) fn project_settings(
             }
         }
         if let LiteralValue::Number(number) = &default.value {
-            if min
-                .as_deref()
-                .is_some_and(|min| *number < parse_number(min))
-                || max
-                    .as_deref()
-                    .is_some_and(|max| *number > parse_number(max))
-            {
+            if min.is_some_and(|min| *number < min) || max.is_some_and(|max| *number > max) {
                 return Err(setting_error(
                     path,
                     source,
@@ -162,8 +156,8 @@ pub(super) fn project_settings(
             ty: ty.to_owned(),
             default: Some(default_text),
             label,
-            min,
-            max,
+            min: min.map(|value| value.to_string()),
+            max: max.map(|value| value.to_string()),
             step: None,
             options,
             option_labels,
@@ -517,7 +511,7 @@ fn optional_number(
     source: &str,
     path: &Path,
     setting_path: &str,
-) -> Result<Option<String>, ScriptDeclarationError> {
+) -> Result<Option<f64>, ScriptDeclarationError> {
     let Some(value) = get(properties, field) else {
         return Ok(None);
     };
@@ -549,7 +543,7 @@ fn optional_number(
             SettingReason::NonFinite,
         ));
     }
-    Ok(Some(number.to_string()))
+    Ok(Some(*number))
 }
 
 fn default_text(
@@ -775,10 +769,6 @@ fn property_span(
             || fallback.span.clone(),
             |property| property.value.span.clone(),
         )
-}
-
-fn parse_number(value: &str) -> f64 {
-    value.parse().unwrap_or(f64::NAN)
 }
 
 fn setting_error(

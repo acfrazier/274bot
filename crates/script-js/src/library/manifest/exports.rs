@@ -1019,6 +1019,19 @@ impl Visit for RuntimeIdentifierVisitor<'_> {
         }
         expression.visit_children_with(self);
     }
+
+    fn visit_prop(&mut self, property: &deno_ast::swc::ast::Prop) {
+        if let deno_ast::swc::ast::Prop::Shorthand(identifier) = property {
+            if self
+                .bindings
+                .iter()
+                .any(|binding| **binding == identifier.to_id())
+            {
+                self.found.get_or_insert(identifier.span);
+            }
+        }
+        property.visit_children_with(self);
+    }
 }
 
 #[derive(Default)]

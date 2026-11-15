@@ -136,12 +136,17 @@ pub fn analyze(path: &Path, source: &str) -> Result<ScriptAnalysis, ExtractionEr
 
     reject_non_compat_host_capabilities(&graph)?;
     if graph.has_runtime_export("tick") || graph.has_runtime_export("apiVersion") {
-        let span = ["tick", "apiVersion"]
-            .into_iter()
-            .flat_map(|name| graph.suppliers(name))
-            .filter(|supplier| supplier.runtime)
-            .min_by_key(|supplier| supplier.span.start)
-            .map_or(0..0, |supplier| supplier.span);
+        let span = graph
+            .direct_tick_function()
+            .or_else(|| {
+                ["tick", "apiVersion"]
+                    .into_iter()
+                    .flat_map(|name| graph.suppliers(name))
+                    .filter(|supplier| supplier.runtime)
+                    .min_by_key(|supplier| supplier.span.start)
+                    .map(|supplier| supplier.span)
+            })
+            .unwrap_or(0..0);
         return Err(declaration_error(
             graph.entry(),
             span,
@@ -216,26 +221,24 @@ fn parse_capabilities(
     field_path: &str,
 ) -> Result<DeclaredHostCapabilities, ScriptDeclarationError> {
     let LiteralValue::Array(values) = &value.value else {
-        return Err(ScriptDeclarationError::new(
+        return Err(manifest_error(
             path,
             source,
             value.span.clone(),
             field_path,
-            DeclarationReason::Capability(CapabilityReason::Unknown("expected an array".into())),
+            ManifestReason::WrongType("array of strings"),
         ));
     };
     let mut seen = HashSet::with_capacity(values.len());
     let mut capabilities = DeclaredHostCapabilities::EMPTY;
     for item in values {
         let LiteralValue::String(name) = &item.value else {
-            return Err(ScriptDeclarationError::new(
+            return Err(manifest_error(
                 path,
                 source,
                 item.span.clone(),
                 field_path,
-                DeclarationReason::Capability(CapabilityReason::Unknown(
-                    "non-string capability".into(),
-                )),
+                ManifestReason::WrongType("string"),
             ));
         };
         if !seen.insert(name.as_str()) {
@@ -360,7 +363,7 @@ fn parse_manifest(
                         source,
                         property.value.span.clone(),
                         &field_path,
-                        ManifestReason::MalformedApiVersion,
+                        ManifestReason::WrongType("integer numeric literal"),
                     ));
                 };
                 if number.fract() != 0.0 || number < 0.0 || number > u32::MAX as f64 {
@@ -754,7 +757,55 @@ mod tests {
             ),
             "{error:?}"
         );
+        assert_eq!(
+            error.reason_text(),
+            expected_expression_reason(expected),
+            "{error}"
+        );
         error
+    }
+
+    fn expected_expression_reason(kind: ExpressionKind) -> &'static str {
+        match kind {
+            ExpressionKind::Identifier => "expected a literal value, found identifier",
+            ExpressionKind::PropertyAccess => "expected a literal value, found property access",
+            ExpressionKind::Call => "expected a literal value, found call",
+            ExpressionKind::NewExpression => "expected a literal value, found new expression",
+            ExpressionKind::Function => "expected a literal value, found function",
+            ExpressionKind::ArrowFunction => "expected a literal value, found arrow function",
+            ExpressionKind::Class => "expected a literal value, found class",
+            ExpressionKind::Spread => "expected a literal value, found spread",
+            ExpressionKind::ShorthandProperty => {
+                "expected a literal value, found shorthand property"
+            }
+            ExpressionKind::Getter => "expected a literal value, found getter",
+            ExpressionKind::Setter => "expected a literal value, found setter",
+            ExpressionKind::Method => "expected a literal value, found method",
+            ExpressionKind::Template => "expected a literal value, found template",
+            ExpressionKind::Null => "expected a literal value, found null",
+            ExpressionKind::Undefined => "expected a literal value, found undefined",
+            ExpressionKind::NaN => "expected a literal value, found NaN",
+            ExpressionKind::Infinity => "expected a literal value, found Infinity",
+            ExpressionKind::BigInt => "expected a literal value, found BigInt",
+            ExpressionKind::UnaryExpression => "expected a literal value, found unary expression",
+            ExpressionKind::BinaryExpression => "expected a literal value, found binary expression",
+            ExpressionKind::ConditionalExpression => {
+                "expected a literal value, found conditional expression"
+            }
+            ExpressionKind::Assignment => "expected a literal value, found assignment",
+            ExpressionKind::Sequence => "expected a literal value, found sequence",
+            ExpressionKind::Await => "expected a literal value, found await",
+            ExpressionKind::Yield => "expected a literal value, found yield",
+            ExpressionKind::Update => "expected a literal value, found update",
+            ExpressionKind::This => "expected a literal value, found this",
+            ExpressionKind::Super => "expected a literal value, found super",
+            ExpressionKind::Import => "expected a literal value, found import",
+            ExpressionKind::RegularExpression => {
+                "expected a literal value, found regular expression"
+            }
+            ExpressionKind::Jsx => "expected a literal value, found JSX",
+            ExpressionKind::OtherExpression => "expected a literal value, found other expression",
+        }
     }
 
     #[test]
@@ -875,16 +926,17 @@ mod tests {
 
     #[test]
     fn type_only_default_does_not_select_compat() {
-        let input = format!(
-            "export interface Manifest {{}}\n{}",
-            source(good_manifest())
-        );
-        assert!(matches!(
-            analyze(Path::new("manifest.ts"), &input),
-            Ok(ScriptAnalysis::Native { .. })
-        ));
+        for declaration in [
+            "export interface Manifest {}",
+            "export default interface Shape {}",
+        ] {
+            let input = format!("{declaration}\n{}", source(good_manifest()));
+            assert!(matches!(
+                analyze(Path::new("manifest.ts"), &input),
+                Ok(ScriptAnalysis::Native { .. })
+            ));
+        }
     }
-
     #[test]
     fn missing_manifest_and_default_discrimination_follow_runtime_exports() {
         for path in ["missing.ts", "missing.js"] {
@@ -1105,6 +1157,7 @@ mod tests {
                     UnsupportedWrapper::TsNonNull
                 ))
             ));
+            assert_eq!(error.reason_text(), "non-null assertion is not allowed");
         }
         let root_non_null = source(&format!("({manifest})!"));
         let error = assert_error_code(&root_non_null, "script-declaration-wrapper");
@@ -1114,6 +1167,7 @@ mod tests {
                 UnsupportedWrapper::TsNonNull
             ))
         ));
+        assert_eq!(error.reason_text(), "non-null assertion is not allowed");
     }
     #[test]
     fn reserved_exports_require_one_direct_simple_const() {
@@ -1141,6 +1195,62 @@ mod tests {
             assert!(
                 matches!(analyze(Path::new("manifest.ts"), input), Err(ExtractionError::Declaration(error)) if error.code() == "manifest-required")
             );
+        }
+    }
+
+    #[test]
+    fn missing_manifest_message_contains_the_migration_example() {
+        let error = declaration_error("export function tick() {}");
+        assert_eq!(error.code(), "manifest-required");
+        assert!(error.to_string().contains(
+            "export const manifest = { apiVersion: 2, name: 'My script', version: '1', author: 'Your name', description: 'What it does', category: 'Examples', tags: [], settings: {}, capabilities: [] };"
+        ));
+    }
+
+    #[test]
+    fn missing_manifest_prefers_tick_span_then_first_entry_export() {
+        let tick_source = "export const apiVersion = 2; export function tick() {}";
+        let tick_error = declaration_error(tick_source);
+        assert_eq!(tick_error.code(), "manifest-required");
+        assert_eq!(
+            tick_error.span.start,
+            tick_source.find("export function").unwrap()
+        );
+
+        let first_export_source = "export const apiVersion = 2; export const tick = () => {};";
+        let first_export_error = declaration_error(first_export_source);
+        assert_eq!(first_export_error.code(), "manifest-required");
+        assert_eq!(
+            first_export_error.span.start,
+            first_export_source.find("export const apiVersion").unwrap()
+        );
+    }
+
+    #[test]
+    fn numeric_setting_ranges_compare_numbers_and_refuse_inversion() {
+        for (min, max, default, expected) in [
+            ("9", "10", "9", None),
+            ("10", "9", "10", Some("setting-range-inverted")),
+            ("-1.2", "-1.1", "-1.2", None),
+            ("-1.1", "-1.2", "-1.1", Some("setting-range-inverted")),
+        ] {
+            let settings = format!(
+                "settings: {{ amount: {{ type: 'number', default: {default}, min: {min}, max: {max} }} }}"
+            );
+            let input = manifest_source_replacing("settings: {}", &settings);
+            match expected {
+                None => assert!(
+                    matches!(
+                        analyze(Path::new("manifest.ts"), &input),
+                        Ok(ScriptAnalysis::Native { .. })
+                    ),
+                    "valid range {min}..={max} was refused"
+                ),
+                Some(code) => {
+                    let error = assert_error_code(&input, code);
+                    assert_eq!(error.reason_text(), "min must not exceed max");
+                }
+            }
         }
     }
 
@@ -1272,6 +1382,69 @@ mod tests {
     }
 
     #[test]
+    fn literal_reason_texts_are_exact() {
+        for (from, to, code, reason) in [
+            (
+                "name: 'Miner',",
+                "name: 'Miner', 1: 'other',",
+                "script-declaration-key-kind",
+                "numeric property names are not allowed",
+            ),
+            (
+                "name: 'Miner',",
+                "name: 'Miner', 1n: 'other',",
+                "script-declaration-key-kind",
+                "BigInt property names are not allowed",
+            ),
+            (
+                "name: 'Miner',",
+                "name: 'Miner', [name]: 'other',",
+                "script-declaration-computed-key",
+                "computed property names are not allowed",
+            ),
+            (
+                "name: 'Miner',",
+                "name: 'Miner', __proto__: {},",
+                "script-declaration-prototype-key",
+                "__proto__ property is not allowed",
+            ),
+            (
+                "name: 'Miner',",
+                "name: 'Miner', 'name': 'Other',",
+                "script-declaration-duplicate-key",
+                "duplicate property \"name\"",
+            ),
+            (
+                "tags: []",
+                "tags: [,]",
+                "script-declaration-sparse-array",
+                "array holes are not allowed",
+            ),
+            (
+                "apiVersion: 2",
+                "apiVersion: 1e400",
+                "script-declaration-number-nonfinite",
+                "number must be finite",
+            ),
+            (
+                "name: 'Miner'",
+                "name: '\\uD800'",
+                "script-declaration-lone-surrogate",
+                "unpaired surrogate escape is not allowed",
+            ),
+            (
+                "name: 'Miner'",
+                "name: 'Miner'!",
+                "script-declaration-wrapper",
+                "non-null assertion is not allowed",
+            ),
+        ] {
+            let error = assert_error_code(&manifest_source_replacing(from, to), code);
+            assert_eq!(error.reason_text(), reason);
+        }
+    }
+
+    #[test]
     fn unpaired_surrogate_escapes_are_refused_in_all_manifest_string_positions() {
         for escape in [r"\uD800", r"\uDC00"] {
             let variants = [
@@ -1359,6 +1532,13 @@ mod tests {
             panic!("valid surrogate pair should decode as a name");
         };
         assert_eq!(manifest.name(), "😀");
+        let braced_pair = manifest_source_replacing("name: 'Miner'", r"name: '\u{D83D}\u{DE00}'");
+        let ScriptAnalysis::Native { manifest, .. } =
+            analyze(Path::new("manifest.ts"), &braced_pair).unwrap()
+        else {
+            panic!("valid braced surrogate pair should decode as a name");
+        };
+        assert_eq!(manifest.name(), "😀");
 
         let literal_backslash = manifest_source_replacing("name: 'Miner'", r"name: '\\uD800'");
         let ScriptAnalysis::Native { manifest, .. } =
@@ -1389,6 +1569,61 @@ mod tests {
     }
 
     #[test]
+    fn display_validation_covers_manifest_and_setting_metadata_fields() {
+        for (from, to) in [
+            ("version: '1'", "version: '\\u202E'"),
+            ("author: 'Alice'", "author: '\\u202E'"),
+            ("description: 'Mine ore'", "description: '\\u202E'"),
+            ("category: 'Mining'", "category: '\\u202E'"),
+            ("tags: []", "tags: ['\\u202E']"),
+            (
+                "settings: {}",
+                "settings: { text: { type: 'string', default: '', label: '\\u202E' } }",
+            ),
+            (
+                "settings: {}",
+                "settings: { text: { type: 'string', default: '', help: '\\u202E' } }",
+            ),
+            (
+                "settings: {}",
+                "settings: { text: { type: 'string', default: '', group: '\\u202E' } }",
+            ),
+            (
+                "settings: {}",
+                "settings: { text: { type: 'string', default: '', options: ['option'], optionLabels: { option: '\\u202E' } } }",
+            ),
+        ] {
+            assert_error_code(
+                &manifest_source_replacing(from, to),
+                "manifest-field-control",
+            );
+        }
+
+        let invalid_id = manifest_source_replacing(
+            "settings: {}",
+            "settings: { 'text\\u202E': { type: 'string', default: '' } }",
+        );
+        assert_error_code(&invalid_id, "setting-id-invalid");
+    }
+
+    #[test]
+    fn diagnostics_escape_c1_line_separators_and_bidi_characters() {
+        for codepoint in [0x0085, 0x2028, 0x2029, 0x202e, 0x2066, 0x2069] {
+            let escaped = format!("\\u{{{codepoint:X}}}");
+            let input = manifest_source_replacing(
+                "capabilities: []",
+                &format!("capabilities: [], '{escaped}': 1"),
+            );
+            let error = assert_error_code(&input, "manifest-unknown-field");
+            let message = error.to_string();
+            assert!(
+                !message.contains(char::from_u32(codepoint).unwrap()),
+                "diagnostic contains U+{codepoint:04X}: {message:?}"
+            );
+        }
+    }
+
+    #[test]
     fn manifest_fields_types_and_conflicting_api_exports_are_checked() {
         for (fragment, field) in [
             ("apiVersion: 2, ", "apiVersion"),
@@ -1412,7 +1647,7 @@ mod tests {
         }
 
         for (from, to, code) in [
-            ("apiVersion: 2", "apiVersion: '2'", "api-version-malformed"),
+            ("apiVersion: 2", "apiVersion: '2'", "manifest-field-type"),
             ("apiVersion: 2", "apiVersion: 3", "api-version-unsupported"),
             ("name: 'Miner'", "name: 1", "manifest-field-type"),
             ("tags: []", "tags: 'ore'", "manifest-field-type"),
@@ -1420,10 +1655,25 @@ mod tests {
             (
                 "capabilities: []",
                 "capabilities: {}",
-                "host-capability-unknown",
+                "manifest-field-type",
             ),
         ] {
-            assert_error_code(&manifest_source_replacing(from, to), code);
+            let error = assert_error_code(&manifest_source_replacing(from, to), code);
+            if to == "apiVersion: '2'" {
+                assert!(matches!(
+                    &error.reason,
+                    DeclarationReason::Manifest(ManifestReason::WrongType(
+                        "integer numeric literal"
+                    ))
+                ));
+                assert_eq!(error.reason_text(), "expected integer numeric literal");
+            }
+            if to == "capabilities: {}" {
+                assert!(matches!(
+                    &error.reason,
+                    DeclarationReason::Manifest(ManifestReason::WrongType("array of strings"))
+                ));
+            }
         }
         for (from, to) in [
             ("apiVersion: 2", "apiVersion: 2.5"),
@@ -1439,14 +1689,19 @@ mod tests {
                 &manifest_source_replacing(from, to),
                 match to {
                     "apiVersion: 2.5" | "apiVersion: -1" => "api-version-malformed",
-                    "capabilities: [1]" => "host-capability-unknown",
                     _ => "manifest-field-type",
                 },
             );
             if to.starts_with("apiVersion") {
                 assert!(matches!(
-                    error.reason,
+                    &error.reason,
                     DeclarationReason::Manifest(ManifestReason::MalformedApiVersion)
+                ));
+            }
+            if to == "capabilities: [1]" {
+                assert!(matches!(
+                    &error.reason,
+                    DeclarationReason::Manifest(ManifestReason::WrongType("string"))
                 ));
             }
         }
@@ -1795,9 +2050,31 @@ mod tests {
     }
 
     #[test]
+    fn default_entry_star_supplying_host_capabilities_is_refused() {
+        let tree = TempTree::new();
+        let entry = tree.path().join("entry.ts");
+        let input = "export * from './caps.ts'; export default class Miner extends TaskBot {}";
+        std::fs::write(&entry, input).unwrap();
+        std::fs::write(
+            tree.path().join("caps.ts"),
+            "export const hostCapabilities = [];",
+        )
+        .unwrap();
+
+        let error = analyze(&entry, input).unwrap_err();
+        assert!(matches!(
+            error,
+            ExtractionError::Declaration(error)
+                if error.code() == "script-declaration-form"
+                    && matches!(error.reason, DeclarationReason::Export(ExportReason::NotDirectConst))
+        ));
+    }
+
+    #[test]
     fn erased_manifest_references_are_binding_aware_across_modules() {
         for reference in [
             "export function tick() { return manifest; }",
+            "export function tick() { return { manifest }; }",
             "const alias = manifest; export function tick() {}",
             "export { manifest as metadata }; export function tick() {}",
         ] {

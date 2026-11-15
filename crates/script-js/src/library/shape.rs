@@ -1210,6 +1210,12 @@ mod tests {
     use super::*;
     use script::identity::{card_identity_id, file_identity};
 
+    #[test]
+    fn transpile_ts_parses_a_bom_prefixed_source() {
+        let emitted = transpile_ts("\u{feff}const value: number = 1;").unwrap();
+        assert!(emitted.contains("const value = 1"), "{emitted}");
+        assert!(!emitted.starts_with('\u{feff}'));
+    }
     /// `WalkDestinations` is a served compatibility module (wave 3 walking),
     /// so WalkTo's `../../api/map/WalkDestinations.js` import resolves to the
     /// shim for every card and the upstream file is never loaded as a sibling

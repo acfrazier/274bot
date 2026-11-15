@@ -515,7 +515,11 @@ fn decode_string_token(token: &str) -> Option<String> {
                     if digits == 0 {
                         return None;
                     }
-                    append_scalar(&mut decoded, &mut pending_high, char::from_u32(value)?)?;
+                    if value <= u16::MAX.into() {
+                        append_unit(&mut decoded, &mut pending_high, u16::try_from(value).ok()?)?;
+                    } else {
+                        append_scalar(&mut decoded, &mut pending_high, char::from_u32(value)?)?;
+                    }
                 } else {
                     append_unit(
                         &mut decoded,
