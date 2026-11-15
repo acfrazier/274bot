@@ -192,21 +192,41 @@
         "non_test": 1,
         "test": 0
       },
+      "clippy::allow_attributes": {
+        "non_test": 1,
+        "test": 0
+      },
+      "clippy::allow_attributes_without_reason": {
+        "non_test": 1,
+        "test": 0
+      },
       "clippy::enum_variant_names": {
-        "non_test": 2,
+        "non_test": 1,
         "test": 0
       },
       "clippy::large_enum_variant": {
-        "non_test": 3,
+        "non_test": 2,
         "test": 0
+      },
+      "clippy::large_types_passed_by_value": {
+        "non_test": 4,
+        "test": 1
       },
       "clippy::too_many_arguments": {
         "non_test": 13,
         "test": 0
       },
+      "clippy::undocumented_unsafe_blocks": {
+        "non_test": 1,
+        "test": 0
+      },
+      "clippy::unwrap_used": {
+        "non_test": 1,
+        "test": 0
+      },
       "dead_code": {
         "non_test": 4,
-        "test": 4
+        "test": 1
       },
       "non_snake_case": {
         "non_test": 0,
@@ -214,10 +234,6 @@
       },
       "rustdoc::all": {
         "non_test": 1,
-        "test": 0
-      },
-      "unused_imports": {
-        "non_test": 3,
         "test": 0
       }
     },
