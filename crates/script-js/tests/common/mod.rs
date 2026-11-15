@@ -2,14 +2,14 @@
 //!
 //! Intentional fixture variants (`base_snapshot`, seeds, `scene_state`, …) stay
 //! in each test file; only byte-identical scaffolding is centralized here.
+#![expect(
+    dead_code,
+    reason = "Shared across integration-test binaries; each binary uses only its needed helper subset"
+)]
 
 use script::native::snapshot_source::{ReachViewInput, SnapshotInput, StatInput, TileInput};
 use script_js::LoadIsolate;
 
-#[allow(
-    dead_code,
-    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
-)]
 pub fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
 }
@@ -27,10 +27,6 @@ const fn stat(index: i32, name: &'static str) -> StatInput<'static> {
 /// A fresh account's stat rows (client stat slot, name): every used stat
 /// is loaded, so a compat card's `onPaint` gate (stats ready) holds. The
 /// live host posts these once the login's stat packets arrive.
-#[allow(
-    dead_code,
-    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
-)]
 pub const FRESH_STATS: [StatInput<'static>; 19] = [
     stat(0, "attack"),
     stat(1, "defence"),
@@ -61,10 +57,6 @@ pub const FRESH_STATS: [StatInput<'static>; 19] = [
 
 /// A logged-in client on a loaded scene: a tile, scene state 2 and the
 /// fresh stat rows, every other table empty.
-#[allow(
-    dead_code,
-    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
-)]
 pub fn ingame_snapshot() -> SnapshotInput<'static> {
     SnapshotInput {
         tick: 1,

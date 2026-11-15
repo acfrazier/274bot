@@ -2,9 +2,9 @@
 //! `SlotScript` bank seat. It posts the script-facing page and supplies a
 //! native `GameSnapshot`; it synthesizes no bank operation or result.
 
-#![allow(
+#![expect(
     dead_code,
-    reason = "shared across integration test binaries; each binary uses a subset, so expect would misfire"
+    reason = "Shared across integration-test binaries; each binary uses only its needed helper subset"
 )]
 
 use std::sync::Arc;
