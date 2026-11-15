@@ -10,8 +10,11 @@ use std::sync::Arc;
 #[test]
 #[cfg(target_pointer_width = "64")]
 fn guardian_per_bot_state_stays_inline_and_small() {
-    // Bounded box outcomes and the retained failure add 8 inline bytes to the 936-byte Guardian.
-    assert_eq!(std::mem::size_of::<Guardian>(), 944);
+    // Bounded box outcomes and the retained failure add 8 inline bytes to the
+    // 936-byte Guardian. The one `ActiveEvent` replaces six ownership cells and
+    // takes the 8 bytes back, with the 8 bytes of the test-only
+    // `last_inputs` publication record counted in.
+    assert_eq!(std::mem::size_of::<Guardian>(), 936);
 }
 
 fn cfg() -> ClientConfig {
@@ -1698,7 +1701,7 @@ fn evade_without_selected_content_detects_attacker_without_action_or_hold() {
         "unknown range must not issue a flee"
     );
     assert!(
-        !guardian.acting,
+        !guardian.acting(),
         "unknown range must not claim the action latch"
     );
     let state = guardian
@@ -5814,3 +5817,5 @@ fn mime_return_reward_page_releases_guardian_before_inventory_tab_restoration() 
     assert!(!guardian.tick(&mut driver, &snap, &settings, 3, None).hold);
 }
 include!("random_ent_regressions.rs");
+
+include!("random_owner_tests.rs");

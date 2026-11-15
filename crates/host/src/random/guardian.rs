@@ -245,10 +245,96 @@ struct LostToolRecovery {
     origin_tiles: [Option<(i32, i32, i32)>; 2],
     target: Option<LostToolTarget>,
 }
+/// Who handles the current event. A claim is held by exactly one owner: the
+/// host Guardian, or the running script. The native Guardian solver and its
+/// children are host work, never a third owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Owner {
+    Host,
+    Script,
+}
+
+/// A Talk-to went out and the dialog may still be open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DialogHandle {
+    /// The NPC slot the in-flight dialog targets (the cooldown key). Client
+    /// NPC slots are below `u16::MAX`.
+    pub(crate) index: u16,
+    /// Continues sent for the in-flight dialog ([`MAX_CONTINUES`] cap).
+    pub(crate) continues: u8,
+}
+
+/// The one Guardian event owner. It carries the owner and the host work that
+/// owner has in flight; `claim`, `handling`, `acting`, `ours` and `hold` are
+/// derived from it and from the live inputs. There is no second copy of any
+/// of them. `Guardian::active` is `None` exactly while the Host owns the
+/// event and has nothing in flight.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ActiveEvent {
+    pub(crate) owner: Owner,
+    /// A dialog handle is in flight (the host is talking it through).
+    pub(crate) dialog: Option<DialogHandle>,
+    /// A non-dialog act is in flight: an op or walk was sent for the current
+    /// event and it has not resolved (evade/plant/hazard/lamp-rub/lost-gear/
+    /// lost-tool, plus the out-of-range walk before a Talk-to / Pick). Holds
+    /// the slot like the dialog handle. The value is the kind that act
+    /// belongs to.
+    pub(crate) solver: Option<RandomKind>,
+}
+
+/// The live inputs of one publication besides the active event.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PublicationInputs {
+    /// The random-event toggle.
+    pub(crate) toggle: bool,
+    /// The detector says the event is owned work (`DetectedRandom::ours`).
+    pub(crate) detected_ours: bool,
+    /// A family the host is not driving right now (stalled or paused lamp,
+    /// stalled tool or box, a trap square it gave up): detect-only.
+    pub(crate) inert_detect: bool,
+    /// A stalled box or an inert trap square never holds.
+    pub(crate) inert_hold: bool,
+    /// The Ent guard holds the slot.
+    pub(crate) ent_hold: bool,
+    /// The detected event is a trapped kind (Maze, Mime).
+    pub(crate) trapped: bool,
+}
+
+/// The ownership fields of the status row. They are computed here and
+/// nowhere else, from the one active event and the live inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Publication {
+    pub(crate) claim: RandomClaim,
+    pub(crate) handling: bool,
+    pub(crate) ours: bool,
+    pub(crate) hold: bool,
+}
+
+pub(crate) fn derive_publication(
+    active: Option<&ActiveEvent>,
+    inputs: PublicationInputs,
+) -> Publication {
+    let claim = match active.map(|active| active.owner) {
+        Some(Owner::Script) => RandomClaim::Handle,
+        Some(Owner::Host) | None => RandomClaim::Host,
+    };
+    let in_flight = active.is_some_and(|active| active.dialog.is_some());
+    let acting = active.is_some_and(|active| active.solver.is_some());
+    Publication {
+        claim,
+        handling: in_flight,
+        // Detection alone must not latch pending work: both native
+        // eligibility and EventSignal.pending use hold OR ours.
+        ours: inputs.toggle && !inputs.inert_detect && inputs.detected_ours,
+        hold: inputs.toggle
+            && claim == RandomClaim::Host
+            && !inputs.inert_hold
+            && (in_flight || acting || inputs.ent_hold || inputs.trapped),
+    }
+}
+
 /// Per-slot random-event guardian state.
 pub struct Guardian {
-    /// A Talk-to went out and the dialog may still be open.
-    pub in_flight: bool,
     /// The snapshot tick the last act ran on (one scan per game tick).
     pub last_tick: u64,
     /// NPC slot → wrong-talk cooldown expiry `now_ms`.
@@ -256,24 +342,17 @@ pub struct Guardian {
     /// Signature (kind+name) of the last detected event: the rising-edge
     /// key the `on_random` knock fires on once per new event.
     pub sig: Option<String>,
-    /// Who handles the current event. Filled by the rising-edge knock
-    /// (host-play's script); `Host` when no event, no script, or the
-    /// script did not claim it.
-    pub claim: RandomClaim,
-    /// The NPC slot the in-flight dialog targets (the cooldown key).
-    in_flight_index: Option<usize>,
-    /// Continues sent for the in-flight dialog ([`MAX_CONTINUES`] cap).
-    continues: u32,
+    /// The one owner of the current event and the host work in flight for it.
+    /// Filled by the rising-edge knock (host-play's script); `None` is the
+    /// Host with nothing in flight: no event, no script, or the script did
+    /// not claim it.
+    active: Option<ActiveEvent>,
+    /// The inputs of the last publication, for the conformance tests.
+    #[cfg(test)]
+    last_inputs: PublicationInputs,
     /// Newest chat sequence already scanned for wrong-talk lines, so a
     /// stale rejection line cannot re-bin a later NPC.
     chat_seen: i32,
-    /// A non-dialog act is in flight: an op or walk was sent for the
-    /// current event and it has not resolved (evade/plant/hazard/
-    /// lamp-rub/lost-gear/lost-tool, plus the out-of-range walk before a
-    /// Talk-to / Pick). Holds the slot like the dialog handle.
-    acting: bool,
-    /// The kind the in-flight non-dialog act belongs to.
-    acting_kind: RandomKind,
     /// Evade: the tile the flee started from — the walk-back target once
     /// the threat despawns (rs2b0t).
     flee_from: Option<(i32, i32)>,
@@ -367,16 +446,13 @@ impl Default for Guardian {
 impl Guardian {
     pub fn new() -> Self {
         Self {
-            in_flight: false,
             last_tick: 0,
             cooldown: HashMap::new(),
             sig: None,
-            claim: RandomClaim::Host,
-            in_flight_index: None,
-            continues: 0,
+            active: None,
+            #[cfg(test)]
+            last_inputs: PublicationInputs::default(),
             chat_seen: 0,
-            acting: false,
-            acting_kind: RandomKind::Dialog,
             flee_from: None,
             evade: None,
             evade_starts: Vec::new(),
@@ -408,6 +484,93 @@ impl Guardian {
             plant_ignored: Vec::new(),
             gear_loss: GearLoss::new(),
         }
+    }
+
+    /// Who handles the current event: derived from the one active event.
+    pub fn claim(&self) -> RandomClaim {
+        match self.active.as_ref().map(|active| active.owner) {
+            Some(Owner::Script) => RandomClaim::Handle,
+            Some(Owner::Host) | None => RandomClaim::Host,
+        }
+    }
+
+    /// A dialog handle is in flight (the host is talking it through).
+    pub fn in_flight(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.dialog.is_some())
+    }
+
+    /// A non-dialog act is in flight.
+    pub fn acting(&self) -> bool {
+        self.acting_kind().is_some()
+    }
+
+    /// The kind of the non-dialog act in flight.
+    fn acting_kind(&self) -> Option<RandomKind> {
+        self.active.as_ref().and_then(|active| active.solver)
+    }
+
+    fn dialog(&self) -> Option<DialogHandle> {
+        self.active.as_ref().and_then(|active| active.dialog)
+    }
+
+    fn dialog_mut(&mut self) -> Option<&mut DialogHandle> {
+        self.active
+            .as_mut()
+            .and_then(|active| active.dialog.as_mut())
+    }
+
+    /// Hand the current event to `claim`. Host work already in flight
+    /// survives a change of owner.
+    fn set_claim(&mut self, claim: RandomClaim) {
+        match claim {
+            RandomClaim::Host => {
+                if let Some(active) = self.active.as_mut() {
+                    active.owner = Owner::Host;
+                }
+            }
+            RandomClaim::Handle => self.active_mut().owner = Owner::Script,
+        }
+        self.settle();
+    }
+
+    /// The Host has nothing in flight and owns the event: no active event.
+    fn settle(&mut self) {
+        if self.active.as_ref().is_some_and(|active| {
+            active.owner == Owner::Host && active.dialog.is_none() && active.solver.is_none()
+        }) {
+            self.active = None;
+        }
+    }
+
+    fn active_mut(&mut self) -> &mut ActiveEvent {
+        self.active.get_or_insert(ActiveEvent {
+            owner: Owner::Host,
+            dialog: None,
+            solver: None,
+        })
+    }
+
+    /// A non-dialog act starts for `kind`.
+    fn begin_solver(&mut self, kind: RandomKind) {
+        self.active_mut().solver = Some(kind);
+    }
+
+    /// The non-dialog act ended or released.
+    fn end_solver(&mut self) {
+        if let Some(active) = self.active.as_mut() {
+            active.solver = None;
+        }
+        self.settle();
+    }
+
+    /// A Talk-to went out for NPC slot `index`.
+    fn begin_dialog(&mut self, index: usize) {
+        self.active_mut().dialog = Some(DialogHandle {
+            index: u16::try_from(index).unwrap_or(u16::MAX),
+            continues: 0,
+        });
     }
 
     /// One guardian pass per caller frame: detect + publish the status
@@ -492,10 +655,9 @@ impl Guardian {
             let plant_growing = self.fresh_chat_has(snap, &[PLANT_GROWING_MARKER]);
             let plant_rejected = self.fresh_chat_has(snap, &[PLANT_REJECTION_MARKER]);
             let plant_before_chat = self.plant.clone();
-            if self.in_flight && wrong_talk {
-                if let Some(index) = self.in_flight_index {
-                    self.cooldown.insert(index, now_ms + WRONG_TALK_COOLDOWN_MS);
-                }
+            if let Some(handle) = self.dialog().filter(|_| wrong_talk) {
+                self.cooldown
+                    .insert(usize::from(handle.index), now_ms + WRONG_TALK_COOLDOWN_MS);
                 self.clear_handle();
             } else if !matches!(self.plant, PlantProbe::Idle) && plant_rejected {
                 // Plant rejection is pinned to the complete actor identity;
@@ -505,11 +667,11 @@ impl Guardian {
                 self.authenticate_plant(now_ms);
             } else if matches!(self.plant, PlantProbe::Authenticated { .. }) && plant_growing {
                 self.note_plant_growing(now_ms);
-            } else if self.acting && self.acting_kind == RandomKind::Pick && plant_rejected {
+            } else if self.acting_kind() == Some(RandomKind::Pick) && plant_rejected {
                 if let Some(index) = ev.as_ref().and_then(|e| e.npc_index) {
                     self.cooldown.insert(index, now_ms + WRONG_TALK_COOLDOWN_MS);
                 }
-                self.acting = false;
+                self.end_solver();
             }
             // The content adds one box and sends this line every 150 ticks,
             // but stops at 28 boxes (macro_event_strange_box.rs2:25-36,319).
@@ -525,7 +687,7 @@ impl Guardian {
             }
             self.chat_seen = head;
             // The dialog ended: the chat is closed and the NPC is gone.
-            if self.in_flight && self.dialog_done(snap) {
+            if self.in_flight() && self.dialog_done(snap) {
                 self.clear_handle();
             }
             if self.plant != plant_before_chat {
@@ -544,7 +706,11 @@ impl Guardian {
             let sig = ev.as_ref().map(|e| format!("{:?}:{}", e.kind, e.name));
             if sig != self.sig {
                 self.sig = sig;
-                self.claim = match (&ev, knock.as_mut()) {
+                // A new event is a new claim, whoever held the last.
+                if let Some(active) = self.active.as_mut() {
+                    active.owner = Owner::Host;
+                }
+                let claim = match (&ev, knock.as_mut()) {
                     (Some(ev), Some(source))
                         if !(ev.kind == RandomKind::Lamp && !settings.lamp_auto) =>
                     {
@@ -552,13 +718,19 @@ impl Guardian {
                     }
                     _ => RandomClaim::Host,
                 };
+                self.set_claim(claim);
             }
-            if let (Some(ev), Some(source)) = (&ev, knock) {
-                if !(ev.kind == RandomKind::Lamp && !settings.lamp_auto) {
-                    if let Some(claim) = source.current_claim(ev) {
-                        self.claim = claim;
+            match (&ev, knock) {
+                (Some(ev), Some(source)) => {
+                    if !(ev.kind == RandomKind::Lamp && !settings.lamp_auto) {
+                        if let Some(claim) = source.current_claim(ev) {
+                            self.set_claim(claim);
+                        }
                     }
                 }
+                // No claim source means no script can own the event.
+                (_, None) => self.set_claim(RandomClaim::Host),
+                (None, Some(_)) => {}
             }
         }
         let unsupported_policy = ev.as_ref().and_then(|event| {
@@ -579,7 +751,7 @@ impl Guardian {
         if let Some((index, name, policy)) = unsupported_policy {
             // Fight/Ignore have no script-layer arm yet. Keep the Guardian in
             // control so compiled scripts do not freeze behind `ours`.
-            self.claim = RandomClaim::Host;
+            self.set_claim(RandomClaim::Host);
             if let Some(state) = self
                 .evade
                 .as_mut()
@@ -631,7 +803,7 @@ impl Guardian {
             })
         {
             self.tool_stalled = false;
-            self.acting = true;
+            self.begin_solver(RandomKind::LostTool);
         }
         let inert_tool = self.tool_stalled
             && ev
@@ -644,7 +816,7 @@ impl Guardian {
         if !on_box || !settings.random_events {
             self.box_solve = BoxSolve::default();
         }
-        if fresh && self.claim != RandomClaim::Host {
+        if fresh && self.claim() != RandomClaim::Host {
             // No native action runs under a script claim. Shift the origin
             // by those observed ticks so neither wait spends Host's budget.
             let paused = (tick as u32).wrapping_sub(self.last_tick as u32);
@@ -678,7 +850,7 @@ impl Guardian {
             // Drop a previous auto-on latch the moment the operator
             // turns lamp auto off with the lamp still in inv, or the
             // redemption gave up with the lamp still held.
-            self.acting = false;
+            self.end_solver();
         }
         // A trap square the host will not solve (random events off, or a Maze
         // visit it gave up) is inert like a stalled lamp: the square stays
@@ -697,14 +869,14 @@ impl Guardian {
             driver,
             snap,
             context.game_data,
-            active && settings.random_events && self.claim == RandomClaim::Host,
+            active && settings.random_events && self.claim() == RandomClaim::Host,
             fresh,
         );
 
         if fresh
             && active
             && settings.random_events
-            && self.claim == RandomClaim::Host
+            && self.claim() == RandomClaim::Host
             && !inert_lamp
             && !inert_box
             && !inert_tool
@@ -747,28 +919,27 @@ impl Guardian {
             .as_ref()
             .and_then(|e| e.npc_index)
             .is_some_and(|i| binned(i, now_ms, &self.cooldown));
+        let inputs = PublicationInputs {
+            toggle: settings.random_events,
+            detected_ours: ev.as_ref().is_some_and(|e| e.ours),
+            inert_detect: inert_lamp || inert_tool || inert_box || inert_trap,
+            inert_hold: inert_trap || inert_box,
+            ent_hold,
+            trapped: ev.as_ref().is_some_and(|e| is_trapped(e.kind)),
+        };
+        #[cfg(test)]
+        {
+            self.last_inputs = inputs;
+        }
+        let published = derive_publication(self.active.as_ref(), inputs);
         RandomStatus {
             kind: ev.as_ref().map(|e| e.kind),
             name: ev.as_ref().map(|e| e.name.clone()),
-            // Detection alone must not latch pending work: both native
-            // eligibility and EventSignal.pending use hold OR ours.
-            ours: settings.random_events
-                && !inert_lamp
-                && !inert_tool
-                && !inert_box
-                && !inert_trap
-                && ev.as_ref().map(|e| e.ours).unwrap_or(false),
-            handling: self.in_flight,
-            hold: settings.random_events
-                && self.claim == RandomClaim::Host
-                && !inert_trap
-                && !inert_box
-                && (self.in_flight
-                    || self.acting
-                    || ent_hold
-                    || ev.as_ref().is_some_and(|e| is_trapped(e.kind))),
+            ours: published.ours,
+            handling: published.handling,
+            hold: published.hold,
             toggle: settings.random_events,
-            claim: self.claim,
+            claim: published.claim,
             cooldown,
         }
     }
@@ -941,8 +1112,8 @@ impl Guardian {
                     i32::from(state.no_progress_ticks) >= state.flee_distance.saturating_add(2);
                 if (stalled || state.elapsed_ticks >= EVADE_GIVE_UP_TICKS) && !state.gave_up {
                     state.gave_up = true;
-                    if self.acting_kind == RandomKind::Evade {
-                        self.acting = false;
+                    if self.acting_kind() == Some(RandomKind::Evade) {
+                        self.end_solver();
                         self.flee_from = None;
                     }
                     api::host_log!(
@@ -1044,8 +1215,8 @@ impl Guardian {
 
     fn clear_plant(&mut self) {
         self.plant = PlantProbe::Idle;
-        if self.acting_kind == RandomKind::Pick {
-            self.acting = false;
+        if self.acting_kind() == Some(RandomKind::Pick) {
+            self.end_solver();
         }
     }
 
@@ -1054,8 +1225,8 @@ impl Guardian {
             self.ignore_plant(actor);
         }
         self.plant = PlantProbe::Idle;
-        if self.acting_kind == RandomKind::Pick {
-            self.acting = false;
+        if self.acting_kind() == Some(RandomKind::Pick) {
+            self.end_solver();
         }
     }
 
@@ -1120,8 +1291,8 @@ impl Guardian {
             self.ignore_plant(replacement);
         }
         self.plant = PlantProbe::Idle;
-        if self.acting_kind == RandomKind::Pick {
-            self.acting = false;
+        if self.acting_kind() == Some(RandomKind::Pick) {
+            self.end_solver();
         }
     }
 
@@ -1171,8 +1342,8 @@ impl Guardian {
         // The in-flight dialog continues on its own handle, independent
         // of a fresh detect: the genie can despawn while the chat is
         // still open, and detect would then return None.
-        if self.in_flight {
-            if self.continues >= MAX_CONTINUES {
+        if let Some(handle) = self.dialog() {
+            if u32::from(handle.continues) >= MAX_CONTINUES {
                 self.clear_handle();
                 return;
             }
@@ -1184,15 +1355,19 @@ impl Guardian {
             };
             match result {
                 SendResult::Sent { .. } => {
-                    self.continues += 1;
+                    if let Some(handle) = self.dialog_mut() {
+                        handle.continues = handle.continues.saturating_add(1);
+                    }
                 }
                 // Spec: stop when continue refuses. Keep one tick after
                 // Talk-to for chat to open; clear once chat is still
                 // closed and a continue/answer has refused.
                 SendResult::Refused { .. } => {
                     if !chat_is_open(snap) {
-                        if self.continues == 0 {
-                            self.continues = 1;
+                        if handle.continues == 0 {
+                            if let Some(handle) = self.dialog_mut() {
+                                handle.continues = 1;
+                            }
                         } else {
                             self.clear_handle();
                         }
@@ -1224,49 +1399,48 @@ impl Guardian {
         // so the drain must run while `detect` already shows nothing (or a
         // newly spawned event). It takes the slot, like the dialog handle,
         // until it completes or gives up.
-        if self.acting && self.acting_kind == RandomKind::Lamp && self.lamp_confirmed {
+        if self.acting_kind() == Some(RandomKind::Lamp) && self.lamp_confirmed {
             self.step_lamp(driver, snap, settings);
             return;
         }
         let Some(ev) = ev else {
-            if self.acting {
+            if self.acting() {
                 self.resolve(
                     driver,
                     snap,
-                    self.acting_kind == RandomKind::Evade && self.evade.is_none(),
+                    self.acting_kind() == Some(RandomKind::Evade) && self.evade.is_none(),
                 );
             }
             return;
         };
         if !ev.ours && ev.kind != RandomKind::Pick {
-            if self.acting {
+            if self.acting() {
                 self.resolve(
                     driver,
                     snap,
-                    self.acting_kind == RandomKind::Evade && self.evade.is_none(),
+                    self.acting_kind() == Some(RandomKind::Evade) && self.evade.is_none(),
                 );
             }
             return;
         }
-        if self.acting {
-            let same_evade = self.acting_kind != RandomKind::Evade
+        if self.acting() {
+            let same_evade = self.acting_kind() != Some(RandomKind::Evade)
                 || self
                     .evade
                     .as_ref()
                     .is_some_and(|state| ev.npc_index == Some(state.index));
-            if ev.kind != self.acting_kind || !same_evade {
+            if Some(ev.kind) != self.acting_kind() || !same_evade {
                 self.resolve(
                     driver,
                     snap,
-                    self.acting_kind == RandomKind::Evade && self.evade.is_none(),
+                    self.acting_kind() == Some(RandomKind::Evade) && self.evade.is_none(),
                 );
             } else {
                 self.step_act(driver, snap, settings, ev, now_ms);
             }
             return;
         }
-        self.acting = true;
-        self.acting_kind = ev.kind;
+        self.begin_solver(ev.kind);
         match ev.kind {
             RandomKind::Evade => {
                 // The pre-flee tile: the walk-back target after despawn.
@@ -1309,7 +1483,10 @@ impl Guardian {
         ev: &DetectedRandom,
         now_ms: u64,
     ) {
-        match self.acting_kind {
+        let Some(kind) = self.acting_kind() else {
+            return;
+        };
+        match kind {
             RandomKind::Dialog => self.step_dialog(driver, snap, ev, now_ms),
             RandomKind::Pick => self.step_pick(driver, snap, ev, now_ms),
             RandomKind::Evade => self.step_evade(driver, snap, ev),
@@ -1328,16 +1505,16 @@ impl Guardian {
     /// walk-back toward the pre-flee tile, and the lost-tool re-wield of
     /// a handle that was worn.
     fn resolve<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, walk_back: bool) {
-        if self.acting_kind == RandomKind::Evade && walk_back {
+        if self.acting_kind() == Some(RandomKind::Evade) && walk_back {
             if let Some((fx, fz)) = self.flee_from.take() {
                 walk(driver, fx, fz);
             }
-        } else if self.acting_kind == RandomKind::Evade {
+        } else if self.acting_kind() == Some(RandomKind::Evade) {
             self.flee_from = None;
         }
         // Content handles omit the tier: "Axe handle" can restore "Rune axe".
         // Re-wield only a formerly worn tool; Gatherer also validates its gates.
-        if self.acting_kind == RandomKind::LostTool && self.tool_was_worn {
+        if self.acting_kind() == Some(RandomKind::LostTool) && self.tool_was_worn {
             if let Some(base) = self
                 .tool_handle_base
                 .as_deref()
@@ -1356,7 +1533,7 @@ impl Guardian {
                 }
             }
         }
-        self.acting = false;
+        self.end_solver();
         self.flee_from = None;
         self.tool_was_worn = false;
         self.tool_handle_base = None;
@@ -1381,20 +1558,20 @@ impl Guardian {
         now_ms: u64,
     ) {
         let Some(index) = ev.npc_index else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         // A slot binned this pass (the wrong-talk above) or earlier is
         // not re-engaged; detect skips binned slots, this guards the
         // same-tick bin.
         if binned(index, now_ms, &self.cooldown) {
-            self.acting = false;
+            self.end_solver();
             return;
         }
         // `ev.npc_index` is the client NPC slot (`NpcView.index`), not
         // the dense view-vec position, so the lookup must scan by slot.
         let Some(npc) = npc_by_index(snap.npcs(), index) else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         let Some((px, pz, level)) = snap.tile() else {
@@ -1412,12 +1589,10 @@ impl Guardian {
         let mut ix = Interactions::new(snap, driver);
         match ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".to_string())) {
             SendResult::Sent { .. } => {
-                self.in_flight = true;
-                self.in_flight_index = Some(index);
-                self.continues = 0;
-                self.acting = false;
+                self.begin_dialog(index);
+                self.end_solver();
             }
-            SendResult::Refused { .. } => self.acting = false,
+            SendResult::Refused { .. } => self.end_solver(),
         }
     }
 
@@ -1440,11 +1615,11 @@ impl Guardian {
             level,
         };
         let Some(index) = ev.npc_index else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         let Some(npc) = npc_by_index(snap.npcs(), index) else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         let display_name = snap
@@ -1470,7 +1645,7 @@ impl Guardian {
                 ix.interact(OpTarget::Npc(npc), ActionSpec::Label("Pick".to_string())),
                 SendResult::Refused { .. }
             ) {
-                self.acting = false;
+                self.end_solver();
             }
             return;
         }
@@ -1483,7 +1658,7 @@ impl Guardian {
         match self.plant.clone() {
             PlantProbe::Idle => {
                 if distance > 1 {
-                    self.acting = false;
+                    self.end_solver();
                     return;
                 }
                 let mut ix = Interactions::new(snap, driver);
@@ -1497,7 +1672,7 @@ impl Guardian {
                     SendResult::Refused { .. } => {
                         self.ignore_plant(actor);
                         self.plant = PlantProbe::Idle;
-                        self.acting = false;
+                        self.end_solver();
                     }
                 }
             }
@@ -1508,7 +1683,7 @@ impl Guardian {
                 if actor != expected {
                     self.ignore_plant(actor);
                     self.plant = PlantProbe::Idle;
-                    self.acting = false;
+                    self.end_solver();
                 } else if now_ms >= deadline_ms {
                     self.ignore_current_plant();
                 }
@@ -1522,7 +1697,7 @@ impl Guardian {
                 if actor != expected {
                     self.ignore_plant(actor);
                     self.plant = PlantProbe::Idle;
-                    self.acting = false;
+                    self.end_solver();
                     return;
                 }
                 if now_ms >= deadline_ms || continues >= MAX_PLANT_CONTINUES {
@@ -1590,7 +1765,7 @@ impl Guardian {
             )
         })
         else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         if fallback_exhausted {
@@ -1681,7 +1856,7 @@ impl Guardian {
         let Some(hazard) = snap.locs().iter().find(|loc| {
             is_hazard_loc_name(loc.name.as_deref()) && cheb((px, pz), (loc.tile.x, loc.tile.z)) <= 2
         }) else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         for (x, z) in hazard_flee_candidates((px, pz), (hazard.tile.x, hazard.tile.z)) {
@@ -1698,7 +1873,7 @@ impl Guardian {
     /// the stage.
     fn step_mime<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
         if !on_mime_square(snap) {
-            self.acting = false;
+            self.end_solver();
             return;
         }
         // Watch the mime NPC (rs2b0t watches every frame).
@@ -1738,13 +1913,13 @@ impl Guardian {
             .sum();
         if count == 0 {
             self.box_solve = BoxSolve::default();
-            self.acting = false;
+            self.end_solver();
             return;
         }
         let tick = snap.tick();
         match self.box_solve.phase {
             BoxPhase::Stalled => {
-                self.acting = false;
+                self.end_solver();
                 return;
             }
             BoxPhase::Answering {
@@ -1834,7 +2009,7 @@ impl Guardian {
         self.box_solve.last_failure = Some(failure);
         if self.box_solve.failures >= BOX_MAX_FAILURES {
             self.box_solve.phase = BoxPhase::Stalled;
-            self.acting = false;
+            self.end_solver();
             api::host_log!(
                 Category::RandomEvent,
                 Level::Warn,
@@ -1855,11 +2030,11 @@ impl Guardian {
     /// [`maze::SOLVE_TICKS`] solver ticks is given up (inert, no hold).
     fn step_maze<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
         let Some((px, pz, level)) = snap.tile() else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         if api::random::trapped_area(px, pz, level) != Some(RandomKind::Maze) {
-            self.acting = false;
+            self.end_solver();
             return;
         }
         self.maze_ticks += 1;
@@ -1872,7 +2047,7 @@ impl Guardian {
             );
             self.maze = None;
             self.maze_stalled = true;
-            self.acting = false;
+            self.end_solver();
             return;
         }
         if self.maze.is_none() {
@@ -1940,7 +2115,7 @@ impl Guardian {
             // Detect-only: tick() already skipped act + ours. Keep the
             // latch down if we still land here (live toggle mid-step).
             self.clear_lamp();
-            self.acting = false;
+            self.end_solver();
             return;
         }
         let lamp_here = lamp_held(snap);
@@ -1953,7 +2128,7 @@ impl Guardian {
             // The lamp left the pack without a Confirm of ours (another
             // actor consumed it): nothing left to drive.
             self.clear_lamp();
-            self.acting = false;
+            self.end_solver();
             return;
         }
         if snap.modals().main == LAMP_IF_ROOT {
@@ -2021,7 +2196,7 @@ impl Guardian {
             return;
         }
         let Some(lamp) = snap.inventory().iter().find(|i| i.def.id == LAMP_OBJ) else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         let mut ix = Interactions::new(snap, driver);
@@ -2031,7 +2206,7 @@ impl Guardian {
                 self.lamp_wait = 0;
                 self.lamp_rubs += 1;
             }
-            SendResult::Refused { .. } => self.acting = false,
+            SendResult::Refused { .. } => self.end_solver(),
         }
     }
 
@@ -2060,7 +2235,7 @@ impl Guardian {
                 // redemption is real. Release the hold; the next lamp, if
                 // any, starts from a fresh Rub.
                 self.clear_lamp();
-                self.acting = false;
+                self.end_solver();
                 return;
             }
             if chat && self.lamp_dialog < MAX_LAMP_DIALOGUE {
@@ -2086,7 +2261,7 @@ impl Guardian {
                 "lamp: the reward never completed; releasing the hold"
             );
             self.clear_lamp();
-            self.acting = false;
+            self.end_solver();
         } else {
             // Confirm did not take: the lamp is still held and the IF stayed
             // open or the selection was refused. Latch without replaying.
@@ -2121,7 +2296,7 @@ impl Guardian {
         self.lamp_rubbed = false;
         self.lamp_wait = 0;
         self.lamp_park = ticks;
-        self.acting = false;
+        self.end_solver();
     }
 
     /// A stalled redemption or a paused Rub: detected, but not acted on or
@@ -2136,7 +2311,7 @@ impl Guardian {
     fn stall_lamp(&mut self) {
         self.clear_lamp();
         self.lamp_stalled = true;
-        self.acting = false;
+        self.end_solver();
     }
 
     /// Take the named lost fishing gear from the ground (Chebyshev ≤ 10,
@@ -2154,7 +2329,7 @@ impl Guardian {
             .iter()
             .find(|g| g.distance <= LOST_GEAR_RADIUS && item_named(g.def.name.as_deref(), gear))
         else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         if pack_full(snap) {
@@ -2170,7 +2345,7 @@ impl Guardian {
             ActionSpec::Label("Take".to_string()),
         ) {
             SendResult::Sent { .. } => {}
-            SendResult::Refused { .. } => self.acting = false,
+            SendResult::Refused { .. } => self.end_solver(),
         }
     }
 
@@ -2187,23 +2362,23 @@ impl Guardian {
             .iter()
             .find(|i| is_tool_handle(i.def.name.as_deref()));
         let Some(handle) = handle_inv.or(handle_worn) else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         let Some(kind) = tool_part(handle.def.name.as_deref(), "handle") else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         if self.tool_recovery.is_none() {
             self.begin_lost_tool(snap);
         }
         let Some(recovery) = self.tool_recovery.as_ref() else {
-            self.acting = false;
+            self.end_solver();
             return;
         };
         if recovery.kind != kind {
             self.tool_stalled = true;
-            self.acting = false;
+            self.end_solver();
             return;
         }
         let tick = snap.tick();
@@ -2271,12 +2446,12 @@ impl Guardian {
         if target.is_none() && head_inv.is_none() {
             if pack_full(snap) && sacrificial_item(snap).is_none() {
                 self.tool_stalled = true;
-                self.acting = false;
+                self.end_solver();
                 return;
             }
             if tick.wrapping_sub(event_tick) >= LOST_TOOL_SPAWN_GRACE_TICKS {
                 self.tool_stalled = true;
-                self.acting = false;
+                self.end_solver();
                 return;
             }
             if let Some(handle) = handle_worn {
@@ -2324,7 +2499,7 @@ impl Guardian {
                     .is_some_and(|missing| tick.wrapping_sub(missing) >= 1)
                 {
                     self.tool_stalled = true;
-                    self.acting = false;
+                    self.end_solver();
                     return;
                 }
                 if target.missing_since_tick.is_none() {
@@ -2354,7 +2529,7 @@ impl Guardian {
                 let _ = ix.interact(OpTarget::Item(junk), ActionSpec::Label("Drop".to_string()));
             } else {
                 self.tool_stalled = true;
-                self.acting = false;
+                self.end_solver();
             }
             return;
         }
@@ -2579,7 +2754,7 @@ impl Guardian {
         if rejected {
             self.tool_refit_after_sequence = None;
             self.tool_stalled = true;
-            self.acting = false;
+            self.end_solver();
         }
     }
 
@@ -2588,16 +2763,19 @@ impl Guardian {
     /// Continue/answer refuse clears via [`Guardian::act`] when chat is
     /// closed (after a one-tick grace post Talk-to).
     fn dialog_done(&self, snap: &GameSnapshot) -> bool {
-        let npc_here = self
-            .in_flight_index
-            .is_some_and(|i| snap.npcs().iter().any(|v| v.index == i));
+        let npc_here = self.dialog().is_some_and(|handle| {
+            snap.npcs()
+                .iter()
+                .any(|v| v.index == usize::from(handle.index))
+        });
         !chat_is_open(snap) && !npc_here
     }
 
     fn clear_handle(&mut self) {
-        self.in_flight = false;
-        self.in_flight_index = None;
-        self.continues = 0;
+        if let Some(active) = self.active.as_mut() {
+            active.dialog = None;
+        }
+        self.settle();
     }
 }
 /// Whether the current scene is complete for the target tile. A missing
