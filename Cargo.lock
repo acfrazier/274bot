@@ -2090,6 +2090,7 @@ dependencies = [
  "scenario",
  "script",
  "script-js",
+ "seat-model",
  "serde",
  "serde_json",
  "sha2",

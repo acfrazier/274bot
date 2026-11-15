@@ -27,37 +27,43 @@ const MAX_ENT_HOLD_TICKS: u8 = 60;
 /// One latched Ent: the client NPC slot, its cache type id, and its current
 /// world tile. No allocation; the display name is deliberately not stored
 /// (it is a tree name, not an identity).
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct EntSight {
     index: usize,
     npc_type: usize,
     tile: (i32, i32),
 }
 
-pub(super) struct EntGuard {
-    active: Option<EntSight>,
-    active_ticks: u8,
-    /// An expired slot stays excluded until the client observes its reversion
-    /// or removal; otherwise the proximity fallback could immediately relatch it.
-    expired: Option<(usize, usize)>,
+/// The live Ent guard: the latched slot, the fresh ticks it has held and
+/// whether its stop step went out. It is host work, so it lives in the
+/// Guardian's active event; only the expired-slot exclusion ([`EntGuard`])
+/// outlives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EntLatch {
+    sight: EntSight,
+    ticks: u8,
     stop_sent: bool,
 }
 
+/// The Ent guard's history: an expired slot stays excluded until the client
+/// observes its reversion or removal; otherwise the proximity fallback could
+/// immediately relatch it. It sends nothing and holds nothing.
+pub(super) struct EntGuard {
+    expired: Option<(usize, usize)>,
+}
+
 impl EntGuard {
-    /// Idle guard, no latch and no stop outstanding.
+    /// No expired slot.
     pub(super) fn new() -> Self {
-        Self {
-            active: None,
-            active_ticks: 0,
-            expired: None,
-            stop_sent: false,
-        }
+        Self { expired: None }
     }
 
-    /// Retain the exact slot until reversion or the 60-tick content bound;
-    /// only fresh ticks send or retry.
+    /// Retain the exact slot of `latch` until reversion or the 60-tick
+    /// content bound; only fresh ticks send or retry. Returns whether the
+    /// guard holds the slot this pass.
     pub(super) fn tick<D: Driver>(
         &mut self,
+        latch: &mut Option<EntLatch>,
         driver: &mut D,
         snap: &GameSnapshot,
         game_data: Option<&SelectedGameData>,
@@ -69,66 +75,58 @@ impl EntGuard {
                 npc.r#type == Some(npc_type) && is_ent_slot(npc.r#type, game_data)
             });
             if still_visible {
-                self.stop_sent = false;
+                *latch = None;
                 return false;
             }
             self.expired = None;
         }
 
-        if let Some(latch) = self.active.take() {
-            if let Some(npc) = npc_by_index(snap.npcs(), latch.index) {
-                if npc.r#type == Some(latch.npc_type) && is_ent_slot(npc.r#type, game_data) {
+        if let Some(mut held) = latch.take() {
+            if let Some(npc) = npc_by_index(snap.npcs(), held.sight.index) {
+                if npc.r#type == Some(held.sight.npc_type) && is_ent_slot(npc.r#type, game_data) {
                     let player_target = snap.local_player().and_then(|lp| lp.player.actor.target);
                     let target_conflict = match player_target {
                         Some(target) => {
-                            target.kind != ActorKind::Npc || target.index != latch.index
+                            target.kind != ActorKind::Npc || target.index != held.sight.index
                         }
-                        None => another_player_targets_ent(snap, latch.index),
+                        None => another_player_targets_ent(snap, held.sight.index),
                     };
                     if !target_conflict {
-                        if fresh && self.active_ticks >= MAX_ENT_HOLD_TICKS {
-                            self.active_ticks = 0;
-                            self.expired = Some((latch.index, latch.npc_type));
-                            self.stop_sent = false;
+                        if fresh && held.ticks >= MAX_ENT_HOLD_TICKS {
+                            self.expired = Some((held.sight.index, held.sight.npc_type));
                             return false;
                         }
                         if fresh {
-                            self.active_ticks = self.active_ticks.saturating_add(1);
+                            held.ticks = held.ticks.saturating_add(1);
                         }
-                        let tile = (npc.network.x, npc.network.z);
-                        self.active = Some(EntSight {
-                            index: latch.index,
-                            npc_type: latch.npc_type,
-                            tile,
-                        });
+                        held.sight.tile = (npc.network.x, npc.network.z);
                         if !enabled {
-                            self.stop_sent = false;
+                            held.stop_sent = false;
+                            *latch = Some(held);
                             return false;
                         }
-                        if !self.stop_sent && fresh && stop_step(driver, snap, tile) {
-                            self.stop_sent = true;
+                        if !held.stop_sent && fresh && stop_step(driver, snap, held.sight.tile) {
+                            held.stop_sent = true;
                         }
+                        *latch = Some(held);
                         return true;
                     }
                 }
             }
-            self.active_ticks = 0;
-            self.stop_sent = false;
         }
 
         if !enabled {
-            self.stop_sent = false;
             return false;
         }
         let Some(seen) = detect_ent(snap, game_data) else {
             return false;
         };
-        let tile = seen.tile;
-        self.active = Some(seen);
-        self.active_ticks = if fresh { 1 } else { 0 };
-        if fresh && stop_step(driver, snap, tile) {
-            self.stop_sent = true;
-        }
+        let stop_sent = fresh && stop_step(driver, snap, seen.tile);
+        *latch = Some(EntLatch {
+            sight: seen,
+            ticks: u8::from(fresh),
+            stop_sent,
+        });
         true
     }
 }

@@ -38,17 +38,42 @@ pub enum Family {
     Solver,
     /// A flee from a hostile actor: a solver whose act the next hostile actor
     /// inherits. The replacement keeps the pending act, and its hold, without
-    /// a release tick, and starts its own bounded wait.
+    /// a release tick, and starts its own escape budget.
+    ///
+    /// The escape budget runs on the content's clock, not on the host's
+    /// passes: every fresh tick the server did not block, from the episode's
+    /// first observation, whoever owns the event and whatever the toggle
+    /// says. The engaged actor keeps its target and attacks a player who
+    /// makes no outward progress from its spawn anchor, whoever moves the
+    /// player (`Npc.ts:77-85,661-670`; the hostile lifetime is
+    /// `macro_events.rs2:36`). A stun blocks the walk at the server
+    /// (`movecheck.rs2:1-6`) and spends nothing. A spent budget makes the
+    /// episode detect-only for any owner until the actor is gone.
     Evade,
     /// A trap square: the hold follows the detection while the host walks out;
     /// a bounded number of solver ticks gives the visit up.
     Trap,
+    /// One operation whose outcome must arrive inside a content window. The
+    /// lost tool's head lands within two content ticks of the loss, plus one
+    /// delivery tick (`macro_event_lost_axe.rs2:18,25-27`;
+    /// `macro_event_lost_pickaxe.rs2:20,25-29`; `projectile.rs2:31-35`). The
+    /// window runs from the episode's first observation on every fresh tick,
+    /// whoever owns the event and whatever the toggle says; the host that
+    /// finds it closed lets go, also when it begins after the window closed.
+    /// A pass that sees the toggle off re-arms a spent window once.
+    Window,
 }
 
 impl Family {
     /// One operation in flight and a bounded wait for its outcome.
     fn is_solver(self) -> bool {
-        matches!(self, Self::Solver | Self::Evade)
+        matches!(self, Self::Solver | Self::Evade | Self::Window)
+    }
+
+    /// The family's wait is the content's clock of the episode, not the
+    /// host's passes.
+    fn has_clock(self) -> bool {
+        matches!(self, Self::Evade | Self::Window)
     }
 }
 
@@ -122,11 +147,15 @@ pub enum GuardianMutation {
     DuplicateOpOnReclaim,
     /// A regained claim replays the rising-edge callback.
     SuccessorCallbackReplay,
+    /// A replacement script runtime inherits the claim of the runtime before
+    /// it (round-2 review probe: a compiled script that never claims the event
+    /// keeps its predecessor's `Handle`).
+    ClaimKeptAcrossRuntime,
 }
 
 impl GuardianMutation {
     /// Every mutation, with the invariant that must catch it.
-    pub const ALL: [(Self, &'static str); 24] = [
+    pub const ALL: [(Self, &'static str); 25] = [
         (Self::StuckGathererHold, "toggle-off-publishes"),
         (Self::StalledHolds, "stalled-hold"),
         (Self::FleeInterrupted, "wait-early"),
@@ -160,6 +189,7 @@ impl GuardianMutation {
         (Self::ToggleOffKeepsOurs, "toggle-off-publishes"),
         (Self::DuplicateOpOnReclaim, "duplicate-op"),
         (Self::SuccessorCallbackReplay, "duplicate-callback"),
+        (Self::ClaimKeptAcrossRuntime, "stale-runtime"),
     ];
 }
 
@@ -175,6 +205,13 @@ pub struct GuardianBounds {
     /// The alphabet carries the Ent guard's steps and a reduced set of event
     /// families, so the state graph stays inside the profile caps.
     pub ent: bool,
+    /// The alphabet carries the content-window family. The seat composition
+    /// leaves it out to stay inside the profile caps: its publications are a
+    /// solver's, and `c6-ownership` explores it.
+    pub window: bool,
+    /// Fresh ticks the Ent guard may hold (the content gives an Ent 60
+    /// ticks; profiles bound it like a wait).
+    pub ent_hold: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -197,8 +234,9 @@ struct Event {
 }
 
 /// One owner of one episode and the host work it has in flight. `guard` is the
-/// Ent guard's hold (a bounded host guard that needs no detected event); like
-/// the real Guardian's, its latch lives beside the active event.
+/// Ent guard's hold (a bounded host guard that needs no detected event). The
+/// real Guardian keeps the Ent's live latch in its active event and only the
+/// expired-slot exclusion beside it; the model's [`EntLatch`] is that latch.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct Active {
     key: u8,
@@ -207,6 +245,32 @@ struct Active {
     owner: Owner,
     phase: Phase,
     guard: bool,
+    /// With a Script owner: the script runtime that made the claim has ended
+    /// (Stop, failure, a new Start, a session replacement). The real Guardian
+    /// compares the runtime generation of the claim with the current one; this
+    /// is that comparison. Pause and Resume keep the runtime.
+    stale: bool,
+}
+
+/// The content clock of the observed episode of a clock family: fresh ticks
+/// since its first observation that spend it (`spent`), and whether one of
+/// them was a tick the server blocked (`blocked`, only under the
+/// `FleeInterrupted` mutation). It is the Guardian's tracking of the world,
+/// not host work. `rearmed`: the operator's toggle-off re-armed a spent
+/// Window, and the next host begin opens a new window.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct EpisodeClock {
+    id: u8,
+    spent: u8,
+    blocked: bool,
+    rearmed: bool,
+}
+
+impl EpisodeClock {
+    /// The spent ticks that could make progress.
+    fn unblocked(self) -> u8 {
+        self.spent.saturating_sub(u8::from(self.blocked))
+    }
 }
 
 /// The Ent guard's latch: its slot is held for a bounded number of fresh
@@ -321,6 +385,7 @@ pub struct GuardianState {
     last_sig: Option<u8>,
     knocks: u8,
     active: Option<Active>,
+    clock: Option<EpisodeClock>,
     ent: EntLatch,
     stale_hold: bool,
     // What the last pass published.
@@ -354,6 +419,7 @@ impl GuardianState {
             last_sig: None,
             knocks: 0,
             active: None,
+            clock: None,
             ent: EntLatch::Absent,
             stale_hold: false,
             out: Publication::default(),
@@ -438,6 +504,7 @@ impl GuardianState {
             owner,
             phase: Phase::Idle,
             guard: false,
+            stale: false,
         }
     }
 
@@ -447,7 +514,12 @@ impl GuardianState {
         }
         let previous = self.owner();
         match self.active.as_mut() {
-            Some(active) => active.owner = owner,
+            Some(active) => {
+                active.owner = owner;
+                // A claim made now is the current runtime's; a Host owner has
+                // no runtime.
+                active.stale = false;
+            }
             None => self.active = Some(self.shell(owner)),
         }
         if previous == Owner::Host
@@ -488,6 +560,16 @@ impl GuardianState {
 
     fn script_claims(&self) -> bool {
         self.script == Script::Running && self.wants
+    }
+
+    /// The script runtime ended or a new one started: a claim the old runtime
+    /// made is no longer the current runtime's.
+    fn end_runtime(&mut self) {
+        if let Some(active) = self.active.as_mut()
+            && active.owner == Owner::Script
+        {
+            active.stale = true;
+        }
     }
 
     pub fn apply(&mut self, step: &GuardianStep) -> Result<(), String> {
@@ -542,6 +624,8 @@ impl GuardianState {
                 self.script_exit = None;
                 self.wants = *wants;
                 self.live = *live;
+                // A new runtime: the previous runtime's claim is not its claim.
+                self.end_runtime();
             }
             GuardianStep::ScriptExit(exit) => {
                 let allowed = match exit {
@@ -557,6 +641,9 @@ impl GuardianState {
                 };
                 self.script_exit =
                     matches!(self.mutation, GuardianMutation::ClaimKeptOnExit(_)).then_some(*exit);
+                if *exit != ScriptExit::Pause {
+                    self.end_runtime();
+                }
                 if self.mutation == GuardianMutation::GlobalUnhold
                     && let Some(seat) = self.seat.as_mut()
                 {
@@ -589,9 +676,15 @@ impl GuardianState {
                 self.script = Script::Stopped;
                 self.script_exit = matches!(self.mutation, GuardianMutation::ClaimKeptOnExit(_))
                     .then_some(ScriptExit::Stop);
+                self.end_runtime();
                 self.chat_open = false;
-                // The new session's snapshot has not seen the world yet.
+                // The new session's snapshot has not seen the world yet, and
+                // the new Guardian has tracked nothing: no signature, no
+                // callback, no clock.
                 self.observed = None;
+                self.last_sig = None;
+                self.knocks = 0;
+                self.clock = None;
                 self.ent_observed = false;
                 self.ent = EntLatch::Absent;
             }
@@ -712,12 +805,24 @@ impl GuardianState {
             }
         }
         if fresh {
+            // A claim belongs to the runtime that made it. A runtime that
+            // ended or was replaced returns it within this tick, and its
+            // successor is not called back (design 3.3).
+            if self.claim_returns()
+                && self.mutation != GuardianMutation::ClaimKeptAcrossRuntime
+                && self
+                    .active
+                    .is_some_and(|active| active.owner == Owner::Script && active.stale)
+            {
+                self.set_owner(Owner::Host);
+            }
             let sig = event.map(|event| event.id);
             if sig != self.last_sig {
                 self.last_sig = sig;
                 self.knocks = 0;
                 if let Some(active) = self.active.as_mut() {
                     active.owner = Owner::Host;
+                    active.stale = false;
                 }
                 let claim = if event.is_some() && self.script_claims() {
                     Owner::Script
@@ -749,6 +854,14 @@ impl GuardianState {
         {
             self.set_owner(Owner::Host);
         }
+        if fresh {
+            self.content_clock(blocked);
+        }
+        // The episode the host pass sees as stalled: a stall the content clock
+        // made on this tick counts like one from an earlier tick.
+        let stalled_for_host = self
+            .active
+            .is_some_and(|active| matches!(active.phase, Phase::Stalled { .. }));
 
         let guard = self.ent_pass(fresh);
         self.set_guard(guard);
@@ -806,7 +919,7 @@ impl GuardianState {
                     ));
                 }
             }
-            if matches!(was.phase, Phase::Stalled { .. })
+            if (matches!(was.phase, Phase::Stalled { .. }) || stalled_for_host)
                 && matches!(now.phase, Phase::Pending { .. })
             {
                 self.violation = Some((
@@ -894,8 +1007,26 @@ impl GuardianState {
         let guarded = self.active.is_some_and(|active| active.guard);
         if !enabled || guarded || self.owner() != Owner::Host {
             // A script owns the event, or the toggle is off: the host's work
-            // in flight keeps its place and spends nothing. Under a script
-            // claim, the mutation lets time count anyway.
+            // in flight keeps its place and spends nothing.
+            //
+            // A pass that sees the toggle off clears a Window's stall latch:
+            // the operator's toggle re-arms one new window (the real
+            // Guardian's `tool_stalled` reset on a toggle-off pass).
+            if !enabled
+                && let Some(active) = self.active
+                && active.family == Family::Window
+                && matches!(active.phase, Phase::Stalled { .. })
+                && event.is_some_and(|event| event.id == active.key)
+            {
+                if let Some(active) = self.active.as_mut() {
+                    active.phase = Phase::Idle;
+                }
+                if let Some(clock) = self.clock.as_mut() {
+                    clock.rearmed = true;
+                }
+                self.settle();
+            }
+            // Under a script claim, the mutation lets time count anyway.
             if self.owner() == Owner::Script
                 && self.mutation == GuardianMutation::ScriptTimeCountsWait
                 && let Some(Active {
@@ -919,7 +1050,7 @@ impl GuardianState {
         }
         let Some(active) = self.active else {
             if let Some(event) = event {
-                self.start(event);
+                self.begin(event);
             }
             return;
         };
@@ -962,6 +1093,22 @@ impl GuardianState {
                     } else {
                         self.finish(Phase::Idle);
                     }
+                    return;
+                }
+                // A clock family's wait is the episode's content clock
+                // (`content_clock`), not this pass: an Evade budget ends there,
+                // and a Window ends at the first host pass that finds it
+                // closed.
+                if active.family == Family::Window {
+                    if self.window_closed(active.key) {
+                        self.finish(Phase::Stalled {
+                            logged: true,
+                            unblocked: self.bounds.wait,
+                        });
+                    }
+                    return;
+                }
+                if active.family == Family::Evade {
                     return;
                 }
                 let counts = !blocked
@@ -1017,7 +1164,7 @@ impl GuardianState {
             }
             Phase::Idle => {
                 if let Some(event) = event {
-                    self.start(event);
+                    self.begin(event);
                 }
             }
         }
@@ -1036,7 +1183,7 @@ impl GuardianState {
             EntLatch::Expired => false,
             EntLatch::Held { ticks } => {
                 if fresh
-                    && ticks >= self.bounds.wait
+                    && ticks >= self.bounds.ent_hold
                     && self.mutation != GuardianMutation::GuardNeverExpires
                 {
                     self.ent = EntLatch::Expired;
@@ -1067,6 +1214,117 @@ impl GuardianState {
         self.settle();
     }
 
+    /// The host begins the work of `event`. A spent Evade budget is not
+    /// begun again. A Window keeps the loss's first observation: a host that
+    /// begins after it closed finds no head to wait for and lets go at once,
+    /// unless the operator re-armed it.
+    fn begin(&mut self, event: Event) {
+        if self.evade_exhausted() {
+            return;
+        }
+        if event.family == Family::Window
+            && let Some(clock) = self.clock.as_mut().filter(|clock| clock.id == event.id)
+            && clock.rearmed
+        {
+            clock.spent = 0;
+            clock.rearmed = false;
+        }
+        self.start(event);
+        if event.family == Family::Window && self.window_closed(event.id) {
+            self.finish(Phase::Stalled {
+                logged: true,
+                unblocked: self.bounds.wait,
+            });
+        }
+    }
+
+    /// The content clock of the observed episode of a clock family. It runs on
+    /// every fresh tick after the first observation, whoever owns the event
+    /// and whatever the toggle says. A spent Evade budget releases the
+    /// episode for any owner.
+    fn content_clock(&mut self, blocked: bool) {
+        let Some(event) = self.observed.filter(|event| event.family.has_clock()) else {
+            self.clock = None;
+            return;
+        };
+        let limit = self.bounds.wait;
+        let clock = match self.clock {
+            Some(clock) if clock.id == event.id => {
+                let window = event.family == Family::Window;
+                let counts =
+                    !blocked || window || self.mutation == GuardianMutation::FleeInterrupted;
+                EpisodeClock {
+                    id: event.id,
+                    spent: if counts {
+                        clock.spent.saturating_add(1).min(limit)
+                    } else {
+                        clock.spent
+                    },
+                    blocked: clock.blocked || (counts && blocked && !window),
+                    rearmed: clock.rearmed,
+                }
+            }
+            // The first observation of the episode.
+            _ => EpisodeClock {
+                id: event.id,
+                spent: 0,
+                blocked: false,
+                rearmed: false,
+            },
+        };
+        self.clock = Some(clock);
+        if self.evade_exhausted() {
+            self.exhaust(event, clock.unblocked());
+        }
+    }
+
+    /// The observed Evade episode spent its budget.
+    fn evade_exhausted(&self) -> bool {
+        self.observed.is_some_and(|event| {
+            event.family == Family::Evade
+                && self
+                    .clock
+                    .is_some_and(|clock| clock.id == event.id && clock.spent >= self.bounds.wait)
+        })
+    }
+
+    /// The Window of episode `id` has closed.
+    fn window_closed(&self, id: u8) -> bool {
+        self.clock
+            .is_some_and(|clock| clock.id == id && clock.spent >= self.bounds.wait)
+    }
+
+    /// A spent Evade budget: the episode is released with a logged failure,
+    /// whoever owns it. Another episode's work in flight (a dialog handle)
+    /// keeps its place; the spent episode publishes through its clock.
+    fn exhaust(&mut self, event: Event, unblocked: u8) {
+        let stalled = Phase::Stalled {
+            logged: true,
+            unblocked,
+        };
+        match self.active {
+            Some(active) if active.key == event.id => {
+                if matches!(active.phase, Phase::Stalled { .. }) {
+                    return;
+                }
+                if matches!(active.phase, Phase::Pending { .. }) {
+                    self.resolved_now = true;
+                }
+                if let Some(active) = self.active.as_mut() {
+                    active.phase = stalled;
+                }
+            }
+            None => {
+                let mut shell = self.shell(Owner::Host);
+                shell.key = event.id;
+                shell.family = event.family;
+                shell.phase = stalled;
+                self.active = Some(shell);
+            }
+            Some(_) => {}
+        }
+    }
+
     fn start(&mut self, event: Event) {
         let owner = self.owner();
         self.active = Some(Active {
@@ -1079,6 +1337,7 @@ impl GuardianState {
                 unblocked: 0,
             },
             guard: self.active.is_some_and(|active| active.guard),
+            stale: owner == Owner::Script && self.active.is_some_and(|active| active.stale),
         });
         if event.family == Family::Dialog {
             self.chat_open = true;
@@ -1098,7 +1357,8 @@ impl GuardianState {
         let matches_event = |active: &Active| event.is_some_and(|event| event.id == active.key);
         PublicationInputs {
             toggle: self.enabled,
-            detected: event.is_some(),
+            // A spent Evade budget is detected but no longer owned work.
+            detected: event.is_some() && !self.evade_exhausted(),
             claim_script: active.is_some_and(|active| active.owner == Owner::Script),
             dialog_in_flight: active.is_some_and(|active| {
                 active.family == Family::Dialog && matches!(active.phase, Phase::Pending { .. })
@@ -1189,13 +1449,13 @@ impl GuardianState {
             }
         }
         if let EntLatch::Held { ticks } = self.ent
-            && ticks > self.bounds.wait
+            && ticks > self.bounds.ent_hold
         {
             return fail(
                 "guard-unbounded",
                 format!(
                     "the Ent guard held {ticks} fresh ticks (bound {})",
-                    self.bounds.wait
+                    self.bounds.ent_hold
                 ),
             );
         }
@@ -1255,6 +1515,16 @@ impl GuardianState {
                     "a live script no longer claims the event but owns it".into(),
                 );
             }
+            if self.out.claim_script
+                && self
+                    .active
+                    .is_some_and(|active| active.owner == Owner::Script && active.stale)
+            {
+                return fail(
+                    "stale-runtime",
+                    "a script runtime that ended or was replaced still owns the event".into(),
+                );
+            }
             if let Some(event) = self.event {
                 let owned = self
                     .active
@@ -1287,7 +1557,7 @@ impl GuardianState {
 
     pub fn describe(&self) -> String {
         format!(
-            "event={:?} ent={:?}/{:?} script={:?} enabled={} session={} active={:?} out={:?} knocks={}",
+            "event={:?} ent={:?}/{:?} script={:?} enabled={} session={} active={:?} clock={:?} out={:?} knocks={}",
             self.event,
             self.ent_world,
             self.ent,
@@ -1295,6 +1565,7 @@ impl GuardianState {
             self.enabled,
             self.session,
             self.active,
+            self.clock,
             self.out,
             self.knocks
         )
@@ -1315,7 +1586,12 @@ fn alphabet(state: &GuardianState) -> Vec<GuardianStep> {
             (Family::Trap, false),
         ]
     };
-    for &(family, forced_host) in families {
+    let window: &[(Family, bool)] = if state.bounds.window && !state.bounds.ent {
+        &[(Family::Window, false)]
+    } else {
+        &[]
+    };
+    for &(family, forced_host) in families.iter().chain(window) {
         out.push(GuardianStep::Appear {
             family,
             forced_host,
@@ -1402,23 +1678,37 @@ impl GuardianProfile {
 
     pub fn bounds(self) -> GuardianBounds {
         match self {
-            Self::Ownership | Self::OwnershipSeat => GuardianBounds {
+            Self::Ownership => GuardianBounds {
                 wait: 2,
                 ids: 2,
                 sessions: 2,
                 ent: false,
+                window: true,
+                ent_hold: 2,
+            },
+            Self::OwnershipSeat => GuardianBounds {
+                wait: 2,
+                ids: 2,
+                sessions: 2,
+                ent: false,
+                window: false,
+                ent_hold: 2,
             },
             Self::OwnershipEnt => GuardianBounds {
                 wait: 2,
                 ids: 2,
                 sessions: 2,
                 ent: true,
+                window: false,
+                ent_hold: 2,
             },
             Self::Nightly => GuardianBounds {
                 wait: 4,
                 ids: 2,
                 sessions: 3,
                 ent: false,
+                window: true,
+                ent_hold: 4,
             },
         }
     }

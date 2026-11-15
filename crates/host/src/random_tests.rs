@@ -11,12 +11,13 @@ use std::sync::Arc;
 #[cfg(target_pointer_width = "64")]
 fn guardian_per_bot_state_stays_inline_and_small() {
     // The base Guardian is 944 bytes. The one `ActiveEvent` replaces the
-    // ownership cells and carries the family phases (box, maze, mime, lamp
-    // redemption) that the Guardian held as separate cells; the lamp's
-    // attempt history and the episode key (session, family, generation)
-    // stay beside it. Together they take 32 bytes less inline, with the
-    // test-only `last_inputs` record counted in.
-    assert_eq!(std::mem::size_of::<Guardian>(), 912);
+    // ownership cells and carries the family state of the work in flight
+    // (box, maze, mime, lamp redemption, flee, lost-tool recovery, plant
+    // probe, Ent latch) in one variant at a time, where the Guardian held
+    // each as a separate cell; the detector history and the episode key
+    // (session, family, generation) stay beside it. Together they take 240
+    // bytes less inline, with the test-only `last_inputs` record counted in.
+    assert_eq!(std::mem::size_of::<Guardian>(), 704);
 }
 
 fn cfg() -> ClientConfig {

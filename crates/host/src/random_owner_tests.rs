@@ -2,15 +2,22 @@
 //
 // The Guardian is replayed through traces of the checked ownership model
 // (`tools/seat-model/src/guardian.rs`). After every step the model and the real
-// Guardian must publish the same `claim`, `handling`, `ours` and `hold`, and the
-// invariants of the model hold over the real observations: the publications
-// equal their derivation, a script that stops, pauses or fails returns its claim
-// within one tick, the toggle off publishes nothing, and the host emits nothing
-// while a script owns the event.
+// Guardian must publish the same `claim`, `handling`, `acting`, `ours` and
+// `hold`, and the invariants of the model hold over the real observations: the
+// publications equal their derivation, a script that stops, pauses or fails
+// returns its claim within one tick, a claim names the runtime that made it,
+// the active event belongs to the current session, the toggle off publishes
+// nothing, and the host emits nothing while a script owns the event.
+//
+// The model's `Seat` steps compose the published hold with the real gameplay
+// seat. Host cannot reach the seat (it lives in `script`), so that replay is
+// host-play's `guardian_seat_conformance_tests.rs`, which drives this Guardian
+// through the real claim adapter and slot.
 use seat_model::guardian::{
     derive as model_derive, Family, GuardianBounds, GuardianMutation, GuardianState, GuardianStep,
     PublicationInputs as ModelInputs, ScriptExit,
 };
+use std::cell::Cell;
 use std::collections::{HashSet, VecDeque};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -24,11 +31,28 @@ enum Run {
 /// the script states that matter (`Slot::current_random_claim`, `Slot::on_random`
 /// in `crates/script/src/slot.rs`). `live` is a Load script with cached ignore
 /// membership; otherwise a compiled script answers only the rising edge.
+///
+/// Each double is one script runtime: replacing it (a new Start, a Stop, a
+/// failure, a session replacement, or a test that swaps in another script)
+/// is a new runtime identity, as the slot's runtime generation is. Pause and
+/// Resume change the double in place and keep the runtime.
 struct Claims {
     run: Run,
     wants: bool,
     live: bool,
     callbacks: u32,
+}
+
+thread_local! {
+    /// The runtime generation of the current claim double on this test thread.
+    static CLAIM_RUNTIME: Cell<u64> = const { Cell::new(0) };
+}
+
+impl Drop for Claims {
+    /// The runtime ends with its double.
+    fn drop(&mut self) {
+        CLAIM_RUNTIME.with(|runtime| runtime.set(runtime.get() + 1));
+    }
 }
 
 impl Claims {
@@ -38,6 +62,10 @@ impl Claims {
         } else {
             RandomClaim::Host
         }
+    }
+
+    fn current_runtime() -> ClaimRuntime {
+        ClaimRuntime::new(0, CLAIM_RUNTIME.with(Cell::get))
     }
 }
 
@@ -57,6 +85,10 @@ impl RandomClaimSource for Claims {
         } else {
             None
         }
+    }
+
+    fn runtime(&mut self) -> Option<ClaimRuntime> {
+        Some(Self::current_runtime())
     }
 }
 
@@ -79,6 +111,8 @@ struct Rig {
     unpublished: bool,
     /// The fixture planted something the reset has to take away again.
     dirty: bool,
+    /// The slot session the current Guardian was made for.
+    session: u32,
 }
 
 impl Rig {
@@ -88,7 +122,8 @@ impl Rig {
     }
 
     /// Back to the start state after a trace that may have replaced the event
-    /// `first` raised by the one `second` raises.
+    /// `first` raised by the one `second` raises. A `second` that needs
+    /// detector history gets it before the trace, then `first` is prepared.
     fn reset_pair(&mut self, first: &dyn Fixture, second: &dyn Fixture) {
         if self.dirty {
             first.remove(self);
@@ -99,18 +134,18 @@ impl Rig {
         self.c.chat_text.fill(String::new());
         self.c.chat_username.fill(String::new());
         self.c.chat_type.fill(0);
+        // A new client: no message has arrived yet.
+        self.c.chat_seq = 0;
+        clear_npcs(&mut self.c);
         plant_player(&mut self.c, "Test", 0, 0);
         self.snap = GameSnapshot::new();
+        self.session = 0;
         self.g = Guardian::new();
         self.drv = FakeDriver::default();
         self.settings = ProfileSettings::default();
         self.policies.clear();
-        self.claims = Claims {
-            run: Run::Stopped,
-            wants: false,
-            live: false,
-            callbacks: 0,
-        };
+        self.start_runtime(Run::Stopped, false, false);
+        self.claims.callbacks = 0;
         self.last = RandomStatus::default();
         self.last_acting = false;
         self.sigs = 0;
@@ -118,7 +153,22 @@ impl Rig {
         self.emissions = 0;
         self.unpublished = false;
         self.dirty = false;
+        if second.name() != first.name() {
+            second.prepare_second(self);
+        }
         first.prepare(self);
+    }
+
+    /// A new script runtime answers the claim port from now on. The callback
+    /// count is the trace's, so it carries over.
+    fn start_runtime(&mut self, run: Run, wants: bool, live: bool) {
+        let callbacks = self.claims.callbacks;
+        self.claims = Claims {
+            run,
+            wants,
+            live,
+            callbacks,
+        };
     }
 }
 
@@ -148,6 +198,7 @@ impl Rig {
             emissions: 0,
             unpublished: false,
             dirty: false,
+            session: 0,
         }
     }
 
@@ -229,14 +280,6 @@ trait Fixture {
     fn ent_only(&self) -> bool {
         false
     }
-    /// The family's wait runs on the content's clock, not on the host's
-    /// passes: it spends every fresh tick whoever holds the claim and
-    /// whatever the toggle says. The model's wait counts host passes, so long
-    /// pause or toggle traces are replayed against the real constants in
-    /// their own tests instead.
-    fn clock(&self) -> bool {
-        false
-    }
     fn install(&self, rig: &mut Rig, id: u8, forced_host: bool);
     fn remove(&self, rig: &mut Rig);
     fn chat_close(&self, _rig: &mut Rig) {}
@@ -244,6 +287,10 @@ trait Fixture {
     fn started(&self, _rig: &mut Rig) {}
     /// The start state of one trace on a new or reset client.
     fn prepare(&self, _rig: &mut Rig) {}
+    /// The start state of a trace in which this family replaces another: the
+    /// detector history it needs, planted so the first family's event does
+    /// not destroy it.
+    fn prepare_second(&self, _rig: &mut Rig) {}
     /// A new Guardian replaced the old one: give it the history it needs
     /// again, and bring the world back to what the model says it is.
     fn rebaseline(&self, _rig: &mut Rig, _present: bool) {}
@@ -257,6 +304,38 @@ fn data_available() -> bool {
 fn real_data() -> Option<Arc<api::game_data::SelectedGameData>> {
     data_available().then(event_game_data)
 }
+
+/// Remove the NPCs in `slots` and keep every other one, as the client's NPC
+/// list does when those slots are removed.
+fn remove_npcs(c: &mut Client, slots: &[usize]) {
+    for &slot in slots {
+        if let Some(npc) = c.npc.get_mut(slot) {
+            *npc = None;
+        }
+    }
+    let count = c.npc_count as usize;
+    let mut kept = 0;
+    for index in 0..count {
+        let id = c.npc_ids[index];
+        if !slots.contains(&(id as usize)) {
+            c.npc_ids[kept] = id;
+            kept += 1;
+        }
+    }
+    c.npc_count = kept as _;
+}
+
+/// Plant an NPC in `slot` alone: whatever stood there is removed first.
+fn put_npc(c: &mut Client, slot: usize, plant: impl FnOnce(&mut Client)) {
+    remove_npcs(c, &[slot]);
+    plant(c);
+}
+
+/// The slots the NPC families use for their two episodes. The Ent guard and
+/// the fishing spot of the gear family stand in their own slots.
+const EVENT_SLOTS: [usize; 2] = [0, 1];
+const ENT_SLOT: usize = 8;
+const FISHING_SLOT: usize = 9;
 
 // --- The families -----------------------------------------------------------
 
@@ -274,20 +353,17 @@ impl Fixture for DialogFx {
     }
     fn install(&self, rig: &mut Rig, id: u8, _forced: bool) {
         let name = ["Genie", "Mysterious old man"][usize::from(id)];
-        plant_npc(
-            &mut rig.c,
-            usize::from(id),
-            name,
-            -1,
-            Some("Greetings Test!"),
-        );
+        let slot = usize::from(id);
+        put_npc(&mut rig.c, slot, |c| {
+            plant_npc(c, slot, name, -1, Some("Greetings Test!"));
+        });
     }
     fn started(&self, rig: &mut Rig) {
         // The server opens the chat after the Talk-to.
         open_chat(&mut rig.c);
     }
     fn remove(&self, rig: &mut Rig) {
-        clear_npcs(&mut rig.c);
+        remove_npcs(&mut rig.c, &EVENT_SLOTS);
     }
     fn chat_close(&self, rig: &mut Rig) {
         close_chat(&mut rig.c);
@@ -349,9 +425,6 @@ impl Fixture for EvadeFx {
         // passes and lets go on the tenth.
         9
     }
-    fn clock(&self) -> bool {
-        true
-    }
     fn needs_data(&self) -> bool {
         true
     }
@@ -371,10 +444,21 @@ impl Fixture for EvadeFx {
             rig.policies
                 .insert(name.to_ascii_lowercase(), vault::RandomEventPolicy::Fight);
         }
-        plant_npc_with_op(&mut rig.c, usize::from(id), name, 32768, None, "Attack");
+        let slot = usize::from(id);
+        put_npc(&mut rig.c, slot, |c| {
+            plant_npc_with_op(c, slot, name, 32768, None, "Attack");
+        });
     }
+    /// The actor is observed gone: its slot now shows another NPC. A removal
+    /// while the player stands beyond the view edge is not despawn evidence,
+    /// and the Guardian keeps that actor for the content's cleanup interval
+    /// (`a_retained_hostile_actor_resumes_after_an_overlapping_trap_ends`).
     fn remove(&self, rig: &mut Rig) {
-        clear_npcs(&mut rig.c);
+        for slot in EVENT_SLOTS {
+            if rig.c.npc.get(slot).is_some_and(Option::is_some) {
+                put_npc(&mut rig.c, slot, |c| plant_npc(c, slot, "Man", -1, None));
+            }
+        }
     }
 }
 
@@ -417,10 +501,10 @@ impl Fixture for MimeFx {
     }
     fn install(&self, rig: &mut Rig, _id: u8, _forced: bool) {
         plant_player(&mut rig.c, "Test", 31 * 64, 74 * 64);
-        plant_npc(&mut rig.c, 0, "Mime", -1, None);
+        put_npc(&mut rig.c, 0, |c| plant_npc(c, 0, "Mime", -1, None));
     }
     fn remove(&self, rig: &mut Rig) {
-        clear_npcs(&mut rig.c);
+        remove_npcs(&mut rig.c, &[0]);
         plant_player(&mut rig.c, "Test", 3222, 3222);
     }
 }
@@ -495,17 +579,12 @@ impl Fixture for PickFx {
         false
     }
     fn install(&self, rig: &mut Rig, _id: u8, _forced: bool) {
-        plant_npc_with_op(
-            &mut rig.c,
-            0,
-            "Strange plant",
-            -1,
-            Some("Pick Test!"),
-            "Pick",
-        );
+        put_npc(&mut rig.c, 0, |c| {
+            plant_npc_with_op(c, 0, "Strange plant", -1, Some("Pick Test!"), "Pick");
+        });
     }
     fn remove(&self, rig: &mut Rig) {
-        clear_npcs(&mut rig.c);
+        remove_npcs(&mut rig.c, &[0]);
     }
 }
 
@@ -515,7 +594,9 @@ impl Fixture for PickFx {
 struct LostGearFx;
 impl LostGearFx {
     fn held(rig: &mut Rig) {
-        plant_npc(&mut rig.c, 0, "Fishing spot", -1, None);
+        put_npc(&mut rig.c, FISHING_SLOT, |c| {
+            plant_npc(c, FISHING_SLOT, "Fishing spot", -1, None);
+        });
         rig.c.ground_obj[0][3][0] = None;
         plant_inv_named(&mut rig.c, 311, Some("Harpoon"));
     }
@@ -537,6 +618,9 @@ impl Fixture for LostGearFx {
     fn prepare(&self, rig: &mut Rig) {
         Self::held(rig);
         rig.history_pass();
+    }
+    fn prepare_second(&self, rig: &mut Rig) {
+        self.prepare(rig);
     }
     fn install(&self, rig: &mut Rig, _id: u8, _forced: bool) {
         drop_harpoon_to_ground(&mut rig.c);
@@ -561,15 +645,14 @@ impl Fixture for LostToolFx {
         "lost tool"
     }
     fn family(&self) -> Family {
-        Family::Solver
+        // The head lands within the content's spawn window, which runs from
+        // the loss whoever owns the event and whatever the toggle says.
+        Family::Window
     }
     fn bound(&self) -> u8 {
         // The refit gives up after its three-tick spawn grace: the host works
         // on three passes and lets go on the fourth.
         3
-    }
-    fn clock(&self) -> bool {
-        true
     }
     fn needs_data(&self) -> bool {
         true
@@ -596,15 +679,18 @@ impl Fixture for LostToolFx {
     }
 }
 
+/// An Ent the player chops, in its own slot. Its targeting is the content's
+/// `p_opnpc(1)` (`macro_event_ent.rs2:20`), seen as the player's face target.
 fn plant_ent(rig: &mut Rig) {
-    plant_inv_named(&mut rig.c, 1351, Some("Bronze axe"));
-    plant_npc_typed_with_op(&mut rig.c, 0, 448, "Oak", -1, None, "Chop down");
+    put_npc(&mut rig.c, ENT_SLOT, |c| {
+        plant_npc_typed_with_op(c, ENT_SLOT, 448, "Oak", -1, None, "Chop down");
+    });
     rig.c
         .local_player
         .as_mut()
         .expect("local player")
         .entity
-        .face_entity = 0;
+        .face_entity = ENT_SLOT as i32;
 }
 
 /// The Ent guard: host work for a forced Ent, with no detected event, so no
@@ -628,7 +714,7 @@ impl Fixture for EntFx {
         plant_ent(rig);
     }
     fn remove(&self, rig: &mut Rig) {
-        clear_npcs(&mut rig.c);
+        remove_npcs(&mut rig.c, &[ENT_SLOT]);
     }
 }
 
@@ -650,22 +736,80 @@ fn fixtures() -> Vec<Box<dyn Fixture>> {
 
 // --- The replay -------------------------------------------------------------
 
+/// The real Ent guard holds for the content's 60 ticks
+/// (`macro_event_ent.rs2:18`); the model bounds it alike.
+const ENT_HOLD_TICKS: u8 = 60;
+
+fn bounds_for(fx: &dyn Fixture) -> GuardianBounds {
+    GuardianBounds {
+        wait: fx.bound(),
+        ids: 2,
+        sessions: 2,
+        ent: false,
+        window: false,
+        ent_hold: ENT_HOLD_TICKS,
+    }
+}
+
 fn model_for(fx: &dyn Fixture) -> GuardianState {
-    GuardianState::new(
-        GuardianBounds {
-            wait: fx.bound(),
-            ids: 2,
-            sessions: 2,
-            ent: false,
-        },
-        GuardianMutation::None,
-    )
+    GuardianState::new(bounds_for(fx), GuardianMutation::None)
+}
+
+/// Every server line a family settles a pending operation on: the wrong-talk
+/// rejection, the plant's two answers, the refit rejection, the stun, and the
+/// box's two answer outcomes.
+const RESULT_LINES: [&str; 7] = [
+    "It's not here for you.",
+    "You are trying to talk to someone else's event.",
+    "The fruit isn't ready to be picked yet",
+    "Nothing interesting happens.",
+    "You've been stunned!",
+    "You have completed this cube, but there are more for you to do.",
+    "Oh dear, you have answered the question incorrectly",
+];
+
+/// A late result: every settling line, carrying a token (chat sequence) at or
+/// below the cutoff of the operation in flight. It arrives with the next chat
+/// update, as a late packet does, and must settle nothing.
+fn deliver_late_results(rig: &mut Rig) {
+    let g = &rig.g;
+    let mut cutoff = g.chat_seen;
+    if let Some(after) = g.tool_run().and_then(|run| run.refit_after_sequence) {
+        cutoff = cutoff.min(after);
+    }
+    if let BoxPhase::Answering { sequence, .. } = g.box_solve().phase {
+        cutoff = cutoff.min(sequence);
+    }
+    let head = i64::try_from(rig.c.chat_seq).expect("chat sequence");
+    let dense = rig
+        .c
+        .chat_text
+        .iter()
+        .take_while(|text| !text.is_empty())
+        .count();
+    let first = usize::try_from(head - i64::from(cutoff))
+        .unwrap_or(0)
+        .max(dense);
+    assert!(
+        first + RESULT_LINES.len() <= rig.c.chat_text.len(),
+        "chat ring room"
+    );
+    for index in dense..first {
+        rig.c.chat_text[index] = "Welcome to RuneScape.".into();
+        rig.c.chat_type[index] = 0;
+        rig.c.chat_username[index].clear();
+    }
+    for (offset, line) in RESULT_LINES.iter().enumerate() {
+        rig.c.chat_text[first + offset] = (*line).into();
+        rig.c.chat_type[first + offset] = 0;
+        rig.c.chat_username[first + offset].clear();
+    }
 }
 
 /// Apply one model step to the real Guardian. A fresh `Tick` runs one pass on a
 /// new observed game tick; `Frame` runs one on the same one. `cur` is the
 /// fixture that raised the event now standing; `Replace` removes it and raises
-/// `next` in its place.
+/// `next` in its place. The Ent guard's steps plant and remove an Ent.
 fn drive(
     cur: &dyn Fixture,
     next: &dyn Fixture,
@@ -690,30 +834,34 @@ fn drive(
         GuardianStep::Disappear => cur.remove(rig),
         GuardianStep::EntAppear => {
             rig.dirty = true;
-            cur.install(rig, 0, false);
+            EntFx.install(rig, 0, false);
         }
-        GuardianStep::EntRemove => cur.remove(rig),
+        GuardianStep::EntRemove => EntFx.remove(rig),
         GuardianStep::ScriptStart { wants, live } => {
-            rig.claims.run = Run::Running;
-            rig.claims.wants = *wants;
-            rig.claims.live = *live;
+            rig.start_runtime(Run::Running, *wants, *live);
         }
         GuardianStep::ScriptExit(ScriptExit::Pause) => rig.claims.run = Run::Paused,
-        GuardianStep::ScriptExit(_) => rig.claims.run = Run::Stopped,
+        // The runtime ends: the slot's next Start is another runtime.
+        GuardianStep::ScriptExit(_) => {
+            let (wants, live) = (rig.claims.wants, rig.claims.live);
+            rig.start_runtime(Run::Stopped, wants, live);
+        }
         GuardianStep::ScriptResume => rig.claims.run = Run::Running,
         GuardianStep::ScriptWants(wants) => rig.claims.wants = *wants,
         GuardianStep::SetEnabled(enabled) => rig.settings.random_events = *enabled,
         GuardianStep::SessionReplace => {
-            rig.g = Guardian::new();
+            rig.session += 1;
+            rig.g = Guardian::in_session(rig.session);
             rig.snap = GameSnapshot::new();
             rig.unpublished = true;
-            rig.claims.run = Run::Stopped;
+            let (wants, live) = (rig.claims.wants, rig.claims.live);
+            rig.start_runtime(Run::Stopped, wants, live);
             cur.chat_close(rig);
             cur.rebaseline(rig, model.event_id().is_some());
         }
         GuardianStep::ChatClose => cur.chat_close(rig),
         GuardianStep::Replicate { fresh } => cur.replicate(rig, *fresh),
-        GuardianStep::LateResult => {}
+        GuardianStep::LateResult => deliver_late_results(rig),
         GuardianStep::Tick { .. } => {
             let talking = rig.g.in_flight();
             rig.pass(true);
@@ -724,7 +872,10 @@ fn drive(
         GuardianStep::Frame => {
             rig.pass(false);
         }
-        GuardianStep::Seat(_) => {}
+        // The host replay has no seat: the model here is not composed with
+        // one, so its alphabet has no seat step. The seat replay is
+        // host-play's `guardian_seat_conformance_tests.rs`.
+        GuardianStep::Seat(step) => panic!("no seat in the host replay: {step:?}"),
     }
 }
 
@@ -802,6 +953,27 @@ fn check_real(rig: &Rig, step: &GuardianStep, trace: &[GuardianStep]) {
         // non-fresh frame cannot refresh it.
         if matches!(step, GuardianStep::Tick { .. }) {
             fail("a script that is not running still owns the event");
+        }
+    }
+    // The active event belongs to this session and to an episode the Guardian
+    // has observed; a script's claim names the runtime that answers now (a
+    // fresh pass returns a claim whose runtime ended).
+    if let Some(active) = rig.g.active.as_ref() {
+        if active.key.session != rig.session {
+            fail(&format!(
+                "the active event belongs to session {} in session {}",
+                active.key.session, rig.session
+            ));
+        }
+        if active.key.generation > rig.g.episode.generation {
+            fail("the active event names an episode the Guardian never observed");
+        }
+        if let Owner::Script { runtime } = active.owner {
+            if matches!(step, GuardianStep::Tick { .. })
+                && runtime != Some(Claims::current_runtime())
+            {
+                fail("a claim outlived the script runtime that made it");
+            }
         }
     }
 }
@@ -882,15 +1054,7 @@ fn replay_with(
     mutation: GuardianMutation,
     check_model: bool,
 ) {
-    let mut model = GuardianState::new(
-        GuardianBounds {
-            wait: first.bound(),
-            ids: 2,
-            sessions: 2,
-            ent: false,
-        },
-        mutation,
-    );
+    let mut model = GuardianState::new(bounds_for(first), mutation);
     let mut done: Vec<GuardianStep> = Vec::new();
     let mut cur = first;
     for step in steps {
@@ -965,6 +1129,7 @@ fn alphabet(fx: &dyn Fixture) -> Vec<GuardianStep> {
         GuardianStep::SetEnabled(false),
         GuardianStep::SetEnabled(true),
         GuardianStep::SessionReplace,
+        GuardianStep::LateResult,
         GuardianStep::Tick { blocked: false },
         GuardianStep::Frame,
     ]);
@@ -1221,17 +1386,13 @@ fn script_pause_resume_stop_and_failure_move_the_claim_for_every_family() {
         if fx.needs_data() && !data_available() {
             continue;
         }
-        // The shortest Evade give-up is nine fresh ticks; a family on the
-        // content's clock is replayed over its first ticks only, and its
-        // clock is tested against the real constants below.
-        let bound = if fx.clock() {
-            0
-        } else {
-            usize::from(fx.bound()).min(3)
-        };
+        // A wait can end while the script owns the event (a content clock)
+        // or only under the host: each family is replayed with the exit at
+        // the edge, mid-wait and past its bound.
+        let bound = usize::from(fx.bound()).min(12);
         for live in [false, true] {
             for exit in [ScriptExit::Pause, ScriptExit::Stop, ScriptExit::Fail] {
-                for at in [0, if fx.clock() { 0 } else { 1 }, bound] {
+                for at in [0, 1, bound] {
                     let mut steps = vec![
                         GuardianStep::ScriptStart { wants: true, live },
                         appear(fx.as_ref()),
@@ -1243,9 +1404,7 @@ fn script_pause_resume_stop_and_failure_move_the_claim_for_every_family() {
                         steps.push(GuardianStep::ScriptResume);
                         steps.push(tick());
                     }
-                    if !fx.clock() {
-                        steps.push(tick());
-                    }
+                    steps.push(tick());
                     replay(fx.as_ref(), &steps);
                 }
             }
@@ -1261,30 +1420,27 @@ fn the_toggle_releases_every_family_and_resumes_it() {
         if fx.needs_data() && !data_available() {
             continue;
         }
-        let steps = if fx.clock() {
-            vec![
-                appear(fx.as_ref()),
-                tick(),
-                GuardianStep::SetEnabled(false),
-                tick(),
-                GuardianStep::Frame,
-                GuardianStep::SetEnabled(true),
-                tick(),
-            ]
-        } else {
-            vec![
-                appear(fx.as_ref()),
-                tick(),
-                tick(),
-                GuardianStep::SetEnabled(false),
-                tick(),
-                tick(),
-                GuardianStep::Frame,
-                GuardianStep::SetEnabled(true),
-                tick(),
-                tick(),
-            ]
-        };
+        // Off mid-wait for two ticks, and off across the whole bound.
+        let short = vec![
+            appear(fx.as_ref()),
+            tick(),
+            tick(),
+            GuardianStep::SetEnabled(false),
+            tick(),
+            tick(),
+            GuardianStep::Frame,
+            GuardianStep::SetEnabled(true),
+            tick(),
+            tick(),
+        ];
+        replay(fx.as_ref(), &short);
+        let mut long = vec![appear(fx.as_ref()), tick(), GuardianStep::SetEnabled(false)];
+        long.extend(std::iter::repeat_n(
+            tick(),
+            usize::from(fx.bound()).min(12) + 1,
+        ));
+        long.extend([GuardianStep::SetEnabled(true), tick(), tick()]);
+        let steps = long;
         replay(fx.as_ref(), &steps);
     }
 }
@@ -1633,17 +1789,10 @@ fn strange_plant_pick_follows_the_claim_cycle() {
 
 // --- Overlap between families, content clocks, seeded divergence ------------
 
-fn history_free_fixtures() -> Vec<Box<dyn Fixture>> {
-    vec![
-        Box::new(DialogFx),
-        Box::new(BoxFx),
-        Box::new(EvadeFx),
-        Box::new(MazeFx),
-        Box::new(MimeFx),
-        Box::new(LampFx),
-        Box::new(HazardFx),
-        Box::new(PickFx),
-    ]
+/// The ten event families. The Ent guard has no detected event; it overlaps
+/// events instead of replacing them (`ent_overlap_traces`).
+fn event_fixtures() -> Vec<Box<dyn Fixture>> {
+    fixtures().into_iter().filter(|fx| !fx.ent_only()).collect()
 }
 
 fn replace_with(fx: &dyn Fixture) -> GuardianStep {
@@ -1658,15 +1807,7 @@ fn replace_with(fx: &dyn Fixture) -> GuardianStep {
 /// and across a session replacement.
 fn overlap_traces(a: &dyn Fixture, b: &dyn Fixture) -> Vec<Vec<GuardianStep>> {
     let script = |live| GuardianStep::ScriptStart { wants: true, live };
-    // A hostile actor that left the view because the player moved on stays
-    // retained for its content deadline: when the overlapping event ends, it
-    // is the event again (`retained_hostile_actor_resumes_...` tests that).
-    // The model has one event, so that trace ends with the replacement.
-    let ending = if a.name() == "evade" {
-        vec![tick()]
-    } else {
-        vec![GuardianStep::Disappear, tick()]
-    };
+    let ending = vec![GuardianStep::Disappear, tick()];
     let exhausted = usize::from(a.bound()).min(12) + 1;
     let mut spent = vec![appear(a)];
     spent.extend(std::iter::repeat_n(tick(), exhausted));
@@ -1720,27 +1861,120 @@ fn overlap_traces(a: &dyn Fixture, b: &dyn Fixture) -> Vec<Vec<GuardianStep>> {
 }
 
 /// An event of one family replaced by an event of another, for every ordered
-/// pair of families that need no detector history. The model's `Replace` is
-/// the overlap: the old episode ends (or, for a dialog, finishes its handle)
-/// and the new one is the host's or a script's, never masked by the old.
+/// pair of the ten event families. The model's `Replace` is the overlap: the
+/// old episode ends (or, for a dialog, finishes its handle) and the new one is
+/// the host's or a script's, never masked by the old. A family that needs
+/// detector history (lost gear) gets it before the trace.
 #[test]
 fn an_event_replaced_by_another_family_follows_the_model() {
-    let fixtures = history_free_fixtures();
+    let fixtures = event_fixtures();
     let mut rig = Rig::new(real_data());
+    let mut pairs = 0;
     for a in &fixtures {
         for b in &fixtures {
             if a.name() == b.name() || ((a.needs_data() || b.needs_data()) && !data_available()) {
                 continue;
             }
+            pairs += 1;
             for steps in overlap_traces(a.as_ref(), b.as_ref()) {
                 // Whatever an earlier trace left standing goes first.
                 for fx in &fixtures {
                     fx.remove(&mut rig);
                 }
+                clear_inv(&mut rig.c);
                 rig.dirty = false;
                 rig.reset_pair(a.as_ref(), b.as_ref());
                 replay_mixed(&mut rig, a.as_ref(), b.as_ref(), &steps, true);
             }
+        }
+    }
+    if data_available() {
+        assert_eq!(pairs, 90, "every ordered pair of the ten event families");
+    }
+}
+
+/// The Ent guard overlapping an event of each family: the guard first or the
+/// event first, a script claim that pauses and resumes under the guard, the
+/// toggle, and a session replacement.
+fn ent_overlap_traces(b: &dyn Fixture) -> Vec<Vec<GuardianStep>> {
+    use GuardianStep::{EntAppear, EntRemove};
+    vec![
+        vec![
+            EntAppear,
+            tick(),
+            appear(b),
+            tick(),
+            tick(),
+            EntRemove,
+            tick(),
+            tick(),
+            GuardianStep::Disappear,
+            tick(),
+        ],
+        vec![
+            appear(b),
+            tick(),
+            EntAppear,
+            tick(),
+            tick(),
+            GuardianStep::Disappear,
+            tick(),
+            EntRemove,
+            tick(),
+        ],
+        vec![
+            GuardianStep::ScriptStart {
+                wants: true,
+                live: false,
+            },
+            EntAppear,
+            tick(),
+            appear(b),
+            tick(),
+            GuardianStep::ScriptExit(ScriptExit::Pause),
+            tick(),
+            GuardianStep::ScriptResume,
+            tick(),
+        ],
+        vec![
+            EntAppear,
+            tick(),
+            GuardianStep::SetEnabled(false),
+            appear(b),
+            tick(),
+            GuardianStep::SetEnabled(true),
+            tick(),
+            tick(),
+        ],
+        vec![
+            appear(b),
+            tick(),
+            EntAppear,
+            tick(),
+            GuardianStep::SessionReplace,
+            tick(),
+            tick(),
+        ],
+    ]
+}
+
+#[test]
+fn the_ent_guard_overlapping_every_family_follows_the_model() {
+    let fixtures = event_fixtures();
+    let mut rig = Rig::new(real_data());
+    for b in &fixtures {
+        if b.needs_data() && !data_available() {
+            continue;
+        }
+        for steps in ent_overlap_traces(b.as_ref()) {
+            for fx in &fixtures {
+                fx.remove(&mut rig);
+            }
+            EntFx.remove(&mut rig);
+            clear_inv(&mut rig.c);
+            rig.dirty = false;
+            rig.reset(b.as_ref());
+            replay_in(&mut rig, b.as_ref(), &steps);
         }
     }
 }
@@ -1878,7 +2112,9 @@ fn a_retained_hostile_actor_resumes_after_an_overlapping_trap_ends() {
     rig.dirty = true;
     rig.pass(true);
     rig.pass(true);
-    EvadeFx.remove(&mut rig);
+    // The actor leaves the client's NPC list as the player steps onto the
+    // maze far away: a view-edge removal, not despawn evidence.
+    remove_npcs(&mut rig.c, &EVENT_SLOTS);
     MazeFx.install(&mut rig, 0, false);
     let status = rig.pass(true);
     assert_eq!(
@@ -2079,4 +2315,218 @@ fn an_episode_key_names_its_session() {
     let new = rig.g.active.as_ref().expect("the host talks again").key;
     assert_eq!((new.session, new.kind), (1, old.kind));
     assert_ne!(new, old);
+}
+
+// --- Round 3: runtime identity, content clocks, live state in the event ------
+
+/// A claim belongs to the script runtime that made it (design 3.3). A
+/// compiled script replaced before the next observation by one that never
+/// claims does not inherit the claim; one that would claim is not called back
+/// for the event already standing. The episode is the same throughout.
+#[test]
+fn a_replacement_runtime_returns_the_claim_without_a_callback() {
+    for successor_wants in [false, true] {
+        let mut rig = Rig::new(None);
+        rig.start_runtime(Run::Running, true, false);
+        DialogFx.install(&mut rig, 0, false);
+        assert_eq!(rig.pass(true).claim, RandomClaim::Handle);
+        assert_eq!(rig.claims.callbacks, 1);
+        let active = rig.g.active.as_ref().expect("script claim");
+        assert_eq!(
+            active.owner,
+            Owner::Script {
+                runtime: Some(Claims::current_runtime())
+            },
+            "the claim names its runtime"
+        );
+        let before = active.key;
+        rig.start_runtime(Run::Running, successor_wants, false);
+        let callbacks = rig.claims.callbacks;
+        let status = rig.pass(true);
+        assert_eq!(
+            status.claim,
+            RandomClaim::Host,
+            "successor wants {successor_wants}"
+        );
+        assert_eq!(rig.claims.callbacks, callbacks, "no successor callback");
+        assert_eq!(rig.g.active.as_ref().expect("host work").key, before);
+        assert!(
+            status.hold && status.handling,
+            "the host talks to the genie"
+        );
+    }
+}
+
+/// The same replacement against the model, compiled and Load, claiming and
+/// not.
+#[test]
+fn a_replacement_runtime_follows_the_model() {
+    for live in [false, true] {
+        for successor_wants in [false, true] {
+            replay(
+                &DialogFx,
+                &[
+                    GuardianStep::ScriptStart { wants: true, live },
+                    appear(&DialogFx),
+                    tick(),
+                    GuardianStep::ScriptExit(ScriptExit::Stop),
+                    GuardianStep::ScriptStart {
+                        wants: successor_wants,
+                        live,
+                    },
+                    tick(),
+                    tick(),
+                ],
+            );
+        }
+    }
+}
+
+/// An Evade a script owns gives up on the content's clock, as the model's
+/// Evade budget does: the episode is detect-only for the script too.
+#[test]
+fn an_evade_a_script_owns_releases_on_the_content_clock_as_the_model_does() {
+    if !data_available() {
+        return;
+    }
+    let mut steps = vec![
+        GuardianStep::ScriptStart {
+            wants: true,
+            live: false,
+        },
+        appear(&EvadeFx),
+    ];
+    steps.extend(std::iter::repeat_n(
+        tick(),
+        usize::from(EvadeFx.bound()) + 2,
+    ));
+    replay(&EvadeFx, &steps);
+    // The script lets go after the budget: the host does not begin again.
+    steps.extend([GuardianStep::ScriptExit(ScriptExit::Pause), tick(), tick()]);
+    replay(&EvadeFx, &steps);
+}
+
+/// The lost tool's window runs through a toggle off; a host that begins after
+/// it closed (the toggle, or a script that held the event) lets go at once;
+/// and a pass that sees the toggle off re-arms one new window.
+#[test]
+fn a_lost_tool_window_follows_the_model_through_the_toggle_and_the_claim() {
+    if !data_available() {
+        return;
+    }
+    let toggle = [
+        appear(&LostToolFx),
+        tick(),
+        GuardianStep::SetEnabled(false),
+        tick(),
+        tick(),
+        GuardianStep::SetEnabled(true),
+        tick(),
+    ];
+    replay(&LostToolFx, &toggle);
+    let mut late = vec![
+        GuardianStep::ScriptStart {
+            wants: true,
+            live: false,
+        },
+        appear(&LostToolFx),
+    ];
+    late.extend(std::iter::repeat_n(tick(), 6));
+    late.extend([GuardianStep::ScriptExit(ScriptExit::Pause), tick(), tick()]);
+    replay(&LostToolFx, &late);
+    let mut rearm = vec![appear(&LostToolFx)];
+    rearm.extend(std::iter::repeat_n(tick(), 5));
+    rearm.extend([
+        GuardianStep::SetEnabled(false),
+        tick(),
+        GuardianStep::SetEnabled(true),
+        tick(),
+        tick(),
+        tick(),
+        tick(),
+        tick(),
+    ]);
+    replay(&LostToolFx, &rearm);
+}
+
+/// The live solver state of the flee, the lost-tool recovery and the Ent guard
+/// is in the active event and ends with it; the Guardian keeps only detector
+/// history beside it.
+#[test]
+fn live_solver_state_lives_in_the_active_event() {
+    if !data_available() {
+        return;
+    }
+    // The flee: its walk-back tile and walk target.
+    let mut rig = Rig::new(real_data());
+    EvadeFx.install(&mut rig, 0, false);
+    rig.dirty = true;
+    assert!(rig.pass(true).hold);
+    let active = rig.g.active.clone().expect("the host flees");
+    let super::Family::Evade(run) = active.family else {
+        panic!("not a flee: {:?}", active.family);
+    };
+    assert!(
+        run.flee_from.is_some() && run.flee_target.is_some(),
+        "{run:?}"
+    );
+    assert!(rig.g.evade.as_ref().is_some_and(|track| track.has_fled));
+    EvadeFx.remove(&mut rig);
+    rig.pass(true);
+    rig.pass(true);
+    assert!(rig.g.active.is_none(), "the flee ended with its event");
+
+    // The lost-tool recovery: its window and target.
+    let mut rig = Rig::new(real_data());
+    LostToolFx.prepare(&mut rig);
+    LostToolFx.install(&mut rig, 0, false);
+    rig.dirty = true;
+    assert!(rig.pass(true).hold);
+    let active = rig.g.active.clone().expect("the host recovers");
+    let super::Family::LostTool(run) = &active.family else {
+        panic!("not a recovery: {:?}", active.family);
+    };
+    assert!(run.recovery.is_some(), "{run:?}");
+    LostToolFx.remove(&mut rig);
+    rig.pass(true);
+    assert!(rig.g.active.is_none(), "the recovery ended with its event");
+
+    // The Ent guard: its latch, and the hold it asks for.
+    let mut rig = Rig::new(None);
+    plant_ent(&mut rig);
+    assert!(rig.pass(true).hold);
+    let active = rig.g.active.clone().expect("the guard holds");
+    assert!(active.guard && active.ent.is_some());
+    rig.settings.random_events = false;
+    assert!(!rig.pass(true).hold);
+    let active = rig.g.active.clone().expect("the latch stays");
+    assert!(
+        !active.guard && active.ent.is_some(),
+        "the toggle releases the hold"
+    );
+    rig.settings.random_events = true;
+    EntFx.remove(&mut rig);
+    rig.pass(true);
+    assert!(rig.g.active.is_none(), "the guard ended with its Ent");
+}
+
+/// A late result carries an earlier token: every settling server line, below
+/// the cutoff of the operation in flight, settles nothing. Box, dialog and
+/// tool replays against the model.
+#[test]
+fn a_late_result_settles_nothing_as_the_model_says() {
+    let late = |fx: &dyn Fixture, ticks: usize| {
+        let mut steps = vec![appear(fx)];
+        steps.extend(std::iter::repeat_n(tick(), ticks));
+        steps.extend([GuardianStep::LateResult, tick(), tick()]);
+        steps
+    };
+    replay(&BoxFx, &late(&BoxFx, 1));
+    replay(&BoxFx, &late(&BoxFx, 2));
+    replay(&DialogFx, &late(&DialogFx, 1));
+    replay(&PickFx, &late(&PickFx, 1));
+    if data_available() {
+        replay(&LostToolFx, &late(&LostToolFx, 1));
+        replay(&EvadeFx, &late(&EvadeFx, 2));
+    }
 }

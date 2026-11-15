@@ -375,3 +375,184 @@ fn the_ent_guard_holds_for_a_bounded_time_and_follows_the_toggle() {
         run_guardian_trace(profile, GuardianMutation::GuardNeverExpires, &steps).unwrap_err();
     assert_eq!(caught.1.name, "guard-unbounded");
 }
+
+/// A claim belongs to the script runtime that made it. A compiled script that
+/// replaces the claiming one before the next observation, and never claims the
+/// event itself, does not inherit the claim, and is not called back for it
+/// (round-2 review probe `runtime-generation-model-probe.diff`).
+#[test]
+fn a_replaced_compiled_runtime_does_not_inherit_a_claim() {
+    let steps = [
+        GuardianStep::ScriptStart {
+            wants: true,
+            live: false,
+        },
+        appear(Family::Solver),
+        tick(),
+        GuardianStep::ScriptExit(ScriptExit::Stop),
+        GuardianStep::ScriptStart {
+            wants: false,
+            live: false,
+        },
+        tick(),
+    ];
+    let state =
+        run_guardian_trace(GuardianProfile::Ownership, GuardianMutation::None, &steps).unwrap();
+    assert!(
+        !state.publication().claim_script,
+        "a replacement runtime inherited the old claim: {}",
+        state.describe()
+    );
+    assert!(state.publication().hold, "the host takes the event");
+    // A successor that would claim is not called back for the old event.
+    let mut claiming = steps.clone();
+    claiming[4] = GuardianStep::ScriptStart {
+        wants: true,
+        live: false,
+    };
+    let state = run_guardian_trace(
+        GuardianProfile::Ownership,
+        GuardianMutation::None,
+        &claiming,
+    )
+    .unwrap();
+    assert!(!state.publication().claim_script, "{}", state.describe());
+    let caught = run_guardian_trace(
+        GuardianProfile::Ownership,
+        GuardianMutation::ClaimKeptAcrossRuntime,
+        &steps,
+    )
+    .unwrap_err();
+    assert_eq!(caught.1.name, "stale-runtime");
+    // Pause and Resume keep the runtime: the claim comes back to the host on
+    // the pause and is not taken again without a new event.
+    let paused = [
+        GuardianStep::ScriptStart {
+            wants: true,
+            live: false,
+        },
+        appear(Family::Solver),
+        tick(),
+        GuardianStep::ScriptExit(ScriptExit::Pause),
+        GuardianStep::ScriptResume,
+        tick(),
+    ];
+    let state =
+        run_guardian_trace(GuardianProfile::Ownership, GuardianMutation::None, &paused).unwrap();
+    assert!(state.publication().claim_script, "{}", state.describe());
+}
+
+/// The Evade escape budget is the content's clock: a script claim does not
+/// pause it, and a spent budget is detect-only for the script too (round-2
+/// review probe `review_evade_script_owned_deadline_conforms_to_the_model`).
+#[test]
+fn an_evade_budget_runs_whoever_owns_the_event() {
+    let profile = GuardianProfile::Ownership;
+    let wait = profile.bounds().wait as usize;
+    let mut steps = vec![
+        GuardianStep::ScriptStart {
+            wants: true,
+            live: false,
+        },
+        appear(Family::Evade),
+    ];
+    steps.extend(std::iter::repeat_n(tick(), wait));
+    let state = run_guardian_trace(profile, GuardianMutation::None, &steps).unwrap();
+    let out = state.publication();
+    assert!(out.claim_script && out.ours, "{}", state.describe());
+    steps.push(tick());
+    let state = run_guardian_trace(profile, GuardianMutation::None, &steps).unwrap();
+    let out = state.publication();
+    assert!(
+        out.claim_script && !out.ours && !out.hold,
+        "the budget ran out under the script: {}",
+        state.describe()
+    );
+    // The toggle off does not pause it either, and the host that takes the
+    // event back does not begin it again.
+    let mut steps = vec![
+        appear(Family::Evade),
+        tick(),
+        GuardianStep::SetEnabled(false),
+    ];
+    steps.extend(std::iter::repeat_n(tick(), wait));
+    steps.push(GuardianStep::SetEnabled(true));
+    steps.push(tick());
+    let state = run_guardian_trace(profile, GuardianMutation::None, &steps).unwrap();
+    let out = state.publication();
+    assert!(
+        !out.ours && !out.hold && !out.acting,
+        "{}",
+        state.describe()
+    );
+    // A stunned tick spends nothing.
+    let mut steps = vec![appear(Family::Evade)];
+    steps.extend(std::iter::repeat_n(tick(), wait));
+    steps.push(GuardianStep::Tick { blocked: true });
+    let state = run_guardian_trace(profile, GuardianMutation::None, &steps).unwrap();
+    assert!(state.publication().hold, "{}", state.describe());
+    let caught =
+        run_guardian_trace(profile, GuardianMutation::FleeInterrupted, &steps).unwrap_err();
+    assert_eq!(caught.1.name, "wait-early");
+}
+
+/// A content window runs through a toggle off once the host has begun: the
+/// host that finds it closed lets go (round-2 review probe
+/// `review_lost_tool_toggle_deadline_conforms_to_the_model`). A host that
+/// begins after the window has gone by opens a new one.
+#[test]
+fn a_content_window_runs_through_the_toggle_and_the_claim() {
+    let profile = GuardianProfile::Ownership;
+    let steps = [
+        appear(Family::Window),
+        tick(),
+        GuardianStep::SetEnabled(false),
+        tick(),
+        GuardianStep::SetEnabled(true),
+        tick(),
+    ];
+    let state = run_guardian_trace(profile, GuardianMutation::None, &steps).unwrap();
+    let out = state.publication();
+    assert!(
+        !out.ours && !out.hold && !out.acting,
+        "the window closed while the toggle was off: {}",
+        state.describe()
+    );
+    // While the toggle is off the work keeps its place.
+    let state = run_guardian_trace(profile, GuardianMutation::None, &steps[..4]).unwrap();
+    assert!(state.publication().acting && !state.publication().hold);
+    // A script that held the event past the window: the host that takes it
+    // finds the window closed and lets go in the same pass.
+    let late = [
+        GuardianStep::ScriptStart {
+            wants: true,
+            live: false,
+        },
+        appear(Family::Window),
+        tick(),
+        tick(),
+        tick(),
+        tick(),
+        GuardianStep::ScriptExit(ScriptExit::Pause),
+        tick(),
+    ];
+    let state = run_guardian_trace(profile, GuardianMutation::None, &late).unwrap();
+    let out = state.publication();
+    assert!(
+        !out.hold && !out.acting && !out.ours,
+        "{}",
+        state.describe()
+    );
+    // A pass that sees the toggle off re-arms the spent window once: the host
+    // opens a new one when the toggle comes back.
+    let mut rearm = steps.to_vec();
+    rearm.extend([
+        GuardianStep::SetEnabled(false),
+        tick(),
+        GuardianStep::SetEnabled(true),
+        tick(),
+    ]);
+    let state = run_guardian_trace(profile, GuardianMutation::None, &rearm).unwrap();
+    let out = state.publication();
+    assert!(out.hold && out.acting && out.ours, "{}", state.describe());
+}

@@ -46,6 +46,10 @@ scenario = { path = "../scenario" }
 # The checked model of the auto-run hold; the conformance test drives the
 # product with its traces (`src/script_hold_conformance_tests.rs`).
 hold-model = { path = "../../tools/hold-model" }
+# The checked model of Guardian ownership composed with the seat; the
+# conformance test drives the real Guardian, claim adapter, slot and seat with
+# its traces (`src/guardian_seat_conformance_tests.rs`).
+seat-model = { path = "../../tools/seat-model" }
 
 # These harnesses use the optional scenario runner even for their offline tests.
 [[test]]
