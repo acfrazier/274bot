@@ -2649,6 +2649,29 @@ fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
     .preferences()
 }
 
+/// A preferences service on its own root with its read-refusal notices
+/// captured, for a file written before the service opens.
+fn preferences_with_notices(scratch: &IsolatedEnv, case: &str) -> (Preferences, NoticeLines) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let state = State {
+        hooks: Hooks {
+            read_refusal: Some(Arc::new(move |level, line| {
+                sink.lock().unwrap().push((level, line.to_string()));
+            })),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let service = LocalStateService::open_with_state(
+        StateRoot::new(scratch.home.join(case).join(".274bot")),
+        &[LocalStateDomain::Preferences],
+        Arc::new(RequestIdMinter::new()),
+        state,
+    );
+    (service.preferences(), seen)
+}
+
 /// A runtime settings service and its account/content-bound file.
 fn runtime_settings_at(
     scratch: &IsolatedEnv,
@@ -3114,6 +3137,121 @@ fn preferences_refused_for_permissions_are_never_quarantined() {
         assert_eq!(siblings(&path), ["panel-ui.json"], "mode {mode:o}");
         assert!(notices.lock().unwrap().is_empty(), "mode {mode:o}");
     }
+}
+
+/// FU:15 (S3a): a preferences file that names a field twice in one
+/// object — at the top level or inside a nested object — is refused
+/// whole instead of read keeping one of the two values: reads and saves
+/// refuse with the field, the object it sits in and the remedy, every
+/// byte stays, nothing appears beside the file, and the operator's
+/// warning names the file and the cause.
+#[test]
+fn a_preferences_file_with_a_duplicate_field_is_refused_and_kept() {
+    let scratch = IsolatedEnv::enter("local-state-s3a-preferences-duplicate");
+    for (case, bytes, field, object) in [
+        (
+            "top-level",
+            br#"{"last_focus":"alice","last_focus":"bob"}"#.to_vec(),
+            "last_focus",
+            "the top level",
+        ),
+        (
+            "nested",
+            br#"{"nav":{"allow_teleports":true,"allow_teleports":false}}"#.to_vec(),
+            "allow_teleports",
+            r#"the object "nav""#,
+        ),
+    ] {
+        let (preferences, notices) = preferences_with_notices(&scratch, case);
+        let path = preferences.path();
+        write_private(&path, &bytes);
+        let cause = format!(
+            "field {field:?} is named twice in {object}; edit the file to remove one of them"
+        );
+        assert!(
+            matches!(
+                preferences
+                    .service()
+                    .readback_lease(&identity(LocalStateDomain::Preferences, "alice"), WAIT),
+                Err(ErrorCode::Failed {
+                    domain: LocalStateDomain::Preferences,
+                    reason: FailureReason::Schema
+                })
+            ),
+            "{case}: {notices:?}"
+        );
+        let error = preferences.document().unwrap_err();
+        assert_eq!(error.path(), path.display().to_string(), "{case}");
+        assert_eq!(error.cause(), cause, "{case}");
+        assert_eq!(
+            error.code(),
+            Some(ErrorCode::Failed {
+                domain: LocalStateDomain::Preferences,
+                reason: FailureReason::Schema,
+            }),
+            "{case}"
+        );
+        assert!(preferences.reload().is_err(), "{case}: reads refuse it");
+        assert!(
+            preferences
+                .set("map_bake", serde_json::json!("always"))
+                .is_err(),
+            "{case}: a save refuses it"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            bytes,
+            "{case}: every byte stays"
+        );
+        assert_eq!(
+            siblings(&path),
+            ["panel-ui.json"],
+            "{case}: nothing is written beside it"
+        );
+        let notices = notices.lock().unwrap().clone();
+        assert_eq!(notices.len(), 1, "{case}: {notices:?}");
+        assert_eq!(notices[0].0, Level::Warn, "{case}: the operator's notice");
+        assert!(
+            notices[0]
+                .1
+                .contains(&format!("preferences file refused path={}", path.display())),
+            "{case}: {notices:?}"
+        );
+        assert!(notices[0].1.contains(&cause), "{case}: {notices:?}");
+        drop(preferences);
+    }
+}
+
+/// FU:15 (S3a): a preferences file without duplicate fields loads with
+/// exactly the values a plain `serde_json` read held before, and the
+/// same field name in two different objects (`future.same` and
+/// `future.other.same`, one `name` per element of `layout`) is not a
+/// duplicate.
+#[test]
+fn a_preferences_file_without_duplicate_fields_loads_as_before() {
+    let scratch = IsolatedEnv::enter("local-state-s3a-preferences-valid");
+    let preferences = preferences_at(&scratch, "valid");
+    let path = preferences.path();
+    let bytes = br#"{
+        "last_focus": "alice",
+        "nav": {"allow_teleports": true},
+        "pvp": {"start_fights": true},
+        "layout": [{"name": "mine"}, {"name": "yours"}],
+        "future": {"same": 1, "other": {"same": 2}}
+    }"#
+    .to_vec();
+    write_private(&path, &bytes);
+    let lease = preferences
+        .service()
+        .readback_lease(&identity(LocalStateDomain::Preferences, "alice"), WAIT)
+        .unwrap();
+    assert!(lease.is_some(), "the file loads");
+    let expected: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(*preferences.document().unwrap(), expected);
+    assert_eq!(preferences.value("last_focus").unwrap(), "alice");
+    assert!(preferences.walk_globals().unwrap().allow_teleports);
+    assert!(preferences.pvp_globals().unwrap().start_fights);
 }
 
 /// A refused loadouts file stays byte-for-byte intact and is never renamed,

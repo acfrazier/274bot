@@ -14,7 +14,9 @@
 //! JSON, or JSON that is not an object) is quarantined on a save-path read
 //! and a fresh document is started ([`corrupt_preferences`],
 //! [`corrupt_script_runtime_settings`]); every other refusal leaves the file
-//! unchanged. Duplicate loadout names are refused rather than renamed apart.
+//! unchanged. Duplicate loadout names are refused rather than renamed apart,
+//! and a preferences file that names a field twice in one object is refused
+//! whole rather than read keeping the last value.
 //! A hint document from before schema 1 is refused as a whole, never
 //! rewritten or partially loaded. The service logs each changed refusal with
 //! its file path.
@@ -49,6 +51,7 @@ use api::local_state::{
     RuntimeSettingsRow, ValidationReason, MAX_RUNTIME_SETTINGS_ROWS,
 };
 use script::native::PvpGlobals;
+use serde::de::{self, DeserializeSeed};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -444,6 +447,12 @@ pub(super) enum ReadError {
     ScriptSettingsRow { index: usize },
     #[error("script runtime settings contains a duplicate namespace/key")]
     DuplicateScriptSetting,
+    /// A field named twice in one object of the document, at any level:
+    /// `object` is that object as the refusal names it (`the top level`,
+    /// `the object "nav"`) and `field` is the name named twice. Which of
+    /// the two values was meant is unknown, so the file is refused whole.
+    #[error("field {field:?} is named twice in {object}; edit the file to remove one of them")]
+    DuplicateField { object: String, field: String },
     #[error("rows: {0}")]
     Rows(#[from] HintRowsError),
     /// Loadout names key the rows, so no edit can safely identify a row in
@@ -468,6 +477,7 @@ impl ReadError {
             | ReadError::TooManyScriptSettings { .. }
             | ReadError::ScriptSettingsRow { .. }
             | ReadError::DuplicateScriptSetting
+            | ReadError::DuplicateField { .. }
             | ReadError::Rows(_)
             | ReadError::SharedNames { .. } => FailureReason::Schema,
             ReadError::Identity { .. }
@@ -497,6 +507,7 @@ impl ReadError {
             | ReadError::TooManyScriptSettings { .. }
             | ReadError::ScriptSettingsRow { .. }
             | ReadError::DuplicateScriptSetting
+            | ReadError::DuplicateField { .. }
             | ReadError::SharedNames { .. } => false,
         }
     }
@@ -582,6 +593,161 @@ fn script_runtime_settings_identity(
     ))
 }
 
+/// The position of a member's value inside the object at `object`: the
+/// root object's members sit at their name alone, a nested object's
+/// member at `parent.name`.
+fn member_path(object: &str, field: &str) -> String {
+    match object.is_empty() {
+        true => field.to_owned(),
+        false => format!("{object}.{field}"),
+    }
+}
+
+/// The position of an array element inside the value at `array`.
+fn element_path(array: &str, index: usize) -> String {
+    format!("{array}[{index}]")
+}
+
+/// The object a refusal names from a position: the document's root
+/// object is `the top level`, a member's object `the object "nav"`.
+fn object_phrase(path: &str) -> String {
+    match path.is_empty() {
+        true => "the top level".to_owned(),
+        false => format!("the object {path:?}"),
+    }
+}
+
+/// A `Value` parse that refuses a file naming a field twice in one
+/// object. `serde_json` builds its maps silently keeping the last value,
+/// so the check walks the parse itself: `object` is where this value
+/// sits in the document, and the first duplicate is carried out through
+/// `found` because a `serde_json` deserializer can only return its own
+/// error.
+struct NoDuplicateFields<'a> {
+    object: &'a str,
+    found: &'a std::cell::RefCell<Option<ReadError>>,
+}
+
+impl<'de> de::DeserializeSeed<'de> for NoDuplicateFields<'_> {
+    type Value = Value;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+}
+
+impl<'de> de::Visitor<'de> for NoDuplicateFields<'_> {
+    type Value = Value;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Number(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Number(value.into()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        // A non-finite float cannot appear in JSON text; the same
+        // fallback `serde_json` uses keeps the parse total.
+        Ok(serde_json::Number::from_f64(value).map_or(Value::Null, Value::Number))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::String(value.to_owned()))
+    }
+
+    fn visit_unit<E>(self) -> Result<Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(Value::Null)
+    }
+
+    fn visit_seq<A>(self, mut access: A) -> Result<Value, A::Error>
+    where
+        A: de::SeqAccess<'de>,
+    {
+        let mut elements = Vec::new();
+        while let Some(element) = access.next_element_seed(NoDuplicateFields {
+            object: &element_path(self.object, elements.len()),
+            found: self.found,
+        })? {
+            elements.push(element);
+        }
+        Ok(Value::Array(elements))
+    }
+
+    fn visit_map<A>(self, mut access: A) -> Result<Value, A::Error>
+    where
+        A: de::MapAccess<'de>,
+    {
+        let mut fields = Map::new();
+        while let Some(field) = access.next_key::<String>()? {
+            if fields.contains_key(&field) {
+                *self.found.borrow_mut() = Some(ReadError::DuplicateField {
+                    object: object_phrase(self.object),
+                    field,
+                });
+                return Err(de::Error::custom("a field of this object is named twice"));
+            }
+            let member = member_path(self.object, &field);
+            let value = access.next_value_seed(NoDuplicateFields {
+                object: &member,
+                found: self.found,
+            })?;
+            fields.insert(field, value);
+        }
+        Ok(Value::Object(fields))
+    }
+}
+
+/// Parses `raw` into a JSON object, refusing a file that names a field
+/// twice in one object at any level. Every other read result is the
+/// plain `serde_json` parse: a valid file holds exactly the values it
+/// held before the check.
+fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, Value>, ReadError> {
+    let found = std::cell::RefCell::new(None);
+    let mut parser = serde_json::Deserializer::from_str(raw);
+    let document = NoDuplicateFields {
+        object: "",
+        found: &found,
+    }
+    .deserialize(&mut parser)
+    .map_err(|error| found.borrow_mut().take().unwrap_or(ReadError::Json(error)))?;
+    parser.end()?;
+    let Value::Object(document) = document else {
+        return Err(ReadError::NotAnObject);
+    };
+    Ok(document)
+}
+
 /// Read `key`'s current file under `root`: `Ok(None)` when there is no
 /// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file.
 pub(super) fn read(
@@ -615,9 +781,7 @@ pub(super) fn read(
             }))
         }
         StoreKey::Preferences => {
-            let Value::Object(document) = serde_json::from_str(&raw)? else {
-                return Err(ReadError::NotAnObject);
-            };
+            let document = object_without_duplicate_fields(&raw)?;
             let projection = project_preferences(document);
             let (rows, unrepresentable) = preference_rows(&projection.document);
             Ok(Some(ReadDocument {
