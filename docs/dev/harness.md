@@ -517,11 +517,16 @@ the slot is Idle, and resets the card for a new Start. Quester's Cook fresh,
 resume, restart and login fixtures use this same compiled Start outcome gate.
 
 After Start, the shared live pump (`panel-play` and `tui-play`) also reads the
-slot's lifecycle receipt. A failed receipt of the started run, such as a
+lifecycle receipt of every script the scenario started, the companions' as
+well as the driven slot's. A failed receipt of a started run, such as a
 blocked Quester queue, fails the scenario at once with the script's own
-reason. A watch such as `quest_done` then does not wait out its deadline for a
-result that the stopped script cannot make. A completed, stopped, cancelled or
-paused script ends nothing, and the receipt of an earlier run is ignored.
+reason and the slot that failed. A watch such as `quest_done` then does not
+wait out its deadline for a result that the stopped script cannot make. The
+pump reads the receipts before the runner checks its proofs in the same frame:
+a failure published before the frame that proves the scenario ends the run as
+a failure, not a pass. Each slot's receipts count from the generation of its
+own accepted Start; a receipt of an earlier run is ignored. A completed,
+stopped, cancelled or paused script ends nothing.
 
 ### Quester journal fixtures
 

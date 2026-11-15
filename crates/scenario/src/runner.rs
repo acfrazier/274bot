@@ -909,31 +909,32 @@ impl ScenarioRunner {
         }
     }
 
-    /// Whether a failure of the driven script can still end this run: the
+    /// Whether a failure of a script this run started can still end it: the
     /// StartScript step has begun, and the run has no verdict and is not in
-    /// terminal cleanup. The live pump reads the slot's lifecycle receipt only
-    /// while this holds.
+    /// terminal cleanup. The live pump reads the slot receipts only while
+    /// this holds.
     pub fn wants_script_failure(&self) -> bool {
         self.script_started && matches!(self.phase, Phase::Running | Phase::Proving)
     }
 
-    /// Fail the run because the driven script ended Failed; `reason` is the
-    /// script's own failure text. A script that stopped itself leaves the
+    /// Fail the run because the script on `slot` ended Failed; `reason` is
+    /// the script's own failure text. A script that stopped itself leaves the
     /// current watch waiting for a result that cannot come, so without this
     /// the run waits out its whole deadline. No-op unless
-    /// [`Self::wants_script_failure`].
-    pub fn fail_script(&mut self, reason: &str) {
+    /// [`Self::wants_script_failure`]. The live pump calls it before the
+    /// runner ticks, so a failed script cannot end the run in PASS.
+    pub fn fail_script(&mut self, slot: &str, reason: &str) {
         if !self.wants_script_failure() {
             return;
         }
         if matches!(self.phase, Phase::Running) && self.step < self.scenario.steps.len() {
             self.finish_fail(&format!(
-                "step {} ({}): the script failed: {reason}",
+                "step {} ({}): the script on {slot} failed: {reason}",
                 self.step + 1,
                 self.current_step().name
             ));
         } else {
-            self.finish_fail(&format!("the script failed: {reason}"));
+            self.finish_fail(&format!("the script on {slot} failed: {reason}"));
         }
     }
 
