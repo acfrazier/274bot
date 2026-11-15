@@ -378,6 +378,11 @@ mod protect_window_oracle {
     }
 }
 
+/// A driver's last look before the runner publishes a PASS. It names a script
+/// that the run started and that ended Failed, as `(slot, reason)`. The live
+/// pump installs one that reads the lifecycle receipts of the started slots.
+pub type PassGate = Box<dyn Fn() -> Option<(String, String)> + Send>;
+
 /// The machine both runners drive. One instance per scenario run.
 pub struct ScenarioRunner {
     scenario: Scenario,
@@ -531,6 +536,8 @@ pub struct ScenarioRunner {
     #[allow(clippy::type_complexity)]
     shot_sink: Option<Box<dyn FnMut(&str, &GameSnapshot) + Send>>,
     terminal_cleanup: Option<TerminalCleanup>,
+    /// The driver's last look before a PASS is published. See [`PassGate`].
+    pass_gate: Option<PassGate>,
 }
 
 impl ScenarioRunner {
@@ -649,6 +656,7 @@ impl ScenarioRunner {
             script_idle: false,
             shot_sink: None,
             terminal_cleanup: None,
+            pass_gate: None,
         }
     }
 
@@ -927,15 +935,30 @@ impl ScenarioRunner {
         if !self.wants_script_failure() {
             return;
         }
+        let failure = script_failure_text(slot, reason);
         if matches!(self.phase, Phase::Running) && self.step < self.scenario.steps.len() {
             self.finish_fail(&format!(
-                "step {} ({}): the script on {slot} failed: {reason}",
+                "step {} ({}): {failure}",
                 self.step + 1,
                 self.current_step().name
             ));
         } else {
-            self.finish_fail(&format!("the script on {slot} failed: {reason}"));
+            self.finish_fail(&failure);
         }
+    }
+
+    /// Install the gate that the runner asks just before it publishes a PASS,
+    /// or clear it with `None`. A script that failed before that look turns
+    /// the PASS into a FAIL, also when it failed after the last
+    /// [`Self::fail_script`] call. A failure after the look happened after
+    /// the proof, and the runner does not see it.
+    pub fn set_pass_gate(&mut self, gate: Option<PassGate>) {
+        self.pass_gate = gate;
+    }
+
+    /// Whether a pass gate is installed.
+    pub fn has_pass_gate(&self) -> bool {
+        self.pass_gate.is_some()
     }
 
     /// Latch the first published paint row that starts with each receipt
@@ -2593,6 +2616,12 @@ impl ScenarioRunner {
     }
 
     fn record_pass(&mut self) {
+        // The last look before the PASS is published. Every PASS goes through
+        // here, also one that waited for the world-speed cleanup.
+        if let Some((slot, reason)) = self.pass_gate.as_ref().and_then(|gate| gate()) {
+            self.record_fail(&script_failure_text(&slot, &reason));
+            return;
+        }
         self.phase = Phase::Done;
         self.fire_terminal_shot();
         let mut evidence = Evidence::terminal(
@@ -2651,6 +2680,11 @@ impl ScenarioRunner {
         evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
         self.evidence = Some(evidence);
     }
+}
+
+/// The failure text of a run that ended because the script on `slot` failed.
+fn script_failure_text(slot: &str, reason: &str) -> String {
+    format!("the script on {slot} failed: {reason}")
 }
 
 /// The distinct receipt prefixes a scenario's [`Proof::ScriptReceipt`]

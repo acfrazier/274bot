@@ -97,6 +97,26 @@ fn with_stat_proof(mut scenario: scenario::Scenario) -> scenario::Scenario {
     scenario
 }
 
+/// A client that is in the game on a settled scene, with no connection.
+fn synthetic_client() -> Client {
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: std::env::temp_dir()
+            .join("absent-pump-cache")
+            .to_string_lossy()
+            .into_owned(),
+        members: true,
+        lowmem: true,
+    });
+    client.ingame = true;
+    client.scene_state = 2;
+    client.map_build_base_x = 3200;
+    client.map_build_base_z = 3200;
+    client.local_player = Some(ClientPlayer::at(20, 20));
+    client
+}
+
 /// A live runner whose staged Starts are already accepted and settled, one for
 /// each owned account, over a play with no connection and a synthetic client.
 struct Rig {
@@ -145,21 +165,7 @@ impl Rig {
         handle.install_scenario_runner_for_test(runner);
         handle.install_play(&play);
         handle.stage(StartPlan(cards));
-        let mut client = Client::new(ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 43594,
-            cache_dir: std::env::temp_dir()
-                .join("absent-pump-cache")
-                .to_string_lossy()
-                .into_owned(),
-            members: true,
-            lowmem: true,
-        });
-        client.ingame = true;
-        client.scene_state = 2;
-        client.map_build_base_x = 3200;
-        client.map_build_base_z = 3200;
-        client.local_player = Some(ClientPlayer::at(20, 20));
+        let mut client = synthetic_client();
         client.runenergy = 0;
         Some(Self {
             handle,
@@ -458,16 +464,23 @@ fn a_companions_failed_receipt_of_an_earlier_run_is_not_this_runs_failure() {
         Some(script::ScriptTerminalState::Failed)
     );
 
+    // The companion's next Start is accepted but its run is not installed yet:
+    // the slot still holds the failed receipt of the earlier run.
     rig.start(ScriptFlow::Continue);
-    rig.start_on(PEER, blocked(NATIVE_REASON));
     rig.frames(3);
     rig.frame_on(PEER);
     assert_eq!(
+        rig.receipt_state_of(PEER),
+        Some(script::ScriptTerminalState::Failed)
+    );
+    assert_eq!(
         rig.status(),
         ON_THE_FINAL_WATCH,
-        "the companion's slot still holds the earlier run's failed receipt"
+        "the companion's slot holds the failed receipt of its earlier run"
     );
 
+    // The later run fails under a newer generation: that failure counts.
+    rig.start_on(PEER, blocked(NATIVE_REASON));
     rig.slot_tick_on(PEER);
     rig.frame_on(PEER);
     assert_eq!(rig.status(), RunnerStatus::Failed);
@@ -501,4 +514,131 @@ fn each_started_script_is_read_under_its_own_start_generation() {
         "the driven slot's higher generation must not hide the companion's failure"
     );
     assert!(rig.failure().contains(NATIVE_REASON));
+}
+
+#[test]
+fn a_companions_failure_published_before_the_pass_is_recorded_cannot_pass() {
+    let Some(mut rig) = Rig::with(with_peer(with_stat_proof(queue_scenario()))) else {
+        return;
+    };
+    rig.start(ScriptFlow::Continue);
+    let peer_run = rig.start_on(PEER, blocked(NATIVE_REASON));
+    rig.frames(3);
+    assert_eq!(rig.status(), ON_THE_FINAL_PROOF);
+    rig.frame_on(PEER);
+    rig.prove();
+
+    // The companion's own thread publishes its Failed receipt after the pump
+    // read the receipts and before the runner checks its final proof. The tick
+    // closure runs between the two: the read has returned when it starts.
+    let handle = rig.play.script_start_handle();
+    let (read_done, read_done_rx) = std::sync::mpsc::sync_channel(0);
+    let (published, published_rx) = std::sync::mpsc::sync_channel(0);
+    std::thread::scope(|scope| {
+        let companion = scope.spawn(move || {
+            let mut peer_client = synthetic_client();
+            read_done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the driven frame reaches the runner tick");
+            handle.tick_test_script(PEER, 1, &mut peer_client);
+            assert_eq!(
+                handle.failure_since(PEER, peer_run.run).as_deref(),
+                Some(NATIVE_REASON),
+                "the companion thread publishes the native Failed receipt"
+            );
+            published.send(()).unwrap();
+        });
+        rig.handle.frame(
+            &mut rig.client,
+            SLOT,
+            false,
+            |runner, client, hold| {
+                read_done.send(()).unwrap();
+                published_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("the companion publishes while the driven frame holds the runner");
+                ScenarioRunner::tick_with_hold(runner, client, hold);
+            },
+            ScenarioRunner::companion_tick,
+        );
+        companion.join().expect("the companion thread finishes");
+    });
+
+    assert_eq!(
+        rig.receipt_state_of(PEER),
+        Some(script::ScriptTerminalState::Failed)
+    );
+    assert_eq!(
+        rig.status(),
+        RunnerStatus::Failed,
+        "the failure was published before the PASS was recorded"
+    );
+    let message = rig.failure();
+    assert!(message.contains(NATIVE_REASON), "{message}");
+    assert!(message.contains(PEER), "{message}");
+    let receipt: serde_json::Value =
+        serde_json::from_str(&rig.handle.evidence_json().expect("a terminal receipt")).unwrap();
+    assert_eq!(receipt["outcome"], "FAIL");
+
+    rig.frame_on(PEER);
+    rig.frame();
+    assert_eq!(
+        rig.status(),
+        RunnerStatus::Failed,
+        "later frames keep the verdict"
+    );
+}
+
+#[test]
+fn started_scripts_that_did_not_fail_let_the_scenario_pass() {
+    let Some(mut rig) = Rig::with(with_peer(with_stat_proof(queue_scenario()))) else {
+        return;
+    };
+    rig.start(ScriptFlow::Continue);
+    rig.start_on(PEER, ScriptFlow::Complete);
+    rig.frames(3);
+    assert_eq!(rig.status(), ON_THE_FINAL_PROOF);
+    rig.slot_tick_on(PEER);
+    assert_eq!(
+        rig.receipt_state_of(PEER),
+        Some(script::ScriptTerminalState::Completed)
+    );
+
+    rig.prove();
+    rig.frame();
+    assert_eq!(
+        rig.status(),
+        RunnerStatus::Passed,
+        "a running script and a completed script both leave the PASS"
+    );
+}
+
+#[test]
+fn a_failed_receipt_of_an_earlier_run_does_not_veto_the_pass() {
+    let Some(mut rig) = Rig::with(with_peer(with_stat_proof(queue_scenario()))) else {
+        return;
+    };
+    rig.start_on(PEER, blocked("the earlier peer run blocked"));
+    rig.slot_tick_on(PEER);
+    assert_eq!(
+        rig.receipt_state_of(PEER),
+        Some(script::ScriptTerminalState::Failed)
+    );
+
+    // The companion's next Start is accepted but its run is not installed yet:
+    // the slot still holds the failed receipt of the earlier run.
+    rig.start(ScriptFlow::Continue);
+    rig.frames(3);
+    assert_eq!(rig.status(), ON_THE_FINAL_PROOF);
+    assert_eq!(
+        rig.receipt_state_of(PEER),
+        Some(script::ScriptTerminalState::Failed)
+    );
+    rig.prove();
+    rig.frame();
+    assert_eq!(
+        rig.status(),
+        RunnerStatus::Passed,
+        "the failed receipt belongs to an earlier run of the companion's slot"
+    );
 }
