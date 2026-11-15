@@ -5477,6 +5477,9 @@ fn preferences_state_line(ui: &Ui, session: &Session) {
 
 fn global_config_section(ui: &Ui, session: &mut Session) {
     preferences_state_line(ui, session);
+    // The heading says what became of the save: it failed, or (the COMMIT
+    // ended in a disk error the database could not settle) its outcome is
+    // unknown. The text under it agrees.
     if let Some(failure) = session.panel_preference_write_error() {
         ui.text_colored(session.ui.chrome.error_rgba(), failure.heading());
         ui.text_wrapped(failure.text);
