@@ -373,6 +373,7 @@ export type InteractReq =
   | { op: 'recovery-anchor'; x: number; z: number; level: number}
   | { op: 'recovery-anchor-none'}
   | { op: 'key'; down: boolean; key: string; code?: string}
+  | { op: 'key-gesture'; key: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'; duration_ms: number}
   | { op: 'mouse'; down: boolean; x: number; y: number; button?: number};
 
 /** Host-owned snapshot fields exposed on NativeApi.snapshot. Delta posts omit unchanged fields. Do not mutate; valid until the next tick. */

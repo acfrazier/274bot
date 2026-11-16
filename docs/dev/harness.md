@@ -573,6 +573,32 @@ Measured-window limits for cell authors:
 - The nightly runner has no INVALID category. Read the receipt to distinguish INVALID from its nightly FAIL classification.
 - The account's own face target (Talk-to, trade, follow) invalidates a quiet window, and companions are not observed. Avoid those actions inside Quiet and qualify companions separately.
 
+### Native key gestures
+
+`StepKind::KeyGesture { key, duration_ms }` holds one camera arrow through the
+slot's ordinary native input consumer. `GestureKey` admits only the four DOM
+arrow names. The host admits durations from 1 to 10,000 milliseconds and
+measures the hold from its first native consumer frame. A key step cannot
+advance before release, even if its wait predicate already holds.
+
+Use `Proof::CameraDelta` to require both the completed native hold and a change
+in the existing orbit-camera snapshot. The terminal `keys` receipt records the
+session, ticket, duration, applied frames, release state and before/after yaw
+and pitch. Request admission alone is not proof.
+
+The script hand-off accepts `{ op: 'key-gesture', key: 'ArrowLeft',
+duration_ms: 400 }` with a host-stamped production identity. It does not alter
+the existing digit/Enter amount-input operation. Human holds have priority;
+an unowned user key-up cannot clear a script hold, and script cleanup cannot
+clear a human hold. Completion, script revocation, lease cancellation, session
+loss and scenario termination release the script-owned key.
+
+The `host.keys-377-native-duration-live` cell holds an arrow for 400 milliseconds
+on one owned account. It records before/released CPU frames, the native hold
+receipt, thirty post-release frames without a held bit, and clean logout.
+Supply the ordinary 377 resource paths, an owned `BOT_LIVE_NAME_PREFIX` and
+`PARITY_KEYS_EVIDENCE_DIR`; the exact command is in `tools/live-map/map.toml`.
+
 ### Quester journal fixtures
 
 The headless Quester journal fixtures run with

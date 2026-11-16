@@ -1643,7 +1643,7 @@ where
             InteractReq::Key { down, key, .. } => {
                 wrote |= ix.apply_amount_key(down, &key);
             }
-            InteractReq::Mouse { .. } => {}
+            InteractReq::Mouse { .. } | InteractReq::KeyGesture { .. } => {}
             InteractReq::SetCameraYaw { .. } => {}
             InteractReq::RunPolicyOverride { .. } => {
                 // Applied only through Host's generation-fenced policy sink.

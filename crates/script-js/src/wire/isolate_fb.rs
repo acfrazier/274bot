@@ -5998,6 +5998,25 @@ fn decode_interact_rows<'a>(
                     .to_string(),
                 code: row.kind().unwrap_or("").to_string(),
             }),
+            "key-gesture" => {
+                let key = row
+                    .action()
+                    .ok_or_else(|| "key-gesture has no key".to_string())?;
+                let admitted =
+                    api::native_input::GestureKey::parse(key).map_err(|error| error.to_string())?;
+                let duration_ms = u32::try_from(
+                    row.index()
+                        .ok_or_else(|| "key-gesture has no duration".to_string())?,
+                )
+                .map_err(|_| "invalid key duration".to_string())?;
+                api::native_input::KeyGesture::new(admitted, duration_ms)
+                    .map_err(|error| error.to_string())?;
+                out.push(script::interact::InteractReq::KeyGesture {
+                    key: key.to_string(),
+                    duration_ms,
+                    identity: row.input_identity(),
+                });
+            }
             "mouse" => out.push(script::interact::InteractReq::Mouse {
                 down: row.index() == Some(1),
                 x: row.xf().unwrap_or(f64::NAN),
@@ -6700,6 +6719,7 @@ fn interact_off<'b>(
         InteractReq::ChannelMessage { .. } => "channel-message",
         InteractReq::ChannelStatus { .. } => "channel-status",
         InteractReq::Key { .. } => "key",
+        InteractReq::KeyGesture { .. } => "key-gesture",
         InteractReq::Mouse { .. } => "mouse",
         InteractReq::RunPolicyOverride { .. } => "run-policy",
         InteractReq::SayPublic { .. } => "say-public",
@@ -6765,7 +6785,9 @@ fn interact_off<'b>(
             allow_teleports: true,
             ..
         } => Some(b.create_string("tele")),
-        InteractReq::Key { key, .. } => Some(b.create_string(key)),
+        InteractReq::Key { key, .. } | InteractReq::KeyGesture { key, .. } => {
+            Some(b.create_string(key))
+        }
         InteractReq::ChannelStatus { message, .. } => Some(b.create_string(message)),
         InteractReq::DuelAccept { screen, .. } => Some(b.create_string(screen)),
         _ => None,
@@ -7302,6 +7324,15 @@ fn interact_off<'b>(
                 table.add_kind(off);
             }
             table.add_index(if *down { 1 } else { 0 });
+        }
+        InteractReq::KeyGesture {
+            duration_ms,
+            identity,
+            ..
+        } => {
+            table.add_action(action_off.expect("key identifier encoded"));
+            table.add_index(i32::try_from(*duration_ms).unwrap_or(i32::MAX));
+            table.add_input_identity(*identity);
         }
         InteractReq::Mouse {
             down,

@@ -70,6 +70,144 @@ fn stat_scenario(min: i32, budget: u32) -> Scenario {
     }
 }
 
+fn running_key_scenario(
+    arm: Proof,
+) -> (
+    ScenarioRunner,
+    Client,
+    Arc<api::native_input::NativeInputAuthority>,
+) {
+    let mut scenario = stat_scenario(0, 100);
+    scenario.steps = vec![Step {
+        name: "native camera hold",
+        kind: StepKind::KeyGesture {
+            key: api::native_input::GestureKey::ArrowLeft,
+            duration_ms: 100,
+        },
+        wait: wait(arm, 100),
+    }];
+    scenario.proof = arm;
+    let input = api::native_input::NativeInputAuthority::new();
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_key_input(Arc::clone(&input));
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    for _ in 0..8 {
+        runner.tick(&mut client);
+        if input.lock().pending_key().is_some() {
+            break;
+        }
+        client.bump_gens(ServerProt::PLAYER_INFO);
+    }
+    assert!(
+        input.lock().pending_key().is_some(),
+        "scenario must admit its ordinary key action"
+    );
+    input.lock().consume_key(Instant::now(), true);
+    (runner, client, input)
+}
+
+#[test]
+fn key_gesture_cannot_finish_early_even_with_an_immediate_wait_arm() {
+    let (mut runner, mut client, input) = running_key_scenario(Proof::IngameScene2);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert!(matches!(runner.phase, Phase::Running));
+    assert!(runner.evidence().is_none());
+    assert_eq!(
+        input.key_progress(1).unwrap().phase,
+        api::native_input::KeyPhase::Held
+    );
+    input
+        .lock()
+        .consume_key(Instant::now() + Duration::from_millis(101), true);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    assert_eq!(
+        runner.evidence().unwrap().keys[0].input.phase,
+        api::native_input::KeyPhase::Released
+    );
+}
+
+#[test]
+fn camera_delta_requires_native_duration_release_and_an_observed_change() {
+    let (mut runner, mut client, input) = running_key_scenario(Proof::CameraDelta);
+    client.orbit_camera_yaw += 1;
+    runner.tick(&mut client);
+    assert!(
+        !runner.holds(Proof::CameraDelta),
+        "movement alone cannot prove a duration or release"
+    );
+    input
+        .lock()
+        .consume_key(Instant::now() + Duration::from_millis(101), true);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let key = &runner.evidence().unwrap().keys[0];
+    assert_ne!(key.camera_before, key.camera_after);
+    assert!(key.input.held_ms >= key.input.duration_ms);
+    assert_eq!(key.input.phase, api::native_input::KeyPhase::Released);
+    assert_eq!(client.out.pos, 0, "key actions must not synthesize packets");
+}
+
+#[test]
+fn every_key_scenario_exit_cancels_its_native_hold() {
+    use api::native_input::KeyPhase;
+    for exit in [
+        "error",
+        "cancel",
+        "disconnect",
+        "relog",
+        "scenario-end",
+        "invalid",
+        "unavailable",
+    ] {
+        let (mut runner, mut client, input) = running_key_scenario(Proof::CameraDelta);
+        match exit {
+            "error" => runner.finish_fail("key test error"),
+            "cancel" => {
+                drop(runner);
+                assert_eq!(input.key_progress(1).unwrap().phase, KeyPhase::Cancelled);
+                continue;
+            }
+            "disconnect" => {
+                client.ingame = false;
+                runner.tick(&mut client);
+            }
+            "relog" => {
+                client.gens.session = client.gens.session.wrapping_add(1);
+                runner.tick(&mut client);
+            }
+            "invalid" => runner.finish_invalid("key test invalid"),
+            "unavailable" => runner.finish_unavailable("key test unavailable"),
+            _ => runner.finish_pass(),
+        }
+        assert_eq!(
+            input.key_progress(1).unwrap().phase,
+            KeyPhase::Cancelled,
+            "{exit}"
+        );
+        assert_eq!(
+            runner.evidence().unwrap().keys[0].input.phase,
+            KeyPhase::Cancelled,
+            "{exit}"
+        );
+        assert!(
+            input.lock().pending_key().is_none(),
+            "{exit} must not replay"
+        );
+    }
+}
+
+#[test]
+fn camera_proof_without_a_key_action_is_fail_closed_and_unallocated() {
+    let runner = ScenarioRunner::with_world(stat_scenario(0, 2), None);
+    assert!(runner.key_run.is_none());
+    assert!(!runner.holds(Proof::CameraDelta));
+}
+
 #[test]
 fn terminal_status_accepts_only_an_explicit_pass() {
     for outcome in ["INVALID", "UNAVAILABLE", "FAIL", "unknown"] {

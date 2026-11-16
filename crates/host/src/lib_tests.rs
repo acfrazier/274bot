@@ -1555,6 +1555,56 @@ fn client_frame_releases_held_keys_when_capture_disabled() {
 }
 
 #[test]
+fn native_key_disconnect_and_relog_release_before_the_next_session_frame() {
+    use api::native_input::{GestureKey, KeyGesture, KeyPhase};
+    for exit in ["disconnect", "relog"] {
+        let mut client = test_client();
+        let input = SlotInput::new();
+        let lease = input
+            .authority()
+            .key_gesture(KeyGesture::new(GestureKey::ArrowLeft, 1000).unwrap())
+            .unwrap();
+        input.consume_native_frame(&mut client.shell);
+        assert_eq!(
+            client.shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+            1
+        );
+        if exit == "relog" {
+            client.gens.session = client.gens.session.wrapping_add(1);
+        }
+        client.ingame = false;
+        let mut slot = SlotLoop::new();
+        let mut sends = 0;
+        Host::client_frame(
+            &mut client,
+            &mut slot,
+            "key-exit",
+            Some(&input),
+            None,
+            &mut sends,
+            None,
+        );
+        assert_eq!(
+            lease.progress().unwrap().phase,
+            KeyPhase::Cancelled,
+            "{exit}"
+        );
+        assert_eq!(
+            client.shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+            0,
+            "{exit}"
+        );
+        client.ingame = true;
+        input.consume_native_frame(&mut client.shell);
+        assert_eq!(
+            client.shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+            0,
+            "{exit} must not replay"
+        );
+    }
+}
+
+#[test]
 fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
     use client::client::{ClientNpc, MiniMenuAction};
     for (x, y, action, expected, event_packet) in [

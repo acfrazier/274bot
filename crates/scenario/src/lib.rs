@@ -21,6 +21,7 @@ mod catalog;
 pub mod evidence;
 pub mod fixture;
 pub mod interference;
+pub mod keys;
 pub mod proof;
 mod quest_fast;
 pub mod quest_watch;
@@ -488,6 +489,11 @@ pub enum StepKind {
     MakeProduct { product_id: i32 },
     /// Answer the currently observed Make-X quantity prompt.
     EnterAmount { value: i32 },
+    /// Hold an admitted camera key through the normal native input owner.
+    KeyGesture {
+        key: api::native_input::GestureKey,
+        duration_ms: u32,
+    },
     /// Like [`StepKind::Perform`], but re-sends once per observed game
     /// tick (one `PLAYER_INFO`) until `wait.arm` holds (`getvar` polls,
     /// sticky `setvar tutorial`). Client cycles do not re-send it.

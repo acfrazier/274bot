@@ -46,8 +46,8 @@ pub use random::{
 pub use render_head::SlotRender;
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
 pub use slot_io::{
-    map_image_to_applet, wake_channel, FrameBuf, InputEv, ManualMoveIntent, MouseOwner, SlotInput,
-    SlotPark, SlotWake,
+    map_image_to_applet, wake_channel, FrameBuf, InputEv, KeyOwner, ManualMoveIntent, MouseOwner,
+    SlotInput, SlotPark, SlotWake,
 };
 #[cfg(feature = "journal-paint-proof")]
 pub use slot_io::{JournalPaintStamp, JournalProofFrame};
@@ -553,6 +553,9 @@ impl Host {
         capacity::begin_services(client.gens.player_info);
         loop {
             if probe(client) {
+                if let Some(input) = &input {
+                    input.cancel_native_keys(&mut client.shell);
+                }
                 capacity::end_services();
                 return slot.run_policy;
             }
@@ -717,6 +720,9 @@ impl Host {
         client.set_external_reconnect_owner(true);
         client.set_hosted_title_label(Some(username));
         if let Some(inp) = input {
+            if !client.ingame {
+                inp.cancel_native_keys(&mut client.shell);
+            }
             let owner = inp.consume_native_frame(&mut client.shell);
             inp.classify_manual_move_intent(client, owner);
         } else {
@@ -728,6 +734,11 @@ impl Host {
         let t_loop = std::time::Instant::now();
         slot.recover_entity_cycles(client, slot.pacing_now(t_loop));
         client.mainloop();
+        if !client.ingame {
+            if let Some(input) = input {
+                input.cancel_native_keys(&mut client.shell);
+            }
+        }
         client.advance_hosted_animations(false);
         // The hosted title's `mainloop` changes nothing it draws, so the only
         // title paint owed ahead of its cadence is the in-game → title edge:
@@ -1130,6 +1141,7 @@ fn slot_want_cpu(input: Option<&SlotInput>) -> bool {
 /// frame loop.
 fn frame_cadence(client: &Client, input: Option<&SlotInput>) -> bool {
     input.map(|i| i.enabled()).unwrap_or(false)
+        || input.is_some_and(SlotInput::key_input_active)
         || (client.draw
             && (input.map(|i| i.full_rate()).unwrap_or(false)
                 || (client.ingame && client.scene_state != 2)))

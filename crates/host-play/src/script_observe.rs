@@ -2697,6 +2697,26 @@ pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::interact::Int
     let mut out = Vec::with_capacity(reqs.len());
     for req in reqs {
         match req.borrow() {
+            script::interact::InteractReq::KeyGesture {
+                key,
+                duration_ms,
+                identity,
+            } => {
+                if let Some(input) = slot_input {
+                    let gesture = api::native_input::GestureKey::parse(key)
+                        .and_then(|key| api::native_input::KeyGesture::new(key, *duration_ms));
+                    match gesture.and_then(|gesture| {
+                        input.authority().script_key_gesture(*identity, gesture)
+                    }) {
+                        Ok(_) => {}
+                        Err(error) => host_log!(
+                            Category::InteractTrace,
+                            Level::Warn,
+                            "key gesture refused: {error}"
+                        ),
+                    }
+                }
+            }
             script::interact::InteractReq::Mouse {
                 down,
                 x,

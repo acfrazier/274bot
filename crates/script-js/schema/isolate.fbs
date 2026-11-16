@@ -1053,10 +1053,11 @@ table SeatResult {
 // | "shop-button" | "make-panel"
 // | "wear" | "unequip" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
-// | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse"
+// | "recovery-anchor" | "recovery-anchor-none" | "key" | "key-gesture" | "mouse"
 // | "inspect-route" | "run-policy" | "progress-read".
 // Reserved legacy Interact.op tag: "select-bank" (do not reuse).
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
+// "key-gesture": action=admitted DOM arrow, index=duration in milliseconds.
 // "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
 // input_identity is the native permit at production (0 when absent).
 // Optional fields are absent (not written) when the request has none.

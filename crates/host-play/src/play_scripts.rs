@@ -208,6 +208,12 @@ fn validate_script_loadout_setting(
 }
 
 impl ScriptStartHandle {
+    /// The existing slot-native input authority, shared with scenario actions.
+    pub fn native_input(&self, name: &str) -> Option<Arc<api::native_input::NativeInputAuthority>> {
+        let slot = script_slot(&self.scripts, name)?;
+        let slot = slot.lock().ok()?;
+        Some(slot.native_input())
+    }
     /// The operator's loadout rows for a Start on `name`'s slot: the state
     /// composition's current lease (a readback, so a row the frontend's
     /// form just saved is seen), or no rows for a composition without a
