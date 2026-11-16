@@ -6,12 +6,17 @@ use scenario::{
 };
 use std::io::Write;
 use std::process::Command;
+use std::sync::Mutex;
 
 // Selected 377 content: nettles.loc and maps/m49_52.jm2 (0 1 15).
 // Picking without gloves runs damage_self(2); it changes only the picker.
 const NETTLE_ID: i32 = 1181;
 const NETTLE_TILE: (i32, i32, i32) = (3137, 3343, 0);
 const START_TILE: (i32, i32, i32) = (3136, 3343, 0);
+// Leave the manor's aggressive NPCs through normal scene walking. This
+// destination is south of the nettles, not a teleport or a world-state edit.
+const ESCAPE_TILE: (i32, i32, i32) = (3140, 3320, 0);
+const QUIET_TICKS: u32 = 4;
 const WINDOW: &str = "self-nettle-sting";
 const CHILD_MODE: &str = "PARITY_1I_WINDOW";
 
@@ -32,13 +37,87 @@ fn combat_quiet(snapshot: &GameSnapshot) -> bool {
         && !snapshot.taking_damage()
 }
 
+#[derive(Default)]
+struct QuietInterval {
+    first: Option<u32>,
+    last: Option<u32>,
+}
+
+impl QuietInterval {
+    fn observe(&mut self, tick: u32, quiet: bool) {
+        if !quiet {
+            self.first = None;
+        }
+        if self.last == Some(tick) {
+            return;
+        }
+        if quiet && (self.first.is_none() || self.last != Some(tick.wrapping_sub(1))) {
+            self.first = Some(tick);
+        }
+        self.last = Some(tick);
+    }
+
+    fn elapsed(&self) -> u32 {
+        self.first
+            .zip(self.last)
+            .map_or(0, |(first, last)| last.wrapping_sub(first))
+    }
+
+    fn ready(&self) -> bool {
+        self.first.is_some() && self.elapsed() >= QUIET_TICKS
+    }
+}
+
+#[derive(Default)]
+struct EscapeWitness {
+    from: Option<(i32, i32, i32)>,
+    requested_tick: Option<u32>,
+    arrived_tick: Option<u32>,
+    quiet: QuietInterval,
+}
+
+impl EscapeWitness {
+    fn send(&mut self, client: &mut Client, snapshot: &GameSnapshot) -> bool {
+        let (x, z, level) = ESCAPE_TILE;
+        if !matches!(
+            Interactions::new(snapshot, client).walk(WorldTile { x, z, level }),
+            SendResult::Sent { .. }
+        ) {
+            return false;
+        }
+        self.from = snapshot.tile();
+        self.requested_tick = Some(snapshot.tick());
+        true
+    }
+
+    fn observe(&mut self, snapshot: &GameSnapshot) {
+        let arrived = snapshot.tile() == Some(ESCAPE_TILE);
+        if arrived {
+            self.arrived_tick.get_or_insert(snapshot.tick());
+        }
+        self.quiet
+            .observe(snapshot.tick(), arrived && combat_quiet(snapshot));
+    }
+
+    fn receipt(&self) -> Value {
+        json!({
+            "action":self.requested_tick.map(|_| "normal Interactions::walk"),
+            "from":self.from,"to":ESCAPE_TILE,"requested_tick":self.requested_tick,
+            "arrived_tick":self.arrived_tick,
+            "quiet":{"first_tick":self.quiet.first,"last_tick":self.quiet.last,
+                "elapsed_ticks":self.quiet.elapsed(),"required_ticks":QUIET_TICKS,
+                "ready":self.quiet.ready()},
+        })
+    }
+}
+
 fn state(snapshot: &GameSnapshot) -> Value {
     json!({"tick":snapshot.tick(),"tile":snapshot.tile(),"hitpoints":hitpoints(snapshot),
         "taking_damage":snapshot.taking_damage(),
         "actor":snapshot.local_player().map(|local| &local.player.actor)})
 }
 
-fn steps(inside: bool) -> Vec<Step> {
+fn steps(inside: bool, escape: Arc<Mutex<EscapeWitness>>) -> Vec<Step> {
     let begin = || Step {
         name: "Begin measured nettle window",
         kind: StepKind::BeginMeasuredWindow {
@@ -76,18 +155,37 @@ fn steps(inside: bool) -> Vec<Step> {
         },
     });
     if !inside {
+        let walk_escape = Arc::clone(&escape);
         steps.push(Step {
-            name: "disclosed transit sting expires before Begin",
+            name: "normal walk south out of the nettle NPCs' reach",
+            kind: StepKind::Perform {
+                send: Box::new(move |client, snapshot| {
+                    hitpoints(snapshot) == Some(8)
+                        && walk_escape.lock().unwrap().send(client, snapshot)
+                }),
+            },
+            wait: Wait {
+                arm: Proof::ArrivedNear {
+                    x: ESCAPE_TILE.0,
+                    z: ESCAPE_TILE.1,
+                    level: ESCAPE_TILE.2,
+                    radius: 0,
+                },
+                budget_ticks: 64,
+            },
+        });
+        steps.push(Step {
+            name: "measured quiet interval at the escape tile before Begin",
             kind: StepKind::Await {
-                evidence: "own sting observed and combat now quiet",
-                ready: Box::new(|snapshot| {
-                    hitpoints(snapshot) == Some(8) && combat_quiet(snapshot)
+                evidence: "own sting observed; escaped and quiet for four full game ticks",
+                ready: Box::new(move |snapshot| {
+                    hitpoints(snapshot) == Some(8) && escape.lock().unwrap().quiet.ready()
                 }),
                 summary: None,
             },
             wait: Wait {
                 arm: Proof::IngameScene2,
-                budget_ticks: 24,
+                budget_ticks: 32,
             },
         });
         steps.push(begin());
@@ -107,19 +205,34 @@ fn clean_logout(
     client: &mut Client,
     snapshot: &mut GameSnapshot,
     pump: &mut Pump,
+    escape: &mut EscapeWitness,
 ) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let near_nettles = snapshot.tile().is_some_and(|(x, z, level)| {
+        level == START_TILE.2 && x.abs_diff(START_TILE.0) <= 32 && z.abs_diff(START_TILE.1) <= 32
+    });
+    if client.ingame
+        && near_nettles
+        && snapshot.tile() != Some(ESCAPE_TILE)
+        && !escape.send(client, snapshot)
+    {
+        return Err("cleanup normal escape walk was refused".into());
+    }
+    let deadline = Instant::now() + Duration::from_secs(90);
     let mut last_attempt = None;
     while client.ingame {
         let started = Instant::now();
         client.mainloop();
         host::publish_snapshot(snapshot, client, pump.drain_client(client));
+        escape.observe(snapshot);
         if !snapshot.ingame() {
             return Ok(());
         }
         // Match the live-map shutdown rule: the server may refuse logout
         // in combat; another request waits sixteen observed game ticks.
-        if last_attempt.is_none_or(|tick| snapshot.tick().wrapping_sub(tick) >= 16) {
+        if (!near_nettles || escape.quiet.ready())
+            && combat_quiet(snapshot)
+            && last_attempt.is_none_or(|tick| snapshot.tick().wrapping_sub(tick) >= 16)
+        {
             let interfaces = std::sync::Arc::clone(&client.ifaces);
             if !interact::logout(client, interfaces.as_slice()) {
                 return Err("clean logout interface unavailable".into());
@@ -127,7 +240,10 @@ fn clean_logout(
             last_attempt = Some(snapshot.tick());
         }
         if Instant::now() >= deadline {
-            return Err("clean logout was not observed within thirty seconds".into());
+            return Err(
+                "clean escape, quiet interval and logout were not observed within ninety seconds"
+                    .into(),
+            );
         }
         if let Some(rest) = Duration::from_millis(20).checked_sub(started.elapsed()) {
             std::thread::sleep(rest);
@@ -156,6 +272,7 @@ fn run_case(inside: bool, directory: &Path, mode: &str) -> Result<(), String> {
     }
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
+    let transit_escape = Arc::new(Mutex::new(EscapeWitness::default()));
     let result = (|| {
         if !interact::login(
             &mut client,
@@ -259,7 +376,7 @@ fn run_case(inside: bool, directory: &Path, mode: &str) -> Result<(), String> {
                     profiles: vec![("interference", "unused")],
                     mainland: false,
                 },
-                steps: steps(inside),
+                steps: steps(inside, Arc::clone(&transit_escape)),
                 proof: Proof::StatAtMost { id: 3, max: 8 },
                 companions: vec![],
                 settings: ScenarioSettings {
@@ -275,6 +392,7 @@ fn run_case(inside: bool, directory: &Path, mode: &str) -> Result<(), String> {
             let started = Instant::now();
             client.mainloop();
             host::publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
+            transit_escape.lock().unwrap().observe(&snapshot);
             runner.tick(&mut client);
             if matches!(
                 runner.status(),
@@ -306,7 +424,17 @@ fn run_case(inside: bool, directory: &Path, mode: &str) -> Result<(), String> {
             }
         }
     })();
-    let cleanup = clean_logout(&mut client, &mut snapshot, &mut pump);
+    let mut cleanup_escape = EscapeWitness::default();
+    let cleanup = clean_logout(&mut client, &mut snapshot, &mut pump, &mut cleanup_escape);
+    fs::write(
+        directory.join(format!("{mode}-escape.json")),
+        json!({
+            "before_begin":transit_escape.lock().unwrap().receipt(),
+            "cleanup":cleanup_escape.receipt(),
+        })
+        .to_string(),
+    )
+    .map_err(|error| error.to_string())?;
     fs::write(directory.join(format!("{mode}-cleanup.json")), json!({
         "success":cleanup.is_ok(),"logout_observed":!client.ingame,"error":cleanup.as_ref().err(),
     }).to_string()).map_err(|error| error.to_string())?;
@@ -370,14 +498,19 @@ fn measured_windows_377() -> Result<(), String> {
                     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
                 });
         let exit_code = output.status.code();
+        let escape: Result<Value, String> = fs::read(directory.join(format!("{mode}-escape.json")))
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|error| error.to_string()));
         fs::write(directory.join(format!("{mode}-receipt.json")), serde_json::to_vec_pretty(&json!({
             "cell":"interference_377","mode":mode,"head":std::env::var("PARITY_1I_HEAD").ok(),
             "command":[executable.to_string_lossy(),"--ignored","--exact","interference::measured_windows_377","--nocapture","--test-threads=1"],
             "child_environment":{CHILD_MODE:mode},"exit_code":exit_code,"evidence":evidence.as_ref().ok(),
             "fixture_error":evidence.as_ref().err(),"cleanup":cleanup.as_ref().ok(),"cleanup_error":cleanup.as_ref().err(),
+            "escape":escape.as_ref().ok(),"escape_error":escape.as_ref().err(),
         })).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
         let evidence = evidence?;
         let cleanup = cleanup?;
+        let escape = escape?;
         if cleanup["success"] != true || cleanup["logout_observed"] != true {
             return Err(format!(
                 "{mode}: child did not complete clean logout: {cleanup}"
@@ -389,6 +522,25 @@ fn measured_windows_377() -> Result<(), String> {
         {
             return Err(format!("{mode}: expected {expected} and corresponding child exit; got outcome={} exit={exit_code:?}", evidence["outcome"]));
         }
+        if mode == "outside" {
+            let before = &escape["before_begin"];
+            let start = &evidence["interference"]["windows"][0]["start"];
+            let quiet_last = before["quiet"]["last_tick"].as_u64();
+            if before["action"] != "normal Interactions::walk"
+                || before["to"] != json!(ESCAPE_TILE)
+                || before["arrived_tick"].as_u64().is_none()
+                || before["quiet"]["ready"] != true
+                || before["quiet"]["elapsed_ticks"].as_u64().unwrap_or(0) < u64::from(QUIET_TICKS)
+                || start["tile"] != json!(ESCAPE_TILE)
+                || !quiet_last
+                    .zip(start["tick"].as_u64())
+                    .is_some_and(|(last, begin)| last <= begin)
+            {
+                return Err(format!(
+                    "outside: missing normal escape and pre-Begin quiet proof: {escape}"
+                ));
+            }
+        }
         let events = evidence["interference"]["events"]
             .as_array()
             .ok_or("missing typed interference events")?;
@@ -399,10 +551,9 @@ fn measured_windows_377() -> Result<(), String> {
         };
         if !events.iter().any(|event| {
             event["classification"] == classification
-                && matches!(
-                    event["reason"].as_str(),
-                    Some("hitpoints-decreased" | "fresh-hitmark" | "combat-active")
-                )
+                && event["reason"] == "hitpoints-decreased"
+                && event["previous"]["hitpoints"] == 10
+                && event["sample"]["hitpoints"] == 8
         }) {
             return Err(format!(
                 "{mode}: receipt does not disclose the actual nettle disturbance"
@@ -414,4 +565,44 @@ fn measured_windows_377() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[test]
+fn quiet_interval_requires_consecutive_game_ticks_and_resets_on_combat() {
+    let mut quiet = QuietInterval::default();
+    for _ in 0..20 {
+        quiet.observe(10, true);
+    }
+    assert_eq!(quiet.elapsed(), 0, "client cycles are not game ticks");
+    for tick in 11..=13 {
+        quiet.observe(tick, true);
+        assert!(!quiet.ready());
+    }
+    quiet.observe(14, false);
+    assert!(!quiet.ready(), "a fresh disturbance resets the interval");
+    for tick in 15..=19 {
+        quiet.observe(tick, true);
+    }
+    assert!(quiet.ready());
+    quiet.observe(21, true);
+    assert!(!quiet.ready(), "unobserved game ticks are not quiet proof");
+}
+
+#[test]
+fn transit_escape_precedes_begin_but_inside_sting_remains_measured() {
+    let outside = steps(false, Arc::new(Mutex::new(EscapeWitness::default())));
+    assert!(matches!(outside[0].kind, StepKind::Perform { .. }));
+    assert!(matches!(outside[1].kind, StepKind::Perform { .. }));
+    assert!(matches!(outside[2].kind, StepKind::Await { .. }));
+    assert!(matches!(
+        outside[3].kind,
+        StepKind::BeginMeasuredWindow { .. }
+    ));
+    let inside = steps(true, Arc::new(Mutex::new(EscapeWitness::default())));
+    assert!(matches!(
+        inside[0].kind,
+        StepKind::BeginMeasuredWindow { .. }
+    ));
+    assert!(matches!(inside[1].kind, StepKind::Perform { .. }));
+    assert!(matches!(inside[2].kind, StepKind::EndMeasuredWindow { .. }));
 }

@@ -14,6 +14,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   it as interference.
   An invalid window also takes precedence over a failed started script at the
   final pass gate, so its interference reason remains the terminal diagnostic.
+- The revision-377 nettle-window cell leaves nearby aggressors by normal
+  walking and records four full quiet game ticks before its transit Begin;
+  its inside-window sting still requires INVALID and clean escape/logout.
 - `ObserveMenu` checks exact menu operations and structured targets without
   sending input; the unarmed observer path allocates nothing.
 - The revision-377 attachment live check requires Hans by NPC type and never
