@@ -580,6 +580,8 @@ slot's ordinary native input consumer. `GestureKey` admits only the four DOM
 arrow names. The host admits durations from 1 to 10,000 milliseconds and
 measures the hold from its first native consumer frame. A key step cannot
 advance before release, even if its wait predicate already holds.
+Set the step's `budget_ticks` to cover the entire hold and its release frame.
+The step budget is independent of the requested duration.
 
 Use `Proof::CameraDelta` to require both the completed native hold and a change
 in the existing orbit-camera snapshot. The terminal `keys` receipt records the
@@ -591,7 +593,13 @@ duration_ms: 400 }` with a host-stamped production identity. It does not alter
 the existing digit/Enter amount-input operation. Human holds have priority;
 an unowned user key-up cannot clear a script hold, and script cleanup cannot
 clear a human hold. Completion, script revocation, lease cancellation, session
-loss and scenario termination release the script-owned key.
+loss and scenario termination release the producing owner's key. A scenario
+lease survives unrelated script Stop, replacement and Pause. Closing the host
+input gate for a guardian hold or `!up` cancels either producer's hold.
+
+Script admission refusals are logged only; the script receives no refusal
+result. An invalid key-gesture request drops its whole interact batch, including
+other requests in that batch. Scenario admission refusals fail the step.
 
 The `host.keys-377-native-duration-live` cell holds an arrow for 400 milliseconds
 on one owned account. It records before/released CPU frames, the native hold

@@ -97,6 +97,39 @@ fn same_frame_user_down_up_still_cancels_script_ownership() {
 }
 
 #[test]
+fn a_released_user_tap_does_not_preempt_a_later_script_hold() {
+    let (input, tx, mut shell) = user_input();
+    let ch = GestureKey::ArrowLeft.shell_char();
+    for down in [true, false] {
+        tx.send(InputEv::Key { down, ch }).unwrap();
+    }
+    let now = Instant::now();
+    consume(&input, &mut shell, now);
+    assert_eq!(shell.key_held[ch as usize], 0);
+    assert_eq!(input.key_owner(ch), KeyOwner::None);
+
+    let identity = input.authority.publish_live();
+    let ticket = input
+        .authority
+        .script_key_gesture(identity, gesture())
+        .unwrap();
+    consume(&input, &mut shell, now + Duration::from_millis(20));
+    assert_eq!(
+        input.authority.key_progress(ticket).unwrap().phase,
+        KeyPhase::Held
+    );
+    assert_eq!(shell.key_held[ch as usize], 1);
+    assert_eq!(input.key_owner(ch), KeyOwner::Script { ticket });
+    consume(&input, &mut shell, now + Duration::from_millis(120));
+    assert_eq!(
+        input.authority.key_progress(ticket).unwrap().phase,
+        KeyPhase::Released
+    );
+    assert_eq!(shell.key_held[ch as usize], 0);
+    assert!(!input.key_input_active());
+}
+
+#[test]
 fn unowned_user_keyup_and_focus_detach_cannot_release_a_script_key() {
     let (input, tx, mut shell) = user_input();
     let lease = input.authority.key_gesture(gesture()).unwrap();
@@ -159,6 +192,76 @@ fn script_error_stop_and_replacement_revoke_only_the_producing_identity() {
             input.key_owner(GestureKey::ArrowLeft.shell_char()),
             KeyOwner::None
         );
+    }
+}
+
+#[test]
+fn scenario_hold_survives_unrelated_script_stop_replacement_and_pause() {
+    for event in ["stop", "replacement", "pause", "sync-not-live"] {
+        let input = SlotInput::new();
+        input.authority.publish_live();
+        let lease = input.authority.key_gesture(gesture()).unwrap();
+        let mut shell = GameShell::new();
+        let now = Instant::now();
+        let ch = GestureKey::ArrowLeft.shell_char();
+        consume(&input, &mut shell, now);
+        assert_eq!(lease.progress().unwrap().phase, KeyPhase::Held);
+        match event {
+            "replacement" => {
+                input.authority.publish_live();
+            }
+            "sync-not-live" => input.authority.sync_live(false),
+            _ => input.authority.revoke(),
+        }
+        assert_eq!(lease.progress().unwrap().phase, KeyPhase::Held, "{event}");
+        consume(&input, &mut shell, now + Duration::from_millis(20));
+        assert_eq!(lease.progress().unwrap().phase, KeyPhase::Held, "{event}");
+        assert_eq!(shell.key_held[ch as usize], 1, "{event}");
+        assert_eq!(
+            input.key_owner(ch),
+            KeyOwner::Script {
+                ticket: lease.progress().unwrap().ticket
+            },
+            "{event}"
+        );
+        drop(lease);
+        consume(&input, &mut shell, now + Duration::from_millis(40));
+        assert_eq!(shell.key_held[ch as usize], 0, "{event}");
+        assert!(!input.key_input_active(), "{event}");
+    }
+}
+
+#[test]
+fn closing_the_host_consume_gate_cancels_and_releases_a_held_key() {
+    for script_owned in [false, true] {
+        let input = SlotInput::new();
+        let identity = input.authority.publish_live();
+        let lease = (!script_owned).then(|| input.authority.key_gesture(gesture()).unwrap());
+        let ticket = match &lease {
+            Some(lease) => lease.progress().unwrap().ticket,
+            None => input
+                .authority
+                .script_key_gesture(identity, gesture())
+                .unwrap(),
+        };
+        let mut shell = GameShell::new();
+        let now = Instant::now();
+        let ch = GestureKey::ArrowLeft.shell_char();
+        consume(&input, &mut shell, now);
+        assert_eq!(shell.key_held[ch as usize], 1);
+        input.set_host_consume_allowed(false);
+        consume(&input, &mut shell, now + Duration::from_millis(20));
+        assert_eq!(
+            input.authority.key_progress(ticket).unwrap().phase,
+            KeyPhase::Cancelled
+        );
+        assert_eq!(shell.key_held[ch as usize], 0);
+        assert_eq!(input.key_owner(ch), KeyOwner::None);
+        assert!(!input.key_input_active());
+        input.set_host_consume_allowed(true);
+        consume(&input, &mut shell, now + Duration::from_millis(40));
+        assert_eq!(shell.key_held[ch as usize], 0, "reopening cannot replay");
+        assert!(!input.key_input_active());
     }
 }
 

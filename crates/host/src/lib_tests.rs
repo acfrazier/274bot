@@ -1605,6 +1605,57 @@ fn native_key_disconnect_and_relog_release_before_the_next_session_frame() {
 }
 
 #[test]
+fn native_key_probe_return_releases_a_held_script_key() {
+    use api::native_input::{GestureKey, KeyGesture, KeyPhase};
+    let mut client = test_client();
+    client.ingame = true;
+    let input = SlotInput::new();
+    let authority = input.authority();
+    let identity = authority.publish_live();
+    let ticket = authority
+        .script_key_gesture(
+            identity,
+            KeyGesture::new(GestureKey::ArrowLeft, 10_000).unwrap(),
+        )
+        .unwrap();
+    input.consume_native_frame(&mut client.shell);
+    let ch = GestureKey::ArrowLeft.shell_char();
+    assert_eq!(
+        authority.key_progress(ticket).unwrap().phase,
+        KeyPhase::Held
+    );
+    assert_eq!(client.shell.key_held[ch as usize], 1);
+    let mut probed = false;
+    Host::run_client(
+        &mut client,
+        "alice",
+        ProfileSettings::default(),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Mutex::new("strength".to_string())),
+        Some(Arc::clone(&input)),
+        None,
+        None,
+        ScriptRunPolicy::default(),
+        |_, _, _, _, _| panic!("the exit probe must return before another client frame"),
+        |client| {
+            probed = true;
+            assert_eq!(client.shell.key_held[ch as usize], 1);
+            true
+        },
+        |_: &DetectedRandom| RandomClaim::Host,
+    );
+    assert!(probed);
+    assert_eq!(
+        authority.key_progress(ticket).unwrap().phase,
+        KeyPhase::Cancelled
+    );
+    assert_eq!(client.shell.key_held[ch as usize], 0);
+    assert_eq!(input.key_owner(ch), crate::slot_io::KeyOwner::None);
+    assert!(!input.key_input_active());
+}
+
+#[test]
 fn native_key_action_pumps_the_headless_host_camera_without_a_render_head() {
     use api::native_input::{GestureKey, KeyGesture, KeyPhase};
     use client::client::ClientPlayer;
