@@ -12,6 +12,10 @@ export function runMachine() { throw new Error('unused'); }
 export function snap() { return {}; }
 export function queue() { return {}; }
 export function proxy(_name, methods) { return methods; }
+export const notImpl = (name, reason) =>
+    new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
+export const refused = (reason) =>
+    new Error(reason ? 'cannot do that now: ' + reason : 'cannot do that now');
 "#;
 const BANK_ENTRY: &str = r#"
 import '/rs2b0t/bot/shim/_kernel.js';

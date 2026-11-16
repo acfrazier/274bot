@@ -1,6 +1,4 @@
-import { runMachine } from '../../shim/_kernel.js';
-const notImpl = (name, reason) =>
-    new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
+import { notImpl, refused, runMachine } from '../../shim/_kernel.js';
 
 // One try: Rust walks, presses the booth it observed and waits for the
 // fresh item list, then the caller's await answers the frozen boolean.
@@ -18,7 +16,7 @@ async function driveBankOpen(input) {
 // and awaits the host result. Arguments Rust cannot read are refused.
 async function bankOp(args) {
     const out = await runMachine('bank_op', args);
-    if (out.kind === 'refused') throw notImpl(out.reason);
+    if (out.kind === 'refused') throw refused(out.reason);
     return out.kind === 'done' && out.value === true;
 }
 

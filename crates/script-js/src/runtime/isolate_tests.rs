@@ -1282,6 +1282,34 @@ fn concurrent_machines_settle_independently() {
 }
 
 #[test]
+fn bank_refusal_is_not_an_unimplemented_member() {
+    let src = "import { Bank } from '/rs2b0t/bot/api/bank/Bank.js';\n\
+        export default class T extends LoopingBot {\n\
+        async loop() {\n\
+            if (globalThis.__did) return;\n\
+            globalThis.__did = true;\n\
+            globalThis.__rs2b0t_machine_start = () => ({ kind: 'refused', reason: 'denied' });\n\
+            try { await Bank.withdrawX('Bones', -1); }\n\
+            catch (error) { globalThis.__refused = error.message; }\n\
+            try { Bank.notImplementedMember; }\n\
+            catch (error) { globalThis.__missing = error.message; }\n\
+        }\n\
+    }\n";
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    wait_ready(&iso);
+    machine_tick(&iso, 1);
+    assert_eq!(
+        iso.probe("globalThis.__refused").unwrap(),
+        serde_json::json!("cannot do that now: denied")
+    );
+    assert_eq!(
+        iso.probe("globalThis.__missing").unwrap(),
+        serde_json::json!("not impl: Bank.notImplementedMember")
+    );
+    iso.join();
+}
+
+#[test]
 fn refused_and_immediate_starts_resolve_without_a_wait() {
     let iso = spawn_machine_card(
         "globalThis.__outs = [
