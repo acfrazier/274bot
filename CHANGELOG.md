@@ -5,6 +5,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
+### Scenario observations
+
+- Scenario runners can extract cache-defined varbits with a no-send step.
+  Snapshot availability is explicitly Unknown because rows lack per-index
+  receive receipts; `VarbitEquals` requires a matching observed-varp witness.
+  An unrequested observer adds no per-tick allocations. Varbit observations
+  are available in every scenario build without an optional feature.
+- Scenario construction refuses menu and varbit observations nested in `All`.
+  Use each observation as a top-level wait arm or terminal proof instead.
+  Snapshot-only sustain polls, stall-combat guards, fixture prerequisites,
+  loot-style wait arms, and native seed-deposit wait arms refuse both
+  observations at any depth. Refusals identify their authored location
+  before the runner can send an action.
+- A top-level menu or varbit wait arm requires its own observer step.
+  Construction refuses an unpaired arm before sending any action.
+  Varbit observers must name the same varbit id as their wait arm.
+
 ### Scenario runner
 
 - Scenarios can name measured windows. Unexpected damage, combat or targeting

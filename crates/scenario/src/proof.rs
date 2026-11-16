@@ -10,6 +10,17 @@ use api::snapshot::{
 use nav_planner::arrival::arrived;
 use nav_planner::tile::{chebyshev, Tile};
 
+/// Caller-supplied evidence that a base varp was received in this session.
+/// The caller owns provenance and required freshness, such as a receipt after
+/// an action starts. The runner only matches the index and current base value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObservedVarpWitness {
+    /// The base-varp index named by the selected varbit definition.
+    pub varp_id: i32,
+    /// The base-varp value independently observed in the current session.
+    pub value: i32,
+}
+
 /// A named predicate over observable game state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Proof {
@@ -101,6 +112,9 @@ pub enum Proof {
     },
     /// A structured operation/target is present in the current menu while an
     /// `ObserveMenu` step is armed. Snapshot-only checks fail closed.
+    /// A step wait arm requires that same step to be `ObserveMenu`.
+    /// A terminal proof requires the last step to be `ObserveMenu`; otherwise
+    /// it remains false and the scenario ends only at its deadline.
     MenuHasEntry {
         operation: MenuOperation,
         target: MenuTargetSelector,
@@ -166,6 +180,19 @@ pub enum Proof {
     /// `varp(id) == value`: an exact transmitted varp value. An absent id
     /// fails closed, just like [`Proof::Varp`].
     VarpExact { id: i32, value: i32 },
+    /// `varbit(id) == value`: a cache-backed bit range. Snapshot rows carry no
+    /// per-index receive receipt, so the base observation is Unknown. The
+    /// proof remains false unless `observed_base_varp` witnesses the selected
+    /// definition's base-varp index and current value.
+    /// A step wait arm requires that same step to be `ObserveVarbit` with the
+    /// same id.
+    /// A terminal proof requires an `ObserveVarbit` step with the same id
+    /// anywhere in the scenario, not necessarily as the last step.
+    VarbitEquals {
+        id: i32,
+        value: i32,
+        observed_base_varp: Option<ObservedVarpWitness>,
+    },
     /// `stat(id) >= min`: a decoded stat-family value. `id == 16` is run
     /// energy; every other id reads the snapshot stat table's effective
     /// level.
@@ -306,7 +333,13 @@ pub enum Proof {
         orbit_yaw: i32,
         orbit_pitch: i32,
     },
-    /// Every child snapshot predicate must hold.
+    /// Every child predicate must hold. Runner construction rejects nested
+    /// `MenuHasEntry` and `VarbitEquals` in wait arms and terminal proofs.
+    /// Use top-level observation proofs with their matching steps instead.
+    /// Construction also rejects both observations, at any depth, in sustain
+    /// polls, stall-combat guards, fixture prerequisites, loot-style wait
+    /// arms, and native seed-deposit wait arms. These sites use snapshot-only
+    /// checks and cannot observe the client.
     All(&'static [Proof]),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,6 +504,7 @@ impl Proof {
             Proof::SideTabAvailable { index } => format!("side_tab({index})_available"),
             Proof::Varp { id, min } => format!("varp({id})>={min}"),
             Proof::VarpExact { id, value } => format!("varp({id})=={value}"),
+            Proof::VarbitEquals { id, value, .. } => format!("varbit({id})=={value}"),
             Proof::Stat { id, min } => format!("stat({id})>={min}"),
             Proof::StatAtMost { id, max } => format!("stat({id})<={max}"),
             Proof::Chat { needle } => format!("chat(contains \"{needle}\")"),
@@ -876,6 +910,7 @@ impl Proof {
                 .iter()
                 .find(|v| v.index == *id)
                 .is_some_and(|v| v.value == *value),
+            Proof::VarbitEquals { .. } => false,
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
             // Newest line only (`snap.chat()` is the ring head). A line a

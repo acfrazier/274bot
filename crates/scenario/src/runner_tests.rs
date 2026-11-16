@@ -1,7 +1,10 @@
 use super::*;
+use crate::proof::ObservedVarpWitness;
 use client::client::MiniMenuAction;
 use client::client::{Client, ClientConfig, ClientNpc};
 use client::config::if_type::{ComponentType, IfTypeMut};
+use client::config::runtime_377::{CacheFields377, InterfaceFields377, VarpFields377};
+use client::config::CacheRevision377;
 use client::config::IfType;
 use client::dash3d::ClientPlayer;
 use client::io::{ClientProt, ServerProt};
@@ -322,6 +325,394 @@ fn observe_menu_is_armed_typed_and_never_sends() {
     advance_game_ticks_until_done(&mut runner, &mut client);
     assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
     assert_eq!(client.out.pos, 0);
+}
+
+fn assert_nested_observer_is_rejected(proof: Proof, observer: &str) {
+    for terminal in [false, true] {
+        let mut scenario = stat_scenario(0, 2);
+        scenario.settings.teardown_world_speed_ms = Some(600);
+        if terminal {
+            scenario.proof = proof;
+        } else {
+            scenario.steps[0].wait.arm = proof;
+        }
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("nested {observer} must be refused at construction");
+        };
+        assert!(
+            message.contains(observer) && message.contains("cannot be nested in Proof::All"),
+            "{message}"
+        );
+        let location = if terminal {
+            "terminal proof"
+        } else {
+            "step 1 (set run energy)"
+        };
+        assert!(message.contains(location), "{message}");
+        let receipt = runner.evidence().expect("invalid scenario receipt");
+        assert_eq!(receipt.outcome, "FAIL");
+        assert_eq!(receipt.ticks, 0);
+        let mut client = seeded_client();
+        client.runenergy = 7;
+        runner.tick(&mut client);
+        assert_eq!(
+            client.runenergy, 7,
+            "an invalid scenario must not run its step"
+        );
+        assert_eq!(
+            client.out.pos, 0,
+            "an invalid scenario must not run cleanup"
+        );
+    }
+}
+
+#[test]
+fn menu_proofs_in_all_are_refused_at_construction() {
+    const MENU: Proof = Proof::MenuHasEntry {
+        operation: api::snapshot::MenuOperation::NpcOption(1),
+        target: api::snapshot::MenuTargetSelector::NpcType(0),
+    };
+    for proof in [
+        Proof::All(&[MENU]),
+        Proof::All(&[Proof::Stat { id: 16, min: 100 }, Proof::All(&[MENU])]),
+    ] {
+        assert_nested_observer_is_rejected(proof, "MenuHasEntry");
+    }
+}
+
+#[test]
+fn varbit_proofs_in_all_are_refused_at_construction() {
+    const VARBIT: Proof = Proof::VarbitEquals {
+        id: 0,
+        value: 3,
+        observed_base_varp: Some(ObservedVarpWitness {
+            varp_id: 0,
+            value: 44,
+        }),
+    };
+    for proof in [
+        Proof::All(&[VARBIT]),
+        Proof::All(&[Proof::Stat { id: 16, min: 100 }, Proof::All(&[VARBIT])]),
+    ] {
+        assert_nested_observer_is_rejected(proof, "VarbitEquals");
+    }
+}
+
+const CLIENT_MENU_PROOF: Proof = Proof::MenuHasEntry {
+    operation: api::snapshot::MenuOperation::NpcOption(1),
+    target: api::snapshot::MenuTargetSelector::NpcType(0),
+};
+const CLIENT_VARBIT_PROOF: Proof = Proof::VarbitEquals {
+    id: 0,
+    value: 3,
+    observed_base_varp: Some(ObservedVarpWitness {
+        varp_id: 0,
+        value: 44,
+    }),
+};
+const CLIENT_OBSERVATION_CASES: &[(Proof, &str)] = &[
+    (CLIENT_MENU_PROOF, "MenuHasEntry"),
+    (CLIENT_VARBIT_PROOF, "VarbitEquals"),
+    (Proof::All(&[CLIENT_MENU_PROOF]), "MenuHasEntry"),
+    (Proof::All(&[CLIENT_VARBIT_PROOF]), "VarbitEquals"),
+    (
+        Proof::All(&[
+            Proof::Stat { id: 16, min: 100 },
+            Proof::All(&[Proof::All(&[CLIENT_MENU_PROOF])]),
+        ]),
+        "MenuHasEntry",
+    ),
+    (
+        Proof::All(&[
+            Proof::Stat { id: 16, min: 100 },
+            Proof::All(&[Proof::All(&[CLIENT_VARBIT_PROOF])]),
+        ]),
+        "VarbitEquals",
+    ),
+];
+
+fn assert_unpaired_client_wait_arm_is_refused(proof: Proof, required_step: &str) {
+    let mut scenario = stat_scenario(0, 2);
+    scenario.steps[0].name = "send a probe cheat";
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(|client, _| {
+            let _ = api::interact::cheat(client, "~energy");
+            true
+        }),
+    };
+    scenario.steps[0].wait.arm = proof;
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    client.npc[7] = Some(Box::new(ClientNpc {
+        r#type: Some(0),
+        ..ClientNpc::default()
+    }));
+    client.menu_num_entries = 1;
+    client.menu_action[0] = MiniMenuAction::OP_NPC1;
+    client.menu_param_a[0] = 7;
+    for _ in 0..20 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+    }
+    assert_eq!(client.out.pos, 0, "refusal must precede every action");
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("an unpaired client wait arm must fail at construction");
+    };
+    assert!(
+        message.contains("step 1 (send a probe cheat) wait arm"),
+        "{message}"
+    );
+    assert!(message.contains(required_step), "{message}");
+    assert_eq!(runner.evidence().expect("refusal receipt").ticks, 0);
+}
+
+#[test]
+fn unpaired_menu_wait_arm_is_refused_before_sending() {
+    assert_unpaired_client_wait_arm_is_refused(CLIENT_MENU_PROOF, "requires an ObserveMenu step");
+}
+
+#[test]
+fn unpaired_varbit_wait_arm_is_refused_before_sending() {
+    assert_unpaired_client_wait_arm_is_refused(
+        CLIENT_VARBIT_PROOF,
+        "requires an ObserveVarbit step with the same id",
+    );
+}
+
+#[test]
+fn client_wait_arm_requires_its_own_matching_observer() {
+    for (kind, proof, required_step) in [
+        (
+            StepKind::ObserveVarbit { id: 0 },
+            CLIENT_MENU_PROOF,
+            "requires an ObserveMenu step",
+        ),
+        (
+            StepKind::ObserveMenu,
+            CLIENT_VARBIT_PROOF,
+            "requires an ObserveVarbit step with the same id",
+        ),
+        (
+            StepKind::ObserveVarbit { id: 1 },
+            CLIENT_VARBIT_PROOF,
+            "requires an ObserveVarbit step with the same id",
+        ),
+    ] {
+        let mut scenario = stat_scenario(0, 2);
+        scenario.steps[0].kind = kind;
+        scenario.steps[0].wait.arm = proof;
+        let runner = ScenarioRunner::new(scenario);
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("an observer for another wait arm must be refused");
+        };
+        assert!(message.contains("step 1"), "{message}");
+        assert!(message.contains(required_step), "{message}");
+        assert_eq!(runner.evidence().expect("refusal receipt").ticks, 0);
+    }
+}
+
+fn snapshot_only_refusal_scenario() -> Scenario {
+    let mut scenario = stat_scenario(0, 2);
+    scenario.seed.mainland = true;
+    scenario.settings.nav.engine_speed_ms = Some(300);
+    scenario.settings.teardown_world_speed_ms = Some(600);
+    scenario.settings.sustains = vec![Sustain::poll(Proof::Stat { id: 16, min: 0 }, "~energy")];
+    scenario
+}
+
+fn assert_snapshot_only_observer_is_rejected(scenario: Scenario, observer: &str, location: &str) {
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("{location}: {observer} must be refused at construction");
+    };
+    assert!(message.contains(observer), "{message}");
+    assert!(message.contains(location), "{message}");
+    assert!(message.contains("requires client observation"), "{message}");
+    let receipt = runner.evidence().expect("invalid scenario receipt");
+    assert_eq!(receipt.outcome, "FAIL");
+    assert_eq!(receipt.ticks, 0);
+    let mut client = seeded_client();
+    client.runenergy = 7;
+    for _ in 0..20 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+    }
+    assert_eq!(client.runenergy, 7, "refusal must not dispatch the step");
+    assert_eq!(
+        client.out.pos, 0,
+        "refusal must not seed, sustain, or clean up"
+    );
+}
+
+#[test]
+fn sustain_poll_snapshot_only_client_observations_are_refused() {
+    for &(proof, observer) in CLIENT_OBSERVATION_CASES {
+        let mut scenario = snapshot_only_refusal_scenario();
+        scenario
+            .settings
+            .sustains
+            .push(Sustain::poll(proof, "~energy"));
+        assert_snapshot_only_observer_is_rejected(scenario, observer, "sustain 2 poll condition");
+    }
+}
+
+#[test]
+fn stall_guard_snapshot_only_client_observations_are_refused() {
+    for &(proof, observer) in CLIENT_OBSERVATION_CASES {
+        let mut scenario = snapshot_only_refusal_scenario();
+        scenario.steps[0].kind = StepKind::ObserveStallCombat {
+            stand: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            guard_ready: proof,
+        };
+        assert_snapshot_only_observer_is_rejected(
+            scenario,
+            observer,
+            "step 1 (set run energy) guard_ready",
+        );
+    }
+}
+
+#[test]
+fn fixture_prereq_snapshot_only_client_observations_are_refused() {
+    for (proof, observer) in CLIENT_OBSERVATION_CASES {
+        let mut scenario = snapshot_only_refusal_scenario();
+        scenario.settings.fixture_prereqs = Some(std::slice::from_ref(proof));
+        assert_snapshot_only_observer_is_rejected(scenario, observer, "fixture prerequisite 1");
+    }
+}
+
+#[test]
+fn loot_style_snapshot_only_client_observations_are_refused() {
+    for &(proof, observer) in CLIENT_OBSERVATION_CASES {
+        let mut scenario = snapshot_only_refusal_scenario();
+        scenario.steps[0].kind = StepKind::ObserveStyleAcrossLootTrips {
+            deposit_id: 995,
+            food: &[315],
+            progress_stat: 16,
+        };
+        scenario.steps[0].wait.arm = proof;
+        assert_snapshot_only_observer_is_rejected(
+            scenario,
+            observer,
+            "step 1 (set run energy) wait arm",
+        );
+    }
+}
+
+#[test]
+fn seed_deposit_snapshot_only_client_observations_are_refused() {
+    for &(proof, observer) in CLIENT_OBSERVATION_CASES {
+        let mut scenario = snapshot_only_refusal_scenario();
+        scenario.steps[0].kind = StepKind::NativeSeedDeposit {
+            unnoted_id: 995,
+            quantity: 1,
+            note_id: None,
+        };
+        scenario.steps[0].wait.arm = proof;
+        assert_snapshot_only_observer_is_rejected(
+            scenario,
+            observer,
+            "step 1 (set run energy) wait arm",
+        );
+    }
+}
+
+fn client_observation_terminal_runner(
+    proof: Proof,
+    teardown_speed: Option<u32>,
+) -> (ScenarioRunner, Client) {
+    let mut scenario = stat_scenario(0, 2);
+    scenario.settings.teardown_world_speed_ms = teardown_speed;
+    scenario.steps[0].kind = match proof {
+        Proof::MenuHasEntry { .. } => StepKind::ObserveMenu,
+        Proof::VarbitEquals { id, .. } => StepKind::ObserveVarbit { id },
+        _ => panic!("client-observation test proof"),
+    };
+    scenario.steps[0].wait.arm = proof;
+    scenario.proof = proof;
+    let ordinary_step = Step {
+        name: "ordinary observation",
+        kind: StepKind::Shot { label: "ordinary" },
+        wait: wait(Proof::Stat { id: 16, min: 0 }, 2),
+    };
+    if matches!(proof, Proof::VarbitEquals { .. }) {
+        scenario.steps.push(ordinary_step);
+    } else {
+        scenario.steps.insert(0, ordinary_step);
+    }
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    install_varbit_fixture(&mut client, 44, true);
+    client.npc[7] = Some(Box::new(ClientNpc {
+        r#type: Some(0),
+        ..ClientNpc::default()
+    }));
+    client.menu_num_entries = 1;
+    client.menu_action[0] = MiniMenuAction::OP_NPC1;
+    client.menu_param_a[0] = 7;
+    (runner, client)
+}
+
+#[test]
+fn client_observation_terminal_pass_checks_gate_before_publishing() {
+    for proof in [CLIENT_MENU_PROOF, CLIENT_VARBIT_PROOF] {
+        for failed in [false, true] {
+            let (mut runner, mut client) = client_observation_terminal_runner(proof, None);
+            let probe = GateProbe::new(failed);
+            runner.set_pass_gate(Some(probe.gate()));
+            advance_game_ticks_until_done(&mut runner, &mut client);
+            let receipt = runner.evidence().expect("terminal receipt");
+            assert_eq!(receipt.outcome, if failed { "FAIL" } else { "PASS" });
+            if failed {
+                assert_eq!(
+                    receipt.message.as_deref(),
+                    Some("the script on bob failed: the queue blocked")
+                );
+            } else {
+                assert_eq!(runner.status(), RunnerStatus::Passed);
+            }
+            assert_eq!(probe.looks(), 1);
+            assert_eq!(client.out.pos, 0, "observation must not send");
+        }
+    }
+}
+
+#[test]
+fn client_observation_terminal_pass_waits_for_cleanup_before_gate() {
+    for proof in [CLIENT_MENU_PROOF, CLIENT_VARBIT_PROOF] {
+        let (mut runner, mut client) = client_observation_terminal_runner(proof, Some(600));
+        let probe = GateProbe::new(false);
+        runner.set_pass_gate(Some(probe.gate()));
+        for _ in 0..8 {
+            if matches!(runner.phase, Phase::Cleaning) {
+                break;
+            }
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut client);
+        }
+        assert!(matches!(runner.phase, Phase::Cleaning));
+        assert!(runner.evidence().is_none());
+        assert_eq!(probe.looks(), 0, "the proof does not publish the PASS");
+        runner.tick(&mut client);
+        assert!(contains_outgoing_ascii(&client, "speed 600"));
+        probe.fail();
+        push_system_chat(&mut client, "World speed was changed to 600ms");
+        runner.tick(&mut client);
+        let receipt = runner.evidence().expect("terminal receipt after cleanup");
+        assert_eq!(receipt.outcome, "FAIL");
+        assert_eq!(
+            receipt.message.as_deref(),
+            Some("the script on bob failed: the queue blocked")
+        );
+        assert_eq!(probe.looks(), 1);
+    }
 }
 
 #[test]
@@ -5859,6 +6250,248 @@ fn ground_item_absence_proof_bounds_ids_area_level_and_loaded_player() {
     c.ingame = false;
     runner.snapshot.rebuild(&c);
     assert!(!proof.check(&runner.snapshot, None));
+}
+
+fn varbit_observation_scenario(
+    id: i32,
+    value: i32,
+    observed_base_varp: Option<ObservedVarpWitness>,
+) -> Scenario {
+    Scenario {
+        name: "varbit-observation",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![Step {
+            name: "observe the selected varbit",
+            kind: StepKind::ObserveVarbit { id },
+            wait: wait(
+                Proof::VarbitEquals {
+                    id,
+                    value,
+                    observed_base_varp,
+                },
+                2,
+            ),
+        }],
+        proof: Proof::VarbitEquals {
+            id,
+            value,
+            observed_base_varp,
+        },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    }
+}
+
+fn install_varbit_fixture(client: &mut Client, raw_value: i32, transmit: bool) {
+    let cache = std::sync::Arc::get_mut(&mut client.cache).expect("sole cache owner");
+    cache.varbits.push(Default::default());
+    cache.varbits[0].basevar = 0;
+    cache.varbits[0].startbit = 2;
+    cache.varbits[0].endbit = 4;
+    cache.varps.push(Default::default());
+    cache.revision_377 = Some(Box::new(CacheRevision377 {
+        config: CacheFields377 {
+            varps: vec![VarpFields377 {
+                code1: 0,
+                code2: 0,
+                tracked: false,
+                code4: false,
+                code6: false,
+                code7: 0,
+                scope: 0,
+                transmit,
+                code12: 0,
+                code14: false,
+                debugname: None,
+            }],
+            ..Default::default()
+        },
+        interfaces: InterfaceFields377 {
+            client_code_layers: Default::default(),
+            type1_fields: Vec::new(),
+            null_string_masks: Vec::new(),
+            initial_overlays: Vec::new(),
+        },
+    }));
+    client.var.push(raw_value);
+    client.bump_gens(ServerProt::VARP_SMALL);
+}
+
+#[test]
+fn varbit_observer_is_no_send_and_runner_replacement_reads_fresh_state() {
+    let mut client = seeded_client();
+    install_varbit_fixture(&mut client, 44, true);
+    let sent_before = client.out.pos;
+
+    let witness = Some(ObservedVarpWitness {
+        varp_id: 0,
+        value: 44,
+    });
+    let mut repeated = varbit_observation_scenario(0, 3, witness);
+    repeated.steps.push(Step {
+        name: "observe the selected varbit again",
+        kind: StepKind::ObserveVarbit { id: 0 },
+        wait: wait(
+            Proof::VarbitEquals {
+                id: 0,
+                value: 3,
+                observed_base_varp: witness,
+            },
+            2,
+        ),
+    });
+    let mut first = ScenarioRunner::new(repeated);
+    first.set_scene_settle(Duration::ZERO);
+    for _ in 0..8 {
+        if first.status() == RunnerStatus::Passed {
+            break;
+        }
+        first.tick(&mut client);
+    }
+    assert_eq!(first.status(), RunnerStatus::Passed);
+    assert_eq!(client.out.pos, sent_before, "observation must not send");
+    drop(first);
+
+    client.gens.session = client.gens.session.wrapping_add(1);
+    client.var[0] = 8;
+    client.bump_gens(ServerProt::VARP_SMALL);
+    let mut replacement = ScenarioRunner::new(varbit_observation_scenario(
+        0,
+        2,
+        Some(ObservedVarpWitness {
+            varp_id: 0,
+            value: 8,
+        }),
+    ));
+    replacement.set_scene_settle(Duration::ZERO);
+    replacement.tick(&mut client);
+    assert_eq!(replacement.status(), RunnerStatus::Passed);
+    assert_eq!(client.out.pos, sent_before, "replacement must not send");
+    drop(replacement);
+
+    let mut missing = ScenarioRunner::new(varbit_observation_scenario(1, 0, None));
+    missing.set_scene_settle(Duration::ZERO);
+    missing.tick(&mut client);
+    let RunnerStatus::Failed(message) = missing.status() else {
+        panic!(
+            "missing varbit must finish unavailable: {:?}",
+            missing.status()
+        );
+    };
+    assert!(message.contains("unavailable"), "{message}");
+    assert!(message.contains("MissingDefinition"), "{message}");
+    assert_eq!(
+        client.out.pos, sent_before,
+        "missing observation must not send"
+    );
+}
+#[test]
+fn unknown_zero_needs_a_matching_witness_even_when_metadata_says_private() {
+    let mut client = seeded_client();
+    install_varbit_fixture(&mut client, 0, false);
+    let sent_before = client.out.pos;
+
+    let mut unobserved = ScenarioRunner::new(varbit_observation_scenario(0, 0, None));
+    unobserved.set_scene_settle(Duration::ZERO);
+    for _ in 0..8 {
+        if matches!(
+            unobserved.status(),
+            RunnerStatus::Passed | RunnerStatus::Failed(_)
+        ) {
+            break;
+        }
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        unobserved.tick(&mut client);
+    }
+    assert!(
+        matches!(unobserved.status(), RunnerStatus::Failed(_)),
+        "an unknown zero passed without a witness: {:?}",
+        unobserved.status()
+    );
+    let receipt = unobserved.evidence().expect("unavailable receipt");
+    assert_eq!(receipt.outcome, "UNAVAILABLE");
+    assert!(receipt
+        .message
+        .as_deref()
+        .is_some_and(|message| message.contains("UnobservedBaseVarp")));
+    drop(unobserved);
+
+    for witness in [
+        ObservedVarpWitness {
+            varp_id: 1,
+            value: 0,
+        },
+        ObservedVarpWitness {
+            varp_id: 0,
+            value: 1,
+        },
+    ] {
+        let mut mismatched = ScenarioRunner::new(varbit_observation_scenario(0, 0, Some(witness)));
+        mismatched.set_scene_settle(Duration::ZERO);
+        for _ in 0..8 {
+            if matches!(
+                mismatched.status(),
+                RunnerStatus::Passed | RunnerStatus::Failed(_)
+            ) {
+                break;
+            }
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            mismatched.tick(&mut client);
+        }
+        assert!(
+            matches!(mismatched.status(), RunnerStatus::Failed(_)),
+            "a mismatched base-varp witness was accepted: {:?}",
+            mismatched.status()
+        );
+        drop(mismatched);
+    }
+
+    let mut observed = ScenarioRunner::new(varbit_observation_scenario(
+        0,
+        0,
+        Some(ObservedVarpWitness {
+            varp_id: 0,
+            value: 0,
+        }),
+    ));
+    observed.set_scene_settle(Duration::ZERO);
+    for _ in 0..8 {
+        if observed.status() == RunnerStatus::Passed {
+            break;
+        }
+        observed.tick(&mut client);
+    }
+    assert_eq!(observed.status(), RunnerStatus::Passed);
+    assert_eq!(
+        client.out.pos, sent_before,
+        "varbit observations must not send client output"
+    );
+}
+
+#[test]
+fn enabled_but_unrequested_varbit_observer_allocates_nothing_per_tick() {
+    let mut client = seeded_client();
+    let mut runner = ScenarioRunner::new(stat_scenario(100, 100_000));
+    runner.set_scene_settle(Duration::ZERO);
+    for _ in 0..8 {
+        runner.tick(&mut client);
+    }
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+
+    let measured = allocation_counter::measure(|| {
+        for _ in 0..128 {
+            runner.tick(&mut client);
+        }
+    });
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    assert_eq!(measured.count_total, 0, "idle varbit observer allocated");
+    assert_eq!(
+        measured.bytes_total, 0,
+        "idle varbit observer allocated bytes"
+    );
 }
 
 #[test]

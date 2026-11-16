@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use api::interact::{cheat, logout, Interactions, SendResult};
 use api::obj_names::ObjNames;
+use api::snapshot::{varbit_value, VarbitObservation, VarbitUnavailable};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use nav_executor::{TravelOptions, TravelOutcome, Traveller};
@@ -619,7 +620,8 @@ impl ScenarioRunner {
                 )
             })
             .then(Box::default);
-        Self {
+        let invalid_observation = client_observation_refusal(&scenario);
+        let mut runner = Self {
             scenario,
             snapshot: GameSnapshot::new(),
             obj_names: None,
@@ -682,7 +684,11 @@ impl ScenarioRunner {
             pass_gate: None,
             run_receipt: Some(Box::default()),
             combat_observer,
+        };
+        if let Some(message) = invalid_observation {
+            runner.record_fail(&message);
         }
+        runner
     }
 
     /// Stop or start dispatch recording without changing any gameplay predicate.
@@ -1425,7 +1431,34 @@ impl ScenarioRunner {
                         .relog_session
                         .is_some_and(|session| client.gens.session != session);
             }
-            let arm_holds = self.holds_with_client(arm, client);
+            if let StepKind::ObserveVarbit { id } = self.current_step().kind {
+                if !matches!(arm, Proof::VarbitEquals { id: proof_id, .. } if proof_id == id) {
+                    self.finish_fail(&format!(
+                        "step {} ({}): ObserveVarbit requires a matching VarbitEquals wait arm",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+            } else if matches!(arm, Proof::VarbitEquals { .. }) {
+                self.finish_fail(&format!(
+                    "step {} ({}): VarbitEquals requires an ObserveVarbit step",
+                    self.step + 1,
+                    self.current_step().name
+                ));
+                return;
+            }
+            let arm_holds = match self.holds_with_client(arm, client) {
+                Ok(holds) => holds,
+                Err(unavailable) => {
+                    self.finish_unavailable(&format!(
+                        "step {} ({}): varbit unavailable: {unavailable:?}",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+            };
             let stall_combat_holds = match self.observe_stall_combat(arm_holds) {
                 Ok(holds) => holds,
                 Err(message) => {
@@ -1553,10 +1586,31 @@ impl ScenarioRunner {
                 ));
             }
         }
-        if matches!(self.phase, Phase::Proving)
-            && self.holds_with_client(self.scenario.proof, client)
-        {
-            self.finish_pass();
+        if matches!(self.phase, Phase::Proving) {
+            if let Proof::VarbitEquals { id, .. } = self.scenario.proof {
+                let requested = self.scenario.steps.iter().any(|step| {
+                    matches!(
+                        &step.kind,
+                        StepKind::ObserveVarbit { id: observed } if *observed == id
+                    )
+                });
+                if !requested {
+                    self.finish_fail("terminal VarbitEquals requires an ObserveVarbit step");
+                    return;
+                }
+            }
+            let proof_holds = match self.holds_with_client(self.scenario.proof, client) {
+                Ok(holds) => holds,
+                Err(unavailable) => {
+                    self.finish_unavailable(&format!(
+                        "terminal proof: varbit unavailable: {unavailable:?}"
+                    ));
+                    return;
+                }
+            };
+            if proof_holds {
+                self.finish_pass();
+            }
         }
         if !matches!(self.phase, Phase::Done | Phase::Cleaning)
             && self.started.elapsed() > self.deadline
@@ -1810,10 +1864,31 @@ impl ScenarioRunner {
         }
     }
 
-    /// Menu proofs require the named observation step and read the current
-    /// client menu directly. The `None` request stays on the allocation-free
-    /// path for every non-menu proof and every unarmed tick.
-    fn holds_with_client(&self, proof: Proof, client: &Client) -> bool {
+    /// Client-backed proofs require their named observation step. Other proofs
+    /// retain the allocation-free snapshot and host-receipt checks.
+    fn holds_with_client(&self, proof: Proof, client: &Client) -> Result<bool, VarbitUnavailable> {
+        if let Proof::VarbitEquals {
+            id,
+            value,
+            observed_base_varp,
+        } = proof
+        {
+            if self.on_stop_script() && !self.script_idle {
+                return Ok(false);
+            }
+            let result = varbit_value(&self.snapshot, &client.cache, id)?;
+            let observed = match result.observation {
+                VarbitObservation::Unknown {
+                    base_varp,
+                    base_value,
+                } => {
+                    let witness = observed_base_varp
+                        .ok_or(VarbitUnavailable::UnobservedBaseVarp { id, base_varp })?;
+                    witness.varp_id == base_varp && witness.value == base_value
+                }
+            };
+            return Ok(observed && result.value == value);
+        }
         let query = match (self.menu_observation_armed(), proof) {
             (true, Proof::MenuHasEntry { operation, target }) => {
                 Some(api::snapshot::MenuEntryQuery { operation, target })
@@ -1822,9 +1897,9 @@ impl ScenarioRunner {
         };
         let menu_holds = api::query::menu_has_entry(client, query);
         if matches!(proof, Proof::MenuHasEntry { .. }) {
-            return menu_holds;
+            return Ok(menu_holds);
         }
-        self.holds(proof)
+        Ok(self.holds(proof))
     }
 
     /// Restart the style watch's budget at each completed pre-style trip and
@@ -2509,6 +2584,7 @@ impl ScenarioRunner {
             | StepKind::ObserveStyleAcrossLootTrips { .. }
             | StepKind::ObserveCombatAcrossBankReturns { .. }
             | StepKind::ObserveRandomEvent { .. }
+            | StepKind::ObserveVarbit { .. }
             | StepKind::ObserveMenu => Ok("no-send"),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
@@ -3095,6 +3171,99 @@ impl ScenarioRunner {
         );
         self.evidence = Some(evidence);
     }
+}
+
+fn client_observation(proof: Proof) -> Option<&'static str> {
+    match proof {
+        Proof::MenuHasEntry { .. } => Some("MenuHasEntry"),
+        Proof::VarbitEquals { .. } => Some("VarbitEquals"),
+        Proof::All(proofs) => proofs.iter().find_map(|proof| client_observation(*proof)),
+        _ => None,
+    }
+}
+
+fn nested_client_observation(proof: Proof) -> Option<&'static str> {
+    match proof {
+        Proof::All(proofs) => proofs.iter().find_map(|proof| client_observation(*proof)),
+        _ => None,
+    }
+}
+
+fn client_observation_refusal(scenario: &Scenario) -> Option<String> {
+    for (index, step) in scenario.steps.iter().enumerate() {
+        let (observer, reason) = match step.kind {
+            StepKind::ObserveStyleAcrossLootTrips { .. } | StepKind::NativeSeedDeposit { .. } => (
+                client_observation(step.wait.arm),
+                "requires client observation",
+            ),
+            _ => (
+                nested_client_observation(step.wait.arm),
+                "cannot be nested in Proof::All",
+            ),
+        };
+        if let Some(observer) = observer {
+            return Some(format!(
+                "step {} ({}) wait arm: {observer} {reason}. Use a top-level observation proof",
+                index + 1,
+                step.name
+            ));
+        }
+        let required_observer = match step.wait.arm {
+            Proof::MenuHasEntry { .. } if !matches!(step.kind, StepKind::ObserveMenu) => {
+                Some("MenuHasEntry requires an ObserveMenu step")
+            }
+            Proof::VarbitEquals { id, .. } if !matches!(step.kind, StepKind::ObserveVarbit { id: observer_id } if observer_id == id) => {
+                Some("VarbitEquals requires an ObserveVarbit step with the same id")
+            }
+            _ => None,
+        };
+        if let Some(requirement) = required_observer {
+            return Some(format!(
+                "step {} ({}) wait arm: {requirement}",
+                index + 1,
+                step.name
+            ));
+        }
+        if let StepKind::ObserveStallCombat { guard_ready, .. } = step.kind {
+            if let Some(observer) = client_observation(guard_ready) {
+                return Some(format!(
+                    "step {} ({}) guard_ready: {observer} requires client observation. Use a top-level observation proof",
+                    index + 1,
+                    step.name
+                ));
+            }
+        }
+    }
+    if let Some(observer) = nested_client_observation(scenario.proof) {
+        return Some(format!(
+            "terminal proof: {observer} cannot be nested in Proof::All. Use a top-level observation proof"
+        ));
+    }
+    for (index, sustain) in scenario.settings.sustains.iter().enumerate() {
+        if let SustainWhen::Poll(proof) = sustain.when {
+            if let Some(observer) = client_observation(proof) {
+                return Some(format!(
+                    "sustain {} poll condition: {observer} requires client observation. Use a top-level observation proof",
+                    index + 1
+                ));
+            }
+        }
+    }
+    for (index, proof) in scenario
+        .settings
+        .fixture_prereqs
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+    {
+        if let Some(observer) = client_observation(*proof) {
+            return Some(format!(
+                "fixture prerequisite {}: {observer} requires client observation. Use a top-level observation proof",
+                index + 1
+            ));
+        }
+    }
+    None
 }
 
 /// The failure text of a run that ended because the script on `slot` failed.
