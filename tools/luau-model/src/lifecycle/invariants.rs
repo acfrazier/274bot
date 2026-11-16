@@ -102,6 +102,25 @@ impl Lifecycle {
                     "the call is Completed and the payload is gone before the resume",
                 ));
             }
+            // LD2 2.4: the first fault is never cleared. The retained history
+            // says that a refused call happened, and the latch must hold it
+            // through revocation and close.
+            if run.dock.faults > 0 && !run.dock.fault {
+                return Err(Self::violation(
+                    "d-first-fault-cleared",
+                    "a refused call is in the dock's history and the first-fault latch is empty",
+                ));
+            }
+        }
+        // LD2 2.4: the end record of a closed dock keeps the first fault.
+        if let Some(dock) = &s.closed_dock
+            && dock.faults > 0
+            && !dock.end.is_some_and(|end| end.fault)
+        {
+            return Err(Self::violation(
+                "d-first-fault-lost",
+                "the end record of a closed dock lacks the first fault of its history",
+            ));
         }
         // LD2 3.2: the ledger holds every admission.
         if self.bounds.runner {

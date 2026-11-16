@@ -34,7 +34,7 @@ are in `src/lifecycle/checks.rs`, and `luau-model --list-checks` prints them.
 | I4 | `stop` is accepted in every state. When it returns the VM is gone, `done` got one message, no later call enters the VM, and no row of the run reaches the seat after the Stop began. |
 | I5 | `onStop` runs at most once, only inside `stop`, never in a dispatch, never after a trip or an internal failure, never for a script that did not load or has no such entry. A pause does not change that. |
 | I6 | At most one invocation of `tick` is live. A game tick starts one only when none is live and the tick is not held. A suspended invocation resumes once per wait, in a dispatch that is not held and carries its completion. A dispatch with nothing due does not enter the VM. |
-| I7 | a: each entry has its deadline (one for a whole dispatch), and no entry that passed its deadline is accepted. b: after a trip no new entry starts and no binding has an effect. c: script code after the deadline is bounded (`R_gap`, `R_prop`). d: a deadline is cleared when its owner ends. |
+| I7 | a: each entry has its deadline (one for a whole dispatch), and no entry that passed its deadline is accepted, unless the script stopped itself first (LD1 4.3). b: after a trip no new entry starts and no binding has an effect. c: script code after the deadline is bounded (`R_gap`, `R_prop`). d: a deadline is cleared when its owner ends. |
 | I8 | b: each cap event trips the run (E1, E2: memory; E3: internal) unless an earlier cause set the latch. c: the verdict does not depend on the error value that the script sees. |
 | I9 | Every end of a run (Stop, removal, `api.stop`, a trip, an internal failure, a restart, the drop of the slot) drops the VM once, discards the queued rows and leaves `Stopping`. |
 | I10 | Script code runs only in the Load entry of `spawn`, in a Tick or Paint entry of a dispatch (the slot is `Running`, the run is not paused, tripped or self-stopped) and in the Hook entry of `stop`. |
@@ -77,7 +77,7 @@ three memory events and no byte count.
 | I6 | `i6-resume-twice` | One completion resumed two waits. | `resume-twice` |
 | I6 | `i6-resume-without-completion` | A dispatch resumed an invocation with no completion due. | `resume-without-completion` |
 | I6 | `i6-two-invocations` | A game tick started `tick` while an invocation is suspended. | `reenter-tick` |
-| I7 a | `i7a-late-accept` | A Tick or a Paint entry that passed its deadline was accepted. | `no-exit-check`, `paint-rearms-deadline`, `sampled-clock`, `verdict-from-error` |
+| I7 a | `i7a-late-accept` | A Tick or a Paint entry that passed its deadline was accepted, unless the script stopped itself first (LD1 4.3, the first terminal cause). | `no-exit-check`, `paint-rearms-deadline`, `sampled-clock`, `verdict-from-error` |
 | I7 a | `i7a-late-hook` | A Hook entry that passed its deadline was accepted. | `hook-ungated` |
 | I7 a | `i7a-late-load` | A Load entry that passed its deadline was accepted. | `load-ungated` |
 | I7 b | `i7b-effect-after-trip` | A binding had an effect after a trip, after the cap, or after the deadline. | `effect-after-trip`, `gap-effect` |
@@ -107,7 +107,8 @@ three memory events and no byte count.
 | D | `d-dock-shared` | A restart claimed the dock of the old run again. | `shared-restart-dock` |
 | D | `d-end-lacks-hook-failure` | The end record of the dock does not carry the failure of `onStop`. | `hook-failure-not-in-end` |
 | D | `d-failed-dispatch-committed` | A staged call of a failed dispatch was committed to the dock queue. | `commit-failed-dispatch` |
-| D | `d-first-fault-lost` | The end record of the dock lost the first fault that an entry latched. | `unobserved-refusal-lost` |
+| D | `d-first-fault-cleared` | A refused call is in the history of the dock and the first-fault latch is empty: revocation, close or the call itself lost the first fault. | `revoke-clears-first-fault` |
+| D | `d-first-fault-lost` | The end record of the dock lost the first fault that the history of the dock holds. | `unobserved-refusal-lost` |
 | D | `d-payload-lost` | The call is Completed and its payload is gone before the resume. | `refused-dispatch-loses-payload` |
 | D | `d-refusal-not-latched` | An extension call in `onStop` was refused and left no first fault. | `caught-hook-refusal-lost` |
 | D | `d-revoke-keeps-payload` | The dock was revoked and its completion payload is still there. | `revoke-keeps-payload` |
@@ -117,7 +118,7 @@ three memory events and no byte count.
 | F | `f-row-after-fence` | The seat admitted a row of a run whose entry fence is published. | `post-freeze-action` |
 | L | `l-ledger-incomplete` | An admitted Start has no entry in the execution ledger. | `forget-earlier-execution`, `loading-missing-from-ledger` |
 | L | `l-load-under-admission` | The Load entry of a File Start ran under the shared admission guard. | `file-compile-holds-shared-admission` |
-| L | `l-pass-unsound` | The final gate wrote PASS while a planned execution was not retired by the runner's own ticketed Stop and clean (or, when the plan requires the natural self-stop, was not ended by its own clean `api.stop`), or an admission outside the plan happened, or the slot is not Idle. | `failed-replacement-restores-authorization`, `forced-stop-satisfies-natural-stop`, `guessed-stop-generation`, `replacement-with-old-end` |
+| L | `l-pass-unsound` | The final gate wrote PASS while a planned execution was not retired by the runner's own ticketed Stop and clean (or, when the plan requires the natural self-stop, was not ended by its own clean `api.stop`), or the live slot does not match the final ticket (generation and Start serial), or an admission outside the plan happened, or the slot is not Idle. | `failed-replacement-restores-authorization`, `forced-stop-satisfies-natural-stop`, `guessed-stop-generation`, `replacement-with-old-end`, `stale-final-ticket` |
 | L | `l-stop-unowned` | The runner's Stop for one execution ended another execution. | `repeat-last-table-stop` |
 | L | `l-vm-under-runner-lock` | A VM section began inside the runner's closure, under the runner lock. | `file-compile-under-runner`, `stop-under-runner-lock` |
 
@@ -165,7 +166,10 @@ Each is on purpose.
    waiting binding, `api.stop`, an extension call), a return, an uncaught
    error, a `pcall` that catches a propagating error, an allocation event, a
    panic. `R_gap` and `R_prop` bound the gap after a deadline and the number
-   of errors that a script can swallow (`r_gap`, `r_prop`, one by default).
+   of errors that a script can swallow. `r_gap` is two in every profile, the
+   minimum of LD1 6.5: several operations can run between the deadline and
+   the next check point, not one (LD1 3.4 withdrew the one-operation rule).
+   `r_prop` is one.
 3. **One invocation of `tick`.** Its states are `Idle`, `Running` and
    `Suspended(wait)`. A wait is a seat request, a typed family request, a
    walk, a tick wait, or an extension call of the dock. The completion is a
@@ -190,14 +194,21 @@ Each is on purpose.
 8. **The LD2 layers are optional.** A profile turns on the dock, the fence
    and the runner. The dock has one claim, one call slot with its states
    (`Staged`, `Queued`, `Taken`, `Completed`, `Consumed`, `Done`,
-   `Discarded`, `Cancelled`), one completion payload, a first-fault latch and
-   an end record. The runner has a ledger of up to three admitted Starts
+   `Discarded`, `Cancelled`), one completion payload, a first-fault latch, an
+   end record and a retained history of the faults (a saturating count that
+   no step clears, written by the refused call before the latch). The
+   invariants compare the latch and the end record with that history, so a
+   Revoke or a Close that loses the first fault fails them (LD2 2.4). The
+   runner has a ledger of up to three admitted Starts
    (serial, planned or foreign, state, clean, natural witness, generation),
    the retirement ticket that the slot issues for a Stop of the runner (and,
    when the plan requires the natural self-stop, for the one housekeeping Stop
    of the idle slot after the script stopped itself), the posted intent and
-   the verdict. The runner never runs script code: it posts an intent, and the
-   role pump executes it.
+   the verdict. At the final gate the live Idle slot must match the final
+   ticket: the generation and the Start serial that the ticket names (LD2
+   3.2). A later Stop of the idle slot moves the generation, and a later
+   admission moves the serial. The runner never runs script code: it posts an
+   intent, and the role pump executes it.
 9. **Counts are budgets.** Every event has a count in the profile: Starts,
    ticks (and how many are held), wakes, waits, control operations, restarts,
    gate changes, holds, session resets, memory events, panics. A profile
@@ -219,7 +230,7 @@ exhausted, so the choice only keeps the test lane short).
 
 Groups: LD1 6.4 is the table of LD1 (round 1 to round 3 of its reviews). LD1
 rules are rules of LD1 that its table has no row for. LD2 is the runner side.
-The self-checks are the builder's proof that a check can fail. Seventy-eight
+The self-checks are the builder's proof that a check can fail. Eighty
 mutations, none uncaught.
 
 #### LD1 6.4
@@ -313,12 +324,14 @@ mutations, none uncaught.
 | `file-compile-under-runner` | File Start, compile and Load run under the runner lock. | `l-vm-under-runner-lock` | `runner` | 2 |
 | `file-compile-holds-shared-admission` | File Start, compile and Load hold the shared admission guard. | `l-load-under-admission` | `runner` | 2 |
 | `forced-stop-satisfies-natural-stop` | A plan that requires the natural self-stop accepts the Stop that the runner forced: the ticket and a clean end stand for the witness. | `l-pass-unsound` | `runner-natural` | 9 |
+| `stale-final-ticket` | The final gate takes the final ticket as proof and does not compare its after-generation with the live slot: an operator Stop of the idle slot after the runner's own Stop still passes (LD2 3.2). | `l-pass-unsound` | `runner` | 10 |
+| `revoke-clears-first-fault` | Revocation clears the first-fault latch, so the end record that `close` builds from it lacks the first fault (LD2 2.4). | `d-first-fault-cleared` | `fence` | 4 |
 
 #### self-checks
 
 | Mutation | What it is | Caught by | Profile | Steps |
 |---|---|---|---|---|
-| `check-gap-unbounded` | Check: a gap longer than `R_gap` is allowed. | `i7c-gap-bound` | `smoke` | 3 |
+| `check-gap-unbounded` | Check: a gap longer than `R_gap` is allowed. | `i7c-gap-bound` | `smoke` | 4 |
 | `check-hook-twice` | Check: a second `onStop` can start. | `i5-hook-twice` | `smoke` | 4 |
 | `check-pause-no-refusal` | Check: a Pause does not stop the dispatch from entering the VM. | `i2-entry-while-paused` | `smoke` | 4 |
 | `check-done-dropped` | Check: the completion that `stop` sends never reaches the slot, so the slot stays Stopping. | `p1-stuck-stopping` | `smoke` | 4 |
@@ -331,8 +344,15 @@ remain: see "Not modelled".
 ## Findings
 
 LD1 and LD2, taken as written, leave three behaviours open that the model
-reached. Each has a mutation that keeps the design as written, with its
-shortest trace. The head resolves each one with a rule that LD1 should state.
+reached. F1 is a gap in LD1. F2 and F3 are clarifications of the contract:
+LD1 6.1 schedules the Dispatch, Observe and Restart steps independently, and
+the model explores every order. The pinned host runs the Tick, the log drain
+and the watchdog of one slot under one lock
+(`crates/host-play/src/script_observe.rs`), so it does not show these two
+interleavings today. The rule keeps the contract true if a later host
+separates the steps. Each finding has a mutation that keeps the design as
+written, with its shortest trace. The head resolves each one with a rule that
+LD1 should state.
 
 **F1. A wait in a Paint entry has no resumer** (`f1-paint-wait-suspends`,
 profile `waits`, 5 steps). LD1 6.1 lets a script "yield at a wait" in a Tick
@@ -388,28 +408,28 @@ shortest trace for each violation name, not only the first). The exit code is
 and 2 for a bad argument.
 
 The head is clean and exhausted in every profile. The counts are the same on
-every machine.
+every machine. Every profile uses an `R_gap` of two, the minimum of LD1 6.5.
 
 | Lane | Profile | What it adds | Horizon | States | Deepest |
 |---|---|---|---|---|---|
-| unit | `smoke` | one run: Start, Stop, the watchdog, `api.stop` | 28 | 288 | 13 |
-| unit | `control` | two Starts, Pause, Resume, Stop, removal, the progress watchdog's restart, the client gate, scripts with and without hooks | 40 | 7 995 | 17 |
-| unit | `waits` | seat, family, walk and tick waits; a hold; a session reset; evidence and seat-page wakes | 44 | 31 674 | 23 |
-| unit | `watchdog` | one deadline for the Tick and the Paint entry, trips and panics in every entry kind | 44 | 579 | 17 |
-| unit | `memory` | the memory events E1, E2 (three sites), E3 | 40 | 1 120 | 17 |
-| unit | `dock` | the dock: extension calls, the runner's take and complete, revocation, a hold, a reset | 44 | 63 350 | 27 |
-| unit | `dock-trips` | the dock with trips and internal failures | 44 | 8 935 | 23 |
-| unit | `dock-restart` | a retained Start after a restart gets a fresh dock | 44 | 3 767 | 21 |
-| unit | `fence` | the entry fence and the revocation of the dock | 40 | 3 779 | 21 |
-| unit | `runner` | the ledger, the retirement tickets and the final gate, two Starts | 44 | 49 214 | 23 |
-| unit | `runner-natural` | a plan that requires the natural self-stop: the script's own `api.stop`, then one housekeeping Stop of the idle slot; a forced Stop is not that witness | 44 | 54 808 | 23 |
-| unit | `clock` | a longer clock (two units for Load and Hook, three for the dispatch), three ticks, a memory event, a panic | 52 | 15 368 | 24 |
-| nightly | `runner-restart` | `runner` with a restart, three Starts all planned, two ticks, `api.stop`, four control operations | 52 | 15 119 060 | 40 |
-| nightly | `full` | everything in small counts with the longer clock: two runs and a restart, held and evidence ticks, a wait, a reset, a hold, the client gate, one memory event, one panic | 64 | 22 244 068 | 31 |
-| nightly | `suggested` | the suggested start of LD1 6.5: two runs, four ticks (one held), two waits, three control operations, the watchdog, one memory event and one panic, with the seat pages, reset, hold and client gate of `waits` | 64 | 32 721 008 | 36 |
-| nightly | `scenario` | LD1 and the runner side of LD2 together, with one dispatch | 64 | 17 065 647 | 35 |
+| unit | `smoke` | one run: Start, Stop, the watchdog, `api.stop` | 28 | 376 | 14 |
+| unit | `control` | two Starts, Pause, Resume, Stop, removal, the progress watchdog's restart, the client gate, scripts with and without hooks | 40 | 10 426 | 18 |
+| unit | `waits` | seat, family, walk and tick waits; a hold; a session reset; evidence and seat-page wakes | 44 | 41 210 | 24 |
+| unit | `watchdog` | one deadline for the Tick and the Paint entry, trips and panics in every entry kind | 44 | 735 | 18 |
+| unit | `memory` | the memory events E1, E2 (three sites), E3 | 40 | 1 537 | 18 |
+| unit | `dock` | the dock: extension calls, the runner's take and complete, revocation, a hold, a reset | 44 | 76 762 | 28 |
+| unit | `dock-trips` | the dock with trips and internal failures | 44 | 11 351 | 24 |
+| unit | `dock-restart` | a retained Start after a restart gets a fresh dock | 44 | 4 725 | 22 |
+| unit | `fence` | the entry fence and the revocation of the dock | 40 | 4 721 | 22 |
+| unit | `runner` | the ledger, the retirement tickets and the final gate, two Starts | 44 | 60 492 | 23 |
+| unit | `runner-natural` | a plan that requires the natural self-stop: the script's own `api.stop`, then one housekeeping Stop of the idle slot; a forced Stop is not that witness | 44 | 67 175 | 23 |
+| unit | `clock` | a longer clock (two units for Load and Hook, three for the dispatch), three ticks, a memory event, a panic | 52 | 21 217 | 25 |
+| nightly | `runner-restart` | `runner` with a restart, three Starts all planned, two ticks, `api.stop`, four control operations | 52 | 18 690 478 | 40 |
+| nightly | `full` | everything in small counts with the longer clock: two runs and a restart, held and evidence ticks, a wait, a reset, a hold, the client gate, one memory event, one panic | 64 | 32 534 736 | 32 |
+| nightly | `suggested` | the suggested start of LD1 6.5: two runs, four ticks (one held), two waits, three control operations, the watchdog, one memory event and one panic, with the seat pages, reset, hold and client gate of `waits` | 64 | 47 234 200 | 37 |
+| nightly | `scenario` | LD1 and the runner side of LD2 together, with one dispatch | 64 | 23 415 607 | 36 |
 
-`scenario` with a second dispatch needs more than 62 million states and passes
+`scenario` with a second dispatch needs more than 62 million states at an `R_gap` of one and passes
 the byte cap: the profile keeps one dispatch, and `dock`, `fence` and
 `runner-restart` explore the dock and the runner with more ticks. On the Linux
 nightly host (release build, one core, one 16 GB scope for each profile) the

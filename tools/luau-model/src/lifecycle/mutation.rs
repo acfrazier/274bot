@@ -203,6 +203,13 @@ pub enum Mutation {
     /// A plan that requires the natural self-stop accepts the Stop that the
     /// runner forced: the ticket and a clean end stand for the witness.
     ForcedStopSatisfiesNaturalStop,
+    /// The final gate takes the final ticket as proof and does not compare its
+    /// after-generation with the live slot: an operator Stop of the idle slot
+    /// after the runner's own Stop still passes (LD2 3.2).
+    StaleFinalTicket,
+    /// Revocation clears the first-fault latch, so the end record that `close`
+    /// builds from it lacks the first fault (LD2 2.4).
+    RevokeClearsFirstFault,
 
     // ---- self-checks ----
     /// Check: a gap longer than `R_gap` is allowed.
@@ -221,7 +228,7 @@ pub enum Mutation {
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 79] = [
+    pub const ALL: [Mutation; 81] = [
         Mutation::None,
         Mutation::OnStopAfterTrip,
         Mutation::OnStopInDispatch,
@@ -290,6 +297,8 @@ impl Mutation {
         Mutation::FileCompileUnderRunner,
         Mutation::FileCompileHoldsSharedAdmission,
         Mutation::ForcedStopSatisfiesNaturalStop,
+        Mutation::StaleFinalTicket,
+        Mutation::RevokeClearsFirstFault,
         Mutation::CheckGapUnbounded,
         Mutation::CheckHookTwice,
         Mutation::CheckPauseNoRefusal,
@@ -375,6 +384,8 @@ impl Mutation {
             Mutation::FileCompileUnderRunner => "file-compile-under-runner",
             Mutation::FileCompileHoldsSharedAdmission => "file-compile-holds-shared-admission",
             Mutation::ForcedStopSatisfiesNaturalStop => "forced-stop-satisfies-natural-stop",
+            Mutation::StaleFinalTicket => "stale-final-ticket",
+            Mutation::RevokeClearsFirstFault => "revoke-clears-first-fault",
             Mutation::CheckGapUnbounded => "check-gap-unbounded",
             Mutation::CheckHookTwice => "check-hook-twice",
             Mutation::CheckPauseNoRefusal => "check-pause-no-refusal",
@@ -464,6 +475,8 @@ impl Mutation {
             Mutation::FileCompileUnderRunner => "l-vm-under-runner-lock",
             Mutation::FileCompileHoldsSharedAdmission => "l-load-under-admission",
             Mutation::ForcedStopSatisfiesNaturalStop => "l-pass-unsound",
+            Mutation::StaleFinalTicket => "l-pass-unsound",
+            Mutation::RevokeClearsFirstFault => "d-first-fault-cleared",
             Mutation::CheckGapUnbounded => "i7c-gap-bound",
             Mutation::CheckHookTwice => "i5-hook-twice",
             Mutation::CheckPauseNoRefusal => "i2-entry-while-paused",

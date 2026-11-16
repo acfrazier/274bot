@@ -259,6 +259,12 @@ pub struct Dock {
     pub payload: bool,
     /// `first_fault`: written before an error returns to Luau, never cleared.
     pub fault: bool,
+    /// Ghost: the retained history of the faults of this run (LD2 2.4). Each
+    /// refused call adds one before any code of the dock acts, and the count
+    /// saturates at two ("the count of later faults may saturate"). No step
+    /// clears it and no transition reads it: the invariants compare the latch
+    /// and the end record with it.
+    pub faults: u8,
     /// Ghost: the payload was delivered to a resume.
     pub delivered: bool,
     pub end: Option<End>,
@@ -274,6 +280,7 @@ impl Dock {
             call: Call::None,
             payload: false,
             fault: false,
+            faults: 0,
             delivered: false,
             end: None,
         }

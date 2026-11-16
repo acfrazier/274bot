@@ -73,7 +73,9 @@ pub struct Bounds {
     /// Memory events: E1, E2 and E3 of rule C4.
     pub caps: u8,
     pub panics: u8,
-    /// `R_gap` and `R_prop` of rule C2.
+    /// `R_gap` and `R_prop` of rule C2. LD1 6.5 requires `R_gap` of at least
+    /// two: several operations can run between the deadline and the next
+    /// check point, not one (LD1 3.4, the withdrawn one-operation rule).
     pub r_gap: u8,
     pub r_prop: u8,
     /// Rows that a run can queue before the slot admits them (rule C6).
@@ -121,7 +123,7 @@ impl Bounds {
             resets: 0,
             caps: 0,
             panics: 0,
-            r_gap: 1,
+            r_gap: 2,
             r_prop: 1,
             rows: 1,
             b_dispatch: 2,

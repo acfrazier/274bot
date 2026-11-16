@@ -131,6 +131,7 @@ fn catching_profile(mutation: Mutation) -> &'static str {
         | CaughtHookRefusalLost
         | UnobservedRefusalLost
         | RevokeKeepsPayload
+        | RevokeClearsFirstFault
         | WakeBetweenFreezeAndStop
         | PostFreezeAction
         | BlockingFleetLock => "fence",
@@ -147,6 +148,7 @@ fn catching_profile(mutation: Mutation) -> &'static str {
         | LoadingMissingFromLedger
         | StopUnderRunnerLock
         | FileCompileUnderRunner
+        | StaleFinalTicket
         | FileCompileHoldsSharedAdmission => "runner",
         ForcedStopSatisfiesNaturalStop => "runner-natural",
     }
@@ -464,6 +466,26 @@ fn a_trip_in_a_tick_entry_is_one_failed_dispatch() {
     let (state, events) = run(&m, &trace);
     assert!(events.contains(&Event::Tripped(Fail::Watchdog)));
     assert!(state.run.is_none(), "the run is retired in the same call");
+    assert_eq!(state.slot.receipt, Receipt::Failed);
+}
+
+/// LD1 3.4 and 6.5: several operations can run between the deadline and the
+/// next check point, not one. The model offers two (`R_gap`), the next check
+/// point still trips the entry, and a third operation is not offered.
+#[test]
+fn two_operations_after_the_deadline_still_trip_at_the_next_check_point() {
+    let m = model(Bounds {
+        clock: true,
+        ..Bounds::minimal()
+    });
+    let gap = Action::Vm(Op::Gap);
+    let mut trace = running();
+    trace.extend([TICK, Action::Advance, Action::Advance, gap, gap]);
+    let (state, _) = run(&m, &trace);
+    assert!(!m.enabled(&state, &gap), "a third operation exceeds R_gap");
+    trace.extend([Action::Vm(Op::Point), FAIL]);
+    let (state, events) = run(&m, &trace);
+    assert!(events.contains(&Event::Tripped(Fail::Watchdog)));
     assert_eq!(state.slot.receipt, Receipt::Failed);
 }
 
@@ -841,6 +863,64 @@ fn a_foreign_stop_is_not_the_runners_retirement() {
     assert!(state.runner.foreign_end);
     let design = Lifecycle::new(runner_bounds(), Mutation::GuessedStopGeneration);
     assert_eq!(violation(&design, &trace), "l-pass-unsound");
+}
+
+/// LD2 3.2 and 5.4: the final ticket belongs to the slot at the moment of the
+/// runner's Stop. A later operator Stop of the idle slot moves the generation
+/// (the ticket says 2, the live slot says 3), and the final gate compares the
+/// live Idle slot with the final ticket. The 11-step trace is the one that
+/// the gate review of round 2 found on the first head.
+#[test]
+fn an_operator_stop_of_the_idle_slot_after_the_runner_ticket_fails_the_final_gate() {
+    let m = model(runner_bounds());
+    let mut trace = clean_runner_trace();
+    trace.extend([Action::Stop, Action::FinalGate]);
+    assert_eq!(trace.len(), 11);
+    let (state, _) = run(&m, &trace);
+    let ticket_after = state
+        .runner
+        .ledger
+        .iter()
+        .flatten()
+        .find_map(|exec| match exec.state {
+            luau_model::lifecycle::ExecState::Ticketed(t) => Some(t.gen_after),
+            _ => None,
+        })
+        .expect("the runner's Stop is ticketed");
+    assert_eq!((ticket_after, state.slot.generation), (2, 3));
+    assert_eq!(state.runner.phase, RunnerPhase::Done(Verdict::Fail));
+    // The design that takes the ticket as proof passes it.
+    let design = Lifecycle::new(runner_bounds(), Mutation::StaleFinalTicket);
+    assert_eq!(violation(&design, &trace), "l-pass-unsound");
+}
+
+/// LD2 2.4: a refused call in the Load entry writes the first fault, and
+/// revocation and close keep it. The earlier design that cleared the latch on
+/// revocation passed every check until the retained history existed.
+#[test]
+fn revocation_and_close_keep_the_first_fault() {
+    let bounds = Bounds {
+        dock: true,
+        ctl: 2,
+        ..Bounds::minimal()
+    };
+    let m = model(bounds);
+    let call = Action::Vm(Op::Call(Binding::Ext { awaited: false }));
+    let trace = vec![
+        START,
+        call,
+        load_table(true, true),
+        Action::Revoke,
+        Action::Stop,
+        RETURN,
+        Action::Observe,
+    ];
+    let (state, _) = run(&m, &trace);
+    let closed = state.closed_dock.expect("the dock closed");
+    assert_eq!(closed.faults, 1);
+    assert!(closed.end.is_some_and(|end| end.fault));
+    let design = Lifecycle::new(bounds, Mutation::RevokeClearsFirstFault);
+    assert_eq!(violation(&design, &trace), "d-first-fault-cleared");
 }
 
 #[test]

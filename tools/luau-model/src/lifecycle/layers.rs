@@ -257,6 +257,10 @@ impl Lifecycle {
         } else {
             hook_fail
         };
+        // LD2 2.4: the end record retains the first fault. The retained
+        // history is the truth here, not the latch: a Revoke that cleared the
+        // latch must not pass for a dock that never had a fault.
+        let had_fault = dock.faults > 0;
         let fault = if self.is(Mutation::UnobservedRefusalLost) {
             false
         } else {
@@ -268,7 +272,7 @@ impl Lifecycle {
                 "the dock's end record does not carry the failure of onStop",
             ));
         }
-        if fault != dock.fault {
+        if fault != had_fault {
             return Err(Self::violation(
                 "d-first-fault-lost",
                 "the dock's end record lost the first fault that an entry latched",
@@ -333,6 +337,9 @@ impl Lifecycle {
             return Ok(());
         };
         if kind != Kind::Tick || run.dock.closed || run.dock.revoked {
+            // The refused call enters the retained history first, before any
+            // code of the dock acts: no later step can erase the record.
+            run.dock.faults = run.dock.faults.saturating_add(1).min(2);
             if !(kind == Kind::Hook && self.is(Mutation::CaughtHookRefusalLost)) {
                 run.dock.fault = true;
             } else {
@@ -345,6 +352,7 @@ impl Lifecycle {
         }
         if !run.dock.call.is_terminal() {
             // A second awaited operation while one owns the invocation.
+            run.dock.faults = run.dock.faults.saturating_add(1).min(2);
             run.dock.fault = true;
             return Ok(());
         }
@@ -435,6 +443,9 @@ impl Lifecycle {
             }
             if !self.is(Mutation::RevokeKeepsPayload) {
                 run.dock.payload = false;
+            }
+            if self.is(Mutation::RevokeClearsFirstFault) {
+                run.dock.fault = false;
             }
         }
         s.runner.phase = RunnerPhase::Fenced;
@@ -536,11 +547,38 @@ impl Lifecycle {
         Ok(())
     }
 
+    /// LD2 3.2: at the final gate the live Idle slot is compared with the
+    /// role's final ticket and its final ledger frontier. The last admitted
+    /// execution's ticket names the generation and the Start serial that the
+    /// slot must still show. A later Stop of the idle slot moves the
+    /// generation, and a later admission moves the serial, so a stale ticket
+    /// does not authorise the end. An empty ledger has no ticket: the
+    /// frontier check covers the NoExecution case.
+    fn final_ticket_matches(s: &State) -> bool {
+        match s
+            .runner
+            .ledger
+            .iter()
+            .flatten()
+            .max_by_key(|exec| exec.serial)
+        {
+            None => true,
+            Some(exec) => matches!(
+                exec.state,
+                ExecState::Ticketed(t)
+                    if t.serial == exec.serial
+                        && t.gen_after == s.slot.generation
+                        && t.start_serial == s.slot.serial
+            ),
+        }
+    }
+
     /// The truth that the final gate must establish (LD2 5.4, items 3 and
     /// 4): every planned execution was retired by the runner's own ticketed
     /// Stop and ended clean, or, when the plan requires the natural self-stop,
-    /// ended by its own clean `api.stop` before that Stop. No admission
-    /// outside the plan happened, and the slot is Idle with nothing pending.
+    /// ended by its own clean `api.stop` before that Stop. The live Idle slot
+    /// still matches the final ticket. No admission outside the plan
+    /// happened, and the slot is Idle with nothing pending.
     fn pass_is_sound(&self, s: &State) -> bool {
         let slot_idle = s.slot.state == RunState::Idle
             && s.run.is_none()
@@ -558,6 +596,7 @@ impl Lifecycle {
         });
         slot_idle
             && planned_ok
+            && Self::final_ticket_matches(s)
             && !s.runner.foreign_start
             && !s.runner.foreign_end
             && !s.runner.failed
@@ -612,14 +651,20 @@ impl Lifecycle {
                 // runner forced stands for the natural self-stop.
                 slot_idle
                     && frontier
+                    && Self::final_ticket_matches(s)
                     && ledger
                         .iter()
                         .flatten()
                         .all(|exec| exec.planned && ticket_ok(exec) && (exec.clean || exec.natural))
             }
             _ => {
+                // The ticket is compared with the live slot, unless the
+                // earlier design takes it as proof.
+                let ticket_current =
+                    self.is(Mutation::StaleFinalTicket) || Self::final_ticket_matches(s);
                 slot_idle
                     && frontier
+                    && ticket_current
                     && ledger.iter().flatten().all(|exec| {
                         exec.planned
                             && ticket_ok(exec)

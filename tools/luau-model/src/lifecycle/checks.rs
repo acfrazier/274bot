@@ -30,7 +30,7 @@ const fn check(name: &'static str, rule: &'static str, refuses: &'static str) ->
     }
 }
 
-pub const CHECKS: [Check; 61] = [
+pub const CHECKS: [Check; 62] = [
     check(
         "i1-two-vms",
         "I1",
@@ -116,7 +116,7 @@ pub const CHECKS: [Check; 61] = [
     check(
         "i7a-late-accept",
         "I7 a",
-        "A Tick or a Paint entry that passed its deadline was accepted.",
+        "A Tick or a Paint entry that passed its deadline was accepted, unless the script stopped itself first (LD1 4.3, the first terminal cause).",
     ),
     check(
         "i7a-late-hook",
@@ -264,9 +264,14 @@ pub const CHECKS: [Check; 61] = [
         "A staged call of a failed dispatch was committed to the dock queue.",
     ),
     check(
+        "d-first-fault-cleared",
+        "D",
+        "A refused call is in the history of the dock and the first-fault latch is empty: revocation, close or the call itself lost the first fault.",
+    ),
+    check(
         "d-first-fault-lost",
         "D",
-        "The end record of the dock lost the first fault that an entry latched.",
+        "The end record of the dock lost the first fault that the history of the dock holds.",
     ),
     check(
         "d-payload-lost",
@@ -316,7 +321,7 @@ pub const CHECKS: [Check; 61] = [
     check(
         "l-pass-unsound",
         "L",
-        "The final gate wrote PASS while a planned execution was not retired by the runner's own ticketed Stop and clean (or, when the plan requires the natural self-stop, was not ended by its own clean `api.stop`), or an admission outside the plan happened, or the slot is not Idle.",
+        "The final gate wrote PASS while a planned execution was not retired by the runner's own ticketed Stop and clean (or, when the plan requires the natural self-stop, was not ended by its own clean `api.stop`), or the live slot does not match the final ticket (generation and Start serial), or an admission outside the plan happened, or the slot is not Idle.",
     ),
     check(
         "l-stop-unowned",
