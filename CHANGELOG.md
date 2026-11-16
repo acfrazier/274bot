@@ -110,8 +110,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   Hitpoints to walk away. It prices that walk on every game tick from the
   scene the bot stands in, for the tile the Guardian's own escape walks to, so
   a wall or a closed door that changes the way out is counted before the next
-  attack. When the food that pays for the escape is gone, or the fight cannot
-  go on, it flees as it did before. Flee stays the default.
+  attack. The client sends at most 25 waypoints (the corners of its route) in
+  one movement packet, and a longer walk stops short and starts again from a
+  new tile, so a way out that winds that much has no bound: the Guardian does
+  not fight it and flees. When the food that pays for the escape is gone, or
+  the fight cannot go on, it flees as it did before. Flee stays the default.
 - Swarm and the angry Strange plant are not fought. With Fight saved they keep
   the old handling: the Guardian flees them, and a script claim does not take
   them.

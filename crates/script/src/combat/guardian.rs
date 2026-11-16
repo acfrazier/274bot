@@ -25,7 +25,6 @@ use crate::native::{
 };
 use crate::reach_route;
 use api::game_data::SelectedGameData;
-use api::query::ReachQueryView;
 use api::random::{
     FightActor, FightCancel, FightEscape, FightEvent, FightOffer, FightOutcome, FightPhase,
     FightPrep, FightRead, FightReadiness, FightReason, FightToken,
@@ -209,7 +208,8 @@ fn outcome_of_error(error: &ActionError) -> FightOutcome {
 }
 
 /// The walk the Guardian's escape takes from the observed player tile, priced
-/// from the live scene (design V11D 5.3).
+/// from the live scene (design V11D 5.3). It is a walk that goes out in one
+/// movement packet, so it ends on its target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EscapeWalk {
     /// The tile the Guardian's first escape click goes to.
@@ -221,14 +221,23 @@ pub(crate) struct EscapeWalk {
     pub(crate) ticks: u16,
 }
 
-/// The walking bound of the client's route to `target` in the posted flood;
-/// `None` when the client has no route to the exact tile.
-fn price(view: &ReachQueryView, target: api::WorldTile) -> Option<EscapeWalk> {
-    let steps = reach_route::depth_to(view, target).filter(|steps| *steps > 0)?;
-    let ticks = super::risk::walk_ticks(usize::try_from(steps).ok()?).ok()?;
+/// The walking bound of the client's `route` to `target`. It covers the one
+/// walk a single movement packet sends: the client writes the first 25
+/// waypoints of its route (its corners, then its end) and the engine walks
+/// only those ([`reach_route::MOVE_PACKET_WAYPOINTS`]). A route with more
+/// stops at its 25th corner, still inside the chase area, and the Guardian
+/// then picks a new tile and a new route from there: the walk out is several
+/// routes, and no bound of the first one covers it. The posted flood starts
+/// only on the player and knows no second route, so such a route has no
+/// bound: `None`, and the fight is Flee.
+fn price(target: api::WorldTile, route: reach_route::Route) -> Option<EscapeWalk> {
+    if route.steps == 0 || !route.in_one_packet() {
+        return None;
+    }
+    let ticks = super::risk::walk_ticks(usize::try_from(route.steps).ok()?).ok()?;
     Some(EscapeWalk {
         target,
-        steps,
+        steps: route.steps,
         ticks: u16::try_from(ticks).ok()?,
     })
 }
@@ -239,17 +248,20 @@ fn price(view: &ReachQueryView, target: api::WorldTile) -> Option<EscapeWalk> {
 /// ([`api::random::first_escape_target`]); the cost is the length of the
 /// client's own route to it over the live scene's collision, so a closed
 /// door is a wall and a candidate that another wall closes off is skipped.
-/// The posted flood must start on the player. `None` when it does not, or
-/// when no candidate can be walked to: an unknown walk is never an instant
+/// That tile is the click's target even when its route is too long to price:
+/// the child never prices another tile than the one the Guardian clicks. The
+/// posted flood must start on the player. `None` when it does not, when no
+/// candidate can be walked to, and when the route to the first one needs more
+/// than one movement packet ([`price`]): an unknown walk is never an instant
 /// escape.
 pub(crate) fn escape_walk(escape: &FightEscape, frame: &Frame<'_>) -> Option<EscapeWalk> {
     let here = frame.here;
     let view = reach_route::live(frame.reach, Some(here))?;
     let player = (here.x, here.z);
     let distance = api::random::escape_distance(escape.anchor, escape.radius, player);
-    let mut walk = None;
-    api::random::first_escape_target(escape.anchor, player, distance, |(x, z)| {
-        walk = price(
+    let mut route = None;
+    let (x, z) = api::random::first_escape_target(escape.anchor, player, distance, |(x, z)| {
+        route = reach_route::route_to(
             view,
             api::WorldTile {
                 x,
@@ -257,9 +269,16 @@ pub(crate) fn escape_walk(escape: &FightEscape, frame: &Frame<'_>) -> Option<Esc
                 level: here.level,
             },
         );
-        walk.is_some()
-    });
-    walk
+        route.is_some()
+    })?;
+    price(
+        api::WorldTile {
+            x,
+            z,
+            level: here.level,
+        },
+        route?,
+    )
 }
 
 /// The walk the upkeep guard serves: the Guardian's own walk out, described as
@@ -952,6 +971,25 @@ mod tests {
         assert_eq!(escape_allowance(4, 6), 0, "saturating at zero");
         assert_eq!(escape_allowance(0, 0), 0);
         assert_eq!(escape_allowance(u32::MAX, 0), u16::MAX, "and at the top");
+    }
+
+    /// A route is priced only when one movement packet carries it: up to 25
+    /// waypoints (its corners and its end), whatever its steps. The 26th
+    /// waypoint stops the walk at a corner, and a route that stops has no
+    /// bound. A route of no steps is no walk.
+    #[test]
+    fn a_route_is_priced_only_when_one_movement_packet_carries_it() {
+        let target = api::WorldTile {
+            x: 3000,
+            z: 3000,
+            level: 0,
+        };
+        let route = |steps, waypoints| reach_route::Route { steps, waypoints };
+        let walk = price(target, route(60, 25)).expect("25 waypoints go out in one packet");
+        assert_eq!((walk.steps, walk.ticks), (60, 90), "(3 * 60 + 1) / 2");
+        assert_eq!(price(target, route(77, 26)), None, "26 do not");
+        assert_eq!(price(target, route(25, 1)).map(|walk| walk.ticks), Some(38));
+        assert_eq!(price(target, route(0, 1)), None, "no steps, no walk");
     }
 
     /// The deferral rule: one lock-producing upkeep before the first click,

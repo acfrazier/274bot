@@ -12,6 +12,9 @@ use api::query::ReachQueryView;
 use api::WorldTile;
 use std::collections::VecDeque;
 
+#[cfg(test)]
+pub(crate) mod raw_walk_tests;
+
 /// The engine sends an NPC in a player's NPC info only while its south-west
 /// tile is within this Chebyshev distance of the player
 /// (`BuildArea.PREFERRED_VIEW_DISTANCE = 15`, `src/network/rsbuf/build.ts:57`;
@@ -117,15 +120,44 @@ pub(crate) fn nearest_depth(view: &ReachQueryView, goals: &[WorldTile]) -> Optio
     Some(flood_depth(view, tile, rank).unwrap_or(u32::from(rank)))
 }
 
-/// Walking depth, in steps, of the exact tile `goal` in the posted flood: the
-/// length of the route the client's own pathfinder walks to it. The flood is
-/// the live scene's collision, so a closed door is a wall. A depth the posted
-/// step masks cannot reproduce falls back to the tile's dequeue rank, which
-/// is never shorter. `None` when the tile lies off the posted window, is
-/// walled off, or is on another level.
-pub(crate) fn depth_to(view: &ReachQueryView, goal: WorldTile) -> Option<u32> {
+/// The most waypoints one movement packet carries. The client sends the first
+/// 25 corners of its route and no more (`client.rs:5523-5524`, "max number of
+/// turns in a single pf request"), the engine decodes at most 25 of them
+/// (`MoveClickDecoder.ts:21`) and queues at most 25 (`PathingEntity.ts:42`,
+/// `queueWaypoints` at `:268-275`). It queues the waypoints it received and
+/// no route of its own (`MoveClickHandler.ts:42-48`; `clientRoutefinder` is on
+/// in `WorldConfig.ts:103`), and walks them a step a tick
+/// (`PathingEntity.ts:135-149`). A route with more corners walks to the 25th
+/// and stops there.
+pub(crate) const MOVE_PACKET_WAYPOINTS: u32 = 25;
+
+/// The route the client's own pathfinder walks to a flooded tile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Route {
+    /// Its length, in steps.
+    pub steps: u32,
+    /// The waypoints its movement packet needs: the tile it ends on and every
+    /// tile where its direction changes (`client.rs:5497-5521`).
+    pub waypoints: u32,
+}
+
+impl Route {
+    /// Whether one movement packet carries the whole route, so that the walk
+    /// ends on its last tile and not on a corner short of it.
+    pub(crate) fn in_one_packet(self) -> bool {
+        self.waypoints <= MOVE_PACKET_WAYPOINTS
+    }
+}
+
+/// The route the client's own pathfinder walks to the exact tile `goal`, read
+/// from the posted flood without a second search. The flood is the live
+/// scene's collision, so a closed door is a wall. `None` when the tile lies
+/// off the posted window, is walled off, or is on another level, and when the
+/// posted step masks cannot reproduce the chain that reached it: a route whose
+/// shape is unknown is not a route that can be priced.
+pub(crate) fn route_to(view: &ReachQueryView, goal: WorldTile) -> Option<Route> {
     let rank = exact_rank_at(view, goal)?;
-    Some(flood_depth(view, goal, rank).unwrap_or(u32::from(rank)))
+    flood_route(view, goal, rank)
 }
 
 /// The tile whose exact rank produced `rank`: the tile itself or one of its
@@ -142,11 +174,25 @@ fn stand_for(view: &ReachQueryView, tile: WorldTile, rank: u16) -> WorldTile {
         .unwrap_or(tile)
 }
 
-/// Walking depth of a flooded tile, recovered from dequeue ranks: each BFS
-/// tile was discovered by its lowest-ranked neighbour able to step into it.
+/// Walking depth of a flooded tile, recovered from dequeue ranks: the steps of
+/// [`flood_route`]. `None` when the posted step masks cannot reproduce the
+/// chain.
+fn flood_depth(view: &ReachQueryView, tile: WorldTile, rank: u16) -> Option<u32> {
+    flood_route(view, tile, rank).map(|route| route.steps)
+}
+
+/// The route to a flooded tile, recovered from dequeue ranks: each BFS tile
+/// was discovered by its lowest-ranked neighbour able to step into it, so the
+/// chain of discoverers from the tile back to the player is the route the
+/// client's breadth-first search walks, tile for tile (the flood expands its
+/// neighbours in the client's own order, `client.rs:5329-5453`). Its
+/// waypoints are the tile itself and every tile of the chain where the
+/// direction changes, as the client collects them (`client.rs:5497-5521`).
 /// `None` when the posted step masks cannot reproduce the chain.
-fn flood_depth(view: &ReachQueryView, mut tile: WorldTile, mut rank: u16) -> Option<u32> {
-    let mut depth = 0u32;
+fn flood_route(view: &ReachQueryView, mut tile: WorldTile, mut rank: u16) -> Option<Route> {
+    let mut steps = 0u32;
+    let mut waypoints = 1u32;
+    let mut heading = None;
     while rank != 0 {
         let (parent_rank, parent) = (-1..=1)
             .flat_map(|dx| (-1..=1).map(move |dz| (dx, dz)))
@@ -161,11 +207,18 @@ fn flood_depth(view: &ReachQueryView, mut tile: WorldTile, mut rank: u16) -> Opt
                 (from_rank < rank && view.can_step(from, tile)).then_some((from_rank, from))
             })
             .min_by_key(|(from_rank, _)| *from_rank)?;
+        // The chain runs from the end back to the start: a step that does not
+        // go the way of the one after it is a corner.
+        let step = (tile.x - parent.x, tile.z - parent.z);
+        if heading.is_some_and(|heading| heading != step) {
+            waypoints += 1;
+        }
+        heading = Some(step);
         tile = parent;
         rank = parent_rank;
-        depth += 1;
+        steps += 1;
     }
-    Some(depth)
+    Some(Route { steps, waypoints })
 }
 
 /// One [`bounded_steps`] search.
@@ -286,6 +339,7 @@ fn reaches_npc_from(view: &ReachQueryView, stand: WorldTile, npc: WorldTile) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use raw_walk_tests::{self as raw_walk, corners, maze, scattered, Prng};
 
     const SIDE: i32 = 80;
 
@@ -535,33 +589,114 @@ mod tests {
         assert_eq!(steps(&view, tile(14, 12), big), Some(1));
     }
 
-    /// The depth of an exact tile in a flooded view: open ground is the
+    /// The route to an exact tile in a flooded view: open ground is the
     /// Chebyshev distance, blocked ground has none, a wall adds its detour, and
     /// a tile off the posted window has none.
     #[test]
-    fn the_depth_of_an_exact_tile_reads_the_posted_flood() {
+    fn the_route_to_an_exact_tile_reads_the_posted_flood() {
         let player = tile(5, 5);
         let flooded = |scene: &Scene| {
             let flood = api::query::SceneQuery::new(&scene.0, Some(player)).flood_reach();
             api::query::pack_reach_query(&scene.0, flood.as_ref())
         };
+        let depth = |view: &ReachQueryView, goal: WorldTile| route_to(view, goal).map(|r| r.steps);
         let open = flooded(&Scene::open());
-        assert_eq!(depth_to(&open, tile(12, 8)), Some(7));
-        assert_eq!(depth_to(&open, tile(5, 20)), Some(15));
-        assert_eq!(depth_to(&open, tile(200, 5)), None);
+        assert_eq!(depth(&open, tile(12, 8)), Some(7));
+        assert_eq!(depth(&open, tile(5, 20)), Some(15));
+        assert_eq!(depth(&open, tile(200, 5)), None);
 
         let mut scene = Scene::open();
         for z in 0..=8 {
             scene.flag(tile(8, z), BLOCKED_GROUND);
         }
         let walled = flooded(&scene);
-        assert_eq!(depth_to(&walled, tile(8, 5)), None, "blocked ground");
-        let straight = depth_to(&open, tile(11, 5)).unwrap();
-        let round = depth_to(&walled, tile(11, 5)).unwrap();
+        assert_eq!(depth(&walled, tile(8, 5)), None, "blocked ground");
+        let straight = depth(&open, tile(11, 5)).unwrap();
+        let round = depth(&walled, tile(11, 5)).unwrap();
         assert!(
             round > straight,
             "{round} steps round the wall, {straight} straight"
         );
         assert!(round <= 12, "the detour is the wall's own length: {round}");
+    }
+
+    /// The route the posted flood gives is the route the real client takes,
+    /// and the waypoints it counts are the waypoints of the packet the client
+    /// writes for it: the whole route in one packet up to 25 waypoints, and
+    /// only a walk to the 25th corner beyond them. Mazes (long, winding
+    /// routes), thick scattered obstacles (detours, no route at all) and thin
+    /// ones (diagonals) are clicked from random tiles to random tiles.
+    #[test]
+    fn the_flood_route_is_the_route_and_the_packet_the_real_client_sends() {
+        let mut walker = raw_walk::RawWalk::new();
+        let mut rng = Prng(0x2745_2745_2745_2745);
+        let (mut whole, mut cut, mut refused) = (0, 0, 0);
+        for scene_index in 0..12 {
+            let open = match scene_index % 3 {
+                0 => maze(&mut rng),
+                1 => scattered(&mut rng, 35),
+                _ => scattered(&mut rng, 10),
+            };
+            walker.open_only(open.iter().copied());
+            let scene = walker.scene();
+            for _ in 0..6 {
+                let src = open[rng.below(open.len())];
+                let flood =
+                    api::query::SceneQuery::new(&scene, Some(tile(src.0, src.1))).flood_reach();
+                let view = api::query::pack_reach_query(&scene, flood.as_ref());
+                for _ in 0..16 {
+                    let dest = open[rng.below(open.len())];
+                    if dest == src {
+                        continue;
+                    }
+                    let label = format!("scene {scene_index}, {src:?} to {dest:?}");
+                    let click = walker.click(src, dest);
+                    let route = route_to(&view, tile(dest.0, dest.1));
+                    assert_eq!(
+                        click.is_some(),
+                        route.is_some(),
+                        "the client and the flood agree on a route: {label}"
+                    );
+                    let (Some(click), Some(route)) = (click, route) else {
+                        refused += 1;
+                        continue;
+                    };
+                    assert_eq!(
+                        route.steps as usize,
+                        click.route.len() - 1,
+                        "the length of the route: {label}"
+                    );
+                    let mut sent = corners(&click.route);
+                    sent.push(dest);
+                    assert_eq!(
+                        route.waypoints as usize,
+                        sent.len(),
+                        "the corners of the route and its end: {label}"
+                    );
+                    sent.truncate(MOVE_PACKET_WAYPOINTS as usize);
+                    assert_eq!(click.waypoints, sent, "the packet: {label}");
+
+                    let (walked, stands) = raw_walk::walk(src, &click.waypoints);
+                    if route.in_one_packet() {
+                        whole += 1;
+                        assert_eq!(
+                            (walked, stands),
+                            (route.steps, dest),
+                            "the walk ends on the target: {label}"
+                        );
+                    } else {
+                        cut += 1;
+                        assert!(
+                            walked < route.steps && stands != dest,
+                            "the walk stops short at the 25th corner: {label}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(
+            whole > 100 && cut > 100 && refused > 20,
+            "the scenes reach each case: {whole} whole, {cut} cut, {refused} refused"
+        );
     }
 }

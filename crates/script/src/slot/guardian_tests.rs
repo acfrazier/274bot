@@ -13,11 +13,14 @@ use crate::combat_session::tests::World;
 use crate::ctx::test_support::NullDriver;
 use crate::interact::InteractReq;
 use crate::native::{HostAction, HostEffect, InteractionReceipt};
+use crate::reach_route::raw_walk_tests::{
+    self as raw_walk, corners, maze, scattered, Prng, RawWalk,
+};
 use api::query::{pack_reach_query, ReachQueryView, SceneQuery};
 use api::quest_progress::EvidenceStamp;
 use api::random::{
-    escape_candidates, escape_distance, FightActor, FightCancel, FightEscape, FightEvent,
-    FightOffer, FightOutcome, FightPhase, FightReason, FightToken,
+    escape_candidates, escape_distance, first_escape_target, FightActor, FightCancel, FightEscape,
+    FightEvent, FightOffer, FightOutcome, FightPhase, FightReason, FightToken,
 };
 use api::selected::{ClientRevision, RunKey};
 use api::snapshot::{SceneView, SnapshotView};
@@ -38,8 +41,9 @@ fn here_of(world: &World) -> WorldTile {
 }
 
 /// The live scene a test posts: an open square around the bot with some tiles
-/// blocked. The host floods it from the player's tile on every observation,
-/// and so does [`Ground::view`].
+/// blocked, or a scene of its own (the real client's collision). The host
+/// floods it from the player's tile on every observation, and so does
+/// [`Ground::view`].
 #[derive(Clone)]
 struct Ground {
     base: (i32, i32),
@@ -48,6 +52,8 @@ struct Ground {
     /// The tile the flood starts from when it is not the player's: a flood
     /// that does not start on the player is not live.
     flood_from: Option<WorldTile>,
+    /// A scene posted as it is, in place of the square.
+    scene: Option<SceneView>,
 }
 
 impl Ground {
@@ -57,11 +63,23 @@ impl Ground {
             size: 61,
             blocked: Vec::new(),
             flood_from: None,
+            scene: None,
         }
     }
 
-    /// The posted reach view for a player standing on `player`.
-    fn view(&self, player: WorldTile) -> ReachQueryView {
+    /// `scene`, posted as it is.
+    fn of_scene(scene: SceneView) -> Self {
+        Self {
+            base: (scene.base_x, scene.base_z),
+            size: scene.width,
+            blocked: Vec::new(),
+            flood_from: None,
+            scene: Some(scene),
+        }
+    }
+
+    /// The open square with the blocked tiles closed.
+    fn square(&self) -> SceneView {
         let mut scene = SceneView {
             available: true,
             base_x: self.base.0,
@@ -75,6 +93,15 @@ impl Ground {
             let index = ((x - self.base.0) * self.size + (z - self.base.1)) as usize;
             scene.collision_flags[index] |= CollisionFlag::SQ_BLOCKED;
         }
+        scene
+    }
+
+    /// The posted reach view for a player standing on `player`.
+    fn view(&self, player: WorldTile) -> ReachQueryView {
+        let scene = match &self.scene {
+            Some(scene) => scene.clone(),
+            None => self.square(),
+        };
         let flood = SceneQuery::new(&scene, Some(self.flood_from.unwrap_or(player))).flood_reach();
         pack_reach_query(&scene, flood.as_ref())
     }
@@ -112,10 +139,18 @@ fn offer_for(world: &World, config: &str, event: FightEvent, serial: u32) -> Fig
 
 impl Fight {
     fn offered(config: &str, event: FightEvent) -> Self {
+        Self::offered_with(config, event, None)
+    }
+
+    /// As [`Fight::offered`], with the escape around `escape` when it is given.
+    fn offered_with(config: &str, event: FightEvent, escape: Option<FightEscape>) -> Self {
         let world = World::new(config);
         let mut slot = SlotScript::new();
         slot.bind_incarnation(1);
-        let offer = offer_for(&world, config, event, 1);
+        let mut offer = offer_for(&world, config, event, 1);
+        if let Some(escape) = escape {
+            offer.escape = escape;
+        }
         slot.guardian_offer(offer, &selected())
             .expect("the offer is admitted");
         let ground = Ground::around(here_of(&world));
@@ -166,7 +201,12 @@ impl Fight {
     /// The walk the escape takes from the bot's tile over `ground`, as the
     /// child prices it.
     fn priced(&self, ground: &Ground) -> Option<EscapeWalk> {
-        let view = ground.view(self.here());
+        self.priced_view(&ground.view(self.here()))
+    }
+
+    /// The walk the escape takes from the bot's tile over the posted `view`,
+    /// as the child prices it.
+    fn priced_view(&self, view: &ReachQueryView) -> Option<EscapeWalk> {
         let stamp = EvidenceStamp {
             run: RunKey {
                 slot: 1,
@@ -177,7 +217,7 @@ impl Fight {
             sequence: 1,
         };
         let frame = Frame::borrow(
-            SnapshotView::new(Some(&self.world.snapshot), stamp).with_reach(Some(&view)),
+            SnapshotView::new(Some(&self.world.snapshot), stamp).with_reach(Some(view)),
         )?;
         escape_walk(&self.escape, &frame)
     }
@@ -928,5 +968,195 @@ fn an_unpriced_observation_hands_over_without_an_attack() {
     assert!(
         fight.slot.take_guardian_action().is_none(),
         "no attack goes out on an unpriced walk"
+    );
+}
+
+/// The reviewer's counterexample (Codex review of round 2): a 14 by 14 maze of
+/// one-tile corridors, the rest of the build area closed. The top row is
+/// z = 59, the left column x = 46. The bot stands on (46, 48), the anchor is
+/// (52, 52) and the radius 7, so the Guardian's first escape tile is (59, 52).
+const ROUTE_PREFIX_MAZE: [&str; 14] = [
+    "######.#######", // z = 59
+    "##.........###", // z = 58
+    "##.#######.###", // z = 57
+    ".......#...#.#", // z = 56
+    "######.#.###.#", // z = 55
+    "...#...#.#...#", // z = 54
+    ".#.#.###.#.#.#", // z = 53
+    ".#...#.#.#.#..", // z = 52
+    ".#####.#.#.###", // z = 51
+    "...#...#.#...#", // z = 50
+    "##.#.###.###.#", // z = 49
+    "...#.....#...#", // z = 48
+    "####.#####.###", // z = 47
+    "##.........###", // z = 46
+];
+
+fn route_prefix_maze() -> Vec<(i32, i32)> {
+    ROUTE_PREFIX_MAZE
+        .iter()
+        .zip((46..=59).rev())
+        .flat_map(|(row, z)| {
+            row.bytes()
+                .zip(46..)
+                .filter(|&(cell, _)| cell == b'.')
+                .map(move |(_, x)| (x, z))
+        })
+        .collect()
+}
+
+/// A walk the client cannot send in one movement packet is not priced (review
+/// of round 2). In that maze the three first ring tiles are closed, and the
+/// route to the first tile the client accepts, the one the Guardian clicks, is
+/// 77 steps with 26 corners, 27 waypoints with its end. One packet carries 25:
+/// the engine walks 74 steps and stops at (58, 54), six tiles from the anchor,
+/// inside the chase area of an actor with a maxrange of 5 (`Npc.ts:652-674`).
+/// The Guardian then picks another tile, (52, 59), 43 steps away: 117 steps in
+/// all, more than the 116 ticks `(3 * 77 + 1) / 2` the whole route was priced
+/// at. That walk has no bound, so the child hands over to Flee and attacks
+/// nothing.
+#[test]
+fn a_walk_the_client_cannot_send_in_one_packet_is_not_priced() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (start, anchor) = ((46, 48), (52, 52));
+    let mut walker = RawWalk::new();
+    walker.open_only(route_prefix_maze());
+    let distance = escape_distance(anchor, 7, start);
+    let first = first_escape_target(anchor, start, distance, |tile| {
+        walker.click(start, tile).is_some()
+    })
+    .expect("the client accepts a tile");
+    assert_eq!(first, (59, 52), "the Guardian's first tile");
+
+    // What the real client does with that click.
+    let click = walker.click(start, first).expect("the client accepts it");
+    assert_eq!(click.route.len() - 1, 77, "the steps of its route");
+    assert_eq!(corners(&click.route).len(), 26, "and its corners");
+    assert_eq!(click.waypoints.len(), 25, "one packet carries 25 waypoints");
+    let (walked, stops) = raw_walk::walk(start, &click.waypoints);
+    assert_eq!((walked, stops), (74, (58, 54)), "and the walk stops short");
+    // A maxrange of 5 chases a target up to 5 + 1 tiles from the anchor.
+    let reach = (stops.0 - anchor.0).abs().max((stops.1 - anchor.1).abs());
+    assert!(reach <= 6, "inside the chase area: {reach} from the anchor");
+
+    // The Guardian picks its tile again from where the walk stopped.
+    let again = first_escape_target(anchor, stops, escape_distance(anchor, 7, stops), |tile| {
+        walker.click(stops, tile).is_some()
+    })
+    .expect("a second tile");
+    assert_eq!(again, (52, 59));
+    let second = walker.click(stops, again).unwrap().route.len() as u32 - 1;
+    assert_eq!(second, 43);
+    assert!(
+        walked + second > (3 * 77u32).div_ceil(2),
+        "{} steps against the 116 ticks the whole route was priced at",
+        walked + second
+    );
+
+    // The child prices nothing: over that scene, from that tile, with that
+    // anchor, and at its admission.
+    let escape = FightEscape { anchor, radius: 7 };
+    let mut fight = Fight::offered_with(
+        "macro_rivertrollguardian_1",
+        FightEvent::RiverTroll,
+        Some(escape),
+    );
+    fight.move_player(WorldTile {
+        x: start.0,
+        z: start.1,
+        level: 0,
+    });
+    let ground = Ground::of_scene(walker.scene());
+    assert_eq!(fight.priced(&ground), None, "no bound covers that walk");
+    fight.ground = Some(ground);
+    fight.tick();
+    assert_eq!(
+        fight.read().outcome,
+        FightOutcome::FleeRequired(FightReason::UnknownFacts)
+    );
+    assert!(
+        fight.slot.take_guardian_action().is_none(),
+        "no attack follows a walk no bound covers"
+    );
+}
+
+/// The child prices the walk the real client makes, and prices it only when
+/// the client sends the whole walk in one packet: over mazes, thick and thin
+/// obstacles, from random tiles around random anchors, a priced walk is the
+/// route to the first tile the client accepts, the packet ends on that tile,
+/// and its steps stay inside the priced ticks. When the client accepts a tile
+/// whose route needs a second packet the child prices nothing, and does not
+/// price a later tile instead: the Guardian clicks that first tile.
+#[test]
+fn the_priced_walk_is_the_walk_the_real_client_sends() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+    let mut walker = RawWalk::new();
+    let mut rng = Prng(0x274b_0b0b_2745_2745);
+    let (mut whole, mut cut, mut refused) = (0, 0, 0);
+    for scene_index in 0..9 {
+        let open = match scene_index % 3 {
+            0 => maze(&mut rng),
+            1 => scattered(&mut rng, 35),
+            _ => scattered(&mut rng, 10),
+        };
+        walker.open_only(open.iter().copied());
+        let ground = Ground::of_scene(walker.scene());
+        for _ in 0..12 {
+            let start = open[rng.below(open.len())];
+            let beside = |rng: &mut Prng| i32::try_from(rng.below(11)).unwrap() - 5;
+            let anchor = (start.0 + beside(&mut rng), start.1 + beside(&mut rng));
+            fight.escape = FightEscape { anchor, radius: 7 };
+            fight.move_player(WorldTile {
+                x: start.0,
+                z: start.1,
+                level: 0,
+            });
+            let label = format!("scene {scene_index}, from {start:?} around {anchor:?}");
+            let priced = fight.priced(&ground);
+            let distance = escape_distance(anchor, 7, start);
+            let accepted = first_escape_target(anchor, start, distance, |tile| {
+                walker.click(start, tile).is_some()
+            });
+            let Some(tile) = accepted else {
+                assert_eq!(priced, None, "no tile the client accepts: {label}");
+                refused += 1;
+                continue;
+            };
+            let click = walker.click(start, tile).unwrap();
+            if corners(&click.route).len() < 25 {
+                whole += 1;
+                let walk =
+                    priced.unwrap_or_else(|| panic!("a walk of one packet is priced: {label}"));
+                assert_eq!(
+                    walk.target,
+                    WorldTile {
+                        x: tile.0,
+                        z: tile.1,
+                        level: 0
+                    },
+                    "the first tile the client accepts: {label}"
+                );
+                assert_eq!(walk.steps as usize, click.route.len() - 1, "{label}");
+                let (walked, stops) = raw_walk::walk(start, &click.waypoints);
+                assert_eq!(stops, tile, "the packet ends on the tile: {label}");
+                assert!(
+                    walked <= u32::from(walk.ticks),
+                    "{walked} steps inside {} ticks: {label}",
+                    walk.ticks
+                );
+            } else {
+                cut += 1;
+                assert_eq!(priced, None, "a walk of two packets has no bound: {label}");
+            }
+        }
+    }
+    assert!(
+        whole > 0 && cut > 0 && refused > 0,
+        "the scenes reach each case: {whole} priced, {cut} too long, {refused} with no tile"
     );
 }
