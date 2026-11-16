@@ -3098,6 +3098,22 @@ fn client_observation_refusal(scenario: &Scenario) -> Option<String> {
                 step.name
             ));
         }
+        let required_observer = match step.wait.arm {
+            Proof::MenuHasEntry { .. } if !matches!(step.kind, StepKind::ObserveMenu) => {
+                Some("MenuHasEntry requires an ObserveMenu step")
+            }
+            Proof::VarbitEquals { id, .. } if !matches!(step.kind, StepKind::ObserveVarbit { id: observer_id } if observer_id == id) => {
+                Some("VarbitEquals requires an ObserveVarbit step with the same id")
+            }
+            _ => None,
+        };
+        if let Some(requirement) = required_observer {
+            return Some(format!(
+                "step {} ({}) wait arm: {requirement}",
+                index + 1,
+                step.name
+            ));
+        }
         if let StepKind::ObserveStallCombat { guard_ready, .. } = step.kind {
             if let Some(observer) = client_observation(guard_ready) {
                 return Some(format!(

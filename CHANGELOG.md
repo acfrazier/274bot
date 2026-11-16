@@ -18,6 +18,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   loot-style wait arms, and native seed-deposit wait arms refuse both
   observations at any depth. Refusals identify their authored location
   before the runner can send an action.
+- A top-level menu or varbit wait arm requires its own observer step.
+  Construction refuses an unpaired arm before sending any action.
+  Varbit observers must name the same varbit id as their wait arm.
 
 ### Scenario runner
 
