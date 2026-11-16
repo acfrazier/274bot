@@ -1,0 +1,15 @@
+# Linux nightly host (user unit): start 274bot-luau-model-nightly.service at 03:45
+# local time, after the other model nightlies (hold-model at 02:30 and
+# js-teardown-model at 03:15) on the same host. A missed run is not made up at
+# boot: the largest profile needs a few GB.
+# Install: ~/.config/systemd/user/274bot-luau-model-nightly.timer
+[Unit]
+Description=274bot luau-model nightly profile runs at 03:45
+
+[Timer]
+OnCalendar=*-*-* 03:45:00
+Persistent=false
+Unit=274bot-luau-model-nightly.service
+
+[Install]
+WantedBy=timers.target
