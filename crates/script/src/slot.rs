@@ -692,7 +692,7 @@ impl SlotScript {
             manual_route_bank_fetch: None,
 
             surface_start: None,
-            factories: [None; SurfaceKind::COUNT],
+            factories: [const { None }; SurfaceKind::COUNT],
             watchdog: ProgressWatchdog::new(),
 
             cut_restart_times: [None; CUT_RESTART_LIMIT],

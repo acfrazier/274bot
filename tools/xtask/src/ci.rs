@@ -68,6 +68,18 @@ const CLIPPY_COMMANDS: &[(&str, &str)] = &[
         "clippy-13",
         "cargo clippy -p host --all-targets --no-deps --features render-test-hooks -- -D warnings -D clippy::todo -D clippy::unimplemented",
     ),
+    (
+        "clippy-14",
+        "cargo clippy -p host-play --no-default-features --features luau --all-targets --no-deps -- -D warnings -D clippy::todo -D clippy::unimplemented",
+    ),
+    (
+        "clippy-15",
+        "cargo clippy -p panel --no-default-features --features luau --all-targets --no-deps -- -D warnings -D clippy::todo -D clippy::unimplemented",
+    ),
+    (
+        "clippy-16",
+        "cargo clippy -p tui --no-default-features --features luau --all-targets --no-deps -- -D warnings -D clippy::todo -D clippy::unimplemented",
+    ),
 ];
 
 const TEST_LANES: &[(&str, &str)] = &[
@@ -84,6 +96,14 @@ const TEST_LANES: &[(&str, &str)] = &[
     (
         "native-only",
         "cargo build -p panel --no-default-features && cargo build -p tui --no-default-features && cargo build -p host-play --no-default-features && cargo test -p host-play --no-default-features --lib && python3 -B tools/architecture/native_dependencies.py --self-test && python3 -B tools/architecture/native_dependencies.py",
+    ),
+    (
+        "luau-only",
+        "cargo build -p panel --no-default-features --features luau && cargo build -p tui --no-default-features --features luau && cargo build -p host-play --no-default-features --features luau && cargo test -p host-play --no-default-features --features luau --lib",
+    ),
+    (
+        "js-only",
+        "cargo build -p panel --no-default-features --features js && cargo build -p tui --no-default-features --features js && cargo build -p host-play --no-default-features --features js",
     ),
     (
         "grinch-oracles",
@@ -1338,9 +1358,11 @@ mod tests {
     #[test]
     fn ci_step_list_contains_every_lane_and_clippy_command() {
         let names: Vec<String> = steps().into_iter().map(|step| step.name).collect();
-        assert_eq!(CLIPPY_COMMANDS.len(), 13);
-        assert_eq!(TEST_LANES.len(), 15);
-        assert!(names.iter().any(|name| name == "clippy-13"));
+        assert_eq!(CLIPPY_COMMANDS.len(), 16);
+        assert_eq!(TEST_LANES.len(), 17);
+        assert!(names.iter().any(|name| name == "clippy-16"));
+        assert!(names.iter().any(|name| name == "test-luau-only"));
+        assert!(names.iter().any(|name| name == "test-js-only"));
         assert!(
             names
                 .iter()

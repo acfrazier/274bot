@@ -14,6 +14,7 @@ nav-executor = { path = "../nav-executor" }
 scenario = { path = "../scenario", optional = true }
 script = { path = "../script" }
 script-js = { path = "../script-js", optional = true }
+script-luau = { path = "../script-luau", optional = true }
 # Local-state preference edits preserve member order without the JS runtime too.
 serde_json = { version = "1.0.140", features = ["preserve_order"] }
 serde = { version = "1.0.219", features = ["derive"] }
@@ -120,8 +121,9 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [features]
-default = ["js"]
+default = ["js", "luau"]
 js = ["dep:script-js"]
+luau = ["dep:script-luau"]
 debug-catalog = ["api/debug-catalog"]
 # Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
 # Frontend binaries install CountingAllocator (T3).
@@ -138,7 +140,7 @@ live-harness = ["dep:scenario"]
 
 # Test-only Play fixtures. Enabled from frontend dev-dependencies, never
 # production builds.
-test-support = ["api/test-support", "host/test-support", "script/test-hooks", "script-js?/test-hooks", "nav-planner/test-support", "dep:scenario"]
+test-support = ["api/test-support", "host/test-support", "script/test-hooks", "script-js?/test-hooks", "script-luau?/test-hooks", "nav-planner/test-support", "dep:scenario"]
 
 # Read-only probe for the manual-click LIVE harnesses. Enabled from frontend
 # dev-dependencies, never production builds.

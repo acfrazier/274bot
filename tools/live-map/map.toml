@@ -302,6 +302,9 @@ globs = [
   "crates/nav-bake/Cargo.toml",
   "crates/nav-bake/src/pack/sidecars.rs",
   "crates/nav-bake/src/services.rs",
+  # The Luau surface crate has no VM, thread or state until its run lifecycle
+  # lands. That slice moves crates/script-luau/src/** to [live] with its cells.
+  "crates/script-luau/src/lib.rs",
 ]
 
 exceptions = [
@@ -1424,6 +1427,7 @@ cells = [
 [[cover]]
 globs = [
   "crates/script-js/Cargo.toml",
+  "crates/script-luau/Cargo.toml",
   "crates/script-js/compat-js/abi-contract.json",
   "crates/script-js/compat-js/family-predecessors.json",
   "crates/script-js/compat-js/index.d.ts",

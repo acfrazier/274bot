@@ -6875,13 +6875,14 @@ fn s2b_admission_per_bot_layouts() {
         std::mem::size_of_val(&bot.bank_fetch),
         std::mem::size_of_val(&bot.compact_route),
     );
-    // Protected-food handles add 80 B to NavBot and 16 B to WalkGuard.
-    // The composed 64-bit baseline is 4192/1600/560/280 B.
+    // Protected-food handles add 80 B to NavBot and 16 B to WalkGuard. The
+    // slot's factory entry for the Luau surface adds 16 B to SlotScript.
+    // The composed 64-bit baseline is 4192/1616/560/280 B.
     // Each ceiling leaves 64 B; memory-profile adds separate state.
     #[cfg(all(target_pointer_width = "64", not(feature = "memory-profile")))]
     {
         assert!(std::mem::size_of::<NavBot>() <= 4256);
-        assert!(std::mem::size_of::<script::SlotScript>() <= 1664);
+        assert!(std::mem::size_of::<script::SlotScript>() <= 1680);
     }
     assert!(std::mem::size_of::<script::combat::Combat>() <= 624);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 344);

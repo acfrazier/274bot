@@ -1,0 +1,27 @@
+[package]
+name = "script-luau"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[features]
+# Integration-only test seams, enabled through dev-dependencies of the product
+# crates. They forward the core's seams.
+test-hooks = ["script/test-hooks"]
+
+[dependencies]
+api = { path = "../api" }
+# Exact pin. `luau` builds the Luau VM from source (a C++17 compiler is a hard
+# requirement of every build with this crate). `send` makes `Lua: Send`, which a
+# run needs (`lib.rs`). The JIT, `async`, `serde` and `macros` stay off: the
+# last one links `inventory`, which registers code before `main`.
+mlua = { version = "=0.12.2", default-features = false, features = ["luau", "send"] }
+script = { path = "../script" }
+vault = { path = "../vault" }
+
+[dev-dependencies]
+# The source scan of `tests/startup_state.rs`; the version `script` already uses.
+syn = { version = "=2.0.119", features = ["full", "visit"] }
+
+[lints]
+workspace = true

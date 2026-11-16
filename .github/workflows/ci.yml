@@ -75,6 +75,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config \
+            g++ \
             libasound2-dev \
             libwayland-dev \
             libxkbcommon-dev \
@@ -117,6 +118,12 @@ jobs:
         run: cargo run --locked -p xtask -- ci clippy-12
       - name: Clippy
         run: cargo run --locked -p xtask -- ci clippy-13
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-14
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-15
+      - name: Clippy
+        run: cargo run --locked -p xtask -- ci clippy-16
 
   architecture:
     name: architecture
@@ -180,6 +187,16 @@ jobs:
             save_cache: false
             os: ubuntu-24.04
           - lane: native-only
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
+          - lane: luau-only
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
+          - lane: js-only
             free_disk: false
             cache_key: workspace
             save_cache: false
@@ -252,6 +269,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config \
+            g++ \
             libasound2-dev \
             libwayland-dev \
             libxkbcommon-dev \

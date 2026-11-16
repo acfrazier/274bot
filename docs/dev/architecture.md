@@ -150,6 +150,7 @@ workspace member; it is listed as an architecture external.
 | `nav-executor` | Pollable `Traveller` follow run, walk and transport hops | Planner search, script isolate, or operator UI |
  | `script` | Native card machines (Quester, Gatherer, Combat), slot lifecycle and typed native facades over the packed world | A production dependant of `client`; a JS runtime owner |
  | `script-js` | JS runtime: V8 isolate, compat machines (including Sherlock and the clue machine), catalog and library, isolate wire schema and JS assets | A native card owner; a production dependant of `client` except through dev fixtures |
+ | `script-luau` | Luau script surface: the wiring of the surface so far, with no VM, no thread and no process-wide state. The run lifecycle, sandbox and bindings follow | A native card owner; a machine; a dependant of `script-js`, `host-play`, `frontend-core` or `client` |
 | `host-play` | Shared `Play` lifecycle over host/script/nav/vault; stages locally generated navigation payloads during product builds | A second panel or client renderer |
 | `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log; script coordination (catalog, per-profile assignment and parameters, Start all/Stop all, reload, Apply to all); fleet marks and the commands on marked bots (Assign, log in/out, group walk); the fleet/detail projections (phase, queue place, retained errors, newest operation) and the one process resource sampler both front ends render | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries; a per-row or per-bot sampler |
 | `scenario` | Shared headed/headless live scenario runner and Quester fixtures | Panel/TUI chrome |
@@ -168,9 +169,10 @@ graph, derived from the manifests:
 - `nav-executor` → `api`, `nav`, `client`; `nav` also **dev** for planner test-support fixtures
  - `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
  - `script-js` → `script`, `api`, `vault` (runtime); `client` **dev-only**; `nav-planner` **dev-only** (test fixtures only; production JS code uses the Core `script` nav facade)
- - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `nav` runtime; `nav-bake` **dev-only** for fixtures; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
+ - `script-luau` → `script`, `api`, `vault` (runtime); no `client`, `nav-planner`, `script-js` or front-end edge
+ - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `script-luau` **optional** under `luau`; `nav` runtime; `nav-bake` **dev-only** for fixtures; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
  - `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
- - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
+ - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `script-luau` **optional** under `luau`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
  - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
  - `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host`, `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
  - `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `nav-bake`, `scenario`, `vault`; `host-play` also **dev**
@@ -218,6 +220,7 @@ graph, derived from the manifests:
    stages local nav payloads; it neither builds nor invokes the bake tool.
  - **`script-js` → `client` and `script-js` → `nav-planner` are `[dev-dependencies]` only.** Production JS code uses the Core `script` nav facade. Promoting either to a normal dependency fails the checker.
  - **`host-play` → `script-js` and `frontend-core` → `script-js` are optional production edges enabled by `js`.** Both consumers also declare dev edges for test fixtures. With `js`, the slot binds the JS surface factory and hosts install its cards with `script_js::install_cards()`. Native-only builds do not construct a JS library or bind that factory.
+ - **`host-play` → `script-luau` and `frontend-core` → `script-luau` are optional production edges enabled by `luau`.** Nothing in either consumer uses the crate yet, and no Luau factory is bound: a slot refuses a Luau card with `SurfaceError::NoFactory(SurfaceKind::Luau)`, in every build. `script-luau` has no edge to `script-js`, `host-play`, `frontend-core`, `client` or `nav-planner`, and no front end or `e2e` depends on it directly.
 
 For a new edge, kind, migration, optional-dependency activation, vendored path
 package, or checker change, follow [Changing a boundary](#changing-a-boundary).
@@ -233,13 +236,14 @@ product data; candidate inventory exceptions are not. Do not add a hidden graph.
 | --- | --- |
  | `script` | `canvas-raster`: raster, fonts and composition; `path-schema`: Path JSON Schema generation; `test-hooks`: integration-only seams. No JS dependencies. |
  | `script-js` | JS runtime crate: V8 isolate, compat machines, catalog and library, isolate wire schema. `test-hooks`: integration-only isolate seams; `memory-profile`: V8 heap and snapshot counters for the host-play harness. |
+ | `script-luau` | Luau script surface. `test-hooks`: integration-only seams, forwarded from `script`. Builds the Luau VM from source with `mlua` (`luau` and `send`), so it needs a C++17 compiler. |
 | `api` | `path-schema`, `debug-catalog`, `test-hooks` |
 | `host` | `render-diagnostics`, `performance-profile`, `journal-paint-proof` |
-| `host-play` | `js` (default); `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the JS-enabled fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
-| `panel` | `js` (default, forwarded to `frontend-core`), `render-diagnostics`, `memory-profile`, `memory-profile-no-alloc` |
-| `tui` | `js` (default, forwarded to `frontend-core`), `memory-profile`, `memory-profile-no-alloc` |
-| `frontend-core` | `js` (default, enables the host JS runtime and `canvas-raster`), `canvas-raster`, `test-support` (arm-only spawn fixtures for front-end tests) |
-| `e2e` | `js` (default, forwarded to `host-play`) |
+| `host-play` | `js` and `luau` (default); `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the JS-enabled fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
+| `panel` | `js` and `luau` (default, forwarded to `frontend-core`), `render-diagnostics`, `memory-profile`, `memory-profile-no-alloc` |
+| `tui` | `js` and `luau` (default, forwarded to `frontend-core`), `memory-profile`, `memory-profile-no-alloc` |
+| `frontend-core` | `js` and `luau` (default; each enables its `host-play` feature, its surface crate and `canvas-raster`), `canvas-raster`, `test-support` (arm-only spawn fixtures for front-end tests) |
+| `e2e` | `js` and `luau` (default, forwarded to `host-play`) |
 
 ## Per-crate module ownership
 

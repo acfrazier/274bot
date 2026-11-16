@@ -85,6 +85,11 @@ Commands that use `--workspace`, including CI, include `xtask`.
 - Install Python 3, `git`, `curl`, `sha256sum`, `gzip`, `unzip` and `diff`.
   Linux test lanes also need the ALSA and window headers used by CI. The panel
   memory lane needs `xvfb`.
+- Install a C++17 compiler. The default build compiles the Luau VM from
+  source. On Linux install `g++` or `clang++`. On macOS install the Xcode
+  command-line tools. On Windows install the MSVC C++ build tools. A build
+  with `--no-default-features`, or with `--no-default-features --features js`,
+  does not need it (`--features js` alone keeps the default `luau` feature).
 - Local test lanes need the same 289 navigation pack, decoded snapshots and
   other local test assets that the tests name. Set `NAV_PACK`,
   `WORLD_NAV_PACK`, `NAV_ARRIVAL_PACK`, `BOT_NAV_SNAPSHOT_ROOT`, `ENGINE_DIR`

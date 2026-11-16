@@ -88,13 +88,32 @@ The panel only starts the **focused** vault profile; switching the combo starts 
 
 **Window:** `panel-play` is an OS window. It does **not** open the client’s `Present` applet. The Game pane blits the client frame (GPU texture or CpuPix3D), **never below 765×503**. Unfocused slots paint at the **1 fps** watch cadence only in a MultiBox wall with *Only render focused* off; otherwise they stay draw-off. The focused slot runs at **50 fps**. The real 765×503 applet is `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity.
 
-## Builds with and without JavaScript
+## Builds with and without JavaScript and Luau
 
-`panel`, `tui`, `host-play` and `e2e` enable the `js` feature by default.
-These are the full builds, including catalog and external JavaScript/TypeScript
-scripts. The native `script` kernel has no JavaScript runtime dependency.
+`panel`, `tui`, `host-play` and `e2e` enable the `js` and `luau` features by
+default. These are the full builds. The `js` feature adds the JavaScript runtime,
+with catalog and external JavaScript/TypeScript scripts. The `luau` feature adds
+the Luau script surface, the `script-luau` crate. It compiles the Luau VM from
+source, so it needs a C++17 compiler (see
+[Requirements](../../CONTRIBUTING.md#requirements)). The Luau surface has no run
+lifecycle yet, so no card starts through it. The native `script` kernel has no
+dependency on either runtime.
 
-Build each application separately to omit the JS runtime:
+The two features build in four compositions. Build each application separately.
+
+| Composition | Feature arguments |
+| --- | --- |
+| Both (the full build) | none |
+| JavaScript only | `--no-default-features --features js` |
+| Luau only | `--no-default-features --features luau` |
+| Neither (the native build) | `--no-default-features` |
+
+A build without a feature has none of that surface's crates in its dependency
+graph: no `script-js`, V8 or `flatbuffers` without `js`, and no `script-luau`,
+`mlua` or `luau0-src` without `luau`. `python3 tools/architecture/native_dependencies.py`
+checks every composition of `panel`, `tui` and `host-play`.
+
+Build each application without both features for the native build:
 
 ```bash
 cargo build --release -p panel --bin panel-play --no-default-features
@@ -109,8 +128,10 @@ it does not create an isolate itself.
 
 On Linux, panel keeps its existing Wayland window decorations. Their
 `winit` → `sctk-adwaita` path uses `tiny-skia` and `ab_glyph`, independently
-of the script runtime. Native builds do not enable the script canvas raster
-or its embedded Liberation fonts.
+of the script runtime. The native build does not enable the script canvas raster
+or its embedded Liberation fonts. A `panel` or `tui` build with `luau` does,
+because Luau scripts paint through that canvas. `host-play` without `js` never
+does.
 
 Saved File and catalog assignments remain stored and readable. Start refuses
 them because no JS factory is available; it does not discard the assignment
