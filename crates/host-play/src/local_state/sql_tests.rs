@@ -376,6 +376,199 @@ fn a_fresh_root_starts_empty_at_a_database_version_and_writes_no_json() {
     }
 }
 
+/// The directories a `sql::open_connection` call flushed, in order, with the
+/// names each held then, and the index of each in `events`.
+fn flushed(events: &[sql::OpenEvent]) -> Vec<(usize, std::path::PathBuf, Vec<String>)> {
+    events
+        .iter()
+        .enumerate()
+        .filter_map(|(at, event)| match event {
+            sql::OpenEvent::SyncDir { dir, names } => Some((at, dir.clone(), names.clone())),
+            sql::OpenEvent::Pragma(_) => None,
+        })
+        .collect()
+}
+
+/// The directories of [`flushed`], in order.
+fn flushed_dirs(synced: &[(usize, std::path::PathBuf, Vec<String>)]) -> Vec<std::path::PathBuf> {
+    synced.iter().map(|(_, dir, _)| dir.clone()).collect()
+}
+
+/// Plan §4.5 (macOS `fullfsync`): the durability pragmas run before the
+/// switch to WAL mode, because a new file runs its first transaction inside
+/// `PRAGMA journal_mode = WAL` and syncs it as set at that moment. The
+/// recorded statements pin the order on every platform. They cannot show the
+/// sync call itself: the macOS syscall trace of a creation does (an
+/// `F_FULLFSYNC` for the journal and the database file).
+#[test]
+fn a_new_database_is_set_up_with_its_durability_pragmas_before_wal_mode() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-open-pragmas");
+    let root = root_of(&scratch);
+    sql::take_open_events();
+    let conn = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens"));
+    let pragmas: Vec<String> = sql::take_open_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            sql::OpenEvent::Pragma(text) => Some(text),
+            sql::OpenEvent::SyncDir { .. } => None,
+        })
+        .collect();
+    let wal = pragmas
+        .iter()
+        .position(|text| text.starts_with("PRAGMA journal_mode"))
+        .expect("the journal mode is set");
+    let mut durability = vec!["synchronous"];
+    if cfg!(target_os = "macos") {
+        durability.extend(["fullfsync", "checkpoint_fullfsync"]);
+    }
+    for name in durability {
+        let at = pragmas
+            .iter()
+            .position(|text| text.contains(name))
+            .unwrap_or_else(|| panic!("{name} is set: {pragmas:?}"));
+        assert!(at < wal, "{name} is set before journal_mode: {pragmas:?}");
+    }
+    sql::verify_settings(&conn).unwrap();
+}
+
+/// Plan §4.5: a new name needs its directory-publication sync. The empty
+/// database file is published by a hard link and SQLite makes `-wal` and
+/// `-shm` at the first read transaction, so the open flushes the state
+/// directory, the root and the root's parent after those names exist.
+#[test]
+fn a_new_database_flushes_its_directory_chain_after_its_names_exist() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-open-names");
+    let root = root_of(&scratch);
+    sql::take_open_events();
+    let conn = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens"));
+    let events = sql::take_open_events();
+    let last_pragma = events
+        .iter()
+        .rposition(|event| matches!(event, sql::OpenEvent::Pragma(_)))
+        .expect("the pragmas run");
+    let synced = flushed(&events);
+    assert_eq!(
+        flushed_dirs(&synced),
+        vec![
+            root.state_dir(),
+            root.path().to_path_buf(),
+            scratch.home.clone()
+        ]
+    );
+    for (at, dir, _) in &synced {
+        assert!(
+            *at > last_pragma,
+            "{} is flushed after setup",
+            dir.display()
+        );
+    }
+    let [database, wal, shm] = sql::database_set(&root);
+    for file in [database, wal, shm] {
+        let name = file.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(
+            synced[0].2.contains(&name),
+            "{name} exists when the state directory is flushed: {:?}",
+            synced[0].2
+        );
+    }
+    assert!(synced[1].2.contains(&"state".to_owned()));
+    assert!(synced[2].2.contains(&".274bot".to_owned()));
+    drop(conn);
+}
+
+/// A database that exists with its WAL flushes nothing when it opens again.
+/// A WAL that is gone (another program removed it between two runs) is a new
+/// name again, so only the state directory is flushed.
+#[test]
+fn a_reopen_flushes_nothing_and_a_new_wal_flushes_the_state_directory_only() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-open-reopen");
+    let root = root_of(&scratch);
+    let first = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens"));
+    drop(first);
+    let [_, wal, shm] = sql::database_set(&root);
+    assert!(
+        wal.exists(),
+        "close-time checkpoints are off: the WAL stays"
+    );
+    sql::take_open_events();
+    let second = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database reopens"));
+    drop(second);
+    assert!(flushed(&sql::take_open_events()).is_empty());
+    std::fs::remove_file(&wal).unwrap();
+    if shm.exists() {
+        std::fs::remove_file(&shm).unwrap();
+    }
+    let third = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens"));
+    let synced = flushed(&sql::take_open_events());
+    assert_eq!(synced.len(), 1, "{synced:?}");
+    assert_eq!(synced[0].1, root.state_dir());
+    assert!(synced[0].2.contains(&"state.sqlite3-wal".to_owned()));
+    drop(third);
+}
+
+/// A zero-byte database file is one no commit has reached (plan §4.3). Its
+/// name may come from an open that stopped before it flushed, so the open
+/// flushes the whole chain again.
+#[test]
+fn a_zero_byte_database_file_is_published_again() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-open-empty");
+    let root = root_of(&scratch);
+    vault::create_private_dir(&root.state_dir()).unwrap();
+    vault::create_private_file(&root.database_file(), b"").unwrap();
+    sql::take_open_events();
+    let conn = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens"));
+    let synced = flushed(&sql::take_open_events());
+    assert_eq!(
+        flushed_dirs(&synced),
+        vec![
+            root.state_dir(),
+            root.path().to_path_buf(),
+            scratch.home.clone()
+        ]
+    );
+    drop(conn);
+}
+
+/// A directory that cannot be flushed refuses the database with the
+/// directory named: a new name is never left unflushed without saying so.
+#[cfg(unix)]
+#[test]
+fn a_directory_that_cannot_be_flushed_refuses_the_new_database() {
+    use std::os::unix::fs::MetadataExt;
+
+    struct Restore(std::path::PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-open-flush-refused");
+    let root = root_of(&scratch);
+    vault::create_private_dir(&root.state_dir()).unwrap();
+    if std::fs::metadata(&scratch.home).unwrap().uid() == 0 {
+        // The superuser opens any directory: nothing to refuse.
+        return;
+    }
+    let _restore = Restore(scratch.home.clone());
+    std::fs::set_permissions(&scratch.home, std::fs::Permissions::from_mode(0o100)).unwrap();
+    match sql::open_connection(&root) {
+        Err(sql::SqlFailure::Refused { detail, .. }) => {
+            assert!(detail.contains("could not be flushed"), "{detail}");
+            assert!(
+                detail.contains(&scratch.home.display().to_string()),
+                "{detail}"
+            );
+        }
+        _ => panic!("a directory that cannot be flushed must refuse the database"),
+    }
+}
+
 #[test]
 fn first_import_takes_the_whole_object_once_and_keeps_the_source_as_migrated_evidence() {
     let _state_lease = crate::test_process::state();

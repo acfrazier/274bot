@@ -2149,7 +2149,8 @@ fn migrated_name(source: &Path) -> io::Result<PathBuf> {
 
 /// Open the database at `root` without creating it through SQLite: the
 /// private directory and an empty private file are made first, then every
-/// file of the set is checked by path metadata only.
+/// file of the set is checked by path metadata only. A call that brings a
+/// new name makes it durable before it returns ([`publish_names`]).
 pub(super) fn open_connection(root: &StateRoot) -> Result<Connection, SqlFailure> {
     let dir = root.state_dir();
     let path = root.database_file();
@@ -2165,11 +2166,20 @@ pub(super) fn open_connection(root: &StateRoot) -> Result<Connection, SqlFailure
     };
     vault::create_private_dir(&dir).map_err(|error| io_refusal(&dir, error))?;
     check_private(&dir, vault::PrivateKind::Dir)?;
-    match vault::create_private_file(&path, b"") {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+    let linked = match vault::create_private_file(&path, b"") {
+        Ok(()) => true,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
         Err(error) => return Err(io_refusal(&path, error)),
-    }
+    };
+    // A zero-byte file is a database no commit has reached (plan §4.3). Its
+    // name can come from a call that stopped before it made the name
+    // durable, so it is published again here.
+    let new_database = linked || fs::metadata(&path).is_ok_and(|meta| meta.len() == 0);
+    let [_, wal, _] = database_set(root);
+    let new_wal = matches!(
+        fs::symlink_metadata(&wal),
+        Err(error) if error.kind() == io::ErrorKind::NotFound
+    );
     for file in database_set(root) {
         check_private(&file, vault::PrivateKind::File)?;
     }
@@ -2186,6 +2196,9 @@ pub(super) fn open_connection(root: &StateRoot) -> Result<Connection, SqlFailure
         )
     })?;
     configure(&conn, &display)?;
+    if new_database || new_wal {
+        publish_names(&conn, root, new_database)?;
+    }
     Ok(conn)
 }
 
@@ -2197,6 +2210,106 @@ pub(super) fn database_set(root: &StateRoot) -> [PathBuf; 3] {
     let mut shm = path.clone().into_os_string();
     shm.push("-shm");
     [path, PathBuf::from(wal), PathBuf::from(shm)]
+}
+
+/// Make the names a new database brings durable (plan §4.5: a new name needs
+/// its directory-publication sync). The empty file was published by a hard
+/// link, and SQLite makes `-wal` and `-shm` at the first read transaction in
+/// WAL mode, so one read runs here to bring them into the directory. Then
+/// each directory that holds a new name is flushed with
+/// `files::sync_directory` (`F_FULLFSYNC` on macOS): the state directory,
+/// and for a new database file also the root and its parent, the chain a
+/// JSON write flushes (`files::entry_chain`). SQLite syncs the directory of
+/// a new WAL itself, at the first sync of the WAL, but with a plain `fsync`,
+/// which macOS does not push to the drive. The `-shm` name needs no flush:
+/// SQLite rebuilds that file.
+fn publish_names(
+    conn: &Connection,
+    root: &StateRoot,
+    new_database: bool,
+) -> Result<(), SqlFailure> {
+    let path = root.database_file();
+    let display = path.display().to_string();
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    })
+    .map_err(|error| match wait_of(&error) {
+        Some(cause) => SqlFailure::Wait(cause),
+        None => refused_by(
+            error,
+            &format!("Preferences refused at {display:?}: the WAL could not be opened"),
+        ),
+    })?;
+    let dirs = if new_database {
+        files::entry_chain(&path, root)
+    } else {
+        vec![root.state_dir()]
+    };
+    for dir in dirs {
+        #[cfg(test)]
+        note_sync(&dir);
+        files::sync_directory(&dir).map_err(|error| {
+            SqlFailure::refused(
+                FailureReason::Io,
+                format!(
+                    "Preferences refused at {display:?}: the new database's name in {:?} could \
+                     not be flushed to the disk: {error}",
+                    dir.display().to_string()
+                ),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// What a test sees of the connections the calling thread opened: the PRAGMA
+/// statements in the order they ran, and each directory flushed for a new
+/// name with the names it held at that moment.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum OpenEvent {
+    Pragma(String),
+    SyncDir { dir: PathBuf, names: Vec<String> },
+}
+
+#[cfg(test)]
+thread_local! {
+    static OPEN_EVENTS: std::cell::RefCell<Vec<OpenEvent>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The events since the last call, oldest first.
+#[cfg(test)]
+pub(super) fn take_open_events() -> Vec<OpenEvent> {
+    OPEN_EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()))
+}
+
+#[cfg(test)]
+fn note_pragma(statement: &str) {
+    OPEN_EVENTS.with(|events| {
+        events
+            .borrow_mut()
+            .push(OpenEvent::Pragma(statement.to_owned()));
+    });
+}
+
+#[cfg(test)]
+fn note_sync(dir: &Path) {
+    let mut names: Vec<String> = fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    OPEN_EVENTS.with(|events| {
+        events.borrow_mut().push(OpenEvent::SyncDir {
+            dir: dir.to_path_buf(),
+            names,
+        });
+    });
 }
 
 fn wal_len(root: &StateRoot) -> u64 {
@@ -2331,8 +2444,28 @@ fn configure(conn: &Connection, display: &str) -> Result<(), SqlFailure> {
         conn.set_limit(limit, value)
             .map_err(|error| failed("a length limit", error))?;
     }
+    #[cfg(test)]
+    note_pragma("PRAGMA page_size = 4096");
     conn.execute_batch("PRAGMA page_size = 4096")
         .map_err(|error| failed("page_size", error))?;
+    // The durability pragmas run before the switch to WAL mode. A new file
+    // runs its first transaction (the header with the WAL format version)
+    // inside `PRAGMA journal_mode = WAL`, in the rollback journal, and syncs
+    // it as the connection is set when that statement runs. On macOS
+    // `fullfsync` is what turns that `fsync` into `F_FULLFSYNC` (plan §4.5).
+    let durability = if cfg!(target_os = "macos") {
+        "PRAGMA synchronous = FULL; PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON;"
+    } else {
+        "PRAGMA synchronous = FULL;"
+    };
+    for statement in durability.split_inclusive(';') {
+        let statement = statement.trim();
+        #[cfg(test)]
+        note_pragma(statement);
+        run_pragma(conn, statement).map_err(|error| failed(statement, error))?;
+    }
+    #[cfg(test)]
+    note_pragma("PRAGMA journal_mode = WAL");
     let mode: String = conn
         .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
         .map_err(|error| match wait_of(&error) {
@@ -2359,16 +2492,16 @@ fn configure(conn: &Connection, display: &str) -> Result<(), SqlFailure> {
             ),
         ));
     }
-    let mut settings = format!(
-        "PRAGMA synchronous = FULL; PRAGMA wal_autocheckpoint = 0; PRAGMA cache_spill = OFF; \
-         PRAGMA mmap_size = 0; PRAGMA max_page_count = {MAX_PAGES}; PRAGMA cache_size = \
-         {CACHE_SIZE}; PRAGMA soft_heap_limit = {SOFT_HEAP_LIMIT};"
+    let settings = format!(
+        "PRAGMA wal_autocheckpoint = 0; PRAGMA cache_spill = OFF; PRAGMA mmap_size = 0; \
+         PRAGMA max_page_count = {MAX_PAGES}; PRAGMA cache_size = {CACHE_SIZE}; \
+         PRAGMA soft_heap_limit = {SOFT_HEAP_LIMIT};"
     );
-    if cfg!(target_os = "macos") {
-        settings.push_str(" PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON;");
-    }
     for statement in settings.split_inclusive(';') {
-        run_pragma(conn, statement.trim()).map_err(|error| failed(statement.trim(), error))?;
+        let statement = statement.trim();
+        #[cfg(test)]
+        note_pragma(statement);
+        run_pragma(conn, statement).map_err(|error| failed(statement, error))?;
     }
     verify_settings(conn).map_err(|mismatch| {
         // A database created with another page size cannot hold this
