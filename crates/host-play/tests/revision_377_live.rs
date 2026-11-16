@@ -53,6 +53,8 @@ mod quester;
 #[path = "revision_377_live/quester_imp.rs"]
 mod quester_imp;
 
+#[path = "revision_377_live/actor.rs"]
+mod actor;
 #[path = "revision_377_live/quester_doric.rs"]
 mod quester_doric;
 #[path = "revision_377_live/quester_journal.rs"]

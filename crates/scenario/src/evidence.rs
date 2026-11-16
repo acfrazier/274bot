@@ -56,6 +56,9 @@ pub struct Evidence {
     /// Opt-in measured-window and combat/transit records.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interference: Option<Box<crate::interference::InterferenceEvidence>>,
+    /// Bounded selected-actor style and overhead records, only when armed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actors: Option<Box<crate::actor::ActorEvidence>>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
     /// The dispatch ledger is boxed so ordinary runner state holds no inline ring.
@@ -291,6 +294,7 @@ impl Evidence {
             ground_guard: None,
             seed_deposits: Vec::new(),
             interference: None,
+            actors: None,
             scene: snap.scene_state(),
             run_receipt: None,
         }

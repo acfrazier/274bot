@@ -551,6 +551,8 @@ pub struct ScenarioRunner {
     run_receipt: Option<Box<RunReceipt>>,
     /// Allocated only for scenarios that explicitly request measured windows.
     combat_observer: Option<Box<CombatObserver>>,
+    /// No actor sampling or retained records without a named ObserveActor step.
+    actor_observer: Option<Box<crate::actor::ActorObserver>>,
 }
 
 impl ScenarioRunner {
@@ -685,6 +687,7 @@ impl ScenarioRunner {
             pass_gate: None,
             run_receipt: Some(Box::default()),
             combat_observer,
+            actor_observer: None,
         };
         if let Some(message) = invalid_observation {
             runner.record_fail(&message);
@@ -1179,6 +1182,9 @@ impl ScenarioRunner {
         self.delta_baselines
             .retain(|baseline| baseline.session == client.gens.session);
         let dirty = self.snapshot.rebuild(client);
+        let actor = self.armed_actor();
+        let actor_result =
+            crate::actor::ActorObserver::observe(self.actor_observer.as_deref_mut(), client, actor);
         CombatObserver::observe(
             self.combat_observer.as_deref_mut(),
             &self.snapshot,
@@ -1193,6 +1199,10 @@ impl ScenarioRunner {
                 self.finish_invalid(reason);
                 return;
             }
+        }
+        if let Err(reason) = actor_result {
+            self.finish_unavailable(reason);
+            return;
         }
         // Observed game ticks since the last poll: `snapshot.tick()`
         // advances once per `PLAYER_INFO` (the server's world cycle),
@@ -1797,6 +1807,12 @@ impl ScenarioRunner {
             return false;
         }
         match proof {
+            Proof::ActorChatStyle { .. }
+            | Proof::OverheadText { .. }
+            | Proof::OverheadTextLifetime { .. } => self
+                .actor_observer
+                .as_ref()
+                .is_some_and(|observer| observer.holds(proof)),
             Proof::ScriptIdle => self.script_idle,
             Proof::All(proofs) => proofs.iter().all(|proof| self.holds(*proof)),
             Proof::ScriptReceipt { prefix } => self
@@ -1849,6 +1865,18 @@ impl ScenarioRunner {
                 self.fresh_xp_baseline,
                 Some(&self.delta_baselines),
             ),
+        }
+    }
+
+    fn armed_actor(&self) -> Option<api::snapshot::ActorSelector> {
+        let step = match self.phase {
+            Phase::Running => self.scenario.steps.get(self.step),
+            Phase::Proving => self.scenario.steps.last(),
+            _ => None,
+        }?;
+        match step.kind {
+            StepKind::ObserveActor { actor } => Some(actor),
+            _ => None,
         }
     }
 
@@ -2576,6 +2604,12 @@ impl ScenarioRunner {
                     Ok("no-send")
                 }
             }
+            StepKind::ObserveActor { actor } => {
+                let observer = self.actor_observer.get_or_insert_with(Box::default);
+                crate::actor::ActorObserver::observe(Some(observer), client, Some(*actor))
+                    .map_err(str::to_owned)?;
+                Ok("no-send")
+            }
             StepKind::Shot { .. }
             | StepKind::StartScript
             | StepKind::StopScript
@@ -3098,6 +3132,10 @@ impl ScenarioRunner {
             .combat_observer
             .take()
             .map(|observer| Box::new((*observer).into_evidence()));
+        evidence.actors = self
+            .actor_observer
+            .take()
+            .map(|observer| Box::new((*observer).into_evidence()));
         self.receipt_event(
             "TERMINAL",
             "predicate",
@@ -3185,6 +3223,10 @@ impl ScenarioRunner {
             .combat_observer
             .take()
             .map(|observer| Box::new((*observer).into_evidence()));
+        evidence.actors = self
+            .actor_observer
+            .take()
+            .map(|observer| Box::new((*observer).into_evidence()));
         self.receipt_event(
             "TERMINAL",
             "predicate",
@@ -3202,10 +3244,22 @@ impl ScenarioRunner {
     }
 }
 
+fn actor_proof_selector(proof: Proof) -> Option<api::snapshot::ActorSelector> {
+    match proof {
+        Proof::ActorChatStyle { actor, .. }
+        | Proof::OverheadText { actor, .. }
+        | Proof::OverheadTextLifetime { actor, .. } => Some(actor),
+        _ => None,
+    }
+}
+
 fn client_observation(proof: Proof) -> Option<&'static str> {
     match proof {
         Proof::MenuHasEntry { .. } => Some("MenuHasEntry"),
         Proof::VarbitEquals { .. } => Some("VarbitEquals"),
+        Proof::ActorChatStyle { .. } => Some("ActorChatStyle"),
+        Proof::OverheadText { .. } => Some("OverheadText"),
+        Proof::OverheadTextLifetime { .. } => Some("OverheadTextLifetime"),
         Proof::All(proofs) => proofs.iter().find_map(|proof| client_observation(*proof)),
         _ => None,
     }
@@ -3280,6 +3334,13 @@ fn client_observation_refusal(scenario: &Scenario) -> Option<String> {
             Proof::VarbitEquals { id, .. } if !matches!(step.kind, StepKind::ObserveVarbit { id: observer_id } if observer_id == id) => {
                 Some("VarbitEquals requires an ObserveVarbit step with the same id")
             }
+            Proof::ActorChatStyle { actor, .. }
+            | Proof::OverheadText { actor, .. }
+            | Proof::OverheadTextLifetime { actor, .. }
+                if !matches!(step.kind, StepKind::ObserveActor { actor: observed } if observed == actor) =>
+            {
+                Some("actor proof requires an ObserveActor step with the same actor")
+            }
             _ => None,
         };
         if let Some(requirement) = required_observer {
@@ -3297,6 +3358,16 @@ fn client_observation_refusal(scenario: &Scenario) -> Option<String> {
                     step.name
                 ));
             }
+        }
+    }
+    if let Some(actor) = actor_proof_selector(scenario.proof) {
+        if !matches!(scenario.steps.last().map(|step| &step.kind),
+            Some(StepKind::ObserveActor { actor: observed }) if *observed == actor)
+        {
+            return Some(
+                "terminal actor proof requires a final ObserveActor step with the same actor"
+                    .into(),
+            );
         }
     }
     if let Some(observer) = nested_client_observation(scenario.proof) {
