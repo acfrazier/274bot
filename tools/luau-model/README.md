@@ -406,15 +406,17 @@ every machine.
 | nightly | `scenario` | LD1 and the runner side of LD2 together, with one dispatch | 64 | 17 065 647 | 35 |
 
 `scenario` with a second dispatch needs more than 62 million states and passes
-the byte cap: the profile keeps one dispatch, and the runner and the dock are
-also explored with more ticks in `runner`, `runner-restart`, `dock` and
-`fence`. Release build, one core: the four nightly profiles take 20 to 45
-seconds and an estimated 3 to 7 GB. The unit lane (`cargo test -p
-luau-model`, about 13 seconds in a debug build) runs the eleven unit profiles
-and the 77 mutation runs. The four nightly profiles run in `nightly.sh` (one
-16 GB scope for each profile) and with `LUAU_MODEL_FULL=1 cargo test --release
--p luau-model`. `systemd/` holds the user unit and timer for a Linux nightly
-host (the install steps are in the unit's header); nothing installs them.
+the byte cap: the profile keeps one dispatch, and `dock`, `fence` and
+`runner-restart` explore the dock and the runner with more ticks. On the Linux
+nightly host (release build, one core, one 16 GB scope for each profile) the
+four nightly profiles take 19 to 37 seconds and 3.2 to 6.5 GB of resident
+memory; `suggested` is the largest. The unit lane (`cargo test -p luau-model`,
+about 7 seconds in a debug build) runs the eleven unit profiles and the 77
+mutation runs. The four nightly profiles run in `nightly.sh` (one 16 GB scope
+for each profile) and, as a test lane, with `LUAU_MODEL_FULL=1 cargo test
+--release -p luau-model` (about 100 seconds). `systemd/` holds the user unit
+and timer for a Linux nightly host (the install steps are in the unit's
+header); nothing installs them.
 
 ## Conformance (slice L2b)
 

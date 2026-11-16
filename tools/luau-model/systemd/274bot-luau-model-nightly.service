@@ -20,7 +20,7 @@ Type=oneshot
 WorkingDirectory=%h/274bot
 Environment=PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/bash %h/274bot/tools/luau-model/nightly.sh
-# The profiles take well under an hour in all (the largest needs a few
-# minutes of search and a few GB), plus the build.
+# The 15 profiles take about two minutes in all and at most 6.5 GB for one
+# profile (measured on Linux), plus the build.
 TimeoutStartSec=2h
 Nice=10
