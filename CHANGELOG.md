@@ -28,9 +28,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   inside a window makes the run INVALID, never a pass or successful exit,
   even after cleanup. The receipt keeps the same events outside a window.
   Quiet windows cut short by a product failure retain FAIL or UNAVAILABLE and
-  its reason. Their receipts disclose the missing End. An incomplete window
-  cannot pass. When interference and a started-script failure coincide, the
-  INVALID receipt keeps both reasons.
+  its reason. Their receipts disclose the missing End. The verdict closes the
+  window before world-speed cleanup, so cleanup combat is transit, not a new
+  INVALID. An incomplete window cannot pass. When interference and a
+  started-script failure coincide, the INVALID receipt keeps both reasons.
   A deliberate-death label exempts all combat in its short window only when
   death is observed there. It cannot identify the attacker. Receipts disclose
   the HP path, hits and face targets so readers can judge the exemption.

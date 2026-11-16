@@ -2822,6 +2822,9 @@ impl ScenarioRunner {
         if matches!(self.phase, Phase::Cleaning) {
             return;
         }
+        if let Some(observer) = self.combat_observer.as_mut() {
+            observer.terminal();
+        }
         if let Some(speed_ms) = self.scenario.settings.teardown_world_speed_ms {
             self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Fail(msg.to_owned()));
             return;
@@ -2848,6 +2851,9 @@ impl ScenarioRunner {
     fn finish_unavailable(&mut self, msg: &str) {
         if matches!(self.phase, Phase::Cleaning) {
             return;
+        }
+        if let Some(observer) = self.combat_observer.as_mut() {
+            observer.terminal();
         }
         if let Some(speed_ms) = self.scenario.settings.teardown_world_speed_ms {
             self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Unavailable(msg.to_owned()));
