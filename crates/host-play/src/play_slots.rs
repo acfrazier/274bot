@@ -63,16 +63,43 @@ use crate::{
 /// a key; never reused, refused at exhaustion.
 static SLOT_KEYS: SlotKeyMinter = SlotKeyMinter::new();
 
+/// The Fight service of a slot (design V11D 4.1): the slot's arm, where the
+/// Guardian and the observation share their one frame's port, and the
+/// selected content the child prices its escape from.
+pub(crate) struct FightService {
+    arm: Arc<SlotArm>,
+    game_data: Arc<api::game_data::SelectedGameData>,
+}
+
+impl FightService {
+    pub(crate) fn new(arm: Arc<SlotArm>, game_data: Arc<api::game_data::SelectedGameData>) -> Self {
+        Self { arm, game_data }
+    }
+}
+
 /// The script callback is edge-triggered. Load's cached ignore membership
-/// can change independently while the Guardian keeps the same solver.
+/// can change independently while the Guardian keeps the same solver. The
+/// same adapter carries the Guardian's Fight to the slot's child.
 pub(crate) struct ScriptRandomClaims {
     scripts: ScriptWall,
     name: String,
+    fight: Option<FightService>,
 }
 
 impl ScriptRandomClaims {
     pub(crate) fn new(scripts: ScriptWall, name: String) -> Self {
-        Self { scripts, name }
+        Self {
+            scripts,
+            name,
+            fight: None,
+        }
+    }
+
+    /// The adapter with a Fight service. Without one every offer is refused,
+    /// and the Guardian flees as it always did.
+    pub(crate) fn with_fight(mut self, fight: FightService) -> Self {
+        self.fight = Some(fight);
+        self
     }
 }
 
@@ -99,6 +126,62 @@ impl host::RandomClaimSource for ScriptRandomClaims {
         let slot = slot.lock().ok()?;
         let (incarnation, run) = slot.random_claim_runtime();
         Some(host::ClaimRuntime::new(incarnation, run))
+    }
+
+    /// The child lives in the slot, whatever card it holds: a slot that never
+    /// loaded one gets its cell here.
+    fn fight_offer(
+        &mut self,
+        offer: &api::random::FightOffer,
+    ) -> Result<(), api::random::FightReason> {
+        let service = self
+            .fight
+            .as_ref()
+            .ok_or(api::random::FightReason::NoService)?;
+        let slot = script_slot_or_insert(&self.scripts, &self.name);
+        let mut slot = slot
+            .lock()
+            .map_err(|_| api::random::FightReason::NoService)?;
+        slot.guardian_offer(*offer, &service.game_data)
+    }
+
+    fn fight_revoke(&mut self, token: api::random::FightToken, cancel: api::random::FightCancel) {
+        let Some(slot) = script_slot(&self.scripts, &self.name) else {
+            return;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            return;
+        };
+        slot.guardian_revoke_token(token, cancel);
+    }
+
+    fn fight_read(&mut self, token: api::random::FightToken) -> Option<api::random::FightRead> {
+        let slot = script_slot(&self.scripts, &self.name)?;
+        let slot = slot.lock().ok()?;
+        slot.guardian_read(token)
+    }
+
+    fn fight_release(&mut self, token: api::random::FightToken) {
+        if let Some(service) = &self.fight {
+            service.arm.fight.release(token);
+        }
+        let Some(slot) = script_slot(&self.scripts, &self.name) else {
+            return;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            return;
+        };
+        slot.guardian_release(token);
+    }
+
+    fn fight_stage_escape(&mut self, intent: host::EscapeIntent) {
+        if let Some(service) = &self.fight {
+            service.arm.fight.stage(intent);
+        }
+    }
+
+    fn fight_take_sent(&mut self, token: api::random::FightToken) -> Option<host::SentEscape> {
+        self.fight.as_ref()?.arm.fight.take_sent(token)
     }
 }
 
@@ -1497,8 +1580,12 @@ fn spawn_slot_thread(
                 let obs_name = username.clone();
                 let obs_catalog_core = slot_catalog_core.clone();
                 let obs_paired_core = slot_paired_core.clone();
-                let knock =
+                let slot_game_data = connection.profile().and_then(|profile| profile.game_data());
+                let mut knock =
                     ScriptRandomClaims::new(Arc::clone(&slot_scripts), username.clone());
+                if let Some(game_data) = slot_game_data.clone() {
+                    knock = knock.with_fight(FightService::new(Arc::clone(&arm_obs), game_data));
+                }
                 run_policy = Host::run_client_with_event_policies(
                     &mut client,
                     &username,
@@ -1507,7 +1594,7 @@ fn spawn_slot_thread(
                     Arc::clone(&arm_obs.lamp_auto),
                     Arc::clone(&arm_obs.lamp_skill),
                     Arc::clone(&arm_obs.random_event_policies),
-                    connection.profile().and_then(|profile| profile.game_data()),
+                    slot_game_data,
                     Some(slot_input.clone()),
                     slot_render.clone(),
                     park.clone(),
@@ -1823,6 +1910,30 @@ fn spawn_slot_thread(
                                 c.ingame && !session_boundary,
                                 *script_tick,
                                 slot_manual_abort_pause.load(Ordering::Relaxed),
+                            );
+                            // The Guardian's Fight child (design V11D 4.2, 4.4). A
+                            // manual step is a takeover: it revokes the child before
+                            // anything dispatches, and the Guardian's own escape
+                            // answers the event after the manual lease. Otherwise the
+                            // child may act under the Guardian's hold and under no
+                            // other reason's.
+                            let manual = frame_input.manual_move_count() > 0;
+                            if let (true, Some(token)) = (manual, status.fight) {
+                                if let Some(slot) = script_slot(&slot_scripts, name) {
+                                    if let Ok(mut slot) = slot.lock() {
+                                        slot.guardian_revoke_token(
+                                            token,
+                                            api::random::FightCancel::ManualTakeover,
+                                        );
+                                    }
+                                }
+                            }
+                            arm_latch_obs.fight.publish(
+                                status.fight.filter(|_| !manual && !session_boundary),
+                                c.ingame
+                                    && !session_boundary
+                                    && !manual
+                                    && arm_latch_obs.guardian_child_ready(ready),
                             );
                             let frame = script_frame(&slot_scripts, name);
                             let script_state = frame.state;

@@ -88,6 +88,7 @@ fn npc(x: i32, z: i32, targets_local: bool) -> FrameNpc {
         type_id: Some(391),
         tile: (x, z),
         targets_local,
+        health: (30, 30),
     }
 }
 
@@ -281,6 +282,133 @@ fn a_released_hold_inside_chase_range_is_a_give_up_failure() {
     match run(&mut ep, frames) {
         Verdict::Fail(message) => assert!(message.contains("gave up"), "{message}"),
         other => panic!("expected give-up failure, got {other:?}"),
+    }
+}
+
+const TROLL_FIGHT: RandomEventCell = RandomEventCell {
+    event: "river troll",
+    trigger: Trigger::Skill(2),
+    oracle: Oracle::Fight { npc: "River troll" },
+    skill: FISHING,
+};
+
+/// One observed tick of a fight: the hold, the troll at `(100, 101)` unless it
+/// is `gone`, whether the bot targets it, and the troll's health so far (its
+/// health bar totals 30).
+fn fight_frame(tick: u32, hold: bool, gone: bool, fighting: bool, health: i32) -> Frame {
+    let mut f = frame(tick, 100, 100, hold);
+    if !gone {
+        let mut troll = npc(100, 101, tick < 4);
+        troll.health = (health, 30);
+        f.npcs = vec![troll];
+    }
+    f.local_target = fighting.then(|| "River troll".to_string());
+    f
+}
+
+/// A correct fight: the troll targets the bot, the Guardian holds, the bot
+/// targets the troll and deals damage, the troll is gone for three ticks, the
+/// hold drops after that and fishing XP resumes.
+fn fight_pass_frames() -> Vec<Frame> {
+    let mut frames = Vec::new();
+    let mut acked = acked(TROLL_FIGHT, 3);
+    acked.npcs = vec![npc(100, 101, true)];
+    frames.push(acked);
+    for tick in 4..=9 {
+        frames.push(fight_frame(
+            tick,
+            true,
+            false,
+            true,
+            if tick >= 6 { 24 } else { 30 },
+        ));
+    }
+    for tick in 10..=12 {
+        frames.push(fight_frame(tick, true, true, false, 0));
+    }
+    frames.push(fight_frame(13, false, true, false, 0));
+    let mut resumed = fight_frame(20, false, true, false, 0);
+    resumed.skill_xp = Some(1080);
+    frames.push(resumed);
+    frames
+}
+
+#[test]
+fn a_fight_that_kills_the_actor_and_resumes_passes() {
+    let mut ep = armed(TROLL_FIGHT);
+    assert_eq!(run(&mut ep, fight_pass_frames()), Verdict::Pass);
+    let receipt = ep.receipt();
+    assert!(receipt["fought"].is_number() && receipt["damage_dealt"].is_number());
+    assert!(
+        receipt["escape"].is_null(),
+        "a fight that ends in a kill never escaped"
+    );
+    assert!(receipt["hold_rise"].is_number() && receipt["hold_fall"].is_number());
+}
+
+#[test]
+fn fleeing_instead_of_fighting_fails_the_fight_oracle() {
+    let mut ep = armed(TROLL_FIGHT);
+    let mut frames: Vec<Frame> = fight_pass_frames().into_iter().take(5).collect();
+    // The bot runs past the chase range while the troll still stands.
+    let mut fled = frame(20, 100, 83, true);
+    fled.npcs = vec![npc(100, 98, true)];
+    frames.push(fled);
+    match run(&mut ep, frames) {
+        Verdict::Fail(message) => assert!(message.contains("instead of fighting"), "{message}"),
+        other => panic!("expected a flee failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn releasing_the_hold_while_the_actor_stands_fails_the_fight_oracle() {
+    let mut ep = armed(TROLL_FIGHT);
+    let mut frames: Vec<Frame> = fight_pass_frames().into_iter().take(5).collect();
+    frames.push(fight_frame(20, false, false, true, 24));
+    match run(&mut ep, frames) {
+        Verdict::Fail(message) => assert!(message.contains("still stood"), "{message}"),
+        other => panic!("expected a released-hold failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_actor_gone_without_the_bot_having_fought_it_fails_the_fight_oracle() {
+    let mut ep = armed(TROLL_FIGHT);
+    let mut frames: Vec<Frame> = Vec::new();
+    let mut acked = acked(TROLL_FIGHT, 3);
+    acked.npcs = vec![npc(100, 101, true)];
+    frames.push(acked);
+    for tick in 4..=6 {
+        frames.push(fight_frame(tick, true, false, false, 30));
+    }
+    // The troll vanishes (its lifetime ends) and the hold drops: no fight.
+    for tick in 7..=9 {
+        frames.push(fight_frame(tick, true, true, false, 0));
+    }
+    frames.push(fight_frame(10, false, true, false, 0));
+    match run(&mut ep, frames) {
+        Verdict::Fail(message) => assert!(message.contains("never fought"), "{message}"),
+        other => panic!("expected a never-fought failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_fight_oracle_run_without_damage_does_not_pass_on_a_target_alone() {
+    let mut ep = armed(TROLL_FIGHT);
+    let mut frames: Vec<Frame> = Vec::new();
+    let mut acked = acked(TROLL_FIGHT, 3);
+    acked.npcs = vec![npc(100, 101, true)];
+    frames.push(acked);
+    for tick in 4..=6 {
+        frames.push(fight_frame(tick, true, false, true, 30));
+    }
+    for tick in 7..=9 {
+        frames.push(fight_frame(tick, true, true, false, 0));
+    }
+    frames.push(fight_frame(10, false, true, false, 0));
+    match run(&mut ep, frames) {
+        Verdict::Fail(message) => assert!(message.contains("never fought"), "{message}"),
+        other => panic!("expected a no-damage failure, got {other:?}"),
     }
 }
 

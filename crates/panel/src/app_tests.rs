@@ -4379,10 +4379,10 @@ fn guardian_policy_frame(
 }
 
 /// The panel's policy control is the real combo widget: exactly Flee and
-/// Fight are listed, a saved Fight stays visible and saved, picking Flee
-/// applies, and the disabled Fight choice is refused by the widget itself.
+/// Fight are listed, a saved Fight stays visible and saved, and picking
+/// either choice applies through the widget (Fight is selectable).
 #[test]
-fn guardian_policy_combo_offers_two_choices_and_refuses_fight() {
+fn guardian_policy_combo_offers_two_choices_and_applies_both() {
     let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = crate::test_support::imgui_context();
     ctx.io_mut()
@@ -4395,8 +4395,8 @@ fn guardian_policy_combo_offers_two_choices_and_refuses_fight() {
     assert!(!guardian_policy_frame(&mut ctx, &mut policy, None));
     let text = drawn.0.take();
     assert!(
-        text.contains("Fight (not available yet)"),
-        "a saved Fight stays visible:\n{text}"
+        text.contains("Fight") && !text.contains("not available"),
+        "a saved Fight stays visible and selectable:\n{text}"
     );
     assert!(!text.contains("Ignore"), "no Ignore label draws:\n{text}");
     assert_eq!(policy, frontend_core::GuardianPolicy::Fight);
@@ -4414,7 +4414,7 @@ fn guardian_policy_combo_offers_two_choices_and_refuses_fight() {
         "the policy control draws its preview and its options"
     );
     assert!(
-        opened.matches("Fight (not available yet)").count() == 2,
+        opened.matches("Fight").count() == 2,
         "the saved preview plus exactly one Fight option:\n{opened}"
     );
     assert!(opened.contains("Flee"), "the Flee option draws:\n{opened}");
@@ -4434,21 +4434,17 @@ fn guardian_policy_combo_offers_two_choices_and_refuses_fight() {
     assert_eq!(policy, frontend_core::GuardianPolicy::Flee);
     drawn.0.take();
 
-    // Reopening shows the current Flee and the one Fight option; activating
-    // the disabled Fight choice changes nothing.
+    // Reopening shows the current Flee; picking Fight applies too.
     guardian_policy_frame(&mut ctx, &mut policy, Some(combo));
     guardian_policy_frame(&mut ctx, &mut policy, None);
     guardian_policy_frame(&mut ctx, &mut policy, None);
     drawn.0.take();
     let popup = imgui_window_id("##Combo_00").expect("the combo popup drew again");
-    let fight = imgui_item_id("Fight (not available yet)", popup);
+    let fight = imgui_item_id("Fight", popup);
     guardian_policy_frame(&mut ctx, &mut policy, Some(fight));
     let changed = guardian_policy_frame(&mut ctx, &mut policy, None);
-    assert!(
-        !changed,
-        "the disabled Fight choice is refused by the control"
-    );
-    assert_eq!(policy, frontend_core::GuardianPolicy::Flee);
+    assert!(changed, "the Fight choice is accepted by the control");
+    assert_eq!(policy, frontend_core::GuardianPolicy::Fight);
 }
 
 fn draw_status_detail(detail: &frontend_core::SlotDetail, walk: &str, mem: &str) -> String {

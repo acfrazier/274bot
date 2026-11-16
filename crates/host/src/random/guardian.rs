@@ -1,6 +1,13 @@
 use super::*;
 
 use api::hostlog::{Category, Level};
+use api::random::{
+    FightActor, FightCancel, FightEscape, FightEvent, FightOffer, FightOutcome, FightPhase,
+    FightReason, FightToken, RandomResponse, ResponseReason, ResponseState,
+};
+mod fight;
+pub use fight::{EscapeIntent, SentEscape};
+use fight::{FightDesk, Response};
 /// `map_findsquare(coord, 1, 7, ...)` finds an eligible ring tile, or returns
 /// `coord` when no ring tile qualifies. Recovery checks distance 0 through 7
 /// from both observed event-origin candidates (`ServerOps.ts:298-335`).
@@ -108,6 +115,13 @@ pub struct RandomStatus {
     pub claim: RandomClaim,
     /// The shown NPC slot is in the 45 s wrong-talk bin.
     pub cooldown: bool,
+    /// What the Guardian is doing about the event, in typed form: the one row
+    /// both frontends render (design V11D 7.1). `None` while nothing is
+    /// detected or the event has no response worth showing.
+    pub response: Option<RandomResponse>,
+    /// The fight the Guardian waits on, for the slot's dispatch gate: only
+    /// gameplay carrying this token may pass the Guardian hold.
+    pub fight: Option<FightToken>,
 }
 
 impl Default for RandomStatus {
@@ -121,6 +135,8 @@ impl Default for RandomStatus {
             toggle: false,
             claim: RandomClaim::Host,
             cooldown: false,
+            response: None,
+            fight: None,
         }
     }
 }
@@ -222,6 +238,22 @@ pub(crate) struct EvadeRun {
     flee_target: Option<(i32, i32)>,
     fallback_distance: Option<i32>,
     fallback_exhausted: bool,
+    /// How the Guardian answers the event: the escape solver, or the fight a
+    /// child runs (design V11D 3.2).
+    response: Response,
+    /// The escape follows a fight that handed over, and its counters started
+    /// at that handoff.
+    from_fight: bool,
+    /// The child whose upkeep guard serves the walk out: staged walks go
+    /// through it so no click can race an admitted input lock.
+    escape: Option<FightToken>,
+    /// An escape walk is staged and has not come back from the observation.
+    staged: bool,
+    /// An admitted input lock blocks every click before this tick (low 16
+    /// bits, wrap-aware).
+    lock_until: Option<u16>,
+    /// Why the fight handed over, for the status row.
+    why: Option<ResponseReason>,
 }
 
 /// One lost-tool recovery in flight: the content window and target, the
@@ -595,6 +627,20 @@ pub struct Guardian {
     plant_ignored: Vec<PlantActor>,
     /// Per-slot fishing-gear held/lost history used to prove `LostGear`.
     gear_loss: GearLoss,
+    /// Fight tokens minted this session.
+    fight_serial: u32,
+    /// The actor (client slot, cache type) whose Fight is spent in this
+    /// episode: handed over, cancelled, won or refused. It never restarts.
+    fight_spent: Option<(usize, Option<usize>)>,
+    /// The current episode began under a saved Fight for a hostile event:
+    /// Host ownership holds to its release, whatever the setting becomes.
+    episode_fight: bool,
+    /// The actor (client slot, cache type) of the Fight child the claim source
+    /// holds, when no release has gone out for it: the latest offered token
+    /// (`fight_serial`) names it. A pass that finds no Evade run holding it
+    /// revokes it and spends that actor's Fight, so no child outlives the run
+    /// and none restarts for the same actor.
+    fight_open: Option<(usize, Option<usize>)>,
 }
 
 impl Default for Guardian {
@@ -631,6 +677,10 @@ impl Guardian {
             lamp: LampHistory::default(),
             plant_ignored: Vec::new(),
             gear_loss: GearLoss::new(),
+            fight_serial: 0,
+            fight_spent: None,
+            episode_fight: false,
+            fight_open: None,
         }
     }
 
@@ -935,8 +985,9 @@ impl Guardian {
     /// rising-edge `on_random` arm: once per detected event (kind+name
     /// signature), when the caller supplies it. The script's claim normally
     /// gates act + hold (`Host` claims both; `Handle` leaves the script
-    /// available); a stored Fight is forced to Guardian Flee until its
-    /// script-layer handler exists.
+    /// available); an event saved as Fight is the Host's for the whole
+    /// episode, and a listed one is fought by a native child the claim
+    /// source holds (see `fight.rs`).
     pub fn tick<D: Driver>(
         &mut self,
         driver: &mut D,
@@ -967,7 +1018,7 @@ impl Guardian {
         settings: &ProfileSettings,
         context: &GuardianLiveContext<'_>,
         now_ms: u64,
-        mut knock: Option<&mut dyn RandomClaimSource>,
+        knock: Option<&mut dyn RandomClaimSource>,
     ) -> RandomStatus {
         let tick = snap.tick() as u64;
         let fresh = self.last_tick != tick;
@@ -983,6 +1034,8 @@ impl Guardian {
         if fresh {
             self.observe_evade_starts(snap, active);
         }
+        let mut port = knock;
+        self.fight_fold(snap, &mut port, settings, context, fresh && active);
         let mut ev = detect_ignoring_plants(
             snap,
             now_ms,
@@ -992,6 +1045,10 @@ impl Guardian {
         );
         self.pin_plant_event(snap, &mut ev);
         self.refresh_evade(snap, &mut ev, context.game_data, fresh);
+        if self.evade.is_none() {
+            // The actor's removal is observed: its slot can host another.
+            self.fight_spent = None;
+        }
 
         if fresh && active {
             // Fresh chat only: a stale wrong-talk line must not re-bin a
@@ -1055,7 +1112,7 @@ impl Guardian {
             // that stopped, failed or was replaced returns it within this
             // tick, and its successor is not called back for the event
             // (design 3.3).
-            if let (Some(claimed), Some(source)) = (self.claim_runtime(), knock.as_mut()) {
+            if let (Some(claimed), Some(source)) = (self.claim_runtime(), port.as_mut()) {
                 if source.runtime() != claimed {
                     self.set_claim(RandomClaim::Host, None);
                 }
@@ -1075,7 +1132,13 @@ impl Guardian {
                 if let Some(active) = self.active.as_mut() {
                     active.owner = Owner::Host;
                 }
-                let (claim, runtime) = match (&ev, knock.as_mut()) {
+                // The episode's saved Fight, fixed when it began: a later change
+                // of the setting never moves the claim or starts a fight.
+                self.episode_fight = ev.as_ref().is_some_and(|event| {
+                    event.kind == RandomKind::Evade
+                        && Self::saved_policy(context, &event.name) == RandomEventPolicy::Fight
+                });
+                let (claim, runtime) = match (&ev, port.as_mut()) {
                     (Some(ev), Some(source))
                         if !(ev.kind == RandomKind::Lamp && !settings.lamp_auto) =>
                     {
@@ -1089,9 +1152,13 @@ impl Guardian {
                 };
                 self.set_claim(claim, runtime);
             }
-            match (&ev, knock) {
+            let fight_host = self.episode_fight
+                && ev
+                    .as_ref()
+                    .is_some_and(|event| event.kind == RandomKind::Evade);
+            match (&ev, port.as_mut()) {
                 (Some(ev), Some(source)) => {
-                    if !(ev.kind == RandomKind::Lamp && !settings.lamp_auto) {
+                    if !(ev.kind == RandomKind::Lamp && !settings.lamp_auto) && !fight_host {
                         match source.current_claim(ev) {
                             Some(RandomClaim::Handle) => {
                                 let runtime = source.runtime();
@@ -1107,37 +1174,36 @@ impl Guardian {
                 (None, Some(_)) => {}
             }
         }
-        let unsupported_policy = ev.as_ref().and_then(|event| {
-            if event.kind != RandomKind::Evade {
-                return None;
-            }
-            let policy = context
-                .event_policies
-                .get(&event.name)
-                .copied()
-                .unwrap_or_default();
-            (policy != RandomEventPolicy::Flee).then_some((
-                event.npc_index?,
-                event.name.as_str(),
-                policy,
-            ))
-        });
-        if let Some((index, name, policy)) = unsupported_policy {
-            // Fight has no script-layer arm yet. Keep the Guardian in
-            // control so compiled scripts do not freeze behind `ours`.
+        // A saved Fight holds the episode's Host ownership from its first
+        // observation to its release: an eligible event is fought, an excluded
+        // one (Swarm, Strange plant) keeps today's handling, and neither lets a
+        // script claim take it (design V11D 4.3; operator answer CP5).
+        if self.episode_fight
+            && ev
+                .as_ref()
+                .is_some_and(|event| event.kind == RandomKind::Evade)
+        {
             self.set_claim(RandomClaim::Host, None);
-            if let Some(state) = self
-                .evade
-                .as_mut()
-                .filter(|state| state.index == index && state.name.eq_ignore_ascii_case(name))
-            {
-                if !state.policy_logged {
-                    api::host_log!(
-                        Category::RandomEvent,
-                        Level::Info,
-                        "evade: stored {policy:?} policy for {name} is unavailable; treating it as Flee"
-                    );
-                    state.policy_logged = true;
+            if let Some(event) = ev.as_ref().filter(|event| {
+                matches!(
+                    api::random::fight_eligibility(&event.name),
+                    Some(api::random::FightEligibility::Excluded(_)) | None
+                )
+            }) {
+                if let Some(state) = self
+                    .evade
+                    .as_mut()
+                    .filter(|state| Some(state.index) == event.npc_index)
+                {
+                    if !state.policy_logged {
+                        api::host_log!(
+                            Category::RandomEvent,
+                            Level::Info,
+                            "evade: Fight does not apply to {}; handling it as Flee",
+                            event.name
+                        );
+                        state.policy_logged = true;
+                    }
                 }
             }
         }
@@ -1276,7 +1342,17 @@ impl Guardian {
         {
             let plant_before_act = self.plant().clone();
             let ignored_before_act = self.plant_ignored.len();
-            self.act(driver, snap, ev.as_ref(), settings, now_ms);
+            self.act(
+                driver,
+                snap,
+                ev.as_ref(),
+                settings,
+                &mut FightDesk {
+                    context,
+                    port: &mut port,
+                },
+                now_ms,
+            );
             if *self.plant() != plant_before_act || self.plant_ignored.len() != ignored_before_act {
                 ev = detect_ignoring_plants(
                     snap,
@@ -1292,6 +1368,9 @@ impl Guardian {
         // stale authenticated `ours`.
         self.pin_plant_event(snap, &mut ev);
         self.last_tick = tick;
+        // A family that replaced the Evade run this pass left its child
+        // without an owner: it is revoked before the status publishes.
+        self.fight_close_orphan(&mut port);
 
         // `act` may have paused or stalled the redemption just above: a lamp
         // the host is not driving this tick is inert in the same tick, so the
@@ -1328,6 +1407,8 @@ impl Guardian {
             toggle: settings.random_events,
             claim: published.claim,
             cooldown,
+            response: self.derive_response(ev.as_ref(), settings.random_events),
+            fight: self.fight_token(),
         }
     }
 
@@ -1411,6 +1492,10 @@ impl Guardian {
         game_data: Option<&SelectedGameData>,
         fresh: bool,
     ) {
+        // The fight owns the actor's ticks, and an admitted input lock blocks
+        // the walk: neither is evidence of escape progress or of its failure
+        // (design V11D 6.3), as a stunned tick is not.
+        let counted = !(self.in_combat() || self.lock_blocked(snap.tick()));
         if let Some(mut state) = self.evade.take() {
             let actor = snap.npcs().iter().find(|npc| npc.index == state.index);
             let same_actor =
@@ -1473,7 +1558,10 @@ impl Guardian {
             if retain {
                 if fresh {
                     state.elapsed_ticks = state.elapsed_ticks.saturating_add(1);
-                    if let Some(distance) = player.map(|tile| cheb(tile, state.start_tile)) {
+                    if let Some(distance) = player
+                        .map(|tile| cheb(tile, state.start_tile))
+                        .filter(|_| counted)
+                    {
                         if distance > state.furthest_distance {
                             state.furthest_distance = distance;
                             state.no_progress_ticks = 0;
@@ -1487,7 +1575,7 @@ impl Guardian {
                         } else {
                             state.no_progress_ticks = 0;
                         }
-                    } else {
+                    } else if counted {
                         state.no_progress_ticks = 0;
                     }
                 }
@@ -1722,6 +1810,7 @@ impl Guardian {
         snap: &GameSnapshot,
         ev: Option<&DetectedRandom>,
         settings: &ProfileSettings,
+        desk: &mut FightDesk<'_, '_, '_>,
         now_ms: u64,
     ) {
         // The in-flight dialog continues on its own handle, independent
@@ -1761,7 +1850,7 @@ impl Guardian {
             }
             return;
         }
-        self.act_solver(driver, snap, ev, settings, now_ms);
+        self.act_solver(driver, snap, ev, settings, desk, now_ms);
     }
 
     /// The non-dialog act machine: drive the in-flight act to completion,
@@ -1777,6 +1866,7 @@ impl Guardian {
         snap: &GameSnapshot,
         ev: Option<&DetectedRandom>,
         settings: &ProfileSettings,
+        desk: &mut FightDesk<'_, '_, '_>,
         now_ms: u64,
     ) {
         // A confirmed lamp redemption outlives its own detect: the server
@@ -1825,7 +1915,7 @@ impl Guardian {
                 // an Evade hands its flee to the next hostile actor without a
                 // release tick.
                 self.adopt_episode(ev.kind);
-                self.step_act(driver, snap, settings, ev, now_ms);
+                self.step_act(driver, snap, settings, desk, ev, now_ms);
             }
             return;
         }
@@ -1865,7 +1955,7 @@ impl Guardian {
             }
             _ => {}
         }
-        self.step_act(driver, snap, settings, ev, now_ms);
+        self.step_act(driver, snap, settings, desk, ev, now_ms);
     }
 
     /// One step of the in-flight (or freshly started) non-dialog act,
@@ -1875,6 +1965,7 @@ impl Guardian {
         driver: &mut D,
         snap: &GameSnapshot,
         settings: &ProfileSettings,
+        desk: &mut FightDesk<'_, '_, '_>,
         ev: &DetectedRandom,
         now_ms: u64,
     ) {
@@ -1884,7 +1975,7 @@ impl Guardian {
         match kind {
             RandomKind::Dialog => self.step_dialog(driver, snap, ev, now_ms),
             RandomKind::Pick => self.step_pick(driver, snap, ev, now_ms),
-            RandomKind::Evade => self.step_evade(driver, snap, ev),
+            RandomKind::Evade => self.step_evade(driver, snap, ev, settings, desk),
             RandomKind::Hazard => self.step_hazard(driver, snap),
             RandomKind::Lamp => self.step_lamp(driver, snap, settings),
             RandomKind::LostGear => self.step_lost_gear(driver, snap, ev),
@@ -2135,7 +2226,14 @@ impl Guardian {
     /// the content's cleanup timer. Late-anchor targeting feedback after
     /// the next NPC phase requires another outward step, not a finished latch.
     /// Blocked exact routes retain the existing nearest/nearer-ring fallback.
-    fn step_evade<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot, _ev: &DetectedRandom) {
+    fn step_evade<D: Driver>(
+        &mut self,
+        driver: &mut D,
+        snap: &GameSnapshot,
+        _ev: &DetectedRandom,
+        settings: &ProfileSettings,
+        desk: &mut FightDesk<'_, '_, '_>,
+    ) {
         let Some((npc_type, facts)) = self.evade.as_ref().map(|state| {
             (
                 state.npc_type,
@@ -2152,14 +2250,54 @@ impl Guardian {
             return;
         };
         // The flee in flight belongs to this actor. A successor actor keeps
-        // the walk-back tile and starts its own walks.
+        // the walk-back tile and starts its own walks; a fight of the old
+        // actor ends with it.
         let mut run = self.evade_run();
         if run.actor != Some((facts.index, npc_type)) {
+            if let (Some(token), Some(source)) = (
+                run.response.token().or(run.escape),
+                desk.port.as_deref_mut(),
+            ) {
+                source.fight_revoke(token, FightCancel::Replaced);
+                source.fight_release(token);
+                self.fight_open = None;
+            }
             run = EvadeRun {
                 actor: Some((facts.index, npc_type)),
                 flee_from: run.flee_from,
                 ..EvadeRun::default()
             };
+        }
+        // The fight, or the wait for its kill's removal, holds the event: no
+        // escape walk goes out.
+        if run.response.in_combat() {
+            *self.evade_run_mut() = run;
+            return;
+        }
+        // Offer the Fight once, before this actor's first escape step.
+        if !run.from_fight && run.escape.is_none() {
+            *self.evade_run_mut() = run;
+            if self.fight_begin(snap, desk.port, desk.context, settings) {
+                return;
+            }
+            run = self.evade_run();
+        }
+        // The walk out of a fight that handed over goes through the child's
+        // upkeep guard, which knows an admitted input lock.
+        if run.escape.is_some() {
+            *self.evade_run_mut() = run;
+            if self.fight_stage_escape(desk.port, facts, run) {
+                return;
+            }
+            run = self.evade_run();
+        }
+        // An admitted lock still blocks every click, raw or routed.
+        if let Some(until) = run.lock_until {
+            if fight::lock_blocks(snap.tick(), until) {
+                *self.evade_run_mut() = run;
+                return;
+            }
+            run.lock_until = None;
         }
         let fled = flee_step(driver, snap, &mut run, facts);
         *self.evade_run_mut() = run;
@@ -3125,7 +3263,7 @@ struct FleeFacts {
 
 /// One flee decision of the flee in flight `run`. Returns whether a flee walk
 /// was accepted.
-fn flee_step<D: Driver>(
+fn flee_step<D: Driver + ?Sized>(
     driver: &mut D,
     snap: &GameSnapshot,
     run: &mut EvadeRun,

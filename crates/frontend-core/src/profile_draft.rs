@@ -13,17 +13,16 @@ use crate::command::RasterMode;
 /// One hostile random's response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GuardianPolicy {
-    /// Walk away. The default and, until Guardian Fight is enabled, the
-    /// only supported response: a saved Fight is kept and treated as Flee.
+    /// Walk away. The default.
     #[default]
     Flee,
-    /// Fight it (not available yet; saved, and treated as Flee until then).
+    /// Fight it with the native Combat core. It applies to six events (see
+    /// [`guardian_event_help`]); the others keep their normal handling.
     Fight,
 }
 
 impl GuardianPolicy {
-    /// The choices both frontends offer, in display order. Every choice is
-    /// shown; [`Self::available`] says which can be picked now. A 0.2.9 file's
+    /// The choices both frontends offer, in display order. A 0.2.9 file's
     /// `ignore` value reaches this vocabulary as `Flee` (the vault converts
     /// it at the persistence boundary), so it is not a choice.
     pub const OPTIONS: [Self; 2] = [Self::Flee, Self::Fight];
@@ -32,14 +31,8 @@ impl GuardianPolicy {
     pub fn label(self) -> &'static str {
         match self {
             Self::Flee => "Flee",
-            Self::Fight => "Fight (not available yet)",
+            Self::Fight => "Fight",
         }
-    }
-
-    /// Whether the choice can be selected now. Flee is the only live choice
-    /// until Guardian Fight lands; the next slice makes Fight available.
-    pub fn available(self) -> bool {
-        matches!(self, Self::Flee)
     }
 
     pub(crate) fn from_vault(policy: RandomEventPolicy) -> Self {
@@ -57,10 +50,55 @@ impl GuardianPolicy {
     }
 }
 
-/// The notice both frontends show when Fight is attempted, until its slice
-/// enables the choice. One string keeps the panel and the TUI in step.
-pub const GUARDIAN_FIGHT_UNAVAILABLE: &str =
-    "Fight is not available yet; a saved Fight is treated as Flee.";
+/// The help both frontends show beside the policy choices. One string keeps
+/// the panel and the TUI in step.
+pub const GUARDIAN_FIGHT_HELP: &str = "Fight handles six events that attack immediately and can be damaged. Other events keep their normal handling. Flee remains the default.";
+
+/// Whether a saved Fight applies to the event keyed `event`: the shared
+/// eligibility the runtime admits by. The frontends use it to say, when the
+/// operator picks Fight for an event it does not apply to, what the event gets
+/// instead.
+pub fn guardian_fight_applies(event: &str) -> bool {
+    matches!(
+        api::random::fight_eligibility(event),
+        Some(api::random::FightEligibility::Applies(_))
+    )
+}
+
+/// What a saved Fight means for the event keyed `event` (one of
+/// [`GUARDIAN_EVENTS`]): the one explanation both frontends show for the
+/// row, from the shared eligibility the runtime admits by. A key with no
+/// policy row has none.
+pub fn guardian_event_help(event: &str) -> &'static str {
+    use api::random::{FightEligibility, FightEvent, FightExclusion};
+    match api::random::fight_eligibility(event) {
+        Some(FightEligibility::Applies(event)) => match event {
+            FightEvent::RiverTroll => {
+                "Fight the attacking River troll. Flee if fighting cannot continue."
+            }
+            FightEvent::RockGolem => {
+                "Fight the attacking Rock golem. Flee if fighting cannot continue."
+            }
+            FightEvent::Zombie => {
+                "Fight the attacking event Zombie. Flee if fighting cannot continue."
+            }
+            FightEvent::Shade => "Fight the attacking Shade. Flee if fighting cannot continue.",
+            FightEvent::Watchman => {
+                "Fight the attacking Watchman. Flee if fighting cannot continue."
+            }
+            FightEvent::TreeSpirit => {
+                "Fight the attacking Tree spirit. Flee if fighting cannot continue."
+            }
+        },
+        Some(FightEligibility::Excluded(FightExclusion::Swarm)) => {
+            "Fight does not apply. The Swarm cannot be damaged. Flee."
+        }
+        Some(FightEligibility::Excluded(FightExclusion::StrangePlant)) => {
+            "Fight does not apply. Pick ripe fruit. Flee if the plant attacks."
+        }
+        None => "",
+    }
+}
 
 /// The hostile randoms with a per-event policy: (stable key, label), in
 /// display order.

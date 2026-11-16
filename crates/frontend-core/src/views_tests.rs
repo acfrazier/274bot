@@ -735,6 +735,101 @@ fn the_detail_follows_the_selection_to_a_slot_outside_the_fleet() {
     );
 }
 
+/// Every answer the Guardian publishes reaches the shared runtime row as one
+/// sentence about the event, whatever the saved choice was. A stopped episode
+/// never reads as handled and never shows `(hold)`, and handling that is off
+/// says so.
+#[test]
+fn the_random_row_carries_the_guardians_typed_response() {
+    use api::random::{RandomResponse, ResponseReason, ResponseState};
+    let mut s = fleet("random-response", &["rr-amy"], true);
+    s.select("rr-amy");
+    let cases = [
+        (
+            "river troll",
+            true,
+            ResponseState::Fighting,
+            None,
+            "evade: river troll (hold) | Fighting River troll.",
+        ),
+        (
+            "river troll",
+            true,
+            ResponseState::Fleeing,
+            Some(ResponseReason::EscapeReserve),
+            "evade: river troll (hold) | Fleeing River troll: Hitpoints cannot pay for the escape.",
+        ),
+        (
+            "swarm",
+            true,
+            ResponseState::Fleeing,
+            Some(ResponseReason::Immune),
+            "evade: swarm (hold) | Fleeing Swarm: cannot be damaged.",
+        ),
+        (
+            "strange plant",
+            true,
+            ResponseState::Fleeing,
+            Some(ResponseReason::NotFought),
+            "evade: strange plant (hold) | Fleeing angry Strange plant.",
+        ),
+        (
+            "strange plant",
+            true,
+            ResponseState::Picking,
+            None,
+            "evade: strange plant (hold) | Picking Strange plant fruit.",
+        ),
+        (
+            "river troll",
+            false,
+            ResponseState::ScriptOwned,
+            None,
+            "evade: river troll | Script handling River troll.",
+        ),
+        (
+            "river troll",
+            false,
+            ResponseState::Stopped,
+            Some(ResponseReason::ExhaustedBudget),
+            "evade: river troll | River troll: handling stopped \u{2014} out of time.",
+        ),
+    ];
+    for (name, hold, state, reason, want) in cases {
+        publish(&s, "rr-amy", |r| {
+            phase_to(r, StartupPhase::Ready);
+            (r.ingame, r.connected) = (true, true);
+            r.random = host_play::RandomStatus {
+                kind: Some(api::RandomKind::Evade),
+                name: Some(name.into()),
+                hold,
+                toggle: true,
+                response: Some(RandomResponse { state, reason }),
+                ..host_play::RandomStatus::default()
+            };
+        });
+        s.poll();
+        assert_eq!(detail(&s).random.as_deref(), Some(want));
+    }
+    publish(&s, "rr-amy", |r| {
+        r.random = host_play::RandomStatus {
+            kind: Some(api::RandomKind::Evade),
+            name: Some("river troll".into()),
+            toggle: false,
+            response: Some(RandomResponse {
+                state: ResponseState::HandlingOff,
+                reason: None,
+            }),
+            ..host_play::RandomStatus::default()
+        };
+    });
+    s.poll();
+    assert_eq!(
+        detail(&s).random.as_deref(),
+        Some("evade: river troll (off) | Random-event handling is off.")
+    );
+}
+
 static PROBES: AtomicUsize = AtomicUsize::new(0);
 
 fn counting_probe() -> ProcessProbe {

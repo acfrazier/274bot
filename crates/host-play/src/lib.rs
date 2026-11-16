@@ -79,6 +79,7 @@ mod instance_lock;
 #[cfg(any(test, feature = "live-probe"))]
 mod manual_click_live_probe;
 mod play_bootstrap;
+mod play_fight;
 mod play_login;
 mod play_status;
 mod play_wires;

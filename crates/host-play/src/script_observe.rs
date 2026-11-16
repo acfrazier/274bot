@@ -671,6 +671,8 @@ where
     // The script's own wait for the result of its own interaction, read after
     // this frame's script tick; the host holds its auto-run press meanwhile.
     let mut script_wait = None;
+    // The Guardian's Fight child has rows to dispatch this frame, and may.
+    let mut child_rows = false;
     'script_slot: {
         let Some(slot) = observed_slot.as_ref() else {
             break 'script_slot;
@@ -1350,6 +1352,82 @@ where
                 }
             }
         }
+        // The Guardian's Fight child (design V11D 4.2, step 5). It steps on the
+        // fresh snapshot under the Guardian's own hold, only for the token the
+        // Guardian published this frame, and never inside a card's tick. Its
+        // rows go out through the one dispatch below, and the walk out of a
+        // fight that handed over goes through its upkeep guard first.
+        if let Some((token, online)) = service_arm.and_then(|arm| arm.fight.open()) {
+            if let (true, Some(snap)) = (slot.guardian_token() == Some(token), snapshot.read()) {
+                let (condition, pulse) = {
+                    let navs = navs.lock().unwrap();
+                    let bot = navs.get(name);
+                    (
+                        bot.and_then(|bot| bot.condition.current().copied()),
+                        bot.map(|bot| bot.condition.unknown_pulse()),
+                    )
+                };
+                if online && (tick_edge || wait_families_dirty || host_results_dirty) {
+                    let packed = pack_cached_reach(
+                        slot.reach_pack_cache(),
+                        Some(snap),
+                        here,
+                        world.as_deref(),
+                        canlight,
+                    );
+                    let wilderness = world
+                        .as_deref()
+                        .and_then(|world| nav_planner::producer::wilderness_view(world).ok())
+                        .map(PackWilderness);
+                    let mut ctx = ScriptCtx {
+                        driver: &mut *driver,
+                        tick,
+                        here,
+                        walk: None,
+                        walk_with: None,
+                        inv,
+                        snapshot: Some(snap),
+                        obj_names,
+                        compiled: script::CompiledTick {
+                            reach: Some(packed.view.as_ref()),
+                            reach_flood: packed.flood.as_deref(),
+                            condition,
+                            poison_unknown_pulse: pulse,
+                            cure_poison,
+                            wilderness: wilderness
+                                .as_ref()
+                                .map(|levels| levels as &dyn script::native::WildernessLevels),
+                            ..Default::default()
+                        },
+                    };
+                    slot.guardian_tick(&mut ctx, online);
+                }
+                if let (true, Some(arm)) = (online, service_arm) {
+                    let fact = condition.filter(|fact| fact.tick == snap.tick());
+                    let blocked = slot.guardian_escape_upkeep(token, snap.tick() as u16, |guard| {
+                        super::script_walk::tick_walk_guard(
+                            &mut *driver,
+                            snap,
+                            guard,
+                            fact.as_ref(),
+                            Some(name),
+                            cure_poison,
+                        );
+                    });
+                    if blocked == Some(false) {
+                        if let Some(intent) = arm.fight.take_staged(token) {
+                            let sent = intent.send(&mut *driver, snap);
+                            if sent.fled() {
+                                slot.guardian_escape_sent(token);
+                            }
+                            arm.fight.record_sent(sent);
+                            wrote = true;
+                        }
+                    }
+                }
+                child_rows = online && slot.guardian_has_actions();
+            }
+        }
         {
             let mut navs = navs.lock().unwrap();
             // The bot exists on every steady frame; `entry` would build an
@@ -1637,7 +1715,11 @@ where
     if DELAY_ORDERED_DRAIN.with(|delay| delay.replace(false)) {
         has_native_actions = false;
     }
-    if up && !hold && (!interact.is_empty() || has_native_actions) {
+    // The card's own work goes out outside every hold. The Guardian's Fight
+    // child goes out under the Guardian's hold, and only its rows do.
+    let ordinary_gate = up && !hold && (!interact.is_empty() || has_native_actions);
+    let child_gate = up && child_rows;
+    if ordinary_gate || child_gate {
         if snapshot.read().is_some() {
             #[cfg(test)]
             wait_dispatch_barrier();
@@ -1652,9 +1734,11 @@ where
                         exclusive,
                     };
                 };
-                if same_lifetime
+                let card_open = ordinary_gate
                     && (slot.state() == script::RunState::Running
-                        || slot.completed_seat_dispatch_open())
+                        || slot.completed_seat_dispatch_open());
+                if same_lifetime
+                    && (card_open || child_gate)
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
                     let compatibility_work_scope = slot.work_scope();
@@ -1678,9 +1762,11 @@ where
                     // but its two host consumers drain separately. Deliver JS
                     // Walk releases before the native action loop as well, so
                     // a fresh native drive cannot overtake a reserved stop.
-                    if interact.iter().any(|queued| {
-                        matches!(queued.req, script::interact::InteractReq::AbortWalk { .. })
-                    }) {
+                    if card_open
+                        && interact.iter().any(|queued| {
+                            matches!(queued.req, script::interact::InteractReq::AbortWalk { .. })
+                        })
+                    {
                         let (releases, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut interact)
                             .into_iter()
                             .partition(|queued| {
@@ -1713,7 +1799,7 @@ where
                         );
                     }
                     let mut refused_batch = None;
-                    while let Some(action) = slot.take_native_action() {
+                    while let Some(action) = slot.take_dispatch_action(!card_open) {
                         let batch = action.batch;
                         let authority = action.authority();
                         let bank_deposit = action.bank_deposit;
@@ -2174,6 +2260,23 @@ where
                                         session_permissions: slot.api_gather_walk_permissions(),
                                     },
                                 );
+                            }
+                        }
+                    }
+                    if !card_open {
+                        // Under the Guardian's hold the card's own requests are
+                        // not sent. The ones that wait for an answer get their
+                        // refusal, as the held path gives them.
+                        for queued in std::mem::take(&mut interact) {
+                            match queued.req {
+                                script::interact::InteractReq::WithdrawX { .. } => {
+                                    slot.complete_withdraw_x(false);
+                                }
+                                script::interact::InteractReq::Deposit { .. }
+                                | script::interact::InteractReq::Withdraw { .. } => {
+                                    slot.complete_bank_op(false);
+                                }
+                                _ => {}
                             }
                         }
                     }

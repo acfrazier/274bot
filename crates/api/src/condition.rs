@@ -2,7 +2,8 @@
 
 use thiserror::Error;
 
-const POISON_PERIOD: u16 = 30;
+/// Game ticks between two poison fires.
+pub const POISON_PERIOD: u16 = 30;
 
 /// The observed condition of one account.
 ///

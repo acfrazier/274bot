@@ -762,14 +762,6 @@ impl TuiApp {
                 self.error = Some(reason.into());
                 return AppAction::SettingsDraftEdited(edit);
             }
-            SettingsKey::Refused(reason) => {
-                return AppAction::Refused(Refusal {
-                    command: Some(frontend_core::OperatorCommand::SetGuardian),
-                    bot: self.settings_profile.clone(),
-                    reason: reason.into(),
-                    need: None,
-                });
-            }
             SettingsKey::WalkGlobal(preference) => {
                 let pending =
                     frontend_core::WalkGlobalsView::new(self.nav, self.script_scope_notice_ack);

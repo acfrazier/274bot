@@ -86,7 +86,7 @@ offers **Discard** and **Keep editing**.
 | **Log in automatically** | Logs the bot in as soon as it starts, and again after a disconnect. | off |
 | **world (next slot start)** | The world this profile uses. Shown only for a server with a world list, such as rs2b2t. | auto |
 | **random events** | On: 274bot handles random events. Off: it shows their status and does not handle or hold them. | on |
-| **Policies** | How the bot answers each hostile random event. Only Flee works, and a saved Fight or Ignore acts as Flee. | Flee |
+| **Policies** | How the bot answers each hostile random event: **Flee** or **Fight**. Fight works for the River troll, Rock golem, Zombie, Shade, Watchman and Tree spirit; the other events keep their normal handling. | Flee |
 | **lamp auto** | Claims a genie lamp reward without asking you. | on |
 | lamp skill drop-down | The skill a genie lamp trains. | strength |
 | **clue duel partner** | The other account's name, for the Duel Arena crossing in clue 3554. | empty |

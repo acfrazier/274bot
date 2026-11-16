@@ -8344,7 +8344,7 @@ fn set_random_event_policy_persists_without_spawning() {
             .unwrap()
             .random_event_policy("river troll"),
         frontend_core::GuardianPolicy::Fight,
-        "a saved Fight stays saved while the choice is unavailable"
+        "a chosen Fight is saved"
     );
     assert!(
         s.core.slots().is_empty(),

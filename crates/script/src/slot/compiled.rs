@@ -11,7 +11,7 @@ use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FamilyPreparation, RunKey};
 use std::sync::Mutex;
 
-pub(super) fn selected_revision(
+pub(crate) fn selected_revision(
     selected: &api::game_data::SelectedGameData,
 ) -> Result<ClientRevision, StartError> {
     match selected.revision() {
@@ -474,7 +474,7 @@ impl NativeOutput for Output {
 }
 
 /// One frame's native authority/evidence for compiled runs and API reads.
-pub(super) fn frame_context<'a>(
+pub(crate) fn frame_context<'a>(
     ctx: &'a ScriptCtx<'_>,
     run: RunKey,
     revision: ClientRevision,
@@ -1502,6 +1502,7 @@ impl SlotScript {
     }
 
     fn install_compiled(&mut self, run: CompiledRun) {
+        self.guardian_revoke(api::random::FightCancel::Replaced);
         if self.watchdog.state() == crate::WatchdogState::Idle {
             self.watchdog.arm_fresh(Instant::now());
         }
@@ -1684,6 +1685,7 @@ impl SlotScript {
     }
 
     pub(super) fn fail_compiled(&mut self, failure: ScriptFailure) {
+        self.guardian_revoke(api::random::FightCancel::CardFailed);
         self.revoke_native_input();
         {
             self.compiled_interacts.clear();

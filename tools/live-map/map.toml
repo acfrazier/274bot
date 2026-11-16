@@ -1394,6 +1394,48 @@ cells = [
   "scenario.guardian-box-load-claim|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_guardian_event_strange_box_load_claim|--locked -p scenario --lib scenarios::guardian_events::tests::",
 ]
 
+# A saved Fight: the Guardian offers the exact event actor to the native Combat
+# child, which fights it with the shared Combat core under the Guardian's hold.
+# One cell fights a listed event to its death and removal (the River troll
+# while fishing); one saves Fight for the Swarm, which Fight does not apply
+# to, and requires the ordinary flee.
+[[cover]]
+globs = [
+  "crates/api/src/lifecycle.rs",
+  "crates/api/src/random.rs",
+  "crates/frontend-core/src/live/mod.rs",
+  "crates/host-play/src/play_fight.rs",
+  "crates/host-play/src/play_login.rs",
+  "crates/host-play/src/play_slots.rs",
+  "crates/host-play/src/script_observe.rs",
+  "crates/host-play/src/script_walk.rs",
+  "crates/host/src/random/guardian/fight.rs",
+  "crates/script/src/combat/escape.rs",
+  "crates/script/src/combat/guardian.rs",
+  "crates/script/src/combat/guard.rs",
+  "crates/script/src/combat/machine.rs",
+  "crates/script/src/combat/request.rs",
+  "crates/script/src/combat/select.rs",
+  "crates/script/src/slot.rs",
+  "crates/script/src/slot/compiled.rs",
+  "crates/tui/src/bin.rs",
+]
+cells = [
+  "scenario.guardian-fight-river-troll|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_guardian_fight_river_troll|--locked -p scenario --features api/test-support --lib scenarios::guardian_events::tests::",
+  "scenario.guardian-fight-swarm-flee|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_guardian_fight_swarm_flee|--locked -p scenario --features api/test-support --lib scenarios::guardian_events::tests::",
+]
+
+# The per-event Guardian policy of the profile editor: the two choices, the
+# explanation of each event and the saved Fight. Headless: the panel draws the
+# real combo widget and the terminal app the real settings popup.
+[[cover]]
+globs = ["crates/frontend-core/src/profile_draft.rs"]
+cells = [
+  "frontend-core.guardian-policy-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib profile_draft::tests::",
+  "panel.guardian-policy-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib guardian_policy_combo",
+  "tui.guardian-policy-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib settings_popup_",
+]
+
 # Real Catherby fishing XP is the pre-trigger control; the cell then summons
 # the Genie deterministically and requires dialogue, reward and fresh XP.
 [[cover]]

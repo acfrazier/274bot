@@ -133,6 +133,15 @@ pub struct Escape {
 
 const _: () = assert!(std::mem::size_of::<Escape>() <= 64);
 
+/// A bite a fight admitted and had not seen settle when it handed over to the
+/// upkeep guard: the item, the tick of its admission and the Hitpoints before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingBite {
+    pub id: i32,
+    pub tick: u16,
+    pub hp: i16,
+}
+
 /// Per-followed-route protection and eat driver. Threats plus a few clocks;
 /// tables live behind an `Arc`.
 pub struct WalkGuard {
@@ -148,6 +157,9 @@ pub struct WalkGuard {
     prayer_admission_tick: u16,
     unprotectable: u8,
     flags: u8,
+    /// Lock-producing upkeep this guard admitted: a Guardian Fight's walk out
+    /// allows one before its first click.
+    lock_ops: u8,
     drink_points: u8,
     drink_count: u8,
     drink_kind: PotionKind,
@@ -164,6 +176,7 @@ const FLAG_FOOD_ALLOWED: u8 = 4;
 const FLAG_NO_POINTS_REPORTED: u8 = 8;
 const FLAG_FOOD_ONLY: u8 = 16;
 const FLAG_CURE_FRUIT: u8 = 32;
+const FLAG_DEFER_LOCKS: u8 = 64;
 
 // The 64-bit baseline measured 264 bytes; Path food reserves add a 16-byte
 // Arc slice handle, and a 344-byte cap preserves at least 64 bytes of headroom.
@@ -314,6 +327,94 @@ impl WalkGuard {
         self.raised_prayers
     }
 
+    /// Continue a fight's upkeep: start from the clocks the fight admitted and
+    /// from the bite it had not seen settle, so the walk out neither forgets
+    /// an admitted input lock nor eats again for a bite already sent.
+    pub fn continue_from(
+        &mut self,
+        schedule: Schedule,
+        bite: Option<PendingBite>,
+        snapshot: &SnapshotView<'_>,
+    ) {
+        self.schedule = schedule;
+        match bite {
+            Some(bite) if self.schedule.pending(OpKind::Eat) => {
+                self.eat_id = bite.id;
+                self.eat_hp = bite.hp;
+                self.eat_admission_tick = bite.tick;
+                self.eat_count =
+                    Frame::borrow(*snapshot).map_or(0, |frame| food_count(&frame, bite.id));
+            }
+            _ => self.schedule.settle(OpKind::Eat),
+        }
+    }
+
+    /// The game tick (wrap-aware) from which this guard stops blocking clicks:
+    /// the admitted input lock, or the click an admitted prayer still owes.
+    /// `None` when `tick` is not blocked.
+    pub fn lock_end(&self, tick: u16) -> Option<u16> {
+        let lock = self
+            .schedule
+            .locked(tick)
+            .then_some(self.schedule.input_lock);
+        let follow = (self.flags & FLAG_FOLLOW != 0 && !reached(tick, self.follow_until))
+            .then_some(self.follow_until);
+        match (lock, follow) {
+            (Some(lock), Some(follow)) => Some(if reached(lock, follow) { lock } else { follow }),
+            (lock, follow) => lock.or(follow),
+        }
+    }
+
+    /// Hold back every proposal that would lock input while `defer` is on: a
+    /// Guardian Fight's walk out sets it once the allowance after its first
+    /// click is spent, so no bite goes out ahead of the next click (design
+    /// V11D 6.2). Food without an input lock is unaffected.
+    pub fn defer_lock_upkeep(&mut self, defer: bool) {
+        if defer {
+            self.flags |= FLAG_DEFER_LOCKS;
+        } else {
+            self.flags &= !FLAG_DEFER_LOCKS;
+        }
+    }
+
+    /// The lock-producing upkeep this guard admitted so far.
+    pub fn lock_ops(&self) -> u8 {
+        self.lock_ops
+    }
+
+    #[cfg(test)]
+    pub(crate) fn defers_lock_upkeep(&self) -> bool {
+        self.flags & FLAG_DEFER_LOCKS != 0
+    }
+
+    /// Whether admitting `op` locks input: every drink, the cure fruit, and
+    /// the food that carries a message delay (the karambwan).
+    fn locks_input(&self, op: &GuardOp, snapshot: &SnapshotView<'_>) -> bool {
+        match op {
+            GuardOp::Drink { .. } => true,
+            GuardOp::Eat { name } => {
+                let Some(frame) = Frame::borrow(*snapshot) else {
+                    return false;
+                };
+                let Some(row) = frame.inventory.iter().find(|row| {
+                    row.def
+                        .name
+                        .as_deref()
+                        .is_some_and(|got| got.eq_ignore_ascii_case(name.as_ref()))
+                }) else {
+                    return false;
+                };
+                match self.tables.food(row.def.id) {
+                    Some(food) => food.message_delay.is_some(),
+                    // Not food of the table: the cure fruit, which locks as a
+                    // drink does.
+                    None => true,
+                }
+            }
+            _ => false,
+        }
+    }
+
     fn new(
         tables: Arc<CombatTables>,
         food_allowed: bool,
@@ -334,6 +435,7 @@ impl WalkGuard {
             unprotectable: 0,
             flags: if food_allowed { FLAG_FOOD_ALLOWED } else { 0 }
                 | if food_only { FLAG_FOOD_ONLY } else { 0 },
+            lock_ops: 0,
             drink_points: 0,
             drink_count: 0,
             drink_kind: PotionKind::Prayer,
@@ -403,6 +505,9 @@ impl WalkGuard {
             return;
         };
         let tick = frame.tick;
+        if self.locks_input(op, snapshot) {
+            self.lock_ops = self.lock_ops.saturating_add(1);
+        }
         match op {
             GuardOp::IfButton { component }
                 if *component > 0
@@ -468,8 +573,22 @@ impl WalkGuard {
 
     /// Observe one tick with the slot-owned condition and current cure policy.
     /// Commit a sent proposal with [`Self::admitted`]. An absent condition adds
-    /// no poison fire to the eat line.
+    /// no poison fire to the eat line. While [`Self::defer_lock_upkeep`] is on,
+    /// a proposal that would lock input is dropped, as a refused send is.
     pub fn tick(
+        &mut self,
+        snapshot: &SnapshotView<'_>,
+        condition: Option<&BotCondition>,
+        cure_policy: CurePoison,
+    ) -> Option<GuardOp> {
+        let op = self.propose(snapshot, condition, cure_policy)?;
+        if self.flags & FLAG_DEFER_LOCKS != 0 && self.locks_input(&op, snapshot) {
+            return None;
+        }
+        Some(op)
+    }
+
+    fn propose(
         &mut self,
         snapshot: &SnapshotView<'_>,
         condition: Option<&BotCondition>,
@@ -845,7 +964,7 @@ fn item_name(frame: &Frame<'_>, id: i32) -> Option<Arc<str>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use api::quest_progress::EvidenceStamp;
     use api::selected::RunKey;
@@ -855,6 +974,149 @@ mod tests {
         WorldTile,
     };
     use api::{obj_names::ItemDefView, snapshot::ItemActionFamily, snapshot::ItemContainer};
+
+    /// A guard that has just admitted an input-locking karambwan bite at the
+    /// emergency line, with the tables it ran on and the tick of the admission.
+    pub(crate) fn karambwan_guard_after_a_bite() -> (Arc<CombatTables>, WalkGuard, u16) {
+        let mut scene = Scene::new(43);
+        scene.launch_unknown();
+        for slot in 0..4 {
+            scene.add_food("tbwt_cooked_karambwan", slot, 1);
+        }
+        let emergency = {
+            let frame = Frame::borrow(scene.view_at(0)).unwrap();
+            let mut threats = ThreatSet::default();
+            threats.observe(&frame, &scene.tables, 0);
+            let danger = threats.danger(&frame, &scene.tables, 0, false, false);
+            select::lines(danger, 40).emergency
+        };
+        scene.stats[3].effective = emergency;
+        scene.refresh();
+        let mut guard = scene.begin().unwrap();
+        let eat = guard
+            .tick(
+                &scene.view_at(0),
+                scene.condition(),
+                crate::survival::CurePoison::WhenNeeded,
+            )
+            .unwrap();
+        assert_eat(Some(&eat), "Cooked karambwan");
+        guard.admitted(&eat, &scene.view_at(0));
+        (Arc::clone(&scene.tables), guard, 0)
+    }
+
+    /// The admitted karambwan bite locks input for a while; the guard reports
+    /// that end, and not before the bite is admitted. A guard a fight continues
+    /// from the same clocks reports the same end.
+    #[test]
+    fn the_admitted_karambwan_lock_is_reported_until_its_end() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (_tables, guard, tick) = karambwan_guard_after_a_bite();
+        let end = guard
+            .lock_end(tick.wrapping_add(1))
+            .expect("the karambwan bite locks input");
+        assert!(
+            guard.lock_end(end.wrapping_sub(1)).is_some(),
+            "locked up to its end"
+        );
+        assert_eq!(guard.lock_end(end), None, "free from its end tick on");
+
+        let mut scene = Scene::new(43);
+        scene.launch_unknown();
+        for slot in 0..4 {
+            scene.add_food("tbwt_cooked_karambwan", slot, 1);
+        }
+        let mut continued = scene.begin().unwrap();
+        assert_eq!(
+            continued.lock_end(tick.wrapping_add(1)),
+            None,
+            "a fresh guard has no lock"
+        );
+        continued.continue_from(guard.schedule, None, &scene.view_at(1));
+        assert_eq!(
+            continued.lock_end(tick.wrapping_add(1)),
+            Some(end),
+            "the continued guard keeps the admitted lock"
+        );
+    }
+
+    /// The first bite after an admitted first one, as the guard proposes it
+    /// on the following ticks with the Hitpoints still at the emergency line,
+    /// with lock-producing upkeep deferred or not.
+    fn second_bite(food: &str, defer: bool) -> Option<(u16, GuardOp)> {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 10;
+        scene.launch_unknown();
+        for slot in 0..4 {
+            scene.add_food(food, slot, 1);
+        }
+        let mut guard = scene.begin().unwrap();
+        let first = guard
+            .tick(&scene.view_at(0), scene.condition(), CurePoison::WhenNeeded)
+            .expect("the first bite");
+        guard.admitted(&first, &scene.view_at(0));
+        guard.schedule.settle(OpKind::Eat);
+        guard.defer_lock_upkeep(defer);
+        (1..16u16).find_map(|tick| {
+            match guard.tick(
+                &scene.view_at(tick),
+                scene.condition(),
+                CurePoison::WhenNeeded,
+            ) {
+                Some(op @ GuardOp::Eat { .. }) => Some((tick, op)),
+                _ => None,
+            }
+        })
+    }
+
+    /// R3-3: once the allowance is spent, the guard admits no lock-producing
+    /// upkeep ahead of the next click: a second karambwan bite that is due is
+    /// deferred. Food without an input lock is not held back, and the bite
+    /// comes back when the deferral ends.
+    #[test]
+    fn a_deferral_holds_back_a_second_karambwan_bite_and_no_other_food() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (tick, bite) =
+            second_bite("tbwt_cooked_karambwan", false).expect("a second karambwan bite is due");
+        assert_eat(Some(&bite), "Cooked karambwan");
+        assert!(tick >= 4, "not inside the first bite's lock: {tick}");
+        assert_eq!(
+            second_bite("tbwt_cooked_karambwan", true),
+            None,
+            "deferred ahead of follow"
+        );
+        let open = second_bite("lobster", false).expect("a second lobster bite is due");
+        assert_eq!(
+            second_bite("lobster", true),
+            Some(open),
+            "food that locks no input is not held back"
+        );
+    }
+
+    /// The guard counts the lock-producing upkeep it admitted: a bite that
+    /// locks input counts, and one that does not is not counted.
+    #[test]
+    fn the_guard_counts_the_lock_producing_upkeep_it_admitted() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (_tables, guard, _tick) = karambwan_guard_after_a_bite();
+        assert_eq!(guard.lock_ops(), 1, "the karambwan bite locks input");
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 10;
+        scene.launch_unknown();
+        scene.add_food("lobster", 0, 1);
+        let mut guard = scene.begin().unwrap();
+        let eat = guard
+            .tick(&scene.view_at(0), scene.condition(), CurePoison::WhenNeeded)
+            .expect("the lobster bite");
+        guard.admitted(&eat, &scene.view_at(0));
+        assert_eq!(guard.lock_ops(), 0, "a lobster locks no input");
+    }
 
     fn dummy_stamp(tick: u64) -> EvidenceStamp {
         EvidenceStamp {

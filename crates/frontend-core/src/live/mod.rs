@@ -55,6 +55,7 @@ pub struct ScenarioView<'a> {
     companion_count: usize,
     has_start_script_step: bool,
     nav: ScenarioNav,
+    guardian_fight: &'static [&'static str],
 }
 
 /// Surface-independent view settings selected by a scenario.
@@ -1842,6 +1843,7 @@ impl Scenario {
                 .steps
                 .iter()
                 .any(|step| matches!(step.kind, scenario::StepKind::StartScript)),
+            guardian_fight: settings.guardian_fight,
             nav: ScenarioNav {
                 allow_teleports: settings.nav.allow_teleports,
                 allow_wilderness: settings.nav.allow_wilderness,
@@ -2009,6 +2011,11 @@ impl ScenarioView<'_> {
 
     pub fn start_file(&self) -> Option<&str> {
         self.start_file
+    }
+
+    /// The guardian events the live profile saves as Fight.
+    pub fn guardian_fight(&self) -> &'static [&'static str] {
+        self.guardian_fight
     }
 
     pub fn fleet_start(&self) -> Option<FleetStart> {
@@ -2186,8 +2193,8 @@ impl LiveProfiles {
     }
 
     /// Create the TUI live vault.
-    pub fn tui_vault(&self) -> PathBuf {
-        tui_live_vault(&self.entries, &self.passphrase)
+    pub fn tui_vault(&self, fight: &[&str]) -> PathBuf {
+        tui_live_vault(&self.entries, &self.passphrase, fight)
     }
 }
 
@@ -2270,19 +2277,21 @@ pub fn panel_live_vault(
         uid_base,
         passphrase,
         auto_login,
+        &[],
         "274bot-panel-live",
         &SERIAL,
     )
 }
 
 /// Create the TUI's encrypted live vault.
-fn tui_live_vault(entries: &[(String, String)], passphrase: &str) -> PathBuf {
+fn tui_live_vault(entries: &[(String, String)], passphrase: &str, fight: &[&str]) -> PathBuf {
     static SERIAL: AtomicUsize = AtomicUsize::new(0);
     create_live_vault(
         entries,
         274_000_001,
         passphrase,
         true,
+        fight,
         "274bot-tui-live",
         &SERIAL,
     )
@@ -2293,10 +2302,11 @@ fn create_live_vault(
     uid_base: i32,
     passphrase: &str,
     auto_login: bool,
+    fight: &[&str],
     prefix: &str,
     serial: &AtomicUsize,
 ) -> PathBuf {
-    use vault::{Profile, ProfileSettings, Vault};
+    use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault};
 
     let serial = serial.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(if prefix == "274bot-tui-live" {
@@ -2320,9 +2330,15 @@ fn create_live_vault(
                 username: username.clone(),
                 password: password.clone().into(),
                 uid: uid_base + index as i32,
-                settings: ProfileSettings {
-                    auto_login,
-                    ..ProfileSettings::default()
+                settings: {
+                    let mut settings = ProfileSettings {
+                        auto_login,
+                        ..ProfileSettings::default()
+                    };
+                    for event in fight {
+                        settings.set_random_event_policy(event, RandomEventPolicy::Fight);
+                    }
+                    settings
                 },
             })
             .unwrap();

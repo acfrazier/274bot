@@ -277,7 +277,8 @@ scenario cells, besides the `host-play` live tests that seed a bank:
 content) is needed by:
 
 <!-- engine-patch-cells:0002 -->
-`guardian_skill_big_fish`, `guardian_skill_ent`, `guardian_skill_gas`,
+`guardian_fight_river_troll`, `guardian_skill_big_fish`, `guardian_skill_ent`,
+`guardian_skill_gas`,
 `guardian_skill_lost_axe`, `guardian_skill_lost_axe_same_kind_head`,
 `guardian_skill_lost_pickaxe`, `guardian_skill_river_troll`,
 `guardian_skill_rock_golem`, `guardian_skill_shade`,

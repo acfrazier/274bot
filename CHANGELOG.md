@@ -45,10 +45,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 ### Developer tools
 
 - The seat model also checks who owns a random event, the host Guardian or the
-  running script. Run `seat-model --ownership` for its three profiles. The host
-  tests replay the model's traces against the Guardian. When a slot has no
+  running script. Run `seat-model --ownership` for its profiles; the new
+  `c6-ownership-fight` profile covers a saved Fight and its native child. The
+  host tests replay the model's traces against the Guardian. When a slot has no
   script claim source, the Guardian now hands any script claim back to itself at
   once.
+- The ownership model now knows that a teleporting trap (Maze, Mime) counts as
+  outward progress for a hostile actor the Guardian still tracks. The two
+  matrix traces that left this out are part of the host replay.
 - The Quester rocky-elevation live oracle counts actual scenario-worker polls.
   Recovered client entity cycles no longer cause a false late-drain failure.
 - A generated game data file that fails to decode now names the file and says
@@ -97,6 +101,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   names the walk that failed.
 - A purchase close starts a fresh shop-open attempt. The buy machine cannot
   loop forever inside one tick.
+
+### Random events
+
+- A saved Fight now works. The Guardian fights the event with the combat engine
+  that scripts use, for River troll, Rock golem, Zombie, Shade, Watchman and
+  Tree spirit. It eats the food the bot already carries and keeps enough
+  Hitpoints to walk away; when the food that pays for the escape is gone, or
+  the fight cannot go on, it flees as it did before. Flee stays the default.
+- Swarm and the angry Strange plant are not fought. With Fight saved they keep
+  the old handling: the Guardian flees them, and a script claim does not take
+  them.
+- A script Pause, Stop or failure, a manual takeover, or changing the saved
+  choice to Flee ends the fight at once and the Guardian flees. Turning random
+  events off or logging out ends it and the Guardian does nothing more. A fight
+  never starts again for the same actor.
+- This closes the known issue that Fight could be chosen but was treated as Flee.
 
 ### Panel and terminal app
 

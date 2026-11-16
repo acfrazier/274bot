@@ -1,5 +1,9 @@
 use super::*;
 use api::prot::Out;
+use api::random::{
+    FightCancel, FightOffer, FightOutcome, FightPhase, FightRead, FightReason, FightToken,
+    ResponseReason, ResponseState,
+};
 use client::client::{Client, ClientConfig, ClientPlayer, MiniMenuAction};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{Cache, LocType, NpcType, ObjType};
@@ -15,9 +19,14 @@ fn guardian_per_bot_state_stays_inline_and_small() {
     // (box, maze, mime, lamp redemption, flee, lost-tool recovery, plant
     // probe, Ent latch) in one variant at a time, where the Guardian held
     // each as a separate cell; the detector history and the episode key
-    // (session, family, generation) stay beside it. Together they take 240
+    // (session, family, generation) stay beside it. Together they take 208
     // bytes less inline, with the test-only `last_inputs` record counted in.
-    assert_eq!(std::mem::size_of::<Guardian>(), 704);
+    // The Fight response (the child's token, the escape's token and input
+    // lock, the walk-out bookkeeping) lives in the flee variant, and the
+    // serial, spent actor and episode latch beside it add 32 bytes. The actor
+    // of the open child, which the pass that finds no run holding it closes,
+    // adds 24.
+    assert_eq!(std::mem::size_of::<Guardian>(), 760);
 }
 
 fn cfg() -> ClientConfig {
@@ -5906,3 +5915,5 @@ fn mime_return_reward_page_releases_guardian_before_inventory_tab_restoration() 
 include!("random_ent_regressions.rs");
 
 include!("random_owner_tests.rs");
+
+include!("random_fight_tests.rs");

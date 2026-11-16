@@ -11,9 +11,19 @@ const SEAT_MUTATIONS: [GuardianMutation; 2] = [
     GuardianMutation::HoldNotAppliedToSeat,
 ];
 
+const FIGHT_MUTATIONS: [GuardianMutation; 5] = [
+    GuardianMutation::FightTimeCounts,
+    GuardianMutation::FightSurvivesExit,
+    GuardianMutation::FightRestarts,
+    GuardianMutation::FightDoubleDispatch,
+    GuardianMutation::FightOrphanKept,
+];
+
 fn profile_for(mutation: GuardianMutation) -> GuardianProfile {
     if SEAT_MUTATIONS.contains(&mutation) {
         GuardianProfile::OwnershipSeat
+    } else if FIGHT_MUTATIONS.contains(&mutation) {
+        GuardianProfile::OwnershipFight
     } else if mutation == GuardianMutation::GuardNeverExpires {
         GuardianProfile::OwnershipEnt
     } else {
@@ -38,6 +48,7 @@ fn chosen_profiles_close_without_a_cap() {
         GuardianProfile::Ownership,
         GuardianProfile::OwnershipSeat,
         GuardianProfile::OwnershipEnt,
+        GuardianProfile::OwnershipFight,
     ] {
         let result =
             explore_guardian_profile(profile, GuardianMutation::None, ExploreLimits::default());
@@ -558,16 +569,17 @@ fn a_content_window_runs_through_the_toggle_and_the_claim() {
 }
 
 /// A hostile actor that stays engaged while another event wins the detector
-/// keeps its identity and its budget: the clock runs through the overlap, and
-/// the returning actor whose budget ran out is detect-only (round-3 review
-/// probe `retained-evade-combat-probe.rs`). An actor with budget left is the
-/// host's flee again, with that budget and not a fresh one.
+/// keeps its identity and its budget: the clock runs through an overlap that
+/// does not move the player, and the returning actor whose budget ran out is
+/// detect-only (round-3 review probe `retained-evade-combat-probe.rs`). An
+/// actor with budget left is the host's flee again, with that budget and not a
+/// fresh one.
 #[test]
 fn a_retained_hostile_actor_keeps_its_budget_across_an_overlap() {
     let profile = GuardianProfile::Ownership;
     let wait = profile.bounds().wait as usize;
     let overlap = GuardianStep::Overlap {
-        family: Family::Trap,
+        family: Family::Solver,
         forced_host: false,
     };
     // The budget runs out during the overlap.
@@ -625,4 +637,400 @@ fn a_retained_hostile_actor_keeps_its_budget_across_an_overlap() {
         .is_err(),
         "nothing is retained to return"
     );
+}
+
+/// V11a acceptance item: a trap that teleports the player (Maze, Mime) carries
+/// the player out of the retained actor's chase range, which the content
+/// counts as outward progress (`Npc.ts:77-85,661-670`), so the actor's
+/// no-progress counter resets and does not run while the trap is the detected
+/// event. A budget that would have run out during the overlap is the actor's
+/// again on its return; one the actor had spent before stays spent. A held
+/// Strange box does not move the player: the same overlap spends the budget.
+#[test]
+fn a_teleporting_trap_is_outward_progress_for_the_retained_actor() {
+    let profile = GuardianProfile::Ownership;
+    let wait = profile.bounds().wait as usize;
+    let teleport = GuardianStep::Overlap {
+        family: Family::Teleport,
+        forced_host: false,
+    };
+    let mut during = vec![appear(Family::Evade), tick(), teleport.clone()];
+    during.extend(std::iter::repeat_n(tick(), wait + 1));
+    during.extend([GuardianStep::Return, tick()]);
+    let state = run_guardian_trace(profile, GuardianMutation::None, &during).unwrap();
+    assert_eq!(state.event_id(), Some(0), "the same actor returns");
+    assert!(
+        state.publication().ours,
+        "the actor still has budget: {}",
+        state.describe()
+    );
+    // The seeded fault counts the trap's ticks: the returning actor is given
+    // up although its counter was reset.
+    let caught =
+        run_guardian_trace(profile, GuardianMutation::TeleportProgressLost, &during).unwrap_err();
+    assert_eq!(caught.1.name, "actor-budget");
+    assert_eq!(caught.0, during.len() - 1, "caught at the return's pass");
+    // A budget of four leaves room to see the flee work the returned actor
+    // again: the host begins on the pass after the first.
+    let nightly = GuardianProfile::Nightly;
+    assert_eq!(nightly.bounds().wait, 4);
+    let mut again = vec![appear(Family::Evade), tick(), teleport.clone()];
+    again.extend(std::iter::repeat_n(tick(), 5));
+    again.extend([GuardianStep::Return, tick(), tick()]);
+    let state = run_guardian_trace(nightly, GuardianMutation::None, &again).unwrap();
+    let out = state.publication();
+    assert!(
+        out.ours && out.hold && out.acting,
+        "the flee works the returned actor: {}",
+        state.describe()
+    );
+    let caught =
+        run_guardian_trace(nightly, GuardianMutation::TeleportProgressLost, &again).unwrap_err();
+    assert_eq!(caught.1.name, "actor-budget");
+    // A budget the actor spent before the teleport stays spent: the latch
+    // outlives the counter.
+    let mut spent = vec![appear(Family::Evade)];
+    spent.extend(std::iter::repeat_n(tick(), wait + 1));
+    spent.extend([teleport, tick(), GuardianStep::Return, tick()]);
+    let state = run_guardian_trace(profile, GuardianMutation::None, &spent).unwrap();
+    let out = state.publication();
+    assert!(
+        !out.ours && !out.hold && !out.acting,
+        "{}",
+        state.describe()
+    );
+    // The box is a trap that does not move the player: the budget runs out
+    // during the overlap, as it does for every other family.
+    let box_overlap = GuardianStep::Overlap {
+        family: Family::Trap,
+        forced_host: false,
+    };
+    let mut held = vec![appear(Family::Evade), tick(), box_overlap];
+    held.extend(std::iter::repeat_n(tick(), wait + 1));
+    held.extend([GuardianStep::Return, tick()]);
+    let state = run_guardian_trace(profile, GuardianMutation::None, &held).unwrap();
+    let out = state.publication();
+    assert!(
+        !out.ours && !out.hold && !out.acting,
+        "a box is no progress: {}",
+        state.describe()
+    );
+}
+
+/// A hostile actor of the six listed events. Under a saved Fight the Guardian
+/// binds it to the host and fights it; under a saved Flee it is an ordinary
+/// Evade.
+fn fight() -> GuardianStep {
+    GuardianStep::Appear {
+        family: Family::Fight,
+        forced_host: false,
+    }
+}
+
+fn fight_state(steps: &[GuardianStep]) -> seat_model::guardian::GuardianState {
+    run_guardian_trace(
+        GuardianProfile::OwnershipFight,
+        GuardianMutation::None,
+        steps,
+    )
+    .unwrap_or_else(|(at, violation)| panic!("step {at}: {violation:?}"))
+}
+
+fn fight_caught(mutation: GuardianMutation, steps: &[GuardianStep]) -> (usize, &'static str) {
+    let (at, violation) =
+        run_guardian_trace(GuardianProfile::OwnershipFight, mutation, steps).unwrap_err();
+    (at, violation.name)
+}
+
+/// A saved Fight is the Host's own work: a native child takes the event, the
+/// host solver sends nothing beside it, and the escape clock stands still for
+/// as long as it fights (design V11D 3.4, 6.3).
+#[test]
+fn a_saved_fight_is_a_child_the_host_solver_does_not_work_beside() {
+    let wait = GuardianProfile::OwnershipFight.bounds().wait as usize;
+    let state = fight_state(&[fight(), tick()]);
+    let out = state.publication();
+    assert_eq!(state.child_id(), Some(0));
+    assert!(
+        out.hold && out.acting && out.ours && !out.claim_script,
+        "{}",
+        state.describe()
+    );
+    assert!(!state.emitted(), "no host operation beside the child");
+    assert_eq!(
+        fight_caught(GuardianMutation::FightDoubleDispatch, &[fight(), tick()]),
+        (1, "fight-dispatch")
+    );
+    // Many more ticks than the escape budget: the actor is not given up.
+    let mut steps = vec![fight()];
+    steps.extend(std::iter::repeat_n(tick(), 2 * wait + 2));
+    let state = fight_state(&steps);
+    assert_eq!(state.child_id(), Some(0));
+    assert!(state.publication().ours && state.publication().hold);
+    let (at, name) = fight_caught(GuardianMutation::FightTimeCounts, &steps);
+    assert_eq!(name, "fight-clock");
+    assert_eq!(
+        at, 2,
+        "caught on the first tick the clock runs under the fight"
+    );
+}
+
+/// Every explicit cancellation revokes the child before the next dispatch and
+/// permanently latches the flee for that actor (design V11D 4.4).
+#[test]
+fn a_cancellation_hands_the_event_to_the_flee_once_and_for_all() {
+    let wait = GuardianProfile::OwnershipFight.bounds().wait as usize;
+    let after = |state: &seat_model::guardian::GuardianState| {
+        let out = state.publication();
+        assert_eq!(state.child_id(), None, "{}", state.describe());
+        assert!(state.fight_is_spent(0), "{}", state.describe());
+        assert!(
+            out.hold && out.acting && out.ours && !out.claim_script,
+            "the flee runs: {}",
+            state.describe()
+        );
+    };
+    // A card that pauses, stops or fails (and a manual takeover) revokes.
+    for exit in [ScriptExit::Pause, ScriptExit::Stop, ScriptExit::Fail] {
+        let steps = [
+            GuardianStep::ScriptStart {
+                wants: false,
+                live: false,
+            },
+            fight(),
+            tick(),
+            GuardianStep::ScriptExit(exit),
+            tick(),
+        ];
+        after(&fight_state(&steps));
+        assert_eq!(
+            fight_caught(GuardianMutation::FightSurvivesExit, &steps),
+            (4, "fight-revoked-runs"),
+            "{exit:?}"
+        );
+    }
+    // The saved policy changes to Flee: the Host keeps the episode.
+    let steps = [fight(), tick(), GuardianStep::PolicyFlee, tick()];
+    after(&fight_state(&steps));
+    // The child's own typed end hands over as well.
+    let steps = [
+        fight(),
+        tick(),
+        GuardianStep::FightEnd(seat_model::guardian::FightResult::Handoff),
+        tick(),
+    ];
+    after(&fight_state(&steps));
+    // The toggle off revokes (handling off) and publishes nothing. The escape
+    // clock runs through it, as it does for every episode, and the Fight is
+    // spent: it never restarts when the toggle is back on.
+    let off = [fight(), tick(), GuardianStep::SetEnabled(false), tick()];
+    let state = fight_state(&off);
+    assert_eq!(state.child_id(), None);
+    assert!(state.fight_is_spent(0));
+    assert!(!state.publication().hold && !state.publication().ours);
+    let mut on = off.to_vec();
+    on.extend([GuardianStep::SetEnabled(true), tick()]);
+    let state = fight_state(&on);
+    assert_eq!(state.child_id(), None, "{}", state.describe());
+    assert!(state.fight_is_spent(0));
+    // The escape counters start at the handoff: the budget of the flee is a
+    // whole one, and it runs out after it.
+    let mut steps = vec![
+        fight(),
+        tick(),
+        GuardianStep::FightEnd(seat_model::guardian::FightResult::Handoff),
+    ];
+    steps.extend(std::iter::repeat_n(tick(), wait - 1));
+    assert!(fight_state(&steps).publication().ours);
+    steps.push(tick());
+    let state = fight_state(&steps);
+    assert!(
+        !state.publication().ours && !state.publication().hold,
+        "the flee's own budget ran out: {}",
+        state.describe()
+    );
+}
+
+/// Fight never restarts for an actor in the session, however the first one
+/// ended, and never starts under a saved Flee (design V11D 4.3, 4.4).
+#[test]
+fn a_spent_or_cancelled_fight_never_restarts() {
+    // A trap wins the detector; the retained actor's child closes with the
+    // owner, and the actor is fled from when it returns.
+    let steps = [
+        fight(),
+        tick(),
+        GuardianStep::Overlap {
+            family: Family::Solver,
+            forced_host: false,
+        },
+        tick(),
+        GuardianStep::Return,
+        tick(),
+    ];
+    let state = fight_state(&steps);
+    assert_eq!(state.child_id(), None);
+    assert!(state.fight_is_spent(0));
+    assert!(state.publication().hold && state.publication().acting);
+    assert_eq!(
+        fight_caught(GuardianMutation::FightRestarts, &steps),
+        (5, "fight-restart")
+    );
+    // The policy flipped to Flee before the host began: no child.
+    let steps = [
+        GuardianStep::SetEnabled(false),
+        fight(),
+        tick(),
+        GuardianStep::PolicyFlee,
+        GuardianStep::SetEnabled(true),
+        tick(),
+    ];
+    let state = fight_state(&steps);
+    assert_eq!(state.child_id(), None);
+    assert!(state.publication().hold && state.publication().acting);
+    assert_eq!(
+        fight_caught(GuardianMutation::FightRestarts, &steps),
+        (5, "fight-restart")
+    );
+    // A new session is a new episode: the new Guardian fights the actor.
+    let steps = [fight(), tick(), GuardianStep::SessionReplace, tick()];
+    assert_eq!(fight_state(&steps).child_id(), Some(0));
+}
+
+/// The child belongs to the Fight family of the active event: another family
+/// that replaces it closes the child in the same pass (design V11D 3.3).
+#[test]
+fn a_family_that_replaces_the_fight_closes_the_child_in_the_same_pass() {
+    for steps in [
+        vec![fight(), tick(), GuardianStep::Disappear, tick()],
+        vec![
+            fight(),
+            tick(),
+            GuardianStep::Overlap {
+                family: Family::Solver,
+                forced_host: false,
+            },
+            tick(),
+        ],
+    ] {
+        let state = fight_state(&steps);
+        assert_eq!(state.child_id(), None, "{}", state.describe());
+        assert_eq!(
+            fight_caught(GuardianMutation::FightOrphanKept, &steps),
+            (steps.len() - 1, "orphan-child")
+        );
+    }
+    // A hostile successor inherits the hold, and its own fight when it is
+    // wanted; the old actor's child is closed.
+    let steps = [
+        fight(),
+        tick(),
+        GuardianStep::Replace {
+            family: Family::Fight,
+            forced_host: false,
+        },
+        tick(),
+    ];
+    let state = fight_state(&steps);
+    assert_eq!(state.child_id(), Some(1), "{}", state.describe());
+    assert!(state.fight_is_spent(0) && !state.fight_is_spent(1));
+    assert!(state.publication().hold);
+}
+
+/// A kill holds the event until the actor's removal is observed; a spent
+/// episode budget ends the fight released; a late result of an earlier
+/// token settles nothing.
+#[test]
+fn a_kill_a_spent_budget_and_a_late_result_end_a_fight_as_designed() {
+    use seat_model::guardian::FightResult;
+    let killed = [
+        fight(),
+        tick(),
+        GuardianStep::FightEnd(FightResult::Killed),
+        tick(),
+    ];
+    let state = fight_state(&killed);
+    let out = state.publication();
+    assert_eq!(state.child_id(), None);
+    assert!(out.hold && out.acting && out.ours, "{}", state.describe());
+    let mut removed = killed.to_vec();
+    removed.extend([GuardianStep::Disappear, tick()]);
+    let state = fight_state(&removed);
+    let out = state.publication();
+    assert!(
+        !out.hold && !out.acting && !out.ours,
+        "{}",
+        state.describe()
+    );
+
+    let state = fight_state(&[
+        fight(),
+        tick(),
+        GuardianStep::FightEnd(FightResult::Budget),
+        tick(),
+    ]);
+    let out = state.publication();
+    assert_eq!(state.child_id(), None);
+    assert!(
+        !out.hold && !out.acting && !out.ours,
+        "{}",
+        state.describe()
+    );
+
+    let state = fight_state(&[fight(), tick(), GuardianStep::LateResult, tick()]);
+    assert_eq!(state.child_id(), Some(0), "the late result changed nothing");
+    assert!(state.publication().hold && state.publication().acting);
+}
+
+/// Under a saved Fight every hostile event is forced to the Host, the
+/// eligible ones and the excluded ones (Swarm, the angry plant) alike; once
+/// the saved policy is Flee a new episode is an ordinary Evade a script may
+/// claim, an actor of the listed events included (operator answer CP5,
+/// `MAIN-ACCEPTANCE.md` R3-1). A policy that changes during an episode does
+/// not rebind it: its first pass fixed the binding.
+#[test]
+fn a_saved_fight_forces_the_host_and_a_saved_flee_leaves_the_script_its_claim() {
+    let claiming = GuardianStep::ScriptStart {
+        wants: true,
+        live: false,
+    };
+    let excluded = GuardianStep::Appear {
+        family: Family::Evade,
+        forced_host: false,
+    };
+    let state = fight_state(&[claiming.clone(), excluded.clone(), tick()]);
+    let out = state.publication();
+    assert!(
+        !out.claim_script && out.hold && out.acting,
+        "{}",
+        state.describe()
+    );
+    assert_eq!(state.child_id(), None, "no child for an excluded event");
+    let state = fight_state(&[GuardianStep::PolicyFlee, claiming.clone(), excluded, tick()]);
+    assert!(state.publication().claim_script, "{}", state.describe());
+    // An actor of the listed events under a saved Flee is not fought either.
+    let state = fight_state(&[GuardianStep::PolicyFlee, claiming.clone(), fight(), tick()]);
+    assert!(state.publication().claim_script, "{}", state.describe());
+    assert_eq!(state.child_id(), None);
+    // The policy flipped to Flee before the Guardian first saw the actor: the
+    // new episode is bound by the policy it finds.
+    let state = fight_state(&[claiming.clone(), fight(), GuardianStep::PolicyFlee, tick()]);
+    assert!(state.publication().claim_script, "{}", state.describe());
+    assert_eq!(state.child_id(), None);
+    // A retained actor is bound again when it returns, by the policy then.
+    let steps = [
+        claiming,
+        fight(),
+        tick(),
+        GuardianStep::Overlap {
+            family: Family::Solver,
+            forced_host: false,
+        },
+        tick(),
+        GuardianStep::PolicyFlee,
+        GuardianStep::Return,
+        tick(),
+    ];
+    let state = fight_state(&steps);
+    assert!(state.publication().claim_script, "{}", state.describe());
 }

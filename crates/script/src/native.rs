@@ -649,6 +649,12 @@ pub trait Script: Send {
     fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         crate::combat::RaisedPrayers::empty()
     }
+    /// The food counts this run's current step reserves from combat and
+    /// route upkeep. A Guardian Fight child captures it at its offer so the
+    /// suspended run's reserve outlives the card (design V11D 5.2).
+    fn protected_items(&self) -> Option<Arc<[crate::combat::FoodReserve]>> {
+        None
+    }
     fn on_stop(&mut self, _reason: StopReason) {}
     fn on_stop_with_output(&mut self, reason: StopReason, _output: &mut dyn NativeOutput) {
         self.on_stop(reason);
@@ -1278,6 +1284,11 @@ pub struct AssessReceipt {
     pub refusal: Option<WalkRefusal>,
     pub detail: Option<Arc<str>>,
     pub route_ticks: u32,
+    /// The movement ticks of the assessed route: its tiles, at one tile a
+    /// tick. `route_ticks` less this is the hold allowance the bound already
+    /// carries (design V11D 6.2): a Guardian Fight spends it on lock waits
+    /// after the first click of its walk out.
+    pub route_moves: u32,
 }
 
 /// Native walk failure classification, independent of Traveller internals.

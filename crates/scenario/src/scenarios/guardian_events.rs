@@ -286,6 +286,9 @@ const fn episode_budget(oracle: Oracle) -> u32 {
         Oracle::Trap(TrapKind::Maze) => 1000,
         Oracle::Trap(TrapKind::Mime) => 700,
         Oracle::Dialog { .. } | Oracle::Pick => 500,
+        // A fight runs until the event actor is dead and removed: tier one has
+        // 25 Hitpoints and the bot hits for one or two every few ticks.
+        Oracle::Fight { .. } => 800,
         _ => 400,
     }
 }
@@ -805,6 +808,136 @@ guardian_cell_factories! {
     guardian_skill_shade_scenario => "guardian_skill_shade",
     guardian_skill_zombie_scenario => "guardian_skill_zombie",
     guardian_skill_watchman_scenario => "guardian_skill_watchman",
+}
+
+const BRONZE_SCIMITAR_ID: i32 = 1321;
+
+/// The lobsters a fight cell seeds. The river troll at its lowest tier
+/// outlasts a combat level 9 account only by chance: the account deals about
+/// one damage point in ten game ticks, the event about one in six, so a long
+/// fight has to be paid for in food or the Guardian rightly hands over to
+/// Flee when the food is gone (design V11D 5.2). This count lets the fight
+/// run past 550 game ticks, far beyond the fight's expected length.
+const FIGHT_FOOD: i32 = 15;
+
+/// The account's own state a fight cell seeds: combat stats low enough that
+/// the event spawns at its lowest tier (combat level under 11,
+/// `macro_events.rs2:175-181`) and Hitpoints enough to pay the escape reserve,
+/// a weapon and food. Nothing else is added: the event itself is the real one.
+const FIGHT_SEED: &[&str] = &[
+    "setstat attack 5",
+    "setstat strength 5",
+    "setstat hitpoints 25",
+    "give bronze_scimitar 1",
+    "give lobster 15",
+];
+
+/// One saved-Fight cell: the Guardian cell's event and oracle, the events the
+/// profile saves as Fight, and whether the account is armed to fight.
+type FightCell = (
+    &'static str,
+    Activity,
+    &'static str,
+    Trigger,
+    Oracle,
+    &'static [&'static str],
+    bool,
+);
+
+/// `(scenario name, activity, event, trigger, oracle, saved Fight events,
+/// armed)`. The listed events are fought to the end; the Swarm, which Fight
+/// does not apply to (player damage against it is capped at 0), still flees
+/// with Fight saved.
+pub(crate) const GUARDIAN_FIGHT_CELLS: &[FightCell] = &[
+    (
+        "guardian_fight_river_troll",
+        Activity::Fishing,
+        "river troll",
+        Trigger::Skill(2),
+        Oracle::Fight { npc: "River troll" },
+        &["river troll"],
+        true,
+    ),
+    (
+        "guardian_fight_swarm_flee",
+        Activity::Fishing,
+        "swarm",
+        Trigger::General(1),
+        Oracle::Evade { npc: "Swarm" },
+        &["swarm"],
+        false,
+    ),
+];
+
+/// Build the named cell from [`GUARDIAN_FIGHT_CELLS`]: the Guardian cell of
+/// the event with the policy saved as Fight, and, for an armed cell, the
+/// account's own fight stats, weapon and food seeded before the stand.
+pub(crate) fn guardian_fight_cell(name: &str) -> Scenario {
+    let (name, activity, event, trigger, oracle, fight, armed) = *GUARDIAN_FIGHT_CELLS
+        .iter()
+        .find(|cell| cell.0 == name)
+        .unwrap_or_else(|| panic!("{name} is not a guardian fight cell"));
+    let mut scenario = guardian_event_cell(name, activity, event, trigger, oracle);
+    scenario.settings.guardian_fight = fight;
+    if armed {
+        let mut steps = vec![
+            Step {
+                name: "seed the account's own fight stats, weapon and food",
+                kind: StepKind::Perform {
+                    send: Box::new(|client, _| {
+                        FIGHT_SEED.iter().all(|cmd| cheat(client, cmd).is_sent())
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ItemId {
+                        id: LOBSTER_ID,
+                        count: FIGHT_FOOD,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "wield the seeded weapon",
+                kind: StepKind::Perform {
+                    send: Box::new(|client, snapshot| {
+                        matches!(
+                            Interactions::new(snapshot, client).wear(BRONZE_SCIMITAR_ID),
+                            SendResult::Sent { .. }
+                        )
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::EquipmentId {
+                        id: BRONZE_SCIMITAR_ID,
+                    },
+                    budget_ticks: 120,
+                },
+            },
+        ];
+        steps.push(drain_setstat_levelups_before_hostile_tele());
+        let stand = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "stand at the real activity site")
+            .expect("every guardian cell stands at its activity site");
+        scenario.steps.splice(stand..stand, steps);
+    }
+    scenario
+}
+
+macro_rules! guardian_fight_cell_factories {
+    ($($fn_name:ident => $cell:literal),* $(,)?) => {
+        $(
+            pub(crate) fn $fn_name() -> Scenario {
+                guardian_fight_cell($cell)
+            }
+        )*
+    };
+}
+
+guardian_fight_cell_factories! {
+    guardian_fight_river_troll_scenario => "guardian_fight_river_troll",
+    guardian_fight_swarm_flee_scenario => "guardian_fight_swarm_flee",
 }
 
 #[cfg(test)]

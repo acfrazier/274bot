@@ -6,7 +6,7 @@
 //! `on_random` knock live in [`Guardian`].
 mod ent;
 mod guardian;
-pub use guardian::{Guardian, GuardianLiveContext, RandomStatus};
+pub use guardian::{EscapeIntent, Guardian, GuardianLiveContext, RandomStatus, SentEscape};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -63,6 +63,40 @@ pub trait RandomClaimSource {
     /// the source has no runtime identity, like a fixed callback). A claim
     /// made under another runtime returns to the host without a callback.
     fn runtime(&mut self) -> Option<ClaimRuntime> {
+        None
+    }
+
+    /// Offer one Fight to the script layer (design V11D 4.1): the native
+    /// Combat core against the exact actor of `offer`. `Err` is a typed
+    /// reason the Guardian flees instead. A source with no Fight service
+    /// refuses, and the Guardian flees as it always did.
+    fn fight_offer(
+        &mut self,
+        _offer: &api::random::FightOffer,
+    ) -> Result<(), api::random::FightReason> {
+        Err(api::random::FightReason::NoService)
+    }
+
+    /// Revoke the Fight of `token` before the next dispatch. The source
+    /// records the cancellation for the next [`Self::fight_read`].
+    fn fight_revoke(&mut self, _token: api::random::FightToken, _cancel: api::random::FightCancel) {
+    }
+
+    /// What the child of `token` reports now; `None` when the source holds no
+    /// such child.
+    fn fight_read(&mut self, _token: api::random::FightToken) -> Option<api::random::FightRead> {
+        None
+    }
+
+    /// The Guardian folded the child's end: the source drops it.
+    fn fight_release(&mut self, _token: api::random::FightToken) {}
+
+    /// Stage one escape walk for the slot observation to send once no admitted
+    /// lock blocks it (design V11D 6.2). Staging is not sending.
+    fn fight_stage_escape(&mut self, _intent: EscapeIntent) {}
+
+    /// The escape walk of `token` the observation sent, taken once.
+    fn fight_take_sent(&mut self, _token: api::random::FightToken) -> Option<SentEscape> {
         None
     }
 }
