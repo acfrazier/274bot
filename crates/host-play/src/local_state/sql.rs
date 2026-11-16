@@ -2149,8 +2149,9 @@ fn migrated_name(source: &Path) -> io::Result<PathBuf> {
 
 /// Open the database at `root` without creating it through SQLite: the
 /// private directory and an empty private file are made first, then every
-/// file of the set is checked by path metadata only. A call that brings a
-/// new name makes it durable before it returns ([`publish_names`]).
+/// file of the set is checked by path metadata only. The names of a file no
+/// commit has reached are made durable before the call returns
+/// ([`publish_names`]), and again at every open until a commit reaches it.
 pub(super) fn open_connection(root: &StateRoot) -> Result<Connection, SqlFailure> {
     let dir = root.state_dir();
     let path = root.database_file();
@@ -2166,20 +2167,18 @@ pub(super) fn open_connection(root: &StateRoot) -> Result<Connection, SqlFailure
     };
     vault::create_private_dir(&dir).map_err(|error| io_refusal(&dir, error))?;
     check_private(&dir, vault::PrivateKind::Dir)?;
-    let linked = match vault::create_private_file(&path, b"") {
-        Ok(()) => true,
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+    match vault::create_private_file(&path, b"") {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(io_refusal(&path, error)),
-    };
-    // A zero-byte file is a database no commit has reached (plan §4.3). Its
-    // name can come from a call that stopped before it made the name
-    // durable, so it is published again here.
-    let new_database = linked || fs::metadata(&path).is_ok_and(|meta| meta.len() == 0);
+    }
+    // A WAL that is absent or empty holds no commit. SQLite makes it again at
+    // the first read ([`publish_names`]), so its name is published again.
     let [_, wal, _] = database_set(root);
-    let new_wal = matches!(
-        fs::symlink_metadata(&wal),
-        Err(error) if error.kind() == io::ErrorKind::NotFound
-    );
+    let new_wal = match fs::symlink_metadata(&wal) {
+        Ok(meta) => meta.len() == 0,
+        Err(error) => error.kind() == io::ErrorKind::NotFound,
+    };
     for file in database_set(root) {
         check_private(&file, vault::PrivateKind::File)?;
     }
@@ -2196,9 +2195,7 @@ pub(super) fn open_connection(root: &StateRoot) -> Result<Connection, SqlFailure
         )
     })?;
     configure(&conn, &display)?;
-    if new_database || new_wal {
-        publish_names(&conn, root, new_database)?;
-    }
+    publish_names(&conn, root, new_wal)?;
     Ok(conn)
 }
 
@@ -2212,38 +2209,47 @@ pub(super) fn database_set(root: &StateRoot) -> [PathBuf; 3] {
     [path, PathBuf::from(wal), PathBuf::from(shm)]
 }
 
-/// Make the names a new database brings durable (plan §4.5: a new name needs
-/// its directory-publication sync). The empty file was published by a hard
-/// link, and SQLite makes `-wal` and `-shm` at the first read transaction in
-/// WAL mode, so one read runs here to bring them into the directory. Then
-/// each directory that holds a new name is flushed with
-/// `files::sync_directory` (`F_FULLFSYNC` on macOS): the state directory,
-/// and for a new database file also the root and its parent, the chain a
-/// JSON write flushes (`files::entry_chain`). SQLite syncs the directory of
-/// a new WAL itself, at the first sync of the WAL, but with a plain `fsync`,
-/// which macOS does not push to the drive. The `-shm` name needs no flush:
-/// SQLite rebuilds that file.
-fn publish_names(
-    conn: &Connection,
-    root: &StateRoot,
-    new_database: bool,
-) -> Result<(), SqlFailure> {
+/// Make the names of a database no commit has reached durable (plan §4.5: a
+/// new name needs its directory-publication sync). The empty file was
+/// published by a hard link, and SQLite makes `-wal` and `-shm` at the first
+/// read transaction in WAL mode, so one read runs here to bring them into the
+/// directory. The same read tells whether a commit has reached the database:
+/// one with no table is uninitialized (plan §4.3), whether this call made its
+/// file, an earlier call left it empty or an earlier call stopped after its
+/// header. The names of an uninitialized database are flushed with
+/// `files::sync_directory` (`F_FULLFSYNC` on macOS): the state directory, the
+/// root and the root's parent, the chain a JSON write flushes
+/// (`files::entry_chain`). A call that fails there leaves the database
+/// uninitialized, because the schema is written only after the open returns.
+/// So the next open, in this process or another, flushes the chain again,
+/// until one call completes it. A WAL that no commit has reached (`new_wal`)
+/// is flushed again the same way, in the state directory alone.
+///
+/// SQLite syncs the directory of a new WAL itself, at the first sync of the
+/// WAL, but with a plain `fsync`, which macOS does not push to the drive.
+/// The `-shm` name needs no flush: SQLite rebuilds that file.
+fn publish_names(conn: &Connection, root: &StateRoot, new_wal: bool) -> Result<(), SqlFailure> {
     let path = root.database_file();
     let display = path.display().to_string();
-    conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
-        row.get::<_, i64>(0)
-    })
-    .map_err(|error| match wait_of(&error) {
-        Some(cause) => SqlFailure::Wait(cause),
-        None => refused_by(
-            error,
-            &format!("Preferences refused at {display:?}: the WAL could not be opened"),
-        ),
-    })?;
-    let dirs = if new_database {
+    let tables: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| match wait_of(&error) {
+            Some(cause) => SqlFailure::Wait(cause),
+            None => refused_by(
+                error,
+                &format!("Preferences refused at {display:?}: the database could not be read"),
+            ),
+        })?;
+    let dirs = if tables == 0 {
         files::entry_chain(&path, root)
-    } else {
+    } else if new_wal {
         vec![root.state_dir()]
+    } else {
+        return Ok(());
     };
     for dir in dirs {
         #[cfg(test)]
@@ -2252,7 +2258,7 @@ fn publish_names(
             SqlFailure::refused(
                 FailureReason::Io,
                 format!(
-                    "Preferences refused at {display:?}: the new database's name in {:?} could \
+                    "Preferences refused at {display:?}: the database's name in {:?} could \
                      not be flushed to the disk: {error}",
                     dir.display().to_string()
                 ),

@@ -394,12 +394,60 @@ fn flushed_dirs(synced: &[(usize, std::path::PathBuf, Vec<String>)]) -> Vec<std:
     synced.iter().map(|(_, dir, _)| dir.clone()).collect()
 }
 
+/// The name of a `PRAGMA name = value;` statement as the recorder holds it:
+/// the whole word after `PRAGMA`, so `fullfsync` is not
+/// `checkpoint_fullfsync`.
+fn pragma_name(statement: &str) -> &str {
+    statement
+        .trim_start_matches("PRAGMA")
+        .trim_start()
+        .split(|c: char| c.is_whitespace() || matches!(c, '=' | '(' | ';'))
+        .next()
+        .unwrap_or_default()
+}
+
+/// A commit that reaches the database file and leaves frames in the WAL: a
+/// table, a checkpoint that copies it into the file, and one more row.
+fn reach_the_database(conn: &Connection) {
+    conn.execute("CREATE TABLE reached (x)", []).unwrap();
+    let busy: i64 = conn
+        .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(busy, 0, "the checkpoint copied every frame");
+    conn.execute("INSERT INTO reached VALUES (1)", []).unwrap();
+}
+
+/// Puts a directory's mode back to `0o700` when dropped, so a failed
+/// assertion does not leave a scratch directory that the cleanup cannot
+/// enter.
+#[cfg(unix)]
+struct RestoreMode(std::path::PathBuf);
+
+#[cfg(unix)]
+impl Drop for RestoreMode {
+    fn drop(&mut self) {
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
+#[test]
+fn a_pragma_is_named_by_its_whole_word() {
+    assert_eq!(pragma_name("PRAGMA fullfsync = ON;"), "fullfsync");
+    assert_eq!(
+        pragma_name("PRAGMA checkpoint_fullfsync = ON;"),
+        "checkpoint_fullfsync"
+    );
+    assert_eq!(pragma_name("PRAGMA journal_mode = WAL"), "journal_mode");
+    assert_eq!(pragma_name("PRAGMA synchronous = FULL;"), "synchronous");
+    assert_eq!(pragma_name("PRAGMA page_size = 4096"), "page_size");
+}
+
 /// Plan §4.5 (macOS `fullfsync`): the durability pragmas run before the
 /// switch to WAL mode, because a new file runs its first transaction inside
 /// `PRAGMA journal_mode = WAL` and syncs it as set at that moment. The
-/// recorded statements pin the order on every platform. They cannot show the
-/// sync call itself: the macOS syscall trace of a creation does (an
-/// `F_FULLFSYNC` for the journal and the database file).
+/// recorded statements pin the order on every platform, each by its exact
+/// name. They cannot show the sync call itself: the macOS syscall trace of a
+/// creation does (an `F_FULLFSYNC` for the journal and the database file).
 #[test]
 fn a_new_database_is_set_up_with_its_durability_pragmas_before_wal_mode() {
     let _state_lease = crate::test_process::state();
@@ -414,18 +462,19 @@ fn a_new_database_is_set_up_with_its_durability_pragmas_before_wal_mode() {
             sql::OpenEvent::SyncDir { .. } => None,
         })
         .collect();
-    let wal = pragmas
+    let names: Vec<&str> = pragmas.iter().map(|text| pragma_name(text)).collect();
+    let wal = names
         .iter()
-        .position(|text| text.starts_with("PRAGMA journal_mode"))
+        .position(|set| *set == "journal_mode")
         .expect("the journal mode is set");
     let mut durability = vec!["synchronous"];
     if cfg!(target_os = "macos") {
         durability.extend(["fullfsync", "checkpoint_fullfsync"]);
     }
     for name in durability {
-        let at = pragmas
+        let at = names
             .iter()
-            .position(|text| text.contains(name))
+            .position(|set| *set == name)
             .unwrap_or_else(|| panic!("{name} is set: {pragmas:?}"));
         assert!(at < wal, "{name} is set before journal_mode: {pragmas:?}");
     }
@@ -478,20 +527,21 @@ fn a_new_database_flushes_its_directory_chain_after_its_names_exist() {
     drop(conn);
 }
 
-/// A database that exists with its WAL flushes nothing when it opens again.
-/// A WAL that is gone (another program removed it between two runs) is a new
-/// name again, so only the state directory is flushed.
+/// A database that a commit has reached, with its WAL, flushes nothing when
+/// it opens again. A WAL that is gone (another program removed it between two
+/// runs) is a new name again, so only the state directory is flushed.
 #[test]
 fn a_reopen_flushes_nothing_and_a_new_wal_flushes_the_state_directory_only() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("s1-open-reopen");
     let root = root_of(&scratch);
     let first = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens"));
+    reach_the_database(&first);
     drop(first);
     let [_, wal, shm] = sql::database_set(&root);
     assert!(
-        wal.exists(),
-        "close-time checkpoints are off: the WAL stays"
+        std::fs::metadata(&wal).is_ok_and(|meta| meta.len() > 0),
+        "close-time checkpoints are off: the WAL stays, with its frames"
     );
     sql::take_open_events();
     let second = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database reopens"));
@@ -506,6 +556,87 @@ fn a_reopen_flushes_nothing_and_a_new_wal_flushes_the_state_directory_only() {
     assert_eq!(synced.len(), 1, "{synced:?}");
     assert_eq!(synced[0].1, root.state_dir());
     assert!(synced[0].2.contains(&"state.sqlite3-wal".to_owned()));
+    drop(third);
+}
+
+/// A database with its header and no table is one no commit has reached
+/// (plan §4.3: uninitialized). Its names may come from an open that stopped
+/// before it flushed them all, so every open flushes the chain again until a
+/// commit reaches the database.
+#[test]
+fn a_database_no_commit_has_reached_is_published_again_at_every_open() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-open-header");
+    let root = root_of(&scratch);
+    let chain = vec![
+        root.state_dir(),
+        root.path().to_path_buf(),
+        scratch.home.clone(),
+    ];
+    sql::take_open_events();
+    for attempt in 0..2 {
+        let conn = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens"));
+        assert_eq!(
+            flushed_dirs(&flushed(&sql::take_open_events())),
+            chain,
+            "open {attempt} of a database no commit has reached"
+        );
+        drop(conn);
+    }
+    let [database, wal, _] = sql::database_set(&root);
+    assert!(
+        std::fs::metadata(&database).unwrap().len() > 0,
+        "the opens left the database with its header"
+    );
+    assert!(wal.exists());
+    let conn = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens"));
+    reach_the_database(&conn);
+    drop(conn);
+    sql::take_open_events();
+    let conn = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database reopens"));
+    assert!(
+        flushed(&sql::take_open_events()).is_empty(),
+        "a commit has reached the database: nothing is left to flush"
+    );
+    drop(conn);
+}
+
+/// A WAL no commit has reached is a name that may not be durable: an open can
+/// stop after SQLite made the file and before it flushed the directory. The
+/// next open flushes the state directory again, and no more than that.
+#[test]
+fn a_wal_no_commit_has_reached_is_published_again_in_the_state_directory_only() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-open-empty-wal");
+    let root = root_of(&scratch);
+    let first = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens"));
+    reach_the_database(&first);
+    let busy: i64 = first
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(busy, 0, "the checkpoint reset the WAL");
+    drop(first);
+    let [_, wal, _] = sql::database_set(&root);
+    assert_eq!(
+        std::fs::metadata(&wal).unwrap().len(),
+        0,
+        "the WAL is empty"
+    );
+    sql::take_open_events();
+    let second = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database reopens"));
+    let synced = flushed(&sql::take_open_events());
+    assert_eq!(flushed_dirs(&synced), vec![root.state_dir()]);
+    assert!(synced[0].2.contains(&"state.sqlite3-wal".to_owned()));
+    second
+        .execute("INSERT INTO reached VALUES (2)", [])
+        .unwrap();
+    drop(second);
+    sql::take_open_events();
+    let third = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database reopens"));
+    assert!(
+        flushed(&sql::take_open_events()).is_empty(),
+        "a commit has reached the WAL: nothing is left to flush"
+    );
     drop(third);
 }
 
@@ -540,13 +671,6 @@ fn a_zero_byte_database_file_is_published_again() {
 fn a_directory_that_cannot_be_flushed_refuses_the_new_database() {
     use std::os::unix::fs::MetadataExt;
 
-    struct Restore(std::path::PathBuf);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
-        }
-    }
-
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("s1-open-flush-refused");
     let root = root_of(&scratch);
@@ -555,7 +679,7 @@ fn a_directory_that_cannot_be_flushed_refuses_the_new_database() {
         // The superuser opens any directory: nothing to refuse.
         return;
     }
-    let _restore = Restore(scratch.home.clone());
+    let _restore = RestoreMode(scratch.home.clone());
     std::fs::set_permissions(&scratch.home, std::fs::Permissions::from_mode(0o100)).unwrap();
     match sql::open_connection(&root) {
         Err(sql::SqlFailure::Refused { detail, .. }) => {
@@ -567,6 +691,71 @@ fn a_directory_that_cannot_be_flushed_refuses_the_new_database() {
         }
         _ => panic!("a directory that cannot be flushed must refuse the database"),
     }
+}
+
+/// A flush that fails during the first open leaves the database with its
+/// header and its WAL but no table. The next open must flush the chain again
+/// (the round 5 review probe): a name that an earlier open could not make
+/// durable is never taken for published.
+#[cfg(unix)]
+#[test]
+fn a_failed_parent_flush_is_repeated_by_the_next_open() {
+    use std::os::unix::fs::MetadataExt;
+
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-open-parent-retry");
+    let root = root_of(&scratch);
+    vault::create_private_dir(&root.state_dir()).unwrap();
+    if std::fs::metadata(&scratch.home).unwrap().uid() == 0 {
+        // The superuser opens any directory: nothing to refuse.
+        return;
+    }
+    let chain = vec![
+        root.state_dir(),
+        root.path().to_path_buf(),
+        scratch.home.clone(),
+    ];
+    let _restore = RestoreMode(scratch.home.clone());
+    std::fs::set_permissions(&scratch.home, std::fs::Permissions::from_mode(0o100)).unwrap();
+    sql::take_open_events();
+    let first = sql::open_connection(&root);
+    std::fs::set_permissions(&scratch.home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    match first {
+        Err(sql::SqlFailure::Refused { detail, .. }) => {
+            assert!(detail.contains("could not be flushed"), "{detail}");
+            assert!(
+                detail.contains(&scratch.home.display().to_string()),
+                "{detail}"
+            );
+        }
+        _ => panic!("the first open must refuse the parent that cannot be flushed"),
+    }
+    assert_eq!(
+        flushed_dirs(&flushed(&sql::take_open_events())),
+        chain,
+        "the first open tried the whole chain"
+    );
+    let [database, wal, _] = sql::database_set(&root);
+    assert!(
+        std::fs::metadata(&database).unwrap().len() > 0,
+        "the failed open left the database with its header"
+    );
+    assert!(wal.exists(), "and its WAL");
+    let second = sql::open_connection(&root)
+        .unwrap_or_else(|_| panic!("the second open has its permissions back"));
+    assert_eq!(
+        flushed_dirs(&flushed(&sql::take_open_events())),
+        chain,
+        "the second open flushes the whole chain again"
+    );
+    reach_the_database(&second);
+    drop(second);
+    let third = sql::open_connection(&root).unwrap_or_else(|_| panic!("the database reopens"));
+    assert!(
+        flushed(&sql::take_open_events()).is_empty(),
+        "the chain is published: nothing is left to flush"
+    );
+    drop(third);
 }
 
 /// A database that another connection holds locked answers a wait at open,
