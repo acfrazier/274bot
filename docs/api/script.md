@@ -47,7 +47,7 @@ The operator apps enable `js` by default. A product built with
 `--no-default-features` keeps the native Gatherer, Grinch and Quester, but
 does not include the JS runtime or offer Load, Reload, catalog or rs2b0t
 profile-import controls. Native settings, lifecycle and paint controls remain.
-See [building without JavaScript](../dev/build-from-source.md#builds-with-and-without-javascript)
+See [building without JavaScript](../dev/build-from-source.md#builds-with-and-without-javascript-and-luau)
 for the separate application build commands.
 
 Saved File and catalog selections use the same Core vocabulary in both
