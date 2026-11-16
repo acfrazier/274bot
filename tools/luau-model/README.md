@@ -429,23 +429,25 @@ every machine. Every profile uses an `R_gap` of two, the minimum of LD1 6.5.
 | unit | `runner-natural` | a plan that requires the natural self-stop: the script's own `api.stop`, then one housekeeping Stop of the idle slot; a forced Stop is not that witness | 44 | 67 175 | 23 |
 | unit | `runner-chain` | two planned executions in a chain: the runner's own Stop retires the first, the next Start links to its ticket, and an operator Stop of the idle slot between them breaks the link | 44 | 48 084 | 24 |
 | unit | `clock` | a longer clock (two units for Load and Hook, three for the dispatch), three ticks, a memory event, a panic | 52 | 21 217 | 25 |
-| nightly | `runner-restart` | `runner` with a restart, three Starts all planned, two ticks, `api.stop`, four control operations | 52 | 18 690 478 | 40 |
+| nightly | `runner-restart` | `runner` with a restart, three Starts all planned, two ticks, `api.stop`, four control operations | 52 | 18 688 687 | 40 |
 | nightly | `full` | everything in small counts with the longer clock: two runs and a restart, held and evidence ticks, a wait, a reset, a hold, the client gate, one memory event, one panic | 64 | 32 534 736 | 32 |
 | nightly | `suggested` | the suggested start of LD1 6.5: two runs, four ticks (one held), two waits, three control operations, the watchdog, one memory event and one panic, with the seat pages, reset, hold and client gate of `waits` | 64 | 47 234 200 | 37 |
 | nightly | `scenario` | LD1 and the runner side of LD2 together, with one dispatch | 64 | 23 415 607 | 36 |
 
-`scenario` with a second dispatch needs more than 62 million states at an `R_gap` of one and passes
-the byte cap: the profile keeps one dispatch, and `dock`, `fence` and
-`runner-restart` explore the dock and the runner with more ticks. On the Linux
-nightly host (release build, one core, one 16 GB scope for each profile) the
-four nightly profiles take 18 to 37 seconds and 3.2 to 6.5 GB of resident
-memory; `suggested` is the largest. The unit lane (`cargo test -p luau-model`,
-about 7 seconds in a debug build) runs the thirteen unit profiles and the 81
-mutation runs. The four nightly profiles run in `nightly.sh` (one 16 GB scope
-for each profile) and, as a test lane, with `LUAU_MODEL_FULL=1 cargo test
---release -p luau-model` (about 100 seconds). `systemd/` holds the user unit
-and timer for a Linux nightly host (the install steps are in the unit's
-header); nothing installs them.
+`scenario` with a second dispatch needs more than 62 million states at an
+`R_gap` of one and passes the byte cap: the profile keeps one dispatch, and
+`dock`, `fence` and `runner-restart` explore the dock and the runner with
+more ticks. On the Linux nightly host (release build, one core, one 16 GB
+scope for each profile) the four nightly profiles take 25 to 52 seconds and
+3.7 to 9.0 GiB of resident memory. `suggested` is the largest: its estimate
+is 9.5 GiB of the 12 GiB byte cap, and it has 47 of the 115 million states of
+the state cap. The unit lane (`cargo test -p luau-model`, about 10 seconds in
+a debug build) runs the thirteen unit profiles and the 81 mutation runs. The
+four nightly profiles run in `nightly.sh` (one 16 GB scope for each profile)
+and, as a test lane, with `LUAU_MODEL_FULL=1 cargo test --release -p
+luau-model` (about 150 seconds). `systemd/` holds the user unit and timer for
+a Linux nightly host (the install steps are in the unit's header). Nothing
+installs them.
 
 ## Conformance (slice L2b)
 
