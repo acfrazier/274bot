@@ -413,7 +413,7 @@ every machine.
 the byte cap: the profile keeps one dispatch, and `dock`, `fence` and
 `runner-restart` explore the dock and the runner with more ticks. On the Linux
 nightly host (release build, one core, one 16 GB scope for each profile) the
-four nightly profiles take 19 to 37 seconds and 3.2 to 6.5 GB of resident
+four nightly profiles take 18 to 37 seconds and 3.2 to 6.5 GB of resident
 memory; `suggested` is the largest. The unit lane (`cargo test -p luau-model`,
 about 7 seconds in a debug build) runs the twelve unit profiles and the 78
 mutation runs. The four nightly profiles run in `nightly.sh` (one 16 GB scope
