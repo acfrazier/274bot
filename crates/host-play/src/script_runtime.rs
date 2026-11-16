@@ -134,12 +134,11 @@ use script_observe::try_clone_world_state;
 #[cfg(test)]
 pub(super) use script_observe::{
     delay_ordered_drain_for_test, install_dispatch_barrier, install_ordered_dispatch_hook,
-    script_observe, DispatchBarrier,
+    script_observe, take_script_interacts, DispatchBarrier,
 };
 #[cfg(all(test, feature = "js"))]
 pub(super) use script_observe::{
     drain_observed_host_interacts, script_observe_cached, script_observe_with_npc_boxes,
-    take_script_interacts,
 };
 pub(super) use script_observe::{
     nav_world_state_for_observe, observe_script_inv, script_observe_cached_with_channels,
