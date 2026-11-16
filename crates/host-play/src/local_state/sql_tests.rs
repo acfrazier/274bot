@@ -569,6 +569,33 @@ fn a_directory_that_cannot_be_flushed_refuses_the_new_database() {
     }
 }
 
+/// A database that another connection holds locked answers a wait at open,
+/// never a refusal: the open is retried at the delayed intervals (plan
+/// §4.4). `PRAGMA synchronous` is the first statement that reads the schema,
+/// so it must answer a lock as `journal_mode` does.
+#[test]
+fn a_database_locked_at_open_answers_a_wait_not_a_refusal() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s1-open-locked");
+    let root = root_of(&scratch);
+    vault::create_private_dir(&root.state_dir()).unwrap();
+    vault::create_private_file(&root.database_file(), b"").unwrap();
+    let holder = inspect(&root);
+    holder
+        .execute_batch("CREATE TABLE held (x); BEGIN EXCLUSIVE;")
+        .unwrap();
+    match sql::open_connection(&root) {
+        Err(sql::SqlFailure::Wait(sql::WaitCause::Busy)) => {}
+        Err(sql::SqlFailure::Refused { detail, .. }) => {
+            panic!("a lock must wait, not refuse: {detail}")
+        }
+        _ => panic!("the open of a locked database must answer a wait"),
+    }
+    holder.execute_batch("COMMIT").unwrap();
+    drop(holder);
+    sql::open_connection(&root).unwrap_or_else(|_| panic!("the database opens once it is free"));
+}
+
 #[test]
 fn first_import_takes_the_whole_object_once_and_keeps_the_source_as_migrated_evidence() {
     let _state_lease = crate::test_process::state();

@@ -2431,6 +2431,24 @@ fn configure(conn: &Connection, display: &str) -> Result<(), SqlFailure> {
             format!("Preferences refused at {display:?}: {what} failed: {error}"),
         )
     };
+    // What a failed statement means: lock contention asks for a retry, a file
+    // that is not a database (or is corrupt) names the recovery, and
+    // anything else refuses with the statement. `PRAGMA synchronous` reads the
+    // schema, so it can answer any of them before `journal_mode` does.
+    let classify = |what: &str, error: rusqlite::Error| match wait_of(&error) {
+        Some(cause) => SqlFailure::Wait(cause),
+        None if matches!(
+            error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt)
+        ) =>
+        {
+            SqlFailure::refused(
+                FailureReason::Checksum,
+                format!("the database is damaged: {error}"),
+            )
+        }
+        None => failed(what, error),
+    };
     conn.busy_timeout(Duration::ZERO)
         .map_err(|error| failed("busy_timeout", error))?;
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
@@ -2462,26 +2480,13 @@ fn configure(conn: &Connection, display: &str) -> Result<(), SqlFailure> {
         let statement = statement.trim();
         #[cfg(test)]
         note_pragma(statement);
-        run_pragma(conn, statement).map_err(|error| failed(statement, error))?;
+        run_pragma(conn, statement).map_err(|error| classify(statement, error))?;
     }
     #[cfg(test)]
     note_pragma("PRAGMA journal_mode = WAL");
     let mode: String = conn
         .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
-        .map_err(|error| match wait_of(&error) {
-            Some(cause) => SqlFailure::Wait(cause),
-            None if matches!(
-                error.sqlite_error_code(),
-                Some(rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt)
-            ) =>
-            {
-                SqlFailure::refused(
-                    FailureReason::Checksum,
-                    format!("the database is damaged: {error}"),
-                )
-            }
-            None => failed("journal_mode", error),
-        })?;
+        .map_err(|error| classify("journal_mode", error))?;
     if !mode.eq_ignore_ascii_case("wal") {
         return Err(SqlFailure::refused(
             FailureReason::Io,
