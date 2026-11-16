@@ -91,6 +91,7 @@ fn native_key_duration_377() -> Result<(), String> {
                     input.consume_native_frame(&mut client.shell);
                     held_frames += u32::from(client.shell.key_held[ch as usize] != 0);
                     client.mainloop();
+                    client.advance_hosted_animations(false);
                     host::publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
                     runner.tick(&mut client);
                     match runner.status() {
@@ -141,6 +142,7 @@ fn native_key_duration_377() -> Result<(), String> {
                 return Err("native key leaked after release".into());
             }
             client.mainloop();
+            client.advance_hosted_animations(false);
             host::publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
             std::thread::sleep(Duration::from_millis(20));
         }

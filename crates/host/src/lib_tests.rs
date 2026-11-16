@@ -1605,6 +1605,55 @@ fn native_key_disconnect_and_relog_release_before_the_next_session_frame() {
 }
 
 #[test]
+fn native_key_action_pumps_the_headless_host_camera_without_a_render_head() {
+    use api::native_input::{GestureKey, KeyGesture, KeyPhase};
+    use client::client::ClientPlayer;
+    let mut client = test_client();
+    client.error_loading = false;
+    client.ingame = true;
+    client.scene_state = 2;
+    client.local_player = Some(ClientPlayer::at(50, 50));
+    client.set_draw(false);
+    let input = SlotInput::new();
+    assert!(!frame_cadence(&client, Some(&input)));
+    let lease = input
+        .authority()
+        .key_gesture(KeyGesture::new(GestureKey::ArrowLeft, 1000).unwrap())
+        .unwrap();
+    assert!(frame_cadence(&client, Some(&input)));
+    let before = client.orbit_camera_yaw;
+    let mut slot = SlotLoop::new();
+    let mut sends = 0;
+    Host::client_frame(
+        &mut client,
+        &mut slot,
+        "headless-key",
+        Some(&input),
+        None,
+        &mut sends,
+        None,
+    );
+    assert_ne!(client.orbit_camera_yaw, before);
+    assert!(!client.draw);
+    assert!(slot.head.is_none());
+    assert_eq!(lease.progress().unwrap().phase, KeyPhase::Held);
+    drop(lease);
+    Host::client_frame(
+        &mut client,
+        &mut slot,
+        "headless-key",
+        Some(&input),
+        None,
+        &mut sends,
+        None,
+    );
+    assert_eq!(
+        client.shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+        0
+    );
+}
+
+#[test]
 fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
     use client::client::{ClientNpc, MiniMenuAction};
     for (x, y, action, expected, event_packet) in [

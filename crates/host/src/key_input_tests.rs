@@ -182,6 +182,40 @@ fn old_lease_drop_cannot_release_a_later_ticket() {
 }
 
 #[test]
+fn a_busy_key_owner_cannot_be_overwritten_by_another_producer() {
+    let input = SlotInput::new();
+    let identity = input.authority.publish_live();
+    let first = input.authority.key_gesture(gesture()).unwrap();
+    let other = KeyGesture::new(GestureKey::ArrowRight, 100).unwrap();
+    assert!(matches!(
+        input.authority.key_gesture(other),
+        Err(KeyInputError::Busy)
+    ));
+    assert_eq!(
+        input.authority.script_key_gesture(identity, other),
+        Err(KeyInputError::Busy)
+    );
+    let mut shell = GameShell::new();
+    input.consume_native_frame(&mut shell);
+    assert_eq!(
+        input.key_owner(GestureKey::ArrowLeft.shell_char()),
+        KeyOwner::Script {
+            ticket: first.progress().unwrap().ticket
+        }
+    );
+    assert_eq!(
+        shell.key_held[GestureKey::ArrowRight.shell_char() as usize],
+        0
+    );
+    drop(first);
+    input.consume_native_frame(&mut shell);
+    assert_eq!(
+        shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+        0
+    );
+}
+
+#[test]
 fn unused_and_warmed_key_consumers_allocate_nothing_on_the_owner_thread() {
     std::thread::spawn(|| {
         let input = SlotInput::new();
@@ -193,6 +227,7 @@ fn unused_and_warmed_key_consumers_allocate_nothing_on_the_owner_thread() {
         assert_eq!(disabled.count_total, 0);
         assert_eq!(disabled.bytes_current, 0);
         let warm = input.authority.key_gesture(gesture()).unwrap();
+        input.consume_native_frame(&mut shell);
         drop(warm);
         input.consume_native_frame(&mut shell);
         let armed = allocation_counter::measure(|| {
