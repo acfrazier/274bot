@@ -2285,3 +2285,24 @@ globs = [
 cells = [
   "host.menu-377-hans-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact live_377_attaches_walks_and_interacts_with_numeric_npc --nocapture --test-threads=1",
 ]
+
+# Own-account real nettle sting: transit is disclosed; a measured hit is INVALID.
+[[cover]]
+globs = [
+  "crates/scenario/src/interference.rs",
+  "crates/scenario/src/interference_tests.rs",
+  "crates/scenario/src/lib.rs",
+  "crates/scenario/src/evidence.rs",
+  "crates/scenario/src/runner.rs",
+  "crates/scenario/src/runner_tests.rs",
+  "crates/frontend-core/src/live/mod.rs",
+  "crates/e2e/src/suite/receipt.rs",
+  "crates/e2e/src/suite/receipt_tests.rs",
+  "crates/host-play/tests/interference_alloc.rs",
+  "crates/host-play/tests/revision_377_live.rs",
+  "crates/host-play/tests/revision_377_live/interference.rs",
+]
+cells = [
+  "host.interference-377-measured-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} PARITY_1I_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact interference::measured_windows_377 --nocapture --test-threads=1",
+  "host.interference-allocation-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features test-support --test interference_alloc -- --nocapture",
+]

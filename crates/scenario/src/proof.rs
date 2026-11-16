@@ -113,8 +113,8 @@ pub enum Proof {
     /// A structured operation/target is present in the current menu while an
     /// `ObserveMenu` step is armed. Snapshot-only checks fail closed.
     /// A step wait arm requires that same step to be `ObserveMenu`.
-    /// A terminal proof requires the last step to be `ObserveMenu`; otherwise
-    /// it remains false and the scenario ends only at its deadline.
+    /// A terminal proof requires the last step to be `ObserveMenu`. Otherwise it
+    /// stays false until the deadline or an earlier failure, such as a failed script.
     MenuHasEntry {
         operation: MenuOperation,
         target: MenuTargetSelector,

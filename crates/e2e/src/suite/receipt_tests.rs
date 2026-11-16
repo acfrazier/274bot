@@ -676,7 +676,7 @@ fn the_outer_live_name_and_the_inner_scenario_are_checked_separately() {
     let case = core_case("thiever");
     // The old invented shape (outer name = scenario, PascalCase witness) must fail.
     let invented = parse(
-            "PASS: live thiever {\"scenario\":\"thiever\"}\nCATALOG_CORE: thiever {\"case\":\"Thiever\"}\n",
+            "PASS: live thiever {\"scenario\":\"thiever\",\"outcome\":\"PASS\"}\nCATALOG_CORE: thiever {\"case\":\"Thiever\"}\n",
         );
     match validate(&case, &invented, Some(0), &[]) {
         Verdict::SharedFailure { kind, reason } => {
@@ -728,6 +728,33 @@ fn a_real_panel_core_pass_is_valid_and_keeps_the_shots_contract() {
     assert!(matches!(
         validate(&case, &receipts, Some(0), &[shot]),
         Verdict::PendingVisualReview { .. }
+    ));
+}
+
+#[test]
+fn invalid_is_non_pass_even_with_a_pass_prefix_and_zero_exit() {
+    let case = core_case("thiever");
+    for outcome in ["INVALID", "UNAVAILABLE", "unknown"] {
+        let output = panel_core_pass("script_thiever", "thiever").replace(
+            "\"outcome\":\"PASS\"",
+            &format!("\"outcome\":\"{outcome}\""),
+        );
+        let verdict = validate(&case, &parse(&output), Some(0), &[capture_record()]);
+        assert!(
+            matches!(verdict, Verdict::SharedFailure { .. }),
+            "{outcome}: {verdict:?}"
+        );
+    }
+    let output = "FAIL: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"INVALID\",\"message\":\"combat in measured window; the script on bob failed: the queue blocked\"}\n";
+    let verdict = validate(&case, &parse(output), Some(1), &[]);
+    assert!(
+        matches!(verdict, Verdict::CaseFailure { reason } if reason.contains("INVALID")
+            && reason.contains("combat in measured window")
+            && reason.contains("the script on bob failed: the queue blocked"))
+    );
+    assert!(matches!(
+        validate(&case, &parse(output), Some(0), &[]),
+        Verdict::SharedFailure { .. }
     ));
 }
 
@@ -841,7 +868,8 @@ fn native_core_failure_message_beats_prior_scenario_pass_evidence() {
 #[test]
 fn missing_or_wrong_witness_stops_the_run() {
     let case = core_case("thiever");
-    let mut receipts = parse("PASS: live script_thiever {\"scenario\":\"thiever\"}\n");
+    let mut receipts =
+        parse("PASS: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"PASS\"}\n");
     assert!(matches!(
         validate(&case, &receipts, Some(0), &[]),
         Verdict::SharedFailure {
@@ -851,7 +879,7 @@ fn missing_or_wrong_witness_stops_the_run() {
     ));
 
     receipts = parse(
-        "PASS: live script_thiever {\"scenario\":\"thiever\"}\n\
+        "PASS: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"PASS\"}\n\
              CATALOG_CORE: script_thiever {\"case\":\"bank_fletcher\"}\n",
     );
     match validate(&case, &receipts, Some(0), &[]) {
@@ -863,7 +891,7 @@ fn missing_or_wrong_witness_stops_the_run() {
 
     // A core case must not present a pair witness.
     receipts = parse(
-        "PASS: live script_thiever {\"scenario\":\"thiever\"}\n\
+        "PASS: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"PASS\"}\n\
              CATALOG_CORE: script_thiever {\"case\":\"thiever\"}\n\
              PAIRED_CORE: script_thiever {\"case\":\"air\"}\n",
     );
@@ -876,7 +904,7 @@ fn missing_or_wrong_witness_stops_the_run() {
 #[test]
 fn duplicate_terminal_receipts_are_rejected() {
     let case = core_case("thiever");
-    let line = "PASS: live script_thiever {\"scenario\":\"thiever\"}\n";
+    let line = "PASS: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"PASS\"}\n";
     let receipts = parse(&format!("{line}{line}"));
     match validate(&case, &receipts, Some(0), &[]) {
         Verdict::SharedFailure { reason, .. } => {
@@ -890,7 +918,7 @@ fn duplicate_terminal_receipts_are_rejected() {
 fn pair_cases_require_their_own_witness_under_the_live_name() {
     let case = core_case("nature_crafter_air");
     let receipts = parse(
-        "PASS: live script_nature_crafter_air {\"scenario\":\"nature_crafter_air\"}\n\
+        "PASS: live script_nature_crafter_air {\"scenario\":\"nature_crafter_air\",\"outcome\":\"PASS\"}\n\
              PAIRED_CORE: script_nature_crafter_air {\"case\":\"air\"}\n",
     );
     assert!(matches!(
@@ -899,7 +927,7 @@ fn pair_cases_require_their_own_witness_under_the_live_name() {
     ));
 
     let wrong = parse(
-        "PASS: live script_nature_crafter_air {\"scenario\":\"nature_crafter_air\"}\n\
+        "PASS: live script_nature_crafter_air {\"scenario\":\"nature_crafter_air\",\"outcome\":\"PASS\"}\n\
              PAIRED_CORE: script_nature_crafter_air {\"case\":\"mule\"}\n",
     );
     match validate(&case, &wrong, Some(0), &[]) {
@@ -919,7 +947,7 @@ fn duel_pass_requires_the_native_claim() {
     let case = core_case("duel_arena");
     let first = duel_runtime_evidence(&duel_first_combat_pair(), false);
     let missing = parse(
-        "PASS: live script_duel_arena {\"scenario\":\"duel_arena\"}\n\
+        "PASS: live script_duel_arena {\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}\n\
              PAIRED_CORE: script_duel_arena {\"case\":\"duel\"}\n",
     );
     match validate(&case, &missing, Some(0), &[]) {
@@ -935,7 +963,7 @@ fn duel_pass_requires_the_native_claim() {
     let mut queued_json = first.clone();
     queued_json["claim"] = serde_json::json!("queued-challenge");
     let queued = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {queued_json}\n"
     ));
     match validate(
@@ -951,7 +979,7 @@ fn duel_pass_requires_the_native_claim() {
     }
 
     let receipts = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {first}\n"
     ));
     assert!(matches!(
@@ -1014,7 +1042,7 @@ fn duel_pass_requires_the_native_claim() {
     forged["a"]["saw_combat"] = serde_json::json!(false);
     forged["b"]["saw_combat"] = serde_json::json!(false);
     let unsupported = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {forged}\n"
     ));
     match validate(
@@ -1037,7 +1065,7 @@ fn duel_pass_requires_the_native_claim() {
     let mut seeded_offer = first.clone();
     seeded_offer["a"]["baseline"]["duel_offer_open"] = serde_json::json!(true);
     let seeded_offer_receipts = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {seeded_offer}\n"
     ));
     match validate(
@@ -1058,7 +1086,7 @@ fn duel_pass_requires_the_native_claim() {
     let mut seeded_confirm = first.clone();
     seeded_confirm["a"]["baseline"]["duel_confirm_open"] = serde_json::json!(true);
     let seeded_confirm_receipts = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {seeded_confirm}\n"
     ));
     match validate(
@@ -1082,7 +1110,7 @@ fn duel_pass_requires_the_native_claim() {
         .expect("actor a")
         .remove("mixed_identity");
     let missing_identity_receipts = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {missing_identity}\n"
     ));
     match validate(
@@ -1100,7 +1128,7 @@ fn duel_pass_requires_the_native_claim() {
     let mut invalid_identity = first.clone();
     invalid_identity["a"]["mixed_identity"] = serde_json::json!("yes");
     let invalid_identity_receipts = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {invalid_identity}\n"
     ));
     match validate(
@@ -1124,7 +1152,7 @@ fn duel_pass_requires_the_native_claim() {
         .expect("actor b")
         .remove("saw_wrong_partner");
     let missing_partner_receipts = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {missing_partner}\n"
     ));
     match validate(
@@ -1142,7 +1170,7 @@ fn duel_pass_requires_the_native_claim() {
     let mut invalid_partner = first.clone();
     invalid_partner["b"]["saw_wrong_partner"] = serde_json::json!(1);
     let invalid_partner_receipts = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {invalid_partner}\n"
     ));
     match validate(
@@ -1165,7 +1193,7 @@ fn duel_pass_requires_the_native_claim() {
     assert_eq!(full["full"], "reset-and-further");
     assert_eq!(full["supported"], "first-combat");
     let full_receipts = parse(&format!(
-        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\"}}\n\
+        "PASS: live script_duel_arena {{\"scenario\":\"duel_arena\",\"outcome\":\"PASS\"}}\n\
              PAIRED_CORE: script_duel_arena {full}\n"
     ));
     assert!(matches!(

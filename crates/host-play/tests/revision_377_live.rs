@@ -8,6 +8,8 @@
 //! two-player menu cell requires `PARITY_2C_EVIDENCE_DIR` and a served-identity
 //! JSON file at `PARITY_2C_SERVED_IDENTITY`. Template preparation uses the
 //! production runtime-cache path in a private home.
+//! The measured-window cell requires `PARITY_1I_EVIDENCE_DIR` and records
+//! the actual non-zero child exit for its intentionally INVALID variant.
 //! Numeric NPC selection and reacquisition require a wall-valid adjacent
 //! approach in the observed collision scene.
 //! Pre-Start mainland fixtures request a fresh login after observing logout.
@@ -41,6 +43,9 @@ mod quantity;
 
 #[path = "revision_377_live/menu.rs"]
 mod menu;
+
+#[path = "revision_377_live/interference.rs"]
+mod interference;
 
 #[path = "revision_377_live/quester.rs"]
 mod quester;

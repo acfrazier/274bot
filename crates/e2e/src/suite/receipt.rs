@@ -618,6 +618,18 @@ pub fn validate(
             format!("{live} PASS evidence is not a JSON object"),
         );
     }
+    if pass
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("outcome"))
+        .and_then(Value::as_str)
+        != Some("PASS")
+    {
+        return shared(
+            "receipt",
+            format!("{live} PASS line carries non-pass evidence: {}", pass.line),
+        );
+    }
     match evidence_scenario(pass) {
         Some(observed) if observed == scenario => {}
         Some(observed) => {
@@ -730,7 +742,10 @@ fn failure_detail(fail: &TerminalReceipt, receipts: &ParsedReceipts) -> String {
     if let Some(Value::Object(map)) = &fail.payload {
         if let Some(message) = map.get("message").and_then(Value::as_str) {
             if !message.is_empty() {
-                return message.to_string();
+                return match map.get("outcome").and_then(Value::as_str) {
+                    Some(outcome) => format!("{outcome}: {message}"),
+                    None => message.to_string(),
+                };
             }
         }
         if let Some(outcome) = map.get("outcome").and_then(Value::as_str) {

@@ -538,6 +538,41 @@ owns it. Each slot's receipts count from the generation of its own accepted
 Start; a receipt of an earlier run is ignored. A completed, stopped, cancelled
 or paused script ends nothing.
 
+A measured window with observed interference ends as `INVALID`, with a nonzero
+exit. The runner also asks the script pass gate and keeps both failure reasons.
+A failed step, budget, deadline, started script or unavailable proof in a quiet
+open window keeps its own `FAIL` or `UNAVAILABLE` outcome and diagnostic.
+The verdict closes the window before world-speed cleanup. Combat observed
+during cleanup is transit and does not replace that failure with `INVALID`.
+The receipt marks that window incomplete with `end_reason: "terminal"` and
+`valid: false`, without claiming interference. An open window cannot produce
+`PASS`: a successful proof without End becomes `FAIL: measured-window-not-ended`.
+Construction refuses End without Begin, nested Begin, mismatched End and a
+Begin with no declared End, before seeding, sending, sustaining or cleanup.
+Only explicit `PASS` evidence permits a successful status or exit.
+
+`LabelledDeath` exempts **all combat** in its window, not a specific attacker.
+The exemption applies only if HP zero is observed before the window closes.
+Without that death, its combat is ordinary interference and the run is INVALID.
+A cell must open this window only around its deliberate death and keep it short.
+The receipt keeps the HP path, raw hitmark values/types/cycles, observed hit
+count and face-target changes. It also lists nearby NPC slots facing the account
+at each recorded snapshot change. Those targets do not prove who dealt a hit
+and do not affect the verdict. Null NPC lists mean no snapshot was attached
+(for example Begin's repeated sample). Lists are bounded and disclose truncation.
+The observer cannot bind damage to an attacker. That would need a client-owned
+damage-source observation. Session changes and evidence overflow still invalidate.
+
+Measured-window limits for cell authors:
+
+- The death label exempts all combat in its window, and hitpoints already 0 when Begin runs count as the death. Open it only around the deliberate death.
+- A death-labelled window that fails before the death and saw a hit reads INVALID, not FAIL. Treat that result as an invalid measurement.
+- A window name reused by a later window is refused only at run time. Give each window a unique name.
+- The live cell's outside window has zero length. It proves transit disclosure, not a sustained quiet interval.
+- 1,024 events overflow and invalidate the run, even outside a window. Keep the full observation history below that bound.
+- The nightly runner has no INVALID category. Read the receipt to distinguish INVALID from its nightly FAIL classification.
+- The account's own face target (Talk-to, trade, follow) invalidates a quiet window, and companions are not observed. Avoid those actions inside Quiet and qualify companions separately.
+
 ### Quester journal fixtures
 
 The headless Quester journal fixtures run with

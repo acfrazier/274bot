@@ -189,6 +189,15 @@ pub enum RunnerStatus {
     Failed,
 }
 
+fn project_runner_status(status: scenario::RunnerStatus, outcome: Option<&str>) -> RunnerStatus {
+    match status {
+        scenario::RunnerStatus::Seeding => RunnerStatus::Seeding,
+        scenario::RunnerStatus::Running { step, total } => RunnerStatus::Running { step, total },
+        scenario::RunnerStatus::Passed if outcome == Some("PASS") => RunnerStatus::Passed,
+        scenario::RunnerStatus::Passed | scenario::RunnerStatus::Failed(_) => RunnerStatus::Failed,
+    }
+}
+
 /// Value-only timing receipt for the TUI's live proof output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiveTimingView {
@@ -1224,19 +1233,9 @@ impl RunnerHandle {
 
     /// Current provider-neutral runner state.
     pub fn status(&self) -> Option<RunnerStatus> {
-        self.0
-            .lock()
-            .unwrap()
-            .runner
-            .as_ref()
-            .map(|runner| match runner.status() {
-                scenario::RunnerStatus::Seeding => RunnerStatus::Seeding,
-                scenario::RunnerStatus::Running { step, total } => {
-                    RunnerStatus::Running { step, total }
-                }
-                scenario::RunnerStatus::Passed => RunnerStatus::Passed,
-                scenario::RunnerStatus::Failed(_) => RunnerStatus::Failed,
-            })
+        self.0.lock().unwrap().runner.as_ref().map(|runner| {
+            project_runner_status(runner.status(), runner.evidence().map(|e| e.outcome))
+        })
     }
     /// Scenario identity used by the headed recording sidecar.
     pub fn scenario_name(&self) -> Option<&'static str> {
@@ -2542,6 +2541,32 @@ impl<Io> crate::OperatorSession<Io> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn invalid_receipts_never_project_as_a_frontend_pass() {
+        for outcome in [
+            Some("INVALID"),
+            Some("UNAVAILABLE"),
+            Some("FAIL"),
+            Some("unknown"),
+            None,
+        ] {
+            assert_eq!(
+                super::project_runner_status(scenario::RunnerStatus::Passed, outcome),
+                super::RunnerStatus::Failed,
+            );
+        }
+        assert_eq!(
+            super::project_runner_status(scenario::RunnerStatus::Passed, Some("PASS")),
+            super::RunnerStatus::Passed,
+        );
+        assert_eq!(
+            super::project_runner_status(
+                scenario::RunnerStatus::Failed("retirement failed".into()),
+                Some("PASS")
+            ),
+            super::RunnerStatus::Failed,
+        );
+    }
     #[test]
     fn screen_name_matches_the_client_conversion() {
         for raw in ["", "live_bot_7", "_a__b", "CAPS", "a_9_é", "😄_x"] {
