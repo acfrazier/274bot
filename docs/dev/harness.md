@@ -538,11 +538,28 @@ owns it. Each slot's receipts count from the generation of its own accepted
 Start; a receipt of an earlier run is ignored. A completed, stopped, cancelled
 or paused script ends nothing.
 
-A measured window that is invalid takes precedence over the script pass gate.
-Its terminal outcome stays `INVALID`, with a nonzero exit, even when a started
-script also failed. Otherwise a failed script produces `FAIL`. Only explicit
-`PASS` evidence permits a successful status or exit. Cleanup never turns either
-non-pass outcome into a pass.
+A measured window with observed interference ends as `INVALID`, with a nonzero
+exit. The runner also asks the script pass gate and keeps both failure reasons.
+A failed step, budget, deadline, started script or unavailable proof in a quiet
+open window keeps its own `FAIL` or `UNAVAILABLE` outcome and diagnostic.
+The receipt marks that window incomplete with `end_reason: "terminal"` and
+`valid: false`, without claiming interference. An open window cannot produce
+`PASS`: a successful proof without End becomes `FAIL: measured-window-not-ended`.
+Construction refuses End without Begin, nested Begin, mismatched End and a
+Begin with no declared End, before seeding, sending, sustaining or cleanup.
+Only explicit `PASS` evidence permits a successful status or exit.
+
+`LabelledDeath` exempts **all combat** in its window, not a specific attacker.
+The exemption applies only if HP zero is observed before the window closes.
+Without that death, its combat is ordinary interference and the run is INVALID.
+A cell must open this window only around its deliberate death and keep it short.
+The receipt keeps the HP path, raw hitmark values/types/cycles, observed hit
+count and face-target changes. It also lists nearby NPC slots facing the account
+at each recorded snapshot change. Those targets do not prove who dealt a hit
+and do not affect the verdict. Null NPC lists mean no snapshot was attached
+(for example Begin's repeated sample). Lists are bounded and disclose truncation.
+The observer cannot bind damage to an attacker. That would need a client-owned
+damage-source observation. Session changes and evidence overflow still invalidate.
 
 ### Quester journal fixtures
 

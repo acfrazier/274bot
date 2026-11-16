@@ -246,23 +246,61 @@ fn invalid_is_sticky_through_cleanup_success_failure_and_terminal_polls() {
 }
 
 #[test]
-fn an_unclosed_measured_window_cannot_become_a_terminal_pass() {
+fn an_unclosed_measured_window_is_refused_before_dispatch() {
     let mut scenario = measured_scenario(crate::CombatExpectation::Quiet, false);
     scenario.steps.truncate(1);
     scenario.proof = Proof::IngameScene2;
     let mut runner = ScenarioRunner::with_world(scenario, None);
-    runner.set_scene_settle(Duration::ZERO);
+    let evidence = runner.evidence().expect("construction refusal");
+    assert_eq!(evidence.outcome, "FAIL");
+    assert_eq!(evidence.ticks, 0);
+    assert!(evidence
+        .message
+        .as_deref()
+        .unwrap()
+        .contains("Begin has no End"));
+    assert!(evidence.interference.as_ref().unwrap().windows.is_empty());
     let mut client = seeded_client();
-    client.stat_effective_level[3] = 10;
-    advance_game_ticks_until_done(&mut runner, &mut client);
-    assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
-    let evidence = runner.evidence().unwrap();
-    assert_eq!(evidence.outcome, "INVALID");
-    assert_eq!(
-        evidence.interference.as_ref().unwrap().invalid_reason,
-        Some("measured-window-not-ended")
-    );
-    assert_eq!(evidence.exit_code(), 1);
+    runner.tick(&mut client);
+    assert_eq!(client.out.pos, 0);
+}
+
+#[test]
+fn malformed_measured_boundaries_are_refused_before_seeding_sustaining_or_cleanup() {
+    for case in ["end-without-begin", "begin-twice", "mismatched-end"] {
+        let mut scenario = measured_scenario(crate::CombatExpectation::Quiet, false);
+        match case {
+            "end-without-begin" => {
+                scenario.steps.remove(0);
+            }
+            "begin-twice" => {
+                scenario.steps[1].kind = StepKind::BeginMeasuredWindow {
+                    name: "nested",
+                    expectation: crate::CombatExpectation::Quiet,
+                };
+            }
+            "mismatched-end" => {
+                scenario.steps[2].kind = StepKind::EndMeasuredWindow { name: "other" };
+            }
+            _ => unreachable!(),
+        }
+        scenario.seed.mainland = true;
+        scenario.settings.teardown_world_speed_ms = Some(600);
+        scenario.settings.sustains = vec![Sustain::poll(Proof::IngameScene2, "~energy")];
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        let receipt = runner.evidence().expect(case);
+        assert_eq!(receipt.outcome, "FAIL", "{case}");
+        assert_eq!(receipt.ticks, 0, "{case}");
+        assert!(
+            receipt.message.as_deref().unwrap().contains("step"),
+            "{case}"
+        );
+        let mut client = seeded_client();
+        for _ in 0..8 {
+            runner.tick(&mut client);
+        }
+        assert_eq!(client.out.pos, 0, "{case}");
+    }
 }
 
 #[test]
@@ -3151,8 +3189,15 @@ fn measured_pass_gate_both_vetoes_keep_invalid_and_its_reason_first() {
         let evidence = runner.evidence().unwrap();
         assert_eq!(evidence.outcome, "INVALID");
         assert_eq!(evidence.exit_code(), 1);
-        assert_eq!(evidence.message.as_deref(), Some("hitpoints-decreased"));
-        assert_eq!(probe.looks(), 0, "INVALID precedes the script pass gate");
+        assert_eq!(
+            evidence.message.as_deref(),
+            Some("hitpoints-decreased; the script on bob failed: the queue blocked")
+        );
+        assert_eq!(
+            probe.looks(),
+            1,
+            "INVALID must retain the script failure too"
+        );
         let combat = evidence.interference.as_ref().unwrap();
         assert!(!combat.windows[0].valid);
         assert_eq!(combat.invalid_reason, Some("hitpoints-decreased"));
@@ -3202,7 +3247,7 @@ fn measured_pass_gate_invalid_window_with_successful_script_cannot_pass() {
         assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
         assert_eq!(runner.evidence().unwrap().outcome, "INVALID");
         assert_eq!(runner.evidence().unwrap().exit_code(), 1);
-        assert_eq!(probe.looks(), 0);
+        assert_eq!(probe.looks(), 1);
     }
 }
 
@@ -3222,6 +3267,277 @@ fn measured_pass_gate_clean_window_and_successful_script_still_pass() {
     assert_eq!(runner.evidence().unwrap().outcome, "PASS");
     assert_eq!(runner.evidence().unwrap().exit_code(), 0);
     assert_eq!(probe.looks(), 1);
+}
+
+#[test]
+fn measured_terminal_nonpass_keeps_its_cause_unless_interference_was_observed() {
+    for outcome in ["FAIL", "UNAVAILABLE"] {
+        for interfered in [false, true] {
+            let probe = GateProbe::new(false);
+            let (mut runner, mut client) = measured_pass_gate_runner(&probe);
+            if interfered {
+                observe_measured_damage(&mut runner, &mut client);
+            }
+            runner.record_terminal(outcome, "the product or capability failed");
+            let receipt = runner.evidence().unwrap();
+            assert_eq!(
+                receipt.outcome,
+                if interfered { "INVALID" } else { outcome }
+            );
+            assert_eq!(receipt.exit_code(), 1);
+            assert!(receipt
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("the product or capability failed"));
+            let combat = receipt.interference.as_ref().unwrap();
+            assert_eq!(
+                combat.invalid_reason,
+                interfered.then_some("hitpoints-decreased")
+            );
+            assert_eq!(combat.windows[0].end_reason, Some("terminal"));
+            assert!(!combat.windows[0].valid);
+        }
+    }
+}
+
+#[test]
+fn measured_open_window_terminal_paths_never_hide_a_quiet_product_failure() {
+    for cause in [
+        "step",
+        "budget",
+        "deadline",
+        "script",
+        "gate",
+        "unavailable",
+    ] {
+        for interfered in [false, true] {
+            for cleanup in [false, true] {
+                let probe = GateProbe::new(cause == "gate");
+                let (mut runner, mut client) = measured_pass_gate_runner(&probe);
+                if cleanup {
+                    runner.scenario.settings.teardown_world_speed_ms = Some(600);
+                }
+                if interfered {
+                    observe_measured_damage(&mut runner, &mut client);
+                }
+                let reason = match cause {
+                    "step" => {
+                        runner.fail_start("the measured step failed");
+                        "the measured step failed"
+                    }
+                    "budget" => {
+                        runner.tick(&mut client);
+                        runner.game_ticks_waited = 12;
+                        runner.tick(&mut client);
+                        "not seen within 12 game ticks"
+                    }
+                    "deadline" => {
+                        runner.deadline = Duration::ZERO;
+                        runner.tick(&mut client);
+                        "deadline"
+                    }
+                    "script" => {
+                        runner.fail_script("bob", "the queue blocked");
+                        "the script on bob failed: the queue blocked"
+                    }
+                    "gate" => {
+                        record_measured_pass(&mut runner, cleanup);
+                        "the script on bob failed: the queue blocked"
+                    }
+                    "unavailable" => {
+                        runner.finish_unavailable("engine capability unavailable");
+                        "engine capability unavailable"
+                    }
+                    _ => unreachable!(),
+                };
+                if matches!(runner.phase, Phase::Cleaning) {
+                    let pending = runner.terminal_cleanup.take().unwrap().outcome;
+                    runner.complete_terminal(pending);
+                }
+                let receipt = runner.evidence().expect(cause);
+                assert_eq!(
+                    receipt.outcome,
+                    if interfered {
+                        "INVALID"
+                    } else if cause == "unavailable" {
+                        "UNAVAILABLE"
+                    } else {
+                        "FAIL"
+                    },
+                    "{cause}, interference={interfered}, cleanup={cleanup}"
+                );
+                assert_eq!(receipt.exit_code(), 1);
+                let message = receipt.message.as_deref().unwrap();
+                assert!(
+                    message.contains(if interfered {
+                        "hitpoints-decreased"
+                    } else {
+                        reason
+                    }),
+                    "{cause}: {message}"
+                );
+                let combat = receipt.interference.as_ref().unwrap();
+                assert_eq!(combat.windows[0].end_reason, Some("terminal"), "{cause}");
+                assert!(!combat.windows[0].valid, "{cause}");
+                assert_eq!(
+                    combat.invalid_reason,
+                    interfered.then_some("hitpoints-decreased")
+                );
+                if client.out.pos != 0 {
+                    assert!(
+                        cleanup && contains_outgoing_ascii(&client, "speed 600"),
+                        "only the existing cleanup may send"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn measured_open_window_cannot_publish_pass_even_after_cleanup() {
+    for cleanup in [false, true] {
+        let probe = GateProbe::new(false);
+        let (mut runner, _) = measured_pass_gate_runner(&probe);
+        record_measured_pass(&mut runner, cleanup);
+        let receipt = runner.evidence().unwrap();
+        assert_eq!(receipt.outcome, "FAIL");
+        assert!(receipt
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("measured-window-not-ended"));
+        let combat = receipt.interference.as_ref().unwrap();
+        assert_eq!(combat.invalid_reason, None);
+        assert_eq!(combat.windows[0].end_reason, Some("terminal"));
+        assert!(!combat.windows[0].valid);
+        assert_eq!(receipt.exit_code(), 1);
+    }
+}
+
+#[test]
+fn measured_client_proofs_preserve_unavailable_and_menu_deadline_failures() {
+    for cause in ["varbit-arm", "varbit-terminal", "menu-arm", "menu-terminal"] {
+        for interfered in [false, true] {
+            let probe = GateProbe::new(false);
+            let (mut runner, mut client) = measured_pass_gate_runner(&probe);
+            if interfered {
+                observe_measured_damage(&mut runner, &mut client);
+            }
+            let varbit = cause.starts_with("varbit");
+            let proof = if varbit {
+                CLIENT_VARBIT_PROOF
+            } else {
+                CLIENT_MENU_PROOF
+            };
+            runner.scenario.steps[2].kind = if varbit {
+                StepKind::ObserveVarbit { id: 0 }
+            } else {
+                StepKind::ObserveMenu
+            };
+            runner.scenario.steps[2].wait.arm = proof;
+            if cause.ends_with("terminal") {
+                runner.scenario.proof = proof;
+                runner.phase = Phase::Proving;
+            }
+            // Menu reads return false, never UNAVAILABLE; its deadline remains FAIL.
+            runner.deadline = Duration::ZERO;
+            runner.tick(&mut client);
+            let receipt = runner.evidence().expect(cause);
+            assert_eq!(
+                receipt.outcome,
+                if interfered {
+                    "INVALID"
+                } else if varbit {
+                    "UNAVAILABLE"
+                } else {
+                    "FAIL"
+                },
+                "{cause}"
+            );
+            let message = receipt.message.as_deref().unwrap();
+            assert!(
+                message.contains(if interfered {
+                    "hitpoints-decreased"
+                } else if varbit {
+                    "MissingDefinition"
+                } else {
+                    "deadline"
+                }),
+                "{cause}: {message}"
+            );
+            assert_eq!(receipt.exit_code(), 1);
+            assert_eq!(
+                receipt.interference.as_ref().unwrap().windows[0].end_reason,
+                Some("terminal")
+            );
+            assert_eq!(client.out.pos, 0);
+        }
+    }
+}
+
+#[test]
+fn labelled_death_receipt_discloses_hitmarks_and_npc_face_targets_without_blame() {
+    let mut runner = ScenarioRunner::with_world(
+        measured_scenario(
+            crate::CombatExpectation::LabelledDeath { label: "own death" },
+            false,
+        ),
+        None,
+    );
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = seeded_client();
+    client.self_slot = 2;
+    client.stat_effective_level[3] = 10;
+    for (position, index, facing) in [(0, 7, 32770), (1, 8, 32771)] {
+        let mut npc = ClientNpc {
+            r#type: Some(0),
+            ..ClientNpc::default()
+        };
+        npc.entity.face_entity = facing;
+        client.npc[index] = Some(Box::new(npc));
+        client.npc_ids[position] = index as i32;
+    }
+    client.npc_count = 2;
+    client.bump_gens(ServerProt::NPC_INFO);
+    runner.tick(&mut client);
+    client.stat_effective_level[3] = 0;
+    let actor = &mut client.local_player.as_mut().unwrap().entity;
+    actor.damage_values[0] = 10;
+    actor.damage_types[0] = 1;
+    actor.damage_cycles[0] = 70;
+    actor.face_entity = 8;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    advance_game_ticks_until_done(&mut runner, &mut client);
+    let receipt = runner.evidence().unwrap();
+    assert_eq!(
+        receipt.outcome, "PASS",
+        "NPC disclosure must not infer blame"
+    );
+    let combat = receipt.interference.as_ref().unwrap();
+    assert_eq!(combat.windows[0].hit_count, 1);
+    assert!(combat.windows[0].death_observed);
+    let event = combat
+        .events
+        .iter()
+        .find(|event| event.reason == "death")
+        .unwrap();
+    assert_eq!(event.sample.target.unwrap().index, 8);
+    assert_eq!(event.targeting_npcs.as_deref(), Some([7].as_slice()));
+    assert!(!event.targeting_npcs_truncated);
+    let json: serde_json::Value = serde_json::from_str(&receipt.to_json()).unwrap();
+    let event = json["interference"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["reason"] == "death")
+        .unwrap();
+    assert_eq!(event["sample"]["hitmarks"]["marks"][0]["value"], 10);
+    assert_eq!(event["sample"]["hitmarks"]["marks"][0]["cycle"], 70);
+    assert_eq!(event["targeting_npcs"][0], 7);
+    assert_eq!(client.out.pos, 0);
 }
 
 #[test]

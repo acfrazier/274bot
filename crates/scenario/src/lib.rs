@@ -605,11 +605,14 @@ pub enum StepKind {
     ObserveMenu,
     /// Begin a named interval over existing read-only combat, HP and target views.
     /// Transit outside an interval is disclosed but does not invalidate the run.
+    /// A death label exempts ALL combat only if HP zero is observed before End.
+    /// Open it only around the deliberate death and keep it short: the observer
+    /// cannot identify who dealt a hit. Unpaired boundaries fail at construction.
     BeginMeasuredWindow {
         name: &'static str,
         expectation: CombatExpectation,
     },
-    /// End the matching interval. Missing or mismatched boundaries are non-pass.
+    /// End the matching interval. A labelled window without death gets no combat exemption.
     EndMeasuredWindow { name: &'static str },
     /// Host starts the catalog isolate (`script_start_load`) or compiled
     /// card (`start_compiled`) once when the live pump sees this step.

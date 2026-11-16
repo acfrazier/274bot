@@ -27,10 +27,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Scenarios can name measured windows. Unexpected damage, combat or targeting
   inside a window makes the run INVALID, never a pass or successful exit,
   even after cleanup. The receipt keeps the same events outside a window.
-  A cell can explicitly label its own deliberate death instead of treating
-  it as interference.
-  An invalid window also takes precedence over a failed started script at the
-  final pass gate, so its interference reason remains the terminal diagnostic.
+  Quiet windows cut short by a product failure retain FAIL or UNAVAILABLE and
+  its reason. Their receipts disclose the missing End. An incomplete window
+  cannot pass. When interference and a started-script failure coincide, the
+  INVALID receipt keeps both reasons.
+  A deliberate-death label exempts all combat in its short window only when
+  death is observed there. It cannot identify the attacker. Receipts disclose
+  the HP path, hits and face targets so readers can judge the exemption.
 - The revision-377 nettle-window cell leaves nearby aggressors by normal
   walking and records four full quiet game ticks before its transit Begin;
   its inside-window sting still requires INVALID and clean escape/logout.

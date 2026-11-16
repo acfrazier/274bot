@@ -745,10 +745,12 @@ fn invalid_is_non_pass_even_with_a_pass_prefix_and_zero_exit() {
             "{outcome}: {verdict:?}"
         );
     }
-    let output = "FAIL: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"INVALID\",\"message\":\"combat in measured window\"}\n";
+    let output = "FAIL: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"INVALID\",\"message\":\"combat in measured window; the script on bob failed: the queue blocked\"}\n";
     let verdict = validate(&case, &parse(output), Some(1), &[]);
     assert!(
-        matches!(verdict, Verdict::CaseFailure { reason } if reason.contains("combat in measured window"))
+        matches!(verdict, Verdict::CaseFailure { reason } if reason.contains("INVALID")
+            && reason.contains("combat in measured window")
+            && reason.contains("the script on bob failed: the queue blocked"))
     );
     assert!(matches!(
         validate(&case, &parse(output), Some(0), &[]),

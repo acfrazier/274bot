@@ -742,7 +742,10 @@ fn failure_detail(fail: &TerminalReceipt, receipts: &ParsedReceipts) -> String {
     if let Some(Value::Object(map)) = &fail.payload {
         if let Some(message) = map.get("message").and_then(Value::as_str) {
             if !message.is_empty() {
-                return message.to_string();
+                return match map.get("outcome").and_then(Value::as_str) {
+                    Some(outcome) => format!("{outcome}: {message}"),
+                    None => message.to_string(),
+                };
             }
         }
         if let Some(outcome) = map.get("outcome").and_then(Value::as_str) {

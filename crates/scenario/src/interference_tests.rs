@@ -11,6 +11,7 @@ fn frame(hp: i32) -> CombatSample {
         in_combat: false,
         target: None,
         hitmark_cycle: Some(0),
+        hitmarks: None,
     }
 }
 
@@ -152,8 +153,10 @@ fn windows_require_matching_boundaries_and_a_continuous_session() {
     observer
         .begin("unclosed", CombatExpectation::Quiet)
         .unwrap();
-    observer.terminal();
-    assert_eq!(observer.invalid_reason(), Some("measured-window-not-ended"));
+    assert!(observer.terminal());
+    assert_eq!(observer.invalid_reason(), None);
+    assert_eq!(observer.evidence.windows[0].end_reason, Some("terminal"));
+    assert!(!observer.evidence.windows[0].valid);
 }
 
 #[test]
@@ -172,4 +175,110 @@ fn retention_overflow_cannot_certify_a_pass() {
     );
     assert_eq!(observer.evidence.dropped_events, 1);
     assert_eq!(observer.invalid_reason(), Some("combat-evidence-overflow"));
+}
+
+#[test]
+fn death_labels_exempt_all_combat_only_when_the_death_is_observed() {
+    for labelled in [false, true] {
+        for dies in [false, true] {
+            let mut observer = CombatObserver::default();
+            observer.sample(frame(10));
+            observer
+                .begin(
+                    "deliberate death",
+                    if labelled {
+                        CombatExpectation::LabelledDeath { label: "own death" }
+                    } else {
+                        CombatExpectation::Quiet
+                    },
+                )
+                .unwrap();
+            for (tick, hp, damage, target) in
+                [(2, 6, 4, Some(7)), (3, 3, 3, Some(8)), (4, 0, 3, None)]
+            {
+                if hp == 0 && !dies {
+                    break;
+                }
+                let mut marks = [api::snapshot::HitmarkView {
+                    value: 0,
+                    kind: 0,
+                    cycle: 0,
+                }; 4];
+                marks[0] = api::snapshot::HitmarkView {
+                    value: damage,
+                    kind: 1,
+                    cycle: tick as i32 + 70,
+                };
+                observer.sample(CombatSample {
+                    tick,
+                    target: target.map(|index| ActorTargetView {
+                        kind: ActorKind::Npc,
+                        index,
+                    }),
+                    in_combat: true,
+                    hitmark_cycle: Some(tick as i32 + 70),
+                    hitmarks: Some(HitmarksView {
+                        marks,
+                        loop_cycle: tick as i32,
+                    }),
+                    ..frame(hp)
+                });
+            }
+            observer.end("deliberate death").unwrap();
+            observer.terminal();
+            let exempt = labelled && dies;
+            assert_eq!(
+                observer.invalid_reason(),
+                (!exempt).then_some("hitpoints-decreased")
+            );
+            let window = &observer.evidence.windows[0];
+            assert_eq!(window.valid, exempt);
+            assert_eq!(window.death_observed, dies);
+            assert_eq!(window.hit_count, if dies { 3 } else { 2 });
+            let hits: Vec<_> = observer
+                .evidence
+                .events
+                .iter()
+                .filter(|event| event.sample.hitmarks.is_some())
+                .collect();
+            assert_eq!(
+                hits.iter()
+                    .map(|event| event.sample.hitpoints.unwrap())
+                    .collect::<Vec<_>>(),
+                if dies { vec![6, 3, 0] } else { vec![6, 3] }
+            );
+            assert!(hits.iter().all(|event| event.classification
+                == if exempt {
+                    "labelled_death"
+                } else {
+                    "interference"
+                }));
+            assert_eq!(hits[0].sample.target.unwrap().index, 7);
+            assert_eq!(hits[1].sample.target.unwrap().index, 8);
+            assert_eq!(hits[0].sample.hitmarks.unwrap().marks[0].value, 4);
+            assert_eq!(hits[0].sample.hitmarks.unwrap().marks[0].cycle, 72);
+        }
+    }
+}
+
+#[test]
+fn a_cut_short_label_without_death_does_not_hide_its_combat() {
+    let mut observer = CombatObserver::default();
+    observer.sample(frame(10));
+    observer
+        .begin(
+            "death",
+            CombatExpectation::LabelledDeath { label: "own death" },
+        )
+        .unwrap();
+    observer.sample(CombatSample {
+        tick: 2,
+        ..frame(6)
+    });
+    assert!(observer.terminal());
+    assert_eq!(observer.invalid_reason(), Some("hitpoints-decreased"));
+    assert_eq!(
+        observer.evidence.events.last().unwrap().classification,
+        "interference"
+    );
 }

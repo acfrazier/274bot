@@ -620,7 +620,8 @@ impl ScenarioRunner {
                 )
             })
             .then(Box::default);
-        let invalid_observation = client_observation_refusal(&scenario);
+        let invalid_observation =
+            client_observation_refusal(&scenario).or_else(|| measured_window_refusal(&scenario));
         let mut runner = Self {
             scenario,
             snapshot: GameSnapshot::new(),
@@ -2804,8 +2805,7 @@ impl ScenarioRunner {
     }
 
     fn finish_pass(&mut self) {
-        if let Some(observer) = self.combat_observer.as_mut() {
-            observer.terminal();
+        if let Some(observer) = self.combat_observer.as_ref() {
             if let Some(reason) = observer.invalid_reason() {
                 self.finish_invalid(reason);
                 return;
@@ -3048,8 +3048,11 @@ impl ScenarioRunner {
     }
 
     fn record_pass(&mut self) {
-        if let Some(observer) = self.combat_observer.as_mut() {
-            observer.terminal();
+        let window_open = self
+            .combat_observer
+            .as_mut()
+            .is_some_and(|observer| observer.terminal());
+        if let Some(observer) = self.combat_observer.as_ref() {
             if let Some(reason) = observer.invalid_reason() {
                 self.record_terminal("INVALID", reason);
                 return;
@@ -3059,6 +3062,10 @@ impl ScenarioRunner {
         // here, also one that waited for the world-speed cleanup.
         if let Some((slot, reason)) = self.pass_gate.as_ref().and_then(|gate| gate()) {
             self.record_fail(&script_failure_text(&slot, &reason));
+            return;
+        }
+        if window_open {
+            self.record_fail("measured-window-not-ended: terminal proof reached before End");
             return;
         }
         self.phase = Phase::Done;
@@ -3109,11 +3116,12 @@ impl ScenarioRunner {
         if let Some(observer) = self.combat_observer.as_mut() {
             observer.terminal();
         }
-        // Cleanup errors may add a diagnostic but can never erase interference.
-        let outcome = if self
+        let interference = self
             .combat_observer
             .as_ref()
-            .is_some_and(|observer| observer.invalid_reason().is_some())
+            .and_then(|observer| observer.invalid_reason());
+        // Cleanup errors may add a diagnostic but can never erase interference.
+        let outcome = if interference.is_some()
             || matches!(
                 self.terminal_cleanup
                     .as_ref()
@@ -3134,6 +3142,21 @@ impl ScenarioRunner {
             Some(summary) => format!("{msg} [{summary}]"),
             None => msg.to_string(),
         };
+        let mut msg = msg;
+        if outcome == "INVALID" {
+            if let Some(reason) = interference {
+                if !msg.contains(reason) {
+                    msg = format!("{reason}; {msg}");
+                }
+            }
+            if let Some((slot, reason)) = self.pass_gate.as_ref().and_then(|gate| gate()) {
+                let failure = script_failure_text(&slot, &reason);
+                if !msg.contains(&failure) {
+                    msg.push_str("; ");
+                    msg.push_str(&failure);
+                }
+            }
+        }
         let mut evidence = Evidence::terminal(
             self.scenario.name,
             outcome,
@@ -3187,6 +3210,42 @@ fn nested_client_observation(proof: Proof) -> Option<&'static str> {
         Proof::All(proofs) => proofs.iter().find_map(|proof| client_observation(*proof)),
         _ => None,
     }
+}
+
+fn measured_window_refusal(scenario: &Scenario) -> Option<String> {
+    let mut active = None;
+    for (index, step) in scenario.steps.iter().enumerate() {
+        let reason = match step.kind {
+            StepKind::BeginMeasuredWindow { name, expectation } => {
+                if name.is_empty()
+                    || matches!(
+                        expectation,
+                        crate::CombatExpectation::LabelledDeath { label: "" }
+                    )
+                {
+                    Some("measured-window Begin requires a nonempty name and death label")
+                } else if active.is_some() {
+                    Some("measured-window Begin before the previous End")
+                } else {
+                    active = Some(name);
+                    None
+                }
+            }
+            StepKind::EndMeasuredWindow { name } => match active {
+                None => Some("measured-window End without Begin"),
+                Some(begin) if begin != name => Some("measured-window End does not match Begin"),
+                Some(_) => {
+                    active = None;
+                    None
+                }
+            },
+            _ => None,
+        };
+        if let Some(reason) = reason {
+            return Some(format!("step {} ({}): {reason}", index + 1, step.name));
+        }
+    }
+    active.map(|name| format!("measured-window {name}: Begin has no End"))
 }
 
 fn client_observation_refusal(scenario: &Scenario) -> Option<String> {
