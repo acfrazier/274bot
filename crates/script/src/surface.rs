@@ -24,11 +24,13 @@ use std::{
 pub enum SurfaceKind {
     /// JavaScript runtime.
     Js,
+    /// Luau runtime.
+    Luau,
 }
 
 impl SurfaceKind {
     /// The number of surface kinds in the inline factory array.
-    pub const COUNT: usize = 1;
+    pub const COUNT: usize = 2;
 
     /// The index of this kind in the inline factory array.
     pub const fn index(self) -> usize {
@@ -43,6 +45,8 @@ pub enum SurfaceFamily {
     JsV1,
     /// Version 2 of the JavaScript API.
     JsV2,
+    /// Version 2 of the Luau API.
+    LuauV2,
 }
 
 /// Frozen inputs for one card. The surface crate builds the card and exposes
