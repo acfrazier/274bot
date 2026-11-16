@@ -212,6 +212,23 @@ pub fn profiles() -> Vec<Profile> {
             },
             nightly: false,
         },
+        // The chain of LD2 3.2: two planned executions, each retired by the
+        // runner's own Stop, with the next Start linked to the earlier ticket.
+        // A Stop of the idle slot between them breaks the link.
+        Profile {
+            name: "runner-chain",
+            bounds: Bounds {
+                horizon: 44,
+                starts: 2,
+                ctl: 3,
+                ticks: 0,
+                fence: true,
+                runner: true,
+                plan: 2,
+                ..min
+            },
+            nightly: false,
+        },
         // The ledger across a restart and a third admission, with a plan that
         // owns all three starts, a self-stop and four control operations.
         Profile {

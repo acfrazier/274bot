@@ -321,7 +321,7 @@ pub const CHECKS: [Check; 62] = [
     check(
         "l-pass-unsound",
         "L",
-        "The final gate wrote PASS while a planned execution was not retired by the runner's own ticketed Stop and clean (or, when the plan requires the natural self-stop, was not ended by its own clean `api.stop`), or the live slot does not match the final ticket (generation and Start serial), or an admission outside the plan happened, or the slot is not Idle.",
+        "The final gate wrote PASS while a planned execution was not retired by the runner's own ticketed Stop and clean (or, when the plan requires the natural self-stop, was not ended by its own clean `api.stop`), or the live slot does not match the final ticket (generation and Start serial), or an earlier ticket is not linked to the next admission of the chain, or an admission outside the plan happened, or the slot is not Idle.",
     ),
     check(
         "l-stop-unowned",

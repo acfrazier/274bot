@@ -573,6 +573,23 @@ impl Lifecycle {
         }
     }
 
+    /// LD2 3.2: an earlier ticket is not compared with the final live slot.
+    /// It is linked to the next authorised admission of the chain: that
+    /// admission moved the generation by one from the ticket's
+    /// after-generation. A Stop of the idle slot between two planned
+    /// executions moves it by two, and the chain is broken.
+    fn tickets_link(s: &State) -> bool {
+        let ledger = &s.runner.ledger;
+        ledger
+            .iter()
+            .flatten()
+            .zip(ledger.iter().flatten().skip(1))
+            .all(|(earlier, next)| match earlier.state {
+                ExecState::Ticketed(t) => next.generation == t.gen_after.wrapping_add(1),
+                _ => true,
+            })
+    }
+
     /// The truth that the final gate must establish (LD2 5.4, items 3 and
     /// 4): every planned execution was retired by the runner's own ticketed
     /// Stop and ended clean, or, when the plan requires the natural self-stop,
@@ -597,6 +614,7 @@ impl Lifecycle {
         slot_idle
             && planned_ok
             && Self::final_ticket_matches(s)
+            && Self::tickets_link(s)
             && !s.runner.foreign_start
             && !s.runner.foreign_end
             && !s.runner.failed
@@ -652,6 +670,7 @@ impl Lifecycle {
                 slot_idle
                     && frontier
                     && Self::final_ticket_matches(s)
+                    && Self::tickets_link(s)
                     && ledger
                         .iter()
                         .flatten()
@@ -662,9 +681,12 @@ impl Lifecycle {
                 // earlier design takes it as proof.
                 let ticket_current =
                     self.is(Mutation::StaleFinalTicket) || Self::final_ticket_matches(s);
+                let chain_linked =
+                    self.is(Mutation::UnlinkedEarlierTicket) || Self::tickets_link(s);
                 slot_idle
                     && frontier
                     && ticket_current
+                    && chain_linked
                     && ledger.iter().flatten().all(|exec| {
                         exec.planned
                             && ticket_ok(exec)

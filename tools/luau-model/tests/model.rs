@@ -151,6 +151,7 @@ fn catching_profile(mutation: Mutation) -> &'static str {
         | StaleFinalTicket
         | FileCompileHoldsSharedAdmission => "runner",
         ForcedStopSatisfiesNaturalStop => "runner-natural",
+        UnlinkedEarlierTicket => "runner-chain",
     }
 }
 
@@ -891,6 +892,72 @@ fn an_operator_stop_of_the_idle_slot_after_the_runner_ticket_fails_the_final_gat
     assert_eq!(state.runner.phase, RunnerPhase::Done(Verdict::Fail));
     // The design that takes the ticket as proof passes it.
     let design = Lifecycle::new(runner_bounds(), Mutation::StaleFinalTicket);
+    assert_eq!(violation(&design, &trace), "l-pass-unsound");
+}
+
+fn chain_bounds() -> Bounds {
+    Bounds {
+        starts: 2,
+        ctl: 3,
+        ticks: 0,
+        fence: true,
+        runner: true,
+        plan: 2,
+        ..Bounds::minimal()
+    }
+}
+
+/// Two planned executions: the runner's own Stop retires the first, the
+/// next Start moves the generation by one from that ticket, the runner's own
+/// Stop retires the second, and the gate passes the chain (LD2 3.2).
+fn chain_trace(foreign_stop_between: bool) -> Vec<Action> {
+    let mut trace = vec![
+        Action::Post(Intent::Start),
+        Action::Pump,
+        load_table(true, true),
+        Action::Observe,
+        Action::Fence,
+        Action::Post(Intent::Stop { serial: 1 }),
+        Action::Pump,
+        RETURN,
+        Action::Observe,
+    ];
+    if foreign_stop_between {
+        trace.push(Action::Stop);
+    }
+    trace.extend([
+        Action::Post(Intent::Start),
+        Action::Pump,
+        load_table(true, true),
+        Action::Observe,
+        Action::Post(Intent::Stop { serial: 2 }),
+        Action::Pump,
+        RETURN,
+        Action::Observe,
+        Action::FinalGate,
+    ]);
+    trace
+}
+
+#[test]
+fn a_chain_of_two_planned_executions_passes_the_final_gate() {
+    let m = model(chain_bounds());
+    let (state, _) = run(&m, &chain_trace(false));
+    assert_eq!(state.runner.phase, RunnerPhase::Done(Verdict::Pass));
+    assert_eq!(state.slot.serial, 2);
+}
+
+/// LD2 3.2: an earlier ticket is linked to the next admission of the chain,
+/// not compared with the final live slot. An operator Stop of the idle slot
+/// between the two executions moves the generation by one more, and the gate
+/// fails the chain although the final ticket matches the live slot.
+#[test]
+fn an_operator_stop_between_two_planned_executions_breaks_the_chain() {
+    let m = model(chain_bounds());
+    let trace = chain_trace(true);
+    let (state, _) = run(&m, &trace);
+    assert_eq!(state.runner.phase, RunnerPhase::Done(Verdict::Fail));
+    let design = Lifecycle::new(chain_bounds(), Mutation::UnlinkedEarlierTicket);
     assert_eq!(violation(&design, &trace), "l-pass-unsound");
 }
 

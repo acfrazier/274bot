@@ -207,6 +207,10 @@ pub enum Mutation {
     /// after-generation with the live slot: an operator Stop of the idle slot
     /// after the runner's own Stop still passes (LD2 3.2).
     StaleFinalTicket,
+    /// The final gate compares only the final ticket and does not link each
+    /// earlier ticket to the next admission of the chain: an operator Stop of
+    /// the idle slot between two planned executions passes (LD2 3.2).
+    UnlinkedEarlierTicket,
     /// Revocation clears the first-fault latch, so the end record that `close`
     /// builds from it lacks the first fault (LD2 2.4).
     RevokeClearsFirstFault,
@@ -228,7 +232,7 @@ pub enum Mutation {
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 81] = [
+    pub const ALL: [Mutation; 82] = [
         Mutation::None,
         Mutation::OnStopAfterTrip,
         Mutation::OnStopInDispatch,
@@ -298,6 +302,7 @@ impl Mutation {
         Mutation::FileCompileHoldsSharedAdmission,
         Mutation::ForcedStopSatisfiesNaturalStop,
         Mutation::StaleFinalTicket,
+        Mutation::UnlinkedEarlierTicket,
         Mutation::RevokeClearsFirstFault,
         Mutation::CheckGapUnbounded,
         Mutation::CheckHookTwice,
@@ -385,6 +390,7 @@ impl Mutation {
             Mutation::FileCompileHoldsSharedAdmission => "file-compile-holds-shared-admission",
             Mutation::ForcedStopSatisfiesNaturalStop => "forced-stop-satisfies-natural-stop",
             Mutation::StaleFinalTicket => "stale-final-ticket",
+            Mutation::UnlinkedEarlierTicket => "unlinked-earlier-ticket",
             Mutation::RevokeClearsFirstFault => "revoke-clears-first-fault",
             Mutation::CheckGapUnbounded => "check-gap-unbounded",
             Mutation::CheckHookTwice => "check-hook-twice",
@@ -476,6 +482,7 @@ impl Mutation {
             Mutation::FileCompileHoldsSharedAdmission => "l-load-under-admission",
             Mutation::ForcedStopSatisfiesNaturalStop => "l-pass-unsound",
             Mutation::StaleFinalTicket => "l-pass-unsound",
+            Mutation::UnlinkedEarlierTicket => "l-pass-unsound",
             Mutation::RevokeClearsFirstFault => "d-first-fault-cleared",
             Mutation::CheckGapUnbounded => "i7c-gap-bound",
             Mutation::CheckHookTwice => "i5-hook-twice",
