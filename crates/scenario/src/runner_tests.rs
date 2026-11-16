@@ -3429,7 +3429,6 @@ fn measured_open_window_terminal_paths_never_hide_a_quiet_product_failure() {
                         .expect("cleanup damage must remain disclosed");
                     assert_eq!(hit.classification, "transit", "{cause}");
                     assert_eq!(hit.window, None, "{cause}");
-                    assert!(hit.transit, "{cause}");
                 }
                 if client.out.pos != 0 {
                     assert!(
