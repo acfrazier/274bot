@@ -1,24 +1,83 @@
 //! The Guardian's Fight child in its slot (design V11D 4 and 6): offered with
-//! no card loaded, it prices the escape, fights only the exact event actor,
-//! and every command revokes it before the next dispatch. The host side of the
-//! seams is played here: the estimate answer and the interaction receipts.
+//! no card loaded, it prices the escape from the live scene, fights only the
+//! exact event actor, and every command revokes it before the next dispatch.
+//! The host side of the seams is played here: the live scene the host posts
+//! on every observation and the interaction receipts.
 use super::*;
-use crate::combat::guardian::{escape_reserve, outcome_of_end};
+use crate::combat::frame::Frame;
+use crate::combat::guardian::{escape_reserve, escape_walk, outcome_of_end, EscapeWalk};
 use crate::combat::request::{AbortReason, CombatEnd, PrepItem, Unprotected};
 use crate::combat::tables::CombatTables;
+use crate::combat::EscapeCost;
 use crate::combat_session::tests::World;
 use crate::ctx::test_support::NullDriver;
 use crate::interact::InteractReq;
-use crate::native::{AssessReceipt, HostAction, HostEffect, InteractionReceipt};
+use crate::native::{HostAction, HostEffect, InteractionReceipt};
+use api::query::{pack_reach_query, ReachQueryView, SceneQuery};
 use api::quest_progress::EvidenceStamp;
 use api::random::{
-    FightActor, FightCancel, FightEscape, FightEvent, FightOffer, FightOutcome, FightPhase,
-    FightReason, FightToken,
+    escape_candidates, escape_distance, FightActor, FightCancel, FightEscape, FightEvent,
+    FightOffer, FightOutcome, FightPhase, FightReason, FightToken,
 };
-use api::selected::ClientRevision;
+use api::selected::{ClientRevision, RunKey};
+use api::snapshot::{SceneView, SnapshotView};
+use api::WorldTile;
+use client::dash3d::CollisionFlag;
 
 fn selected() -> Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(ClientRevision::R289).unwrap()
+}
+
+fn here_of(world: &World) -> WorldTile {
+    world
+        .snapshot
+        .local_player()
+        .expect("the bot is observed")
+        .player
+        .network
+}
+
+/// The live scene a test posts: an open square around the bot with some tiles
+/// blocked. The host floods it from the player's tile on every observation,
+/// and so does [`Ground::view`].
+#[derive(Clone)]
+struct Ground {
+    base: (i32, i32),
+    size: i32,
+    blocked: Vec<(i32, i32)>,
+    /// The tile the flood starts from when it is not the player's: a flood
+    /// that does not start on the player is not live.
+    flood_from: Option<WorldTile>,
+}
+
+impl Ground {
+    fn around(here: WorldTile) -> Self {
+        Self {
+            base: (here.x - 30, here.z - 30),
+            size: 61,
+            blocked: Vec::new(),
+            flood_from: None,
+        }
+    }
+
+    /// The posted reach view for a player standing on `player`.
+    fn view(&self, player: WorldTile) -> ReachQueryView {
+        let mut scene = SceneView {
+            available: true,
+            base_x: self.base.0,
+            base_z: self.base.1,
+            level: 0,
+            width: self.size,
+            height: self.size,
+            collision_flags: vec![0; (self.size * self.size) as usize],
+        };
+        for &(x, z) in &self.blocked {
+            let index = ((x - self.base.0) * self.size + (z - self.base.1)) as usize;
+            scene.collision_flags[index] |= CollisionFlag::SQ_BLOCKED;
+        }
+        let flood = SceneQuery::new(&scene, Some(self.flood_from.unwrap_or(player))).flood_reach();
+        pack_reach_query(&scene, flood.as_ref())
+    }
 }
 
 /// A slot that never loaded a card, one world with an event actor beside the
@@ -27,27 +86,14 @@ struct Fight {
     slot: SlotScript,
     world: World,
     token: FightToken,
+    escape: FightEscape,
     tick: u64,
+    /// The live scene posted on every observation; `None` posts no reach.
+    ground: Option<Ground>,
 }
 
 fn offer_for(world: &World, config: &str, event: FightEvent, serial: u32) -> FightOffer {
-    let here = world
-        .snapshot
-        .local_player()
-        .expect("the bot is observed")
-        .player
-        .network;
-    let (x, z) = (here.x, here.z);
-    let ring = [
-        (x + 6, z),
-        (x - 6, z),
-        (x, z + 6),
-        (x, z - 6),
-        (x + 5, z + 5),
-        (x - 5, z + 5),
-        (x + 5, z - 5),
-        (x - 5, z - 5),
-    ];
+    let here = here_of(world);
     let npc_type = world.data.npc_by_config(config).unwrap().id;
     FightOffer {
         token: FightToken { session: 1, serial },
@@ -57,9 +103,8 @@ fn offer_for(world: &World, config: &str, event: FightEvent, serial: u32) -> Fig
             npc_type: u16::try_from(npc_type).unwrap(),
         },
         escape: FightEscape {
-            anchor: (x - 2, z),
+            anchor: (here.x - 2, here.z),
             radius: 12,
-            ring,
         },
         budget_ticks: 200,
     }
@@ -73,17 +118,26 @@ impl Fight {
         let offer = offer_for(&world, config, event, 1);
         slot.guardian_offer(offer, &selected())
             .expect("the offer is admitted");
+        let ground = Ground::around(here_of(&world));
         Self {
             slot,
             world,
             token: offer.token,
+            escape: offer.escape,
             tick: 0,
+            ground: Some(ground),
         }
     }
 
-    /// One fresh observation of the child, as the host builds it.
+    fn here(&self) -> WorldTile {
+        here_of(&self.world)
+    }
+
+    /// One fresh observation of the child, as the host builds it: the live
+    /// scene is flooded from the player's tile.
     fn tick(&mut self) {
         self.tick += 1;
+        let reach = self.ground.as_ref().map(|ground| ground.view(self.here()));
         self.slot.guardian_tick(
             &mut ScriptCtx {
                 driver: &mut NullDriver::default(),
@@ -94,7 +148,10 @@ impl Fight {
                 inv: None,
                 snapshot: Some(&self.world.snapshot),
                 obj_names: None,
-                compiled: crate::CompiledTick::default(),
+                compiled: crate::CompiledTick {
+                    reach: reach.as_ref(),
+                    ..crate::CompiledTick::default()
+                },
             },
             true,
         );
@@ -106,40 +163,118 @@ impl Fight {
             .expect("the child is held")
     }
 
-    /// The host answers the estimate with a route of `ticks` walking ticks.
-    fn answer_estimate(&mut self, action: &HostAction, ticks: u32) {
+    /// The walk the escape takes from the bot's tile over `ground`, as the
+    /// child prices it.
+    fn priced(&self, ground: &Ground) -> Option<EscapeWalk> {
+        let view = ground.view(self.here());
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let frame = Frame::borrow(
+            SnapshotView::new(Some(&self.world.snapshot), stamp).with_reach(Some(&view)),
+        )?;
+        escape_walk(&self.escape, &frame)
+    }
+
+    /// The child's first observation, which prices the walk and attacks.
+    fn first_attack(&mut self) -> HostAction {
+        self.tick();
+        self.slot
+            .take_guardian_action()
+            .expect("the first attack row")
+    }
+
+    /// The host accepts `action`.
+    fn accept(&mut self, action: &HostAction) {
         let authority = action.authority();
-        self.slot.complete_native_assess_walk(
+        self.slot.complete_native_interaction(
             &authority,
-            AssessReceipt {
+            InteractionReceipt {
                 request_id: action.request_id.get(),
                 evidence: EvidenceStamp {
                     run: authority.run(),
                     tick: self.tick,
                     sequence: self.tick,
                 },
-                assessment: None,
-                refusal: None,
-                detail: None,
-                route_ticks: ticks,
-                route_moves: ticks,
+                accepted: true,
+                chat_since: 0,
             },
         );
     }
 
-    /// Price the escape and take the child to its first attack row.
-    fn run_to_first_attack(&mut self) -> HostAction {
+    fn set_hitpoints(&mut self, hitpoints: i32) {
+        let mut stats = self.world.snapshot.stats().to_vec();
+        stats
+            .iter_mut()
+            .find(|stat| stat.index == 3)
+            .expect("hitpoints")
+            .effective = hitpoints;
+        self.world.snapshot.seed_stats(stats);
+    }
+
+    fn move_player(&mut self, to: WorldTile) {
+        let mut local = self
+            .world
+            .snapshot
+            .local_player()
+            .expect("the bot is observed")
+            .clone();
+        local.player.network = to;
+        local.player.actor.tile = to;
+        self.world.snapshot.seed_local_player(local);
+    }
+
+    /// `count` cooked karambwan in the pack: the food that locks input.
+    fn carry_karambwan(&mut self, count: i32) {
+        let food = self
+            .world
+            .data
+            .item_by_alias("tbwt_cooked_karambwan")
+            .unwrap();
+        self.world.snapshot.seed_inventory(
+            vec![api::snapshot::ItemView {
+                def: api::obj_names::ItemDefView {
+                    id: food.id,
+                    name: food.name.clone(),
+                    stackable: false,
+                    members: false,
+                    base_value: 1,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: 0,
+                count,
+                actions: Vec::new(),
+                component_id: 3214,
+            }],
+            28,
+        );
+    }
+
+    /// The tick of the karambwan bite the child admits on its next
+    /// observation, with the host accepting every row it sends.
+    fn bite(&mut self) -> u16 {
         self.tick();
-        let estimate = self
-            .slot
-            .take_guardian_action()
-            .expect("the estimate request");
-        assert!(matches!(estimate.effect, HostEffect::AssessWalk(_)));
-        self.answer_estimate(&estimate, 7);
-        self.tick();
-        self.slot
-            .take_guardian_action()
-            .expect("the first attack row")
+        let mut bite = None;
+        while let Some(action) = self.slot.take_guardian_action() {
+            if matches!(
+                &action.effect,
+                HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Eat"
+            ) {
+                bite = Some(self.tick as u16);
+            }
+            self.accept(&action);
+        }
+        bite.expect("the Combat core admitted a karambwan bite")
     }
 }
 
@@ -151,69 +286,81 @@ fn is_attack_on(action: &HostAction, index: i32) -> bool {
     )
 }
 
-/// No card is loaded and none is needed: the offer prices the escape on the
-/// first observation, sends nothing else, and attacks the exact actor once the
-/// walk is priced.
+/// The ring of candidates the Guardian's escape tries from `fight`'s bot.
+fn ring_of(fight: &Fight) -> Vec<(i32, i32)> {
+    let here = fight.here();
+    let player = (here.x, here.z);
+    let distance = escape_distance(fight.escape.anchor, fight.escape.radius, player);
+    escape_candidates(fight.escape.anchor, player, distance).collect()
+}
+
+fn chebyshev(a: WorldTile, b: (i32, i32)) -> u32 {
+    (a.x - b.0).abs().max((a.z - b.1).abs()) as u32
+}
+
+/// No card is loaded and none is needed: the first observation prices the
+/// escape from the live scene, sends nothing but the attack, and attacks the
+/// exact actor.
 #[test]
-fn an_offered_fight_prices_the_escape_before_it_attacks_the_exact_actor() {
+fn an_offered_fight_prices_the_escape_from_the_live_scene_and_attacks_the_exact_actor() {
     if !api::test_support::game_data_available() {
         return;
     }
     let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
     assert_eq!(fight.read().phase, FightPhase::Offered);
 
-    fight.tick();
-    let estimate = fight
-        .slot
-        .take_guardian_action()
-        .expect("the estimate request");
-    let HostEffect::AssessWalk(request) = &estimate.effect else {
-        panic!("the first row is the estimate");
-    };
-    assert_eq!(
-        request
-            .candidate_goals
-            .as_ref()
-            .map(|goals| goals.as_slice().len()),
-        Some(8),
-        "the estimate prices the Guardian's own eight candidates"
-    );
-    assert!(
-        fight.slot.take_guardian_action().is_none(),
-        "nothing else goes out before the walk is priced"
-    );
-    assert_eq!(fight.read().outcome, FightOutcome::Pending);
-
-    fight.answer_estimate(&estimate, 7);
-    fight.tick();
-    let attack = fight.slot.take_guardian_action().expect("the first attack");
+    let attack = fight.first_attack();
     assert!(is_attack_on(&attack, 7), "the exact actor is attacked");
     assert_eq!(fight.read().phase, FightPhase::Fighting);
+    while let Some(row) = fight.slot.take_guardian_action() {
+        assert!(
+            !matches!(row.effect, HostEffect::AssessWalk(_)),
+            "no route assessment goes out: the walk is priced from the live scene"
+        );
+    }
 }
 
-/// No estimate by the next fresh observation is no fight: the child hands
-/// over to Flee with a typed reason and never clicks Attack on trust.
+/// A walk no one can price is not a walk the fight may bet on: with no live
+/// scene, a scene that is not flooded from the player, or every candidate
+/// walled off, the child hands over to Flee with a typed reason and never
+/// clicks Attack on trust.
 #[test]
-fn no_estimate_by_the_next_fresh_observation_means_flee_and_no_attack() {
+fn a_walk_that_cannot_be_priced_means_flee_and_no_attack() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
-    fight.tick();
-    let estimate = fight
-        .slot
-        .take_guardian_action()
-        .expect("the estimate request");
-    assert!(matches!(estimate.effect, HostEffect::AssessWalk(_)));
-    fight.tick();
-    assert_eq!(
-        fight.read().outcome,
-        FightOutcome::FleeRequired(FightReason::UnknownFacts)
-    );
-    assert!(
-        fight.slot.take_guardian_action().is_none(),
-        "no attack follows an unpriced escape"
-    );
+    type Setup = fn(&Fight) -> Option<Ground>;
+    let cases: [(&str, Setup); 3] = [
+        ("no live scene is posted", |_| None),
+        ("the flood starts away from the player", |fight| {
+            let here = fight.here();
+            let mut ground = Ground::around(here);
+            ground.flood_from = Some(WorldTile {
+                x: here.x + 4,
+                ..here
+            });
+            Some(ground)
+        }),
+        ("every candidate is walled off", |fight| {
+            let mut ground = Ground::around(fight.here());
+            ground.blocked = ring_of(fight);
+            Some(ground)
+        }),
+    ];
+    for (why, ground) in cases {
+        let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+        fight.ground = ground(&fight);
+        fight.tick();
+        assert_eq!(
+            fight.read().outcome,
+            FightOutcome::FleeRequired(FightReason::UnknownFacts),
+            "{why}"
+        );
+        assert!(
+            fight.slot.take_guardian_action().is_none(),
+            "{why}: no attack follows an unpriced escape"
+        );
+    }
 }
 
 /// A command revokes the child before the next dispatch: the admitted attack
@@ -233,12 +380,6 @@ fn a_revocation_drops_the_admitted_row_and_keeps_its_cancellation() {
         FightCancel::SessionEnded,
     ] {
         let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
-        fight.tick();
-        let estimate = fight
-            .slot
-            .take_guardian_action()
-            .expect("the estimate request");
-        fight.answer_estimate(&estimate, 7);
         fight.tick();
         assert!(
             fight.slot.guardian_has_actions(),
@@ -281,20 +422,11 @@ fn pause_stop_and_removal_revoke_the_child_of_a_slot_with_no_card() {
     ];
     for (name, command, cancel) in commands {
         let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
-        let attack = fight.run_to_first_attack();
+        let attack = fight.first_attack();
         assert!(is_attack_on(&attack, 7));
-        fight
-            .slot
-            .guardian_revoke_token(fight.token, FightCancel::Replaced);
         // A child revoked by a command stays revoked: the command that
         // follows cannot change the record.
         let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
-        fight.tick();
-        let estimate = fight
-            .slot
-            .take_guardian_action()
-            .expect("the estimate request");
-        fight.answer_estimate(&estimate, 7);
         fight.tick();
         assert!(fight.slot.guardian_has_actions());
         command(&mut fight.slot);
@@ -308,6 +440,112 @@ fn pause_stop_and_removal_revoke_the_child_of_a_slot_with_no_card() {
             "{name}: no stale attack after the command"
         );
     }
+}
+
+/// R3-2: a Pause, a Stop or the slot's removal that revokes a child while the
+/// Combat core fights publishes the input lock of the bite the core admitted,
+/// so the Guardian's own walk after the revocation never clicks inside it. The
+/// child has no upkeep guard in this state: the lock is the core's.
+#[test]
+fn a_command_during_a_combat_bite_publishes_the_lock_the_core_admitted() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    type Command = fn(&mut SlotScript);
+    let commands: [(&str, Command, FightCancel); 3] = [
+        ("pause", SlotScript::pause, FightCancel::Paused),
+        ("stop", SlotScript::stop, FightCancel::Stopped),
+        (
+            "removal",
+            SlotScript::stop_removed,
+            FightCancel::SessionEnded,
+        ),
+    ];
+    for (name, command, cancel) in commands {
+        let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+        let attack = fight.first_attack();
+        assert!(is_attack_on(&attack, 7));
+        fight.accept(&attack);
+        fight.world.attack();
+        fight.set_hitpoints(2);
+        fight.carry_karambwan(2);
+        let bite = fight.bite();
+        assert_eq!(fight.read().phase, FightPhase::Fighting);
+        assert_eq!(
+            fight.read().blocked_until,
+            None,
+            "{name}: nothing is published while the core runs"
+        );
+
+        command(&mut fight.slot);
+        let read = fight.read();
+        assert_eq!(read.outcome, FightOutcome::Cancelled(cancel), "{name}");
+        // A karambwan bite locks input through the next three ticks: the
+        // first click the Guardian may send is the fourth tick after it.
+        assert_eq!(
+            read.blocked_until,
+            Some(bite.wrapping_add(4)),
+            "{name}: the command publishes the core's admitted lock before it revokes"
+        );
+    }
+}
+
+/// A fight that has no bite in flight publishes no lock: a revocation of a
+/// child whose core is free blocks nothing.
+#[test]
+fn a_command_while_the_core_is_free_publishes_no_lock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+    let attack = fight.first_attack();
+    fight.accept(&attack);
+    fight.tick();
+    fight.slot.pause();
+    assert_eq!(
+        fight.read().outcome,
+        FightOutcome::Cancelled(FightCancel::Paused)
+    );
+    assert_eq!(fight.read().blocked_until, None);
+}
+
+/// A core that decided to hand over while its bite still locks input winds
+/// down under the lock, and reports no end until the lock is over. A command
+/// in that state still publishes the lock: the hand over the core committed is
+/// not a release of the bite's lock. The walk can no longer be priced on the
+/// observation after the bite, so the core commits to the hand over at once.
+#[test]
+fn a_command_while_the_core_winds_down_under_a_bite_lock_publishes_the_lock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+    let attack = fight.first_attack();
+    fight.accept(&attack);
+    fight.world.attack();
+    fight.set_hitpoints(2);
+    fight.carry_karambwan(2);
+    let bite = fight.bite();
+    let mut walled = Ground::around(fight.here());
+    walled.blocked = ring_of(&fight);
+    fight.ground = Some(walled);
+    fight.tick();
+    let read = fight.read();
+    assert_eq!(
+        read.outcome,
+        FightOutcome::Pending,
+        "the lock holds the end"
+    );
+    assert_eq!(read.phase, FightPhase::Ending, "the core committed to it");
+
+    fight.slot.pause();
+    let read = fight.read();
+    assert_eq!(read.outcome, FightOutcome::Cancelled(FightCancel::Paused));
+    assert_eq!(
+        read.blocked_until,
+        Some(bite.wrapping_add(4)),
+        "the command publishes the lock the winding-down core still holds"
+    );
 }
 
 /// A token of another fight changes nothing: only the held child answers to
@@ -485,22 +723,9 @@ fn a_receipt_for_the_childs_attack_reaches_the_childs_ledger() {
         return;
     }
     let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
-    let attack = fight.run_to_first_attack();
+    let attack = fight.first_attack();
     assert!(is_attack_on(&attack, 7));
-    let authority = attack.authority();
-    fight.slot.complete_native_interaction(
-        &authority,
-        InteractionReceipt {
-            request_id: attack.request_id.get(),
-            evidence: EvidenceStamp {
-                run: authority.run(),
-                tick: fight.tick,
-                sequence: fight.tick,
-            },
-            accepted: true,
-            chat_since: 0,
-        },
-    );
+    fight.accept(&attack);
     fight.tick();
     assert_eq!(
         fight.read().phase,
@@ -510,5 +735,198 @@ fn a_receipt_for_the_childs_attack_reaches_the_childs_ledger() {
     assert!(
         fight.slot.native_status().is_none(),
         "the slot's card status never saw the child"
+    );
+}
+
+/// The walk is priced to the first outward candidate the client can walk to,
+/// in the order the Guardian tries them (design V11D 5.3, 6.2): in open ground
+/// the first of the ring, at its Chebyshev distance in steps; a candidate a
+/// wall closes off is skipped, so the walk the Guardian takes is the walk the
+/// fight priced.
+#[test]
+fn the_escape_is_priced_to_the_first_candidate_the_client_can_walk_to() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+    let here = fight.here();
+    let ring = ring_of(&fight);
+    let open = fight
+        .priced(&Ground::around(here))
+        .expect("open ground prices");
+    assert_eq!((open.target.x, open.target.z), ring[0]);
+    assert_eq!(open.steps, chebyshev(here, ring[0]));
+
+    for walled in [1usize, 2, 5] {
+        let mut ground = Ground::around(here);
+        ground.blocked = ring[..walled].to_vec();
+        let walk = fight.priced(&ground).expect("a later candidate prices");
+        assert_eq!(
+            (walk.target.x, walk.target.z),
+            ring[walled],
+            "{walled} candidates walled off: the walk is the next one's"
+        );
+        assert_eq!(walk.steps, chebyshev(here, ring[walled]));
+    }
+
+    let mut ground = Ground::around(here);
+    ground.blocked = ring.clone();
+    assert_eq!(fight.priced(&ground), None, "no candidate, no price");
+
+    // The design's worked example: an open seven-step walk is priced at the
+    // conservative eleven ticks, not at seven (design V11D 5.3).
+    let mut seven = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+    seven.escape = FightEscape {
+        anchor: (here.x, here.z),
+        radius: 7,
+    };
+    let walk = seven
+        .priced(&Ground::around(here))
+        .expect("open ground prices");
+    assert_eq!((walk.steps, walk.ticks), (7, 11));
+}
+
+/// A detour is priced: a wall between the player and the same candidate keeps
+/// the candidate and lengthens the route, and with it the bound.
+#[test]
+fn a_detour_around_a_wall_is_priced_in_steps() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+    let here = fight.here();
+    let open = fight.priced(&Ground::around(here)).unwrap();
+    let mut wall = Ground::around(here);
+    wall.blocked = (here.z - 6..=here.z + 6).map(|z| (here.x + 3, z)).collect();
+    let detour = fight.priced(&wall).expect("the wall has a way round");
+    assert_eq!(detour.target, open.target, "the same candidate");
+    assert!(
+        detour.steps > open.steps && detour.ticks > open.ticks,
+        "{} steps and {} ticks round the wall against {} and {} in the open",
+        detour.steps,
+        detour.ticks,
+        open.steps,
+        open.ticks
+    );
+}
+
+/// The first candidate follows the player around the anchor: the walk is
+/// priced where the Guardian's escape would go from the tile the bot stands
+/// on now, not from the tile it stood on at the offer.
+#[test]
+fn the_first_candidate_follows_the_player_around_the_anchor() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+    let here = fight.here();
+    let ground = Ground::around(here);
+    let before = fight.priced(&ground).unwrap();
+    // The bot stands one tile beyond the anchor on the far side.
+    let far = WorldTile {
+        x: fight.escape.anchor.0 - 3,
+        z: fight.escape.anchor.1,
+        level: here.level,
+    };
+    fight.move_player(far);
+    let ring = ring_of(&fight);
+    let after = fight.priced(&ground).unwrap();
+    assert_eq!((after.target.x, after.target.z), ring[0]);
+    assert_ne!(
+        after.target, before.target,
+        "another side of the anchor, another first candidate"
+    );
+}
+
+/// The Hitpoints line below which a fight with no food hands over, for `walk`
+/// and the troll's content facts.
+fn line_for(reserve: crate::combat::EscapeReserve, walk: &EscapeWalk) -> i32 {
+    EscapeCost {
+        hit: reserve.hit,
+        interval: i32::from(reserve.interval),
+        walk: i32::from(walk.ticks),
+        lock: 0,
+        poison_fire: 0,
+        poison_fires: 0,
+        poison_total: 0,
+    }
+    .flee_hp()
+}
+
+/// A changed route is priced before the next attack. The Hitpoints that fight
+/// on over the route as it was hand over, with no attack, on the observation
+/// after a wall made the walk longer; the same Hitpoints over an unchanged
+/// route fight on.
+#[test]
+fn a_changed_route_is_priced_before_the_next_attack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for changed in [false, true] {
+        let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+        let here = fight.here();
+        let tables = CombatTables::build(selected()).unwrap();
+        let reserve = escape_reserve(&tables, fight.world.npc_type()).unwrap();
+        let open = fight.priced(&Ground::around(here)).unwrap();
+        let mut wall = Ground::around(here);
+        wall.blocked = (here.z - 6..=here.z + 6).map(|z| (here.x + 3, z)).collect();
+        let detour = fight.priced(&wall).unwrap();
+        // One Hitpoint above the line of the open route, at or below the line
+        // of the detour.
+        let hitpoints = line_for(reserve, &open) + 1;
+        assert!(
+            hitpoints <= line_for(reserve, &detour),
+            "the detour moves the line: {hitpoints} against {}",
+            line_for(reserve, &detour)
+        );
+
+        fight.set_hitpoints(hitpoints);
+        let attack = fight.first_attack();
+        assert!(is_attack_on(&attack, 7), "the open route affords the fight");
+        fight.accept(&attack);
+        if changed {
+            fight.ground = Some(wall);
+        }
+        fight.tick();
+        if changed {
+            assert_eq!(
+                fight.read().outcome,
+                FightOutcome::FleeRequired(FightReason::EscapeReserve),
+                "the longer walk hands over before another attack"
+            );
+            assert!(
+                fight.slot.take_guardian_action().is_none(),
+                "no attack goes out on the stale bound"
+            );
+            assert_eq!(fight.read().phase, FightPhase::Escaping);
+        } else {
+            assert_eq!(fight.read().outcome, FightOutcome::Pending);
+            assert_eq!(fight.read().phase, FightPhase::Fighting);
+        }
+    }
+}
+
+/// A walk that stops being priceable mid-fight prices zero, and the core hands
+/// over before any attack: every candidate walled off after the first attack.
+#[test]
+fn an_unpriced_observation_hands_over_without_an_attack() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut fight = Fight::offered("macro_rivertrollguardian_1", FightEvent::RiverTroll);
+    let attack = fight.first_attack();
+    fight.accept(&attack);
+    let mut walled = Ground::around(fight.here());
+    walled.blocked = ring_of(&fight);
+    fight.ground = Some(walled);
+    fight.tick();
+    assert_eq!(
+        fight.read().outcome,
+        FightOutcome::FleeRequired(FightReason::EscapeReserve)
+    );
+    assert_eq!(fight.read().phase, FightPhase::Escaping);
+    assert!(
+        fight.slot.take_guardian_action().is_none(),
+        "no attack goes out on an unpriced walk"
     );
 }

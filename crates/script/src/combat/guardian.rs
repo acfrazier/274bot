@@ -23,10 +23,12 @@ use crate::native::{
     ActionContext, ActionError, ActionHandle, HostAction, NativeActions, PvpGlobals,
     RetainedMemory, WalkAllow, WalkGoals, WalkRequest,
 };
+use crate::reach_route;
 use api::game_data::SelectedGameData;
+use api::query::ReachQueryView;
 use api::random::{
-    FightActor, FightCancel, FightEvent, FightOffer, FightOutcome, FightPhase, FightPrep,
-    FightRead, FightReadiness, FightReason, FightToken,
+    FightActor, FightCancel, FightEscape, FightEvent, FightOffer, FightOutcome, FightPhase,
+    FightPrep, FightRead, FightReadiness, FightReason, FightToken,
 };
 use api::selected::RunKey;
 use api::snapshot::SnapshotView;
@@ -206,17 +208,72 @@ fn outcome_of_error(error: &ActionError) -> FightOutcome {
     }
 }
 
-/// One walk the Guardian would send, as the escape estimate needs it.
-fn assessment_request(
-    offer: &FightOffer,
+/// The walk the Guardian's escape takes from the observed player tile, priced
+/// from the live scene (design V11D 5.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EscapeWalk {
+    /// The tile the Guardian's first escape click goes to.
+    pub(crate) target: api::WorldTile,
+    /// The client's own route to it over the live scene, in steps.
+    pub(crate) steps: u32,
+    /// The conservative walking bound of those steps, in ticks
+    /// (`(3 * steps + 1) / 2`, the bound the risk model prices a route by).
+    pub(crate) ticks: u16,
+}
+
+/// The walking bound of the client's route to `target` in the posted flood;
+/// `None` when the client has no route to the exact tile.
+fn price(view: &ReachQueryView, target: api::WorldTile) -> Option<EscapeWalk> {
+    let steps = reach_route::depth_to(view, target).filter(|steps| *steps > 0)?;
+    let ticks = super::risk::walk_ticks(usize::try_from(steps).ok()?).ok()?;
+    Some(EscapeWalk {
+        target,
+        steps,
+        ticks: u16::try_from(ticks).ok()?,
+    })
+}
+
+/// The walk the Guardian's escape sends its first click to from this frame,
+/// and what it costs. The tile is the first outward candidate the client
+/// accepts, chosen by the very function the Guardian's walk uses
+/// ([`api::random::first_escape_target`]); the cost is the length of the
+/// client's own route to it over the live scene's collision, so a closed
+/// door is a wall and a candidate that another wall closes off is skipped.
+/// The posted flood must start on the player. `None` when it does not, or
+/// when no candidate can be walked to: an unknown walk is never an instant
+/// escape.
+pub(crate) fn escape_walk(escape: &FightEscape, frame: &Frame<'_>) -> Option<EscapeWalk> {
+    let here = frame.here;
+    let view = reach_route::live(frame.reach, Some(here))?;
+    let player = (here.x, here.z);
+    let distance = api::random::escape_distance(escape.anchor, escape.radius, player);
+    let mut walk = None;
+    api::random::first_escape_target(escape.anchor, player, distance, |(x, z)| {
+        walk = price(
+            view,
+            api::WorldTile {
+                x,
+                z,
+                level: here.level,
+            },
+        );
+        walk.is_some()
+    });
+    walk
+}
+
+/// The walk the upkeep guard serves: the Guardian's own walk out, described as
+/// a walk to its outward candidates. The guard reads only whether food is
+/// allowed.
+fn escape_request(
+    escape: &FightEscape,
     here: api::WorldTile,
     cx: &ActionContext<'_>,
 ) -> Result<WalkRequest, FightReason> {
-    let goals = offer
-        .escape
-        .ring
-        .iter()
-        .map(|&(x, z)| api::WorldTile {
+    let player = (here.x, here.z);
+    let distance = api::random::escape_distance(escape.anchor, escape.radius, player);
+    let goals = api::random::escape_candidates(escape.anchor, player, distance)
+        .map(|(x, z)| api::WorldTile {
             x,
             z,
             level: here.level,
@@ -244,7 +301,7 @@ fn assessment_request(
 
 /// Where the child stands.
 enum State {
-    /// Offered: the escape estimate and admission are due by the next fresh
+    /// Offered: pricing the walk out and admission are due by the next fresh
     /// observation.
     Offered,
     /// Combat is running against the exact actor. The handle is boxed: it is
@@ -256,20 +313,9 @@ enum State {
     Done,
 }
 
-/// What the child keeps of the escape estimate: the assessed walking ticks,
-/// the tile they were assessed from, and the hold allowance they carry. A
-/// player a step or two off that tile pays the distance on top of the
-/// assessed walk.
-#[derive(Debug, Clone, Copy)]
-struct Estimate {
-    walk: u16,
-    from: (i32, i32),
-    slack: u16,
-}
-
 /// The lock-wait ticks the walk out may spend after its first click (design
-/// V11D 6.2): the assessed bound `W` less the movement ticks of the assessed
-/// route, saturating at zero. An exact-step bound has none.
+/// V11D 6.2): the priced bound `W` less the movement ticks of the route (its
+/// steps), saturating at zero. An exact-step bound has none.
 pub(crate) fn escape_allowance(route_ticks: u32, route_moves: u32) -> u16 {
     u16::try_from(route_ticks.saturating_sub(route_moves)).unwrap_or(u16::MAX)
 }
@@ -292,11 +338,11 @@ pub(crate) struct Inner {
     protected: Option<Arc<[FoodReserve]>>,
     state: State,
     outcome: FightOutcome,
-    /// The pending advisory walk, awaiting its receipt.
-    assess: Option<u64>,
-    estimate: Option<Estimate>,
-    /// The first observed tick of this child: the estimate is due by the next.
+    /// The first observed tick of this child: its admission is due by the next.
     first_tick: Option<u64>,
+    /// The walk out as priced at the last observation of the fight, `None`
+    /// while it could not be priced: the hold allowance the hand over keeps.
+    walk: Option<EscapeWalk>,
     observed_tick: u32,
     /// Fresh observations the fight used, for the combat-budget mapping.
     ticks: u16,
@@ -357,9 +403,8 @@ impl GuardianChild {
                 protected,
                 state: State::Offered,
                 outcome: FightOutcome::Pending,
-                assess: None,
-                estimate: None,
                 first_tick: None,
+                walk: None,
                 observed_tick: 0,
                 ticks: 0,
                 last_tick: None,
@@ -398,7 +443,7 @@ impl GuardianChild {
     /// Whether this child may still send gameplay: its fight runs and no
     /// revocation or end has been recorded.
     pub fn fighting(&self) -> bool {
-        matches!(self.inner.state, State::Fighting(_)) || self.inner.estimating()
+        matches!(self.inner.state, State::Fighting(_)) || self.inner.awaiting_admission()
     }
 
     /// Whether the fight ended with Flee required and the child's upkeep
@@ -503,7 +548,7 @@ impl GuardianChild {
 }
 
 impl Inner {
-    fn estimating(&self) -> bool {
+    fn awaiting_admission(&self) -> bool {
         matches!(self.state, State::Offered)
     }
 
@@ -571,14 +616,37 @@ impl Inner {
         Some(blocked)
     }
 
-    fn revoke(&mut self, cancel: FightCancel) {
-        // The lock end leaves before the guard is dropped.
+    /// The input lock this child's own machinery still holds at `tick`: the
+    /// upkeep guard's while the walk out runs, else the Combat core's admitted
+    /// schedule, read live while the core runs and as of its last poll once it
+    /// ended (design V11D 6.2: a lock the core admitted is never forgotten).
+    fn admitted_lock(&self, tick: u16) -> Option<u16> {
         if let Some(guard) = &self.guard {
-            let tick = self.last_tick.map_or(0, |tick| tick as u16);
-            if let Some(end) = guard.lock_end(tick) {
-                self.blocked_until = Some(end);
-            }
+            return guard.lock_end(tick);
         }
+        let schedule = match &self.state {
+            State::Fighting(handle) => handle
+                .inspect(Combat::handoff_schedule)
+                .unwrap_or(self.schedule),
+            _ => self.schedule,
+        };
+        schedule.locked(tick).then_some(schedule.input_lock)
+    }
+
+    /// Publish the admitted lock for the Guardian's next read, before the
+    /// guard or the core that holds it is dropped.
+    fn export_lock(&mut self) {
+        let tick = self.last_tick.map_or(0, |tick| tick as u16);
+        if let Some(end) = self.admitted_lock(tick) {
+            self.blocked_until = Some(end);
+        }
+    }
+
+    fn revoke(&mut self, cancel: FightCancel) {
+        // The lock end leaves before the guard or the core is dropped, in every
+        // state: the Guardian's own walk after a Pause or a Stop waits for the
+        // bite the child had admitted.
+        self.export_lock();
         if let State::Fighting(handle) = &self.state {
             self.prayers = handle.prayer_cleanup();
         }
@@ -612,72 +680,25 @@ impl Inner {
             return;
         }
         match &self.state {
-            State::Offered => self.step_offered(cx, first),
+            State::Offered => self.admit(cx, first),
             State::Fighting(_) => self.step_fighting(cx),
             State::Escaping | State::Done => {}
         }
     }
 
-    /// The offer's estimate and admission, due by the next fresh observation.
-    fn step_offered(&mut self, cx: &mut ActionContext<'_>, first: u64) {
-        let evidence = cx.evidence();
-        if self.assess.is_none() {
-            let here = match Frame::borrow(cx.snapshot()) {
-                Some(frame) => frame.here,
-                None => return,
-            };
-            let request = match assessment_request(&self.offer, here, cx) {
-                Ok(request) => request,
-                Err(reason) => return self.finish(FightOutcome::FleeRequired(reason)),
-            };
-            match cx.assess_walk(request) {
-                Ok(id) => self.assess = Some(id),
-                Err(_) => return self.finish(FightOutcome::FleeRequired(FightReason::NoService)),
-            }
-        }
-        let id = self.assess.expect("the advisory walk is pending");
-        match cx.assess_receipt(id) {
-            Some(receipt) => {
-                let ok = receipt.refusal.is_none() && receipt.route_ticks > 0;
-                let walk = u16::try_from(receipt.route_ticks).unwrap_or(u16::MAX);
-                let slack = escape_allowance(receipt.route_ticks, receipt.route_moves);
-                cx.cancel_request(id);
-                self.assess = None;
-                if !ok {
-                    return self.finish(FightOutcome::FleeRequired(FightReason::UnknownFacts));
-                }
-                let from = Frame::borrow(cx.snapshot())
-                    .map_or((0, 0), |frame| (frame.here.x, frame.here.z));
-                self.estimate = Some(Estimate { walk, from, slack });
-                self.begin_combat(cx);
-            }
-            None if evidence.tick > first => {
-                // The next fresh observation: no estimate means Flee.
-                cx.cancel_request(id);
-                self.assess = None;
+    /// The offer's admission, due by the next fresh observation: price the
+    /// walk out from the live scene and begin the fight. A walk that cannot be
+    /// priced is Flee, and no attack goes out on trust.
+    fn admit(&mut self, cx: &mut ActionContext<'_>, first: u64) {
+        let Some(frame) = Frame::borrow(cx.snapshot()) else {
+            // An incomplete frame waits one observation, no longer.
+            if cx.evidence().tick > first {
                 self.finish(FightOutcome::FleeRequired(FightReason::UnknownFacts));
             }
-            None => {}
-        }
-    }
-
-    /// The walking ticks to price this observation: the assessed walk plus
-    /// the distance the player is from the tile it was assessed on.
-    fn walk_now(&self, frame: &Frame<'_>) -> u16 {
-        let Some(estimate) = self.estimate else {
-            return 0;
-        };
-        let off = (frame.here.x - estimate.from.0)
-            .abs()
-            .max((frame.here.z - estimate.from.1).abs());
-        estimate
-            .walk
-            .saturating_add(u16::try_from(off).unwrap_or(u16::MAX))
-    }
-
-    fn begin_combat(&mut self, cx: &mut ActionContext<'_>) {
-        let Some(frame) = Frame::borrow(cx.snapshot()) else {
             return;
+        };
+        let Some(walk) = escape_walk(&self.offer.escape, &frame) else {
+            return self.finish(FightOutcome::FleeRequired(FightReason::UnknownFacts));
         };
         let npc_type = i32::from(self.offer.actor.npc_type);
         let Some(reserve) = escape_reserve(&self.tables, npc_type) else {
@@ -695,7 +716,17 @@ impl Inner {
             Err(ActionError::BudgetExhausted) => return,
             Err(error) => return self.finish(outcome_of_error(&error)),
         };
-        handle.set_escape_walk(self.walk_now(&frame));
+        api::host_log!(
+            api::hostlog::Category::RandomEvent,
+            api::hostlog::Level::Info,
+            "fight: escape priced at {} steps, {} ticks, to {},{}",
+            walk.steps,
+            walk.ticks,
+            walk.target.x,
+            walk.target.z
+        );
+        handle.set_escape_walk(walk.ticks);
+        self.walk = Some(walk);
         self.state = State::Fighting(Box::new(handle));
         self.step_fighting(cx);
     }
@@ -707,12 +738,17 @@ impl Inner {
         let Some(frame) = Frame::borrow(cx.snapshot()) else {
             return;
         };
-        let walk = self.walk_now(&frame);
+        // Every observation prices the walk the escape would take from here,
+        // over the live scene: a wall or a door that changed, or another first
+        // candidate once the player moved, is priced before the next attack. A
+        // walk that cannot be priced prices zero, and the core hands over
+        // before any attack goes out.
+        self.walk = escape_walk(&self.offer.escape, &frame);
+        handle.set_escape_walk(self.walk.map_or(0, |walk| walk.ticks));
         let in_view = frame.npcs.iter().any(|npc| {
             npc.index == usize::from(self.offer.actor.index)
                 && npc.r#type == Some(usize::from(self.offer.actor.npc_type))
         });
-        handle.set_escape_walk(walk);
         let mut actions = NativeActions { _private: () };
         match actions.poll(handle, cx) {
             Poll::Pending => {
@@ -733,14 +769,19 @@ impl Inner {
         }
     }
 
-    /// The core ended. A fight that hands over to Flee keeps one upkeep guard
-    /// that starts from the core's clocks and unsettled bite.
+    /// The core ended. The lock it admitted is published first, so a child
+    /// that keeps no guard still leaves it to the Guardian. A fight that hands
+    /// over to Flee keeps one upkeep guard that starts from the core's clocks
+    /// and unsettled bite.
     fn ended(&mut self, cx: &mut ActionContext<'_>, outcome: FightOutcome) {
         self.outcome = outcome;
+        self.export_lock();
         if let FightOutcome::FleeRequired(_) = outcome {
             if self.start_guard(cx) {
                 self.state = State::Escaping;
-                self.allowance = self.estimate.map_or(0, |estimate| estimate.slack);
+                self.allowance = self.walk.map_or(0, |walk| {
+                    escape_allowance(u32::from(walk.ticks), walk.steps)
+                });
                 return;
             }
         }
@@ -749,8 +790,8 @@ impl Inner {
 
     fn start_guard(&mut self, cx: &mut ActionContext<'_>) -> bool {
         let view: SnapshotView<'_> = cx.snapshot();
-        let Ok(request) = assessment_request(
-            &self.offer,
+        let Ok(request) = escape_request(
+            &self.offer.escape,
             Frame::borrow(view).map_or(
                 api::WorldTile {
                     x: 0,
@@ -798,7 +839,6 @@ mod tests {
             escape: api::random::FightEscape {
                 anchor: (0, 0),
                 radius: 12,
-                ring: [(6, 0); 8],
             },
             budget_ticks: 200,
         };
@@ -808,9 +848,8 @@ mod tests {
             protected: None,
             state: State::Escaping,
             outcome: FightOutcome::FleeRequired(FightReason::EscapeReserve),
-            assess: None,
-            estimate: None,
             first_tick: Some(0),
+            walk: None,
             observed_tick: u32::from(tick) + 1,
             ticks: 0,
             last_tick: Some(u64::from(tick) + 1),
@@ -870,9 +909,42 @@ mod tests {
         assert!(inner.guard.is_none());
     }
 
+    /// A child with no guard, as one whose core ended or whose guard could not
+    /// start is, publishes the lock its core last admitted: the cached clocks
+    /// carry it, and revocation exports it, until the lock has run out.
+    #[test]
+    fn a_child_with_no_guard_publishes_the_lock_its_core_last_admitted() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut inner, tick) = escaping_child();
+        inner.schedule = inner
+            .guard
+            .as_ref()
+            .expect("the escaping child holds a guard")
+            .schedule();
+        inner.guard = None;
+        inner.state = State::Done;
+        let end = tick.wrapping_add(4);
+        assert_eq!(inner.admitted_lock(tick.wrapping_add(1)), Some(end));
+        assert_eq!(inner.admitted_lock(end), None, "the lock has run out");
+
+        inner.last_tick = Some(u64::from(tick) + 1);
+        inner.export_lock();
+        assert_eq!(inner.read().blocked_until, Some(end));
+
+        let (mut late, tick) = escaping_child();
+        late.schedule = late.guard.as_ref().unwrap().schedule();
+        late.guard = None;
+        late.state = State::Done;
+        late.last_tick = Some(u64::from(tick) + 40);
+        late.revoke(FightCancel::Paused);
+        assert_eq!(late.read().blocked_until, None, "nothing to wait for");
+    }
+
     /// R3-3: the allowance after the first click is the bound less the
-    /// movement ticks of the assessed route, saturating at zero. An exact-step
-    /// bound, or a route longer than its bound, has none.
+    /// movement ticks of the route (its steps), saturating at zero. An
+    /// exact-step bound, or a route longer than its bound, has none.
     #[test]
     fn the_allowance_is_the_bound_less_the_movement_ticks_and_saturates_at_zero() {
         assert_eq!(escape_allowance(9, 6), 3);

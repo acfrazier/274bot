@@ -183,7 +183,10 @@ pub struct FightActor {
     pub npc_type: u16,
 }
 
-/// The escape the Guardian would walk if the fight cannot continue.
+/// The escape the Guardian walks if the fight cannot continue. The offer
+/// names where it starts and how far it must go; the candidate tiles come
+/// from [`escape_distance`] and [`escape_candidates`], the one function the
+/// Guardian's own walk and the child's escape price share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FightEscape {
     /// The spawn anchor the safety radius counts from.
@@ -191,9 +194,85 @@ pub struct FightEscape {
     /// Chebyshev distance from the anchor that ends the pursuit:
     /// `max(maxrange + 2, wanderrange + 4)`.
     pub radius: i32,
-    /// The Guardian's outward candidates, in the order it would try them: the
-    /// escape estimate prices a walk to the nearest reachable one.
-    pub ring: [(i32, i32); 8],
+}
+
+/// The whole-episode failure budget of a hostile event, in game ticks: the
+/// normal hostile spawn's 1000-tick lifetime plus two observation ticks
+/// (`macro_events.rs2:36`; `macro_event_dryad.rs2:10`). Missing or
+/// disengaged actors can need this long. It is a failure policy, not proof of
+/// despawn: the angry plant extends its lifetime (`macro_event_triffid.rs2:35`).
+/// The Guardian releases an episode that spent it, and a live cell watches
+/// for it.
+pub const EVADE_EPISODE_TICKS: u16 = 1_002;
+
+/// Compass offsets of the escape ring, N/NE/E/SE/S/SW/W/NW (rs2b0t
+/// `FLEE_DIRECTIONS`).
+const ESCAPE_COMPASS: [(i32, i32); 8] = [
+    (0, -1),
+    (1, -1),
+    (1, 0),
+    (1, 1),
+    (0, 1),
+    (-1, 1),
+    (-1, 0),
+    (-1, -1),
+];
+
+/// The Chebyshev distance of the escape ring around `anchor`: the content
+/// `radius`, or one tile past the player when the player already stands that
+/// far out.
+pub fn escape_distance(anchor: (i32, i32), radius: i32, player: (i32, i32)) -> i32 {
+    let reach = (player.0 - anchor.0).abs().max((player.1 - anchor.1).abs());
+    radius.max(reach.saturating_add(1))
+}
+
+/// The compass index that points away from `anchor` through `player`. Ties
+/// prefer a cardinal direction, and otherwise keep compass order.
+fn escape_direction(anchor: (i32, i32), player: (i32, i32)) -> usize {
+    let (dx, dz) = (
+        i64::from(player.0) - i64::from(anchor.0),
+        i64::from(player.1) - i64::from(anchor.1),
+    );
+    let mut best = 0;
+    let mut best_score = i64::MIN;
+    let mut best_cardinal = false;
+    for (index, (step_x, step_z)) in ESCAPE_COMPASS.iter().copied().enumerate() {
+        let score = dx * i64::from(step_x) + dz * i64::from(step_z);
+        let cardinal = step_x == 0 || step_z == 0;
+        if score > best_score || (score == best_score && cardinal && !best_cardinal) {
+            best = index;
+            best_score = score;
+            best_cardinal = cardinal;
+        }
+    }
+    best
+}
+
+/// The eight tiles of the escape ring at `distance` from `anchor`, in the
+/// order the Guardian tries them: the compass rotation that begins away from
+/// the anchor and through the player. The iterator allocates nothing.
+pub fn escape_candidates(
+    anchor: (i32, i32),
+    player: (i32, i32),
+    distance: i32,
+) -> impl Iterator<Item = (i32, i32)> {
+    let first = escape_direction(anchor, player);
+    (0..ESCAPE_COMPASS.len()).map(move |offset| {
+        let (dx, dz) = ESCAPE_COMPASS[(first + offset) % ESCAPE_COMPASS.len()];
+        (anchor.0 + dx * distance, anchor.1 + dz * distance)
+    })
+}
+
+/// The first escape candidate `accepts`: the Guardian's walk sends its click
+/// to the first one the client accepts, and the child prices the first one it
+/// can walk to, both through this one choice.
+pub fn first_escape_target(
+    anchor: (i32, i32),
+    player: (i32, i32),
+    distance: i32,
+    mut accepts: impl FnMut((i32, i32)) -> bool,
+) -> Option<(i32, i32)> {
+    escape_candidates(anchor, player, distance).find(|&tile| accepts(tile))
 }
 
 /// What the Guardian offers the script layer.
@@ -304,8 +383,8 @@ impl FightOutcome {
 /// Where the child stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FightPhase {
-    /// Offered; the escape estimate and admission are due by the next fresh
-    /// observation.
+    /// Offered; pricing the escape from the live scene and admission are due
+    /// by the next fresh observation.
     Offered,
     /// Combat is running against the exact actor.
     Fighting,
@@ -372,3 +451,7 @@ pub struct RandomResponse {
     pub state: ResponseState,
     pub reason: Option<ResponseReason>,
 }
+
+#[cfg(test)]
+#[path = "random_tests.rs"]
+mod tests;

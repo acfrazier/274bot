@@ -21,7 +21,9 @@
 
 use super::gatherer::GATHERER_START_INJECT;
 use super::script_basics::script_live_seed_steps;
-use crate::random_episode::{Oracle, RandomEventCell, Reward, TrapKind, Trigger};
+use crate::random_episode::{
+    Oracle, RandomEventCell, Reward, TrapKind, Trigger, FIGHT_EPISODE_TICKS,
+};
 use crate::*;
 
 const PRAYER_STAT: i32 = 5;
@@ -286,10 +288,25 @@ const fn episode_budget(oracle: Oracle) -> u32 {
         Oracle::Trap(TrapKind::Maze) => 1000,
         Oracle::Trap(TrapKind::Mime) => 700,
         Oracle::Dialog { .. } | Oracle::Pick => 500,
-        // A fight runs until the event actor is dead and removed: tier one has
-        // 25 Hitpoints and the bot hits for one or two every few ticks.
-        Oracle::Fight { .. } => 800,
+        // A saved Fight ends by the kill, by the hand over to Flee or by the
+        // Guardian's whole-episode failure budget, whichever the roll gives:
+        // the window holds the longest of them and the resumption after it,
+        // not the expected length of one fight (`FIGHT_EPISODE_TICKS`).
+        Oracle::Fight { .. } => FIGHT_EPISODE_TICKS,
         _ => 400,
+    }
+}
+
+/// The whole-run wall-clock deadline of an episode cell: about two minutes for
+/// the seed, Start and first XP, and the observed episode. The older cells
+/// keep the rule they were measured on, half a second per budgeted tick. A
+/// saved Fight can use its whole budget, so its deadline outlasts the window
+/// in real time: one game tick takes about 600 ms (`Wait::budget_ticks`), and
+/// a minute of margin stays.
+fn episode_deadline(oracle: Oracle, budget: u32) -> Duration {
+    match oracle {
+        Oracle::Fight { .. } => Duration::from_secs(180 + u64::from(budget) * 6 / 10 + 60),
+        _ => Duration::from_secs(180 + u64::from(budget) / 2),
     }
 }
 
@@ -395,9 +412,8 @@ pub(crate) fn guardian_event_cell(
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            // Seed, Start and first XP take about two minutes; the episode
-            // budget runs at about two dirties a second.
-            deadline: Duration::from_secs(180 + budget as u64 / 2),
+            // Seed, Start and first XP take about two minutes.
+            deadline: episode_deadline(oracle, budget),
             start_script: Some(activity.start_script()),
             script_settings_inject: activity.inject(),
             fixture_loadouts: (activity == Activity::Thieving).then_some(THIEVING_LOADOUTS),
@@ -814,10 +830,10 @@ const BRONZE_SCIMITAR_ID: i32 = 1321;
 
 /// The lobsters a fight cell seeds. The river troll at its lowest tier
 /// outlasts a combat level 9 account only by chance: the account deals about
-/// one damage point in ten game ticks, the event about one in six, so a long
-/// fight has to be paid for in food or the Guardian rightly hands over to
-/// Flee when the food is gone (design V11D 5.2). This count lets the fight
-/// run past 550 game ticks, far beyond the fight's expected length.
+/// one damage point in ten game ticks, the event about one in six. The cell
+/// does not need the kill: food pays for the fight and, once it is gone, the
+/// Guardian hands over to Flee (design V11D 5.2), an end the cell accepts
+/// like the kill and the episode budget (`Oracle::Fight`).
 const FIGHT_FOOD: i32 = 15;
 
 /// The account's own state a fight cell seeds: combat stats low enough that
@@ -845,9 +861,10 @@ type FightCell = (
 );
 
 /// `(scenario name, activity, event, trigger, oracle, saved Fight events,
-/// armed)`. The listed events are fought to the end; the Swarm, which Fight
-/// does not apply to (player damage against it is capped at 0), still flees
-/// with Fight saved.
+/// armed)`. The listed events are fought: the cell proves an attack on the
+/// exact actor and damage, then accepts any end the product bounds. The
+/// Swarm, which Fight does not apply to (player damage against it is capped
+/// at 0), still flees with Fight saved.
 pub(crate) const GUARDIAN_FIGHT_CELLS: &[FightCell] = &[
     (
         "guardian_fight_river_troll",

@@ -1284,11 +1284,6 @@ pub struct AssessReceipt {
     pub refusal: Option<WalkRefusal>,
     pub detail: Option<Arc<str>>,
     pub route_ticks: u32,
-    /// The movement ticks of the assessed route: its tiles, at one tile a
-    /// tick. `route_ticks` less this is the hold allowance the bound already
-    /// carries (design V11D 6.2): a Guardian Fight spends it on lock waits
-    /// after the first click of its walk out.
-    pub route_moves: u32,
 }
 
 /// Native walk failure classification, independent of Traveller internals.

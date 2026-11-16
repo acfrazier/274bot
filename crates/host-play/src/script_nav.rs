@@ -3922,20 +3922,12 @@ fn publish_unsubmitted_route_failure(
     }
 }
 
-/// The conservative walking bound of a route in ticks and its movement ticks:
-/// its tiles, at one tile a tick. The bound less the movement is the hold
-/// allowance the bound carries.
-fn compact_route_extent(lease: &NavLease, route: &CompactRoute) -> (u32, u32) {
+fn compact_route_ticks(lease: &NavLease, route: &CompactRoute) -> u32 {
     nav_planner::producer::compact_route_view(lease, route)
         .ok()
         .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
-        .and_then(|path| {
-            Some((
-                u32::try_from(path.ticks()).ok()?,
-                u32::try_from(path.len()).ok()?,
-            ))
-        })
-        .unwrap_or((0, 0))
+        .and_then(|path| u32::try_from(path.ticks()).ok())
+        .unwrap_or(0)
 }
 
 pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
@@ -4313,9 +4305,9 @@ fn apply_route_output(
                 return;
             }
             let lease = output.lease.as_ref();
-            let (route_ticks, route_moves) = lease
+            let route_ticks = lease
                 .zip(output.outcome.current_route())
-                .map_or((0, 0), |(lease, route)| compact_route_extent(lease, route));
+                .map_or(0, |(lease, route)| compact_route_ticks(lease, route));
             let no_path = matches!(output.outcome, RouteJobOutcome::NoPath);
             let detail = output
                 .assessment
@@ -4346,7 +4338,6 @@ fn apply_route_output(
                 refusal,
                 detail,
                 route_ticks,
-                route_moves,
             };
             let mut all = navs.lock().expect("navigation state mutex is not poisoned");
             if let Some(bot) = all.get_mut(name) {
@@ -5555,7 +5546,6 @@ impl ScriptWalkArm {
                 evidence,
                 assessment: None,
                 route_ticks: 0,
-                route_moves: 0,
                 refusal: Some(script::native::WalkRefusal::NoRouteWithinBounds {
                     tried: 0,
                     last: None,
@@ -7189,7 +7179,6 @@ fn advisory_refusal(
         }),
         detail: Some(Arc::from(detail)),
         route_ticks: 0,
-        route_moves: 0,
     }
 }
 

@@ -573,3 +573,26 @@ fn the_fight_cells_save_fight_for_their_event_and_stay_at_the_lowest_tier() {
         "one cell saves Fight for an event it does not apply to and expects the flee"
     );
 }
+
+/// The Fight cell's window is not the expected length of one fight: it holds
+/// the Guardian's whole-episode failure budget and the resumption after it, so
+/// the roll of the fight cannot end the cell before the product's own bound.
+/// The cell's wall-clock deadline holds that window in real time, at the
+/// 600 ms a game tick takes, and the two minutes of seed, Start and first XP
+/// before it, so a long roll is not a timeout either.
+#[test]
+fn the_fight_cell_window_holds_the_episode_budget_and_the_resumption() {
+    let scenario = crate::get("guardian_fight_river_troll").expect("the Fight cell is registered");
+    let observe = scenario.steps.last().unwrap();
+    assert!(matches!(observe.kind, StepKind::ObserveRandomEvent { .. }));
+    let window = observe.wait.budget_ticks;
+    assert!(
+        window >= u32::from(api::random::EVADE_EPISODE_TICKS) + crate::random_episode::RESUME_TICKS,
+        "the {window}-tick window must hold the whole-episode budget and the resumption"
+    );
+    let setup = Duration::from_secs(120);
+    assert!(
+        scenario.settings.deadline >= Duration::from_millis(u64::from(window) * 600) + setup,
+        "the deadline must hold {window} game ticks of 600 ms and the setup before them"
+    );
+}

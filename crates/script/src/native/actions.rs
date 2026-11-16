@@ -3004,7 +3004,6 @@ mod tests {
             )),
             detail: Some(Arc::from("risk input unavailable")),
             route_ticks: 0,
-            route_moves: 0,
         }
     }
 

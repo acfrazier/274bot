@@ -716,6 +716,8 @@ struct FakeDriver {
     /// Boxed-in route model: nearest can end one tile short of its target.
     reach: Option<((i32, i32), i32)>,
     sent_walks: Vec<(i32, i32)>,
+    /// The client refuses this many walk attempts before it accepts one.
+    refuse_first: usize,
     out: NoopOut,
 }
 
@@ -731,6 +733,7 @@ impl Default for FakeDriver {
             route_origin: Some((0, 0)),
             reach: None,
             sent_walks: Vec::new(),
+            refuse_first: 0,
             out: NoopOut,
         }
     }
@@ -763,7 +766,7 @@ impl Driver for FakeDriver {
         let allowed = if try_nearest {
             self.walk_nearest_ok
         } else {
-            self.walk_ok
+            self.walk_ok && self.walks.len() > self.refuse_first
         } && self.reach.is_none_or(|(origin, radius)| {
             cheb((dx, dz), origin) <= radius + i32::from(try_nearest)
         });
@@ -1491,7 +1494,7 @@ fn no_knock_source_keeps_host_claim_and_talks() {
 
 #[test]
 fn flee_candidates_use_content_distance() {
-    let tiles: Vec<_> = flee_candidates((10, 20), 17).collect();
+    let tiles: Vec<_> = api::random::escape_candidates((10, 20), (10, 20), 17).collect();
     assert_eq!(tiles.len(), 8, "one candidate per compass point");
     assert_eq!(tiles[0], (10, 3), "north is first");
     assert_eq!(tiles[7], (-7, 3), "north-west closes the compass");

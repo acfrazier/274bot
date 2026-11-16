@@ -72,6 +72,18 @@ const WALK_BACK_SLACK: i32 = 2;
 /// Consecutive game ticks an event NPC must be absent before it counts as gone
 /// (a view-edge flicker is not a despawn).
 const GONE_TICKS: u32 = 3;
+/// Game ticks from the end of a saved-Fight episode to the activity's next
+/// fresh XP: the bound the Swarm cell uses for the flee's return and first
+/// catch (`guardian_events.rs`).
+pub(crate) const RESUME_TICKS: u32 = 120;
+/// The longest a saved-Fight episode can run, in observed game ticks: the
+/// onset window, the Guardian's whole-episode failure budget (an actor that
+/// outlasts it is let go) and the activity's resumption after it.
+pub(crate) const FIGHT_EPISODE_TICKS: u32 =
+    ONSET_TICKS + api::random::EVADE_EPISODE_TICKS as u32 + RESUME_TICKS;
+/// Game ticks of slack between the actor's first targeting and the start of
+/// the Guardian's whole-episode clock, plus the ticks its hold takes to rise.
+const BUDGET_SLACK_TICKS: u32 = HOLD_RISE_TICKS + 2;
 /// A tile jump larger than this between two observed game ticks is a teleport.
 /// The content's failed-event punishment (`[queue,macro_event_fail_teleport]`)
 /// moves the player to a far random location.
@@ -123,12 +135,15 @@ pub enum Oracle {
     /// hold is released only after the escape (`guardian.rs`
     /// `refresh_evade` / `step_evade`).
     Evade { npc: &'static str },
-    /// Hostile event NPC under a saved Fight (one of the six listed events):
-    /// the Guardian keeps the hold while the player targets the exact actor
-    /// and deals damage (the actor's health bar falls), the actor dies and is removed,
-    /// and the hold is released only after that. Leaving the chase range
-    /// before the removal means the Guardian fled instead of fighting to the
-    /// end.
+    /// Hostile event NPC under a saved Fight (one of the six listed events).
+    /// The cell never gates on a chance outcome: it requires proof that the
+    /// player targeted the exact actor and dealt damage (the actor's health
+    /// bar falls), then accepts every end the product bounds, as long as the
+    /// Guardian releases the hold and the activity resumes: the actor gone
+    /// (killed or removed), the hand over to Flee after the fight (the bot
+    /// leaves the chase range), or the Guardian's whole-episode failure
+    /// budget with the actor still standing. Leaving the chase range before
+    /// any attack means the Guardian fled instead of fighting.
     Fight { npc: &'static str },
     /// Talking event (`DIALOG_NAMES`): the Guardian walks to and talks to
     /// the NPC, drains the dialogue, the NPC leaves, the reward arrives.
@@ -1082,6 +1097,10 @@ impl RandomEventEpisode {
             self.note(frame, "damage_dealt", json!({"health": health}));
         }
         let present = frame.npcs.iter().any(|n| n.index == attacker.index);
+        let targeting = frame
+            .npcs
+            .iter()
+            .any(|n| n.index == attacker.index && n.targets_local);
         if let Some((x, z, _)) = frame.tile {
             let distance = cheb((x, z), attacker.start);
             self.max_distance = self.max_distance.max(distance);
@@ -1095,22 +1114,36 @@ impl RandomEventEpisode {
                     "escaped",
                     json!({"distance": distance, "maxrange": maxrange}),
                 );
-                return Some(Verdict::Fail(format!(
-                    "the Guardian fled from {npc} at game tick {} ({distance} tiles from its start \
-                     {:?}, maxrange {maxrange}) instead of fighting it to the end (fought {:?}, \
-                     damage {:?})",
-                    frame.tick, attacker.start, self.fought, self.damage
-                )));
+                // The hand over to Flee is a bound the product has, but only
+                // after the fight: an escape with no attack and no damage is
+                // the Flee the Guardian had before it could fight.
+                if self.fought.is_none() || self.damage.is_none() {
+                    return Some(Verdict::Fail(format!(
+                        "the Guardian fled from {npc} at game tick {} ({distance} tiles from its \
+                         start {:?}, maxrange {maxrange}) before it fought it: a saved Fight \
+                         attacks the exact actor first (fought {:?}, damage {:?})",
+                        frame.tick, attacker.start, self.fought, self.damage
+                    )));
+                }
             }
         }
-        if self.hold_rise.is_some() && !frame.hold && present && self.npc_gone.is_none() {
+        if self.hold_rise.is_none() || frame.hold {
+            return None;
+        }
+        // The hold is released. Every end the product bounds is accepted: the
+        // actor gone (killed or removed), the hand over to Flee after the
+        // fight, and the whole-episode failure budget with the actor still
+        // standing. Any other release is the Guardian giving the fight up.
+        let budget = self.budget_spent(frame);
+        if present && self.npc_gone.is_none() && self.escape.is_none() && !budget {
             return Some(Verdict::Fail(format!(
                 "the Guardian released the hold at game tick {} while {npc} still stood: the fight \
-                 did not run to its end (fought {:?}, damage {:?})",
+                 did not run to an end the product bounds (fought {:?}, damage {:?})",
                 frame.tick, self.fought, self.damage
             )));
         }
-        if self.npc_gone.is_some() && self.hold_rise.is_some() && !frame.hold {
+        let ended = self.npc_gone.is_some() || budget || (self.escape.is_some() && !targeting);
+        if ended {
             if self.fought.is_none() || self.damage.is_none() {
                 return Some(Verdict::Fail(format!(
                     "{npc} is gone and the hold is released, but the bot never fought it \
@@ -1121,6 +1154,17 @@ impl RandomEventEpisode {
             self.resolve_when(frame, true);
         }
         None
+    }
+
+    /// The Guardian's whole-episode failure budget has run out: its clock
+    /// counts fresh observations from the actor's detection, which is the
+    /// actor's first targeting of the bot, and it lets go of the actor after
+    /// [`api::random::EVADE_EPISODE_TICKS`] of them.
+    fn budget_spent(&self, frame: &Frame) -> bool {
+        self.first_target.is_some_and(|first| {
+            frame.tick.saturating_sub(first) + BUDGET_SLACK_TICKS
+                >= u32::from(api::random::EVADE_EPISODE_TICKS)
+        })
     }
 
     fn judge_evade(&mut self, frame: &Frame, fresh: bool, npc: &'static str) -> Option<Verdict> {

@@ -275,7 +275,9 @@ impl Guardian {
             }
             FightOutcome::TargetGone => {
                 source.fight_release(token);
-                self.fight_to_flee(None, None, ResponseReason::FightEnded);
+                // A bite the core admitted before the actor left still locks
+                // input: the walk waits for it.
+                self.fight_to_flee(None, read.blocked_until, ResponseReason::FightEnded);
             }
             FightOutcome::FleeRequired(reason) => {
                 // The child keeps one upkeep guard while it can; the walk out
@@ -429,7 +431,6 @@ impl Guardian {
     /// escape solver works the event as it always did.
     pub(super) fn fight_begin(
         &mut self,
-        snap: &GameSnapshot,
         port: &mut Option<&mut dyn RandomClaimSource>,
         context: &GuardianLiveContext<'_>,
         settings: &ProfileSettings,
@@ -443,25 +444,15 @@ impl Guardian {
         let Some(state) = self.evade.as_ref() else {
             return false;
         };
-        let Some((px, pz, _)) = snap.tile() else {
-            return false;
-        };
-        let distance = state
-            .flee_distance
-            .max(cheb((px, pz), state.start_tile) + 1);
-        let mut ring = [(0, 0); 8];
-        for (slot, tile) in
-            ring.iter_mut()
-                .zip(flee_candidates_away(state.start_tile, (px, pz), distance))
-        {
-            *slot = tile;
-        }
         let actor_id = (state.index, state.npc_type);
         self.fight_serial = self.fight_serial.wrapping_add(1);
         let token = FightToken {
             session: self.episode.session,
             serial: self.fight_serial,
         };
+        // The child prices the walk the escape would take from the live scene
+        // on every observation, so the offer names only where it starts and
+        // how far it goes.
         let offer = FightOffer {
             token,
             event,
@@ -469,7 +460,6 @@ impl Guardian {
             escape: FightEscape {
                 anchor: state.start_tile,
                 radius: state.flee_distance,
-                ring,
             },
             budget_ticks: EVADE_GIVE_UP_TICKS.saturating_sub(state.elapsed_ticks),
         };

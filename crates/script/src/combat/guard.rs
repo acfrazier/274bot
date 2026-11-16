@@ -387,6 +387,13 @@ impl WalkGuard {
         self.flags & FLAG_DEFER_LOCKS != 0
     }
 
+    /// The clocks this guard keeps, as a Guardian child's cached core
+    /// schedule would hold them.
+    #[cfg(test)]
+    pub(crate) fn schedule(&self) -> Schedule {
+        self.schedule
+    }
+
     /// Whether admitting `op` locks input: every drink, the cure fruit, and
     /// the food that carries a message delay (the karambwan).
     fn locks_input(&self, op: &GuardOp, snapshot: &SnapshotView<'_>) -> bool {

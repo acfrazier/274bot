@@ -117,6 +117,17 @@ pub(crate) fn nearest_depth(view: &ReachQueryView, goals: &[WorldTile]) -> Optio
     Some(flood_depth(view, tile, rank).unwrap_or(u32::from(rank)))
 }
 
+/// Walking depth, in steps, of the exact tile `goal` in the posted flood: the
+/// length of the route the client's own pathfinder walks to it. The flood is
+/// the live scene's collision, so a closed door is a wall. A depth the posted
+/// step masks cannot reproduce falls back to the tile's dequeue rank, which
+/// is never shorter. `None` when the tile lies off the posted window, is
+/// walled off, or is on another level.
+pub(crate) fn depth_to(view: &ReachQueryView, goal: WorldTile) -> Option<u32> {
+    let rank = exact_rank_at(view, goal)?;
+    Some(flood_depth(view, goal, rank).unwrap_or(u32::from(rank)))
+}
+
 /// The tile whose exact rank produced `rank`: the tile itself or one of its
 /// orthogonal neighbours.
 fn stand_for(view: &ReachQueryView, tile: WorldTile, rank: u16) -> WorldTile {
@@ -522,5 +533,35 @@ mod tests {
         assert_eq!(steps(&view, tile(13, 11), big), Some(1));
         assert_eq!(steps(&view, tile(14, 11), big), Some(0));
         assert_eq!(steps(&view, tile(14, 12), big), Some(1));
+    }
+
+    /// The depth of an exact tile in a flooded view: open ground is the
+    /// Chebyshev distance, blocked ground has none, a wall adds its detour, and
+    /// a tile off the posted window has none.
+    #[test]
+    fn the_depth_of_an_exact_tile_reads_the_posted_flood() {
+        let player = tile(5, 5);
+        let flooded = |scene: &Scene| {
+            let flood = api::query::SceneQuery::new(&scene.0, Some(player)).flood_reach();
+            api::query::pack_reach_query(&scene.0, flood.as_ref())
+        };
+        let open = flooded(&Scene::open());
+        assert_eq!(depth_to(&open, tile(12, 8)), Some(7));
+        assert_eq!(depth_to(&open, tile(5, 20)), Some(15));
+        assert_eq!(depth_to(&open, tile(200, 5)), None);
+
+        let mut scene = Scene::open();
+        for z in 0..=8 {
+            scene.flag(tile(8, z), BLOCKED_GROUND);
+        }
+        let walled = flooded(&scene);
+        assert_eq!(depth_to(&walled, tile(8, 5)), None, "blocked ground");
+        let straight = depth_to(&open, tile(11, 5)).unwrap();
+        let round = depth_to(&walled, tile(11, 5)).unwrap();
+        assert!(
+            round > straight,
+            "{round} steps round the wall, {straight} straight"
+        );
+        assert!(round <= 12, "the detour is the wall's own length: {round}");
     }
 }

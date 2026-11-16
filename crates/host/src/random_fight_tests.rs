@@ -667,3 +667,68 @@ fn without_a_lock_the_first_walk_goes_out_on_the_handoff_pass() {
     rig.pass(true);
     assert_eq!(rig.drv.walks.len(), 1);
 }
+
+/// A child whose core ended with the actor gone while a bite it admitted still
+/// locks input leaves that lock to the Guardian: the walk that follows the end
+/// waits for it, as it does after a revocation.
+#[test]
+fn a_target_gone_end_waits_for_the_lock_of_a_bite_in_flight() {
+    if !data_available() {
+        return;
+    }
+    let mut rig = FightRig::troll(saved_fight());
+    rig.pass(true);
+    rig.port.phase = FightPhase::Fighting;
+    rig.pass(true);
+    let tick = rig.snap.tick() as u16;
+    rig.port.blocked_until = Some(tick.wrapping_add(3));
+    rig.port.outcome = FightOutcome::TargetGone;
+    rig.port.phase = FightPhase::Done;
+    let mut walked_at = None;
+    for step in 1..=6u16 {
+        rig.pass(true);
+        if walked_at.is_none() && !rig.drv.walks.is_empty() {
+            walked_at = Some(step);
+        }
+    }
+    assert_eq!(
+        walked_at,
+        Some(3),
+        "no click goes out while the admitted lock runs, the first walk follows it"
+    );
+}
+
+/// The Guardian's own escape click goes to the first candidate the client
+/// accepts, in the ring order the child prices
+/// (`api::random::first_escape_target`): the candidates the client refuses are
+/// tried in ring order, the accepted one is the click, and no later one is
+/// tried. The walk the fight priced is the walk the Guardian takes.
+#[test]
+fn the_escape_click_goes_to_the_first_candidate_the_client_accepts() {
+    if !data_available() {
+        return;
+    }
+    // The offer carries the anchor and radius the Guardian's own walk uses.
+    let mut probe = FightRig::troll(saved_fight());
+    probe.pass(true);
+    let escape = probe.port.offers[0].escape;
+    let player = (0, 0);
+    let distance = api::random::escape_distance(escape.anchor, escape.radius, player);
+    let ring: Vec<_> = api::random::escape_candidates(escape.anchor, player, distance).collect();
+
+    for refused in 0..4 {
+        let mut rig = FightRig::troll(vault::RandomEventPolicy::Flee);
+        rig.drv.refuse_first = refused;
+        rig.pass(true);
+        assert_eq!(
+            rig.drv.walks,
+            ring[..=refused],
+            "{refused} refused: the candidates are tried in ring order, no later one"
+        );
+        assert_eq!(
+            rig.drv.sent_walks,
+            [ring[refused]],
+            "{refused} refused: the accepted candidate is the click"
+        );
+    }
+}

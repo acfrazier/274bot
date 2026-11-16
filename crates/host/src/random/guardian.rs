@@ -33,12 +33,10 @@ const LOST_TOOL_GROUND_LIFETIME_TICKS: u32 = 200;
 /// (`antimacro.npc:130,1009`; `World.ts:340-408`;
 /// `macro_event_triffid.rs2:51-55`).
 const EVADE_CLEANUP_TICKS: u8 = 22;
-/// Final failure budget: the normal hostile spawn's 1000-tick lifetime plus
-/// two observation ticks (`macro_events.rs2:36`; `macro_event_dryad.rs2:10`).
-/// Missing/disengaged actors can need this long. Engaged actors inside chase
-/// range have a shorter no-distance-progress budget below. Neither rule proves
-/// despawn: the angry plant extends its lifetime (`macro_event_triffid.rs2:35`).
-const EVADE_GIVE_UP_TICKS: u16 = 1_002;
+/// Final failure budget: `api::random::EVADE_EPISODE_TICKS`, the normal
+/// hostile spawn's 1000-tick lifetime plus two observation ticks. Engaged
+/// actors inside chase range have a shorter no-distance-progress budget below.
+const EVADE_GIVE_UP_TICKS: u16 = api::random::EVADE_EPISODE_TICKS;
 /// A thieving stun blocks every walk at the server. The fail script applies
 /// the stun for the pickpocket row's `stun_ticks` (Man 8:
 /// `pickpocket.dbrow:10`; the largest row is 10: `pickpocket.dbrow:145`) and
@@ -2277,7 +2275,7 @@ impl Guardian {
         // Offer the Fight once, before this actor's first escape step.
         if !run.from_fight && run.escape.is_none() {
             *self.evade_run_mut() = run;
-            if self.fight_begin(snap, desk.port, desk.context, settings) {
+            if self.fight_begin(desk.port, desk.context, settings) {
                 return;
             }
             run = self.evade_run();
@@ -3321,23 +3319,29 @@ fn flee_step<D: Driver + ?Sized>(
         run.fallback_distance = None;
         run.fallback_exhausted = false;
     }
-    let distance = flee_distance.max(cheb(player, start_tile).saturating_add(1));
+    let distance = api::random::escape_distance(start_tile, flee_distance, player);
     if run.fallback_distance.is_none() {
-        for (x, z) in flee_candidates_away(start_tile, player, distance) {
-            if walk(driver, x, z) {
-                run.flee_target = Some((x, z));
-                return true;
-            }
+        // The first candidate the client accepts: the child prices this very
+        // choice (`api::random::first_escape_target`).
+        if let Some(target) =
+            api::random::first_escape_target(start_tile, player, distance, |(x, z)| {
+                walk(driver, x, z)
+            })
+        {
+            run.flee_target = Some(target);
+            return true;
         }
         run.fallback_distance = Some(distance);
     }
     let fallback_distance = run.fallback_distance.expect("fallback ring is set");
-    for (x, z) in flee_candidates_away(start_tile, player, fallback_distance) {
-        if walk_nearest(driver, x, z) {
-            run.flee_target = Some((x, z));
-            run.fallback_distance = None;
-            return true;
-        }
+    if let Some(target) =
+        api::random::first_escape_target(start_tile, player, fallback_distance, |(x, z)| {
+            walk_nearest(driver, x, z)
+        })
+    {
+        run.flee_target = Some(target);
+        run.fallback_distance = None;
+        return true;
     }
     if fallback_distance > 1 {
         run.fallback_distance = Some(fallback_distance - 1);

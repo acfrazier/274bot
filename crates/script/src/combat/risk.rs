@@ -23,6 +23,7 @@ pub use facts::*;
 pub fn risk_table_build_count_for_test() -> usize {
     facts::build_count_for_test()
 }
+pub(crate) use geometry::walk_ticks;
 pub use geometry::{build_plan, RoutePath};
 pub use input::*;
 use nav_planner::contract::{BoundZoneKey, ContractError, PackId, ZoneKey, ZoneTableView};

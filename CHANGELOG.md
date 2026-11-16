@@ -107,15 +107,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - A saved Fight now works. The Guardian fights the event with the combat engine
   that scripts use, for River troll, Rock golem, Zombie, Shade, Watchman and
   Tree spirit. It eats the food the bot already carries and keeps enough
-  Hitpoints to walk away; when the food that pays for the escape is gone, or
-  the fight cannot go on, it flees as it did before. Flee stays the default.
+  Hitpoints to walk away. It prices that walk on every game tick from the
+  scene the bot stands in, for the tile the Guardian's own escape walks to, so
+  a wall or a closed door that changes the way out is counted before the next
+  attack. When the food that pays for the escape is gone, or the fight cannot
+  go on, it flees as it did before. Flee stays the default.
 - Swarm and the angry Strange plant are not fought. With Fight saved they keep
   the old handling: the Guardian flees them, and a script claim does not take
   them.
 - A script Pause, Stop or failure, a manual takeover, or changing the saved
-  choice to Flee ends the fight at once and the Guardian flees. Turning random
-  events off or logging out ends it and the Guardian does nothing more. A fight
-  never starts again for the same actor.
+  choice to Flee ends the fight at once and the Guardian flees. If a bite that
+  locks input is in flight when that happens, the Guardian waits for it before
+  its first step. Turning random events off or logging out ends the fight and
+  the Guardian does nothing more. A fight never starts again for the same
+  actor.
 - This closes the known issue that Fight could be chosen but was treated as Flee.
 
 ### Panel and terminal app

@@ -622,7 +622,6 @@ pub(crate) fn post_assess_receipt(
         detail: refusal.as_ref().map(|_| Arc::from("router found no route")),
         refusal,
         route_ticks,
-        route_moves: 0,
     });
     request_id
 }
