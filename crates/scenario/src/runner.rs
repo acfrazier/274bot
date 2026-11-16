@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use api::interact::{cheat, logout, Interactions, SendResult};
 use api::obj_names::ObjNames;
+use api::snapshot::{varbit_value, VarbitObservation, VarbitUnavailable};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use nav_executor::{TravelOptions, TravelOutcome, Traveller};
@@ -381,6 +382,11 @@ mod protect_window_oracle {
     }
 }
 
+/// A driver's last look before the runner publishes a PASS. It names a script
+/// that the run started and that ended Failed, as `(slot, reason)`. The live
+/// pump installs one that reads the lifecycle receipts of the started slots.
+pub type PassGate = Box<dyn Fn() -> Option<(String, String)> + Send>;
+
 /// The machine both runners drive. One instance per scenario run.
 pub struct ScenarioRunner {
     scenario: Scenario,
@@ -537,6 +543,8 @@ pub struct ScenarioRunner {
     #[allow(clippy::type_complexity)]
     shot_sink: Option<Box<dyn FnMut(&str, &GameSnapshot) + Send>>,
     terminal_cleanup: Option<TerminalCleanup>,
+    /// The driver's last look before a PASS is published. See [`PassGate`].
+    pass_gate: Option<PassGate>,
     /// A scenario requests a receipt by default. Disarming drops the entire owner.
     run_receipt: Option<Box<RunReceipt>>,
 }
@@ -598,7 +606,8 @@ impl ScenarioRunner {
             scenario.seed.mainland || scenario.settings.require_mainland_base;
         let engine_speed_ms = scenario.settings.nav.engine_speed_ms;
         let receipt_prefixes = receipt_prefixes(&scenario);
-        Self {
+        let invalid_observation = client_observation_refusal(&scenario);
+        let mut runner = Self {
             scenario,
             snapshot: GameSnapshot::new(),
             obj_names: None,
@@ -658,8 +667,13 @@ impl ScenarioRunner {
             script_idle: false,
             shot_sink: None,
             terminal_cleanup: None,
+            pass_gate: None,
             run_receipt: Some(Box::default()),
+        };
+        if let Some(message) = invalid_observation {
+            runner.record_fail(&message);
         }
+        runner
     }
 
     /// Stop or start dispatch recording without changing any gameplay predicate.
@@ -1020,6 +1034,50 @@ impl ScenarioRunner {
         }
     }
 
+    /// Whether a failure of a script this run started can still end it: the
+    /// StartScript step has begun, and the run has no verdict and is not in
+    /// terminal cleanup. The live pump reads the slot receipts only while
+    /// this holds.
+    pub fn wants_script_failure(&self) -> bool {
+        self.script_started && matches!(self.phase, Phase::Running | Phase::Proving)
+    }
+
+    /// Fail the run because the script on `slot` ended Failed; `reason` is
+    /// the script's own failure text. A script that stopped itself leaves the
+    /// current watch waiting for a result that cannot come, so without this
+    /// the run waits out its whole deadline. No-op unless
+    /// [`Self::wants_script_failure`]. The live pump calls it before the
+    /// runner ticks, so a failed script cannot end the run in PASS.
+    pub fn fail_script(&mut self, slot: &str, reason: &str) {
+        if !self.wants_script_failure() {
+            return;
+        }
+        let failure = script_failure_text(slot, reason);
+        if matches!(self.phase, Phase::Running) && self.step < self.scenario.steps.len() {
+            self.finish_fail(&format!(
+                "step {} ({}): {failure}",
+                self.step + 1,
+                self.current_step().name
+            ));
+        } else {
+            self.finish_fail(&failure);
+        }
+    }
+
+    /// Install the gate that the runner asks just before it publishes a PASS,
+    /// or clear it with `None`. A script that failed before that look turns
+    /// the PASS into a FAIL, also when it failed after the last
+    /// [`Self::fail_script`] call. A failure after the look happened after
+    /// the proof, and the runner does not see it.
+    pub fn set_pass_gate(&mut self, gate: Option<PassGate>) {
+        self.pass_gate = gate;
+    }
+
+    /// Whether a pass gate is installed.
+    pub fn has_pass_gate(&self) -> bool {
+        self.pass_gate.is_some()
+    }
+
     /// Latch the first published paint row that starts with each receipt
     /// prefix the scenario watches. The live pump calls this with the
     /// driven slot's current paint frame before the next client-cycle
@@ -1340,7 +1398,34 @@ impl ScenarioRunner {
                         .relog_session
                         .is_some_and(|session| client.gens.session != session);
             }
-            let arm_holds = self.holds_with_client(arm, client);
+            if let StepKind::ObserveVarbit { id } = self.current_step().kind {
+                if !matches!(arm, Proof::VarbitEquals { id: proof_id, .. } if proof_id == id) {
+                    self.finish_fail(&format!(
+                        "step {} ({}): ObserveVarbit requires a matching VarbitEquals wait arm",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+            } else if matches!(arm, Proof::VarbitEquals { .. }) {
+                self.finish_fail(&format!(
+                    "step {} ({}): VarbitEquals requires an ObserveVarbit step",
+                    self.step + 1,
+                    self.current_step().name
+                ));
+                return;
+            }
+            let arm_holds = match self.holds_with_client(arm, client) {
+                Ok(holds) => holds,
+                Err(unavailable) => {
+                    self.finish_unavailable(&format!(
+                        "step {} ({}): varbit unavailable: {unavailable:?}",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+            };
             let stall_combat_holds = match self.observe_stall_combat(arm_holds) {
                 Ok(holds) => holds,
                 Err(message) => {
@@ -1468,10 +1553,31 @@ impl ScenarioRunner {
                 ));
             }
         }
-        if matches!(self.phase, Phase::Proving)
-            && self.holds_with_client(self.scenario.proof, client)
-        {
-            self.finish_pass();
+        if matches!(self.phase, Phase::Proving) {
+            if let Proof::VarbitEquals { id, .. } = self.scenario.proof {
+                let requested = self.scenario.steps.iter().any(|step| {
+                    matches!(
+                        &step.kind,
+                        StepKind::ObserveVarbit { id: observed } if *observed == id
+                    )
+                });
+                if !requested {
+                    self.finish_fail("terminal VarbitEquals requires an ObserveVarbit step");
+                    return;
+                }
+            }
+            let proof_holds = match self.holds_with_client(self.scenario.proof, client) {
+                Ok(holds) => holds,
+                Err(unavailable) => {
+                    self.finish_unavailable(&format!(
+                        "terminal proof: varbit unavailable: {unavailable:?}"
+                    ));
+                    return;
+                }
+            };
+            if proof_holds {
+                self.finish_pass();
+            }
         }
         if !matches!(self.phase, Phase::Done | Phase::Cleaning)
             && self.started.elapsed() > self.deadline
@@ -1725,10 +1831,31 @@ impl ScenarioRunner {
         }
     }
 
-    /// Menu proofs require the named observation step and read the current
-    /// client menu directly. The `None` request stays on the allocation-free
-    /// path for every non-menu proof and every unarmed tick.
-    fn holds_with_client(&self, proof: Proof, client: &Client) -> bool {
+    /// Client-backed proofs require their named observation step. Other proofs
+    /// retain the allocation-free snapshot and host-receipt checks.
+    fn holds_with_client(&self, proof: Proof, client: &Client) -> Result<bool, VarbitUnavailable> {
+        if let Proof::VarbitEquals {
+            id,
+            value,
+            observed_base_varp,
+        } = proof
+        {
+            if self.on_stop_script() && !self.script_idle {
+                return Ok(false);
+            }
+            let result = varbit_value(&self.snapshot, &client.cache, id)?;
+            let observed = match result.observation {
+                VarbitObservation::Unknown {
+                    base_varp,
+                    base_value,
+                } => {
+                    let witness = observed_base_varp
+                        .ok_or(VarbitUnavailable::UnobservedBaseVarp { id, base_varp })?;
+                    witness.varp_id == base_varp && witness.value == base_value
+                }
+            };
+            return Ok(observed && result.value == value);
+        }
         let query = match (self.menu_observation_armed(), proof) {
             (true, Proof::MenuHasEntry { operation, target }) => {
                 Some(api::snapshot::MenuEntryQuery { operation, target })
@@ -1737,9 +1864,9 @@ impl ScenarioRunner {
         };
         let menu_holds = api::query::menu_has_entry(client, query);
         if matches!(proof, Proof::MenuHasEntry { .. }) {
-            return menu_holds;
+            return Ok(menu_holds);
         }
-        self.holds(proof)
+        Ok(self.holds(proof))
     }
 
     /// Restart the style watch's budget at each completed pre-style trip and
@@ -2408,6 +2535,7 @@ impl ScenarioRunner {
             | StepKind::ObserveStyleAcrossLootTrips { .. }
             | StepKind::ObserveCombatAcrossBankReturns { .. }
             | StepKind::ObserveRandomEvent { .. }
+            | StepKind::ObserveVarbit { .. }
             | StepKind::ObserveMenu => Ok("no-send"),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);
@@ -2843,6 +2971,12 @@ impl ScenarioRunner {
     }
 
     fn record_pass(&mut self) {
+        // The last look before the PASS is published. Every PASS goes through
+        // here, also one that waited for the world-speed cleanup.
+        if let Some((slot, reason)) = self.pass_gate.as_ref().and_then(|gate| gate()) {
+            self.record_fail(&script_failure_text(&slot, &reason));
+            return;
+        }
         self.phase = Phase::Done;
         self.fire_terminal_shot();
         let mut evidence = Evidence::terminal(
@@ -2927,6 +3061,88 @@ impl ScenarioRunner {
         );
         self.evidence = Some(evidence);
     }
+}
+
+fn client_observation(proof: Proof) -> Option<&'static str> {
+    match proof {
+        Proof::MenuHasEntry { .. } => Some("MenuHasEntry"),
+        Proof::VarbitEquals { .. } => Some("VarbitEquals"),
+        Proof::All(proofs) => proofs.iter().find_map(|proof| client_observation(*proof)),
+        _ => None,
+    }
+}
+
+fn nested_client_observation(proof: Proof) -> Option<&'static str> {
+    match proof {
+        Proof::All(proofs) => proofs.iter().find_map(|proof| client_observation(*proof)),
+        _ => None,
+    }
+}
+
+fn client_observation_refusal(scenario: &Scenario) -> Option<String> {
+    for (index, step) in scenario.steps.iter().enumerate() {
+        let (observer, reason) = match step.kind {
+            StepKind::ObserveStyleAcrossLootTrips { .. } | StepKind::NativeSeedDeposit { .. } => (
+                client_observation(step.wait.arm),
+                "requires client observation",
+            ),
+            _ => (
+                nested_client_observation(step.wait.arm),
+                "cannot be nested in Proof::All",
+            ),
+        };
+        if let Some(observer) = observer {
+            return Some(format!(
+                "step {} ({}) wait arm: {observer} {reason}. Use a top-level observation proof",
+                index + 1,
+                step.name
+            ));
+        }
+        if let StepKind::ObserveStallCombat { guard_ready, .. } = step.kind {
+            if let Some(observer) = client_observation(guard_ready) {
+                return Some(format!(
+                    "step {} ({}) guard_ready: {observer} requires client observation. Use a top-level observation proof",
+                    index + 1,
+                    step.name
+                ));
+            }
+        }
+    }
+    if let Some(observer) = nested_client_observation(scenario.proof) {
+        return Some(format!(
+            "terminal proof: {observer} cannot be nested in Proof::All. Use a top-level observation proof"
+        ));
+    }
+    for (index, sustain) in scenario.settings.sustains.iter().enumerate() {
+        if let SustainWhen::Poll(proof) = sustain.when {
+            if let Some(observer) = client_observation(proof) {
+                return Some(format!(
+                    "sustain {} poll condition: {observer} requires client observation. Use a top-level observation proof",
+                    index + 1
+                ));
+            }
+        }
+    }
+    for (index, proof) in scenario
+        .settings
+        .fixture_prereqs
+        .unwrap_or(&[])
+        .iter()
+        .enumerate()
+    {
+        if let Some(observer) = client_observation(*proof) {
+            return Some(format!(
+                "fixture prerequisite {}: {observer} requires client observation. Use a top-level observation proof",
+                index + 1
+            ));
+        }
+    }
+    None
+}
+
+/// The failure text of a run that ended because the script on `slot` failed.
+fn script_failure_text(slot: &str, reason: &str) -> String {
+    format!("the script on {slot} failed: {reason}")
 }
 
 /// The distinct receipt prefixes a scenario's [`Proof::ScriptReceipt`]

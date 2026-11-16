@@ -7813,6 +7813,61 @@ fn compiled_catalog_start_pump_reaches_running() {
 
 #[cfg(feature = "js")]
 #[test]
+fn started_generation_names_the_run_a_compiled_start_installs() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let play = compiled_start_play();
+    let handle = play.script_start_handle();
+    let mut pending = vec![live_start::PendingCatalogStart::compiled(
+        "alice",
+        script::CompiledId("Sherlock"),
+        serde_json::Map::new(),
+    )];
+    let mut previous = handle.started_generation("alice").unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            live_start::fire_pending_catalog_start(&mut pending, true, false, || {
+                compiled_arming(&handle)
+            }),
+            live_start::StartScriptPump::Continue,
+            "the Start is admitted before preparation settles"
+        );
+        let issued = handle.started_generation("alice").unwrap();
+        assert!(
+            issued > previous,
+            "an accepted Start issues a newer generation"
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match live_start::fire_pending_catalog_start(&mut pending, true, false, || {
+                compiled_arming(&handle)
+            }) {
+                live_start::StartScriptPump::CompiledRunning => break,
+                live_start::StartScriptPump::Continue | live_start::StartScriptPump::Hold => {
+                    assert!(Instant::now() < deadline, "compiled Start did not settle");
+                    std::thread::yield_now();
+                }
+                other => panic!("compiled Start did not run: {other:?}"),
+            }
+        }
+        let (installed, run) = handle.observe_native_runtime("alice").unwrap();
+        assert_eq!(installed, issued, "the run installs what the Start issued");
+        assert_eq!(run.map(|run| run.run), Some(issued));
+        assert_eq!(handle.started_generation("alice"), Some(issued));
+
+        assert_eq!(
+            live_start::fire_pending_catalog_start(&mut pending, false, true, || {
+                compiled_arming(&handle)
+            }),
+            live_start::StartScriptPump::Continue
+        );
+        previous = handle.started_generation("alice").unwrap();
+    }
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn start_handle_reads_native_runtime_pair_atomically() {
     if !api::test_support::game_data_available() {
         return;

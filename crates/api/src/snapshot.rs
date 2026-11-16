@@ -30,8 +30,10 @@ mod login_quest_colours;
 pub use decode::{
     attacked_by_player, cache_held_ops, menu_entries, tab_inv_component, PLAYER_FACE_BASE,
 };
+mod varbit;
 use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIfaceGate};
 use login_quest_colours::LoginQuestColours;
+pub use varbit::{varbit_value, VarbitObservation, VarbitUnavailable, VarbitValue};
 mod context;
 pub use context::ReadContext;
 
