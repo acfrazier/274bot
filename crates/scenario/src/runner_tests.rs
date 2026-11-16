@@ -3310,6 +3310,8 @@ fn measured_open_window_terminal_paths_never_hide_a_quiet_product_failure() {
         "script",
         "gate",
         "unavailable",
+        "varbit",
+        "menu",
     ] {
         for interfered in [false, true] {
             for cleanup in [false, true] {
@@ -3349,18 +3351,48 @@ fn measured_open_window_terminal_paths_never_hide_a_quiet_product_failure() {
                         runner.finish_unavailable("engine capability unavailable");
                         "engine capability unavailable"
                     }
+                    "varbit" | "menu" => {
+                        let varbit = cause == "varbit";
+                        runner.scenario.steps[2].kind = if varbit {
+                            StepKind::ObserveVarbit { id: 0 }
+                        } else {
+                            StepKind::ObserveMenu
+                        };
+                        runner.scenario.steps[2].wait.arm = if varbit {
+                            CLIENT_VARBIT_PROOF
+                        } else {
+                            CLIENT_MENU_PROOF
+                        };
+                        runner.deadline = Duration::ZERO;
+                        runner.tick(&mut client);
+                        if varbit {
+                            "MissingDefinition"
+                        } else {
+                            "deadline"
+                        }
+                    }
                     _ => unreachable!(),
                 };
-                if matches!(runner.phase, Phase::Cleaning) {
-                    let pending = runner.terminal_cleanup.take().unwrap().outcome;
-                    runner.complete_terminal(pending);
+                let polled_cleanup = matches!(runner.phase, Phase::Cleaning);
+                if polled_cleanup {
+                    runner.tick(&mut client);
+                    assert!(contains_outgoing_ascii(&client, "speed 600"), "{cause}");
+                    assert!(runner.evidence().is_none(), "{cause}");
+                    client.stat_effective_level[3] = 6;
+                    client.bump_gens(ServerProt::UPDATE_STAT);
+                    client.bump_gens(ServerProt::PLAYER_INFO);
+                    runner.tick(&mut client);
+                    assert!(matches!(runner.phase, Phase::Cleaning), "{cause}");
+                    assert!(runner.evidence().is_none(), "{cause}");
+                    push_system_chat(&mut client, "World speed was changed to 600ms");
+                    runner.tick(&mut client);
                 }
                 let receipt = runner.evidence().expect(cause);
                 assert_eq!(
                     receipt.outcome,
                     if interfered {
                         "INVALID"
-                    } else if cause == "unavailable" {
+                    } else if matches!(cause, "unavailable" | "varbit") {
                         "UNAVAILABLE"
                     } else {
                         "FAIL"
@@ -3384,6 +3416,21 @@ fn measured_open_window_terminal_paths_never_hide_a_quiet_product_failure() {
                     combat.invalid_reason,
                     interfered.then_some("hitpoints-decreased")
                 );
+                if polled_cleanup {
+                    assert_eq!(
+                        combat.windows[0].end.unwrap().hitpoints,
+                        Some(if interfered { 8 } else { 10 }),
+                        "{cause}: the window must close before cleanup damage"
+                    );
+                    let hit = combat
+                        .events
+                        .iter()
+                        .find(|event| event.sample.hitpoints == Some(6))
+                        .expect("cleanup damage must remain disclosed");
+                    assert_eq!(hit.classification, "transit", "{cause}");
+                    assert_eq!(hit.window, None, "{cause}");
+                    assert!(hit.transit, "{cause}");
+                }
                 if client.out.pos != 0 {
                     assert!(
                         cleanup && contains_outgoing_ascii(&client, "speed 600"),
