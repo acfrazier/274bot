@@ -98,6 +98,10 @@ pub struct Bounds {
     pub runner: bool,
     /// Starts that the runner's plan owns.
     pub plan: u8,
+    /// The plan requires the natural self-stop of each planned execution
+    /// (LD2 `wait_script_stop`, T30): a clean `api.stop` that the runner did
+    /// not force, retired by one housekeeping Stop of the idle slot.
+    pub natural: bool,
 }
 
 impl Bounds {
@@ -136,6 +140,7 @@ impl Bounds {
             fence: false,
             runner: false,
             plan: 1,
+            natural: false,
         }
     }
 }

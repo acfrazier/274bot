@@ -501,6 +501,10 @@ pub struct Exec {
     /// The run ended with no trip, no self-stop, no failure of `onStop` and
     /// no first fault.
     pub clean: bool,
+    /// The run ended by its own `api.stop`, with no failure of `onStop` and
+    /// no first fault: the natural self-stop witness of LD2 4.1 and T30. Only
+    /// a profile whose plan requires it (`Bounds::natural`) records it.
+    pub natural: bool,
     /// The slot's generation when the run was spawned.
     pub generation: u8,
 }

@@ -148,6 +148,7 @@ fn catching_profile(mutation: Mutation) -> &'static str {
         | StopUnderRunnerLock
         | FileCompileUnderRunner
         | FileCompileHoldsSharedAdmission => "runner",
+        ForcedStopSatisfiesNaturalStop => "runner-natural",
     }
 }
 
@@ -852,6 +853,95 @@ fn a_stop_intent_for_a_retired_execution_is_refused() {
     // execution is retired, and the replacement is not in its ledger plan.
     assert_eq!(state.run.as_ref().map(|r| r.serial), Some(2));
     assert!(!m.enabled(&state, &Action::Post(Intent::Stop { serial: 1 })));
+}
+
+fn natural_bounds() -> Bounds {
+    Bounds {
+        self_stop: true,
+        natural: true,
+        ..runner_bounds()
+    }
+}
+
+/// LD2 4.1 and T30: a plan that requires the natural self-stop. The script
+/// calls `api.stop`, the slot stops it, and the idle slot gets the one
+/// housekeeping Stop of the runner. The ticket and the natural witness pass
+/// the final gate, and the end is not the foreign end of an unplanned Stop.
+#[test]
+fn a_natural_self_stop_retired_by_the_housekeeping_stop_passes_the_final_gate() {
+    let m = model(natural_bounds());
+    let trace = vec![
+        Action::Post(Intent::Start),
+        Action::Pump,
+        load_table(true, true),
+        Action::Observe,
+        TICK,
+        STOP_CALL,
+        FAIL,
+        // The slot reads the request and stops the run: `onStop` runs.
+        Action::Observe,
+        RETURN,
+        Action::Fence,
+        Action::Post(Intent::Stop { serial: 1 }),
+        Action::Pump,
+        Action::FinalGate,
+    ];
+    let (state, events) = run(&m, &trace);
+    assert!(!state.runner.foreign_end);
+    assert!(events.contains(&Event::Stopped(
+        luau_model::lifecycle::StopReason::ScriptStop
+    )));
+    assert!(events.contains(&Event::Ticketed));
+    assert_eq!(state.runner.phase, RunnerPhase::Done(Verdict::Pass));
+}
+
+/// LD2 T30: a forced Stop cannot manufacture the natural self-stop. The
+/// runner's own Stop retires the run with a ticket and a clean end, and the
+/// plan that requires the natural stop still fails.
+#[test]
+fn a_forced_stop_does_not_satisfy_a_natural_stop_plan() {
+    let m = model(natural_bounds());
+    let mut trace = clean_runner_trace();
+    trace.push(Action::FinalGate);
+    let (state, events) = run(&m, &trace);
+    assert!(events.contains(&Event::Ticketed));
+    assert_eq!(state.runner.phase, RunnerPhase::Done(Verdict::Fail));
+    // The same trace passes when the plan does not ask for the natural stop.
+    let plain = model(runner_bounds());
+    let (state, _) = run(&plain, &trace);
+    assert_eq!(state.runner.phase, RunnerPhase::Done(Verdict::Pass));
+    // The design that lets the ticket stand for the witness passes it.
+    let design = Lifecycle::new(natural_bounds(), Mutation::ForcedStopSatisfiesNaturalStop);
+    assert_eq!(violation(&design, &trace), "l-pass-unsound");
+}
+
+/// A self-stop that the plan did not ask for is an end that the runner did
+/// not order, and the housekeeping Stop is offered only after a natural end.
+#[test]
+fn an_unplanned_self_stop_is_foreign_and_no_housekeeping_stop_follows() {
+    let plain = model(Bounds {
+        self_stop: true,
+        ..runner_bounds()
+    });
+    let trace = vec![
+        Action::Post(Intent::Start),
+        Action::Pump,
+        load_table(true, true),
+        Action::Observe,
+        TICK,
+        STOP_CALL,
+        FAIL,
+        Action::Observe,
+        RETURN,
+    ];
+    let (state, _) = run(&plain, &trace);
+    assert!(state.runner.foreign_end);
+    assert!(!plain.enabled(&state, &Action::Post(Intent::Stop { serial: 1 })));
+    // With the natural plan the same end is the witness and the Stop is offered.
+    let natural = model(natural_bounds());
+    let (state, _) = run(&natural, &trace);
+    assert!(!state.runner.foreign_end);
+    assert!(natural.enabled(&state, &Action::Post(Intent::Stop { serial: 1 })));
 }
 
 #[test]

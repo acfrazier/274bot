@@ -45,7 +45,7 @@ are in `src/lifecycle/checks.rs`, and `luau-model --list-checks` prints them.
 | P2 | A completion in a delivery, a `Running` slot with `want_run`, a run that is not paused, tripped or stopped, and a dispatch that is not held: that dispatch resumes the invocation. |
 | D | The scenario dock (LD2 2.2 to 2.4): one claim, one awaited call, one completion payload, a durable first fault, an end record. |
 | F | The entry fence (LD2 5.1 phase A): one try-lock publication that never waits, and no entry after it. |
-| L | The execution ledger, the retirement tickets, the final gate, and the rule that the runner issues no Stop and loads no file under its own lock (LD2 3.2, 3.5, 5.4). |
+| L | The execution ledger, the retirement tickets, the final gate (with a plan that requires the natural self-stop, and its housekeeping Stop), and the rule that the runner issues no Stop and loads no file under its own lock (LD2 3.2, 3.5, 4.1, 5.4). |
 
 **TA**, the termination assumption of LD1 6.2, is not a check. The model
 treats every section that holds the slot mutex as ending, and it has no wall
@@ -117,7 +117,7 @@ three memory events and no byte count.
 | F | `f-row-after-fence` | The seat admitted a row of a run whose entry fence is published. | `post-freeze-action` |
 | L | `l-ledger-incomplete` | An admitted Start has no entry in the execution ledger. | `forget-earlier-execution`, `loading-missing-from-ledger` |
 | L | `l-load-under-admission` | The Load entry of a File Start ran under the shared admission guard. | `file-compile-holds-shared-admission` |
-| L | `l-pass-unsound` | The final gate wrote PASS while a planned execution was not retired by the runner's own Stop and clean, or an admission outside the plan happened, or the slot is not Idle. | `failed-replacement-restores-authorization`, `guessed-stop-generation`, `replacement-with-old-end` |
+| L | `l-pass-unsound` | The final gate wrote PASS while a planned execution was not retired by the runner's own ticketed Stop and clean (or, when the plan requires the natural self-stop, was not ended by its own clean `api.stop`), or an admission outside the plan happened, or the slot is not Idle. | `failed-replacement-restores-authorization`, `forced-stop-satisfies-natural-stop`, `guessed-stop-generation`, `replacement-with-old-end` |
 | L | `l-stop-unowned` | The runner's Stop for one execution ended another execution. | `repeat-last-table-stop` |
 | L | `l-vm-under-runner-lock` | A VM section began inside the runner's closure, under the runner lock. | `file-compile-under-runner`, `stop-under-runner-lock` |
 
@@ -192,8 +192,10 @@ Each is on purpose.
    (`Staged`, `Queued`, `Taken`, `Completed`, `Consumed`, `Done`,
    `Discarded`, `Cancelled`), one completion payload, a first-fault latch and
    an end record. The runner has a ledger of up to three admitted Starts
-   (serial, planned or foreign, state, clean, generation), the retirement
-   ticket that the slot issues for a Stop of the runner, the posted intent and
+   (serial, planned or foreign, state, clean, natural witness, generation),
+   the retirement ticket that the slot issues for a Stop of the runner (and,
+   when the plan requires the natural self-stop, for the one housekeeping Stop
+   of the idle slot after the script stopped itself), the posted intent and
    the verdict. The runner never runs script code: it posts an intent, and the
    role pump executes it.
 9. **Counts are budgets.** Every event has a count in the profile: Starts,
@@ -217,7 +219,7 @@ exhausted, so the choice only keeps the test lane short).
 
 Groups: LD1 6.4 is the table of LD1 (round 1 to round 3 of its reviews). LD1
 rules are rules of LD1 that its table has no row for. LD2 is the runner side.
-The self-checks are the builder's proof that a check can fail. Seventy-seven
+The self-checks are the builder's proof that a check can fail. Seventy-eight
 mutations, none uncaught.
 
 #### LD1 6.4
@@ -310,6 +312,7 @@ mutations, none uncaught.
 | `stop-under-runner-lock` | The runner issues the Stop inside its own closure, under its lock. | `l-vm-under-runner-lock` | `runner` | 5 |
 | `file-compile-under-runner` | File Start, compile and Load run under the runner lock. | `l-vm-under-runner-lock` | `runner` | 2 |
 | `file-compile-holds-shared-admission` | File Start, compile and Load hold the shared admission guard. | `l-load-under-admission` | `runner` | 2 |
+| `forced-stop-satisfies-natural-stop` | A plan that requires the natural self-stop accepts the Stop that the runner forced: the ticket and a clean end stand for the witness. | `l-pass-unsound` | `runner-natural` | 9 |
 
 #### self-checks
 
@@ -399,6 +402,7 @@ every machine.
 | unit | `dock-restart` | a retained Start after a restart gets a fresh dock | 44 | 3 767 | 21 |
 | unit | `fence` | the entry fence and the revocation of the dock | 40 | 3 779 | 21 |
 | unit | `runner` | the ledger, the retirement tickets and the final gate, two Starts | 44 | 49 214 | 23 |
+| unit | `runner-natural` | a plan that requires the natural self-stop: the script's own `api.stop`, then one housekeeping Stop of the idle slot; a forced Stop is not that witness | 44 | 54 808 | 23 |
 | unit | `clock` | a longer clock (two units for Load and Hook, three for the dispatch), three ticks, a memory event, a panic | 52 | 15 368 | 24 |
 | nightly | `runner-restart` | `runner` with a restart, three Starts all planned, two ticks, `api.stop`, four control operations | 52 | 15 119 060 | 40 |
 | nightly | `full` | everything in small counts with the longer clock: two runs and a restart, held and evidence ticks, a wait, a reset, a hold, the client gate, one memory event, one panic | 64 | 22 244 068 | 31 |
@@ -411,7 +415,7 @@ the byte cap: the profile keeps one dispatch, and `dock`, `fence` and
 nightly host (release build, one core, one 16 GB scope for each profile) the
 four nightly profiles take 19 to 37 seconds and 3.2 to 6.5 GB of resident
 memory; `suggested` is the largest. The unit lane (`cargo test -p luau-model`,
-about 7 seconds in a debug build) runs the eleven unit profiles and the 77
+about 7 seconds in a debug build) runs the twelve unit profiles and the 78
 mutation runs. The four nightly profiles run in `nightly.sh` (one 16 GB scope
 for each profile) and, as a test lane, with `LUAU_MODEL_FULL=1 cargo test
 --release -p luau-model` (about 100 seconds). `systemd/` holds the user unit
@@ -459,8 +463,7 @@ clock on the reference machine.
   baseline, the Table Start exception, the multi-role fleet, and the
   mutations of those parts (`ProofBeforeFreeze`, `CleaningWritesPass`,
   `LogoutRequiresLiveGameProof`, `PartialFleetWritesTerminal`,
-  `UnknownOutcomePasses`, `CoreGateAfterPass`,
-  `ForcedStopSatisfiesNaturalStop`, `CancelRetractsSentPacket`,
+  `UnknownOutcomePasses`, `CoreGateAfterPass`, `CancelRetractsSentPacket`,
   `ActivePermitMissingFromFrontier`, `StalePollClockAtV21`,
   `SoakPrintsEarlyPass`, `CleanStopCaptureAfterPass`,
   `QuietTicksCloseUnprocessedRoot`, `UnrelatedCheckClosesRoot`,
@@ -468,7 +471,9 @@ clock on the reference machine.
   `QueuedIntentFreezesPairBaseline`, `MissingTailAllowance`,
   `BootstrapRequiresApprovedCap`, `UnapprovedCapAdmitsSoak` and
   `BarrierClaimsLevelGuard`). The model keeps the ledger, the tickets, the
-  fence and the dock, and the mutations that touch them.
+  fence, the dock and the natural self-stop plan, and the mutations that
+  touch them. The grace timeout of a natural self-stop (`SCRIPT_STOP_WAIT`)
+  has no clock in the runner.
 - Progress beyond P1 and P2, and fairness. A wall-clock bound (TA): L2p.
 
 ## When the protocol changes

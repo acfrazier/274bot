@@ -40,6 +40,7 @@ impl Lifecycle {
                 planned,
                 state: ExecState::Live,
                 clean: true,
+                natural: false,
                 generation: 0,
             });
         }
@@ -67,6 +68,7 @@ impl Lifecycle {
                     planned,
                     state: ExecState::Live,
                     clean: true,
+                    natural: false,
                     generation,
                 });
             }
@@ -109,6 +111,13 @@ impl Lifecycle {
         }
         let idx = usize::from(run.serial).saturating_sub(1);
         let clean = run.latch == Latch::Empty && run.hook_fail.is_none() && !run.dock.fault;
+        // A clean natural self-stop (LD2 4.1, T30): the script's own `api.stop`,
+        // read by the slot, with no failure of `onStop` and no first fault.
+        let natural = self.bounds.natural
+            && reason == StopReason::ScriptStop
+            && run.latch == Latch::SelfStop
+            && run.hook_fail.is_none()
+            && !run.dock.fault;
         let issued = s.runner.issuing == Some(run.serial) && reason == StopReason::Operator;
         s.runner.issuing = None;
         let gen_before = s.slot.generation;
@@ -116,6 +125,7 @@ impl Lifecycle {
             return Ok(());
         };
         exec.clean = clean;
+        exec.natural = natural;
         if issued {
             s.slot.stops = s.slot.stops.wrapping_add(1);
             exec.state = ExecState::Ticketed(Ticket {
@@ -128,9 +138,65 @@ impl Lifecycle {
             ev.push(Event::Ticketed);
         } else {
             exec.state = ExecState::Ended;
-            if exec.planned {
+            if exec.planned && !natural {
                 s.runner.foreign_end = true;
             }
+        }
+        Ok(())
+    }
+
+    /// A naturally ended last execution that the idle slot has not retired
+    /// (LD2 3.2): the runner still owes it the one ordinary housekeeping Stop.
+    fn housekeeping_due(&self, s: &State, exec: &Exec) -> bool {
+        self.bounds.natural
+            && exec.planned
+            && exec.natural
+            && exec.state == ExecState::Ended
+            && exec.serial == s.slot.serial
+            && s.run.is_none()
+            && s.sec.is_none()
+            && s.slot.state == RunState::Idle
+    }
+
+    fn housekeeping_target(&self, s: &State, serial: u8) -> bool {
+        let idx = usize::from(serial).saturating_sub(1);
+        matches!(s.runner.ledger.get(idx), Some(Some(exec)) if self.housekeeping_due(s, exec))
+    }
+
+    /// With no run bound the entry fence has nothing to close. After a natural
+    /// end the runner still publishes it before its final gate.
+    fn natural_fence_target(&self, s: &State) -> bool {
+        self.bounds.natural
+            && s.runner
+                .ledger
+                .iter()
+                .flatten()
+                .any(|exec| exec.planned && exec.natural && exec.state == ExecState::Ended)
+    }
+
+    /// The one ordinary Stop of the idle slot after a natural self-stop. The
+    /// generation moves, and the slot issues the ticket. A forced Stop never
+    /// makes this witness; this Stop only retires it.
+    fn housekeeping_stop(
+        &self,
+        s: &mut State,
+        serial: u8,
+        ev: &mut Vec<Event>,
+    ) -> Result<(), Violation> {
+        let gen_before = s.slot.generation;
+        self.stop_call(s, StopReason::Operator, ev)?;
+        s.slot.stops = s.slot.stops.wrapping_add(1);
+        let ticket = Ticket {
+            serial,
+            ordinal: s.slot.stops,
+            gen_before,
+            gen_after: s.slot.generation,
+            start_serial: s.slot.serial,
+        };
+        let idx = usize::from(serial).saturating_sub(1);
+        if let Some(Some(exec)) = s.runner.ledger.get_mut(idx) {
+            exec.state = ExecState::Ticketed(ticket);
+            ev.push(Event::Ticketed);
         }
         Ok(())
     }
@@ -439,6 +505,10 @@ impl Lifecycle {
                     .as_ref()
                     .is_some_and(|r| r.serial == serial && !r.stopping);
                 if !live {
+                    if self.housekeeping_target(s, serial) {
+                        s.n.ctl += 1;
+                        return self.housekeeping_stop(s, serial, ev);
+                    }
                     if self.is(Mutation::RepeatLastTableStop) && s.run.is_some() {
                         s.runner.issuing = None;
                         self.stop_call(s, StopReason::Operator, ev)?;
@@ -467,10 +537,11 @@ impl Lifecycle {
     }
 
     /// The truth that the final gate must establish (LD2 5.4, items 3 and
-    /// 4): every planned execution was retired by the runner's own Stop and
-    /// ended clean, no admission outside the plan happened, and the slot is
-    /// Idle with nothing pending.
-    fn pass_is_sound(s: &State) -> bool {
+    /// 4): every planned execution was retired by the runner's own ticketed
+    /// Stop and ended clean, or, when the plan requires the natural self-stop,
+    /// ended by its own clean `api.stop` before that Stop. No admission
+    /// outside the plan happened, and the slot is Idle with nothing pending.
+    fn pass_is_sound(&self, s: &State) -> bool {
         let slot_idle = s.slot.state == RunState::Idle
             && s.run.is_none()
             && s.sec.is_none()
@@ -478,8 +549,12 @@ impl Lifecycle {
             && s.slot.chan.is_none();
         let planned_ok = s.runner.ledger.iter().flatten().all(|exec| {
             !exec.planned
-                || matches!(exec.state, ExecState::Ticketed(t) if t.serial == exec.serial)
-                    && exec.clean
+                || (matches!(exec.state, ExecState::Ticketed(t) if t.serial == exec.serial)
+                    && if self.bounds.natural {
+                        exec.natural
+                    } else {
+                        exec.clean
+                    })
         });
         slot_idle
             && planned_ok
@@ -496,9 +571,16 @@ impl Lifecycle {
             return false;
         }
         let ledger = &s.runner.ledger;
-        let ticketed = |exec: &Exec| {
-            matches!(exec.state, ExecState::Ticketed(t) if t.serial == exec.serial) && exec.clean
-        };
+        let ticket_ok =
+            |exec: &Exec| matches!(exec.state, ExecState::Ticketed(t) if t.serial == exec.serial);
+        let ticketed = |exec: &Exec| ticket_ok(exec) && exec.clean;
+        let slot_idle = s.slot.state == RunState::Idle
+            && s.run.is_none()
+            && s.sec.is_none()
+            && s.slot.after == super::After::Idle
+            && s.slot.chan.is_none();
+        let frontier =
+            ledger.iter().flatten().map(|e| e.serial).max().unwrap_or(0) == s.slot.serial;
         let last_ticket = ledger
             .iter()
             .flatten()
@@ -525,27 +607,35 @@ impl Lifecycle {
                     && ledger.iter().flatten().filter(|e| e.planned).all(ticketed)
                     && last_ticket.is_some_and(|t| t.gen_after == s.slot.generation)
             }
-            _ => {
-                let slot_idle = s.slot.state == RunState::Idle
-                    && s.run.is_none()
-                    && s.sec.is_none()
-                    && s.slot.after == super::After::Idle
-                    && s.slot.chan.is_none();
-                let frontier =
-                    ledger.iter().flatten().map(|e| e.serial).max().unwrap_or(0) == s.slot.serial;
+            Mutation::ForcedStopSatisfiesNaturalStop => {
+                // A ticket and a clean end are enough: the Stop that the
+                // runner forced stands for the natural self-stop.
                 slot_idle
                     && frontier
                     && ledger
                         .iter()
                         .flatten()
-                        .all(|exec| exec.planned && ticketed(exec))
+                        .all(|exec| exec.planned && ticket_ok(exec) && (exec.clean || exec.natural))
+            }
+            _ => {
+                slot_idle
+                    && frontier
+                    && ledger.iter().flatten().all(|exec| {
+                        exec.planned
+                            && ticket_ok(exec)
+                            && if self.bounds.natural {
+                                exec.natural
+                            } else {
+                                exec.clean
+                            }
+                    })
             }
         }
     }
 
     pub(super) fn final_gate(&self, s: &mut State, ev: &mut Vec<Event>) -> Result<(), Violation> {
         let accepts = self.gate_accepts(s);
-        if accepts && !Self::pass_is_sound(s) {
+        if accepts && !self.pass_is_sound(s) {
             return Err(Self::violation(
                 "l-pass-unsound",
                 format!(
@@ -571,7 +661,9 @@ impl Lifecycle {
         let phase = s.runner.phase;
         if b.fence
             && phase == RunnerPhase::Running
-            && s.run.as_ref().is_some_and(|run| !run.fenced)
+            && s.run
+                .as_ref()
+                .map_or(self.natural_fence_target(s), |run| !run.fenced)
             && s.sec.is_none()
         {
             out.push(Action::Fence);
@@ -601,7 +693,9 @@ impl Lifecycle {
                     out.push(Action::Post(Intent::Start));
                 }
                 for exec in s.runner.ledger.iter().flatten() {
-                    if exec.planned && exec.state == ExecState::Live {
+                    if exec.planned
+                        && (exec.state == ExecState::Live || self.housekeeping_due(s, exec))
+                    {
                         out.push(Action::Post(Intent::Stop {
                             serial: exec.serial,
                         }));

@@ -194,6 +194,24 @@ pub fn profiles() -> Vec<Profile> {
             },
             nightly: false,
         },
+        // The natural self-stop of LD2 4.1 and T30: the plan requires the
+        // script's own `api.stop`, retired by one housekeeping Stop of the
+        // idle slot. A Stop that the runner forces is not that witness.
+        Profile {
+            name: "runner-natural",
+            bounds: Bounds {
+                horizon: 44,
+                starts: 2,
+                ctl: 3,
+                ticks: 1,
+                self_stop: true,
+                fence: true,
+                runner: true,
+                natural: true,
+                ..min
+            },
+            nightly: false,
+        },
         // The ledger across a restart and a third admission, with a plan that
         // owns all three starts, a self-stop and four control operations.
         Profile {

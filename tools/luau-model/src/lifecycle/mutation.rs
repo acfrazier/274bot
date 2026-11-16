@@ -200,6 +200,9 @@ pub enum Mutation {
     FileCompileUnderRunner,
     /// File Start, compile and Load hold the shared admission guard.
     FileCompileHoldsSharedAdmission,
+    /// A plan that requires the natural self-stop accepts the Stop that the
+    /// runner forced: the ticket and a clean end stand for the witness.
+    ForcedStopSatisfiesNaturalStop,
 
     // ---- self-checks ----
     /// Check: a gap longer than `R_gap` is allowed.
@@ -218,7 +221,7 @@ pub enum Mutation {
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 78] = [
+    pub const ALL: [Mutation; 79] = [
         Mutation::None,
         Mutation::OnStopAfterTrip,
         Mutation::OnStopInDispatch,
@@ -286,6 +289,7 @@ impl Mutation {
         Mutation::StopUnderRunnerLock,
         Mutation::FileCompileUnderRunner,
         Mutation::FileCompileHoldsSharedAdmission,
+        Mutation::ForcedStopSatisfiesNaturalStop,
         Mutation::CheckGapUnbounded,
         Mutation::CheckHookTwice,
         Mutation::CheckPauseNoRefusal,
@@ -370,6 +374,7 @@ impl Mutation {
             Mutation::StopUnderRunnerLock => "stop-under-runner-lock",
             Mutation::FileCompileUnderRunner => "file-compile-under-runner",
             Mutation::FileCompileHoldsSharedAdmission => "file-compile-holds-shared-admission",
+            Mutation::ForcedStopSatisfiesNaturalStop => "forced-stop-satisfies-natural-stop",
             Mutation::CheckGapUnbounded => "check-gap-unbounded",
             Mutation::CheckHookTwice => "check-hook-twice",
             Mutation::CheckPauseNoRefusal => "check-pause-no-refusal",
@@ -458,6 +463,7 @@ impl Mutation {
             Mutation::StopUnderRunnerLock => "l-vm-under-runner-lock",
             Mutation::FileCompileUnderRunner => "l-vm-under-runner-lock",
             Mutation::FileCompileHoldsSharedAdmission => "l-load-under-admission",
+            Mutation::ForcedStopSatisfiesNaturalStop => "l-pass-unsound",
             Mutation::CheckGapUnbounded => "i7c-gap-bound",
             Mutation::CheckHookTwice => "i5-hook-twice",
             Mutation::CheckPauseNoRefusal => "i2-entry-while-paused",
