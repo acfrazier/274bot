@@ -13,6 +13,7 @@ host-play = { path = "../host-play", default-features = false }
 nav-planner = { path = "../nav-planner" }
 script = { path = "../script" }
 script-js = { path = "../script-js", optional = true }
+script-luau = { path = "../script-luau", optional = true }
 # The live harness's scenario runner (ruling D2(a)); only with `live-harness`.
 scenario = { path = "../scenario", optional = true }
 parking_lot = "0.12"
@@ -37,8 +38,10 @@ scenario = { path = "../scenario" }
 
 [features]
 canvas-raster = ["script/canvas-raster"]
-default = ["js"]
+default = ["js", "luau"]
 js = ["host-play/js", "dep:script-js", "canvas-raster"]
+# Luau paints through the native canvas, so a front end with `luau` and without `js` draws script paint.
+luau = ["host-play/luau", "dep:script-luau", "canvas-raster"]
 # Test-only lifecycle and capacity fixture seams; enabled from dev-dependencies,
 # never production builds.
 test-support = ["host-play/test-support", "host/test-support"]

@@ -433,6 +433,11 @@ pub(super) fn script_active(scripts: &ScriptWall, name: &str) -> bool {
         })
 }
 
+/// Surface binding tests: they hold in every composition of the build features.
+#[cfg(test)]
+#[path = "script_surface_wiring_tests.rs"]
+mod surface_wiring_tests;
+
 /// Puzzle-board post tests: the production observe path
 /// ([`with_script_snapshot_input`] via [`script_snapshot_fb`]) over a
 /// client whose main modal holds both a hint panel (a TYPE_INV without

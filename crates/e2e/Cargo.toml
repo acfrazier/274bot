@@ -34,8 +34,9 @@ sha2 = "0.10.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
-default = ["js"]
+default = ["js", "luau"]
 js = ["host-play/js"]
+luau = ["host-play/luau"]
 
 [dev-dependencies]
 # JS-enabled e2e tests inherit script-js's unprotected V8 test platform
