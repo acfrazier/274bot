@@ -39,7 +39,10 @@ pub enum ActorRecord {
         #[serde(flatten)]
         stamp: ActorStamp,
         transition: &'static str,
-        /// Only appearance/replacement owns text. Countdown records reference it.
+        /// Observable transition that established freshness during this observation.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        freshness: Option<&'static str>,
+        /// Only message-start records own text. Countdown records reference them.
         text: Option<String>,
         message_record: Option<usize>,
         remaining_cycles: i32,
@@ -199,19 +202,36 @@ impl ActorObserver {
                     self.push(ActorRecord::Overhead {
                         stamp,
                         transition: "countdown",
+                        freshness: None,
                         text: None,
                         message_record: old.message_record,
                         remaining_cycles: sample.remaining_cycles,
                     })?;
                 }
             } else {
+                let freshness = previous
+                    .filter(|old| sample.source_cycle.wrapping_sub(old.stamp.source_cycle) > 0)
+                    .and_then(|old| {
+                        if old.message_record.is_none() || old.ended || old.remaining <= 0 {
+                            Some("text_became_active")
+                        } else if self.text(old.message_record) != sample.overhead_text {
+                            Some("text_changed")
+                        } else if sample.remaining_cycles > old.remaining {
+                            Some("countdown_restarted")
+                        } else {
+                            None
+                        }
+                    });
                 current.message_record = Some(self.push(ActorRecord::Overhead {
                     stamp,
-                    transition: if previous.is_some_and(|old| old.message_record.is_some()) {
+                    transition: if freshness.is_none() {
+                        "present_at_arm"
+                    } else if previous.is_some_and(|old| old.message_record.is_some()) {
                         "replaced"
                     } else {
                         "appeared"
                     },
+                    freshness,
                     text: sample.overhead_text.map(str::to_owned),
                     message_record: None,
                     remaining_cycles: sample.remaining_cycles,
@@ -229,6 +249,7 @@ impl ActorObserver {
                 self.push(ActorRecord::Overhead {
                     stamp,
                     transition: if current.ended { "expired" } else { "cleared" },
+                    freshness: None,
                     text: None,
                     message_record: old.message_record,
                     remaining_cycles: sample.remaining_cycles,
@@ -249,6 +270,17 @@ impl ActorObserver {
         let Some(current) = self.current else {
             return false;
         };
+        if !matches!(
+            current
+                .message_record
+                .and_then(|index| self.evidence.records.get(index)),
+            Some(ActorRecord::Overhead {
+                freshness: Some(_),
+                ..
+            })
+        ) {
+            return false;
+        }
         match proof {
             crate::Proof::ActorChatStyle {
                 actor,

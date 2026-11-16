@@ -78,9 +78,9 @@ fn disarmed_receipts_allocate_nothing_on_tick_and_paint_producer() {
 
 #[test]
 fn scenario_runner_quantity_baseline_storage_stays_within_ceiling() {
-    // Measured merged 5,816 B + 72 B headroom.
+    // Measured 5,832 B + 64 B headroom after the optional actor evidence fields.
     assert!(
-        std::mem::size_of::<ScenarioRunner>() <= 5_888,
-        "ScenarioRunner exceeded its 5,816 B measurement + 72 B headroom"
+        std::mem::size_of::<ScenarioRunner>() <= 5_896,
+        "ScenarioRunner exceeded its 5,832 B measurement + 64 B headroom"
     );
 }

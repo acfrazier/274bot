@@ -3178,6 +3178,47 @@ fn record_measured_pass(runner: &mut ScenarioRunner, after_cleanup: bool) {
 }
 
 #[test]
+fn combat_invalid_precedes_actor_overflow_in_the_same_poll() {
+    let probe = GateProbe::new(false);
+    let (mut runner, mut client) = measured_pass_gate_runner(&probe);
+    let actor = api::snapshot::ActorSelector::LocalPlayer;
+    runner.scenario.steps[2].kind = StepKind::ObserveActor { actor };
+    client.self_slot = 0;
+    let mut observer = crate::actor::ActorObserver::default();
+    let mut overflowed = false;
+    for cycle in 0..1100 {
+        client.loop_cycle += 1;
+        let player = client.local_player.as_mut().unwrap();
+        player.chat_message = Some(if cycle % 2 == 0 { "One" } else { "Two" }.into());
+        player.chat_timer = 100;
+        if crate::actor::ActorObserver::observe(Some(&mut observer), &client, Some(actor)).is_err()
+        {
+            overflowed = true;
+            break;
+        }
+    }
+    assert!(overflowed);
+    runner.actor_observer = Some(Box::new(observer));
+    assert_eq!(
+        runner.combat_observer.as_ref().unwrap().invalid_reason(),
+        None
+    );
+    client.stat_effective_level[3] = 8;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    let receipt = runner.evidence().unwrap();
+    assert_eq!(receipt.outcome, "INVALID");
+    assert_eq!(receipt.exit_code(), 1);
+    assert!(receipt.actors.as_ref().unwrap().overflowed);
+    assert_eq!(
+        receipt.interference.as_ref().unwrap().invalid_reason,
+        Some("hitpoints-decreased")
+    );
+    assert_eq!(receipt.message.as_deref(), Some("hitpoints-decreased"));
+}
+
+#[test]
 fn measured_pass_gate_both_vetoes_keep_invalid_and_its_reason_first() {
     for after_cleanup in [false, true] {
         let probe = GateProbe::new(true);

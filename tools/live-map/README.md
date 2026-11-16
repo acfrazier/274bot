@@ -115,6 +115,17 @@ Crate 356 at (3380,3268,0), and the other player's Trade with slot. Its
 queries and `ObserveMenu` runner must agree. The account JSON and JSONL
 witnesses are written under `LIVE_EVIDENCE_DIR`; the cell computes PASS.
 
+`host.actor-377-public-chat-lifetime-live` uses two fresh owned accounts and
+the same 377 resource and port variables. Set `PARITY_2A_EVIDENCE_DIR` for
+its JSON receipt and four native raster frames. Supply
+`PARITY_2A_SERVED_IDENTITY` as the path to a JSON file containing
+`host_head`, `client_pin`, `engine_head`, `content_head`,
+`served_crc_sha256`, `served_versionlist_sha256`, `game_port` and
+`http_port` from the selected runtime. The sender types styled public chat
+through normal GameShell keys. The observer checks a fresh appearance,
+style, countdown and natural expiry on the published remote player.
+An already-visible message cannot satisfy a newly dispatched observation.
+
 `host.interference-377-measured-live` uses those 377 resource variables and
 `LIVE_EVIDENCE_DIR`. It creates a fresh account for each of two cases and
 labels only its own tutorial and position seeds. Both cases pick real

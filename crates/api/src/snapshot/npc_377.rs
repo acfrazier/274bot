@@ -5,6 +5,9 @@ use client::config::NpcType;
 
 pub(super) fn menu_form(client: &Client, placed: usize) -> Option<&NpcType> {
     let cache = &client.cache;
+    if client.revision() != client::io::ClientRevision::R377 {
+        return cache.npcs.get(placed);
+    }
     let fields = &cache.revision_377.as_ref()?.config.npcs;
     let root = fields.get(placed)?;
     let current = if let Some(morph) = &root.morph {

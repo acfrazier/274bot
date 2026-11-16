@@ -44,7 +44,7 @@ pub fn actor_observation(
             let npc = client.npc.get(index)?.as_deref()?;
             let name = npc
                 .r#type
-                .and_then(|id| client.cache.npcs.get(id))
+                .and_then(|id| npc_377::menu_form(client, id))
                 .map(|definition| definition.name.as_str());
             (index, &npc.entity, name, npc.r#type)
         }
@@ -238,11 +238,7 @@ impl NpcView {
         let cache = &client.cache;
         let placed = npc.r#type.and_then(|id| cache.npcs.get(id));
         let is_377 = client.revision() == client::io::ClientRevision::R377;
-        let form = if is_377 {
-            npc.r#type.and_then(|id| npc_377::menu_form(client, id))
-        } else {
-            placed
-        };
+        let form = npc.r#type.and_then(|id| npc_377::menu_form(client, id));
         let (name, actions) = match form {
             Some(form) => (Some(form.name.clone()), form.op.clone()),
             None => (None, Vec::new()),
