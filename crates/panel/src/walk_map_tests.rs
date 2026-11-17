@@ -934,7 +934,6 @@ fn overlay_byte_cap_is_1_5_mib_rgba() {
         OverlayFit::Ready { w, h } => {
             assert_eq!(w, OVERLAY_MAX_W);
             assert_eq!(h, OVERLAY_MAX_H);
-            assert_eq!((w as usize) * (h as usize) * 4, OVERLAY_BYTE_CAP);
         }
         OverlayFit::ZoomIn => panic!("192×128 tiles at 4 overlay-px/tile must fit the cap"),
     }

@@ -4438,10 +4438,6 @@ fn guardian_policy_combo_offers_two_choices_and_applies_both() {
     guardian_policy_frame(&mut ctx, &mut policy, None);
     let opened = drawn.0.take();
     assert!(
-        !opened.is_empty(),
-        "the policy control draws its preview and its options"
-    );
-    assert!(
         opened.matches("Fight").count() == 2,
         "the saved preview plus exactly one Fight option:\n{opened}"
     );
