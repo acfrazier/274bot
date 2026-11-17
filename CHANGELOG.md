@@ -10,22 +10,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Revision 377 login failures show clearer messages. An outdated-client
   refusal asks you to reload the page instead of suggesting a login-key problem.
 
-### Revision-377 live fixtures
-
-- Measured nettle cells retain the next snapshot when a fresh hitmark precedes
-  its stat update. They identify NPC-target overlap as a separate invalid
-  fixture and can establish a new quiet interval after transit damage.
-- Player-menu cells select the exact displayed partner name, not the first
-  matching operation. Missing partner rows produce a typed fixture reason.
-- Hans interaction retries temporary absence or unreachable tiles and re-targets
-  his current network tile each game tick. Its finite fixture deadline uses a
-  measured lap calibration, the selected engine's patrol-branch stuck threshold
-  and the initial approach distance. Route or engine movement changes require
-  re-measurement.
-- Six live cells share the nightly controller's optional `NIGHTLY_QUIET_LOCK`
-  lookup instead of a fixed host path. Callers must export it to arm the guards;
-  current live-map routes do not.
-
 ### Scenario observations
 
 - `ObserveActor` records a selected actor's native pose, public-chat style and
