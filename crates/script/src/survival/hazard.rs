@@ -375,7 +375,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn food_park_release_uses_the_line_of_the_current_hitpoints() {
         assert_eq!(
