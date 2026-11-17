@@ -789,7 +789,7 @@ impl NativeMachine for Combat {
                 tick,
                 danger,
                 lines.emergency,
-                food_available,
+                food_available || self.pending_poison_cure(),
                 escape_stop,
             );
             self.counters.locked = self.counters.locked.saturating_add(1);
@@ -1818,6 +1818,16 @@ impl Combat {
     fn pending_row(&self, kind: RowKind) -> bool {
         self.pending.iter().any(|pending| pending.row.kind == kind)
     }
+    fn pending_poison_cure(&self) -> bool {
+        self.pending.iter().any(|pending| {
+            pending.row.kind == RowKind::CureFruit
+                || (pending.row.kind == RowKind::Drink
+                    && matches!(
+                        potion_kind(pending.row.aux),
+                        PotionKind::Antipoison | PotionKind::SuperAntipoison
+                    ))
+        })
+    }
     fn pending_wear(&self, slot: u8) -> bool {
         self.pending
             .iter()
@@ -2382,15 +2392,16 @@ impl Combat {
         tick: u16,
         danger: Option<i32>,
         emergency: i32,
-        food_available: bool,
+        food_or_cure_available: bool,
         escape_stop: bool,
     ) {
         if self.phase == Phase::Escape || self.phase == Phase::WindDown {
             return;
         }
-        let no_food =
-            (danger != Some(0) && arbiter::stat(frame, 3).0 <= emergency && !food_available)
-                || escape_stop;
+        let no_food = (danger != Some(0)
+            && arbiter::stat(frame, 3).0 <= emergency
+            && !food_or_cure_available)
+            || escape_stop;
         let no_fire = self.flags & SHIELD_OVERRIDE != 0
             && !self.shield(frame)
             && !self.antifire(tick)
@@ -2470,8 +2481,7 @@ impl Combat {
             CureDecision::EatFruit { item, .. } => PlanRow::new(RowKind::CureFruit, item, 0),
             CureDecision::None | CureDecision::Needed { .. } => return false,
         };
-        let _ = self.push(plan, row);
-        true
+        self.push(plan, row)
     }
 
     fn emergency_food_available(
@@ -2798,15 +2808,17 @@ impl Combat {
         let mut lines = select::lines(danger, hp_max).with_poison(poison_fire);
         let food_available = self.emergency_food_available(frame, danger, cx.protected_items());
         let escape_stop = self.escape_stop(frame, tick, danger, cx);
+        let cure_scheduled = self.cure_row(&mut plan, frame, tick, danger, lines.eat, cx);
+        let cure_pending = cure_scheduled || self.pending_poison_cure();
         self.safety_end(
             frame,
             tick,
             danger,
             lines.emergency,
-            food_available,
+            food_available || cure_pending,
             escape_stop,
         );
-        if self.cure_row(&mut plan, frame, tick, danger, lines.eat, cx) {
+        if cure_scheduled {
             return Ok(plan);
         }
         if self.phase == Phase::WindDown {
