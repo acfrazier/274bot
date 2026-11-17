@@ -26,7 +26,7 @@ Each `step!` row declares an `AdvanceClass`: `Explicit` or `Default` (`crates/sc
 
 ## Generated schema and shape checks
 
-`crates/script/src/quester/schema.rs:201` renders `paths/path.schema.json` from the Rust document and handler types, and `:220` resolves the output path. The `#[ignore]` test `regen_path_schema` rewrites the file (`crates/script/tests/path_schema.rs:336`). Numeric constraints use standard JSON Schema `type`, `minimum`, and `maximum`, with no custom format plugin (`crates/script/tests/path_schema.rs:300-335`).
+`crates/script/src/quester/schema.rs:201` renders `paths/path.schema.json` from the Rust document and handler types, and `:220` resolves the output path. The `regen_path_schema` example rewrites the file (`cargo run -p script --example regen_path_schema --features path-schema`); `path_schema_matches_generator` in `crates/script/tests/path_schema.rs` checks it. Numeric constraints use standard JSON Schema `type`, `minimum`, and `maximum`, with no custom format plugin (`crates/script/tests/path_schema.rs:300-335`).
 
 `npx --yes -p ajv-cli@5.0.0 ajv validate --spec=draft2020 --errors=text -s crates/script/paths/path.schema.json -d crates/script/paths/289/<id>.json`
 

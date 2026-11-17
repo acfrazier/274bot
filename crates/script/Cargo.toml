@@ -45,3 +45,7 @@ name = "cake_stall_helpers"
 
 [[test]]
 name = "slot"
+
+[[example]]
+name = "regen_path_schema"
+required-features = ["path-schema"]

@@ -1357,7 +1357,7 @@ The `host_js` integration test renders `crates/script/host-js/index.d.ts` from
 the Rust API tables. Regenerate it with:
 
 ```sh
-cargo test -p script --test host_js regen_host_js -- --ignored
+cargo run -p script-js --example regen_checked_in -- host-js
 ```
 
 The pinned TypeScript 5.8.3 consumer probes check the generated declarations,

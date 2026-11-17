@@ -623,15 +623,6 @@ export default class NotImplOverlayProbe extends LoopingBot {
     );
 }
 
-/// Writes `src/shim/declared_surface.js` from the checked-in fixture, so the
-/// generated bundle refreshes without the catalog tree.
-#[test]
-#[ignore]
-fn regen_declared_surface_from_fixture() {
-    let exports = load_fixture().expect("js_declared_abi.json");
-    write_declared_surface(&exports).expect("write declared_surface.js");
-}
-
 /// The checked-in bundle is exactly what the generator renders from the
 /// pinned fixture (no hand edit can drift it).
 #[test]
@@ -642,8 +633,7 @@ fn declared_surface_matches_generator() {
     let actual = std::fs::read_to_string(&path).expect("read declared_surface.js");
     assert!(
         actual == expected,
-        "{} is stale; run: cargo test -p script-js --test declared_abi \
-         regen_declared_surface_from_fixture -- --ignored",
+        "{} is stale; run: cargo run -p script-js --example regen_checked_in -- declared-surface",
         path.display()
     );
 }

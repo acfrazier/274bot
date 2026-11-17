@@ -416,7 +416,7 @@ fn match_pair(src: &str, open: usize, open_ch: u8, close_ch: u8) -> Option<usize
 }
 
 /// `crates/script-js/src/shim/declared_surface.js` — generated from the fixture.
-/// Regen: `cargo test -p script-js --test declared_abi regen_declared_surface_from_fixture -- --ignored`
+/// Regen: `cargo run -p script-js --example regen_checked_in -- declared-surface`
 pub fn declared_surface_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/shim/declared_surface.js")
 }
@@ -678,7 +678,7 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
     let mut covered: HashSet<&str> = HashSet::new();
     let mut out = String::from(
         "// Generated from tests/fixtures/js_declared_abi.json — do not edit by hand.\n\
-         // Regen: cargo test -p script-js --test declared_abi regen_declared_surface_from_fixture -- --ignored\n\
+         // Regen: cargo run -p script-js --example regen_checked_in -- declared-surface\n\
          import { notImpl, notImplValue, proxy } from '../../shim/_kernel.js';\n\n",
     );
     out.push_str("export const defineBot = globalThis.defineBot;\n\n");
