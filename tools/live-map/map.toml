@@ -80,6 +80,15 @@ cells = [
   "scenario.proof-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib proof::tests::",
 ]
 
+# The isolated environment helper is used by these mapped live-cell setup paths.
+[[cover]]
+globs = ["crates/script/src/isolated_env.rs"]
+cells = [
+  "frontend-core.gatherer-park-controls|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BLOCKED_ENGINE_DIR=${ENGINE_L_DIR:?} BLOCKED_NAV_PACK=${NAV_PACK_289:?} BLOCKED_CATALOG_ROOT=${CATALOG_ROOT:?} BLOCKED_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --features live-harness --test native_blocked_live -- --ignored --exact gatherer_parked_status_is_shared_and_controllable --nocapture --test-threads=1",
+  "frontend-core.live-guard-cure|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --features live-harness,test-support --lib survival_live_tests::live_guard_cure -- --ignored --exact --nocapture --test-threads=1",
+  "host.gatherer-bank-cost-fallback|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_bank_cost_air_fallback --nocapture --test-threads=1",
+]
+
 [live]
 globs = [
   "Cargo.toml",
@@ -207,10 +216,6 @@ globs = [
   "crates/host-play/src/script_bank_harness.rs",
   "crates/script/src/native/server_ordered.rs",
   "crates/script-js/host-js/index.d.ts",
-  # This revision changes only a cfg(test) assertion in
-  # isolated_env_restores_bot_home_and_deletes_scratch. That test still checks
-  # the bot_file path and bot_home after drop. Production helpers are unchanged.
-  "crates/script/src/isolated_env.rs",
   # Approved merge ancestry: workspace version/lint declarations and a test-only
   # terminal benchmark seam (the remaining memory.rs change is comment-only).
   "Cargo.toml",
