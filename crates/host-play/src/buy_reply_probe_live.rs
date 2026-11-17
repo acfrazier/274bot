@@ -45,8 +45,6 @@ use super::combat_proof::{
 use super::gather_bait_live::PlayerInfoClock;
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
-const DEFAULT_ENGINE_L_GAME_PORT: u16 = 47_594;
-const DEFAULT_ENGINE_L_HTTP_PORT: u16 = 3_080;
 const KEEPER_CONFIG: &str = "gerrant";
 const ITEM_ALIAS: &str = "feather";
 const COINS_ALIAS: &str = "coins";
@@ -366,6 +364,8 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
     let nav_flags = std::env::var_os("GATHERER_NAV_FLAGS")
         .map(PathBuf::from)
         .unwrap_or_else(|| nav_pack.with_extension("navflags"));
+    let game_port = crate::live_ports::required_port("WORLD_GAME_PORT")?;
+    let http_port = crate::live_ports::required_port("WORLD_HTTP_PORT")?;
     for (name, path) in [
         ("GATHERER_NAV_PACK", &nav_pack),
         ("GATHERER_NAV_FLAGS", &nav_flags),
@@ -378,15 +378,9 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
-        port: Some(crate::live_ports::env_port(
-            "GATHERER_GAME_PORT",
-            DEFAULT_ENGINE_L_GAME_PORT,
-        )),
+        port: Some(game_port),
         asset_host: Some("127.0.0.1".into()),
-        http_port: Some(crate::live_ports::env_port(
-            "GATHERER_HTTP_PORT",
-            DEFAULT_ENGINE_L_HTTP_PORT,
-        )),
+        http_port: Some(http_port),
         engine_dir: Some(engine_dir),
         cache_dir: Some(cache_dir),
         unpack_dir: Some(scratch.join("unpack")),
@@ -1999,6 +1993,12 @@ fn run_live_probe() {
 
     let options = profile_options(&scratch)
         .unwrap_or_else(|error| panic!("buy reply probe prerequisites: {error}"));
+    let engine_game_port = options
+        .port
+        .expect("profile options require WORLD_GAME_PORT");
+    let engine_http_port = options
+        .http_port
+        .expect("profile options require WORLD_HTTP_PORT");
     let nav_pack = options.nav_pack.clone().expect("selected navigation pack");
     let nav_flags = options
         .nav_flags
@@ -2240,14 +2240,8 @@ fn run_live_probe() {
         "engine": {
             "name": "L",
             "host": "127.0.0.1",
-            "game_port": crate::live_ports::env_port(
-                "GATHERER_GAME_PORT",
-                DEFAULT_ENGINE_L_GAME_PORT,
-            ),
-            "http_port": crate::live_ports::env_port(
-                "GATHERER_HTTP_PORT",
-                DEFAULT_ENGINE_L_HTTP_PORT,
-            ),
+            "game_port": engine_game_port,
+            "http_port": engine_http_port,
             "tick_ms": 600,
             "measured_player_info_clock": script_trace["player_info_clock"],
             "selected_revision": "R289",

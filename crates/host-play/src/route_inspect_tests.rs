@@ -3219,6 +3219,26 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
 #[test]
 fn real_content_inspection_capture_bytes() {
     use crate::script_runtime::SettledStart as _;
+    let Some(capture_baseline_path) =
+        std::env::var_os("T5W_INSPECT_CAPTURE_BASELINE").map(std::path::PathBuf::from)
+    else {
+        eprintln!(
+            "Skipping real_content_inspection_capture_bytes: T5W_INSPECT_CAPTURE_BASELINE is not set"
+        );
+        return;
+    };
+    if !capture_baseline_path.is_file() {
+        if std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true")) {
+            eprintln!(
+                "Skipping real_content_inspection_capture_bytes: T5W_INSPECT_CAPTURE_BASELINE is not an available file"
+            );
+            return;
+        }
+        panic!(
+            "T5W_INSPECT_CAPTURE_BASELINE must name an existing capture file: {}",
+            capture_baseline_path.display()
+        );
+    }
     let Some(old_capture) = api::test_support::local_asset_path(
         "T5W_INSPECT_CAPTURE_BASELINE",
         "",

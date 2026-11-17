@@ -20,6 +20,19 @@ pub(super) struct GuideQualificationFixture {
     pub(super) source: Value,
 }
 
+fn seed_path(root: Option<PathBuf>, guide: &str) -> Result<PathBuf, String> {
+    let root = root
+        .filter(|root| !root.as_os_str().is_empty())
+        .ok_or_else(|| "SURVIVABLE_SEED_ROOT is required to select guide seed files".to_owned())?;
+    if !root.is_dir() {
+        return Err(format!(
+            "SURVIVABLE_SEED_ROOT must name an existing directory: {}",
+            root.display()
+        ));
+    }
+    Ok(root.join(guide).join("seed.json"))
+}
+
 impl GuideQualificationFixture {
     pub(super) fn load(
         guide: &str,
@@ -27,13 +40,9 @@ impl GuideQualificationFixture {
         selected: &SelectedGameData,
         identities: &api::game_data::QuestIdentityFacts,
     ) -> Result<Self, String> {
-        let path = std::env::var_os("SURVIVABLE_SEED_ROOT")
-            .map(PathBuf::from)
-            .map(|root| root.join(guide).join("seed.json"));
-        let path_label = path.as_ref().map_or_else(
-            || "SURVIVABLE_SEED_ROOT is not set".to_owned(),
-            |path| path.display().to_string(),
-        );
+        let root = std::env::var_os("SURVIVABLE_SEED_ROOT").map(PathBuf::from);
+        let path = seed_path(root, guide)?;
+        let path_label = path.display().to_string();
         let fallback = || {
             (
                 json!({
@@ -44,8 +53,8 @@ impl GuideQualificationFixture {
                 "lumbridge_fallback",
             )
         };
-        let (mut seed, source, first_start_rule) = match path.as_ref().map(fs::read) {
-            Some(Ok(bytes)) => {
+        let (mut seed, source, first_start_rule) = match fs::read(&path) {
+            Ok(bytes) => {
                 let seed: Value = serde_json::from_slice(&bytes)
                     .map_err(|error| format!("parse seed {path_label}: {error}"))?;
                 (
@@ -54,9 +63,8 @@ impl GuideQualificationFixture {
                     "quest_seed_start",
                 )
             }
-            Some(Err(error)) if error.kind() == ErrorKind::NotFound => fallback(),
-            Some(Err(error)) => return Err(format!("read seed {path_label}: {error}")),
-            None => fallback(),
+            Err(error) if error.kind() == ErrorKind::NotFound => fallback(),
+            Err(error) => return Err(format!("read seed {path_label}: {error}")),
         };
         let overrides = seed.pointer(&format!("/role_overrides/{role}")).cloned();
         if let Some(overrides) = overrides.and_then(|value| value.as_object().cloned()) {
@@ -203,5 +211,23 @@ impl GuideQualificationFixture {
             state_json,
             source,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::seed_path;
+
+    #[test]
+    fn seed_root_is_required() {
+        let error = seed_path(None, "guide").unwrap_err();
+        assert!(error.contains("SURVIVABLE_SEED_ROOT"), "{error}");
+    }
+
+    #[test]
+    fn seed_root_must_be_a_directory() {
+        let executable = std::env::current_exe().unwrap();
+        let error = seed_path(Some(executable), "guide").unwrap_err();
+        assert!(error.contains("SURVIVABLE_SEED_ROOT"), "{error}");
     }
 }

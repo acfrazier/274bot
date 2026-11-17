@@ -33,6 +33,20 @@ use qualification::GuideQualificationFixture;
 const GUIDE_25_PIN: &str = "fcc930b755794f0c7d02d024a2c450731a16ce14";
 const GUIDE_67_PIN_PREFIX: &str = "764a49853";
 
+fn selected_navigation_pack_version(bytes: &[u8]) -> Result<u8, String> {
+    let magic = bytes
+        .get(..4)
+        .ok_or_else(|| "selected navigation pack header is truncated".to_owned())?;
+    let version = bytes
+        .get(4)
+        .copied()
+        .ok_or_else(|| "selected navigation pack version is missing".to_owned())?;
+    if magic != nav_planner::pack::MAGIC && magic != nav_planner::pack::MAGIC_GRID {
+        return Err("selected navigation pack has unsupported magic".into());
+    }
+    Ok(version)
+}
+
 #[derive(Clone)]
 struct Loadout {
     id: &'static str,
@@ -150,13 +164,25 @@ fn export() -> Result<(), String> {
     let combat = CombatTables::build(std::sync::Arc::clone(&selected))
         .map_err(|e| format!("build R289 combat tables: {e:?}"))?;
     let risks = RiskTables::build(&combat);
-    let mut world = NavWorld::load_pack(&pack_path)
-        .map_err(|e| format!("load selected navigation pack: {e:?}"))?;
+    let pack_bytes = fs::read(&pack_path).map_err(|error| {
+        format!(
+            "read selected navigation pack {}: {error}",
+            pack_path.display()
+        )
+    })?;
+    let pack_version = selected_navigation_pack_version(&pack_bytes).map_err(|error| {
+        format!(
+            "read selected navigation pack version from {}: {error}",
+            pack_path.display()
+        )
+    })?;
+    let mut world = NavWorld::from_bytes(&pack_bytes)
+        .map_err(|error| format!("load selected navigation pack: {error:?}"))?;
     world
         .bind_named_bank_facts(&selected)
-        .map_err(|e| format!("bind named bank facts: {e:?}"))?;
+        .map_err(|error| format!("bind named bank facts: {error:?}"))?;
     if world.graph.zones.is_none() {
-        return Err("selected v17 pack has no zone table".into());
+        return Err(format!("selected v{pack_version} pack has no zone table"));
     }
 
     let worktree = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -234,7 +260,7 @@ fn export() -> Result<(), String> {
         },
         "selected_navigation": {
             "path": pack_path.display().to_string(),
-            "pack_version": "v19",
+            "pack_version": format!("v{pack_version}"),
         },
         "sources": {
             "w4": w4_source,
@@ -2686,4 +2712,15 @@ fn variant_map(value: &Value) -> HashMap<String, &Value> {
         .flatten()
         .filter_map(|row| row["variant"].as_str().map(|id| (id.to_owned(), row)))
         .collect()
+}
+
+#[cfg(test)]
+mod pack_version_tests {
+    use super::selected_navigation_pack_version;
+
+    #[test]
+    fn selected_navigation_pack_version_uses_the_loaded_header() {
+        assert_eq!(selected_navigation_pack_version(b"274V\x12"), Ok(18));
+        assert_eq!(selected_navigation_pack_version(b"274N\x01"), Ok(1));
+    }
 }
