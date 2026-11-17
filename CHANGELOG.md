@@ -860,6 +860,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   after three windows in a row with a refusal and no hit landing on the target
   (about 24 ticks), the fight ends with `single-way-blocked` instead of
   repeating the click without end.
+- Combat preparation waits for a missing desired weapon to appear in the next
+  equipment packet before reporting `prep-failed:weapon`.
 
 ### Survival
 

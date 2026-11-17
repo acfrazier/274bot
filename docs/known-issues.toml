@@ -1000,6 +1000,7 @@ text = """A combat step can end at its start with `prep-failed:weapon` even thou
 first = "0.2.0"
 listed = "0.2.9"
 target = "0.3.0"
+fixed = "0.3.0"
 severity = "low"
 owner = "combat (PvP slices)"
 

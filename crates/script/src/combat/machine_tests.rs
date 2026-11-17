@@ -5905,6 +5905,47 @@ fn contains_wear(batch: &DrainedBatch, wanted: &str) -> bool {
 }
 
 #[test]
+fn melee_prep_waits_for_split_weapon_wear_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("cow");
+    let mut sword = scene.held("bronze_scimitar", 0);
+    let id = sword.def.id;
+    scene.inventory.push(sword.clone());
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.set_kit(Arc::new(CompiledKit {
+        worn: Arc::from([(3, id)]),
+        ..CompiledKit::default()
+    }));
+    let mut harness = Harness::new(&scene, request);
+
+    let first = harness.pending_batch(&scene, 1);
+    assert!(contains_wear(&first, sword.def.name.as_deref().unwrap()));
+
+    scene.inventory.clear();
+    scene.refresh();
+    assert!(
+        matches!(harness.poll(&scene.snapshot, 2), Poll::Pending),
+        "a missing weapon gets one frame for the split equipment packet"
+    );
+    let waiting = harness.drain(None);
+    assert_len(&waiting, 0);
+    assert_eq!(harness.machine.end, None);
+    assert_eq!(harness.machine.phase, Phase::Engage);
+
+    sword.container = ItemContainer::Equipment;
+    sword.slot = 3;
+    scene.equipment.push(sword);
+    scene.refresh();
+    assert!(matches!(harness.poll(&scene.snapshot, 3), Poll::Pending));
+    harness.drain(None);
+    assert_eq!(harness.machine.end, None);
+}
+
+#[test]
 fn ranged_prep_waits_for_torn_thrown_weapon_wear_frame() {
     if !api::test_support::game_data_available() {
         return;

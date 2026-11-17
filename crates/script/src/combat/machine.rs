@@ -282,6 +282,8 @@ pub struct Combat {
     last_tick: u16,
     emitted_tick: u16,
     phase: Phase,
+    /// A missing desired weapon has already had its split-packet frame.
+    prep_missing_weapon_observed: bool,
     flags: u16,
     stand_walk_failures: u8,
     /// The walking ticks of the Guardian's escape, as the adapter last priced
@@ -493,6 +495,7 @@ impl NativeMachine for Combat {
             approach_recovery: ReturnStallRecovery::with_max_attempts(QUEST_WALK_MAX_ATTEMPTS),
             approach_walk_pending: false,
             phase: Phase::Prep,
+            prep_missing_weapon_observed: false,
             flags: 0,
             stand_walk_failures: 0,
             escape_walk: 0,
@@ -3016,6 +3019,31 @@ impl Combat {
                 return Ok(plan);
             }
         }
+        // KI:54 records a client frame with the weapon in neither inventory nor
+        // equipment while its separate updates are applied.
+        if matches!(self.phase, Phase::Prep | Phase::Engage) {
+            let weapon = self.desired(3, frame);
+            let missing = self.request.allow.equipment
+                && weapon.is_some_and(|id| {
+                    arbiter::count(frame, id) == 0
+                        && !frame
+                            .equipment
+                            .iter()
+                            .any(|row| row.slot == 3 && row.def.id == id)
+                });
+            if missing {
+                if self.pending_wear(3) && !self.prep_missing_weapon_observed {
+                    self.prep_missing_weapon_observed = true;
+                    return Ok(plan);
+                }
+                self.finish(
+                    CombatEnd::Aborted(AbortReason::PrepFailed(weapon_prep_item(self.active))),
+                    tick,
+                );
+                return self.plan(frame, tick, cx);
+            }
+            self.prep_missing_weapon_observed = false;
+        }
         if self.phase == Phase::Prep {
             let weapon = self.desired(3, frame);
             let conflict = self.flags & SHIELD_OVERRIDE != 0
@@ -3025,21 +3053,9 @@ impl Combat {
                         .item_by_id(id)
                         .is_some_and(|item| item.is_two_handed())
                 });
-            let missing = self.request.allow.equipment
-                && weapon.is_some_and(|id| {
-                    arbiter::count(frame, id) == 0
-                        && !frame
-                            .equipment
-                            .iter()
-                            .any(|row| row.slot == 3 && row.def.id == id)
-                });
-            if conflict || missing {
+            if conflict {
                 self.finish(
-                    CombatEnd::Aborted(AbortReason::PrepFailed(if conflict {
-                        PrepItem::Shield
-                    } else {
-                        weapon_prep_item(self.active)
-                    })),
+                    CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Shield)),
                     tick,
                 );
                 return self.plan(frame, tick, cx);
