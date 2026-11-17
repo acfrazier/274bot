@@ -342,7 +342,7 @@ severity = "medium"
 owner = "No planned fix. Pause is manual takeover."
 
 [[item.earlier]]
-until = "0.2.9.2"
+until = "0.3.0"
 text = """With "Pause script on manual movement" off, a script that acts in place
   can continue after you move the bot yourself. This affects rs2b0t scripts
   without a Gather or Combat session and built-in scripts other than Quester
