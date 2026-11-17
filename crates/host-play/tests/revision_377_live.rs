@@ -1127,7 +1127,11 @@ fn nightly_quiet_lock_callsite_uses_the_configured_variable() -> Result<(), Stri
     let lock = home.0.join("callsite-quiet");
     fs::create_dir(&lock).map_err(|error| error.to_string())?;
     let result = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
-        .args(["--exact", "nightly_quiet_lock_environment_probe", "--nocapture"])
+        .args([
+            "--exact",
+            "nightly_quiet_lock_environment_probe",
+            "--nocapture",
+        ])
         .env("NIGHTLY_QUIET_LOCK", &lock)
         .env_remove("NIGHTLY_QUIET_LOCK_WRONG")
         .output()
