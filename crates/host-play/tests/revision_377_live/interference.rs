@@ -663,6 +663,18 @@ fn recorded_fresh_hitmark_can_precede_the_stat_packet() {
     let next = json!({"tick":5,"tile":START_TILE,"hitpoints":8,
         "hitmarks":{"loop_cycle":208}});
     assert_eq!(nettle_disturbance(&event, &next, "interference"), Ok(()));
+    let mut moved_next = next.clone();
+    moved_next["tile"] = json!([START_TILE.0 + 1, START_TILE.1, START_TILE.2]);
+    assert_eq!(
+        nettle_disturbance(&event, &moved_next, "interference"),
+        Err(DisturbanceFixture::NettleNotObserved)
+    );
+    let mut other_session = event.clone();
+    other_session["previous"]["session"] = json!(1);
+    assert_eq!(
+        nettle_disturbance(&other_session, &next, "interference"),
+        Err(DisturbanceFixture::NettleNotObserved)
+    );
     let mut npc = event.clone();
     npc["targeting_npcs"] = json!([4]);
     assert_eq!(
