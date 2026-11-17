@@ -136,10 +136,11 @@ pub struct CureDoses {
     pub strange_fruit: u8,
 }
 
-/// Observed poison state for one session.
+/// Observed poison state. A confirmed poison reserve survives a reconnect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PoisonState {
-    /// Poison state is not known after login, reconnect, or an unsupported mark.
+    /// Poison state is not known after login, an unsupported mark, or a reconnect
+    /// without a retained poison reserve.
     Unknown {
         /// Tick that began the unknown interval.
         since: u16,
@@ -260,7 +261,14 @@ impl PoisonMemory {
         match event {
             PoisonEvent::None => {}
             PoisonEvent::Reconnect { tick } => {
-                self.state = PoisonState::Unknown { since: tick };
+                // The engine emits the poison line only when its counter is zero
+                // (poison.rs2:12-18), so an active reserve survives login silently.
+                let keep_poison = !self.session_invalid
+                    && !self.death_seen
+                    && matches!(self.state, PoisonState::Poisoned { .. });
+                if !keep_poison {
+                    self.state = PoisonState::Unknown { since: tick };
+                }
                 self.session_invalid = false;
                 self.death_seen = false;
             }
@@ -607,6 +615,38 @@ pub mod poison_math {
                     hit_since_mark: false,
                 }
             );
+        }
+
+        #[test]
+        fn reconnect_preserves_poison_reserve_until_next_poison_mark() {
+            let poisoned = PoisonState::Poisoned {
+                per_tick: 6,
+                last_mark: 100,
+                hit_since_mark: false,
+            };
+            let reserve = outlook(poisoned, 1).total;
+            let memory =
+                PoisonMemory::from_state(poisoned).transition(PoisonEvent::Reconnect { tick: 1 });
+            assert_eq!(memory.state, poisoned);
+            assert_eq!(outlook(memory.state, 1).total, reserve);
+
+            let after_mark = memory.transition(PoisonEvent::Hitmark {
+                kind: 2,
+                value: 4,
+                tick: 31,
+            });
+            assert_eq!(
+                after_mark.state,
+                PoisonState::Poisoned {
+                    per_tick: 4,
+                    last_mark: 31,
+                    hit_since_mark: false,
+                }
+            );
+            let after_death = PoisonMemory::from_state(poisoned)
+                .transition(PoisonEvent::DeathObserved)
+                .transition(PoisonEvent::Reconnect { tick: 1 });
+            assert_eq!(after_death.state, PoisonState::Unknown { since: 1 });
         }
 
         fn hit(memory: PoisonMemory, pulse: u8, tick: u16) -> PoisonMemory {

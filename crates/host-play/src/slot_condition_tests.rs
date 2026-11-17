@@ -244,6 +244,49 @@ fn reconnect_hides_fact_until_first_complete_frame() {
 }
 
 #[test]
+fn reconnect_keeps_poison_reserve_until_next_poison_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut owner, _) = poisoned_owner_with_fruit();
+    let poisoned = owner.current().expect("complete live condition").poison;
+    assert!(matches!(poisoned, PoisonState::Poisoned { .. }));
+    let reserve = remaining(poisoned, api::condition::Exposure::None, 1, 11).total;
+
+    owner.session_ended();
+    owner.session_started(
+        1,
+        0,
+        Some((script::combat::guard::shared_tables().unwrap(), 11)),
+    );
+    assert!(owner.current().is_none());
+    owner.observe_frame(&frame(1), &drain(false, true), false);
+    assert_eq!(owner.current().unwrap().poison, poisoned);
+    assert_eq!(
+        remaining(
+            owner.current().unwrap().poison,
+            api::condition::Exposure::None,
+            1,
+            11
+        )
+        .total,
+        reserve
+    );
+
+    let mut snapshot = frame(31);
+    hit(&mut snapshot, 2, 4, 2);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert!(matches!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 4,
+            last_mark: 31,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn unavailable_tables_keep_food_and_cures_unknown() {
     let mut owner = SlotCondition::default();
     owner.session_started(1, 0, None);

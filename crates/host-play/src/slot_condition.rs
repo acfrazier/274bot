@@ -178,15 +178,14 @@ impl SlotCondition {
         chat_sequence: i32,
         tables: Option<(Arc<CombatTables>, u8)>,
     ) {
+        let memory = self.memory;
         *self = Self::default();
         self.last_tick = tick;
         // Reconnect retains the client's ring. Ignore every pre-boundary line,
         // including lines the old snapshot had not rebuilt or consumed.
         self.chat_seen = chat_sequence;
         self.chat_visible = chat_sequence;
-        self.memory = self
-            .memory
-            .transition(PoisonEvent::Reconnect { tick: tick as u16 });
+        self.memory = memory.transition(PoisonEvent::Reconnect { tick: tick as u16 });
         self.fact.poison = self.memory.state;
         if let Some((tables, q)) = tables {
             self.tables = Some(tables);
