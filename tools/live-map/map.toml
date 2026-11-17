@@ -184,6 +184,13 @@ globs = [
   # Developer inventory emitter: reads a local rs2b0t tree and prints JSON for
   # comparison; it opens no session and ships no runtime path.
   "crates/script-js/examples/catalog_inventory.rs",
+  # Offline maintenance commands that rewrite checked-in output from its
+  # generator (the freshness tests compare the output); they open no session.
+  "crates/script-js/examples/regen_checked_in.rs",
+  "crates/script/examples/regen_path_schema.rs",
+  # Offline performance measurement over a decoded pack; it asserts nothing.
+  # Its correctness checks are the nav-planner `perf_corpus_tests` unit tests.
+  "crates/nav-planner/examples/perf_corpus.rs",
   # deleted by script split S3; its code moved to `script-js`
   # S3 commit: 6831a262cbb35272e6a596b14a1239901b1ea90b.
   "crates/script/src/shim/mod.rs",
