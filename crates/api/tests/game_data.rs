@@ -851,6 +851,5 @@ fn generated_trio_giver_facts_pin_the_closed_giver_set() {
             spawns,
             vec![(2438, 3186, 0), (2668, 3162, 0), (2569, 3249, 0)]
         );
-
     }
 }
