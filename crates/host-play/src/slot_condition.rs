@@ -344,9 +344,14 @@ impl SlotCondition {
             self.session_ended();
             return;
         }
+        // Normal timers require canAccess(), which rejects main/chat modals
+        // (Player.ts:821-831,951-959). Keep poison from expiring while blocked.
         let modal_open = snapshot.modals().main != -1 || snapshot.modals().chat != -1;
         if modal_open {
             self.reset_window(WindowReset::Modal);
+            self.transition(PoisonEvent::TimerPaused {
+                tick: snapshot.tick() as u16,
+            });
         } else if guardian_hold {
             self.reset_window(WindowReset::GuardianHold);
         }

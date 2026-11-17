@@ -322,6 +322,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Reconnecting while poisoned retains the known poison reserve until the next
   poison mark, so survival can still act on a held cure or food.
 
+- Poison risk no longer expires while an observed main or chat modal blocks
+  normal timers. Once the modal closes, a hit still keeps risk active until a
+  new poison mark.
+
 ## [0.2.9.1] — 2026-11-14 — Beta 2 patch
 
 ### Navigation
@@ -879,9 +883,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   in the status row.
   Exhausted combat escapes retain that held-cure guard without restoring food
   permission, including when the walk crosses a named danger zone.
-- A conservative expiry clears a known poison reserve only after the last
-  possible timer fire and its zero-clearing callback. An intervening hit keeps
-  the poison risk active until a newer poison mark arrives.
 - A Gatherer bank trip keeps held antipoison and super antipoison doses in the
   pack, so a later poison still finds them.
 - The panel and terminal app show the same status row when poison means the bot

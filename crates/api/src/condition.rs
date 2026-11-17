@@ -224,6 +224,11 @@ pub enum PoisonEvent {
         /// Current session tick.
         tick: u16,
     },
+    /// The owner observed a busy modal while normal timers could not run.
+    TimerPaused {
+        /// Tick of the observed busy frame.
+        tick: u16,
+    },
     /// The owner observed zero hitpoints.
     DeathObserved,
     /// The owner observed the local player after respawn.
@@ -404,6 +409,23 @@ impl PoisonMemory {
                 _ => {}
             },
             PoisonEvent::Tick { .. } => {}
+            PoisonEvent::TimerPaused { tick } if !self.session_invalid => {
+                if let PoisonState::Poisoned {
+                    per_tick,
+                    hit_since_mark,
+                    ..
+                } = self.state
+                {
+                    // Player.ts:821-831,953 blocks normal timers while busy.
+                    // An overdue timer may fire immediately when access returns.
+                    self.state = PoisonState::Poisoned {
+                        per_tick,
+                        last_mark: tick.wrapping_add(1),
+                        hit_since_mark,
+                    };
+                }
+            }
+            PoisonEvent::TimerPaused { .. } => {}
             PoisonEvent::DeathObserved => self.death_seen = true,
             PoisonEvent::RespawnObserved if self.death_seen && !self.session_invalid => {
                 self.state = PoisonState::Clear;
@@ -728,25 +750,74 @@ pub mod poison_math {
                     ..
                 }
             ));
+            let max_pulse: u8 = 11;
             let high_pulse = PoisonMemory::from_state(PoisonState::Poisoned {
-                per_tick: u8::MAX,
+                per_tick: max_pulse,
                 last_mark: 65_000,
                 hit_since_mark: false,
             });
-            let saturated_bound = 65_000u16.wrapping_add(256 * POISON_PERIOD);
+            // all.npc:4634 gives severity 55; poison.rs2:29 maps that to pulse 11.
+            let clear_at = 65_000u16.wrapping_add(u16::from(max_pulse) * 5 * POISON_PERIOD);
             assert!(matches!(
                 high_pulse
                     .transition(PoisonEvent::Tick {
-                        tick: saturated_bound,
+                        tick: clear_at.wrapping_sub(1),
                     })
                     .state,
                 PoisonState::Poisoned { .. }
             ));
-            let clear_at = 65_000u16.wrapping_add(u16::from(u8::MAX) * 5 * POISON_PERIOD);
             assert_eq!(
                 high_pulse
                     .transition(PoisonEvent::Tick { tick: clear_at })
                     .state,
+                PoisonState::Clear
+            );
+        }
+
+        #[test]
+        fn poison_memory_rebases_clear_window_after_reconnect() {
+            let memory = PoisonMemory::from_state(PoisonState::Poisoned {
+                per_tick: 1,
+                last_mark: 65_000,
+                hit_since_mark: false,
+            })
+            .transition(PoisonEvent::Reconnect { tick: 1 });
+            let rebased = PoisonState::Poisoned {
+                per_tick: 1,
+                last_mark: 1,
+                hit_since_mark: false,
+            };
+            assert_eq!(memory.state, rebased);
+            assert_eq!(
+                memory.transition(PoisonEvent::Tick { tick: 150 }).state,
+                rebased
+            );
+            assert_eq!(
+                memory.transition(PoisonEvent::Tick { tick: 151 }).state,
+                PoisonState::Clear
+            );
+        }
+
+        #[test]
+        fn poison_memory_waits_for_the_timer_after_a_busy_modal() {
+            let memory = PoisonMemory::from_state(PoisonState::Poisoned {
+                per_tick: 1,
+                last_mark: 20,
+                hit_since_mark: false,
+            })
+            .transition(PoisonEvent::TimerPaused { tick: 200 });
+            let paused = PoisonState::Poisoned {
+                per_tick: 1,
+                last_mark: 201,
+                hit_since_mark: false,
+            };
+            assert_eq!(memory.state, paused);
+            assert_eq!(
+                memory.transition(PoisonEvent::Tick { tick: 350 }).state,
+                paused
+            );
+            assert_eq!(
+                memory.transition(PoisonEvent::Tick { tick: 351 }).state,
                 PoisonState::Clear
             );
         }

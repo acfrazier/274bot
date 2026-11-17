@@ -973,6 +973,7 @@ mod tests {
         });
         assert!(resumed);
     }
+
     #[test]
     fn survival_step_parks_on_need_not_on_cure_reason() {
         if !api::test_support::game_data_available() {
