@@ -809,7 +809,7 @@ fn run_quest(q: Quest) -> Result<(), String> {
     let mut lifecycle = None;
     let mut last_status = String::new();
     let result = (|| loop {
-        if nightly_quiet_lock_held(std::env::var_os("NIGHTLY_QUIET_LOCK").as_deref()) {
+        if nightly_quiet_lock_held() {
             return Err("MAC-QUIET.lock appeared".into());
         }
         if let Some(error) = play.script_last_error(&account) {
