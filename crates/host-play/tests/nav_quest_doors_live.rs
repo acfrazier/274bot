@@ -2230,7 +2230,7 @@ fn run_brimhaven_phoenix_kitchen_journal() {
     let receipt_path = evidence.join(format!("kitchen-phoenix-{account}-{serial}.json"));
     let mut receipt = json!({
         "account": account,
-        "server": "Engine Q at 127.0.0.1:44694",
+        "server": format!("Engine Q at 127.0.0.1:{}", host_play::live_ports::game_port()),
         "seed": null,
         "prerequisite_and_crossing": null,
         "logout_observed": false,
@@ -2240,12 +2240,7 @@ fn run_brimhaven_phoenix_kitchen_journal() {
     let mut seed_logout = false;
     let mut play_logout = false;
     let setup = (|| -> Result<(), String> {
-        let mut options = live_profile_options();
-        options.port = Some(44694);
-        options.http_port = Some(1180);
-        options.catalog_root = Some(PathBuf::from(
-            "/Users/acfrazier/experiments/lostcity-289/content",
-        ));
+        let options = live_profile_options();
         let profile = options
             .resolve(None)
             .map_err(|error| format!("resolve Engine Q profile: {error:?}"))?
@@ -2336,7 +2331,7 @@ fn run_brimhaven_phoenix_kitchen_journal() {
     );
 }
 #[test]
-#[ignore = "requires Engine Q at 127.0.0.1:44694/http1180, LIVE=1, WORLD_NAV_PACK, an owned three-character lowercase BOT_LIVE_NAME_PREFIX, and NAV_KITCHEN_EVIDENCE"]
+#[ignore = "requires Engine Q at configured WORLD_GAME_PORT/WORLD_HTTP_PORT, LIVE=1, WORLD_NAV_PACK, an owned three-character lowercase BOT_LIVE_NAME_PREFIX, and NAV_KITCHEN_EVIDENCE"]
 fn live_brimhaven_phoenix_kitchen_crossing() {
     if !api::test_support::game_data_available() {
         return;

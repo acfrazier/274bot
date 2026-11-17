@@ -618,9 +618,18 @@ class LiveMapTests(unittest.TestCase):
 
     def test_diff_expands_real_submodule_paths_and_requires_missing_commit_fetch(self) -> None:
         raw_evidence = os.environ.get("LIVE_MAP_TEST_TMPDIR")
-        self.assertTrue(raw_evidence, "set LIVE_MAP_TEST_TMPDIR to a path under 274bot-evidence")
+        raw_root = os.environ.get("LIVE_EVIDENCE_DIR")
+        self.assertTrue(raw_root, "set LIVE_EVIDENCE_DIR to the configured evidence root")
+        self.assertTrue(
+            raw_evidence,
+            "set LIVE_MAP_TEST_TMPDIR to a path under LIVE_EVIDENCE_DIR",
+        )
+        evidence_root = Path(raw_root).resolve()
         evidence = Path(raw_evidence).resolve()
-        self.assertIn("274bot-evidence", evidence.parts)
+        try:
+            evidence.relative_to(evidence_root)
+        except ValueError:
+            self.fail("LIVE_MAP_TEST_TMPDIR must be under LIVE_EVIDENCE_DIR")
         try:
             evidence.relative_to(Path(tempfile.gettempdir()).resolve())
         except ValueError:

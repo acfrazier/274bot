@@ -4,12 +4,13 @@
 //! then the preceding spatial step's authored destination. Only a guide with
 //! no seed file uses the W4 Lumbridge start and a fresh-account fixture.
 
-use super::{env_path, sha256, tile, tile_json};
+use super::{sha256, tile, tile_json};
 use api::game_data::SelectedGameData;
 use nav_planner::WorldState;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::ErrorKind;
+use std::path::PathBuf;
 
 pub(super) struct GuideQualificationFixture {
     pub(super) start: api::WorldTile,
@@ -26,30 +27,36 @@ impl GuideQualificationFixture {
         selected: &SelectedGameData,
         identities: &api::game_data::QuestIdentityFacts,
     ) -> Result<Self, String> {
-        let root = env_path(
-            "SURVIVABLE_SEED_ROOT",
-            "/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA",
+        let path = std::env::var_os("SURVIVABLE_SEED_ROOT")
+            .map(PathBuf::from)
+            .map(|root| root.join(guide).join("seed.json"));
+        let path_label = path.as_ref().map_or_else(
+            || "SURVIVABLE_SEED_ROOT is not set".to_owned(),
+            |path| path.display().to_string(),
         );
-        let path = root.join(guide).join("seed.json");
-        let (mut seed, source, first_start_rule) = match fs::read(&path) {
-            Ok(bytes) => {
-                let seed: Value = serde_json::from_slice(&bytes)
-                    .map_err(|error| format!("parse seed {}: {error}", path.display()))?;
-                (
-                    seed,
-                    json!({"path":path.display().to_string(),"sha256":sha256(&bytes)}),
-                    "quest_seed_start",
-                )
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => (
+        let fallback = || {
+            (
                 json!({
                     "start_tile":{"x":3222,"z":3218,"level":0},
                     "stats":{},"items":[],"coins":0,"completed_quests":[],
                 }),
                 Value::Null,
                 "lumbridge_fallback",
-            ),
-            Err(error) => return Err(format!("read seed {}: {error}", path.display())),
+            )
+        };
+        let (mut seed, source, first_start_rule) = match path.as_ref().map(fs::read) {
+            Some(Ok(bytes)) => {
+                let seed: Value = serde_json::from_slice(&bytes)
+                    .map_err(|error| format!("parse seed {path_label}: {error}"))?;
+                (
+                    seed,
+                    json!({"path":path_label.as_str(),"sha256":sha256(&bytes)}),
+                    "quest_seed_start",
+                )
+            }
+            Some(Err(error)) if error.kind() == ErrorKind::NotFound => fallback(),
+            Some(Err(error)) => return Err(format!("read seed {path_label}: {error}")),
+            None => fallback(),
         };
         let overrides = seed.pointer(&format!("/role_overrides/{role}")).cloned();
         if let Some(overrides) = overrides.and_then(|value| value.as_object().cloned()) {
@@ -62,7 +69,7 @@ impl GuideQualificationFixture {
             seed["start_tile"][name]
                 .as_i64()
                 .and_then(|value| i32::try_from(value).ok())
-                .ok_or_else(|| format!("seed {} has no usable start_tile.{name}", path.display()))
+                .ok_or_else(|| format!("seed {path_label} has no usable start_tile.{name}"))
         };
         let start = tile(coordinate("x")?, coordinate("z")?, coordinate("level")?);
         let mut state = WorldState::empty().with_map_members(true);
@@ -103,12 +110,12 @@ impl GuideQualificationFixture {
             let index = SKILLS
                 .iter()
                 .position(|skill| skill == name)
-                .ok_or_else(|| format!("unknown seed skill {name} in {}", path.display()))?;
+                .ok_or_else(|| format!("unknown seed skill {name} in {path_label}"))?;
             let level = level
                 .as_i64()
                 .and_then(|value| i32::try_from(value).ok())
                 .filter(|value| *value > 0)
-                .ok_or_else(|| format!("invalid seed level for {name} in {}", path.display()))?;
+                .ok_or_else(|| format!("invalid seed level for {name} in {path_label}"))?;
             state.stats.insert(index as i32, level);
         }
         let [attack, defence, strength, hp, ranged, prayer, magic] =
@@ -122,7 +129,7 @@ impl GuideQualificationFixture {
                 .as_i64()
                 .and_then(|value| i32::try_from(value).ok())
                 .filter(|value| *value >= 0)
-                .ok_or_else(|| format!("invalid seed item count in {}", path.display()))
+                .ok_or_else(|| format!("invalid seed item count in {path_label}"))
         };
         let coins = count(&seed["coins"])?;
         if coins > 0 {
@@ -138,7 +145,7 @@ impl GuideQualificationFixture {
             let alias = item["alias"].as_str().ok_or("seed item has no alias")?;
             let id = selected
                 .item_by_alias(alias)
-                .ok_or_else(|| format!("unknown seed item {alias} in {}", path.display()))?
+                .ok_or_else(|| format!("unknown seed item {alias} in {path_label}"))?
                 .id;
             let quantity = count(&item["count"])?;
             if quantity == 0 {
@@ -170,9 +177,7 @@ impl GuideQualificationFixture {
                 .rows
                 .iter()
                 .find(|row| row.id == id || row.display == id)
-                .ok_or_else(|| {
-                    format!("unknown completed seed quest {id} in {}", path.display())
-                })?;
+                .ok_or_else(|| format!("unknown completed seed quest {id} in {path_label}"))?;
             state.quests.insert(row.display.clone());
             state.varps.insert(row.varp_id, row.complete);
         }

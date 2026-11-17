@@ -6,10 +6,10 @@
 //! ```
 //! Replace the final test name for a cell.
 //! Live execution requires LIVE=1, BOT_CPU=1, a 1-4 character BOT_LIVE_NAME_PREFIX,
-//! GATHERER_GAME_PORT=47594, GATHERER_HTTP_PORT=3080, and absolute
 //! GATHERER_NAV_PACK, GATHERER_ENGINE_DIR, GATHERER_CATALOG_ROOT, and
-//! GATHERER_TICK_EVIDENCE paths. Optional GATHERER_TICK_COMMIT records the
-//! code commit in the evidence JSON. The evidence destination must not exist.
+//! GATHERER_TICK_EVIDENCE paths. GATHERER_GAME_PORT and GATHERER_HTTP_PORT
+//! override the Engine L defaults of 47594 and 3080. Optional GATHERER_TICK_COMMIT
+//! records the code commit in the evidence JSON. The evidence destination must not exist.
 
 use super::{mint_profile, required, selected_profile, TempRoot};
 use api::interact;
@@ -33,8 +33,14 @@ use std::time::{Duration, Instant};
 mod tick_startup;
 
 const ENGINE_HOST: &str = "127.0.0.1";
-const ENGINE_GAME_PORT: u16 = 47_594;
-const ENGINE_HTTP_PORT: u16 = 3_080;
+const DEFAULT_ENGINE_GAME_PORT: u16 = 47_594;
+const DEFAULT_ENGINE_HTTP_PORT: u16 = 3_080;
+fn engine_game_port() -> u16 {
+    host_play::live_ports::env_port("GATHERER_GAME_PORT", DEFAULT_ENGINE_GAME_PORT)
+}
+fn engine_http_port() -> u16 {
+    host_play::live_ports::env_port("GATHERER_HTTP_PORT", DEFAULT_ENGINE_HTTP_PORT)
+}
 const EXPECTED_TICK_MS: u64 = 600;
 const KIT_KNIFE_ID: i32 = 946;
 const LOG_ID: i32 = 1_511;
@@ -715,11 +721,6 @@ impl LiveRun {
         if !(1..=4).contains(&prefix_chars) {
             return Err("BOT_LIVE_NAME_PREFIX must contain 1-4 characters".into());
         }
-        if std::env::var("GATHERER_GAME_PORT").as_deref() != Ok("47594")
-            || std::env::var("GATHERER_HTTP_PORT").as_deref() != Ok("3080")
-        {
-            return Err("the assigned Engine L cell requires GATHERER_GAME_PORT=47594 and GATHERER_HTTP_PORT=3080".into());
-        }
         let output = PathBuf::from(required("GATHERER_TICK_EVIDENCE")?);
         if !output.is_absolute() {
             return Err("GATHERER_TICK_EVIDENCE must be an absolute path".into());
@@ -771,10 +772,10 @@ impl LiveRun {
         if server_profile.profile_class() != host_play::ProfileClass::Local
             || server_profile.client().game_host() != ENGINE_HOST
             || server_profile.client().asset_host() != ENGINE_HOST
-            || server_profile.client().game_port() != ENGINE_GAME_PORT
-            || server_profile.client().asset_port() != ENGINE_HTTP_PORT
+            || server_profile.client().game_port() != engine_game_port()
+            || server_profile.client().asset_port() != engine_http_port()
         {
-            return Err("live tick cells require the assigned local Engine L loopback profile on 47594/3080".into());
+            return Err("live tick cells require a local Engine L loopback profile matching GATHERER_GAME_PORT and GATHERER_HTTP_PORT".into());
         }
         if !matches!(
             server_profile.world_members(),
@@ -1231,7 +1232,7 @@ impl LiveRun {
             "schema": "gatherer-tick-run/v1",
             "case": self.case.name(),
             "kind": match self.case { Case::Probe => "probe", Case::Fly => "fly", Case::Net => "net", Case::Iron => "iron", Case::Oak => "oak", Case::Rune => "rune" },
-            "engine": {"host": ENGINE_HOST, "game_port": ENGINE_GAME_PORT, "http_port": ENGINE_HTTP_PORT, "tick_ms": EXPECTED_TICK_MS},
+            "engine": {"host": ENGINE_HOST, "game_port": engine_game_port(), "http_port": engine_http_port(), "tick_ms": EXPECTED_TICK_MS},
             "runtime": {"commit": std::env::var("GATHERER_TICK_COMMIT").ok(), "bot_cpu": 1, "account_prefix": std::env::var("BOT_LIVE_NAME_PREFIX").ok(), "account": self.account, "profile": self.profile_identity, "world_members": self.world_members},
             "scenario": {"skill": self.case.skill(), "skill_index": self.case.skill_index(), "seed_level": self.case.level(), "target": {"x": self.case.target().x, "z": self.case.target().z, "level": self.case.target().level}, "required_cycles": self.case.required_cycles(), "tick_budget": self.case.tick_budget(), "fixed_deadline_seconds": FIXED_DEADLINE.as_secs(), "inventory_seed": self.case.seeds()},
             "setup": {"equipment": equipment},
@@ -1828,37 +1829,37 @@ mod tests {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080, and absolute Gatherer data paths; records a 300-cycle probe only"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, configured GATHERER_GAME_PORT/GATHERER_HTTP_PORT and Gatherer assets; records a 300-cycle probe only"]
 fn probe_tick_landing() {
     run_live(Case::Probe).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080, and absolute Gatherer data paths; 60-cycle fly-fishing cell"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, configured GATHERER_GAME_PORT/GATHERER_HTTP_PORT and Gatherer assets; 60-cycle fly-fishing cell"]
 fn gatherer_fly_tick() {
     run_live(Case::Fly).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080, and absolute Gatherer data paths; 60-cycle small-net cell"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, configured GATHERER_GAME_PORT/GATHERER_HTTP_PORT and Gatherer assets; 60-cycle small-net cell"]
 fn gatherer_net_tick() {
     run_live(Case::Net).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080, and absolute Gatherer data paths; 60-cycle iron-mining cell"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, configured GATHERER_GAME_PORT/GATHERER_HTTP_PORT and Gatherer assets; 60-cycle iron-mining cell"]
 fn gatherer_mine_iron_tick() {
     run_live(Case::Iron).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080, and absolute Gatherer data paths; 60-cycle oak cell"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, configured GATHERER_GAME_PORT/GATHERER_HTTP_PORT and Gatherer assets; 60-cycle oak cell"]
 fn gatherer_oak_tick() {
     run_live(Case::Oak).unwrap();
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080, and absolute Gatherer data paths; rune-pick iron no-gain guard"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, configured GATHERER_GAME_PORT/GATHERER_HTTP_PORT and Gatherer assets; rune-pick iron no-gain guard"]
 fn gatherer_tick_refused_rune() {
     run_live(Case::Rune).unwrap();
 }

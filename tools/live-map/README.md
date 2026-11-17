@@ -19,12 +19,12 @@ means the input or Git diff is invalid.
 Do not use a broad live glob to hide an uncovered path.
 
 Run the self-tests with temporary Git repositories. The real-submodule test
-stores its temporary repository under the evidence folder. Set the required
-`LIVE_MAP_TEST_TMPDIR` variable to a directory under that folder. Do not use
-`/tmp`.
+stores its temporary repository under `LIVE_MAP_TEST_TMPDIR`, which must be
+inside the configured `LIVE_EVIDENCE_DIR`. Do not use `/tmp`.
 
 ```sh
-LIVE_MAP_TEST_TMPDIR=/path/to/274bot-evidence/request-id/fix-r4 \
+LIVE_EVIDENCE_DIR=/path/to/evidence \
+LIVE_MAP_TEST_TMPDIR=/path/to/evidence/live-map-self-test \
   python3 -B tools/live-map/live_map.py --self-test
 ```
 

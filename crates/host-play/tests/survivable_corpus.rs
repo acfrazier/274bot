@@ -30,12 +30,6 @@ use std::process::Command;
 mod qualification;
 use qualification::GuideQualificationFixture;
 
-const DEFAULT_PACK: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack";
-const DEFAULT_QUERY: &str = "/Volumes/dev-scratch/274bot-evidence/SEED-CALC/queries.jsonl";
-const DEFAULT_GUIDE_25: &str = "/Volumes/dev-scratch-2/274bot-worktrees/survivable-accuracy-src";
-const DEFAULT_GUIDE_67: &str = "/Volumes/dev-scratch-2/274bot-worktrees/quest-paths";
-const DEFAULT_OUTPUT: &str = "/Volumes/dev-scratch/274bot-evidence/SURVIVABLE-P1C/corpus";
 const GUIDE_25_PIN: &str = "fcc930b755794f0c7d02d024a2c450731a16ce14";
 const GUIDE_67_PIN_PREFIX: &str = "764a49853";
 
@@ -90,11 +84,15 @@ fn export_survivable_p1c_corpus_and_diff() {
 }
 
 fn export() -> Result<(), String> {
-    let output = env_path("SURVIVABLE_CORPUS_OUT_DIR", DEFAULT_OUTPUT);
+    let output = PathBuf::from(
+        std::env::var_os("LIVE_EVIDENCE_DIR")
+            .ok_or("LIVE_EVIDENCE_DIR is required for the survivability corpus export")?,
+    )
+    .join("survivable-corpus");
     let Some(pack_path) = api::test_support::local_asset_path(
         "NAV_PACK",
-        DEFAULT_PACK,
-        "real navigation pack for the survivability corpus",
+        "",
+        "current revision 289 navigation pack for the survivability corpus",
     ) else {
         return Ok(());
     };
@@ -112,35 +110,35 @@ fn export() -> Result<(), String> {
     }
     let Some(query_path) = api::test_support::local_asset_path(
         "SURVIVABLE_QUERY_FILE",
-        DEFAULT_QUERY,
-        "real survivability query corpus",
+        "",
+        "survivability query corpus",
     ) else {
         return Ok(());
     };
     let Some(guide_25_root) = api::test_support::local_asset_path(
         "SURVIVABLE_GUIDE_25_ROOT",
-        DEFAULT_GUIDE_25,
-        "real 25-guide source checkout",
+        "",
+        "25-guide source checkout",
     ) else {
         return Ok(());
     };
     let Some(guide_67_root) = api::test_support::local_asset_path(
         "SURVIVABLE_GUIDE_67_ROOT",
-        DEFAULT_GUIDE_67,
-        "real 67-guide source checkout",
+        "",
+        "67-guide source checkout",
     ) else {
         return Ok(());
     };
     let Some(design_r2_path) = api::test_support::local_asset_path(
+        "SURVIVABLE_DESIGN_R2",
         "",
-        "/Volumes/dev-scratch/274bot-evidence/SURVIVABLE-ACCURACY/design-r2.md",
         "survivability design R2 document",
     ) else {
         return Ok(());
     };
     let Some(design_r4_path) = api::test_support::local_asset_path(
+        "SURVIVABLE_DESIGN_R4",
         "",
-        "/Volumes/dev-scratch/274bot-evidence/SURVIVABLE-ACCURACY/design-r4.md",
         "survivability design R4 document",
     ) else {
         return Ok(());
@@ -236,7 +234,7 @@ fn export() -> Result<(), String> {
         },
         "selected_navigation": {
             "path": pack_path.display().to_string(),
-            "pack_version": "reference-v17",
+            "pack_version": "v19",
         },
         "sources": {
             "w4": w4_source,
@@ -310,10 +308,6 @@ fn export() -> Result<(), String> {
         output.display()
     );
     Ok(())
-}
-
-fn env_path(name: &str, fallback: &str) -> PathBuf {
-    std::env::var_os(name).map_or_else(|| PathBuf::from(fallback), PathBuf::from)
 }
 
 fn git_head(root: &Path) -> Result<String, String> {
