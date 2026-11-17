@@ -883,6 +883,7 @@ class RunCellsTests(unittest.TestCase):
                 "QUESTER_TICK_MS": "300",
                 "QUESTER_SPEED_RESTORE": "1",
                 "BOT_LIVE_PARTNER_NAME_PREFIX": "def",
+                "NIGHTLY_QUIET_LOCK": "/tmp/MAC-QUIET.lock",
             },
         ):
             env, _ = build_cell_env(
@@ -908,6 +909,7 @@ class RunCellsTests(unittest.TestCase):
         self.assertEqual(env["WORLD_HTTP_PORT"], "3080")
         self.assertNotIn("QUESTER_TICK_MS", env)
         self.assertNotIn("QUESTER_SPEED_RESTORE", env)
+        self.assertEqual(env["NIGHTLY_QUIET_LOCK"], "/tmp/MAC-QUIET.lock")
 
     def test_engine_q_marker_uses_quest_ports_without_cell_id(self) -> None:
         env, command = build_cell_env(
