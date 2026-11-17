@@ -431,6 +431,7 @@ mod tests {
     #[test]
     fn passphrase_child_entry() {
         let Ok(mode) = std::env::var("HOST_PLAY_PASSPHRASE_TEST_CHILD") else {
+            eprintln!("SKIP passphrase_child_entry: child-only test entrypoint");
             return;
         };
         let (purpose, from_stdin) = match mode.as_str() {

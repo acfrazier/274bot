@@ -12073,10 +12073,14 @@ mod gatherer_real_content_fixture_tests {
 
     #[test]
     fn auto_fixture_candidate_is_reachable_standable_and_beside_authored_trees_in_nav_pack() {
-        let Some(pack_path) = std::env::var_os("NAV_PACK") else {
+        let Some(pack_path) = api::test_support::local_asset_path(
+            "NAV_PACK",
+            "",
+            "navigation pack for the auto-fixture test",
+        ) else {
             return;
         };
-        let world = nav_planner::world::NavWorld::load_pack(&PathBuf::from(pack_path))
+        let world = nav_planner::world::NavWorld::load_pack(&pack_path)
             .expect("the selected real navigation pack must load");
         let collision = &world.collision;
         let build = auto_test_build();
