@@ -620,7 +620,7 @@ class LiveMapTests(unittest.TestCase):
         config = load_map()
         for path in (
             "vendor/fr-client-rust/crates/client/src/client/client.rs",
-            "vendor/fr-client-rust/crates/client/src/io/ondemand.rs",
+            "vendor/fr-client-rust/crates/client/src/io/client_stream.rs",
             "vendor/fr-client-rust/crates/client/src/io/packet.rs",
         ):
             with self.subTest(path=path):
@@ -631,6 +631,18 @@ class LiveMapTests(unittest.TestCase):
                 )
                 self.assertEqual(plan.uncovered, ())
                 self.assertEqual(plan.unclassified, ())
+
+    def test_ondemand_path_selects_377_live_receipt(self) -> None:
+        config = load_map()
+        plan = make_plan(
+            ["vendor/fr-client-rust/crates/client/src/io/ondemand.rs"], config
+        )
+        self.assertEqual(
+            {cell.name for cell in plan.cells if "377" in cell.name},
+            {"client.protocol-377-wire-headless", "host.receipt-377-client-live"},
+        )
+        self.assertEqual(plan.uncovered, ())
+        self.assertEqual(plan.unclassified, ())
 
     def test_377_protocol_paths_select_both_live_cells(self) -> None:
         config = load_map()
@@ -644,6 +656,15 @@ class LiveMapTests(unittest.TestCase):
                 self.assertTrue(required.issubset({cell.name for cell in plan.cells}))
                 self.assertEqual(plan.uncovered, ())
                 self.assertEqual(plan.unclassified, ())
+
+    def test_377_outbound_login_path_selects_headless_wire_fixture(self) -> None:
+        config = load_map()
+        plan = make_plan(
+            ["vendor/fr-client-rust/crates/client/src/client/outbound_377.rs"], config
+        )
+        self.assertIn("client.protocol-377-wire-headless", {cell.name for cell in plan.cells})
+        self.assertEqual(plan.uncovered, ())
+        self.assertEqual(plan.unclassified, ())
 
     def test_diff_expands_real_submodule_paths_and_requires_missing_commit_fetch(self) -> None:
         raw_evidence = os.environ.get("LIVE_MAP_TEST_TMPDIR")
