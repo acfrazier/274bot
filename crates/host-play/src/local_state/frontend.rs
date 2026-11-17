@@ -1291,6 +1291,19 @@ impl QueuedUpdate {
     pub fn wait(&mut self, wait: Duration) -> Option<Result<(), PreferenceError>> {
         self.preferences.wait_preference(self.request, wait)
     }
+
+    /// Wait for the writer without consuming its terminal result.
+    /// Return `false` only when the request remains pending at the timeout.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wait_for_completion(&self, wait: Duration) -> bool {
+        !matches!(
+            self.preferences
+                .shared
+                .service
+                .wait_request(self.request, wait),
+            RequestState::Pending
+        )
+    }
 }
 
 /// The operator loadouts a frontend's form edits ([`script::LoadoutsStore`]
