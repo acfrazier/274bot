@@ -759,23 +759,38 @@ fn navpois_round_trips_and_rejects_bad_framing_and_version() {
 }
 
 #[test]
-fn client_map_jobs_still_reject_revision_377() {
-    assert!(matches!(
-        ImageIdentity {
-            revision: 377,
+fn map_artifacts_admit_377_without_aliasing_legacy_revisions() {
+    let mut image_keys = std::collections::BTreeSet::new();
+    let mut catalogue_keys = std::collections::BTreeSet::new();
+    for revision in [274, 289, 377] {
+        super::revision(revision).unwrap();
+        let image = ImageIdentity {
+            revision,
             ..image_identity()
-        }
-        .key(),
-        Err(MapError::Invalid("revision"))
-    ));
-    assert!(matches!(
-        CatalogueIdentity {
-            revision: 377,
+        };
+        let catalogue = CatalogueIdentity {
+            revision,
             ..catalogue_identity()
-        }
-        .key(),
+        };
+        assert!(image_keys.insert(image.key().unwrap().0));
+        assert!(catalogue_keys.insert(catalogue.key().unwrap().0));
+    }
+    assert!(matches!(
+        super::revision(378),
         Err(MapError::Invalid("revision"))
     ));
+    assert!(ImageIdentity {
+        revision: 378,
+        ..image_identity()
+    }
+    .key()
+    .is_err());
+    assert!(CatalogueIdentity {
+        revision: 378,
+        ..catalogue_identity()
+    }
+    .key()
+    .is_err());
 }
 
 struct Fixture(PathBuf);
