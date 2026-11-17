@@ -14,8 +14,8 @@
 // host-play's `guardian_seat_conformance_tests.rs`, which drives this Guardian
 // through the real claim adapter and slot.
 use seat_model::guardian::{
-    derive as model_derive, Family, GuardianBounds, GuardianMutation, GuardianState, GuardianStep,
-    PublicationInputs as ModelInputs, ScriptExit,
+    derive as model_derive, Family, FightResult, GuardianBounds, GuardianMutation, GuardianState,
+    GuardianStep, PublicationInputs as ModelInputs, ScriptExit,
 };
 use std::cell::Cell;
 use std::collections::{HashSet, VecDeque};
@@ -41,6 +41,17 @@ struct Claims {
     wants: bool,
     live: bool,
     callbacks: u32,
+    fight: FightSlot,
+}
+
+/// The Fight child the slot holds for the Guardian, reduced to what the
+/// Guardian reads (`FightService` over the slot's `GuardianChild`): it stands
+/// between an offer and the Guardian's release, and outlives a script runtime
+/// (a card's Pause or Stop revokes it; the Guardian folds and releases it).
+#[derive(Default)]
+struct FightSlot {
+    child: Option<(FightToken, FightOutcome)>,
+    offers: u32,
 }
 
 thread_local! {
@@ -67,6 +78,14 @@ impl Claims {
     fn current_runtime() -> ClaimRuntime {
         ClaimRuntime::new(0, CLAIM_RUNTIME.with(Cell::get))
     }
+
+    /// The slot's cancellation of the child it holds (a card's Pause, Stop or
+    /// failure). The Guardian folds and releases it on its next fresh pass.
+    fn revoke_child(&mut self, cancel: FightCancel) {
+        if let Some((token, _)) = self.fight.child {
+            self.fight_revoke(token, cancel);
+        }
+    }
 }
 
 impl RandomClaimSource for Claims {
@@ -89,6 +108,43 @@ impl RandomClaimSource for Claims {
 
     fn runtime(&mut self) -> Option<ClaimRuntime> {
         Some(Self::current_runtime())
+    }
+
+    fn fight_offer(&mut self, offer: &FightOffer) -> Result<(), FightReason> {
+        self.fight.offers += 1;
+        self.fight.child = Some((offer.token, FightOutcome::Pending));
+        Ok(())
+    }
+
+    /// A revocation records the cancellation of a child that still runs; a
+    /// result the child already holds stands.
+    fn fight_revoke(&mut self, token: FightToken, cancel: FightCancel) {
+        if let Some((held, outcome)) = self.fight.child.as_mut() {
+            if *held == token && *outcome == FightOutcome::Pending {
+                *outcome = FightOutcome::Cancelled(cancel);
+            }
+        }
+    }
+
+    fn fight_read(&mut self, token: FightToken) -> Option<FightRead> {
+        let (held, outcome) = self.fight.child?;
+        (held == token).then_some(FightRead {
+            token,
+            phase: if outcome == FightOutcome::Pending {
+                FightPhase::Fighting
+            } else {
+                FightPhase::Done
+            },
+            outcome,
+            blocked_until: None,
+            observed_tick: 0,
+        })
+    }
+
+    fn fight_release(&mut self, token: FightToken) {
+        if self.fight.child.is_some_and(|(held, _)| held == token) {
+            self.fight.child = None;
+        }
     }
 }
 
@@ -115,6 +171,8 @@ struct Rig {
     session: u32,
     /// The event slot of the hostile actor the model retains.
     retained: Option<usize>,
+    /// The saved policy of the listed events is Flee now.
+    policy_flee: bool,
 }
 
 impl Rig {
@@ -143,12 +201,14 @@ impl Rig {
         self.snap = GameSnapshot::new();
         self.session = 0;
         self.retained = None;
+        self.policy_flee = false;
         self.g = Guardian::new();
         self.drv = FakeDriver::default();
         self.settings = ProfileSettings::default();
         self.policies.clear();
         self.start_runtime(Run::Stopped, false, false);
         self.claims.callbacks = 0;
+        self.claims.fight = FightSlot::default();
         self.last = RandomStatus::default();
         self.last_acting = false;
         self.sigs = 0;
@@ -166,11 +226,13 @@ impl Rig {
     /// count is the trace's, so it carries over.
     fn start_runtime(&mut self, run: Run, wants: bool, live: bool) {
         let callbacks = self.claims.callbacks;
+        let fight = std::mem::take(&mut self.claims.fight);
         self.claims = Claims {
             run,
             wants,
             live,
             callbacks,
+            fight,
         };
     }
 }
@@ -192,6 +254,7 @@ impl Rig {
                 wants: false,
                 live: false,
                 callbacks: 0,
+                fight: FightSlot::default(),
             },
             data,
             last: RandomStatus::default(),
@@ -203,6 +266,7 @@ impl Rig {
             dirty: false,
             session: 0,
             retained: None,
+            policy_flee: false,
         }
     }
 
@@ -284,12 +348,18 @@ trait Fixture {
     fn ent_only(&self) -> bool {
         false
     }
-    /// The event moves the player to its own area (a teleport trap), out of
-    /// a hostile actor's chase range.
-    fn moves_player(&self) -> bool {
+    /// The model's fight profile: the native child is a model state, and the
+    /// saved policy binds a hostile event at the first pass of its episode.
+    fn fight_profile(&self) -> bool {
         false
     }
     fn install(&self, rig: &mut Rig, id: u8, forced_host: bool);
+    /// Raise the event of `family` (a fixture of the fight profile raises an
+    /// actor of the listed events for `Fight` and one Fight does not apply to
+    /// for `Evade`).
+    fn install_as(&self, rig: &mut Rig, id: u8, forced_host: bool, _family: Family) {
+        self.install(rig, id, forced_host);
+    }
     fn remove(&self, rig: &mut Rig);
     fn chat_close(&self, _rig: &mut Rig) {}
     /// The host's work for the event has just started.
@@ -501,22 +571,70 @@ impl Fixture for EvadeFx {
     }
 }
 
+/// The saved Fight for a listed event (design V11D 3, 4): a River troll for
+/// the first episode and a Rock golem for the next, both under the saved
+/// Fight. The model's `Fight` family; the native child is the double the
+/// claim port holds (`Claims::fight`).
+struct FightFx;
+impl Fixture for FightFx {
+    fn name(&self) -> &'static str {
+        "fight"
+    }
+    fn family(&self) -> Family {
+        Family::Fight
+    }
+    fn bound(&self) -> u8 {
+        // The flee that follows a handoff has the escape budget of an Evade.
+        EvadeFx.bound()
+    }
+    fn needs_data(&self) -> bool {
+        true
+    }
+    fn fight_profile(&self) -> bool {
+        true
+    }
+    fn install(&self, rig: &mut Rig, id: u8, forced_host: bool) {
+        self.install_as(rig, id, forced_host, Family::Fight);
+    }
+    /// An actor of the listed events, or Swarm / the angry plant, which Fight
+    /// does not apply to. The saved policy of both is the rig's.
+    fn install_as(&self, rig: &mut Rig, id: u8, _forced_host: bool, family: Family) {
+        let (key, name) = match (family, id) {
+            (Family::Fight, 0) => ("river troll", "River troll"),
+            (Family::Fight, _) => ("rock golem", "Rock golem"),
+            (_, 0) => ("swarm", "Swarm"),
+            (_, _) => ("strange plant", "Strange plant"),
+        };
+        let saved = if rig.policy_flee {
+            vault::RandomEventPolicy::Flee
+        } else {
+            vault::RandomEventPolicy::Fight
+        };
+        rig.policies.insert(key.to_string(), saved);
+        let slot = usize::from(id);
+        put_npc(&mut rig.c, slot, |c| {
+            plant_npc_with_op(c, slot, name, 32768, None, "Attack");
+        });
+    }
+    fn remove(&self, rig: &mut Rig) {
+        EvadeFx.remove(rig);
+    }
+}
+
 struct MazeFx;
 impl Fixture for MazeFx {
     fn name(&self) -> &'static str {
         "maze"
     }
     fn family(&self) -> Family {
-        Family::Trap
+        // The teleport carries the player out of a hostile actor's chase range.
+        Family::Teleport
     }
     fn bound(&self) -> u8 {
         maze::SOLVE_TICKS as u8
     }
     fn distinct_signatures(&self) -> bool {
         false
-    }
-    fn moves_player(&self) -> bool {
-        true
     }
     fn install(&self, rig: &mut Rig, _id: u8, _forced: bool) {
         plant_player(&mut rig.c, "Test", 2891, 4555);
@@ -532,7 +650,7 @@ impl Fixture for MimeFx {
         "mime"
     }
     fn family(&self) -> Family {
-        Family::Trap
+        Family::Teleport
     }
     fn bound(&self) -> u8 {
         // The mime stage has no solver budget: the hold ends off the square.
@@ -540,9 +658,6 @@ impl Fixture for MimeFx {
     }
     fn distinct_signatures(&self) -> bool {
         false
-    }
-    fn moves_player(&self) -> bool {
-        true
     }
     fn install(&self, rig: &mut Rig, id: u8, _forced: bool) {
         plant_player(&mut rig.c, "Test", 31 * 64, 74 * 64);
@@ -796,6 +911,7 @@ fn bounds_for(fx: &dyn Fixture) -> GuardianBounds {
         window: false,
         retain: false,
         ent_hold: ENT_HOLD_TICKS,
+        fight: fx.fight_profile(),
     }
 }
 
@@ -870,16 +986,22 @@ fn drive(
     // The model has applied the step already: its event is the real one.
     let id = model.event_id().unwrap_or(0);
     match step {
-        GuardianStep::Appear { forced_host, .. } => {
+        GuardianStep::Appear {
+            family,
+            forced_host,
+        } => {
             rig.dirty = true;
-            cur.install(rig, id, *forced_host);
+            cur.install_as(rig, id, *forced_host, *family);
         }
-        GuardianStep::Replace { forced_host, .. } => {
+        GuardianStep::Replace {
+            family,
+            forced_host,
+        } => {
             rig.dirty = true;
             cur.remove(rig);
             // The player is back where every fixture starts from.
             plant_player(&mut rig.c, "Test", 0, 0);
-            next.install(rig, id, *forced_host);
+            next.install_as(rig, id, *forced_host, *family);
         }
         GuardianStep::Disappear => cur.remove(rig),
         GuardianStep::Overlap { forced_host, .. } => {
@@ -906,9 +1028,17 @@ fn drive(
         GuardianStep::ScriptStart { wants, live } => {
             rig.start_runtime(Run::Running, *wants, *live);
         }
-        GuardianStep::ScriptExit(ScriptExit::Pause) => rig.claims.run = Run::Paused,
+        // The slot revokes the child with its card (design V11D 4.4).
+        GuardianStep::ScriptExit(ScriptExit::Pause) => {
+            rig.claims.revoke_child(FightCancel::Paused);
+            rig.claims.run = Run::Paused;
+        }
         // The runtime ends: the slot's next Start is another runtime.
-        GuardianStep::ScriptExit(_) => {
+        GuardianStep::ScriptExit(exit) => {
+            rig.claims.revoke_child(match exit {
+                ScriptExit::Stop => FightCancel::Stopped,
+                _ => FightCancel::CardFailed,
+            });
             let (wants, live) = (rig.claims.wants, rig.claims.live);
             rig.start_runtime(Run::Stopped, wants, live);
         }
@@ -923,6 +1053,8 @@ fn drive(
             rig.g = Guardian::in_session(rig.session);
             rig.snap = GameSnapshot::new();
             rig.unpublished = true;
+            // The slot's session end revokes and drops the old child.
+            rig.claims.fight = FightSlot::default();
             let (wants, live) = (rig.claims.wants, rig.claims.live);
             rig.start_runtime(Run::Stopped, wants, live);
             cur.chat_close(rig);
@@ -940,6 +1072,28 @@ fn drive(
         }
         GuardianStep::Frame => {
             rig.pass(false);
+        }
+        // The child's typed end waits for the Guardian's next fresh pass.
+        GuardianStep::FightEnd(result) => {
+            if let Some((_, outcome)) = rig.claims.fight.child.as_mut() {
+                *outcome = match result {
+                    FightResult::Killed => FightOutcome::Killed,
+                    FightResult::Handoff => FightOutcome::FleeRequired(FightReason::EscapeReserve),
+                    FightResult::Budget => FightOutcome::Failed(FightReason::EpisodeBudget),
+                };
+            }
+        }
+        // The saved policy of every listed event changes.
+        GuardianStep::PolicyFlee | GuardianStep::PolicyFight => {
+            rig.policy_flee = matches!(step, GuardianStep::PolicyFlee);
+            let saved = if rig.policy_flee {
+                vault::RandomEventPolicy::Flee
+            } else {
+                vault::RandomEventPolicy::Fight
+            };
+            for policy in rig.policies.values_mut() {
+                *policy = saved;
+            }
         }
         // The host replay has no seat: the model here is not composed with
         // one, so its alphabet has no seat step. The seat replay is
@@ -1084,6 +1238,31 @@ fn assert_same(model: &GuardianState, rig: &Rig, step: &GuardianStep, trace: &[G
         got,
         "the model's derivation differs from the real publication\nafter {step:?}\ntrace {trace:#?}"
     );
+    // The gate token and the child the slot holds are the model's child: a
+    // revocation closes it in the pass that folds it, and an orphan in the
+    // pass that orphans it.
+    assert_eq!(
+        status.fight.is_some(),
+        model.child_id().is_some(),
+        "the published gate token vs the model's child\nstatus {status:?}\nafter {step:?}\nmodel {}\ntrace {trace:#?}",
+        model.describe()
+    );
+    assert_eq!(
+        rig.claims.fight.child.is_some(),
+        model.child_id().is_some(),
+        "the child the slot holds vs the model's child\nafter {step:?}\nmodel {}\ntrace {trace:#?}",
+        model.describe()
+    );
+    // The host solver sends nothing beside the child (design V11D 3.4).
+    if model.child_id().is_some()
+        && matches!(step, GuardianStep::Tick { .. } | GuardianStep::Frame)
+    {
+        assert_eq!(
+            rig.emissions, 0,
+            "the host sent while the child held the event\nafter {step:?}\nmodel {}\ntrace {trace:#?}",
+            model.describe()
+        );
+    }
 }
 
 fn replay(fx: &dyn Fixture, steps: &[GuardianStep]) {
@@ -1163,26 +1342,36 @@ fn alphabet(fx: &dyn Fixture) -> Vec<GuardianStep> {
     if fx.ent_only() {
         out.extend([GuardianStep::EntAppear, GuardianStep::EntRemove]);
     } else {
-        out.push(GuardianStep::Appear {
-            family,
-            forced_host: false,
-        });
-        if fx.has_forced_host() {
+        // In the fight profile a hostile event is what the actor is, an actor
+        // of the listed events (`Fight`) or one Fight does not apply to
+        // (`Evade`); the saved policy binds it.
+        let kinds: &[Family] = if fx.fight_profile() {
+            &[Family::Fight, Family::Evade]
+        } else {
+            &[family]
+        };
+        for &family in kinds {
             out.push(GuardianStep::Appear {
-                family,
-                forced_host: true,
-            });
-        }
-        if fx.distinct_signatures() {
-            out.push(GuardianStep::Replace {
                 family,
                 forced_host: false,
             });
             if fx.has_forced_host() {
-                out.push(GuardianStep::Replace {
+                out.push(GuardianStep::Appear {
                     family,
                     forced_host: true,
                 });
+            }
+            if fx.distinct_signatures() {
+                out.push(GuardianStep::Replace {
+                    family,
+                    forced_host: false,
+                });
+                if fx.has_forced_host() {
+                    out.push(GuardianStep::Replace {
+                        family,
+                        forced_host: true,
+                    });
+                }
             }
         }
         out.push(GuardianStep::Disappear);
@@ -1206,6 +1395,15 @@ fn alphabet(fx: &dyn Fixture) -> Vec<GuardianStep> {
         GuardianStep::Tick { blocked: false },
         GuardianStep::Frame,
     ]);
+    if fx.fight_profile() {
+        out.extend([
+            GuardianStep::FightEnd(FightResult::Killed),
+            GuardianStep::FightEnd(FightResult::Handoff),
+            GuardianStep::FightEnd(FightResult::Budget),
+            GuardianStep::PolicyFlee,
+            GuardianStep::PolicyFight,
+        ]);
+    }
     if family == Family::Dialog {
         out.push(GuardianStep::ChatClose);
     }
@@ -1363,6 +1561,7 @@ fn hazard_follows_the_script_claim_the_toggle_and_stepping_away() {
         wants: true,
         live: false,
         callbacks: 0,
+        fight: FightSlot::default(),
     };
     HazardFx.install(&mut rig, 0, false);
     let status = rig.pass(true);
@@ -1398,6 +1597,7 @@ fn ent_is_host_work_that_follows_the_toggle_and_the_tree() {
         wants: true,
         live: false,
         callbacks: 0,
+        fight: FightSlot::default(),
     };
     plant_ent(&mut rig);
     let status = rig.pass(true);
@@ -1580,6 +1780,7 @@ fn swarm_and_angry_plant_keep_the_forced_host_claim_under_saved_fight() {
             wants: true,
             live: false,
             callbacks: 0,
+            fight: FightSlot::default(),
         };
         plant_npc_with_op(&mut rig.c, 0, name, 32768, None, "Attack");
         let first = rig.pass(true);
@@ -1606,6 +1807,7 @@ fn swarm_and_angry_plant_keep_the_forced_host_claim_under_saved_fight() {
             wants: true,
             live: false,
             callbacks: 0,
+            fight: FightSlot::default(),
         };
         plant_npc_with_op(&mut rig.c, 0, name, 32768, None, "Attack");
         let status = rig.pass(true);
@@ -1653,6 +1855,7 @@ fn host_owned_open_survives_script_stop_and_replacement_without_a_second_send() 
         wants: false,
         live: true,
         callbacks: 0,
+        fight: FightSlot::default(),
     };
     plant_inv_box(&mut rig.c, 1);
     let first = rig.pass(true);
@@ -1676,6 +1879,7 @@ fn host_owned_open_survives_script_stop_and_replacement_without_a_second_send() 
         wants: true,
         live: false,
         callbacks: 0,
+        fight: FightSlot::default(),
     };
     let status = rig.pass(true);
     assert_eq!(rig.claims.callbacks, 0, "no successor callback");
@@ -1810,6 +2014,7 @@ fn compiled_script(rig: &mut Rig) {
         wants: true,
         live: false,
         callbacks: 0,
+        fight: FightSlot::default(),
     };
 }
 
@@ -1980,12 +2185,13 @@ fn overlap_with(fx: &dyn Fixture) -> GuardianStep {
 /// counterexample) or before it, under a script claim, when the actor is
 /// observed gone, and across a session replacement.
 ///
-/// A trap that moves the player (maze, mime) takes the player out of the
-/// actor's chase range, which the content counts as outward progress
-/// (`Npc.ts:77-85,661-670`), so the real no-progress clock does not run during
-/// it; the model's clock is the no-progress worst case. Its traces return the
-/// actor before the model's budget runs out, or after it ran out before the
-/// overlap.
+/// A trap that moves the player (maze, mime: `Family::Teleport`) takes the
+/// player out of the actor's chase range, which the content counts as outward
+/// progress (`Npc.ts:77-85,661-670`): the real no-progress counter resets and
+/// does not run while the trap is the event, and the model's clock follows
+/// (`teleported` in `GuardianState::content_clock`). A held Strange box
+/// (`Family::Trap`) does not move the player. The last trace spends the budget
+/// during the overlap unless the overlap is a teleport.
 fn retained_traces(a: &dyn Fixture, b: &dyn Fixture) -> Vec<Vec<GuardianStep>> {
     let bound = usize::from(a.bound());
     let ending = [GuardianStep::Return, tick(), tick()];
@@ -2033,13 +2239,11 @@ fn retained_traces(a: &dyn Fixture, b: &dyn Fixture) -> Vec<Vec<GuardianStep>> {
             tick(),
         ],
     ];
-    if !b.moves_player() {
-        let mut during = vec![appear(a)];
-        during.extend(std::iter::repeat_n(tick(), bound - 1));
-        during.extend([overlap_with(b), tick(), tick()]);
-        during.extend(ending);
-        traces.push(during);
-    }
+    let mut during = vec![appear(a)];
+    during.extend(std::iter::repeat_n(tick(), bound - 1));
+    during.extend([overlap_with(b), tick(), tick()]);
+    during.extend(ending);
+    traces.push(during);
     traces
 }
 
@@ -2060,14 +2264,26 @@ fn a_retained_hostile_actor_overlapped_by_every_family_follows_the_model() {
             continue;
         }
         families += 1;
-        for steps in retained_traces(a, b.as_ref()) {
+        let traces = retained_traces(a, b.as_ref());
+        let last = traces.len() - 1;
+        for (index, steps) in traces.iter().enumerate() {
             for fx in &fixtures {
                 fx.remove(&mut rig);
             }
             clear_inv(&mut rig.c);
             rig.dirty = false;
             rig.reset_pair(a, b.as_ref());
-            replay_mixed(&mut rig, a, b.as_ref(), &steps, true);
+            replay_mixed(&mut rig, a, b.as_ref(), steps, true);
+            if index == last {
+                // The budget ran out during the overlap, unless the overlap
+                // was a trap that carried the player out of the actor's range.
+                assert_eq!(
+                    rig.last.ours,
+                    b.family() == Family::Teleport,
+                    "{}: the returned actor's budget after the overlap",
+                    b.name()
+                );
+            }
         }
     }
     assert_eq!(families, 9, "the hostile actor against every other family");
@@ -2120,41 +2336,52 @@ fn review_retained_evade_budget_survives_a_box_overlap_with_combat_evidence() {
     assert!(!rig.last.ours && !model.publication().ours);
 }
 
-/// The round-3 defect seeded back into the model (`RetainedClockLost`: the
-/// returning actor opens a fresh budget). Replayed against the real Guardian,
-/// the comparison catches it; with the model's invariants on, its
+/// The defects seeded back into the model, replayed against the real Guardian:
+/// `RetainedClockLost` (the round-3 defect: the returning actor opens a fresh
+/// budget) over a Strange box, and `TeleportProgressLost` (the V11a acceptance
+/// item: the model counts the ticks of a teleporting trap, so the returning
+/// actor is given up although the content reset its counter) over Maze and
+/// Mime. The comparison catches each; with the model's invariants on, its
 /// `actor-budget` invariant catches it first.
 #[test]
-fn a_model_that_loses_the_retained_clock_fails_the_replay() {
+fn a_model_that_loses_the_retained_clock_or_teleport_progress_fails_the_replay() {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     if !data_available() {
         return;
     }
-    let steps = retained_traces(&EvadeFx, &BoxFx)
-        .pop()
-        .expect("the budget runs out during the overlap");
     let mut rig = Rig::new(real_data());
-    for (check_model, expected) in [(false, "vs real"), (true, "actor-budget")] {
-        rig.reset_pair(&EvadeFx, &BoxFx);
-        let failure = catch_unwind(AssertUnwindSafe(|| {
-            replay_with(
-                &mut rig,
-                &EvadeFx,
-                &BoxFx,
-                &steps,
-                GuardianMutation::RetainedClockLost,
-                check_model,
+    // The seeded faults of the model against the real Guardian: the box
+    // overlap spends the budget (a model that forgets the clock gives the
+    // returning actor a fresh one), a teleporting trap resets it (a model that
+    // counts the trap's ticks gives the actor up).
+    let cases: [(&dyn Fixture, GuardianMutation); 3] = [
+        (&BoxFx, GuardianMutation::RetainedClockLost),
+        (&MazeFx, GuardianMutation::TeleportProgressLost),
+        (&MimeFx, GuardianMutation::TeleportProgressLost),
+    ];
+    for (b, mutation) in cases {
+        let steps = retained_traces(&EvadeFx, b)
+            .pop()
+            .expect("the budget runs out or is reset during the overlap");
+        for (check_model, expected) in [(false, "vs real"), (true, "actor-budget")] {
+            rig.reset_pair(&EvadeFx, b);
+            let failure = catch_unwind(AssertUnwindSafe(|| {
+                replay_with(&mut rig, &EvadeFx, b, &steps, mutation, check_model);
+            }))
+            .expect_err("the seeded model must fail");
+            let message = failure
+                .downcast_ref::<String>()
+                .expect("a formatted panic message");
+            assert!(
+                message.contains(expected),
+                "{} {mutation:?} {expected}: {message}",
+                b.name()
             );
-        }))
-        .expect_err("the seeded model must fail");
-        let message = failure
-            .downcast_ref::<String>()
-            .expect("a formatted panic message");
-        assert!(message.contains(expected), "{expected}: {message}");
+        }
+        // The unseeded model replays the same trace.
+        rig.reset_pair(&EvadeFx, b);
+        replay_mixed(&mut rig, &EvadeFx, b, &steps, true);
     }
-    // The unseeded model replays the same trace.
-    rig.reset_pair(&EvadeFx, &BoxFx);
-    replay_mixed(&mut rig, &EvadeFx, &BoxFx, &steps, true);
 }
 
 /// The Ent guard overlapping an event of each family: the guard first or the
@@ -2792,5 +3019,223 @@ fn a_late_result_settles_nothing_as_the_model_says() {
     if data_available() {
         replay(&LostToolFx, &late(&LostToolFx, 1));
         replay(&EvadeFx, &late(&EvadeFx, 2));
+    }
+}
+
+// --- The saved Fight (design V11D 3, 4 and 6) ---------------------------------
+
+/// The saved Fight raises a hostile actor the Host fights through a native
+/// child: the model's `OwnershipFight` rules against the real Guardian over
+/// the claim port's child. Every model state within seven steps is replayed:
+/// the publications, the published gate token and the child the slot holds
+/// agree with the model after every step, the host solver sends nothing while
+/// the child holds the event, and no child outlives the family that offered it.
+#[test]
+fn a_saved_fight_follows_the_ownership_model() {
+    run_family(&FightFx, 7);
+}
+
+/// A hostile actor of the listed events: the Guardian fights it under a saved
+/// Fight and flees it under a saved Flee.
+fn fight() -> GuardianStep {
+    GuardianStep::Appear {
+        family: Family::Fight,
+        forced_host: false,
+    }
+}
+
+/// A saved Fight against an event of another family: the other event wins
+/// the detector or replaces the fight, the retained actor returns or is gone,
+/// and a session replaces the Guardian. The child closes with its owner in the
+/// same pass and Fight never restarts for that actor.
+fn fight_pair_traces(b: &dyn Fixture) -> Vec<Vec<GuardianStep>> {
+    vec![
+        vec![
+            fight(),
+            tick(),
+            overlap_with(b),
+            tick(),
+            tick(),
+            GuardianStep::Return,
+            tick(),
+            tick(),
+            tick(),
+        ],
+        vec![
+            fight(),
+            tick(),
+            replace_with(b),
+            tick(),
+            tick(),
+            GuardianStep::Disappear,
+            tick(),
+        ],
+        vec![
+            fight(),
+            tick(),
+            overlap_with(b),
+            tick(),
+            GuardianStep::RetainedGone,
+            tick(),
+            GuardianStep::Disappear,
+            tick(),
+        ],
+        vec![
+            fight(),
+            tick(),
+            overlap_with(b),
+            tick(),
+            GuardianStep::SessionReplace,
+            tick(),
+            tick(),
+            GuardianStep::Disappear,
+            tick(),
+        ],
+    ]
+}
+
+#[test]
+fn a_saved_fight_overlapped_or_replaced_by_every_other_family_follows_the_model() {
+    if !data_available() {
+        return;
+    }
+    let others: [&dyn Fixture; 2] = [&BoxFx, &MazeFx];
+    let mut rig = Rig::new(real_data());
+    for b in others {
+        for steps in fight_pair_traces(b) {
+            for fx in &event_fixtures() {
+                fx.remove(&mut rig);
+            }
+            clear_inv(&mut rig.c);
+            rig.dirty = false;
+            rig.reset_pair(&FightFx, b);
+            replay_mixed(&mut rig, &FightFx, b, &steps, true);
+        }
+    }
+}
+
+/// Under a saved Fight every hostile event is the host's, the excluded ones
+/// (Swarm, the angry plant) included; once the saved policy is Flee a new
+/// episode leaves the script its claim, an actor of the listed events
+/// included, and the policy binds an episode at its first pass
+/// (`MAIN-ACCEPTANCE.md` R3-1).
+#[test]
+fn the_saved_policy_gives_a_hostile_event_its_owner_as_the_model_says() {
+    if !data_available() {
+        return;
+    }
+    let claiming = GuardianStep::ScriptStart {
+        wants: true,
+        live: false,
+    };
+    let excluded = GuardianStep::Appear {
+        family: Family::Evade,
+        forced_host: false,
+    };
+    let mut rig = Rig::new(real_data());
+    // A fight replaced by an excluded event under the saved Fight: the host
+    // keeps it and flees; the script's claim does not take it.
+    let replaced = [
+        claiming.clone(),
+        fight(),
+        tick(),
+        GuardianStep::Replace {
+            family: Family::Evade,
+            forced_host: false,
+        },
+        tick(),
+        tick(),
+    ];
+    rig.reset_pair(&FightFx, &FightFx);
+    replay_mixed(&mut rig, &FightFx, &FightFx, &replaced, true);
+    assert_eq!(rig.last.claim, RandomClaim::Host, "the host keeps it");
+    // The saved policy is Flee: a new hostile episode, an actor of the listed
+    // events or not, is an ordinary Evade the script claims, and no Fight is
+    // offered for it. A policy that flips to Flee before the Guardian first
+    // sees the actor binds the episode the same way.
+    for steps in [
+        vec![GuardianStep::PolicyFlee, claiming.clone(), excluded.clone(), tick(), tick()],
+        vec![GuardianStep::PolicyFlee, claiming.clone(), fight(), tick(), tick()],
+        vec![claiming.clone(), fight(), GuardianStep::PolicyFlee, tick(), tick()],
+    ] {
+        rig.reset_pair(&FightFx, &FightFx);
+        replay_mixed(&mut rig, &FightFx, &FightFx, &steps, true);
+        assert_eq!(rig.last.claim, RandomClaim::Handle, "the script claims it");
+        assert_eq!(rig.claims.fight.offers, 0, "no Fight under a saved Flee");
+    }
+    // A retained actor is bound again when it returns, by the policy then.
+    let returned = [
+        claiming,
+        fight(),
+        tick(),
+        overlap_with(&BoxFx),
+        tick(),
+        GuardianStep::PolicyFlee,
+        GuardianStep::Return,
+        tick(),
+        tick(),
+    ];
+    rig.reset_pair(&FightFx, &BoxFx);
+    replay_mixed(&mut rig, &FightFx, &BoxFx, &returned, true);
+    assert_eq!(rig.last.claim, RandomClaim::Handle);
+}
+
+/// The defects seeded back into the model, replayed against the real
+/// Guardian: each model that restarts a spent Fight, keeps a revoked child,
+/// keeps an orphan, or runs the escape clock under the fight disagrees with
+/// the real code; the invariants of the model name the same defect first.
+#[test]
+fn a_model_that_gets_the_fight_wrong_fails_the_replay() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    if !data_available() {
+        return;
+    }
+    let bound = usize::from(FightFx.bound());
+    let exit = vec![
+        GuardianStep::ScriptStart {
+            wants: false,
+            live: false,
+        },
+        fight(),
+        tick(),
+        GuardianStep::ScriptExit(ScriptExit::Stop),
+        tick(),
+    ];
+    let orphan = vec![fight(), tick(), GuardianStep::Disappear, tick()];
+    let restart = vec![
+        fight(),
+        tick(),
+        overlap_with(&BoxFx),
+        tick(),
+        GuardianStep::Return,
+        tick(),
+    ];
+    let mut clock = vec![fight()];
+    clock.extend(std::iter::repeat_n(tick(), bound + 2));
+    let cases: [(GuardianMutation, &[GuardianStep], &str); 4] = [
+        (GuardianMutation::FightSurvivesExit, &exit, "fight-revoked-runs"),
+        (GuardianMutation::FightOrphanKept, &orphan, "orphan-child"),
+        (GuardianMutation::FightRestarts, &restart, "fight-restart"),
+        (GuardianMutation::FightTimeCounts, &clock, "fight-clock"),
+    ];
+    let mut rig = Rig::new(real_data());
+    for (mutation, steps, invariant) in cases {
+        for (check_model, expected) in [(false, "vs"), (true, invariant)] {
+            rig.reset_pair(&FightFx, &BoxFx);
+            let failure = catch_unwind(AssertUnwindSafe(|| {
+                replay_with(&mut rig, &FightFx, &BoxFx, steps, mutation, check_model);
+            }))
+            .expect_err("the seeded model must fail");
+            let message = failure
+                .downcast_ref::<String>()
+                .expect("a formatted panic message");
+            assert!(
+                message.contains(expected),
+                "{mutation:?} {expected}: {message}"
+            );
+        }
+        // The unseeded model replays the same trace.
+        rig.reset_pair(&FightFx, &BoxFx);
+        replay_mixed(&mut rig, &FightFx, &BoxFx, steps, true);
     }
 }

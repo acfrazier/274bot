@@ -104,6 +104,13 @@ pub enum Target {
         npcs: bool,
         players: bool,
     },
+    /// One observed NPC: the client slot and content type of a Guardian event
+    /// actor. No other actor of that type matches, and no recovery path picks
+    /// another attacker for this request.
+    ExactNpc {
+        index: u16,
+        npc_type: i32,
+    },
     Player {
         name: Arc<str>,
     },
@@ -279,6 +286,10 @@ pub struct CombatRequest {
     /// [`super::select::pvp_initiation_allowed`], reads both at `begin` and only
     /// for [`Target::Player`]. Self-defence never reads this field.
     pub pvp: bool,
+    /// A Guardian event fight pays for its escape: the core stops attacking
+    /// once no unreserved food remains and Hitpoints cannot cover the walk
+    /// out (design V11D 5.3). `None` keeps the ordinary emergency line.
+    pub escape_reserve: Option<EscapeReserve>,
 }
 impl Default for CombatRequest {
     fn default() -> Self {
@@ -308,8 +319,20 @@ impl Default for CombatRequest {
             prayer_mode: PrayerMode::Hold,
             until_ticks: 0,
             pvp: false,
+            escape_reserve: None,
         }
     }
+}
+/// What a Guardian event fight needs to price its escape: the content facts
+/// of the exact actor. The walk length arrives per observation
+/// ([`super::Combat::set_escape_walk`] through the handle).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EscapeReserve {
+    /// The actor's greatest unprotected content max hit across its supported
+    /// attack styles.
+    pub hit: i32,
+    /// The actor's fastest attack interval in game ticks.
+    pub interval: u8,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Unprotected {

@@ -6520,3 +6520,6 @@ mod single_way_tests;
 
 #[path = "switch_machine_tests.rs"]
 mod switch_tests;
+
+#[path = "fight_machine_tests.rs"]
+mod fight_tests;

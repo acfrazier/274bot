@@ -346,11 +346,12 @@ fn slot_native_input_authority_survives_run_context_replacement() {
 fn slot_size_stays_within_the_measured_linux_parent_layout() {
     let actual = std::mem::size_of::<SlotScript>();
     println!("Prerequisite-aware SlotScript layout: {actual} bytes");
-    // Measured composed layout: 1616 B. That is W1 boxed replay, the cold
-    // prerequisite handover, and one inline factory entry (16 B) for each
-    // surface kind. The ceiling leaves 64 B.
+    // Measured composed layout: 1624 B. That is W1 boxed replay, the cold
+    // prerequisite handover, one inline factory entry (16 B) for each surface
+    // kind, and the Guardian Fight child (V11b), the `SlotScript::guardian`
+    // optional box pointer (8 B). The ceiling leaves 64 B.
     assert!(
-        actual <= 1616 + 64,
+        actual <= 1624 + 64,
         "the surface slot grew past its measured size plus 64 B: {actual}"
     );
 }

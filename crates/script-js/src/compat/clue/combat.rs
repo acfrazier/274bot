@@ -127,6 +127,7 @@ impl Delegation {
             prayer_mode: PrayerMode::Hold,
             until_ticks: 0,
             pvp: false,
+            escape_reserve: None,
         }
     }
 }

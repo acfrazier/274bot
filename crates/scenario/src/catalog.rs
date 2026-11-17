@@ -217,6 +217,14 @@ const REGISTRY: &[Entry] = &[
         "guardian_skill_watchman",
         scenarios::guardian_skill_watchman_scenario,
     ),
+    Entry::new(
+        "guardian_fight_river_troll",
+        scenarios::guardian_fight_river_troll_scenario,
+    ),
+    Entry::new(
+        "guardian_fight_swarm_flee",
+        scenarios::guardian_fight_swarm_flee_scenario,
+    ),
     Entry::new("chicken_killer", scenarios::chicken_killer_scenario),
     Entry::new(
         "chicken_killer_bank",

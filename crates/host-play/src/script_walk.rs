@@ -841,8 +841,8 @@ fn finish_prayer_off(
     true
 }
 
-pub(crate) fn tick_walk_guard<D: Driver>(
-    driver: &mut D,
+pub(crate) fn tick_walk_guard(
+    driver: &mut dyn Driver,
     snapshot: &GameSnapshot,
     guard: &mut Option<script::combat::WalkGuard>,
     condition: Option<&BotCondition>,

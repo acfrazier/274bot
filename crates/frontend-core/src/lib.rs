@@ -98,8 +98,9 @@ pub use nav_prefs::{nav_preference, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use prefs::UiPreferences;
 pub use profile_draft::{
-    CurePoison, GuardianPolicy, ProfileDraft, ProfileView, SettingsDraft, SurvivalDraft,
-    SurvivalSettings, GUARDIAN_EVENTS, GUARDIAN_FIGHT_UNAVAILABLE, SURVIVAL_FIELDS,
+    guardian_event_help, guardian_fight_applies, CurePoison, GuardianPolicy, ProfileDraft,
+    ProfileView, SettingsDraft, SurvivalDraft, SurvivalSettings, GUARDIAN_EVENTS,
+    GUARDIAN_FIGHT_HELP, SURVIVAL_FIELDS,
 };
 pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRefused};
 pub use profile_form::{
@@ -137,7 +138,8 @@ pub use setting::{Setting, SettingStatus};
 pub use slot_view::{SlotView, StatusBuf};
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 pub use views::{
-    FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, ReasonLine, SlotDetail,
+    write_random_response, FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace,
+    ReasonLine, SlotDetail,
 };
 pub use walk_permissions::{
     danger_routing_tooltip, DangerLevel, WalkGlobals, WalkGlobalsView, BANK_FETCH_PERMISSION_SCOPE,

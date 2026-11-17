@@ -6661,11 +6661,14 @@ fn settings_popup_persists_guardian_fields_and_live_policy() {
     assert_eq!(*alice.lamp_skill.lock().unwrap(), "Magic");
 }
 
+/// Enter on the event-policy row of a listed event saves Fight through the
+/// real command path, draws it, explains it in the row's lead-in, and a
+/// second Enter saves Flee again. No refusal and no unavailable notice.
 #[test]
-fn settings_popup_refuses_fight_with_the_shared_notice() {
+fn settings_popup_saves_fight_for_a_listed_event_and_cycles_back() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
-    lifecycle_vault("settings-policy-refusal").start_session(&mut session.core, empty_play());
+    lifecycle_vault("settings-policy-fight").start_session(&mut session.core, empty_play());
     session.core.fleet_mut().add("alice");
     select(&mut session, "alice");
     let mut app = TuiApp::new("tui");
@@ -6677,12 +6680,21 @@ fn settings_popup_refuses_fight_with_the_shared_notice() {
     session.pump(&mut app);
     app.settings_state.row = 4;
 
-    // The saved default draws as Flee, and no Ignore choice is drawn.
+    // The saved default draws as Flee, the shared help and the selected
+    // event's explanation sit above the row, and no Ignore choice is drawn.
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
         assert!(
             cell_of(&screen, "event policy: Flee").is_some(),
             "{w}x{h}: the saved default draws"
+        );
+        assert!(
+            cell_of(&screen, "Flee remains the default").is_some(),
+            "{w}x{h}: the shared help draws"
+        );
+        assert!(
+            screen_unspaced(&mut app, w, h).contains(&unspaced("Fight the attacking River troll")),
+            "{w}x{h}: the selected event's explanation draws"
         );
         assert!(
             cell_of(&screen, "Ignore").is_none(),
@@ -6691,54 +6703,58 @@ fn settings_popup_refuses_fight_with_the_shared_notice() {
     }
 
     let before = session.core.refusals();
-    let refused = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
-    dispatch(&mut session, &mut app, refused);
-
+    let fight = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, fight);
+    session.pump(&mut app);
+    session.core.flush_writes();
+    assert_eq!(session.core.refusals(), before, "Fight is not refused");
+    assert_eq!(app.error, None, "a listed event needs no notice");
     assert_eq!(
-        app.error.as_deref(),
-        Some(frontend_core::GUARDIAN_FIGHT_UNAVAILABLE),
-        "the shared unavailable notice is what the operator sees"
-    );
-    assert_eq!(
-        session.core.refusals(),
-        before + 1,
-        "the refused policy is logged at the command boundary"
+        session
+            .core
+            .profile("alice")
+            .unwrap()
+            .random_event_policy("river troll"),
+        frontend_core::GuardianPolicy::Fight,
+        "the choice is saved"
     );
     for (w, h) in SIZES {
         let screen = screen(&mut app, w, h);
         assert!(
-            cell_of(&screen, "msg: Fight is not available yet").is_some(),
-            "{w}x{h}: the shared notice is on the message line"
+            cell_of(&screen, "event policy: Fight").is_some(),
+            "{w}x{h}: the saved Fight draws"
         );
         assert!(
-            cell_of(&screen, "Ignore").is_none(),
-            "{w}x{h}: the notice no longer names Ignore"
+            cell_of(&screen, "not available").is_none(),
+            "{w}x{h}: Fight is not called unavailable"
         );
     }
+
+    let flee = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, flee);
+    session.pump(&mut app);
+    session.core.flush_writes();
+    assert_eq!(
+        session
+            .core
+            .profile("alice")
+            .unwrap()
+            .random_event_policy("river troll"),
+        frontend_core::GuardianPolicy::Flee,
+        "Enter cycles Fight back to Flee"
+    );
 }
 
+/// The two events Fight does not apply to keep the saved Fight, and both the
+/// row's lead-in and the message line say what the event gets instead, at
+/// both terminal sizes.
 #[test]
-fn settings_popup_shows_a_saved_fight_and_resets_it_to_flee() {
+fn settings_popup_explains_the_events_fight_does_not_apply_to() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
-    lifecycle_vault("settings-policy-saved-fight").start_session(&mut session.core, empty_play());
+    lifecycle_vault("settings-policy-excluded").start_session(&mut session.core, empty_play());
     session.core.fleet_mut().add("alice");
     select(&mut session, "alice");
-    // Save Fight through the real command path.
-    session
-        .core
-        .stage_guardian(frontend_core::GuardianEdit::policy(
-            "river troll",
-            frontend_core::GuardianPolicy::Fight,
-        ));
-    session
-        .core
-        .submit_detached(OperatorCommand::SetGuardian, Targets::Profile("alice"))
-        .unwrap()
-        .operation()
-        .expect("the policy write opened an operation");
-    session.core.flush_writes();
-
     let mut app = TuiApp::new("tui");
     session.names = vec!["alice".into()];
     session.last_focused = Some("alice".into());
@@ -6747,49 +6763,57 @@ fn settings_popup_shows_a_saved_fight_and_resets_it_to_flee() {
     session.pump(&mut app);
     app.settings_state.row = 4;
 
-    // A previously saved Fight stays visible and stays saved.
-    for (w, h) in SIZES {
-        let screen = screen(&mut app, w, h);
-        assert!(
-            cell_of(&screen, "event policy: Fight (not available yet)").is_some(),
-            "{w}x{h}: a saved Fight stays visible"
-        );
-        assert!(
-            cell_of(&screen, "saved Fight is treated as Flee").is_some(),
-            "{w}x{h}: the row explains the saved Fight"
-        );
-        assert!(
-            cell_of(&screen, "Ignore").is_none(),
-            "{w}x{h}: no Ignore choice draws"
-        );
-    }
+    for (event, shown, fragment) in [
+        ("swarm", "Swarm", "cannot be damaged"),
+        ("strange plant", "Strange plant", "Pick ripe fruit"),
+    ] {
+        let index = frontend_core::GUARDIAN_EVENTS
+            .iter()
+            .position(|(key, _)| *key == event)
+            .unwrap();
+        app.settings_state.random_event_index = index;
+        for (w, h) in SIZES {
+            let words = screen_unspaced(&mut app, w, h);
+            assert!(
+                words.contains(&unspaced("Fight does not apply")),
+                "{w}x{h}: {shown}'s row explains that Fight does not apply"
+            );
+            assert!(
+                words.contains(&unspaced(fragment)),
+                "{w}x{h}: {shown}'s row says what it gets instead ({fragment})"
+            );
+        }
 
-    // Enter on the saved Fight applies the supported Flee reset and saves it.
-    let changed = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
-    dispatch(&mut session, &mut app, changed);
-    session.pump(&mut app);
-    session.core.flush_writes();
-
-    for (w, h) in SIZES {
-        let screen = screen(&mut app, w, h);
-        assert!(
-            cell_of(&screen, "event policy: Flee").is_some(),
-            "{w}x{h}: the supported reset draws"
+        let picked = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+        dispatch(&mut session, &mut app, picked);
+        session.pump(&mut app);
+        session.core.flush_writes();
+        assert_eq!(
+            session
+                .core
+                .profile("alice")
+                .unwrap()
+                .random_event_policy(event),
+            frontend_core::GuardianPolicy::Fight,
+            "{shown}: the saved Fight stays Fight"
         );
-        assert!(
-            cell_of(&screen, "Ignore").is_none(),
-            "{w}x{h}: no Ignore choice draws"
+        assert_eq!(
+            app.error.as_deref(),
+            Some(frontend_core::guardian_event_help(event)),
+            "{shown}: the notice is the shared explanation"
         );
+        for (w, h) in SIZES {
+            assert!(
+                screen_unspaced(&mut app, w, h).contains(&unspaced("msg: Fight does not apply")),
+                "{w}x{h}: {shown}: the explanation is on the message line"
+            );
+        }
+        // Back to Flee for the next event.
+        let back = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+        dispatch(&mut session, &mut app, back);
+        session.pump(&mut app);
+        session.core.flush_writes();
     }
-    assert_eq!(
-        session
-            .core
-            .profile("alice")
-            .unwrap()
-            .random_event_policy("river troll"),
-        frontend_core::GuardianPolicy::Flee,
-        "the next save writes Flee"
-    );
 }
 
 #[test]
@@ -7889,6 +7913,17 @@ fn screen_words(app: &mut TuiApp, w: u16, h: u16) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// The screen's text with every space gone, and the same for a needle: the
+/// settings popup wraps by columns, in the middle of a word, so wrapped text
+/// is compared without its breaks.
+fn screen_unspaced(app: &mut TuiApp, w: u16, h: u16) -> String {
+    unspaced(&screen_words(app, w, h))
+}
+
+fn unspaced(text: &str) -> String {
+    text.split_whitespace().collect()
 }
 
 /// The command palette's *Apply focused bot's settings to marked* copies the

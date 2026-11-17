@@ -55,10 +55,24 @@ pub enum Family {
     /// its identity, and its clock keeps running through the overlap; when
     /// the overlap ends it is the event again with the budget it has left
     /// (`GuardianStep::Overlap`, `GuardianStep::Return`).
+    ///
+    /// A trap that teleports the player ([`Family::Teleport`]) is outward
+    /// progress for a retained actor; the box ([`Family::Trap`]) is not.
     Evade,
     /// A trap square: the hold follows the detection while the host walks out;
-    /// a bounded number of solver ticks gives the visit up.
+    /// a bounded number of solver ticks gives the visit up. A held Strange box
+    /// is one: it does not move the player.
     Trap,
+    /// A trap square that teleports the player (Maze, Mime). To the owner it
+    /// is a [`Family::Trap`]. A hostile actor the Guardian retains while it is
+    /// the detected event finds the player carried out of its chase range:
+    /// outward progress, which resets the actor's no-progress counter, and the
+    /// counter does not run while the player stays out of range
+    /// (`Npc.ts:77-85,661-670`; `macro_event_maze.rs2:14-21`,
+    /// `macro_event_mime.rs2:9-13`). The model carries that as the retained
+    /// actor's clock resetting on every pass the teleport is the detected
+    /// event.
+    Teleport,
     /// One operation whose outcome must arrive inside a content window. The
     /// lost tool's head lands within two content ticks of the loss, plus one
     /// delivery tick (`macro_event_lost_axe.rs2:18,25-27`;
@@ -68,12 +82,38 @@ pub enum Family {
     /// finds it closed lets go, also when it begins after the window closed.
     /// A pass that sees the toggle off re-arms a spent window once.
     Window,
+    /// A hostile actor of the six listed events under a saved Fight (design
+    /// V11D 3 and 4). The Host owns the event the whole time and a native
+    /// child fights the exact actor through the Combat core: the host solver
+    /// sends nothing while the child holds the event, and the escape clock
+    /// stands still. The child ends with a typed result
+    /// ([`GuardianStep::FightEnd`]) or is revoked by a lifecycle change (a
+    /// script exit, the toggle, the saved policy, a replaced event or a new
+    /// session); every end but a kill hands the event to the flee of an
+    /// [`Family::Evade`] with a fresh escape clock, and Fight never restarts
+    /// for that actor in that session. A saved Fight for an event the list
+    /// excludes (Swarm, the angry plant) is `Evade` with a forced Host owner.
+    Fight,
 }
 
 impl Family {
     /// One operation in flight and a bounded wait for its outcome.
     fn is_solver(self) -> bool {
-        matches!(self, Self::Solver | Self::Evade | Self::Window)
+        matches!(
+            self,
+            Self::Solver | Self::Evade | Self::Window | Self::Fight
+        )
+    }
+
+    /// A hostile actor the Guardian tracks: it has an escape clock and can be
+    /// retained across an overlapping event.
+    fn is_hostile(self) -> bool {
+        matches!(self, Self::Evade | Self::Fight)
+    }
+
+    /// A trap square: the owner holds the slot while the host walks out.
+    fn is_trap(self) -> bool {
+        matches!(self, Self::Trap | Self::Teleport)
     }
 }
 
@@ -157,11 +197,36 @@ pub enum GuardianMutation {
     /// budget ran out during the overlap, and the real Guardian publishes it
     /// detect-only).
     RetainedClockLost,
+    /// A trap that teleports the player is not outward progress for the
+    /// retained hostile actor: its no-progress clock keeps running through the
+    /// overlap, so the returning actor is detect-only although the content's
+    /// counter was reset by the teleport (the V11a acceptance item: Maze and
+    /// Mime carry the player out of the actor's chase range,
+    /// `macro_event_maze.rs2:14-21`, `macro_event_mime.rs2:9-13`).
+    TeleportProgressLost,
+    /// The escape clock runs while the native child fights: the base counter
+    /// gives the actor up under the fight (design V11D 6.3).
+    FightTimeCounts,
+    /// A script that pauses, stops or fails does not revoke the native child:
+    /// it keeps the event after its card is gone (design V11D 4.4).
+    FightSurvivesExit,
+    /// A spent Fight is offered again for the same actor: the Guardian
+    /// restarts the fight after the child was revoked or ended (design V11D
+    /// 4.4: a cancellation permanently prevents Fight from restarting).
+    FightRestarts,
+    /// The host solver acts while the native child holds the event: both send
+    /// event work (design V11D 3.4: only the host solver or its matching
+    /// child may emit, never both).
+    FightDoubleDispatch,
+    /// The child outlives the family that offered it: another family replaced
+    /// the active event and the child still holds its token (design V11D
+    /// 3.3: a replacement cannot emit until revocation reaches the gate).
+    FightOrphanKept,
 }
 
 impl GuardianMutation {
     /// Every mutation, with the invariant that must catch it.
-    pub const ALL: [(Self, &'static str); 26] = [
+    pub const ALL: [(Self, &'static str); 32] = [
         (Self::StuckGathererHold, "toggle-off-publishes"),
         (Self::StalledHolds, "stalled-hold"),
         (Self::FleeInterrupted, "wait-early"),
@@ -197,6 +262,12 @@ impl GuardianMutation {
         (Self::SuccessorCallbackReplay, "duplicate-callback"),
         (Self::ClaimKeptAcrossRuntime, "stale-runtime"),
         (Self::RetainedClockLost, "actor-budget"),
+        (Self::TeleportProgressLost, "actor-budget"),
+        (Self::FightTimeCounts, "fight-clock"),
+        (Self::FightSurvivesExit, "fight-revoked-runs"),
+        (Self::FightRestarts, "fight-restart"),
+        (Self::FightDoubleDispatch, "fight-dispatch"),
+        (Self::FightOrphanKept, "orphan-child"),
     ];
 }
 
@@ -224,6 +295,10 @@ pub struct GuardianBounds {
     /// Fresh ticks the Ent guard may hold (the content gives an Ent 60
     /// ticks; profiles bound it like a wait).
     pub ent_hold: u8,
+    /// The alphabet carries the saved-Fight families and the native child's
+    /// steps (`FightEnd`, `PolicyFlee`) over a reduced set of event families,
+    /// so the state graph stays inside the profile caps (`c6-ownership-fight`).
+    pub fight: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -312,6 +387,29 @@ impl EpisodeClock {
             },
         }
     }
+
+    /// One fresh tick on which the actor's no-progress counter resets: a
+    /// teleport carried the player out of its chase range. A spent budget
+    /// stays spent (the actor gave up, and the latch outlives the counter).
+    fn progress(previous: Option<Self>, id: u8, limit: u8) -> Self {
+        let mut clock = Self::advance(previous, id, false, false, limit);
+        if clock.spent < limit {
+            clock.spent = 0;
+            clock.blocked = false;
+        }
+        clock
+    }
+
+    /// The clock of episode `id` restarts: the escape counters start at the
+    /// handoff from a fight, not at the event.
+    fn restart(id: u8) -> Self {
+        Self {
+            id,
+            spent: 0,
+            blocked: false,
+            rearmed: false,
+        }
+    }
 }
 
 /// The Ent guard's latch: its slot is held for a bounded number of fresh
@@ -365,6 +463,17 @@ pub fn derive(input: PublicationInputs) -> Publication {
     }
 }
 
+/// The typed end of a native Fight child (design V11D 6.1), reduced to what
+/// the owner does with it: the actor died, the fight hands the event to the
+/// flee (a required flee, a refusal, a vanished target), or the episode's
+/// budget ran out.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FightResult {
+    Killed,
+    Handoff,
+    Budget,
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum GuardianStep {
     Appear {
@@ -413,6 +522,18 @@ pub enum GuardianStep {
     EntAppear,
     /// The Ent is gone (the tree reverted).
     EntRemove,
+    /// The native child ends: its typed result reaches the Guardian's next
+    /// fresh pass, which folds it before anything else. A result that comes
+    /// after a revocation changes nothing (the cancellation record stands).
+    FightEnd(FightResult),
+    /// The saved policy of the listed events changes from Fight to Flee: a
+    /// running child is revoked, no Fight is offered, and the Host keeps the
+    /// episode it holds (design V11D 4.3, 4.4). A new episode is then an
+    /// ordinary Evade.
+    PolicyFlee,
+    /// The saved policy changes back to Fight. A Fight that was spent stays
+    /// spent, and only a later episode begins under Fight.
+    PolicyFight,
     /// A seat step of the composition (script dispatch, emissions, takes).
     Seat(Step),
 }
@@ -455,6 +576,24 @@ pub struct GuardianState {
     /// observed the hostile actor that is the event or is retained. It is
     /// the spec of the actor's budget, kept apart from the Guardian's clock.
     actor_budget: Option<EpisodeClock>,
+    /// The actor whose native child is open: it holds the event's hold and
+    /// the dispatch gate, until its result or a revocation closes it.
+    child: Option<u8>,
+    /// The child's typed end, waiting for the next fresh pass.
+    child_result: Option<FightResult>,
+    /// A revocation (a script exit, the saved policy) waiting for the next
+    /// fresh pass to fold it. The toggle revokes through `enabled`.
+    revoked: bool,
+    /// The actor whose Fight this session has spent: handed over, revoked or
+    /// ended. It never restarts.
+    fight_spent: Option<u8>,
+    /// Monitor: the actor a child was started for, or whose Fight the saved
+    /// policy cancelled. The spec bars a second child for it in the session,
+    /// whatever the Guardian keeps.
+    barred: Option<u8>,
+    /// The saved policy of the listed events is Flee now (a world setting
+    /// that outlives a session).
+    policy_flee: bool,
     // What the last pass published.
     out: Publication,
     emitted: bool,
@@ -463,7 +602,7 @@ pub struct GuardianState {
     settled: bool,
     // Composition.
     seat: Option<Box<State>>,
-    violation: Option<(&'static str, String)>,
+    violation: Option<Box<(&'static str, String)>>,
 }
 
 impl GuardianState {
@@ -492,6 +631,12 @@ impl GuardianState {
             ent: EntLatch::Absent,
             stale_hold: false,
             actor_budget: None,
+            child: None,
+            child_result: None,
+            revoked: false,
+            fight_spent: None,
+            barred: None,
+            policy_flee: false,
             out: Publication::default(),
             emitted: false,
             resolved_now: false,
@@ -566,6 +711,24 @@ impl GuardianState {
         self.retained.map(|event| event.id)
     }
 
+    /// The episode id of the actor whose native child is open.
+    pub fn child_id(&self) -> Option<u8> {
+        self.child
+    }
+
+    /// Whether the actor's Fight is spent this session: handed over, revoked
+    /// or ended, so it never restarts.
+    pub fn fight_is_spent(&self, id: u8) -> bool {
+        self.fight_spent == Some(id)
+    }
+
+    /// Record the violation of a spec the transition just broke. It is boxed:
+    /// a state that fails is never stored, so the field costs a pointer in
+    /// every state the explorer keeps.
+    fn violate(&mut self, name: &'static str, detail: impl Into<String>) {
+        self.violation = Some(Box::new((name, detail.into())));
+    }
+
     fn owner(&self) -> Owner {
         self.active.map_or(Owner::Host, |active| active.owner)
     }
@@ -575,7 +738,12 @@ impl GuardianState {
         Active {
             key: self.last_sig.unwrap_or(0),
             session: self.session,
-            family: self.observed.map_or(Family::Solver, |event| event.family),
+            family: self
+                .observed
+                .map_or(Family::Solver, |event| match event.family {
+                    Family::Fight => Family::Evade,
+                    family => family,
+                }),
             owner,
             phase: Phase::Idle,
             guard: false,
@@ -686,7 +854,7 @@ impl GuardianState {
                 self.next_id += 1;
                 // The Guardian tracks one hostile actor: a new attacker's
                 // track takes the place of a retained one.
-                if *family == Family::Evade {
+                if family.is_hostile() {
                     self.retained = None;
                 }
             }
@@ -705,14 +873,14 @@ impl GuardianState {
             } => {
                 // The Guardian retains an actor it has tracked: one a fresh
                 // pass of this session observed as the event.
-                let Some(actor) = self
-                    .event
-                    .filter(|event| event.family == Family::Evade && self.observed == Some(*event))
-                else {
+                let Some(actor) = self.event.filter(|event| {
+                    event.family.is_hostile()
+                        && self.observed.is_some_and(|seen| seen.id == event.id)
+                }) else {
                     return Err("no observed hostile actor to retain".into());
                 };
-                if *family == Family::Evade || self.next_id >= self.bounds.ids {
-                    return Err("the other event is an Evade or the ids are spent".into());
+                if family.is_hostile() || self.next_id >= self.bounds.ids {
+                    return Err("the other event is a hostile actor or the ids are spent".into());
                 }
                 self.retained = Some(actor);
                 self.event = Some(Event {
@@ -760,6 +928,10 @@ impl GuardianState {
                     matches!(self.mutation, GuardianMutation::ClaimKeptOnExit(_)).then_some(*exit);
                 if *exit != ScriptExit::Pause {
                     self.end_runtime();
+                }
+                if self.child.is_some() {
+                    // The slot revokes the child with its card (design V11D 4.4).
+                    self.revoked = true;
                 }
                 if self.mutation == GuardianMutation::GlobalUnhold
                     && let Some(seat) = self.seat.as_mut()
@@ -809,6 +981,13 @@ impl GuardianState {
                 self.actor_budget = None;
                 self.ent_observed = false;
                 self.ent = EntLatch::Absent;
+                // The old session's child is revoked with the session, and the
+                // new Guardian has spent no Fight.
+                self.child = None;
+                self.child_result = None;
+                self.revoked = false;
+                self.fight_spent = None;
+                self.barred = None;
             }
             GuardianStep::ChatClose => {
                 if !self.chat_open {
@@ -852,6 +1031,27 @@ impl GuardianState {
                 }
                 self.ent_world = false;
             }
+            GuardianStep::FightEnd(result) => {
+                if self.child.is_none() || self.child_result.is_some() || self.revoked {
+                    return Err("no native child is waiting to end".into());
+                }
+                self.child_result = Some(*result);
+            }
+            GuardianStep::PolicyFlee => {
+                if self.policy_flee {
+                    return Err("the saved policy is Flee already".into());
+                }
+                self.policy_flee = true;
+                if self.child.is_some() {
+                    self.revoked = true;
+                }
+            }
+            GuardianStep::PolicyFight => {
+                if !self.policy_flee {
+                    return Err("the saved policy is Fight already".into());
+                }
+                self.policy_flee = false;
+            }
             GuardianStep::Seat(step) => {
                 let Some(seat) = self.seat.as_mut() else {
                     return Err("no seat in this composition".into());
@@ -877,16 +1077,16 @@ impl GuardianState {
             );
         match step {
             GuardianStep::Replicate { fresh: false } if stalled_before && !stalled_now => {
-                self.violation = Some((
+                self.violate(
                     "stale-rearm",
-                    "a line that is not a fresh server signal re-armed the stalled family".into(),
-                ));
+                    "a line that is not a fresh server signal re-armed the stalled family",
+                );
             }
             GuardianStep::LateResult if pending_before && !pending_now => {
-                self.violation = Some((
+                self.violate(
                     "wrong-token",
-                    "a result carrying an earlier token settled the pending operation".into(),
-                ));
+                    "a result carrying an earlier token settled the pending operation",
+                );
             }
             _ => {}
         }
@@ -907,7 +1107,13 @@ impl GuardianState {
             self.knocks = 0;
         }
         if fresh {
-            self.observed = self.event;
+            self.fight_fold();
+        }
+        // The work a successor can inherit is the work still pending once the
+        // child's own end is folded: a spent budget leaves nothing to inherit.
+        let inheritable = self.active;
+        if fresh {
+            self.observed = self.bound_view();
             self.ent_observed = self.ent_world;
         }
         let event = self.observed;
@@ -1007,6 +1213,11 @@ impl GuardianState {
             // The pending operation is sent again when the claim comes back.
             self.emitted = true;
         }
+        // A family that replaced the Fight this pass left its child without an
+        // owner: it is revoked before the pass publishes.
+        if self.mutation != GuardianMutation::FightOrphanKept {
+            self.close_orphan();
+        }
 
         // Spec checks over the transition.
         if let Some((was, now)) = before
@@ -1023,51 +1234,48 @@ impl GuardianState {
             ) = (was.phase, now.phase)
             {
                 if !fresh && after_wait != before_wait {
-                    self.violation = Some((
-                        "frame-advances",
-                        "a repeated frame poll spent a wait tick".into(),
-                    ));
+                    self.violate("frame-advances", "a repeated frame poll spent a wait tick");
                 }
                 if fresh && now.owner == Owner::Script && after_wait != before_wait {
-                    self.violation = Some((
+                    self.violate(
                         "script-time-counted",
-                        "time under a script claim spent the host's wait".into(),
-                    ));
+                        "time under a script claim spent the host's wait",
+                    );
                 }
-                if now.family.is_solver() && self.emitted {
-                    self.violation = Some((
+                if was.family == now.family && now.family.is_solver() && self.emitted {
+                    self.violate(
                         "duplicate-op",
-                        "the host sent a pending operation a second time".into(),
-                    ));
+                        "the host sent a pending operation a second time",
+                    );
                 }
             }
             if (matches!(was.phase, Phase::Stalled { .. }) || stalled_for_host)
                 && matches!(now.phase, Phase::Pending { .. })
             {
-                self.violation = Some((
+                self.violate(
                     "released-actor-restart",
-                    "a stalled episode started a second budget".into(),
-                ));
+                    "a stalled episode started a second budget",
+                );
             }
         }
         // The next hostile actor inherits a pending flee: it is not released
         // for a tick between two attackers.
         if fresh
-            && let Some(was) = before
-            && was.family == Family::Evade
+            && let Some(was) = inheritable
+            && was.family.is_hostile()
             && was.owner == Owner::Host
             && was.session == self.session
             && matches!(was.phase, Phase::Pending { .. })
-            && event.is_some_and(|event| event.family == Family::Evade && event.id != was.key)
+            && event.is_some_and(|event| event.family.is_hostile() && event.id != was.key)
             && !matches!(
                 self.active.map(|active| active.phase),
                 Some(Phase::Pending { .. })
             )
         {
-            self.violation = Some((
+            self.violate(
                 "evade-handoff",
-                "a replaced hostile actor's successor did not inherit the pending flee".into(),
-            ));
+                "a replaced hostile actor's successor did not inherit the pending flee",
+            );
         }
 
         // Publish: one derivation from the active event and the live inputs.
@@ -1182,21 +1390,14 @@ impl GuardianState {
                 // Work for an event that is gone or replaced resolves; the next
                 // pass starts the successor.
                 if active.family != Family::Dialog && gone {
-                    // A hostile actor's successor inherits the flee; any other
-                    // replacement releases the work and the next pass starts
-                    // its own.
-                    if active.family == Family::Evade
+                    // A hostile actor's successor inherits the flee, or the
+                    // fight offered for it; any other replacement releases the
+                    // work and the next pass starts its own.
+                    if active.family.is_hostile()
                         && self.mutation != GuardianMutation::EvadeReleasesOnReplace
-                        && let Some(event) = event.filter(|event| event.family == Family::Evade)
+                        && let Some(event) = event.filter(|event| event.family.is_hostile())
                     {
-                        self.active = Some(Active {
-                            key: event.id,
-                            phase: Phase::Pending {
-                                wait: 0,
-                                unblocked: 0,
-                            },
-                            ..active
-                        });
+                        self.inherit(active, event);
                         return;
                     }
                     self.finish(Phase::Idle);
@@ -1230,7 +1431,8 @@ impl GuardianState {
                     }
                     return;
                 }
-                if active.family == Family::Evade {
+                // The child owns a fight's wait: the host solver has none.
+                if matches!(active.family, Family::Evade | Family::Fight) {
                     return;
                 }
                 let counts = !blocked
@@ -1270,7 +1472,7 @@ impl GuardianState {
                         wait: next_wait,
                         unblocked: next_unblocked,
                     };
-                    if active.family == Family::Trap {
+                    if active.family.is_trap() {
                         self.emitted = true;
                     }
                 }
@@ -1358,6 +1560,10 @@ impl GuardianState {
             clock.spent = 0;
             clock.rearmed = false;
         }
+        if event.family == Family::Fight && self.fight_wanted(event) {
+            self.start_fight(event);
+            return;
+        }
         self.start(event);
         if event.family == Family::Window && self.window_closed(event.id) {
             self.finish(Phase::Stalled {
@@ -1372,19 +1578,62 @@ impl GuardianState {
     /// escape clock follows the hostile actor through an overlap: the observed
     /// actor's, or the retained one's while another event is the detected
     /// one. A spent Evade budget releases the observed episode for any owner.
+    ///
+    /// The fight owns the actor's ticks: while a Fight holds the event the
+    /// escape counters stand still (design V11D 6.3). A trap that teleports
+    /// the player resets the retained actor's counter on every pass it is the
+    /// detected event: the player is out of the actor's chase range.
     fn content_clock(&mut self, blocked: bool) {
         let limit = self.bounds.wait;
-        let counts = !blocked || self.mutation == GuardianMutation::FleeInterrupted;
-        let observed_actor = self.observed.filter(|event| event.family == Family::Evade);
+        let fighting = self
+            .active
+            .is_some_and(|active| active.family == Family::Fight);
+        let counts = (!blocked || self.mutation == GuardianMutation::FleeInterrupted)
+            && (!fighting || self.mutation == GuardianMutation::FightTimeCounts);
+        let observed_actor = self.observed.filter(|event| event.family.is_hostile());
         let retained = self
             .retained
             .filter(|_| self.mutation != GuardianMutation::RetainedClockLost);
-        self.evade_clock = observed_actor
-            .or(retained)
-            .map(|actor| EpisodeClock::advance(self.evade_clock, actor.id, counts, blocked, limit));
+        let teleported = self.retained.is_some()
+            && self
+                .observed
+                .is_some_and(|event| event.family == Family::Teleport);
+        let previous = self.evade_clock;
+        self.evade_clock = observed_actor.or(retained).map(|actor| {
+            if teleported && self.mutation != GuardianMutation::TeleportProgressLost {
+                EpisodeClock::progress(self.evade_clock, actor.id, limit)
+            } else {
+                EpisodeClock::advance(self.evade_clock, actor.id, counts, blocked, limit)
+            }
+        });
+        // Spec: the escape clock stands still on a pass that starts with a
+        // fight holding the event.
+        if fighting
+            && let (Some(was), Some(now)) = (previous, self.evade_clock)
+            && was.id == now.id
+            && now.spent > was.spent
+        {
+            self.violate(
+                "fight-clock",
+                format!(
+                    "the escape clock of actor {} ran from {} to {} ticks while the fight held the event",
+                    now.id, was.spent, now.spent
+                ),
+            );
+        }
         // The spec of the same actor's budget, whatever the Guardian keeps.
         self.actor_budget = observed_actor.or(self.retained).map(|actor| {
-            EpisodeClock::advance(self.actor_budget, actor.id, !blocked, false, limit)
+            if teleported {
+                EpisodeClock::progress(self.actor_budget, actor.id, limit)
+            } else {
+                EpisodeClock::advance(
+                    self.actor_budget,
+                    actor.id,
+                    !blocked && !fighting,
+                    false,
+                    limit,
+                )
+            }
         });
         self.window_clock = self
             .observed
@@ -1398,10 +1647,10 @@ impl GuardianState {
         }
     }
 
-    /// The observed Evade episode spent its budget.
+    /// The observed hostile episode spent its budget.
     fn evade_exhausted(&self) -> bool {
         self.observed.is_some_and(|event| {
-            event.family == Family::Evade
+            event.family.is_hostile()
                 && self
                     .evade_clock
                     .is_some_and(|clock| clock.id == event.id && clock.spent >= self.bounds.wait)
@@ -1437,7 +1686,10 @@ impl GuardianState {
             None => {
                 let mut shell = self.shell(Owner::Host);
                 shell.key = event.id;
-                shell.family = event.family;
+                shell.family = match event.family {
+                    Family::Fight => Family::Evade,
+                    family => family,
+                };
                 shell.phase = stalled;
                 self.active = Some(shell);
             }
@@ -1450,7 +1702,10 @@ impl GuardianState {
         self.active = Some(Active {
             key: event.id,
             session: self.session,
-            family: event.family,
+            family: match event.family {
+                Family::Fight => Family::Evade,
+                family => family,
+            },
             owner,
             phase: Phase::Pending {
                 wait: 0,
@@ -1464,10 +1719,204 @@ impl GuardianState {
         }
         self.emitted = true;
         if owner == Owner::Script {
-            self.violation = Some((
+            self.violate(
                 "dispatch-exclusion",
-                "the host acted on an event a script owns".into(),
-            ));
+                "the host acted on an event a script owns",
+            );
+        }
+    }
+
+    /// Whether the Guardian offers the fight for `event`: the saved policy is
+    /// Fight, the actor's Fight is not spent in this session and its escape
+    /// budget is not (design V11D 4.3 and 4.4; a given-up actor is never
+    /// fought, `Guardian::fight_wanted`).
+    fn fight_wanted(&self, event: Event) -> bool {
+        let given_up = self
+            .evade_clock
+            .is_some_and(|clock| clock.id == event.id && clock.spent >= self.bounds.wait);
+        !given_up
+            && ((!self.policy_flee && self.fight_spent != Some(event.id))
+                || self.mutation == GuardianMutation::FightRestarts)
+    }
+
+    /// What the Guardian makes of a hostile event at the first pass of its
+    /// episode (the signature edge): under a saved Fight every hostile event
+    /// is forced to the host and an eligible one (`Family::Fight`) is fought;
+    /// under a saved Flee every one is an ordinary Evade a script may claim.
+    /// The world's event keeps what the actor is; only the fight profile
+    /// models the policy.
+    fn bind(&self, event: Event) -> Event {
+        if !self.bounds.fight || !event.family.is_hostile() {
+            return event;
+        }
+        match (event.family, self.policy_flee) {
+            (Family::Fight, false) => Event {
+                forced_host: true,
+                ..event
+            },
+            (_, false) => Event {
+                family: Family::Evade,
+                forced_host: true,
+                ..event
+            },
+            (_, true) => Event {
+                family: Family::Evade,
+                forced_host: false,
+                ..event
+            },
+        }
+    }
+
+    /// The event a fresh pass sees: the one it saw before while the episode
+    /// goes on (the episode's binding is fixed when it begins), else the
+    /// world's event as `bind` reads it.
+    fn bound_view(&self) -> Option<Event> {
+        let world = self.event?;
+        match self.observed {
+            Some(seen) if seen.id == world.id => Some(seen),
+            _ => Some(self.bind(world)),
+        }
+    }
+
+    /// The host offers the fight: the native child takes the event, the host
+    /// solver sends nothing, and the escape clock stands still.
+    fn start_fight(&mut self, event: Event) {
+        let owner = self.owner();
+        self.active = Some(Active {
+            key: event.id,
+            session: self.session,
+            family: Family::Fight,
+            owner,
+            phase: Phase::Pending {
+                wait: 0,
+                unblocked: 0,
+            },
+            guard: self.active.is_some_and(|active| active.guard),
+            stale: owner == Owner::Script && self.active.is_some_and(|active| active.stale),
+        });
+        self.child = Some(event.id);
+        self.child_result = None;
+        self.revoked = false;
+        if self.barred == Some(event.id) || self.policy_flee {
+            self.violate(
+                "fight-restart",
+                "a child started for an actor whose Fight was spent, or under a saved Flee",
+            );
+        }
+        self.barred = Some(event.id);
+        if self.mutation == GuardianMutation::FightDoubleDispatch {
+            // The host solver sends its flee beside the child.
+            self.emitted = true;
+        }
+    }
+
+    /// A hostile successor takes the place of the actor the work was for: it
+    /// inherits the pending hold without a release tick, and its own fight
+    /// when it is wanted. The old actor's child closes with its event.
+    fn inherit(&mut self, old: Active, event: Event) {
+        if self.mutation != GuardianMutation::FightOrphanKept {
+            self.close_child();
+        }
+        if event.family == Family::Fight && self.fight_wanted(event) {
+            self.start_fight(event);
+            return;
+        }
+        self.active = Some(Active {
+            key: event.id,
+            family: Family::Evade,
+            phase: Phase::Pending {
+                wait: 0,
+                unblocked: 0,
+            },
+            ..old
+        });
+    }
+
+    /// Revoke and release the open child, and spend its actor's Fight.
+    fn close_child(&mut self) {
+        if let Some(id) = self.child.take() {
+            self.child_result = None;
+            self.revoked = false;
+            self.fight_spent = Some(id);
+        }
+    }
+
+    /// Close a child no Fight family holds any more.
+    fn close_orphan(&mut self) {
+        let Some(id) = self.child else {
+            return;
+        };
+        let held = self.active.is_some_and(|active| {
+            active.family == Family::Fight && active.key == id && active.session == self.session
+        });
+        if !held {
+            self.close_child();
+        }
+    }
+
+    /// The native child's turn at the start of a fresh pass, before detection
+    /// (the real `Guardian::fight_fold`). A result the child already holds
+    /// stands; otherwise a revocation, or the toggle off, cancels it. Every
+    /// end but a kill hands the event to the flee with fresh escape counters,
+    /// and the actor's Fight is spent.
+    fn fight_fold(&mut self) {
+        let Some(id) = self.child else {
+            return;
+        };
+        let held = self.active.is_some_and(|active| {
+            active.family == Family::Fight && active.key == id && active.session == self.session
+        });
+        if !held {
+            return;
+        }
+        // The seeded fault leaves the revocation unfolded: the child keeps the
+        // event after its card is gone.
+        let revoked = self.revoked && self.mutation != GuardianMutation::FightSurvivesExit;
+        let cancelled = revoked || !self.enabled;
+        let Some(result) = self
+            .child_result
+            .or(cancelled.then_some(FightResult::Handoff))
+        else {
+            return;
+        };
+        self.child = None;
+        self.child_result = None;
+        self.revoked = false;
+        self.fight_spent = Some(id);
+        let limit = self.bounds.wait;
+        match result {
+            // The actor died: the host keeps the event until its removal.
+            FightResult::Killed => {}
+            FightResult::Handoff => {
+                if let Some(active) = self.active.as_mut() {
+                    active.family = Family::Evade;
+                    active.phase = Phase::Pending {
+                        wait: 0,
+                        unblocked: 0,
+                    };
+                }
+                // The escape counters start at the handoff. The first flee
+                // walk the host sends on this pass is not an emission of the
+                // model: a successor actor of the same pass supersedes it.
+                self.evade_clock = Some(EpisodeClock::restart(id));
+                self.actor_budget = Some(EpisodeClock::restart(id));
+            }
+            FightResult::Budget => {
+                let spent = EpisodeClock {
+                    spent: limit,
+                    ..EpisodeClock::restart(id)
+                };
+                self.evade_clock = Some(spent);
+                self.actor_budget = Some(spent);
+                if let Some(active) = self.active.as_mut() {
+                    active.family = Family::Evade;
+                    active.phase = Phase::Stalled {
+                        logged: true,
+                        unblocked: limit,
+                    };
+                }
+                self.resolved_now = true;
+            }
         }
     }
 
@@ -1490,7 +1939,7 @@ impl GuardianState {
             stalled: active.is_some_and(|active| {
                 matches_event(&active) && matches!(active.phase, Phase::Stalled { .. })
             }),
-            trapped: event.is_some_and(|event| event.family == Family::Trap),
+            trapped: event.is_some_and(|event| event.family.is_trap()),
         }
     }
 
@@ -1512,7 +1961,8 @@ impl GuardianState {
 
     pub fn check(&self) -> Result<(), Violation> {
         let fail = |name: &'static str, detail: String| Err(Violation { name, detail });
-        if let Some((name, detail)) = &self.violation {
+        if let Some(violation) = &self.violation {
+            let (name, detail) = &**violation;
             return fail(name, detail.clone());
         }
         if let Some(seat) = &self.seat {
@@ -1612,7 +2062,7 @@ impl GuardianState {
                     ),
                 );
             }
-            if self.event.is_some_and(|event| event.forced_host)
+            if self.observed.is_some_and(|event| event.forced_host)
                 && self.settled
                 && self.out.claim_script
             {
@@ -1631,7 +2081,7 @@ impl GuardianState {
                 && budget.spent >= self.bounds.wait
                 && self
                     .observed
-                    .is_some_and(|event| event.family == Family::Evade && event.id == budget.id)
+                    .is_some_and(|event| event.family.is_hostile() && event.id == budget.id)
             {
                 return fail(
                     "actor-budget",
@@ -1640,6 +2090,57 @@ impl GuardianState {
                         budget.id, self.bounds.wait
                     ),
                 );
+            }
+            // The converse: the Guardian gives an observed hostile actor up
+            // only on its own spent budget. A teleport that carried the
+            // player out of the actor's chase range reset the counter, and a
+            // fight's ticks never counted.
+            if self.evade_exhausted()
+                && let Some(budget) = self.actor_budget
+                && budget.spent < self.bounds.wait
+                && self.observed.is_some_and(|event| event.id == budget.id)
+            {
+                return fail(
+                    "actor-budget",
+                    format!(
+                        "hostile actor {} is given up with {} of its {} budget ticks spent",
+                        budget.id, budget.spent, self.bounds.wait
+                    ),
+                );
+            }
+            // The native child belongs to a Fight family of the active event
+            // and to nothing else: a revocation reaches it within the pass,
+            // the escape clock stands still under it, and the host solver
+            // sends nothing beside it.
+            if let Some(id) = self.child {
+                let held = self.active.is_some_and(|active| {
+                    active.family == Family::Fight
+                        && active.key == id
+                        && active.session == self.session
+                });
+                if !held {
+                    return fail(
+                        "orphan-child",
+                        format!(
+                            "the child of actor {id} is open but no Fight family holds it ({:?})",
+                            self.active
+                        ),
+                    );
+                }
+                if self.revoked {
+                    return fail(
+                        "fight-revoked-runs",
+                        format!("the child of actor {id} still runs after its revocation"),
+                    );
+                }
+                if self.emitted {
+                    return fail(
+                        "fight-dispatch",
+                        format!(
+                            "the host solver acted while the child of actor {id} held the event"
+                        ),
+                    );
+                }
             }
             if self.script != Script::Running && self.out.claim_script {
                 return fail(
@@ -1695,7 +2196,7 @@ impl GuardianState {
 
     pub fn describe(&self) -> String {
         format!(
-            "event={:?} retained={:?} ent={:?}/{:?} script={:?} enabled={} session={} active={:?} evade_clock={:?} window_clock={:?} actor_budget={:?} out={:?} knocks={}",
+            "event={:?} retained={:?} ent={:?}/{:?} script={:?} enabled={} session={} active={:?} evade_clock={:?} window_clock={:?} actor_budget={:?} child={:?}/{:?} revoked={} spent={:?} barred={:?} policy_flee={} out={:?} knocks={}",
             self.event,
             self.retained,
             self.ent_world,
@@ -1707,6 +2208,12 @@ impl GuardianState {
             self.evade_clock,
             self.window_clock,
             self.actor_budget,
+            self.child,
+            self.child_result,
+            self.revoked,
+            self.fight_spent,
+            self.barred,
+            self.policy_flee,
             self.out,
             self.knocks
         )
@@ -1715,7 +2222,17 @@ impl GuardianState {
 
 fn alphabet(state: &GuardianState) -> Vec<GuardianStep> {
     let mut out = Vec::new();
-    let families: &[(Family, bool)] = if state.bounds.ent {
+    // In the fight profile a hostile event is what the actor is: `Fight` for
+    // an actor of the six listed events, `Evade` for one Fight does not apply
+    // to. The saved policy binds it at its first pass (`bind`).
+    let families: &[(Family, bool)] = if state.bounds.fight {
+        &[
+            (Family::Fight, false),
+            (Family::Evade, false),
+            (Family::Solver, false),
+            (Family::Trap, false),
+        ]
+    } else if state.bounds.ent {
         &[(Family::Solver, false), (Family::Trap, false)]
     } else {
         &[
@@ -1727,6 +2244,9 @@ fn alphabet(state: &GuardianState) -> Vec<GuardianStep> {
             (Family::Trap, false),
         ]
     };
+    if state.bounds.fight {
+        return fight_alphabet(families);
+    }
     let window: &[(Family, bool)] = if state.bounds.window && !state.bounds.ent {
         &[(Family::Window, false)]
     } else {
@@ -1745,9 +2265,9 @@ fn alphabet(state: &GuardianState) -> Vec<GuardianStep> {
     out.push(GuardianStep::Disappear);
     if state.bounds.retain {
         for &(family, forced_host) in families.iter().chain(window) {
-            if family != Family::Evade {
+            if !family.is_hostile() {
                 out.push(GuardianStep::Overlap {
-                    family,
+                    family: overlapping(family),
                     forced_host,
                 });
             }
@@ -1789,6 +2309,84 @@ fn alphabet(state: &GuardianState) -> Vec<GuardianStep> {
     out
 }
 
+/// The family an overlap of the alphabet takes. The trap that overlaps a
+/// retained hostile actor is the one that teleports the player (Maze, Mime):
+/// outward progress resets the actor's clock. A held Strange box does not, and
+/// its overlap is the solver's (the clock runs) with the trap's hold: the
+/// conformance matrix replays it against the real Guardian, and a trace test
+/// pins the difference. The state graph holds one of the two inside the
+/// 1,000,000 states of the 32-transition profile (ADR 0017).
+fn overlapping(family: Family) -> Family {
+    match family {
+        Family::Trap => Family::Teleport,
+        other => other,
+    }
+}
+
+/// The fight profile's steps. It keeps what bears on the native child: the
+/// saved policy, the hostile events and every family that can replace them,
+/// the overlaps that retain the actor, the script exits that revoke the child,
+/// the toggle, a session replacement, a late result, a stunned tick and the
+/// repeated frame. What the other profiles already explore (a live script's
+/// membership changes, the chat and the re-arming signals of the dialog and
+/// the box, the content window, the Ent guard and the seat composition) stays
+/// out, so the state graph closes inside the profile caps.
+fn fight_alphabet(families: &[(Family, bool)]) -> Vec<GuardianStep> {
+    let mut out = Vec::new();
+    for &(family, forced_host) in families {
+        out.push(GuardianStep::Appear {
+            family,
+            forced_host,
+        });
+        out.push(GuardianStep::Replace {
+            family,
+            forced_host,
+        });
+    }
+    out.push(GuardianStep::Disappear);
+    for &(family, forced_host) in families {
+        if !family.is_hostile() {
+            out.push(GuardianStep::Overlap {
+                family: overlapping(family),
+                forced_host,
+            });
+        }
+    }
+    out.extend([
+        GuardianStep::Return,
+        GuardianStep::RetainedGone,
+        GuardianStep::ScriptStart {
+            wants: false,
+            live: false,
+        },
+        GuardianStep::ScriptStart {
+            wants: true,
+            live: false,
+        },
+        GuardianStep::ScriptStart {
+            wants: true,
+            live: true,
+        },
+        GuardianStep::ScriptExit(ScriptExit::Pause),
+        GuardianStep::ScriptExit(ScriptExit::Stop),
+        GuardianStep::ScriptExit(ScriptExit::Fail),
+        GuardianStep::ScriptResume,
+        GuardianStep::SetEnabled(false),
+        GuardianStep::SetEnabled(true),
+        GuardianStep::SessionReplace,
+        GuardianStep::LateResult,
+        GuardianStep::Tick { blocked: false },
+        GuardianStep::Tick { blocked: true },
+        GuardianStep::Frame,
+        GuardianStep::FightEnd(FightResult::Killed),
+        GuardianStep::FightEnd(FightResult::Handoff),
+        GuardianStep::FightEnd(FightResult::Budget),
+        GuardianStep::PolicyFlee,
+        GuardianStep::PolicyFight,
+    ]);
+    out
+}
+
 /// A named bounded exploration of the ownership model.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum GuardianProfile {
@@ -1800,13 +2398,18 @@ pub enum GuardianProfile {
     OwnershipEnt,
     /// A deeper bound for the nightly Linux lane (16 GiB scope).
     Nightly,
+    /// Ownership with a saved Fight: the native child, its typed results, its
+    /// revocations and its handoff to the flee, over a reduced set of event
+    /// families.
+    OwnershipFight,
 }
 
-pub const GUARDIAN_PROFILES: [GuardianProfile; 4] = [
+pub const GUARDIAN_PROFILES: [GuardianProfile; 5] = [
     GuardianProfile::Ownership,
     GuardianProfile::OwnershipSeat,
     GuardianProfile::OwnershipEnt,
     GuardianProfile::Nightly,
+    GuardianProfile::OwnershipFight,
 ];
 
 impl GuardianProfile {
@@ -1816,6 +2419,7 @@ impl GuardianProfile {
             Self::OwnershipSeat => "c6-ownership-seat",
             Self::OwnershipEnt => "c6-ownership-ent",
             Self::Nightly => "c6-ownership-nightly",
+            Self::OwnershipFight => "c6-ownership-fight",
         }
     }
 
@@ -1823,7 +2427,7 @@ impl GuardianProfile {
     /// well inside the horizon: a closed run is exhaustive, not truncated.
     pub const fn horizon(self) -> usize {
         match self {
-            Self::Ownership | Self::OwnershipSeat | Self::OwnershipEnt => 32,
+            Self::Ownership | Self::OwnershipSeat | Self::OwnershipEnt | Self::OwnershipFight => 32,
             Self::Nightly => 48,
         }
     }
@@ -1838,6 +2442,7 @@ impl GuardianProfile {
                 window: true,
                 retain: true,
                 ent_hold: 2,
+                fight: false,
             },
             Self::OwnershipSeat => GuardianBounds {
                 wait: 2,
@@ -1847,6 +2452,7 @@ impl GuardianProfile {
                 window: false,
                 retain: false,
                 ent_hold: 2,
+                fight: false,
             },
             Self::OwnershipEnt => GuardianBounds {
                 wait: 2,
@@ -1856,6 +2462,7 @@ impl GuardianProfile {
                 window: false,
                 retain: false,
                 ent_hold: 2,
+                fight: false,
             },
             Self::Nightly => GuardianBounds {
                 wait: 4,
@@ -1865,13 +2472,26 @@ impl GuardianProfile {
                 window: true,
                 retain: true,
                 ent_hold: 4,
+                fight: false,
+            },
+            Self::OwnershipFight => GuardianBounds {
+                wait: 2,
+                ids: 2,
+                sessions: 2,
+                ent: false,
+                window: false,
+                retain: true,
+                ent_hold: 2,
+                fight: true,
             },
         }
     }
 
     pub fn initial(self, mutation: GuardianMutation) -> GuardianState {
         match self {
-            Self::Ownership | Self::OwnershipEnt => GuardianState::new(self.bounds(), mutation),
+            Self::Ownership | Self::OwnershipEnt | Self::OwnershipFight => {
+                GuardianState::new(self.bounds(), mutation)
+            }
             Self::OwnershipSeat | Self::Nightly => GuardianState::composed(self.bounds(), mutation),
         }
     }

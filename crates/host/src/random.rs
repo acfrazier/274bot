@@ -6,7 +6,7 @@
 //! `on_random` knock live in [`Guardian`].
 mod ent;
 mod guardian;
-pub use guardian::{Guardian, GuardianLiveContext, RandomStatus};
+pub use guardian::{EscapeIntent, Guardian, GuardianLiveContext, RandomStatus, SentEscape};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -63,6 +63,40 @@ pub trait RandomClaimSource {
     /// the source has no runtime identity, like a fixed callback). A claim
     /// made under another runtime returns to the host without a callback.
     fn runtime(&mut self) -> Option<ClaimRuntime> {
+        None
+    }
+
+    /// Offer one Fight to the script layer (design V11D 4.1): the native
+    /// Combat core against the exact actor of `offer`. `Err` is a typed
+    /// reason the Guardian flees instead. A source with no Fight service
+    /// refuses, and the Guardian flees as it always did.
+    fn fight_offer(
+        &mut self,
+        _offer: &api::random::FightOffer,
+    ) -> Result<(), api::random::FightReason> {
+        Err(api::random::FightReason::NoService)
+    }
+
+    /// Revoke the Fight of `token` before the next dispatch. The source
+    /// records the cancellation for the next [`Self::fight_read`].
+    fn fight_revoke(&mut self, _token: api::random::FightToken, _cancel: api::random::FightCancel) {
+    }
+
+    /// What the child of `token` reports now; `None` when the source holds no
+    /// such child.
+    fn fight_read(&mut self, _token: api::random::FightToken) -> Option<api::random::FightRead> {
+        None
+    }
+
+    /// The Guardian folded the child's end: the source drops it.
+    fn fight_release(&mut self, _token: api::random::FightToken) {}
+
+    /// Stage one escape walk for the slot observation to send once no admitted
+    /// lock blocks it (design V11D 6.2). Staging is not sending.
+    fn fight_stage_escape(&mut self, _intent: EscapeIntent) {}
+
+    /// The escape walk of `token` the observation sent, taken once.
+    fn fight_take_sent(&mut self, _token: api::random::FightToken) -> Option<SentEscape> {
         None
     }
 }
@@ -157,18 +191,6 @@ const CUBE_IF_BUTTONS: [i32; 3] = [6562, 6563, 6564];
 /// Ground-search radius for lost tool/gear (rs2b0t `.within(10)`).
 const LOST_GEAR_RADIUS: i32 = 10;
 
-/// Compass offsets for the flee rings, N/NE/E/SE/S/SW/W/NW (rs2b0t
-/// `FLEE_DIRECTIONS`).
-const FLEE_COMPASS: [(i32, i32); 8] = [
-    (0, -1),
-    (1, -1),
-    (1, 0),
-    (1, 1),
-    (0, 1),
-    (-1, 1),
-    (-1, 0),
-    (-1, -1),
-];
 /// Frozen random-event step distance (`RandomEvents.ts:64-65`).
 const HAZARD_STEP: i32 = 4;
 /// `eventEvade.ts:7-16` order, retained for equal-distance hazard choices.
@@ -572,15 +594,6 @@ fn cheb(a: (i32, i32), b: (i32, i32)) -> i32 {
     (a.0 - b.0).abs().max((a.1 - b.1).abs())
 }
 
-/// Ordered compass choices at a content-derived Chebyshev distance. This
-/// iterator allocates nothing; the first walkable tile becomes the target.
-#[cfg(test)]
-fn flee_candidates(from: (i32, i32), distance: i32) -> impl Iterator<Item = (i32, i32)> {
-    FLEE_COMPASS
-        .into_iter()
-        .map(move |(dx, dz)| (from.0 + dx * distance, from.1 + dz * distance))
-}
-
 /// Engine chase stop: Chebyshev distance past maxrange+1, except the
 /// diagonal corner exactly at maxrange+1 (`Npc.ts:661-670`).
 fn outside_chase_range(player: (i32, i32), start: (i32, i32), maxrange: i32) -> bool {
@@ -588,39 +601,6 @@ fn outside_chase_range(player: (i32, i32), start: (i32, i32), maxrange: i32) -> 
     let dz = (player.1 - start.1).abs();
     let stop = maxrange.saturating_add(1);
     dx.max(dz) > stop || (dx == stop && dz == stop)
-}
-
-/// The first direction points away from the latched NPC tile, through the
-/// player. Ties prefer a cardinal path and otherwise retain compass order.
-fn flee_direction_index(from: (i32, i32), player: (i32, i32)) -> usize {
-    let (dx, dz) = ((player.0 - from.0) as i64, (player.1 - from.1) as i64);
-    let mut best = 0;
-    let mut best_score = i64::MIN;
-    let mut best_cardinal = false;
-    for (index, (step_x, step_z)) in FLEE_COMPASS.iter().copied().enumerate() {
-        let score = dx * step_x as i64 + dz * step_z as i64;
-        let cardinal = step_x == 0 || step_z == 0;
-        if score > best_score || (score == best_score && cardinal && !best_cardinal) {
-            best = index;
-            best_score = score;
-            best_cardinal = cardinal;
-        }
-    }
-    best
-}
-
-/// Exactly one flee ring, beginning away from the NPC and through the player.
-/// The fixed compass rotation keeps the iterator allocation-free.
-fn flee_candidates_away(
-    from: (i32, i32),
-    player: (i32, i32),
-    distance: i32,
-) -> impl Iterator<Item = (i32, i32)> {
-    let first = flee_direction_index(from, player);
-    (0..FLEE_COMPASS.len()).map(move |offset| {
-        let (dx, dz) = FLEE_COMPASS[(first + offset) % FLEE_COMPASS.len()];
-        (from.0 + dx * distance, from.1 + dz * distance)
-    })
 }
 
 /// Hazard escape candidates are exactly one frozen four-tile ring around

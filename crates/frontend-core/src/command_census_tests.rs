@@ -214,6 +214,8 @@ const CORE: &[(&str, Decision)] = &[
     ("profile_draft.rs::SettingsDraft::survival_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     ("profile_draft.rs::SurvivalDraft::set_cure_poison", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     ("profile_draft.rs::SurvivalSettings::cure_poison_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::guardian_event_help", Excluded(FORMAT)),
+    ("profile_draft.rs::guardian_fight_applies", Excluded("pure predicate over the shared Fight eligibility; no state")),
     // profile_editor.rs: the profile edit form (moved from the panel chooser).
     ("profile_editor.rs::ProfileEditor::draft_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     ("profile_editor.rs::ProfileEditor::username_mut", Staged(C::EditProfileDraft(ProfileDraftField::Username))),
@@ -789,6 +791,7 @@ const CORE: &[(&str, Decision)] = &[
     ("views.rs::FleetRow::copy_from", Excluded(PROJECTION)),
     ("views.rs::SlotDetail::copy_from", Excluded(PROJECTION)),
     ("views.rs::random_kind_name", Excluded(FORMAT)),
+    ("views.rs::write_random_response", Excluded(FORMAT)),
     ("views.rs::run_state_label", Excluded(FORMAT)),
     ("views.rs::script_status_label", Excluded(FORMAT)),
     ("views.rs::script_status_reason", Excluded(FORMAT)),

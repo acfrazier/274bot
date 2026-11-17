@@ -4107,6 +4107,13 @@ impl Script for Quester {
             role: self.path.role.as_ref()?,
         })
     }
+    fn protected_items(&self) -> Option<Arc<[crate::combat::FoodReserve]>> {
+        self.path
+            .provisioning
+            .food_reserves
+            .as_ref()
+            .map(Arc::clone)
+    }
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         tick.cx.walk_prereq = self.path.prereq;
         tick.cx.protected_items = self

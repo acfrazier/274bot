@@ -390,6 +390,10 @@ pub struct SlotArm {
     /// a settings change reaches a running slot within one frame. The
     /// `Arc` is one 24-byte allocation per slot, made at slot creation.
     pub cure_poison: Arc<AtomicU8>,
+    /// The Guardian's Fight, as the slot loop and the claim source share it
+    /// within one frame: the child's token and gate, and the escape walk the
+    /// Guardian stages for the slot observation to send.
+    pub(super) fight: crate::play_fight::FightPort,
     /// The password the next handshake sends. Set from the profile at spawn
     /// and by [`crate::Play::remember_profile`], so a saved password change
     /// reaches a running worker's next login without a respawn. Private: it
@@ -450,6 +454,7 @@ impl SlotArm {
             cure_poison: Arc::new(AtomicU8::new(
                 script::survival::CurePoison::WhenNeeded.to_byte(),
             )),
+            fight: crate::play_fight::FightPort::default(),
             password: parking_lot::Mutex::new(Arc::from("")),
             retry_wake: parking_lot::Condvar::new(),
             #[cfg(any(test, feature = "test-support"))]
@@ -799,6 +804,19 @@ impl SlotArm {
             }
         }
         ready && lifecycle.session.ready().is_some()
+    }
+
+    /// Whether the session is ready for the Guardian's own Fight child: ready
+    /// with the Guardian's hold set aside, and no other reason held. The
+    /// child acts under the Guardian's hold and under nothing else's.
+    pub(super) fn guardian_child_ready(&self, ready: bool) -> bool {
+        ready
+            && self
+                .lifecycle
+                .lock()
+                .session
+                .ready_ignoring(HoldReason::Guardian)
+                .is_some()
     }
 
     /// Why the current session is held, for the live seat cells.

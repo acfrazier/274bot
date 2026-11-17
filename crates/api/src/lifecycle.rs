@@ -1635,6 +1635,17 @@ impl SessionGate {
         }
     }
 
+    /// The session scripts may tick in once the hold of `why` is set aside:
+    /// the ready session with every other hold released. The Guardian's own
+    /// Fight child acts under its hold, never under another reason's.
+    pub const fn ready_ignoring(&self, why: HoldReason) -> Option<SessionKey> {
+        if self.ready && self.holds & !why.bit() == 0 {
+            self.current.current()
+        } else {
+            None
+        }
+    }
+
     /// Whether the current session is held for any reason.
     pub const fn held(&self) -> bool {
         self.current.current().is_some() && self.holds != 0
