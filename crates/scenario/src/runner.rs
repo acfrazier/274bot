@@ -2657,6 +2657,9 @@ impl ScenarioRunner {
             }
             StepKind::ObserveActor { actor } => {
                 let observer = self.actor_observer.get_or_insert_with(Box::default);
+                // Every dispatched step owns a new baseline, including consecutive selectors.
+                crate::actor::ActorObserver::observe(Some(observer), client, None)
+                    .map_err(str::to_owned)?;
                 crate::actor::ActorObserver::observe(Some(observer), client, Some(*actor))
                     .map_err(str::to_owned)?;
                 Ok("no-send")

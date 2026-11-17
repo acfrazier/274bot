@@ -9,11 +9,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 - `ObserveActor` records a selected actor's native pose, public-chat style and
   overhead-text transitions, bound to its slot, session and client cycle.
-  `ActorChatStyle`, `OverheadText` and `OverheadTextLifetime` require that
-  observer. Lifetime proof requires a decreasing timer and natural expiry;
-  replacement, missing actors and session changes cannot count as expiry.
+  `ActorChatStyle`, `OverheadText` and `OverheadTextLifetime` require an
+  appearance witnessed during their own observation. Already-visible text
+  is recorded separately and cannot satisfy a later observation. A later
+  active-text transition, text change or timer restart establishes freshness.
+  Lifetime proof also requires a decreasing timer and natural expiry.
+  Replacement, missing actors and session changes cannot count as expiry.
   Unarmed and unchanged armed polls allocate nothing. Existing cached actor
-  names, positions and animations keep their previous behavior.
+  names, positions and animations keep their previous behavior. Selected
+  NPC names use the same resolved current form as cached NPC views.
 - Scenario runners can extract cache-defined varbits with a no-send step.
   Snapshot availability is explicitly Unknown because rows lack per-index
   receive receipts; `VarbitEquals` requires a matching observed-varp witness.

@@ -298,3 +298,224 @@ fn an_overflowed_actor_observer_can_disarm_for_terminal_cleanup() {
     assert!(evidence.overflowed);
     assert_eq!(evidence.records.len(), 1024);
 }
+
+#[test]
+fn a_message_present_when_arming_cannot_satisfy_any_actor_proof() {
+    for proof in [
+        Proof::ActorChatStyle {
+            actor: ACTOR,
+            colour: 1,
+            effect: 2,
+        },
+        Proof::OverheadText {
+            actor: ACTOR,
+            text: TEXT,
+        },
+        Proof::OverheadTextLifetime {
+            actor: ACTOR,
+            text: TEXT,
+        },
+    ] {
+        let mut runner = runner(proof);
+        let mut client = client();
+        bubble(&mut client, Some(TEXT), 60);
+        for _ in 0..4 {
+            runner.tick(&mut client);
+        }
+        for timer in [59, 58, 0] {
+            bubble(&mut client, (timer > 0).then_some(TEXT), timer);
+            runner.tick(&mut client);
+        }
+        assert!(
+            matches!(runner.status(), RunnerStatus::Running { .. }),
+            "pre-existing message satisfied {}: {:?}",
+            proof.name(),
+            runner.status()
+        );
+        runner.fail_start("finished stale-message check");
+        let records = &runner.evidence().unwrap().actors.as_ref().unwrap().records;
+        assert!(records.iter().any(|record| matches!(
+            record,
+            scenario::actor::ActorRecord::Overhead {
+                transition: "present_at_arm",
+                ..
+            }
+        )));
+        assert!(!records.iter().any(|record| matches!(
+            record,
+            scenario::actor::ActorRecord::Overhead {
+                transition: "appeared",
+                ..
+            }
+        )));
+    }
+}
+
+#[test]
+fn a_later_observation_requires_its_own_message_appearance() {
+    for intervening_step in [false, true] {
+        let proof = Proof::OverheadText {
+            actor: ACTOR,
+            text: TEXT,
+        };
+        let mut scenario = scenario(proof);
+        let first = Step {
+            name: "fresh observation",
+            kind: StepKind::ObserveActor { actor: ACTOR },
+            wait: Wait {
+                arm: proof,
+                budget_ticks: 20,
+            },
+        };
+        if intervening_step {
+            scenario.steps.push(Step {
+                name: "between observations",
+                kind: StepKind::Shot { label: "between" },
+                wait: Wait {
+                    arm: Proof::IngameScene2,
+                    budget_ticks: 20,
+                },
+            });
+        }
+        scenario.steps.push(first);
+        let last = scenario.steps.len() - 1;
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(Duration::ZERO);
+        let mut client = client();
+        prime(&mut runner, &mut client);
+        for timer in [149, 148, 147, 146, 145, 144] {
+            bubble(&mut client, Some(TEXT), timer);
+            runner.tick(&mut client);
+        }
+        assert!(
+            matches!(runner.status(), RunnerStatus::Running { step, .. } if step == last),
+            "earlier message passed re-arm (intervening={intervening_step}): {:?}",
+            runner.status()
+        );
+        bubble(&mut client, Some(TEXT), 150);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+}
+
+#[test]
+fn a_preexisting_message_can_be_replaced_or_cleared_then_freshly_observed() {
+    for replacement in ["text", "timer", "clear"] {
+        let mut runner = runner(Proof::OverheadTextLifetime {
+            actor: ACTOR,
+            text: TEXT,
+        });
+        let mut client = client();
+        bubble(
+            &mut client,
+            Some(if replacement == "text" { "Old" } else { TEXT }),
+            60,
+        );
+        prime(&mut runner, &mut client);
+        if replacement == "clear" {
+            bubble(&mut client, None, 0);
+            runner.tick(&mut client);
+        }
+        let start = if replacement == "timer" { 150 } else { 3 };
+        for timer in [start, start - 1, 0] {
+            bubble(&mut client, (timer > 0).then_some(TEXT), timer);
+            runner.tick(&mut client);
+        }
+        assert_eq!(runner.status(), RunnerStatus::Passed, "{replacement}");
+    }
+}
+
+fn assert_expired_terminal_proof_is_pending(proof: Proof) {
+    let mut scenario = scenario(proof);
+    scenario.steps[0].wait.arm = Proof::OverheadTextLifetime {
+        actor: ACTOR,
+        text: TEXT,
+    };
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    let mut client = client();
+    prime(&mut runner, &mut client);
+    for timer in [3, 2, 0, 0] {
+        bubble(&mut client, (timer > 0).then_some(TEXT), timer);
+        runner.tick(&mut client);
+    }
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "expired message satisfied {}",
+        proof.name()
+    );
+    assert_eq!(client.out.pos, 0);
+}
+
+#[test]
+fn lingering_style_without_text_cannot_satisfy_a_terminal_proof() {
+    assert_expired_terminal_proof_is_pending(Proof::ActorChatStyle {
+        actor: ACTOR,
+        colour: 1,
+        effect: 2,
+    });
+}
+
+#[test]
+fn expired_text_cannot_satisfy_a_terminal_proof() {
+    assert_expired_terminal_proof_is_pending(Proof::OverheadText {
+        actor: ACTOR,
+        text: TEXT,
+    });
+}
+
+#[test]
+fn expiry_without_a_seen_countdown_cannot_prove_a_lifetime() {
+    let mut runner = runner(Proof::OverheadTextLifetime {
+        actor: ACTOR,
+        text: TEXT,
+    });
+    let mut client = client();
+    prime(&mut runner, &mut client);
+    for timer in [1, 0] {
+        bubble(&mut client, (timer > 0).then_some(TEXT), timer);
+        runner.tick(&mut client);
+    }
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+}
+
+#[test]
+fn an_identical_resend_restarts_the_message_and_requires_its_own_countdown() {
+    let mut runner = runner(Proof::OverheadTextLifetime {
+        actor: ACTOR,
+        text: TEXT,
+    });
+    let mut client = client();
+    prime(&mut runner, &mut client);
+    for timer in [3, 2, 150, 0] {
+        bubble(&mut client, (timer > 0).then_some(TEXT), timer);
+        runner.tick(&mut client);
+    }
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    runner.fail_start("finished resend check");
+    let records = &runner.evidence().unwrap().actors.as_ref().unwrap().records;
+    let messages: Vec<_> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| match record {
+            scenario::actor::ActorRecord::Overhead {
+                transition,
+                text: Some(text),
+                ..
+            } => Some((index, *transition, text.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].1, "appeared");
+    assert_eq!(messages[1].1, "replaced");
+    assert_eq!(messages[0].2, messages[1].2);
+    assert!(records.iter().any(|record| matches!(
+        record,
+        scenario::actor::ActorRecord::Overhead {
+            transition: "cleared",
+            message_record: Some(index),
+            ..
+        } if *index == messages[1].0
+    )));
+}

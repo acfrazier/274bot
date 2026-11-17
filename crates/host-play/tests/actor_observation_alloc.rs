@@ -17,6 +17,7 @@ fn client() -> Client {
     });
     client.ingame = true;
     client.scene_state = 2;
+    client.self_slot = 0;
     let mut player = ClientPlayer::at(20, 20);
     player.name = Some("Alice".into());
     player.chat_message = Some("Hello".into());
@@ -68,12 +69,42 @@ fn runner(armed: bool) -> ScenarioRunner {
     runner
 }
 
+fn assert_chat_records(evidence: &scenario::actor::ActorEvidence) {
+    use scenario::actor::ActorRecord;
+    assert!(evidence.records.iter().any(|record| matches!(
+        record,
+        ActorRecord::ActorSample { name: Some(name), .. } if name == "Alice"
+    )));
+    assert!(evidence
+        .records
+        .iter()
+        .any(|record| matches!(record, ActorRecord::ActorStyle { .. })));
+    assert!(evidence.records.iter().any(|record| matches!(
+        record,
+        ActorRecord::Overhead { text: Some(text), transition: "appeared", .. } if text == "Hello"
+    )));
+    assert!(!evidence
+        .records
+        .iter()
+        .any(|record| matches!(record, ActorRecord::Unavailable { .. })));
+}
+
 #[test]
 fn actor_scalar_and_event_observation_allocate_nothing_disarmed_or_unchanged_armed() {
     std::thread::spawn(|| {
         let mut client = client();
         for _ in 0..8 {
+            assert!(actor_observation(&client, Some(ActorSelector::LocalPlayer)).is_some());
+            client.local_player.as_mut().unwrap().chat_message = None;
             let mut owner = Some(Box::<ActorObserver>::default());
+            ActorObserver::observe(
+                owner.as_deref_mut(),
+                &client,
+                Some(ActorSelector::LocalPlayer),
+            )
+            .unwrap();
+            client.loop_cycle += 1;
+            client.local_player.as_mut().unwrap().chat_message = Some("Hello".into());
             ActorObserver::observe(
                 owner.as_deref_mut(),
                 &client,
@@ -96,8 +127,26 @@ fn actor_scalar_and_event_observation_allocate_nothing_disarmed_or_unchanged_arm
             });
             assert_eq!(armed.count_total, 0, "armed: {armed:?}");
             assert_eq!(armed.bytes_total, 0, "armed: {armed:?}");
-            drop(owner.take());
+            ActorObserver::observe(owner.as_deref_mut(), &client, None).unwrap();
+            let disarmed_owner = allocation_counter::measure(|| {
+                for cycle in 0..1000 {
+                    client.loop_cycle += 1;
+                    client.local_player.as_mut().unwrap().chat_timer = 100 - cycle % 100;
+                    ActorObserver::observe(
+                        std::hint::black_box(owner.as_deref_mut()),
+                        &client,
+                        None,
+                    )
+                    .unwrap();
+                }
+            });
+            assert_eq!(disarmed_owner.count_total, 0, "owner: {disarmed_owner:?}");
+            assert_eq!(disarmed_owner.bytes_total, 0, "owner: {disarmed_owner:?}");
+            let evidence = owner.take().unwrap().into_evidence();
+            assert_chat_records(&evidence);
+            assert_eq!(evidence.records.len(), 3, "disarmed owner recorded changes");
             client.gens.session += 1;
+            client.local_player.as_mut().unwrap().chat_timer = 100;
             let disarmed = allocation_counter::measure(|| {
                 for _ in 0..1000 {
                     std::hint::black_box(actor_observation(&client, None));
@@ -124,12 +173,20 @@ fn runner_actor_observation_allocates_nothing_disarmed_or_unchanged_armed() {
         for armed in [false, true] {
             for _ in 0..8 {
                 let mut runner = runner(armed);
+                client.local_player.as_mut().unwrap().chat_message = None;
                 for _ in 0..8 {
                     runner.tick(&mut client);
                 }
+                client.loop_cycle += 1;
+                client.local_player.as_mut().unwrap().chat_message = Some("Hello".into());
+                runner.tick(&mut client);
                 assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
                 let counts = allocation_counter::measure(|| {
-                    for _ in 0..1000 {
+                    for cycle in 0..1000 {
+                        if !armed {
+                            client.loop_cycle += 1;
+                            client.local_player.as_mut().unwrap().chat_timer = 100 - cycle % 100;
+                        }
                         runner.tick(std::hint::black_box(&mut client));
                     }
                 });
@@ -138,6 +195,10 @@ fn runner_actor_observation_allocates_nothing_disarmed_or_unchanged_armed() {
                 assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
                 runner.fail_start("allocation measurement finished");
                 assert_eq!(runner.evidence().unwrap().actors.is_some(), armed);
+                if let Some(actors) = &runner.evidence().unwrap().actors {
+                    assert_chat_records(actors);
+                }
+                client.local_player.as_mut().unwrap().chat_timer = 100;
                 client.gens.session += 1;
             }
         }
@@ -154,9 +215,8 @@ fn selected_actor_owner_retains_bounded_scalar_state() {
         std::mem::size_of::<ActorObserver>(),
         std::mem::size_of::<ScenarioRunner>()
     );
-    // Generous ceilings leave room for ordinary layout changes, not exact-size locks.
+    // Measured optional owner / borrowed view / observer: 8 / 136 / 136 B + 64 B.
     assert!(std::mem::size_of::<Option<Box<ActorObserver>>>() <= 72);
-    assert!(std::mem::size_of::<ActorObservationView<'_>>() <= 320);
-    assert!(std::mem::size_of::<ActorObserver>() <= 512);
-    assert!(std::mem::size_of::<ScenarioRunner>() <= 6400);
+    assert!(std::mem::size_of::<ActorObservationView<'_>>() <= 200);
+    assert!(std::mem::size_of::<ActorObserver>() <= 200);
 }

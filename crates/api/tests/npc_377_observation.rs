@@ -185,3 +185,55 @@ fn revision_274_289_npc_snapshot_bytes_ignore_377_morph_tables_and_varp_changes(
         assert_eq!(serde_json::to_vec(actual.npcs()).unwrap(), expected);
     }
 }
+
+#[test]
+fn selected_actor_names_agree_with_current_npc_forms_on_377_and_289() {
+    for revision in [ClientRevision::R377, ClientRevision::R289] {
+        for varbit in [false, true] {
+            let mut client = client(revision, varbit);
+            let mut snapshot = GameSnapshot::new();
+            for (selector, interactive) in [(0, true), (2, true), (1, true), (0, false)] {
+                client.var[0] = selector << 1;
+                client.var[1] = selector;
+                Arc::get_mut(&mut client.cache)
+                    .unwrap()
+                    .revision_377
+                    .as_mut()
+                    .unwrap()
+                    .config
+                    .npcs[1]
+                    .field_1434 = interactive;
+                client.gens.varp += 1;
+                client.gens.npc += 1;
+                assert!(snapshot.rebuild_family(&client, Family::Npc));
+                let selected = api::snapshot::actor_observation(
+                    &client,
+                    Some(api::snapshot::ActorSelector::Npc(7)),
+                )
+                .unwrap();
+                assert_eq!(selected.name, snapshot.npcs()[0].name.as_deref());
+                assert_eq!(selected.npc_type, snapshot.npcs()[0].r#type);
+                if revision == ClientRevision::R289 {
+                    assert_eq!(selected.name, Some("Placed identity"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn revision_289_selected_actor_bytes_ignore_377_form_data() {
+    let mut with_morph = client(ClientRevision::R289, true);
+    let mut legacy = client(ClientRevision::R289, false);
+    Arc::get_mut(&mut legacy.cache).unwrap().revision_377 = None;
+    let actor = Some(api::snapshot::ActorSelector::Npc(7));
+    let expected = serde_json::to_vec(&api::snapshot::actor_observation(&legacy, actor)).unwrap();
+    for selector in [0, 1, 2, -1] {
+        with_morph.var[0] = selector;
+        with_morph.var[1] = selector;
+        assert_eq!(
+            serde_json::to_vec(&api::snapshot::actor_observation(&with_morph, actor)).unwrap(),
+            expected
+        );
+    }
+}

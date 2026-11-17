@@ -157,9 +157,9 @@ fn measured_combat_owner_has_fixed_state_size() {
         std::mem::size_of::<CombatObserver>(),
         std::mem::size_of::<scenario::ScenarioRunner>()
     );
-    // Measured 8 / 128 / 216 / 5,816 B; each ceiling leaves at least 64 B.
+    // Measured 8 / 128 / 216 / 5,832 B; each ceiling leaves 64 B.
     assert!(std::mem::size_of::<Option<Box<CombatObserver>>>() <= 72);
     assert!(std::mem::size_of::<CombatSample>() <= 192);
     assert!(std::mem::size_of::<CombatObserver>() <= 280);
-    assert!(std::mem::size_of::<scenario::ScenarioRunner>() <= 5_888);
+    assert!(std::mem::size_of::<scenario::ScenarioRunner>() <= 5_896);
 }

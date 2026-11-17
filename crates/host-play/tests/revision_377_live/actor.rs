@@ -70,6 +70,7 @@ fn public_chat_style_and_lifetime_377() -> Result<(), String> {
     let mut frames = Vec::new();
     let mut observations = Vec::new();
     let mut runner_receipt = Value::Null;
+    let mut proof_receipts = Vec::new();
     let mut result = (|| {
         for peer in &mut peers {
             peer.login()?;
@@ -141,35 +142,41 @@ fn public_chat_style_and_lifetime_377() -> Result<(), String> {
         };
         let text = Proof::OverheadText { actor, text: TEXT };
         let lifetime = Proof::OverheadTextLifetime { actor, text: TEXT };
-        let mut runner = ScenarioRunner::with_world(
-            Scenario {
-                name: "public-chat-style-lifetime-377",
-                seed: Seed {
-                    profiles: vec![("test", "test")],
-                    mainland: false,
-                },
-                steps: [("style", style), ("text", text), ("lifetime", lifetime)]
-                    .into_iter()
-                    .map(|(name, proof)| Step {
-                        name,
-                        kind: StepKind::ObserveActor { actor },
-                        wait: Wait {
-                            arm: proof,
-                            budget_ticks: 30,
+        let mut runners =
+            [("style", style), ("text", text), ("lifetime", lifetime)].map(|(name, proof)| {
+                let mut runner = ScenarioRunner::with_world(
+                    Scenario {
+                        name: "public-chat-style-lifetime-377",
+                        seed: Seed {
+                            profiles: vec![("test", "test")],
+                            mainland: false,
                         },
-                    })
-                    .collect(),
-                proof: lifetime,
-                companions: vec![],
-                settings: ScenarioSettings::default(),
-            },
-            None,
-        );
-        runner.set_scene_settle(Duration::ZERO);
+                        steps: vec![Step {
+                            name,
+                            kind: StepKind::ObserveActor { actor },
+                            wait: Wait {
+                                arm: proof,
+                                budget_ticks: 30,
+                            },
+                        }],
+                        proof,
+                        companions: vec![],
+                        settings: ScenarioSettings::default(),
+                    },
+                    None,
+                );
+                runner.set_scene_settle(Duration::ZERO);
+                runner
+            });
         for _ in 0..4 {
-            runner.tick(&mut peers[1].client);
+            for runner in &mut runners {
+                runner.tick(&mut peers[1].client);
+            }
         }
-        if !matches!(runner.status(), RunnerStatus::Running { .. }) {
+        if runners
+            .iter()
+            .any(|runner| !matches!(runner.status(), RunnerStatus::Running { .. }))
+        {
             return Err("actor runner did not arm".into());
         }
         if actor_observation(&peers[1].client, Some(actor))
@@ -198,7 +205,9 @@ fn public_chat_style_and_lifetime_377() -> Result<(), String> {
             "remote style appearance and natural expiry",
             |peers| {
                 let before = peers[1].client.out.pos;
-                runner.tick(&mut peers[1].client);
+                for runner in &mut runners {
+                    runner.tick(&mut peers[1].client);
+                }
                 observer_sent |= before != peers[1].client.out.pos;
                 if let Some(view) = actor_observation(&peers[1].client, Some(actor)) {
                     if !seen
@@ -213,20 +222,34 @@ fn public_chat_style_and_lifetime_377() -> Result<(), String> {
                 if seen && frames.len() == 2 {
                     match capture(&mut peers[1], &directory, "remote-bubble") {
                         Ok(frame) => frames.push(frame),
-                        Err(error) => runner.fail_start(&error),
+                        Err(error) => runners[2].fail_start(&error),
                     }
                 }
-                matches!(
-                    runner.status(),
-                    RunnerStatus::Passed | RunnerStatus::Failed(_)
-                )
+                runners
+                    .iter()
+                    .all(|runner| runner.status() == RunnerStatus::Passed)
+                    || runners
+                        .iter()
+                        .any(|runner| matches!(runner.status(), RunnerStatus::Failed(_)))
             },
         )?;
-        runner_receipt = serde_json::to_value(runner.evidence()).map_err(|e| e.to_string())?;
-        if runner.status() != RunnerStatus::Passed || !seen || observer_sent {
+        for runner in &runners[..2] {
+            proof_receipts
+                .push(serde_json::to_value(runner.evidence()).map_err(|e| e.to_string())?);
+        }
+        runner_receipt = serde_json::to_value(runners[2].evidence()).map_err(|e| e.to_string())?;
+        if runners
+            .iter()
+            .any(|runner| runner.status() != RunnerStatus::Passed)
+            || !seen
+            || observer_sent
+        {
             return Err(format!(
-                "actor proof: {:?}; seen={seen}; observer_sent={observer_sent}",
-                runner.status()
+                "actor proofs: {:?}; seen={seen}; observer_sent={observer_sent}",
+                runners
+                    .iter()
+                    .map(ScenarioRunner::status)
+                    .collect::<Vec<_>>()
             ));
         }
         let ended =
@@ -258,7 +281,7 @@ fn public_chat_style_and_lifetime_377() -> Result<(), String> {
     let receipt = json!({"cell":"host.actor-377-public-chat-lifetime-live",
         "outcome":if result.is_ok(){"PASS"}else{"FAIL"},"error":result.as_ref().err(),
         "identity":identity,"accounts":names,"input":INPUT,"text":TEXT,"observations":observations,
-        "runner":runner_receipt,"frames":frames,"normal_gameshell_input":true,
+        "runner":runner_receipt,"proof_receipts":proof_receipts,"frames":frames,"normal_gameshell_input":true,
         "synthetic_actor_or_chat_rows":false,"end_states":[peers[0].state(),peers[1].state()]});
     let path = directory.join(format!("{}-actor.json", names[0]));
     fs::write(
