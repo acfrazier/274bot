@@ -4,6 +4,9 @@ use thiserror::Error;
 
 /// Game ticks between two poison fires.
 pub const POISON_PERIOD: u16 = 30;
+// Engine A anti_poison.rs2:5,15 and poison.rs2:25-30,72-75.
+const ANTIPOISON_IMMUNITY_TICKS: u16 = 4 * POISON_PERIOD;
+const SUPER_ANTIPOISON_IMMUNITY_TICKS: u16 = 19 * POISON_PERIOD;
 
 /// The observed condition of one account.
 ///
@@ -213,6 +216,11 @@ pub enum PoisonEvent {
         /// Tick that owns the server effect.
         origin: u16,
     },
+    /// The owner matched a drink line with a lost super-antipoison dose.
+    ProvenSuperDrink {
+        /// Tick that owns the server effect.
+        origin: u16,
+    },
     /// A count drop and matching consume line proved a strange-fruit effect.
     ProvenFruit {
         /// Tick that owns the server effect.
@@ -250,6 +258,17 @@ impl PoisonMemory {
             session_invalid: false,
             death_seen: false,
         }
+    }
+
+    fn credit_immunity(&mut self, credit: u16, origin: u16) {
+        let existing = match self.state {
+            PoisonState::Immune { until_lower } => Some(until_lower),
+            _ => None,
+        };
+        self.state = PoisonState::Immune {
+            until_lower: ImmunityCredit::until_lower(credit, origin, existing),
+        };
+        self.death_seen = false;
     }
 
     /// Apply one explicit event to the current poison memory.
@@ -340,16 +359,13 @@ impl PoisonMemory {
             }
             PoisonEvent::LatchComplete { .. } => {}
             PoisonEvent::ProvenDrink { origin } if !self.session_invalid => {
-                let existing = match self.state {
-                    PoisonState::Immune { until_lower } => Some(until_lower),
-                    _ => None,
-                };
-                self.state = PoisonState::Immune {
-                    until_lower: ImmunityCredit::until_lower(120, origin, existing),
-                };
-                self.death_seen = false;
+                self.credit_immunity(ANTIPOISON_IMMUNITY_TICKS, origin);
             }
             PoisonEvent::ProvenDrink { .. } => {}
+            PoisonEvent::ProvenSuperDrink { origin } if !self.session_invalid => {
+                self.credit_immunity(SUPER_ANTIPOISON_IMMUNITY_TICKS, origin);
+            }
+            PoisonEvent::ProvenSuperDrink { .. } => {}
             PoisonEvent::ProvenFruit { origin } if !self.session_invalid => {
                 let existing = match self.state {
                     PoisonState::Immune { until_lower } => Some(until_lower),
@@ -607,6 +623,13 @@ pub mod poison_math {
                     hit_since_mark: false,
                 }
             );
+        }
+
+        #[test]
+        fn super_antipoison_credits_nineteen_poison_periods() {
+            let memory = PoisonMemory::from_state(PoisonState::Clear)
+                .transition(PoisonEvent::ProvenSuperDrink { origin: 10 });
+            assert_eq!(memory.state, PoisonState::Immune { until_lower: 580 });
         }
 
         fn hit(memory: PoisonMemory, pulse: u8, tick: u16) -> PoisonMemory {

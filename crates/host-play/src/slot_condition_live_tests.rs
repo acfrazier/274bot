@@ -47,8 +47,12 @@ impl Live {
     }
 }
 
+const ORDINARY_ANTIPOISON_IMMUNITY_TICKS: u32 = 120;
+const SUPER_ANTIPOISON_IMMUNITY_TICKS: u32 = 570;
+
 struct PoisonOracle {
     deposit: bool,
+    immunity_ticks: u32,
     since: Option<u32>,
     marks: Vec<(u32, u8)>,
     last_mark: Option<u16>,
@@ -57,9 +61,10 @@ struct PoisonOracle {
 }
 
 impl PoisonOracle {
-    fn new(deposit: bool) -> Self {
+    fn new(deposit: bool, immunity_ticks: u32) -> Self {
         Self {
             deposit,
+            immunity_ticks,
             since: None,
             marks: Vec::new(),
             last_mark: None,
@@ -138,9 +143,9 @@ impl PoisonOracle {
             }
         }
         if let Some(origin) = self.immune_origin {
-            let expected = if tick <= origin + 120 {
+            let expected = if tick <= origin + self.immunity_ticks {
                 PoisonState::Immune {
-                    until_lower: (origin + 120) as u16,
+                    until_lower: (origin + self.immunity_ticks) as u16,
                 }
             } else {
                 PoisonState::Clear
@@ -151,7 +156,9 @@ impl PoisonOracle {
                     condition.poison
                 ));
             }
-            if !self.deposit && tick > origin + 120 {
+            if !self.deposit
+                && tick > origin + self.immunity_ticks.min(ORDINARY_ANTIPOISON_IMMUNITY_TICKS)
+            {
                 return Ok(true);
             }
         }
@@ -299,7 +306,14 @@ fn run_condition_cell(super_dose: bool, deposit: bool) {
     let mut login_ready = false;
     let mut ready_tick = None;
     let mut seed_tick = None;
-    let mut oracle = PoisonOracle::new(deposit);
+    let mut oracle = PoisonOracle::new(
+        deposit,
+        if super_dose {
+            SUPER_ANTIPOISON_IMMUNITY_TICKS
+        } else {
+            ORDINARY_ANTIPOISON_IMMUNITY_TICKS
+        },
+    );
     let mut drink_requested = false;
     let mut open_requested = false;
     let mut deposit_requested = false;
@@ -476,8 +490,8 @@ mod oracle_tests {
         })
     }
 
-    fn before_drink() -> PoisonOracle {
-        let mut oracle = PoisonOracle::new(false);
+    fn before_drink(immunity_ticks: u32) -> PoisonOracle {
+        let mut oracle = PoisonOracle::new(false, immunity_ticks);
         assert_eq!(oracle.observe(100, onset(11, true), false, true), Ok(false));
         for (tick, value) in [(130, 6), (160, 6), (190, 5)] {
             assert_eq!(
@@ -531,7 +545,7 @@ mod oracle_tests {
 
     #[test]
     fn condition_oracle_accepts_three_fires_and_exact_ordinary_credit() {
-        let mut oracle = before_drink();
+        let mut oracle = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
         let immune = condition(PoisonState::Immune { until_lower: 311 });
         for tick in 191..=311 {
             assert_eq!(oracle.observe(tick, immune, true, false), Ok(false));
@@ -543,9 +557,42 @@ mod oracle_tests {
     }
 
     #[test]
+    fn condition_oracle_accepts_super_credit_past_ordinary_expiry() {
+        let mut oracle = before_drink(SUPER_ANTIPOISON_IMMUNITY_TICKS);
+        let origin = 191;
+        let immune = condition(PoisonState::Immune {
+            until_lower: (origin + SUPER_ANTIPOISON_IMMUNITY_TICKS) as u16,
+        });
+        for tick in origin..=origin + ORDINARY_ANTIPOISON_IMMUNITY_TICKS {
+            assert_eq!(oracle.observe(tick, immune, true, false), Ok(false));
+        }
+        assert_eq!(
+            oracle.observe(
+                origin + ORDINARY_ANTIPOISON_IMMUNITY_TICKS + 1,
+                immune,
+                true,
+                false
+            ),
+            Ok(true)
+        );
+
+        let mut short_credit = before_drink(SUPER_ANTIPOISON_IMMUNITY_TICKS);
+        assert!(short_credit
+            .observe(
+                origin,
+                condition(PoisonState::Immune {
+                    until_lower: (origin + ORDINARY_ANTIPOISON_IMMUNITY_TICKS) as u16,
+                }),
+                true,
+                false,
+            )
+            .is_err());
+    }
+
+    #[test]
     fn condition_oracle_rejects_death_and_wrong_or_unlatched_onset() {
         for bad in [onset(3, true), onset(11, false), BotCondition::default()] {
-            assert!(PoisonOracle::new(false)
+            assert!(PoisonOracle::new(false, ORDINARY_ANTIPOISON_IMMUNITY_TICKS)
                 .observe(100, bad, false, true)
                 .is_err());
         }
@@ -559,14 +606,14 @@ mod oracle_tests {
             (130, 5, false),
             (130, 6, true),
         ] {
-            let mut oracle = PoisonOracle::new(false);
+            let mut oracle = PoisonOracle::new(false, ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
             oracle.observe(100, onset(11, true), false, true).unwrap();
             assert!(oracle
                 .observe(tick, mark(tick, value, refreshed), false, true)
                 .is_err());
         }
         for (tick, value) in [(159, 6), (161, 6), (160, 5)] {
-            let mut oracle = PoisonOracle::new(false);
+            let mut oracle = PoisonOracle::new(false, ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
             oracle.observe(100, onset(11, true), false, true).unwrap();
             oracle
                 .observe(130, mark(130, 6, false), false, true)
@@ -580,7 +627,7 @@ mod oracle_tests {
     #[test]
     fn condition_oracle_rejects_missing_drink_drop_super_credit_and_early_or_late_expiry() {
         for (line, held, until) in [(false, false, 311), (true, true, 311), (true, false, 761)] {
-            assert!(before_drink()
+            assert!(before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS)
                 .observe(
                     191,
                     condition(PoisonState::Immune { until_lower: until }),
@@ -590,19 +637,19 @@ mod oracle_tests {
                 .is_err());
         }
         let immune = condition(PoisonState::Immune { until_lower: 311 });
-        let mut early = before_drink();
+        let mut early = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
         early.observe(191, immune, true, false).unwrap();
         assert!(early
             .observe(200, condition(PoisonState::Clear), true, false)
             .is_err());
-        let mut late = before_drink();
+        let mut late = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
         late.observe(191, immune, true, false).unwrap();
         assert!(late.observe(312, immune, true, false).is_err());
     }
 
     #[test]
     fn condition_oracle_deposit_keeps_poison_and_rejects_cure_credit() {
-        let oracle = PoisonOracle::new(true);
+        let oracle = PoisonOracle::new(true, ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
         assert!(oracle.deposited(mark(130, 6, false), false).is_ok());
         assert!(oracle.deposited(onset(11, true), false).is_ok());
         for poison in [PoisonState::Clear, PoisonState::Immune { until_lower: 250 }] {
