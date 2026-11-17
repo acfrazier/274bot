@@ -386,7 +386,7 @@ pub enum RequestState {
 }
 
 /// A queued re-read of one store's file
-/// ([`LocalStateService::start_readback`]): the completed-readback count
+/// ([`LocalStateService::queue_readback`]): the completed-readback count
 /// that answers it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReadbackTicket {
@@ -1344,7 +1344,10 @@ impl LocalStateService {
     /// [`Self::finish_readback`] waits for: a read that began after this
     /// call. `NotReady`, with nothing queued, while the preferences' first
     /// import is running on the writer: the read would queue behind a job
-    /// the writer cannot preempt ([`Self::readback_lease`]).
+    /// the writer cannot preempt ([`Self::readback_lease`]). Only the
+    /// fixture-only synchronous preference writer queues a re-read without
+    /// waiting.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn start_readback(
         &self,
         identity: &DomainIdentity,
@@ -1352,11 +1355,12 @@ impl LocalStateService {
         self.queue_readback(identity, None)
     }
 
-    /// [`Self::start_readback`] that waits, when given `wait_until`, outside
-    /// the writer's queue for a first import in flight to end (`NotReady` at
-    /// the deadline, or when the service stops first). The wait and the
-    /// queueing are one critical section: the import cannot begin between
-    /// them.
+    /// Queue a re-read of `identity`'s store. Without `wait_until` it
+    /// returns `NotReady` at once while a first import is in flight; with
+    /// it, it waits outside the writer's queue for that import to end
+    /// (`NotReady` at the deadline, or when the service stops first). The
+    /// wait and the queueing are one critical section: the import cannot
+    /// begin between them.
     fn queue_readback(
         &self,
         identity: &DomainIdentity,
