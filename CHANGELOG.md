@@ -860,6 +860,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   after three windows in a row with a refusal and no hit landing on the target
   (about 24 ticks), the fight ends with `single-way-blocked` instead of
   repeating the click without end.
+- Combat gives a held antipoison a chance to settle before applying the
+  poison-raised no-food stopline. A cure that removes the poison can keep a
+  fight active when food is disabled.
 
 ### Survival
 

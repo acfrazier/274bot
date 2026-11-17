@@ -979,6 +979,101 @@ fn combat_machine_never_policy_keeps_the_cure_and_eats() {
 }
 
 #[test]
+fn combat_machine_cures_before_poison_adjusted_no_food_stopline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.npcs[0].animation = scene.melee_seq();
+    scene.npcs[0].animation_frame = 0;
+    scene.inventory.push(scene.held("4doseantipoison", 0));
+    scene.stat(3, 1, 40);
+    scene.refresh();
+
+    let evidence = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+    let mut threats = ThreatSet::default();
+    threats.observe(&frame, &scene.tables, 1);
+    let danger = threats
+        .danger(&frame, &scene.tables, 1, false, false)
+        .expect("the warlord has known melee danger");
+    let base_lines = select::lines(Some(danger), 40);
+    let hp = base_lines.emergency + 1;
+    let condition = api::condition::BotCondition {
+        tick: 1,
+        session: api::condition::SessionMark::Live,
+        hp: u8::try_from(hp).unwrap(),
+        hp_max: 40,
+        hp_known: true,
+        poison: api::condition::PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        },
+        poison_window: None,
+        food: api::condition::FoodSummary::default(),
+        cures: api::condition::CureDoses {
+            antipoison: 1,
+            ..api::condition::CureDoses::default()
+        },
+    };
+    let poison_fire =
+        crate::survival::math::poison_fire(Some(&condition), &threats, &scene.tables, 1);
+    assert!(hp <= base_lines.with_poison(poison_fire).emergency);
+    scene.stat(3, hp, 40);
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.fallback = Fallback::Abort;
+    request.allow.food = false;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.phase = Phase::Fight;
+    harness.runtime.condition = Some(condition);
+    harness.runtime.poison_unknown_pulse = scene.tables.unknown_poison_pulse();
+
+    assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
+    let cure = harness.drain(None);
+    assert_len(&cure, 1);
+    assert!(
+        matches!(
+            cure.get(0),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == "Antipoison(4)" && action == "Drink"
+        ),
+        "the held cure must be admitted before the poison-adjusted no-food stopline"
+    );
+    assert_eq!(harness.machine.end, None);
+    assert_eq!(harness.machine.phase, Phase::Fight);
+
+    scene.install();
+    scene.refresh();
+    harness.runtime.condition.as_mut().unwrap().tick = 2;
+    assert!(matches!(harness.poll(&scene.snapshot, 2), Poll::Pending));
+    assert_eq!(harness.machine.end, None);
+    assert_eq!(harness.machine.phase, Phase::Fight);
+
+    scene.inventory.clear();
+    scene.refresh();
+    let condition = harness.runtime.condition.as_mut().unwrap();
+    condition.tick = 4;
+    condition.poison = api::condition::PoisonState::Clear;
+    condition.cures.antipoison = 0;
+    assert!(matches!(harness.poll(&scene.snapshot, 4), Poll::Pending));
+    harness.drain(None);
+    assert_eq!(harness.machine.end, None);
+    assert_eq!(harness.machine.phase, Phase::Fight);
+}
+
+#[test]
 fn combat_machine_drinks_antipoison_when_lethal() {
     if !api::test_support::game_data_available() {
         return;
