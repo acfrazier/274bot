@@ -896,6 +896,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Combat gives a held antipoison a chance to settle before applying the
   poison-raised no-food stopline. A cure that removes the poison can keep a
   fight active when food is disabled.
+- Combat preparation waits for a missing desired weapon to appear in the next
+  equipment packet before reporting `prep-failed:weapon`.
 
 ### Survival
 
