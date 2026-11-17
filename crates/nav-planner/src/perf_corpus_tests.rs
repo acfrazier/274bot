@@ -301,13 +301,25 @@ fn taverley_catherby_route_is_monotone_in_permissions() {
     }
 }
 
-/// The batch search names its failure reason per target; a target is either
-/// reached or refused with a stated reason, never silently dropped.
+/// A goal the pack proves unreachable (a blocked tile that no transport edge
+/// lands on) must be refused with a stated reason. A router that returns a
+/// route to it, or drops the goal, fails here.
 #[test]
-fn unreachable_target_fails_closed_with_a_reason() {
+fn pack_proven_unreachable_target_is_refused_with_no_path() {
     let Some(world) = world() else { return };
     let from = tile(3222, 3218, 0);
-    let target = tile(2817, 3443, 0);
+    let is_landing = |t: WorldTile| {
+        world
+            .graph
+            .edges
+            .iter()
+            .chain(&world.graph.teleports)
+            .any(|edge| edge.to == t)
+    };
+    let target = (0..100)
+        .flat_map(|dx| (0..100).map(move |dz| tile(from.x + dx, from.z + dz, 0)))
+        .find(|&t| !world.collision.standable(t) && !is_landing(t))
+        .expect("the pack has a blocked tile near the start that no transport lands on");
     let targets = [target];
     let search = find_many_with(
         &world.collision,
@@ -318,15 +330,21 @@ fn unreachable_target_fails_closed_with_a_reason() {
         &WorldState::empty(),
     );
     assert_eq!(search.results().len(), 1);
-    match &search.results()[0] {
-        Ok(cost) => {
-            let route = search.route(0).expect("a reached target has a route");
-            assert_eq!(route.ticks, cost.ticks);
-            assert_route_is_chain(&route, from, target);
-        }
-        Err(error) => assert!(
-            matches!(error, TargetError::NoPath | TargetError::BudgetExhausted),
-            "a settled search must not report {error:?}"
-        ),
-    }
+    assert_eq!(
+        search.results()[0].as_ref().map(|cost| cost.ticks),
+        Err(&TargetError::NoPath),
+        "blocked, landing-free {target:?} must be refused"
+    );
+    assert_eq!(
+        find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            target,
+            zone_free(),
+            &WorldState::empty(),
+        )
+        .err(),
+        Some(RouteError::NoPath)
+    );
 }
