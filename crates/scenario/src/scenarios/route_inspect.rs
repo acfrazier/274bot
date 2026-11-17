@@ -291,13 +291,97 @@ mod tests {
         );
     }
 
+    /// A client that admits cheats, so a seed closure writes its real
+    /// CLIENT_CHEAT packets to `out`.
+    fn cheat_client() -> Client {
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: crate::NO_CACHE_DIR.into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.set_cheat_admission(client::CheatAdmission::Granted);
+        client
+    }
+
+    /// The text a Perform step's closure writes to the outgoing stream.
+    fn sent_by(step: &Step, client: &mut Client) -> String {
+        let StepKind::Perform { send } = &step.kind else {
+            panic!("{} must be a Perform step", step.name);
+        };
+        let before = client.out.pos;
+        assert!(send(client, &GameSnapshot::new()), "{} send", step.name);
+        String::from_utf8_lossy(&client.out.data()[before..client.out.pos]).into_owned()
+    }
+
     #[test]
     fn v1_bank_coins_and_agility_30_unchanged() {
         let s = brimhaven_moss_inspect_v1_scenario();
-        assert!(s
+        assert_eq!(s.settings.start_script, Some("BrimhavenMossGiants"));
+        let start = s
             .steps
             .iter()
-            .any(|st| st.name.contains("empty pack and Ardougne bank food+coins")));
-        assert_eq!(s.settings.start_script, Some("BrimhavenMossGiants"));
+            .position(|st| st.name == "start the catalog card")
+            .expect("catalog Start");
+        assert!(start >= 2, "the seed and the bank tele come before Start");
+        let (seed, tele) = (&s.steps[start - 2], &s.steps[start - 1]);
+
+        // The seed empties the pack and banks the food and coins; its proof
+        // is the empty pack, not a carried lobster.
+        assert_eq!(
+            seed.wait.arm,
+            Proof::ItemAtMost {
+                name: "Lobster",
+                count: 0,
+            }
+        );
+        let mut client = cheat_client();
+        let sent = sent_by(seed, &mut client);
+        let at = |cmd: &str| {
+            sent.find(cmd)
+                .unwrap_or_else(|| panic!("v1 seed must send {cmd:?}: {sent:?}"))
+        };
+        let clear = at("~clearinv");
+        assert!(clear < at("givebank lobster 28"), "{sent:?}");
+        assert!(clear < at("givebank coins 500"), "{sent:?}");
+        at("setstat agility 30");
+        assert!(
+            !sent.contains("give "),
+            "v1 food and coins go to the bank, never the pack: {sent:?}"
+        );
+
+        // Start happens at the Ardougne SE bank, proven by arrival there.
+        assert_eq!(
+            tele.wait.arm,
+            Proof::ArrivedNear {
+                x: BRIMHAVEN_BANK.x,
+                z: BRIMHAVEN_BANK.z,
+                level: BRIMHAVEN_BANK.level,
+                radius: 6,
+            }
+        );
+        let bank_tele = tele_args(BRIMHAVEN_BANK.level, BRIMHAVEN_BANK.x, BRIMHAVEN_BANK.z);
+        let sent = sent_by(tele, &mut client);
+        assert!(sent.contains(&bank_tele), "{bank_tele:?} in {sent:?}");
+
+        // Nothing after Start seeds or teleports: the pier proof must come
+        // from the card's own walk.
+        for st in &s.steps[start + 1..] {
+            if matches!(st.kind, StepKind::Perform { .. }) {
+                assert_eq!(sent_by(st, &mut client), "", "{} sends nothing", st.name);
+            }
+        }
+        assert_eq!(
+            s.proof,
+            Proof::ArrivedNear {
+                x: BRIMHAVEN_PIER.x,
+                z: BRIMHAVEN_PIER.z,
+                level: BRIMHAVEN_PIER.level,
+                radius: 8,
+            }
+        );
     }
 }

@@ -347,16 +347,45 @@ export default class T extends LoopingBot {
     let mut slot = js_slot(0);
     start_js_running(&mut slot, source, LoadShape::CompatClass, None);
 
-    surface_tick(&mut slot, 1);
-    let _ = probe(&mut slot, "true");
-    let _ = slot.drain_logs();
-    surface_tick(&mut slot, 2);
-    let _ = probe(&mut slot, "true");
-    let _ = slot.drain_logs();
+    // Each iteration counts itself, parks one tick in `delayTicks(1)`, then
+    // fails. A parked iteration must stay the only one: no later iteration
+    // starts until it has resumed and ended.
+    fn after_tick(slot: &mut SlotScript, tick: u64) -> (serde_json::Value, Vec<String>) {
+        surface_tick(slot, tick);
+        let loops = probe(slot, "globalThis.__loops");
+        (loops, slot.drain_logs())
+    }
+    let failure = |tick: u64| format!("tick {tick}: async iteration failure");
 
-    surface_tick(&mut slot, 3);
-    let _ = probe(&mut slot, "true");
-    let _ = slot.drain_logs();
+    let (loops, logs) = after_tick(&mut slot, 1);
+    assert_eq!(loops, serde_json::json!(1), "iteration 1 starts and parks");
+    assert!(logs.is_empty(), "{logs:?}");
+    assert_eq!(slot.last_error(), None);
+
+    let (loops, logs) = after_tick(&mut slot, 2);
+    assert_eq!(
+        loops,
+        serde_json::json!(1),
+        "iteration 1 resumes and fails; no iteration ran while it was parked"
+    );
+    assert_eq!(logs, vec![failure(2)]);
+
+    let (loops, logs) = after_tick(&mut slot, 3);
+    assert_eq!(loops, serde_json::json!(2), "iteration 2 starts and parks");
+    assert!(logs.is_empty(), "{logs:?}");
+    assert_eq!(
+        slot.last_error(),
+        Some(failure(2).as_str()),
+        "starting and parking the next iteration is not a completed success"
+    );
+
+    let (loops, logs) = after_tick(&mut slot, 4);
+    assert_eq!(
+        loops,
+        serde_json::json!(2),
+        "iteration 2 stayed parked until this tick; no third iteration ran"
+    );
+    assert_eq!(logs, vec![failure(4)]);
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
 }
