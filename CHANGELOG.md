@@ -346,6 +346,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The 377 quantity fixture completes the mainland hop and clean relog before
   it seeds materials, so fresh accounts publish inventory updates.
 
+### Survival
+
+- After a super antipoison, the bot now counts 570 game ticks of poison immunity instead of 120.
+
 ## [0.2.9.1] — 2026-11-14 — Beta 2 patch
 
 ### Navigation

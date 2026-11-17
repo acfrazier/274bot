@@ -703,11 +703,11 @@ fn dose_drop_without_line_does_not_clear_poison() {
 }
 
 #[test]
-fn ordinary_and_super_drops_with_line_credit_only_ordinary_bound() {
+fn ordinary_and_super_antipoisons_credit_their_own_immunity_bounds() {
     if !api::test_support::game_data_available() {
         return;
     }
-    for id in [179, 185] {
+    for (id, until_lower) in [(179, 122), (185, 572)] {
         let mut owner = owner();
         let mut snapshot = frame(1);
         inventory(&mut snapshot, 1, &[id]);
@@ -719,9 +719,36 @@ fn ordinary_and_super_drops_with_line_credit_only_ordinary_bound() {
         owner.observe_frame(&snapshot, &drain(true, true), false);
         assert_eq!(
             owner.current().unwrap().poison,
-            PoisonState::Immune { until_lower: 122 }
+            PoisonState::Immune { until_lower }
         );
     }
+}
+
+#[test]
+fn super_antipoison_credit_waits_for_inventory_packet() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut owner = owner();
+    let mut snapshot = frame(0);
+    inventory(&mut snapshot, 1, &[185]);
+    owner.observe_frame(&snapshot, &drain(false, true), false);
+
+    let mut snapshot = frame(3);
+    inventory(&mut snapshot, 1, &[185]);
+    chat(&mut snapshot, 1, DRINK_LINE);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Immune { until_lower: 121 }
+    );
+
+    inventory(&mut snapshot, 2, &[]);
+    owner.observe_frame(&snapshot, &drain(false, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Immune { until_lower: 571 }
+    );
 }
 
 #[test]
@@ -1617,12 +1644,12 @@ fn slot_condition_size_of_pinned() {
             std::mem::size_of::<client::client::ClientGens>(),
             std::mem::size_of::<script::combat::risk::RiskInput>(),
         ),
-        (104, 28, 8, 120, 124),
-        "SlotCondition is 104 B: pending fruit uses existing padding; no allocation"
+        (112, 28, 8, 120, 124),
+        "SlotCondition is 112 B with pending super-drink correlation; no allocation"
     );
     assert!(
-        std::mem::size_of::<SlotCondition>() <= 160,
-        "measured 104 B leaves 56 B under the 160 B owner ceiling"
+        std::mem::size_of::<SlotCondition>() <= 176,
+        "measured 112 B leaves 64 B under the 176 B owner ceiling"
     );
 }
 
