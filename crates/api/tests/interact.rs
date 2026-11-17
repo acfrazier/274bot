@@ -2340,31 +2340,6 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         SendReason::AlreadyIngame,
         SendReason::DriverRejected,
     ];
-    for r in reasons {
-        let label = match r {
-            SendReason::NotAttached => "NotAttached",
-            SendReason::NotIngame => "NotIngame",
-            SendReason::SceneUnavailable => "SceneUnavailable",
-            SendReason::OffScene => "OffScene",
-            SendReason::LevelMismatch => "LevelMismatch",
-            SendReason::StaleTarget => "StaleTarget",
-            SendReason::InvalidAction => "InvalidAction",
-            SendReason::UnsupportedTarget => "UnsupportedTarget",
-            SendReason::ComponentNotVisible => "ComponentNotVisible",
-            SendReason::ClientSideOnly => "ClientSideOnly",
-            SendReason::TargetMaskMismatch => "TargetMaskMismatch",
-            SendReason::CountDialogOpen => "CountDialogOpen",
-            SendReason::NoCountDialog => "NoCountDialog",
-            SendReason::InvalidCount => "InvalidCount",
-            SendReason::NoModalOpen => "NoModalOpen",
-            SendReason::NoContinue => "NoContinue",
-            SendReason::NoChoice => "NoChoice",
-            SendReason::Unreachable => "Unreachable",
-            SendReason::InvalidTab => "InvalidTab",
-            SendReason::AlreadyIngame => "AlreadyIngame",
-            SendReason::DriverRejected => "DriverRejected",
-        };
-    }
     let distinct = reasons.iter().map(discriminant).collect::<HashSet<_>>();
     assert_eq!(
         distinct.len(),

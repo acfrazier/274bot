@@ -11018,6 +11018,15 @@ fn nav_essence_follows_in_and_back_out_to_aubury() {
         },
         _ => panic!("nav_essence step 4 must be Follow"),
     };
+    assert_eq!(
+        dest,
+        WorldTile {
+            x: 2912,
+            z: 4833,
+            level: 0
+        },
+        "the entry follow targets the mine pad"
+    );
     // Step 5 follows out through the exit portal to Aubury's anchor
     // (within the portal's randomised landing radius of 2).
     let (dest, arm) = match &s.steps[4].kind {
