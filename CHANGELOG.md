@@ -5,12 +5,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
-### WalkTo map
-
-- Revision 377 terrain images use the existing client floor and location
-  decoders. Revisions 274 and 289 keep their existing image decoding.
-  This does not add revision 377 catalogue or service-data generation.
-
 ### Scenario observations
 
 - Scenario runners can extract cache-defined varbits with a no-send step.
