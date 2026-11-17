@@ -285,6 +285,17 @@ def matches_any(path: str, globs: list[str]) -> bool:
     return any(matches(path, pattern) for pattern in globs)
 
 
+def _is_exact_test_source_cover(path: str, config: dict[str, Any]) -> bool:
+    return any(
+        pattern.endswith(".rs")
+        and "/tests/" in f"/{pattern}"
+        and not any(character in pattern for character in "*?[]")
+        and matches(path, pattern)
+        for row in config["cover"]
+        for pattern in row["globs"]
+    )
+
+
 def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
     unique_paths = sorted(set(paths))
     live_globs = config["live"]["globs"]
@@ -294,11 +305,17 @@ def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
     not_live: list[str] = []
     unclassified: list[str] = []
     for path in unique_paths:
-        excluded = matches_any(path, excluded_globs) and not matches_any(path, live_exceptions)
+        covered = any(matches_any(path, row["globs"]) for row in config["cover"])
+        exact_test_source = _is_exact_test_source_cover(path, config)
+        excluded = matches_any(path, excluded_globs) and not matches_any(
+            path, live_exceptions
+        )
         is_live = matches_any(path, live_globs)
-        if excluded:
+        if exact_test_source:
+            live_paths.append(path)
+        elif excluded:
             not_live.append(path)
-        elif is_live:
+        elif covered or is_live:
             live_paths.append(path)
         else:
             unclassified.append(path)
@@ -488,20 +505,79 @@ class LiveMapTests(unittest.TestCase):
         self.assertEqual(plan.unclassified, ())
         self.assertEqual(plan.not_live, ("crates/nav/src/router_tests.rs", "tools/check.py"))
 
-    def test_explicit_live_test_exception_overrides_not_live_glob(self) -> None:
-        path = "crates/host-play/tests/survivable_admission_live.rs"
+    def test_exact_test_source_cover_overrides_not_live_glob(self) -> None:
+        path = "crates/host-play/tests/revision_377_live/menu.rs"
         config = validate_map(
             {
-                "live": {"globs": [path]},
-                "not_live": {"globs": ["**/tests/**"], "exceptions": [path]},
-                "cover": [{"globs": [path], "cells": ["host.admission|cargo test --locked -p host-play --test survivable_admission_live real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp"]}],
+                "live": {"globs": ["src/**"]},
+                "not_live": {"globs": ["**/tests/**"]},
+                "cover": [
+                    {
+                        "globs": [path],
+                        "cells": [
+                            "host.menu-377-trade-duel-loc-live|cargo test --locked -p host-play --test revision_377_live -- --ignored --exact menu::trade_duel_loc_menu_377"
+                        ],
+                    }
+                ],
             }
         )
         plan = make_plan([path], config)
-        self.assertEqual([cell.name for cell in plan.cells], ["host.admission"])
+        self.assertEqual(
+            [cell.name for cell in plan.cells],
+            ["host.menu-377-trade-duel-loc-live"],
+        )
         self.assertEqual(plan.not_live, ())
         self.assertEqual(plan.uncovered, ())
+        self.assertEqual(plan.unclassified, ())
 
+    def test_wildcard_covers_and_non_test_exact_covers_stay_not_live(self) -> None:
+        config = load_map()
+        for path in (
+            "crates/script/src/quester/inventory_tests.rs",
+            "Cargo.lock",
+        ):
+            with self.subTest(path=path):
+                plan = make_plan([path], config)
+                self.assertEqual(plan.cells, ())
+                self.assertEqual(plan.uncovered, ())
+                self.assertEqual(plan.unclassified, ())
+                self.assertEqual(plan.not_live, (path,))
+
+    def test_diff_of_live_test_sources_selects_their_cells(self) -> None:
+        config = load_map()
+        with tempfile.TemporaryDirectory(prefix="live-map-test-sources-") as temp:
+            repo = Path(temp)
+            _git(repo, "init", "--quiet")
+            _git(repo, "config", "user.name", "Live Map Test")
+            _git(repo, "config", "user.email", "live-map-test@example.invalid")
+            (repo / "README.md").write_text("base\n", encoding="utf-8")
+            _git(repo, "add", "README.md")
+            _git(repo, "commit", "--quiet", "-m", "base")
+            _git(repo, "branch", "baseline")
+            changed = [
+                "crates/host-play/tests/revision_377_live/menu.rs",
+                "crates/host-play/tests/quester_path_live.rs",
+                "crates/host-play/tests/revision_377_live/cook.rs",
+                "crates/host-play/tests/revision_377_live/quantity.rs",
+                "crates/host-play/tests/revision_377_live/varbit.rs",
+            ]
+            for relative in changed:
+                target = repo / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("changed\n", encoding="utf-8")
+            _git(repo, "add", *changed)
+            _git(repo, "commit", "--quiet", "-m", "change test sources")
+            paths = diff_paths("baseline..HEAD", repo)
+            plan = make_plan(paths, config)
+        selected = {cell.name for cell in plan.cells}
+        self.assertIn("host.menu-377-trade-duel-loc-live", selected)
+        self.assertIn("host.quester-path-engine-q", selected)
+        self.assertIn("host.receipt-377-cook-raster-live", selected)
+        self.assertIn("host.quantity-377-make-x-live", selected)
+        self.assertIn("host.varbit-377-known-missing-live", selected)
+        self.assertEqual(plan.not_live, ())
+        self.assertEqual(plan.uncovered, ())
+        self.assertEqual(plan.unclassified, ())
     def test_commands_deduplicate_by_command(self) -> None:
         config = validate_map(
             {

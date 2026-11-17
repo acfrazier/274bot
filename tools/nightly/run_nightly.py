@@ -2294,6 +2294,9 @@ def private_dirs(home: Path, tmp: Path) -> dict:
 
 def base_env() -> dict:
     env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")}
+    quiet_lock = os.environ.get("NIGHTLY_QUIET_LOCK")
+    if quiet_lock:
+        env["NIGHTLY_QUIET_LOCK"] = quiet_lock
     if IS_WINDOWS:
         upper = {key.upper(): value for key, value in os.environ.items()}
         env.update({key: upper[key] for key in WINDOWS_SYSTEM_ENV if key in upper})
