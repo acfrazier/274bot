@@ -2799,6 +2799,10 @@ fn settle_preferences(session: &mut TuiSession, app: &mut TuiApp) {
     const WAIT: Duration = Duration::from_secs(60);
     let deadline = Instant::now() + WAIT;
     loop {
+        assert!(
+            Instant::now() < deadline,
+            "the preference writes did not settle within {WAIT:?}"
+        );
         session.pump(app);
         if !session.core.preferences_pending() {
             // Projection precedes core polling, so deliver the settled snapshot next frame.
