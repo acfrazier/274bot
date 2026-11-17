@@ -1074,6 +1074,8 @@ struct UnsettledItem {
     /// pack. A later increase conserves it when a non-bank cell's supply trip
     /// deposits it.
     bank_before: Option<BTreeMap<i32, i32>>,
+    /// A consumed pickaxe part must produce a fresh restored tool, not vanish.
+    pickaxe_replacement: Option<(i32, i32)>,
 }
 
 /// How long an item that left the pack may stay unaccounted (not back in
@@ -1287,6 +1289,38 @@ impl Observation {
     fn has_loc(&self, id: i32, tile: WorldTile) -> bool {
         self.loc_ids.contains(&(id, tile.x, tile.z, tile.level))
     }
+}
+
+// macro_event_lost_pickaxe.rs2:32-39 consumes a head and handle into its fixed
+// pickaxe; antimacro.obj:223-309 and content/pack/obj.pack supply these pairs.
+const PICKAXE_REPAIRS: &[(i32, i32)] = &[
+    (480, 1265),
+    (482, 1267),
+    (484, 1269),
+    (486, 1273),
+    (488, 1271),
+    (490, 1275),
+];
+
+fn pickaxe_replacement(item: InvRow, previous: &Observation) -> Option<(i32, i32)> {
+    let &(head, fixed) = PICKAXE_REPAIRS.iter().find(|&&(head, _)| {
+        item.id == head || item.id == 466 && previous.inventory.values().any(|row| row.id == head)
+    })?;
+    let parts = previous
+        .inventory
+        .values()
+        .filter(|row| row.id == head || row.id == 466)
+        .count();
+    if item.count != 1 || parts != 2 {
+        return None;
+    }
+    let before = previous
+        .inventory
+        .values()
+        .filter(|row| row.id == fixed)
+        .map(|row| row.count)
+        .sum();
+    Some((fixed, before))
 }
 
 fn aggregate_item_counts(items: impl IntoIterator<Item = (i32, i32)>) -> BTreeMap<i32, i32> {
@@ -1941,7 +1975,9 @@ struct Witness {
     edge_initial_distance: Option<i32>,
     auto_selected_next: bool,
     gas_hazard_seeded: bool,
+    gas_command_confirmed: bool,
     gas_hazard_observed: bool,
+    gas_native_end: Option<GasHazardEnd>,
     gas_hazard_escaped: bool,
     fish_targets: BTreeSet<FishTarget>,
     moved_spot_reacquired: bool,
@@ -2298,15 +2334,69 @@ fn relog_steps_in_order(steps: &[String], fired_step: &str) -> bool {
     next.is_none()
 }
 
-/// Host-log lines of one `BankTripRelog` run: the Gatherer's recovery lines,
-/// the bank machine's reopen lines and the session lines around the cut.
-struct RelogCapture(Mutex<Vec<String>>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GasHazardEnd {
+    tick: u32,
+    rock_id: i32,
+    tile: WorldTile,
+}
 
-static RELOG_CAPTURE: RelogCapture = RelogCapture(Mutex::new(Vec::new()));
+fn parse_gas_hazard_end(message: &str, tick: u32) -> Option<GasHazardEnd> {
+    let target = message
+        .strip_prefix("gather-approach clear reason=gather-end end=Hazard target=Some((Loc(")?;
+    let (id, target) = target.split_once("), WorldTile { x: ")?;
+    let (x, target) = target.split_once(", z: ")?;
+    let (z, level) = target.split_once(", level: ")?;
+    Some(GasHazardEnd {
+        tick,
+        rock_id: id.parse().ok()?,
+        tile: WorldTile {
+            x: x.parse().ok()?,
+            z: z.parse().ok()?,
+            level: level.strip_suffix(" }))")?.parse().ok()?,
+        },
+    })
+}
 
-impl api::hostlog::Sink for RelogCapture {
+/// Keep the real native hazard target and the relog cell's recovery trail.
+struct LiveCapture {
+    relog: Mutex<Vec<String>>,
+    gas: Mutex<BTreeMap<String, GasHazardEnd>>,
+}
+
+static LIVE_CAPTURE: LiveCapture = LiveCapture {
+    relog: Mutex::new(Vec::new()),
+    gas: Mutex::new(BTreeMap::new()),
+};
+
+impl LiveCapture {
+    fn gas_end(&self, account: &str) -> Option<GasHazardEnd> {
+        self.gas.lock().ok()?.get(account).copied()
+    }
+}
+
+impl api::hostlog::Sink for LiveCapture {
+    fn test_nav_trace_enabled(&self) -> bool {
+        true
+    }
+
     fn record(&self, record: &api::hostlog::Record<'_>) {
         let message = record.message;
+        if record.source == api::hostlog::Source::Nav {
+            if let (Some(account), Some(end)) = (
+                record.slot,
+                record
+                    .tick
+                    .and_then(|tick| parse_gas_hazard_end(message, tick)),
+            ) {
+                if let Ok(mut gas) = self.gas.lock() {
+                    // Each live cell has at most a subject and one helper.
+                    if gas.len() < 2 || gas.contains_key(account) {
+                        gas.insert(account.to_owned(), end);
+                    }
+                }
+            }
+        }
         if [
             "gatherer-bank-",
             "bank-reopen",
@@ -2320,7 +2410,7 @@ impl api::hostlog::Sink for RelogCapture {
         .iter()
         .any(|prefix| message.starts_with(prefix))
         {
-            if let Ok(mut lines) = self.0.lock() {
+            if let Ok(mut lines) = self.relog.lock() {
                 lines.push(format!("{} {message}", record.slot.unwrap_or("-")));
             }
         }
@@ -2328,8 +2418,8 @@ impl api::hostlog::Sink for RelogCapture {
 }
 
 fn relog_log() -> Vec<String> {
-    RELOG_CAPTURE
-        .0
+    LIVE_CAPTURE
+        .relog
         .lock()
         .map(|lines| lines.clone())
         .unwrap_or_default()
@@ -2668,6 +2758,26 @@ impl GatherSlot {
             tile: latest.and_then(|row| row.tile),
             nearest_live_iron,
         }
+    }
+
+    fn observe_gas_hazard_end(&mut self, end: GasHazardEnd) {
+        if self.case != LiveCase::GasHazard || self.witness.gas_hazard_observed {
+            return;
+        }
+        let Some(hazard) = self.plan.inject_after_progress else {
+            return;
+        };
+        let expected_rock = match hazard.id {
+            2121 => 2092,
+            2122 => 2093,
+            _ => return,
+        };
+        if end.rock_id != expected_rock || end.tile != hazard.tile {
+            return;
+        }
+        self.witness.gas_native_end = Some(end);
+        self.witness.gas_hazard_observed = true;
+        self.witness.gas_hazard_start_tile = self.latest.as_ref().and_then(|row| row.tile);
     }
 
     fn fixture_ready(&self) -> bool {
@@ -3319,15 +3429,15 @@ impl GatherSlot {
         }
     }
 
-    /// Places the gas hazard loc beside the subject's iron rock with the
-    /// engine's `~loc` debug cheat once the subject has mined at least once.
+    /// After a real yield, the helper teleports itself onto the live rock, then
+    /// calls cheat_skill_macro_event.rs2:67-76 (gas only, no random selector).
     fn advance_inject_fixture(
         &mut self,
         client: &mut client::client::Client,
         progress: &FixtureProgress,
     ) -> Result<(), String> {
         let Some(FixtureTask::InjectAfterProgress {
-            seed,
+            mut seed,
             mut tile,
             mut return_to,
             mut stage,
@@ -3364,7 +3474,18 @@ impl GatherSlot {
             FixtureStage::Place => {
                 if let Some(target) = tile {
                     if progress.nearest_live_iron == Some(target) {
-                        send_cheat(client, &format!("~loc {}", seed.alias))?;
+                        // Standing on the real rock makes it the unique nearest
+                        // eligible loc (cheat_skill_macro_event.rs2:145-166).
+                        seed.id = if self
+                            .latest
+                            .as_ref()
+                            .is_some_and(|row| row.has_loc(2093, target))
+                        {
+                            2122
+                        } else {
+                            GAS_HAZARD_LOC_ID
+                        };
+                        send_cheat(client, "~skill_macro_event 4")?;
                         self.plan.inject_after_progress = Some(LocSeed {
                             tile: target,
                             ..seed
@@ -3378,11 +3499,20 @@ impl GatherSlot {
                 }
             }
             FixtureStage::WaitLoc => {
-                if tile.is_some_and(|target| {
-                    self.latest
-                        .as_ref()
-                        .is_some_and(|row| row.has_loc(seed.id, target))
-                }) {
+                for line in self.snapshot.chat_lines() {
+                    if line.text == "skill_macro_event 4: gas." {
+                        self.witness.gas_command_confirmed = true;
+                    } else if line.text.starts_with("skill_macro_event 4:") {
+                        return Err(format!("gas fixture refused: {}", line.text));
+                    }
+                }
+                if self.witness.gas_command_confirmed
+                    && tile.is_some_and(|target| {
+                        self.latest
+                            .as_ref()
+                            .is_some_and(|row| row.has_loc(seed.id, target))
+                    })
+                {
                     if return_to.is_some() {
                         stage = FixtureStage::Return;
                     } else {
@@ -3603,6 +3733,17 @@ impl GatherSlot {
                     && wish_granted
                         .take_if(|granted| *granted >= unsettled.left_in)
                         .is_some())
+                && !unsettled
+                    .pickaxe_replacement
+                    .is_some_and(|(fixed, before)| {
+                        observation
+                            .inventory
+                            .values()
+                            .filter(|item| item.id == fixed)
+                            .map(|item| item.count)
+                            .sum::<i32>()
+                            > before
+                    })
         });
         self.witness.last_wish_granted = wish_granted;
         self.record_g2_observation(previous.as_ref(), &observation);
@@ -3655,6 +3796,7 @@ impl GatherSlot {
                                     since: Instant::now(),
                                     left_in: observation.captured_at,
                                     bank_before: self.bank_counts_before.clone(),
+                                    pickaxe_replacement: None,
                                 },
                             );
                         } else {
@@ -3674,6 +3816,7 @@ impl GatherSlot {
                                 since: Instant::now(),
                                 left_in: observation.captured_at,
                                 bank_before: self.bank_counts_before.clone(),
+                                pickaxe_replacement: pickaxe_replacement(*old, &previous),
                             });
                     }
                 }
@@ -3995,7 +4138,11 @@ impl GatherSlot {
                             (tile.0 - hazard.0).abs().max((tile.1 - hazard.1).abs())
                         }
                     };
-                    if current != start && distance(current) > distance(start) {
+                    if !self.witness.gas_hazard_escaped
+                        && current != start
+                        && distance(current) > distance(start)
+                    {
+                        self.witness.gas_hazard_xp_start = observation.xp;
                         self.witness.gas_hazard_escaped = true;
                     }
                 }
@@ -5054,15 +5201,6 @@ impl GatherSlot {
                         .get_or_insert(latest.tick);
                 }
             }
-            if self.case == LiveCase::GasHazard
-                && (event.contains("hazard observed") || event == "walking away from hazard")
-            {
-                self.witness.gas_hazard_observed = true;
-                if self.witness.gas_hazard_start_tile.is_none() {
-                    self.witness.gas_hazard_start_tile =
-                        self.latest.as_ref().and_then(|row| row.tile);
-                }
-            }
             if self.case == LiveCase::OakNearEdge
                 && native_phase == "Waiting"
                 && event == "waiting for a resource"
@@ -5571,7 +5709,8 @@ impl GatherSlot {
                     .plan
                     .inject_after_progress
                     .map(|seed| tile_key(seed.tile));
-                if !self.witness.gas_hazard_seeded
+                if !self.witness.gas_command_confirmed
+                    || !self.witness.gas_hazard_seeded
                     || !self.witness.gas_hazard_observed
                     || self.witness.gas_hazard_tile != expected_hazard
                     || !self.witness.gas_hazard_escaped
@@ -6555,7 +6694,9 @@ fn fixture_plan(
         LiveCase::LocationAuto => fixture_tile("GATHERER_AUTO_START_TILE", AUTO_START)?,
         LiveCase::GasHazard => {
             let tile = fixture_tile("GATHERER_GAS_TILE", GAS_START)?;
-            plan.inject_after_progress = Some(seed(tile, "macro_ironrock1", GAS_HAZARD_LOC_ID));
+            // Expected identity only. The helper calls the content's gas proc;
+            // it never seeds a loc or arms the random mining-event selector.
+            plan.inject_after_progress = Some(seed(tile, "ironrock1", GAS_HAZARD_LOC_ID));
             tile
         }
         LiveCase::WoodcuttingBank
@@ -6868,7 +7009,9 @@ fn run_cell_with_fixture(
         .unwrap_or(45594);
     let relay = (case == LiveCase::BankTripRelog && relog.dead_server)
         .then(|| relog_relay::Relay::start(upstream_port));
-    if case == LiveCase::BankTripRelog && !api::hostlog::install_sink(&RELOG_CAPTURE) {
+    if matches!(case, LiveCase::BankTripRelog | LiveCase::GasHazard)
+        && !api::hostlog::install_sink(&LIVE_CAPTURE)
+    {
         return Err("run this live cell in its own test process".into());
     }
     let (profile, template) = selected_profile(
@@ -7032,6 +7175,8 @@ fn run_cell_with_fixture(
                         if let Ok(mut main) = frame_state.lock() {
                             if helper.case == LiveCase::GasHazard {
                                 main.plan.inject_after_progress = helper.plan.inject_after_progress;
+                                main.witness.gas_command_confirmed =
+                                    helper.witness.gas_command_confirmed;
                             }
                             main.witness.fixture_chop_observed |=
                                 helper.witness.fixture_chop_observed;
@@ -7172,6 +7317,11 @@ fn run_cell_with_fixture(
                 }
             }
             if let Ok(mut slot) = frame_state.lock() {
+                if case == LiveCase::GasHazard && !slot.witness.gas_hazard_observed {
+                    if let Some(end) = LIVE_CAPTURE.gas_end(username) {
+                        slot.observe_gas_hazard_end(end);
+                    }
+                }
                 slot.frame(client, hold, None);
                 if case == LiveCase::DeathReturnRefused
                     && slot.witness.death_recovery_command_sent > 0
@@ -8490,6 +8640,11 @@ fn run_cell_with_fixture(
             "gas_hazard_xp_after_escape": witness.gas_hazard_xp_after_escape,
             "driver_trace": "host debug enabled; inspect native-packet account/tick/count lines",
     });
+    fixture_receipt["gas_command_confirmed"] = witness.gas_command_confirmed.into();
+    fixture_receipt["gas_native_end"] = witness
+        .gas_native_end
+        .map(|end| json!({"tick": end.tick, "rock_id": end.rock_id, "tile": end.tile}))
+        .into();
     if case == LiveCase::BankCostSeersMaple {
         fixture_receipt["non_catalog_booth_trip"] = json!({
             "origin": target,
@@ -9022,7 +9177,7 @@ fn gatherer_wc_area_no_placement() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, GATHERER_GAS_TILE, the engine's ~loc and ~tele debug cheats and local 289 engine"]
+#[ignore = "requires LIVE=1, GATHERER_GAS_TILE, modified 289 engine with ~skill_macro_event 4 and ~tele debug cheats"]
 fn gatherer_mine_gas_hazard() {
     run_cell(Cell::Mining, LiveCase::GasHazard).unwrap();
 }
@@ -10434,6 +10589,69 @@ mod bank_conservation_tests {
     fn age_unsettled(slot: &mut GatherSlot) {
         for item in slot.unsettled_items.values_mut() {
             item.since = Instant::now().checked_sub(Duration::from_secs(3)).unwrap();
+        }
+    }
+
+    #[test]
+    fn pickaxe_parts_settle_only_against_a_fresh_matching_tool() {
+        for &(head, fixed) in PICKAXE_REPAIRS {
+            let mut slot = GatherSlot::new(
+                Cell::Mining,
+                LiveCase::GasHazard,
+                GAS_START,
+                FixturePlan::default(),
+                None,
+                false,
+            );
+            slot.snapshot
+                .seed_inventory(inventory_rows(&[(466, 1), (head, 1)]), 28);
+            let before = slot.capture();
+            slot.snapshot
+                .seed_inventory(inventory_rows(&[(fixed, 1)]), 28);
+            let repaired = slot.capture();
+            slot.observe_running(Some(before), repaired.clone())
+                .unwrap();
+            assert!(slot.unsettled_items.contains_key(&(head, 1)));
+            slot.observe_running(Some(repaired.clone()), repaired)
+                .unwrap();
+            assert!(
+                slot.unsettled_items.is_empty(),
+                "head {head} -> tool {fixed}"
+            );
+        }
+    }
+
+    #[test]
+    fn pickaxe_conservation_rejects_loss_wrong_tool_and_preexisting_tool() {
+        for (before_items, after_items) in [
+            (vec![(466, 1), (484, 1)], vec![(466, 1)]),
+            (vec![(466, 1), (484, 1)], vec![(1267, 1)]),
+            (vec![(466, 1), (484, 1), (1269, 1)], vec![(1269, 1)]),
+            (vec![(1265, 1), (484, 1)], vec![(1269, 1)]),
+        ] {
+            let mut slot = GatherSlot::new(
+                Cell::Mining,
+                LiveCase::GasHazard,
+                GAS_START,
+                FixturePlan::default(),
+                None,
+                false,
+            );
+            slot.snapshot
+                .seed_inventory(inventory_rows(&before_items), 28);
+            let before = slot.capture();
+            slot.snapshot
+                .seed_inventory(inventory_rows(&after_items), 28);
+            let after = slot.capture();
+            slot.observe_running(Some(before), after.clone()).unwrap();
+            age_unsettled(&mut slot);
+            let error = slot
+                .observe_running(Some(after.clone()), after)
+                .unwrap_err();
+            assert!(
+                error.contains("id 484 count 1 was not conserved"),
+                "{error}"
+            );
         }
     }
 
@@ -12229,6 +12447,150 @@ mod gatherer_real_content_fixture_tests {
         assert!(random_plan.bank_seed.is_empty());
         assert!(random_plan.inject_after_progress.is_none());
         assert!(random_task.is_none());
+    }
+
+    #[test]
+    fn gas_native_trace_requires_the_account_and_exact_hazard_target() {
+        use api::hostlog::{Level, Record, Sink, Source};
+
+        let capture = LiveCapture {
+            relog: Mutex::new(Vec::new()),
+            gas: Mutex::new(BTreeMap::new()),
+        };
+        let message = "gather-approach clear reason=gather-end end=Hazard target=Some((Loc(2093), WorldTile { x: 3295, z: 3309, level: 0 }))";
+        let record = Record {
+            slot: Some("alice"),
+            tick: Some(21),
+            source: Source::Nav,
+            level: Level::Debug,
+            message,
+        };
+        capture.record(&Record {
+            source: Source::Script,
+            ..record
+        });
+        assert!(capture.gas_end("alice").is_none());
+        capture.record(&Record {
+            tick: None,
+            ..record
+        });
+        assert!(capture.gas_end("alice").is_none());
+        capture.record(&record);
+        let end = capture.gas_end("alice").unwrap();
+        assert!(capture.gas_end("bob").is_none());
+        assert_eq!(end.tick, 21);
+        assert_eq!(end.rock_id, 2093);
+        assert_eq!(
+            end.tile,
+            WorldTile {
+                x: 3295,
+                z: 3309,
+                level: 0
+            }
+        );
+        assert!(parse_gas_hazard_end(
+            "gather-approach clear reason=gather-end end=Depleted target=None",
+            21,
+        )
+        .is_none());
+        capture.record(&Record {
+            slot: Some("bob"),
+            ..record
+        });
+        capture.record(&Record {
+            slot: Some("carol"),
+            ..record
+        });
+        assert!(capture.gas_end("bob").is_some());
+        assert!(
+            capture.gas_end("carol").is_none(),
+            "the trace buffer is capped"
+        );
+
+        let (_, mut plan, _) = fixture_plan(Cell::Mining, LiveCase::GasHazard).unwrap();
+        plan.inject_after_progress.as_mut().unwrap().tile = end.tile;
+        let mut slot = GatherSlot::new(
+            Cell::Mining,
+            LiveCase::GasHazard,
+            GAS_START,
+            plan,
+            None,
+            false,
+        );
+        // A real Hazard end for ironrock2 is not evidence for injected ironrock1.
+        slot.observe_gas_hazard_end(end);
+        assert!(!slot.witness.gas_hazard_observed);
+        slot.plan.inject_after_progress.as_mut().unwrap().id = 2122;
+        slot.observe_gas_hazard_end(GasHazardEnd {
+            tile: WorldTile {
+                x: end.tile.x + 1,
+                ..end.tile
+            },
+            ..end
+        });
+        assert!(!slot.witness.gas_hazard_observed);
+        slot.observe_gas_hazard_end(end);
+        assert_eq!(slot.witness.gas_native_end, Some(end));
+        assert!(slot.witness.gas_hazard_observed);
+    }
+
+    #[test]
+    fn gas_oracle_requires_direct_spawn_escape_and_fresh_yield() {
+        let (_, plan, _) = fixture_plan(Cell::Mining, LiveCase::GasHazard).unwrap();
+        let mut slot = GatherSlot::new(
+            Cell::Mining,
+            LiveCase::GasHazard,
+            GAS_START,
+            plan,
+            None,
+            false,
+        );
+        let mut observation = slot.capture();
+        observation.xp = 10;
+        observation.tile = Some((GAS_START.x - 1, GAS_START.z, 0));
+        observation
+            .loc_ids
+            .insert((GAS_HAZARD_LOC_ID, GAS_START.x, GAS_START.z, GAS_START.level));
+        slot.record_g2_observation(None, &observation);
+        assert!(
+            slot.qualifies().is_err(),
+            "a visible gas rock without the native Hazard end is not a pass"
+        );
+        slot.observe_gas_hazard_end(GasHazardEnd {
+            tick: observation.tick,
+            rock_id: 2092,
+            tile: GAS_START,
+        });
+        slot.record_g2_observation(None, &observation);
+        assert!(
+            slot.qualifies().is_err(),
+            "a visible gas rock alone is not a pass"
+        );
+        observation.xp += 1;
+        slot.record_g2_observation(None, &observation);
+        assert!(
+            slot.qualifies().is_err(),
+            "yield without escape is not a pass"
+        );
+        observation.tile = Some((GAS_START.x - 2, GAS_START.z, 0));
+        slot.record_g2_observation(None, &observation);
+        assert!(
+            slot.qualifies().is_err(),
+            "escape without fresh yield is not a pass"
+        );
+        observation.xp += 1;
+        slot.record_g2_observation(None, &observation);
+        assert!(
+            slot.qualifies().is_err(),
+            "natural gas without direct-spawn confirmation is not a pass"
+        );
+        slot.witness.gas_command_confirmed = true;
+        assert!(slot.qualifies().is_ok());
+        slot.witness.gas_hazard_tile = Some((0, 0, 0));
+        assert!(
+            slot.qualifies().is_err(),
+            "gas at a different rock is not the injected event"
+        );
     }
 
     #[test]

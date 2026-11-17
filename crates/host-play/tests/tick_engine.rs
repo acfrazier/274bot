@@ -78,8 +78,8 @@ const STALE_MENU_BUDGET: u32 = 4;
 const SPLIT_OPENER_BUDGET: u32 = 4;
 const LATE_RIVER_BUDGET: u32 = 5;
 const LATE_IRON_BUDGET: u32 = 5;
-const NATURAL_IRON_ROLL_BUDGET: u32 = 600;
-const IRON_ROLL_OPPORTUNITY_LIMIT: usize = 32;
+// Iron respawns after 20 ticks before player-count scaling; 600 edges span 30 base respawns, not a random-roll count (skill_mining/configs/mine.dbrow:58-72; skill_mining/scripts/mining.rs2:201-213).
+const IRON_DISPATCH_BUDGET: u32 = 600;
 const COPPER_BUDGET: u32 = 4;
 const HOST_REFUSAL_BUDGET: u32 = 1;
 const MAKE_WITHOUT_CLICK_BUDGET: u32 = 3;
@@ -252,8 +252,11 @@ impl Scenario {
             name,
             skill: "Mining",
             skill_index: 14,
-            // The real mithril tool starts at 21; this cell needs a failed roll.
-            level: 21,
+            // Iron uses (low, high) = (96, 350); STAT_RANDOM at Mining 99
+            // yields 351 > every 0..255 draw. Gems continue to op3 instead
+            // of testing that roll (mining.rs2:187-213; mine.dbrow:71;
+            // engine/script/handlers/PlayerOps.ts:591-599).
+            level: 99,
             resource: ResourceKind::Iron,
             target: mining_start()?,
             tool: item("mithril_pickaxe", MITHRIL_PICKAXE_ID, 1),
@@ -297,7 +300,7 @@ impl Scenario {
     fn with_mutation(mut self, mutation: DispatchMutation) -> Self {
         self.use_proxy |= matches!(
             &mutation,
-            DispatchMutation::Transport(_) | DispatchMutation::HoldOnFreshMiningRoll { .. }
+            DispatchMutation::Transport(_) | DispatchMutation::HoldNextKnifeArm
         );
         self.mutations.push(mutation);
         self
@@ -2554,82 +2557,27 @@ fn iron_roll_on_edge(trace: &TickEngineTrace, tick: u64) -> bool {
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IronPrecondition {
-    Waiting {
-        opportunities: usize,
-    },
-    Selected {
-        request_id: u64,
-        roll_tick: u64,
-        opportunities: usize,
-    },
-    NoEligibleFailure {
-        opportunities: usize,
-    },
-    GuardExhausted {
-        opportunities: usize,
-    },
-    SelectionMissing {
-        roll_tick: u64,
-        opportunities: usize,
-    },
-}
-
-fn iron_precondition(
+fn held_knife_dispatch(
     trace: &TickEngineTrace,
-    selected_request: Option<u64>,
-    start: u32,
-    current: u32,
-) -> IronPrecondition {
-    let mut opportunities = 0;
-    let mut previous_tick = None;
-    for frame in &trace.frames {
-        let tick = u64::from(frame.game_tick);
-        if !frame.tick_edge
-            || frame.game_tick < start
-            || frame.game_tick.saturating_sub(start) > NATURAL_IRON_ROLL_BUDGET
-            || previous_tick == Some(tick)
-            || !iron_roll_on_edge(trace, tick)
-            || has_chat_in_tick(trace, tick, |line| {
-                line.contains("You swing your pick at the rock.")
-            })
-        {
-            continue;
-        }
-        previous_tick = Some(tick);
-        opportunities += 1;
-        let success = has_chat_in_tick(trace, tick, |line| {
-            line.contains("You manage to mine some iron.")
-        });
-        if !success {
-            if let Some(dispatch) = trace.dispatches.iter().find(|dispatch| {
-                Some(dispatch.receipt.request_id) == selected_request && dispatch.game_tick == tick
-            }) {
-                return IronPrecondition::Selected {
-                    request_id: dispatch.receipt.request_id,
-                    roll_tick: tick,
-                    opportunities,
-                };
-            }
-            // The receipt may still be in flight in this same host window.
-            if u64::from(current) > tick {
-                return IronPrecondition::SelectionMissing {
-                    roll_tick: tick,
-                    opportunities,
-                };
-            }
-            return IronPrecondition::Waiting { opportunities };
-        }
-        if opportunities == IRON_ROLL_OPPORTUNITY_LIMIT {
-            return IronPrecondition::NoEligibleFailure { opportunities };
-        }
-    }
-    if current.saturating_sub(start) >= NATURAL_IRON_ROLL_BUDGET {
-        IronPrecondition::GuardExhausted { opportunities }
-    } else {
-        IronPrecondition::Waiting { opportunities }
-    }
+    transport: &[ProxyObservation],
+) -> Option<DispatchObservation> {
+    trace
+        .dispatches
+        .iter()
+        .find(|dispatch| {
+            is_knife_arm(dispatch)
+                && transport.iter().any(|observation| {
+                    observation.request_id == dispatch.receipt.request_id
+                        && observation.mutation == "HoldThroughNextEdge"
+                        && observation.release_edge_tick
+                            == observation.start_game_tick.checked_add(1)
+                        && observation
+                            .released_host_frame
+                            .zip(observation.release_edge_frame)
+                            .is_some_and(|(released, edge)| released > edge)
+                })
+        })
+        .cloned()
 }
 
 fn validate_late_iron_history(
@@ -4026,9 +3974,7 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
 
     let iron = Scenario::iron("tick-late-iron")
         .unwrap_or_else(|error| panic!("{error}"))
-        .with_mutation(DispatchMutation::HoldOnFreshMiningRoll {
-            sequence: MITHRIL_PICK_ANIMATION,
-        });
+        .with_mutation(DispatchMutation::HoldNextKnifeArm);
     run_case(iron, |run| {
         let native_start = run
             .baseline
@@ -4038,47 +3984,27 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         run.wait_until(native_start, STARTUP_EDGE_BUDGET, |trace, _| {
             tick_startup::native_click_within(trace, native_start, STARTUP_EDGE_BUDGET)
         })?;
-        let selection = Arc::clone(&run.hook);
+        // Hold the first real KnifeArm, not a failed-roll follow-up.
+        // Both gem and ore outcomes remain valid (mining.rs2:187-213).
         let start = run.hook.observed_game_tick();
-        let mut precondition = IronPrecondition::Waiting { opportunities: 0 };
-        run.wait_until(start, NATURAL_IRON_ROLL_BUDGET, |trace, _| {
-            let current = trace.frames.last().map_or(start, |frame| frame.game_tick);
-            precondition = iron_precondition(trace, selection.fresh_roll_request_id(), start, current);
-            !matches!(precondition, IronPrecondition::Waiting { .. })
-        })?;
-        let (request_id, selected_tick, opportunities) = match precondition {
-            IronPrecondition::Selected { request_id, roll_tick, opportunities } => {
-                (request_id, roll_tick, opportunities)
-            }
-            IronPrecondition::NoEligibleFailure { opportunities } => return Err(run.failure(format!(
-                "chance precondition: no eligible failed roll in {opportunities} observed opportunities; p <= 4.07e-8, not a late-acceptance result"
-            ))),
-            IronPrecondition::GuardExhausted { opportunities } => return Err(run.failure(format!(
-                "scheduling/target precondition: only {opportunities} observed opportunities by the fixed {NATURAL_IRON_ROLL_BUDGET}-edge guard; not a chance or late-acceptance result"
-            ))),
-            IronPrecondition::SelectionMissing { roll_tick, opportunities } => return Err(run.failure(format!(
-                "scheduling precondition: eligible failed roll at {roll_tick}, opportunity {opportunities}, has no selected held request"
-            ))),
-            IronPrecondition::Waiting { .. } => unreachable!("wait stopped on a terminal precondition"),
-        };
-        println!("TICK-MANIP iron precondition selected real failed roll R={selected_tick}, request={request_id}, observed_opportunities={opportunities}; fixed_guard={NATURAL_IRON_ROLL_BUDGET}, limit={IRON_ROLL_OPPORTUNITY_LIMIT}");
-        let first = run.hook.trace().dispatches.into_iter()
-            .find(|dispatch| dispatch.receipt.request_id == request_id)
-            .ok_or_else(|| run.failure("selected Mining-roll receipt disappeared"))?;
-        assert_batch(run, &first, 3, 4)?;
-        debug_assert_eq!(first.game_tick, selected_tick);
-        let release_edge_tick = selected_tick as u32 + 1;
         let held_proxy = run
             .proxy
             .as_ref()
             .cloned()
-            .ok_or_else(|| run.failure("iron roll hold requires the real loopback proxy"))?;
-        run.wait_until(selected_tick as u32, LATE_IRON_BUDGET, |_, _| {
-            held_proxy.observations().iter().any(|observation| {
-                observation.request_id == request_id
-                    && observation.release_edge_tick == Some(release_edge_tick)
-            })
+            .ok_or_else(|| run.failure("iron KnifeArm hold requires the real loopback proxy"))?;
+        let mut first = None;
+        run.wait_until(start, IRON_DISPATCH_BUDGET, |trace, _| {
+            first = held_knife_dispatch(trace, &held_proxy.observations());
+            first.is_some()
         })?;
+        let first = first.ok_or_else(|| run.failure("no released held iron KnifeArm dispatch"))?;
+        let request_id = first.receipt.request_id;
+        let selected_tick = first.game_tick;
+        println!(
+            "TICK-MANIP iron late-acceptance selected real held KnifeArm R={selected_tick}, request={request_id}; mining outcome is not a gate"
+        );
+        assert_batch(run, &first, 3, 4)?;
+        let release_edge_tick = selected_tick as u32 + 1;
         assert_held_batch(
             run,
             request_id,
@@ -4093,12 +4019,12 @@ fn tick_engine_plain_late_river_and_mithril_iron() {
         let origin = first.game_tick;
         run.wait_until(origin as u32, LATE_IRON_BUDGET, |trace, statuses| {
             validate_late_iron_history(trace, statuses, origin).is_ok()
-        }).map_err(|error| format!("late-acceptance failed after its selected-roll precondition: {error}"))?;
+        }).map_err(|error| format!("late-acceptance failed after its held iron KnifeArm: {error}"))?;
         let trace = run.hook.trace();
         assert_click(run, &trace, origin + 2)?;
         validate_late_iron_history(&trace, &run.statuses, origin)
             .map_err(|error| run.failure(error))?;
-        println!("TICK-MANIP iron late-acceptance passed independently of precondition selection: R+2 act/click, R+5 real roll, one Slip, unchanged prior cycle totals");
+        println!("TICK-MANIP iron late-acceptance passed for either natural mining result: R+2 act/click, R+5 real roll, one Slip, unchanged prior cycle totals");
         assert_log_unchanged(run)?;
         assert_running(run)
     })
@@ -4872,6 +4798,26 @@ mod packet_oracle_tests {
         trace
     }
 
+    fn held_proxy_observation(request_id: u64, start_game_tick: u32) -> ProxyObservation {
+        let release_edge_tick = start_game_tick + 1;
+        ProxyObservation {
+            request_id,
+            request_ids: vec![request_id],
+            mutation: "HoldThroughNextEdge".into(),
+            start_game_tick,
+            start_host_frame: u64::from(start_game_tick) * 10,
+            packet_requests: Vec::new(),
+            packet_opcodes: Vec::new(),
+            packet_lengths: Vec::new(),
+            forwarded_bytes: 0,
+            dropped_bytes: 0,
+            release_edge_tick: Some(release_edge_tick),
+            release_trigger_tick: None,
+            release_edge_frame: Some(u64::from(release_edge_tick) * 10),
+            released_host_frame: Some(u64::from(release_edge_tick) * 10 + 1),
+        }
+    }
+
     fn late_iron_evidence() -> RunEvidence {
         let mut evidence = prefix_evidence();
         let mut receipt = interact::server_ordered::ServerOrderedDispatch::refused(
@@ -4944,47 +4890,74 @@ mod packet_oracle_tests {
         after.host_frame = 150;
         after.tick_slips = Some(2);
         evidence.statuses.push(after);
+        evidence.transport.push(held_proxy_observation(2, 10));
         evidence
     }
 
     #[test]
-    fn iron_precondition_reports_thirty_two_successes_as_a_chance_outcome() {
-        let trace = iron_success_opportunities(32);
+    fn iron_dispatch_selection_ignores_successes_but_requires_its_released_hold() {
+        let mut trace = iron_success_opportunities(32);
+        let mut dispatch = late_iron_evidence().trace.dispatches[1].clone();
+        dispatch.game_tick = 138;
+        dispatch.receipt.dispatch_tick = 138;
+        let request_id = dispatch.receipt.request_id;
+        trace.dispatches.push(dispatch);
+        let held = held_proxy_observation(request_id, 138);
+
+        // The former 32-success cutoff failed before this later real request.
         assert_eq!(
-            iron_precondition(&trace, None, 8, 138),
-            IronPrecondition::NoEligibleFailure { opportunities: 32 }
+            held_knife_dispatch(&trace, std::slice::from_ref(&held))
+                .map(|dispatch| dispatch.receipt.request_id),
+            Some(request_id)
         );
+        assert!(held_knife_dispatch(&trace, &[]).is_none());
+        let mut unreleased = held;
+        unreleased.release_edge_tick = None;
+        assert!(held_knife_dispatch(&trace, &[unreleased]).is_none());
     }
 
     #[test]
-    fn iron_precondition_guard_counts_observed_rolls_not_elapsed_edges() {
-        for opportunities in [0, 1, 31] {
-            let trace = iron_success_opportunities(opportunities);
-            assert_eq!(
-                iron_precondition(&trace, None, 8, 608),
-                IronPrecondition::GuardExhausted {
-                    opportunities: opportunities as usize
-                }
+    fn late_iron_dispatch_selection_rejects_an_early_release() {
+        let evidence = late_iron_evidence();
+        let held = &evidence.transport[0];
+        let edge = held.release_edge_frame.unwrap();
+        for release in [None, Some(edge - 1), Some(edge)] {
+            let mut early = held.clone();
+            early.released_host_frame = release;
+            assert!(
+                held_knife_dispatch(&evidence.trace, &[early]).is_none(),
+                "a hold released at {release:?} must not count as late acceptance"
             );
         }
     }
 
     #[test]
-    fn late_iron_oracle_accepts_selected_failed_roll_and_valid_late_history() {
+    fn late_iron_oracle_accepts_a_held_request_and_valid_history() {
         let evidence = late_iron_evidence();
         assert_eq!(
-            iron_precondition(&evidence.trace, Some(2), 8, 15),
-            IronPrecondition::Selected {
-                request_id: 2,
-                roll_tick: 10,
-                opportunities: 1
-            }
+            held_knife_dispatch(&evidence.trace, &evidence.transport)
+                .map(|dispatch| dispatch.receipt.request_id),
+            Some(2)
         );
         assert!(validate_late_iron_history(&evidence.trace, &evidence.statuses, 10).is_ok());
     }
 
     #[test]
-    fn late_iron_acceptance_failure_is_not_a_chance_or_precondition_result() {
+    fn late_iron_oracle_accepts_a_successful_mining_roll() {
+        let mut evidence = late_iron_evidence();
+        let roll = evidence.trace.frames.last_mut().unwrap();
+        roll.animation.as_mut().unwrap().sequence = -1;
+        roll.chat.push(ChatObservation {
+            game_tick: 15,
+            sequence: 2,
+            text: "You manage to mine some iron.".into(),
+            poll: PollKind::Edge,
+        });
+        assert!(validate_late_iron_history(&evidence.trace, &evidence.statuses, 10).is_ok());
+    }
+
+    #[test]
+    fn late_iron_acceptance_oracle_rejects_wrong_histories() {
         for facet in 0..6 {
             let mut evidence = late_iron_evidence();
             match facet {
@@ -5015,113 +4988,6 @@ mod packet_oracle_tests {
             assert!(
                 validate_late_iron_history(&evidence.trace, &evidence.statuses, 10).is_err(),
                 "late-acceptance facet {facet}"
-            );
-        }
-    }
-
-    #[test]
-    fn natural_mining_roll_gate_rejects_start_acts_stale_frames_and_successes() {
-        use host_play::tick_engine_test_support::fresh_mining_roll;
-        let mut evidence = stale_guard_evidence();
-        evidence.trace.frames[0].chat.push(ChatObservation {
-            game_tick: 7,
-            sequence: 7,
-            text: "You swing your pick at the rock.".into(),
-            poll: PollKind::Edge,
-        });
-        evidence.trace.dispatches.clear();
-        evidence.trace.frames[4]
-            .animation
-            .as_mut()
-            .unwrap()
-            .sequence = MITHRIL_PICK_ANIMATION;
-        assert!(fresh_mining_roll(
-            &evidence.trace,
-            None,
-            11,
-            MITHRIL_PICK_ANIMATION
-        ));
-        let mut before = evidence.trace.clone();
-        let pending = before.frames.pop().unwrap();
-        assert!(!fresh_mining_roll(
-            &before,
-            None,
-            11,
-            MITHRIL_PICK_ANIMATION
-        ));
-        assert!(fresh_mining_roll(
-            &before,
-            Some(&pending),
-            11,
-            MITHRIL_PICK_ANIMATION
-        ));
-        assert_eq!(
-            before.frames.len(),
-            4,
-            "selection does not publish an incomplete frame"
-        );
-        let mut stale_pending = pending.clone();
-        stale_pending.tick_edge = false;
-        assert!(!fresh_mining_roll(
-            &before,
-            Some(&stale_pending),
-            11,
-            MITHRIL_PICK_ANIMATION
-        ));
-        let mut retained = evidence.trace.clone();
-        let mut wake = retained.frames.last().unwrap().clone();
-        wake.host_frame += 1;
-        wake.tick_edge = false;
-        retained.frames.push(wake);
-        assert!(fresh_mining_roll(
-            &retained,
-            None,
-            11,
-            MITHRIL_PICK_ANIMATION
-        ));
-        retained
-            .frames
-            .last_mut()
-            .unwrap()
-            .animation
-            .as_mut()
-            .unwrap()
-            .serial += 1;
-        assert!(!fresh_mining_roll(
-            &retained,
-            None,
-            11,
-            MITHRIL_PICK_ANIMATION
-        ));
-        let mut start_act = evidence.trace.clone();
-        start_act.frames[4].chat.push(ChatObservation {
-            game_tick: 11,
-            sequence: 11,
-            text: "You swing your pick at the rock.".into(),
-            poll: PollKind::Edge,
-        });
-        assert!(
-            !fresh_mining_roll(&start_act, None, 11, MITHRIL_PICK_ANIMATION),
-            "a fresh Mining animation with a start-Act line is not a natural roll"
-        );
-        for facet in 0..5 {
-            let mut trace = evidence.trace.clone();
-            match facet {
-                0 => trace.frames[4].tick_edge = false,
-                1 => trace.frames[4].animation.as_mut().unwrap().serial = 2,
-                2 => trace.frames[4].animation.as_mut().unwrap().sequence = -1,
-                3 => trace.frames[0].chat.clear(),
-                4 => trace.frames[4].chat.push(ChatObservation {
-                    game_tick: 11,
-                    sequence: 11,
-                    text: "You manage to mine some iron.".into(),
-                    poll: PollKind::Edge,
-                }),
-                _ => unreachable!(),
-            }
-            assert!(
-                !fresh_mining_roll(&trace, None, 11, MITHRIL_PICK_ANIMATION),
-                "invalid facet {facet}"
             );
         }
     }
@@ -5470,14 +5336,16 @@ mod packet_oracle_tests {
     }
 
     #[test]
-    fn late_iron_scenario_skips_the_first_arm_wait_but_keeps_knife_method() {
+    fn late_iron_scenario_skips_the_first_arm_wait_but_uses_guaranteed_iron_success() {
         let scenario =
             Scenario::iron("tick-late-iron").expect("iron setup uses the default mining tile");
         assert!(!scenario.require_knife_arm);
         assert_eq!(scenario.settings()["tickMethod"], json!("Knife"));
-        // pickaxes.obj:162-164 permits the real four-tick mithril tool at 21.
-        // The late case needs a failed native roll, not S6b's high-yield setup.
-        assert_eq!(scenario.level, 21);
+        // Mithril requires level 21 and has a four-tick rate
+        // (pickaxes.obj:162-164). Mining 99 gives STAT_RANDOM threshold
+        // 351 for iron's (96, 350) inputs (mine.dbrow:71;
+        // engine/script/handlers/PlayerOps.ts:591-599).
+        assert_eq!(scenario.level, 99);
         assert_eq!(scenario.tool.id, MITHRIL_PICKAXE_ID);
     }
 
