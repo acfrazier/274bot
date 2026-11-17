@@ -79,19 +79,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - 377 trail challenge answers now fail generation when the decoded value
   disagrees with the final selected content parameter.
 
-### Saved state
-
-- A `panel-ui.json` that names a field twice in the same object (a hand
-  edit can do this) is now refused instead of read keeping the last of
-  the two values. Settings from it fail closed with a message naming the
-  file, the field and the object it sits in and asking you to edit the
-  file to remove one of them; preference saves refuse too, so the file's
-  bytes stay as they are and neither a `.corrupt-` copy nor fresh
-  preferences replace it. A file whose content does not parse at all —
-  say, one truncated in the middle of the repeated field — is still the
-  unreadable file: the next save moves it aside and starts fresh,
-  whatever fields it also names.
-
 ### Game client
 
 - On revision 274, the Report abuse form accepts a player's name and shows the
@@ -152,6 +139,107 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   and the next settings save writes Flee. A saved Fight stays Fight.
 - The TUI keeps every Quester start-zone row reachable with PageUp and
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
+
+### Preferences and saved state
+
+- A `panel-ui.json` that names a field twice in the same object (a hand
+  edit can do this) is now refused instead of read keeping the last of
+  the two values, wherever the file is read: the import of the old file
+  into the preferences database refuses it too. The refusal names the
+  file, the field and the object it sits in and asks you to edit the
+  file to remove one of them. The file stays as it is, and no
+  preferences or import record are saved from it, so the next start
+  refuses again until the file is fixed or removed. A file whose content
+  does not parse at all, say one truncated in the middle of the repeated
+  field, is still the unreadable file: its bytes are kept in a
+  `.corrupt-` copy and default preferences start, whatever fields it
+  also names.
+- Preferences now live in a SQLite database, `.274bot/state/state.sqlite3`
+  (with its `-wal` and `-shm` files), instead of `panel-ui.json`. The first
+  start of this version imports the whole `panel-ui.json`, members it does not
+  know included, and renames the file to `panel-ui.json.migrated` as evidence.
+  The panel and the terminal app share the one database, also when both run on
+  one home. A save no longer rewrites a JSON file: each save is one database
+  commit at a new version, and the log keeps one line per save that names what
+  changed.
+- Before running 0.2.9 in the same home, stop all 274bot processes, then run
+  `panel-play state preferences export --same-root` or
+  `tui-play state preferences export --same-root`. Without the export, 0.2.9
+  shows default preferences, because the import renamed `panel-ui.json`. Stop
+  0.2.9 before you start this version again: it imports a changed exported file
+  once; an unchanged one does not replace the saved preferences. If a stop or
+  crash interrupted the export, the next start of this version completes it
+  from its staged file, or refuses with the command to run again. A
+  `panel-ui.json` that changed without an export (an older version or another
+  program wrote it) is refused with the file untouched and both ways out named:
+  move it away, or recover from it.
+- A `panel-ui.json` that is not valid JSON is kept as
+  `panel-ui.json.corrupt-<time>` and preferences start from defaults, once. A
+  file that is too large (as written, or once stored: a compact file with very
+  many short members can grow past the limit), holds a member a preference
+  cannot hold, or that
+  other users can write is not imported: the panel, the terminal app and the
+  headless result say why and what to do, and nothing is saved over it, also
+  when the unreadable file is a changed export or the `--source` of a
+  recovery. A changed export that is not valid JSON is kept as a copy and
+  preferences start from defaults, once. A
+  damaged database is never replaced by a JSON file. Two new commands recover
+  from one, after you stop all 274bot processes:
+  `panel-play state preferences recover --source "/absolute/path/private.json"`
+  and `panel-play state preferences recover --defaults` (the same with
+  `tui-play`). Recovery first keeps a private copy of the whole database set in
+  `state/preserved-<time>`, then starts a new preference history; `--defaults`
+  discards the saved preferences. The commands refuse while another 274bot of
+  this version uses the home. A database written with another page size is
+  refused with the same advice as a newer one.
+- A `panel-ui.json` that is a directory, or a file this user may not read, no
+  longer stops the panel, the terminal app or `host-play` at startup. It
+  refuses the preferences alone, as the other unreadable files above do, with
+  the file, the cause and what to do; nothing is saved over it, and bank
+  hints, loadouts, the vault and every other file keep working. Fix the file
+  (or remove it to start empty) and the next read imports it.
+- When a save's database commit ends with a disk error, 274bot looks for that
+  commit again after reopening the database. If it cannot reopen the database
+  in that moment, or finds no record of the commit, the setting shows "Save
+  outcome unknown: …" (in the panel's own settings "Preferences save outcome
+  unknown: …", for the Load order "Load order save outcome unknown: …") with
+  the reason, and says that the save was not retried. It does not retry the
+  save and does not say it was not saved. The preferences then show what the
+  database holds. The `state/preserved-<time>` directory that a recovery
+  creates is now owner-only from the start, as the files in it are.
+- A save that waits for another 274bot process now says why under "Saving…"
+  (panel) or on the message line (terminal app), and if it cannot finish within
+  5 seconds the setting shows the reason, for example "Not saved: … another
+  274bot process is saving preferences." A save that is already inside its
+  database transaction when 274bot is closed keeps that transaction's own
+  outcome (saved, or not saved) and is never reported as cancelled.
+- A script Start (its loadouts and script settings), and a bank load at a
+  session start, in the first moments after launch, while the preferences are
+  being imported into the database, now wait for the import to end before they
+  read their file. They no longer queue behind it on the shared writer, and
+  still give up after their own timeout (5 seconds for a Start). They are not
+  held back when the import only waits for another 274bot process, or when the
+  preferences are refused.
+- If reading the preferences stops unexpectedly when 274bot starts (a program
+  fault), the preferences are now refused for that run, with the file, the
+  cause and what to do (restart 274bot), as other refusals are. A script Start
+  or a bank load goes on, and a save fails with the refusal, instead of
+  waiting for preferences that never read.
+- The Debug tab saves a pinned command and the recent commands separately. A
+  pin that failed to save is no longer saved when you send a command, and a
+  recent command that failed to save is no longer saved when you pin one.
+- A script library file (`js-scripts.json`) or a preferences store that 274bot
+  refuses at startup now shows in the panel error banner, the terminal app's
+  message line and the headless result, with the file and the reason. Before,
+  the library refusal was only printed to the console, or ignored when
+  headless. When a state file is writable by other users, the message says to
+  run `chmod 600 <the file>` if you own it; when another user owns it, it names
+  both user ids and says that a mode change does not fix ownership. While the
+  preferences stay refused, the panel's Nav config and General config and the
+  terminal app's settings popup show the whole reason and what to do, instead
+  of "Loading preferences…", and a setting you change shows its saved value
+  again, with the same reason beside it. The panel banner keeps the refusal
+  when a profile loads.
 
 ### Scripts
 

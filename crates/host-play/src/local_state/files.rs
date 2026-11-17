@@ -1,8 +1,13 @@
 //! The current files behind the state service (T5.2): the operator's
-//! `loadouts.json` and `panel-ui.json` preferences, and one
-//! `bank-hints/<profile>/<account>.json` per account.
+//! `loadouts.json`, and one `bank-hints/<profile>/<account>.json` per
+//! account, and the script runtime settings file.
 //! Each backend reads and writes the shared saved format used by 0.2.8 and
-//! 0.2.9, whichever release wrote the bytes.
+//! 0.2.9, whichever release wrote the bytes. Since T5.3 the preferences live
+//! in the state database (`super::sql`); this module keeps their shared codec
+//! (rows, the canonical document bytes, the typed walk projection), the
+//! legacy `panel-ui.json` reader's malformed-bytes path
+//! ([`corrupt_preferences`]) and the preferences guard
+//! (`panel-ui.json.lock`, [`try_lock_for_write`]).
 //!
 //! No backend touches `HOME` or any default path: every path is derived
 //! from the explicit [`StateRoot`] and the durable identity.
@@ -10,19 +15,21 @@
 //! What a read refuses is never treated as an absent file: a refused file is
 //! a [`ReadError`], and the service keeps it refused (no lease, no write)
 //! until a later read accepts it.
-//! A preferences or runtime settings file whose content is malformed (not
-//! JSON, or JSON that is not an object) is quarantined on a save-path read
-//! and a fresh document is started ([`corrupt_preferences`],
-//! [`corrupt_script_runtime_settings`]); every other refusal leaves the file
-//! unchanged. Duplicate loadout names are refused rather than renamed apart,
-//! and a preferences file that names a field twice in one object is refused
-//! whole rather than read keeping the last value.
+//! A legacy preferences file (the first import) or a runtime settings file
+//! whose content is malformed (not JSON, or JSON that is not an object) is
+//! quarantined and a fresh document is started
+//! ([`corrupt_preferences`], [`corrupt_script_runtime_settings`]); every
+//! other refusal leaves the file unchanged. Duplicate loadout names are
+//! refused rather than renamed apart, and a preferences file that names a
+//! field twice in one object is refused whole rather than read keeping the
+//! last value ([`object_without_duplicate_fields`], which the legacy
+//! import reads through).
 //! A hint document from before schema 1 is refused as a whole, never
 //! rewritten or partially loaded. The service logs each changed refusal with
 //! its file path.
 //! A file whose content the service cannot represent whole (a hint field it
-//! does not know, a loadout row it cannot write back as read, a preference or
-//! setting it cannot hold as a row) is read but never rewritten
+//! does not know, a loadout row it cannot write back as read, a setting it
+//! cannot hold as a row) is read but never rewritten
 //! ([`Rewrite::Refused`]). Preferences and runtime settings use lossless
 //! representability, so an unknown member is held and written back.
 //! What a write publishes is durable before it is acknowledged: the bytes
@@ -84,6 +91,24 @@ impl StateRoot {
     /// and the TUI share.
     pub fn preferences_file(&self) -> PathBuf {
         self.0.join("panel-ui.json")
+    }
+
+    /// `<root>/state`: the private directory of the state database.
+    pub fn state_dir(&self) -> PathBuf {
+        self.0.join("state")
+    }
+
+    /// `<root>/state/state.sqlite3`: the one state database of this root
+    /// (T5.3: the operator preferences). SQLite keeps its `-wal` and
+    /// `-shm` files beside it.
+    pub fn database_file(&self) -> PathBuf {
+        self.state_dir().join("state.sqlite3")
+    }
+
+    /// `<root>/instance.lock`: the root-use lease every new-version user
+    /// holds shared, and an explicit maintenance command exclusive.
+    pub fn instance_lock_file(&self) -> PathBuf {
+        self.0.join("instance.lock")
     }
 
     /// `<root>/bank-hints/<profile>/<account>.json`: the account's hint
@@ -790,11 +815,12 @@ impl<'de> de::Visitor<'de> for NoDuplicateFields<'_, 'de> {
 /// Parses `raw` into a JSON object, refusing a file that names a field
 /// twice in one object at any level. The shape errors win over the
 /// duplicates: a file whose content is not JSON, or whose root is not an
-/// object, is refused (and, on a save-path read, quarantined) as
+/// object, is refused (and, on the first import, quarantined) as
 /// malformed even when it also names a field twice, so a duplicate is
 /// reported only for a document that parsed whole into an object. Every
 /// other read result is the plain `serde_json` parse: a valid file holds
-/// exactly the values it held before the check.
+/// exactly the values it held before the check. The legacy preferences
+/// import (`sql::read_legacy`) reads the file through this.
 pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, Value>, ReadError> {
     let found = std::cell::RefCell::new(None);
     let mut parser = serde_json::Deserializer::from_str(raw);
@@ -816,11 +842,19 @@ pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, V
 
 /// Read `key`'s current file under `root`: `Ok(None)` when there is no
 /// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file.
+/// Preferences are never read here: they live in the state database
+/// (`sql`), and `panel-ui.json` is only its legacy import source.
 pub(super) fn read(
     key: &StoreKey,
     root: &StateRoot,
     read_at: DurableTimestamp,
 ) -> Result<Option<ReadDocument>, ReadError> {
+    if matches!(key, StoreKey::Preferences) {
+        return Err(ReadError::Io(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "preferences are read from the state database",
+        )));
+    }
     let path = key.path(root);
     let max = max_bytes(key);
     let raw = match read_private_file(&path, max) {
@@ -846,26 +880,7 @@ pub(super) fn read(
                 rewrite,
             }))
         }
-        StoreKey::Preferences => {
-            let document = object_without_duplicate_fields(&raw)?;
-            let projection = project_preferences(document);
-            let (rows, unrepresentable) = preference_rows(&projection.document);
-            Ok(Some(ReadDocument {
-                snapshot: LeaseSnapshot::preferences(rows),
-                preferences: Some(projection),
-                at: read_at,
-                digest,
-                written_len: raw.len(),
-                rewrite: if unrepresentable == 0 {
-                    Rewrite::Lossless
-                } else {
-                    Rewrite::Refused {
-                        unreadable: unrepresentable,
-                        lossy: 0,
-                    }
-                },
-            }))
-        }
+        StoreKey::Preferences => Err(ReadError::NotAnObject),
         StoreKey::BankHint {
             profile,
             account,
@@ -1373,6 +1388,25 @@ pub(super) fn apply_loadout_edit(
     Ok(next)
 }
 
+/// A test's hand inside the lease-row build ([`preference_rows`]): the
+/// writer thread of a service carries the named point of that service's
+/// seams (the job loop installs it), so a test sees every build on that
+/// thread, wherever it runs and whatever lock its caller holds. No other
+/// thread has one.
+#[cfg(test)]
+pub(super) type RowsPoint = std::sync::Arc<dyn Fn(&'static str) + Send + Sync>;
+
+#[cfg(test)]
+thread_local! {
+    static ROWS_POINT: std::cell::RefCell<Option<RowsPoint>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Install (or clear) the calling thread's hand in the lease-row build.
+#[cfg(test)]
+pub(super) fn set_rows_point(point: Option<RowsPoint>) {
+    ROWS_POINT.with(|slot| *slot.borrow_mut() = point);
+}
+
 /// One preferences document (`panel-ui.json`, a JSON object) as rows. Each
 /// top-level member is one row: its name, and its value as compact JSON
 /// text. A member whose value is too long for one row and is an object is
@@ -1382,6 +1416,10 @@ pub(super) fn apply_loadout_edit(
 /// value still too long) cannot be held: it is counted, and a file with any
 /// is read but never rewritten.
 pub(super) fn preference_rows(document: &Map<String, Value>) -> (Vec<PreferenceRow>, usize) {
+    #[cfg(test)]
+    if let Some(point) = ROWS_POINT.with(|slot| slot.borrow().clone()) {
+        point("lease-rows");
+    }
     let mut rows = Vec::with_capacity(document.len());
     let mut unrepresentable = 0;
     for (name, value) in document {
@@ -1590,6 +1628,29 @@ pub(super) fn lock_for_write(
         }
         std::thread::sleep(wait.min(deadline - now));
         wait = (wait * 2).min(Duration::from_millis(50));
+    }
+}
+
+/// Take `path`'s [`WriteLock`] without waiting: `Ok(None)` while another
+/// writer holds it. The preferences database uses this as its product
+/// guard (T5.3 §4.3): a contended guard requeues the job, never sleeps on
+/// the writer thread. The directory is created (`0o700`) when missing.
+pub(super) fn try_lock_for_write(path: &Path) -> io::Result<Option<WriteLock>> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        vault::create_private_dir(parent)?;
+    }
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(lock_path(path))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(WriteLock { _file: file })),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(error)) => Err(error),
     }
 }
 

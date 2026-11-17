@@ -1,3 +1,6 @@
+//! State fixtures hold the test-only lease through service and root teardown.
+//! Mixed process cases keep that lease in the parent until the exact child exits.
+
 use super::*;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -316,6 +319,7 @@ fn running_as_root() -> bool {
 
 #[test]
 fn cold_lease_hydrates_to_an_empty_initial_store_and_never_written_is_none() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-cold");
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
     let identity = bank_identity("alice");
@@ -341,6 +345,7 @@ fn cold_lease_hydrates_to_an_empty_initial_store_and_never_written_is_none() {
 
 #[test]
 fn loadouts_store_and_service_exchange_identical_rows_and_pretty_json() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-loadouts");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -391,6 +396,7 @@ fn loadouts_store_and_service_exchange_identical_rows_and_pretty_json() {
 
 #[test]
 fn bank_hint_submission_writes_schema_one_and_readback_preserves_rows_and_time() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-bank-format");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -433,6 +439,7 @@ fn bank_hint_submission_writes_schema_one_and_readback_preserves_rows_and_time()
 
 #[test]
 fn expected_version_conflict_settles_without_touching_the_file() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-conflict");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -467,6 +474,7 @@ fn expected_version_conflict_settles_without_touching_the_file() {
 
 #[test]
 fn a_new_queued_hint_supersedes_the_old_one_which_follows_it_to_durability() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-superseded");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -546,6 +554,7 @@ fn a_new_queued_hint_supersedes_the_old_one_which_follows_it_to_durability() {
 
 #[test]
 fn identical_hint_bytes_complete_at_the_existing_version_without_a_write() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-identical");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -575,6 +584,7 @@ fn identical_hint_bytes_complete_at_the_existing_version_without_a_write() {
 
 #[test]
 fn failed_write_keeps_previous_rows_and_a_following_submission_can_succeed() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-write-failure");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -622,6 +632,7 @@ fn failed_write_keeps_previous_rows_and_a_following_submission_can_succeed() {
 
 #[test]
 fn unopened_preferences_are_not_ready_for_leases_or_submissions() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-closed-domain");
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
     let identity = identity(LocalStateDomain::Preferences, "alice");
@@ -642,6 +653,7 @@ fn unopened_preferences_are_not_ready_for_leases_or_submissions() {
 
 #[test]
 fn external_loadout_edit_is_read_back_at_a_higher_version() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-external-edit");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -670,6 +682,7 @@ fn external_loadout_edit_is_read_back_at_a_higher_version() {
 /// schema wrote is refused visibly, never read as "no file".
 #[test]
 fn wrong_hint_profile_account_or_schema_is_refused_not_absent_and_never_loaded() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-invalid-hints");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -734,6 +747,7 @@ fn wrong_hint_profile_account_or_schema_is_refused_not_absent_and_never_loaded()
 #[cfg(unix)]
 #[test]
 fn refused_hint_files_are_never_overwritten() {
+    let _state_lease = crate::test_process::state();
     if running_as_root() {
         return;
     }
@@ -806,6 +820,7 @@ fn refused_hint_files_are_never_overwritten() {
 /// document that is not an array): refused loadouts are never replaced.
 #[test]
 fn refused_loadouts_files_are_never_overwritten() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-refused-loadouts");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -854,6 +869,7 @@ fn refused_loadouts_files_are_never_overwritten() {
 /// without them.
 #[test]
 fn a_loadouts_file_the_service_cannot_round_trip_is_read_but_never_rewritten() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-lossy-loadouts");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -890,6 +906,7 @@ fn a_loadouts_file_the_service_cannot_round_trip_is_read_but_never_rewritten() {
 /// leased and written normally.
 #[test]
 fn a_repaired_file_is_accepted_again() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-repaired");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -914,6 +931,7 @@ fn a_repaired_file_is_accepted_again() {
 /// identical resubmission is not a success over bytes it never wrote.
 #[test]
 fn a_hint_resubmitted_after_an_outside_write_conflicts_and_keeps_the_outside_bytes() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-outside-hint");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -946,6 +964,7 @@ fn a_hint_resubmitted_after_an_outside_write_conflicts_and_keeps_the_outside_byt
 /// version after the form saved another row conflicts; the saved row stays.
 #[test]
 fn a_loadout_edit_after_a_form_saved_a_row_conflicts_and_keeps_the_row() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-form-race");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -980,6 +999,7 @@ fn a_loadout_edit_after_a_form_saved_a_row_conflicts_and_keeps_the_row() {
 /// was accepted against what came before).
 #[test]
 fn an_edit_accepted_before_an_outside_change_conflicts() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-accepted-then-changed");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -1026,6 +1046,7 @@ fn an_edit_accepted_before_an_outside_change_conflicts() {
 /// leased, or overwritten, under another.
 #[test]
 fn a_hint_written_under_one_content_scope_is_refused_under_another() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-content-scope");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -1067,6 +1088,7 @@ fn a_hint_written_under_one_content_scope_is_refused_under_another() {
 /// does the same.
 #[test]
 fn a_schema_1_hint_without_scope_is_read_then_stamped() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-schema-1-unscoped-hint");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.bank_hint_file(PROFILE, "alice");
@@ -1139,6 +1161,7 @@ fn a_hint_without_schema_version_is_refused_and_kept() {
 #[cfg(unix)]
 #[test]
 fn a_write_whose_directory_entry_cannot_be_flushed_is_not_durable() {
+    let _state_lease = crate::test_process::state();
     if running_as_root() {
         return;
     }
@@ -1194,6 +1217,7 @@ fn a_write_whose_directory_entry_cannot_be_flushed_is_not_durable() {
 /// parent.
 #[test]
 fn the_receipt_and_audit_follow_the_directory_flush() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-flush-order");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -1265,6 +1289,7 @@ fn the_receipt_and_audit_follow_the_directory_flush() {
 /// writer before it returns.
 #[test]
 fn dropping_the_service_finishes_every_accepted_write_and_joins_the_writer() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-drain");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -1312,6 +1337,7 @@ fn dropping_the_service_finishes_every_accepted_write_and_joins_the_writer() {
 /// serving.
 #[test]
 fn a_panicking_write_fails_its_request_and_the_writer_keeps_serving() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-panic");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -1352,6 +1378,7 @@ fn a_panicking_write_fails_its_request_and_the_writer_keeps_serving() {
 /// when it is next asked for.
 #[test]
 fn bank_identities_are_capped_by_evicting_idle_stores() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-identity-cap");
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
     let names: Vec<String> = (0..MAX_BANK_STORES + 44)
@@ -1378,6 +1405,7 @@ fn bank_identities_are_capped_by_evicting_idle_stores() {
 /// `Busy`, visibly, instead of growing the cache.
 #[test]
 fn with_every_held_store_busy_a_new_identity_is_refused() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-identity-busy");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -1428,6 +1456,7 @@ fn with_every_held_store_busy_a_new_identity_is_refused() {
 /// row-size or file-size budget is refused before it is accepted.
 #[test]
 fn loadout_edits_past_the_row_or_byte_budget_are_refused() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-loadout-budget");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -1496,6 +1525,7 @@ fn loadout_edits_past_the_row_or_byte_budget_are_refused() {
 /// accounts' settlements before its slot reads it.
 #[test]
 fn a_settlement_survives_other_accounts_settlements() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-retention");
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
     let alice = bank_identity("alice");
@@ -1522,6 +1552,7 @@ fn a_settlement_survives_other_accounts_settlements() {
 /// never pending forever.
 #[test]
 fn a_settlement_no_longer_held_reads_forgotten() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-forgotten");
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
     let alice = bank_identity("alice");
@@ -1541,6 +1572,7 @@ fn a_settlement_no_longer_held_reads_forgotten() {
 /// never reused, whichever account takes them.
 #[test]
 fn durable_receipts_are_exact_to_account_and_versions_are_never_reused() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-receipts");
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
     let alice = bank_identity("alice");
@@ -1598,6 +1630,7 @@ fn durable_receipts_are_exact_to_account_and_versions_are_never_reused() {
 /// gets neither rows nor a capability.
 #[test]
 fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_names() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-composition");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open(
@@ -1696,6 +1729,7 @@ fn stamped_hint(identity: &DomainIdentity, rows: &[(i32, i32)], at: u64) -> Vec<
 /// service now holds them.
 #[test]
 fn an_outside_write_while_a_write_is_staged_conflicts_and_keeps_the_outside_bytes() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-staged-race");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
@@ -1741,6 +1775,7 @@ fn an_outside_write_while_a_write_is_staged_conflicts_and_keeps_the_outside_byte
 /// writes over the saved row: its edit conflicts and the row stays.
 #[test]
 fn a_form_save_during_a_service_publication_is_never_overwritten() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-form-publication");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -1782,6 +1817,7 @@ fn a_form_save_during_a_service_publication_is_never_overwritten() {
 /// audit line names it.
 #[test]
 fn an_outside_write_during_the_directory_flush_is_not_acknowledged() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-flush-race");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
@@ -1836,6 +1872,7 @@ fn an_outside_write_during_the_directory_flush_is_not_acknowledged() {
 /// for a row the file does not hold.
 #[test]
 fn two_services_on_one_root_never_interleave_their_writes() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-two-services");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -1930,6 +1967,9 @@ fn lock_holding_child() {
 /// it.
 #[test]
 fn a_writer_in_another_process_holding_the_lock_makes_the_write_wait() {
+    crate::test_process::isolate_state_test!(
+        a_writer_in_another_process_holding_the_lock_makes_the_write_wait
+    );
     let scratch = IsolatedEnv::enter("local-state-r3-other-process");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -1984,6 +2024,7 @@ fn a_writer_in_another_process_holding_the_lock_makes_the_write_wait() {
 /// acknowledged and audited.
 #[test]
 fn a_retry_after_a_failed_ancestor_flush_flushes_the_whole_chain() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-flush-retry");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
@@ -2040,6 +2081,7 @@ fn a_retry_after_a_failed_ancestor_flush_flushes_the_whole_chain() {
 /// terminal line; the held one is never renamed into place afterwards.
 #[test]
 fn past_the_shutdown_bound_every_accepted_write_settles_with_its_own_line() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-shutdown-bound");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
@@ -2108,6 +2150,7 @@ fn past_the_shutdown_bound_every_accepted_write_settles_with_its_own_line() {
 /// audited.
 #[test]
 fn a_write_being_renamed_at_the_shutdown_bound_settles_when_it_finishes() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-shutdown-publishing");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
@@ -2137,6 +2180,7 @@ fn a_write_being_renamed_at_the_shutdown_bound_settles_when_it_finishes() {
 /// and the field stays.
 #[test]
 fn a_hint_with_a_field_this_build_does_not_know_is_read_but_never_rewritten() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-hint-field");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
@@ -2171,21 +2215,34 @@ fn preferences(scratch: &IsolatedEnv) -> Preferences {
     LocalStateService::open_process(StateRoot::new(scratch.home.join(".274bot"))).preferences()
 }
 
-/// T5.2 r3 (scope): the shared `panel-ui.json` is the preferences domain.
-/// A write sets one member, keeps every other one (nested values too),
-/// writes the pretty object the old shared writer wrote, and is audited.
+/// Open the process preferences over a root whose legacy `panel-ui.json`
+/// holds `legacy`, written privately before the open (T5.3 §5.4: the first
+/// import reads it at hydration), and wait until they are read.
+fn preferences_from(scratch: &IsolatedEnv, legacy: &[u8]) -> Preferences {
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    write_private(&root.preferences_file(), legacy);
+    let preferences = preferences(scratch);
+    preferences.reload().unwrap();
+    preferences
+}
+
+/// The durable preference document, read again from the database.
+fn durable_json(preferences: &Preferences) -> serde_json::Value {
+    serde_json::Value::Object(preferences.reload().unwrap().as_ref().clone())
+}
+
+/// T5.2 r3 (scope), T5.3: the preferences domain imported from the shared
+/// `panel-ui.json`. A write sets one member, keeps every other one (nested
+/// values too), and is audited once; no JSON is written.
 #[test]
 fn a_preference_write_sets_one_member_and_keeps_every_other() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-preferences");
-    let preferences = preferences(&scratch);
-    let path = preferences.path();
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    write_private(
-        &path,
+    let preferences = preferences_from(
+        &scratch,
         br#"{"last_focus":"alice","nav":{"allow_teleports":true,"custom":{"keep":7}},"collapsed":{}}"#,
     );
     let audits = audits(preferences.service());
-    preferences.reload().unwrap();
     assert_eq!(preferences.value("last_focus").unwrap(), "alice");
 
     set_patiently(&preferences, "map_bake", serde_json::json!("always"));
@@ -2196,9 +2253,12 @@ fn a_preference_write_sets_one_member_and_keeps_every_other() {
         "collapsed": {},
     });
     expected["map_bake"] = serde_json::json!("always");
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        serde_json::to_vec_pretty(&expected).unwrap()
+    assert_eq!(durable_json(&preferences), expected);
+    assert!(
+        !StateRoot::new(scratch.home.join(".274bot"))
+            .preferences_file()
+            .exists(),
+        "no JSON is written"
     );
     let audits = audits.lock().unwrap();
     assert_eq!(audits.len(), 1);
@@ -2212,10 +2272,8 @@ fn a_preference_write_sets_one_member_and_keeps_every_other() {
 /// keeps its shape and every other member.
 #[test]
 fn an_oversize_preference_object_is_written_member_by_member() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-preferences-wide");
-    let preferences = preferences(&scratch);
-    let path = preferences.path();
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let collapsed: serde_json::Map<String, serde_json::Value> = (0..80)
         .map(|n| {
             (
@@ -2227,8 +2285,7 @@ fn an_oversize_preference_object_is_written_member_by_member() {
         .collect();
     let document = serde_json::json!({"collapsed": collapsed, "lowmem": true});
     assert!(document["collapsed"].to_string().len() > api::local_state::MAX_PREF_VALUE_BYTES);
-    write_private(&path, &serde_json::to_vec_pretty(&document).unwrap());
-    preferences.reload().unwrap();
+    let preferences = preferences_from(&scratch, &serde_json::to_vec_pretty(&document).unwrap());
     let lease = preferences.service().lease(preferences.identity()).unwrap();
     let rows = lease.snapshot().as_preferences().unwrap();
     assert_eq!(rows.len(), 81, "one row per profile, plus lowmem");
@@ -2242,9 +2299,7 @@ fn an_oversize_preference_object_is_written_member_by_member() {
     assert_eq!(audits.lock().unwrap().len(), 1, "one member, one write");
     let mut expected = document.clone();
     expected["collapsed"]["profile_007"]["status"] = serde_json::json!(true);
-    let written: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(written, expected);
+    assert_eq!(durable_json(&preferences), expected);
 }
 
 /// A preferences document holding a 600-member `order` object (too long
@@ -2280,71 +2335,59 @@ fn order_renumbered() -> serde_json::Value {
 }
 
 fn preferences_with_order(scratch: &IsolatedEnv) -> Preferences {
-    let preferences = preferences(scratch);
-    let path = preferences.path();
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let before = order_before();
     assert!(before["order"].to_string().len() > api::local_state::MAX_PREF_VALUE_BYTES);
-    write_private(&path, &serde_json::to_vec_pretty(&before).unwrap());
-    preferences.reload().unwrap();
-    preferences
+    preferences_from(scratch, &serde_json::to_vec_pretty(&before).unwrap())
 }
 
-fn file_json(path: &std::path::Path) -> serde_json::Value {
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
-}
-
-/// F2 r3 (review R4): an update of an object too long for one row that
-/// changes, removes and adds many members (a renumbered Load order) is
-/// one edit and one file replacement: every member lands together.
+/// F2 r3 (review R4), T5.3: an update of an object too long for one row
+/// that changes, removes and adds many members (a renumbered Load order)
+/// is one edit and one database commit: every member lands together, at
+/// one new version.
 #[test]
 fn a_many_member_update_is_one_file_replacement() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-f2-one-replacement");
     let preferences = preferences_with_order(&scratch);
-    let path = preferences.path();
-    let writes = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&writes);
-    preferences
-        .service()
-        .set_write_hook(Arc::new(move |path, bytes| {
-            counted.fetch_add(1, Ordering::SeqCst);
-            vault::write_private_file(path, bytes)
-        }));
     let audits = audits(preferences.service());
+    let before = preferences.snapshot().unwrap().version();
     let after = order_renumbered();
     update_patiently(&preferences, |document| {
         document.insert("order".into(), after["order"].clone());
         Ok(())
     });
-    assert_eq!(writes.load(Ordering::SeqCst), 1, "one file replacement");
     assert_eq!(audits.lock().unwrap().len(), 1, "one durable commit");
-    assert_eq!(file_json(&path), after);
+    let audit = audits.lock().unwrap()[0].clone();
+    assert_eq!(audit.previous(), before);
+    assert_eq!(durable_json(&preferences)["order"], after["order"]);
     assert_eq!(preferences.value("order"), Some(after["order"].clone()));
 }
 
-/// F2 r3 (review R4): a many-member update whose file replacement fails,
-/// or whose writer dies inside it (an interrupted renumbering), leaves the
-/// file and the held rows exactly as before: no member of it lands. The
-/// next update lands whole.
+/// F2 r3 (review R4), T5.3: a many-member update whose commit fails, or
+/// whose writer dies inside the open write transaction (an interrupted
+/// renumbering), leaves the durable document exactly as before: no member
+/// of it lands. The next update lands whole.
 #[test]
 fn a_failed_or_interrupted_many_member_update_changes_nothing() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-f2-all-or-nothing");
     let preferences = preferences_with_order(&scratch);
-    let path = preferences.path();
-    let bytes_before = std::fs::read(&path).unwrap();
-    // 0: the disk refuses the replacement; 1: the writer dies in it; then
-    // the real write.
+    // 0: the database refuses the commit; 1: the writer dies in the
+    // transaction; then the real commit.
     let step = Arc::new(AtomicUsize::new(0));
-    let hook_step = Arc::clone(&step);
-    preferences
-        .service()
-        .set_write_hook(Arc::new(move |path, bytes| {
-            match hook_step.load(Ordering::SeqCst) {
-                0 => Err(std::io::Error::other("disk full")),
-                1 => panic!("injected writer death mid-renumbering"),
-                _ => vault::write_private_file(path, bytes),
+    let fault_step = Arc::clone(&step);
+    let point_step = Arc::clone(&step);
+    preferences.service().set_sql_seams_for_test(sql::Seams {
+        commit_fault: Some(Arc::new(move || {
+            (fault_step.load(Ordering::SeqCst) == 0).then_some(sql::CommitFault::Full)
+        })),
+        point: Some(Arc::new(move |name| {
+            if name == "before-commit" && point_step.load(Ordering::SeqCst) == 1 {
+                panic!("injected writer death mid-renumbering");
             }
-        }));
+        })),
+        ..sql::Seams::default()
+    });
     let after = order_renumbered();
     let renumber = |document: &mut serde_json::Map<String, serde_json::Value>| {
         document.insert("order".into(), after["order"].clone());
@@ -2357,41 +2400,44 @@ fn a_failed_or_interrupted_many_member_update_changes_nothing() {
             !transient_wait(&error),
             "{case}: a load timeout is not the injected failure: {error}"
         );
-        assert_eq!(std::fs::read(&path).unwrap(), bytes_before, "{case}: file");
-        preferences.reload().unwrap();
         assert_eq!(
-            preferences.value("order"),
-            Some(order_before()["order"].clone()),
-            "{case}: held rows"
+            durable_json(&preferences)["order"],
+            order_before()["order"],
+            "{case}: durable rows"
         );
     }
     step.store(2, Ordering::SeqCst);
     update_patiently(&preferences, renumber);
-    assert_eq!(file_json(&path), after);
+    assert_eq!(durable_json(&preferences)["order"], after["order"]);
 }
 
-/// F2 r3 (review R4): two writers (two services on one root, as two
+/// F2 r3 (review R4), T5.3: two writers (two services on one root, as two
 /// processes) each replace every member of the large object while the
-/// first holds its transaction. The second's edit conflicts, it reads and
-/// merges again, and the file ends holding its object whole: never a mix
-/// of the two, and both updates report durable.
+/// first holds its write transaction open. The second waits (the guard and
+/// the database lock are taken without waiting and retried), conflicts,
+/// reads and merges again, and the database ends holding its object whole:
+/// never a mix of the two, and both updates report durable.
 #[test]
 fn concurrent_many_member_updates_never_mix() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-f2-two-writers");
     let first = preferences_with_order(&scratch);
     let second = preferences(&scratch);
     second.reload().unwrap();
-    let path = first.path();
     let (entered_tx, entered) = mpsc::channel();
     let (release, release_rx) = mpsc::channel::<()>();
     let release_rx = std::sync::Mutex::new(release_rx);
+    let entered_tx = std::sync::Mutex::new(entered_tx);
     let held = AtomicBool::new(false);
-    first.service().set_publish_hook(Arc::new(move |_| {
-        if !held.swap(true, Ordering::SeqCst) {
-            let _ = entered_tx.send(());
-            let _ = release_rx.lock().unwrap().recv();
-        }
-    }));
+    first.service().set_sql_seams_for_test(sql::Seams {
+        point: Some(Arc::new(move |name| {
+            if name == "before-commit" && !held.swap(true, Ordering::SeqCst) {
+                let _ = entered_tx.lock().unwrap().send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        })),
+        ..sql::Seams::default()
+    });
     let first_order = order_document(|index| (index + 1) * 1000, |_| false, None);
     let second_order = order_renumbered();
     let update = |preferences: Preferences, document: serde_json::Value| {
@@ -2410,29 +2456,33 @@ fn concurrent_many_member_updates_never_mix() {
     a.join().unwrap();
     b.join().unwrap();
     assert_eq!(
-        file_json(&path),
-        second_order,
+        durable_json(&first)["order"],
+        second_order["order"],
         "the later writer's object, whole"
     );
 }
 
-/// T5.2 r3 (grok P2, the same rule in every domain): a preferences file
-/// with a member the service cannot hold as a row is read, but never
-/// rewritten: a write fails and the file keeps every byte.
+/// T5.2 r3 (grok P2, the same rule in every domain), T5.3: a legacy
+/// preferences file with a member the database cannot hold as a row is
+/// never imported in part: the preferences are refused with the recovery
+/// commands, a write fails, and the file keeps every byte.
 #[test]
 fn a_preferences_file_the_service_cannot_hold_whole_is_never_rewritten() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-preferences-refused");
-    let preferences = preferences(&scratch);
-    let path = preferences.path();
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let root = StateRoot::new(scratch.home.join(".274bot"));
     let document = br#"{"last_focus":"alice","not a key":1}"#;
-    write_private(&path, document);
-    preferences.reload().unwrap();
-    assert_eq!(preferences.value("last_focus").unwrap(), "alice");
+    write_private(&root.preferences_file(), document);
+    let preferences = preferences(&scratch);
+    let error = preferences.reload().unwrap_err().to_string();
+    assert!(
+        error.contains("durable preferences failure"),
+        "the import is refused: {error}"
+    );
     assert!(preferences
         .set("map_bake", serde_json::json!("always"))
         .is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), document);
+    assert_eq!(std::fs::read(root.preferences_file()).unwrap(), document);
 }
 
 /// T5.2 r3 (scope, sol F1 by construction): a frontend's loadouts form and
@@ -2441,6 +2491,7 @@ fn a_preferences_file_the_service_cannot_hold_whole_is_never_rewritten() {
 /// keeps both rows.
 #[test]
 fn a_form_save_and_a_slot_edit_through_one_service_keep_both_rows() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-form-and-slot");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open_process(root.clone());
@@ -2485,6 +2536,7 @@ fn a_form_save_and_a_slot_edit_through_one_service_keep_both_rows() {
 /// failure of the second left neither name on disk.
 #[test]
 fn a_failed_rename_never_loses_the_saved_loadout() {
+    let _state_lease = crate::test_process::state();
     for failing in 0..2 {
         let scratch = IsolatedEnv::enter(&format!("local-state-r4-rename-failure-{failing}"));
         let root = StateRoot::new(scratch.home.join(".274bot"));
@@ -2505,6 +2557,23 @@ fn a_failed_rename_never_loses_the_saved_loadout() {
         renamed.name = "renamed".into();
         assert!(editor.replace_at(0, renamed.clone()));
         let saved = editor.save();
+        let saved = match saved {
+            Err(error) if error.contains("not durable within") => {
+                // The frontend's timeout does not mean publication failed.
+                // Wait for that same request, without submitting the rename again.
+                let request = {
+                    let state = service.shared.state.lock();
+                    assert_eq!(state.requests.len(), 1, "a rename is one publication");
+                    *state.requests.keys().next().unwrap()
+                };
+                match settlement(&service, request) {
+                    Settlement::Completed(_) => Ok(()),
+                    Settlement::Failed(code) => Err(format!("{code:?}")),
+                    other => panic!("the rename did not complete or fail: {other:?}"),
+                }
+            }
+            other => other,
+        };
         if saved.is_err() {
             // Both frontends discard the form's unsaved rows on a failure.
             editor.discard();
@@ -2541,6 +2610,7 @@ fn a_failed_rename_never_loses_the_saved_loadout() {
 /// edit is decided, and nothing is written or inserted.
 #[test]
 fn a_rename_edit_replaces_its_row_in_place_or_is_refused_whole() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r4-rename-edit");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
@@ -2637,51 +2707,35 @@ fn siblings(path: &std::path::Path) -> Vec<String> {
     found
 }
 
-/// Every name in `path`'s directory, sorted: unlike [`siblings`], nothing
-/// is left out, so an assertion here names the writer's lock when it is
-/// there instead of quietly excusing it.
-fn directory_entries(path: &std::path::Path) -> Vec<String> {
-    let mut found: Vec<String> = std::fs::read_dir(path.parent().unwrap())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    found.sort();
-    found
-}
-
-/// A preferences service on its own root under `scratch`.
-fn preferences_at(scratch: &IsolatedEnv, case: &str) -> Preferences {
+/// A preferences service on its own root under `scratch`, opened over
+/// `legacy` (written privately before the open, when given). Its first
+/// hydration waits until `hooks` ran on the service, so a test's notice
+/// hook sees the import's own lines.
+fn preferences_at(
+    scratch: &IsolatedEnv,
+    case: &str,
+    legacy: Option<&[u8]>,
+    hooks: impl FnOnce(&LocalStateService),
+) -> Preferences {
     let root = StateRoot::new(scratch.home.join(case).join(".274bot"));
     std::fs::create_dir_all(root.path()).unwrap();
-    LocalStateService::open(
+    if let Some(bytes) = legacy {
+        write_private(&root.preferences_file(), bytes);
+    }
+    let gate = Arc::new(AtomicBool::new(false));
+    let open = Arc::clone(&gate);
+    let service = LocalStateService::open_process_with_read_stall_for_test(
         root,
-        &[LocalStateDomain::Preferences],
-        Arc::new(RequestIdMinter::new()),
-    )
-    .preferences()
-}
-
-/// A preferences service on its own root with its read-refusal notices
-/// captured, for a file written before the service opens.
-fn preferences_with_notices(scratch: &IsolatedEnv, case: &str) -> (Preferences, NoticeLines) {
-    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let sink = Arc::clone(&seen);
-    let state = State {
-        hooks: Hooks {
-            read_refusal: Some(Arc::new(move |level, line| {
-                sink.lock().unwrap().push((level, line.to_string()));
-            })),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let service = LocalStateService::open_with_state(
-        StateRoot::new(scratch.home.join(case).join(".274bot")),
-        &[LocalStateDomain::Preferences],
-        Arc::new(RequestIdMinter::new()),
-        state,
+        Arc::new(move || {
+            let deadline = Instant::now() + WAIT;
+            while !open.load(Ordering::SeqCst) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }),
     );
-    (service.preferences(), seen)
+    hooks(&service);
+    gate.store(true, Ordering::SeqCst);
+    service.preferences()
 }
 
 /// A runtime settings service and its account/content-bound file.
@@ -2872,6 +2926,7 @@ fn malformed_runtime_settings_are_kept_and_quarantined_by_a_save() {
 
 #[test]
 fn quarantine_copy_flushes_its_candidate() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-quarantine-copy-flush");
     let path = scratch.home.join(".274bot").join("panel-ui.json");
     let bytes = b"quarantine contents".to_vec();
@@ -2883,18 +2938,18 @@ fn quarantine_copy_flushes_its_candidate() {
     assert_eq!(std::fs::read(quarantined).unwrap(), bytes);
 }
 
-/// T5.2 r4 (the pre-T5.2 recovery, made safe): a preferences file whose
-/// content is malformed (not JSON, not UTF-8, JSON that is not an object)
-/// is refused by reads, so readers fail closed, and untouched by them. The
-/// next save moves it aside to `panel-ui.json.corrupt-<time>` holding
-/// exactly its bytes, flushed with its directory entry before the file is
-/// replaced with fresh preferences, and then lands; the operator is told
-/// (a warning) and one info audit line names the quarantine. A file that
+/// T5.2 r4, T5.3 §5.1 (Q3): a legacy preferences file whose content is
+/// malformed (not JSON, not UTF-8, JSON that is not an object) is kept
+/// byte for byte in a private `panel-ui.json.corrupt-<time>` copy, synced
+/// with its directory entry, before default preferences are committed
+/// with their ledger. The source itself is left as it is; the operator is
+/// told (a warning) and one info audit line names the action. A file that
 /// is also truncated and names a field twice is the truncated one first:
 /// it is refused as not JSON, not as the duplicate, and quarantined the
 /// same way.
 #[test]
 fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r4-preferences-quarantine");
     for (case, bytes) in [
         ("not-json", b"{not valid json".to_vec()),
@@ -2906,65 +2961,21 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
             br#"[{"a":1,"a":2}]"#.to_vec(),
         ),
     ] {
-        let preferences = preferences_at(&scratch, case);
-        let path = preferences.path();
-        write_private(&path, &bytes);
-        let notices = quarantine_lines(preferences.service());
-        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let synced = Arc::clone(&order);
-        preferences.service().set_sync_hook(Arc::new(move |dir| {
-            synced
-                .lock()
-                .unwrap()
-                .push(format!("sync {}", dir.display()));
-            files::sync_directory(dir)
-        }));
-        let written = Arc::clone(&order);
-        preferences
-            .service()
-            .set_write_hook(Arc::new(move |path, bytes| {
-                written
-                    .lock()
-                    .unwrap()
-                    .push(format!("write {}", path.display()));
-                vault::write_private_file(path, bytes)
-            }));
-
-        assert!(preferences.reload().is_err(), "{case}: reads refuse it");
+        let mut notices = None;
+        let preferences = preferences_at(&scratch, case, Some(&bytes), |service| {
+            notices = Some(quarantine_lines(service));
+        });
+        let notices = notices.unwrap();
+        let path = preferences.service().root().preferences_file();
+        assert!(preferences.reload().unwrap().is_empty(), "{case}: defaults");
         assert_eq!(
             std::fs::read(&path).unwrap(),
             bytes,
-            "{case}: reads keep it"
-        );
-        assert_eq!(
-            directory_entries(&path),
-            ["panel-ui.json"],
-            "{case}: a read writes nothing, not even the writer's lock"
-        );
-        assert!(
-            order.lock().unwrap().is_empty(),
-            "{case}: reads write nothing"
+            "{case}: kept in place"
         );
 
-        patiently(
-            || preferences.set("map_bake", serde_json::json!("always")),
-            transient_wait,
-        )
-        .expect(case);
-        assert_eq!(
-            std::fs::read(&path).unwrap(),
-            serde_json::to_vec_pretty(&serde_json::json!({"map_bake": "always"})).unwrap(),
-            "{case}: the save lands in fresh preferences"
-        );
-        assert_eq!(preferences.value("map_bake").unwrap(), "always");
-        let found = directory_entries(&path);
-        assert_eq!(
-            found.len(),
-            3,
-            "{case}: {found:?}: the document, its quarantine copy and the writer's lock, \
-             which a landed save leaves"
-        );
-        assert_eq!(found[2], "panel-ui.json.lock", "{case}: {found:?}");
+        let found = siblings(&path);
+        assert_eq!(found.len(), 2, "{case}: {found:?}");
         assert!(
             found[1].starts_with("panel-ui.json.corrupt-"),
             "{case}: {found:?}"
@@ -2975,56 +2986,47 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
             bytes,
             "{case}: the quarantine holds the exact bytes"
         );
-        assert_eq!(
-            order.lock().unwrap()[..3],
-            [
-                format!("sync {}", path.parent().unwrap().display()),
-                format!("write {}", path.display()),
-                format!("write {}", path.display()),
-            ],
-            "{case}: the quarantine's entry is flushed before the file is replaced \
-             with fresh preferences, and then the save is written"
-        );
+        set_patiently(&preferences, "map_bake", serde_json::json!("always"));
+        assert_eq!(preferences.value("map_bake").unwrap(), "always");
         let notices = notices.lock().unwrap().clone();
-        assert_eq!(notices.len(), 2, "{case}: {notices:?}");
-        assert_eq!(notices[0].0, Level::Warn, "{case}: the operator's notice");
+        let warn = notices
+            .iter()
+            .find(|(level, _)| *level == Level::Warn)
+            .unwrap_or_else(|| panic!("{case}: {notices:?}"));
         assert!(
-            notices[0].1.contains(&quarantined.display().to_string()),
+            warn.1.contains(&quarantined.display().to_string()),
             "{case}: {notices:?}"
         );
-        assert_eq!(notices[1].0, Level::Info, "{case}: the audit line");
+        let audits: Vec<_> = notices
+            .iter()
+            .filter(|(level, line)| *level == Level::Info && line.starts_with("audit "))
+            .collect();
+        assert_eq!(audits.len(), 1, "{case}: {notices:?}");
         assert!(
-            notices[1]
+            audits[0]
                 .1
-                .starts_with("audit domain=preferences action=preferences-quarantine"),
+                .contains("action=preferences-defaults-after-quarantine"),
             "{case}: {notices:?}"
         );
-        assert!(
-            notices[1]
-                .1
-                .contains(&format!("quarantined={}", quarantined.display())),
-            "{case}: {notices:?}"
-        );
-        assert_eq!(std::fs::read(&quarantined).unwrap(), bytes, "{case}: kept");
     }
 }
 
-/// T5.2 r4: the quarantine runs under the preferences file's write lock:
-/// while another writer holds it, a save waits and the malformed file
-/// stays where it is.
+/// T5.2 r4, T5.3 §4.3: the import runs under the preferences guard
+/// (`panel-ui.json.lock`): while another writer holds it, the database
+/// does not open, the malformed file stays where it is, and nothing is
+/// copied; once released, the copy is kept and defaults start.
 #[test]
 fn a_preferences_quarantine_waits_for_the_files_lock() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r4-preferences-quarantine-lock");
-    let preferences = preferences_at(&scratch, "locked");
-    let path = preferences.path();
+    let root = StateRoot::new(scratch.home.join("locked").join(".274bot"));
+    let path = root.preferences_file();
     let bytes = b"{not valid json".to_vec();
     write_private(&path, &bytes);
     let lock = files::lock_for_write(&path, std::time::Instant::now() + WAIT, &|| false).unwrap();
-    let saver = {
-        let preferences = preferences.clone();
-        std::thread::spawn(move || preferences.set("map_bake", serde_json::json!("always")))
-    };
+    let preferences = preferences_at(&scratch, "locked", None, |_| {});
     std::thread::sleep(Duration::from_millis(300));
+    assert!(preferences.document().unwrap_err().is_not_ready());
     assert_eq!(
         std::fs::read(&path).unwrap(),
         bytes,
@@ -3032,20 +3034,7 @@ fn a_preferences_quarantine_waits_for_the_files_lock() {
     );
     assert_eq!(siblings(&path), ["panel-ui.json"]);
     drop(lock);
-    // The save stays queued past the frontend's bounded wait under load and
-    // settles later: retry either bounded wait against what is on disk now.
-    let mut saved = saver.join().unwrap();
-    let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(60) {
-        match saved {
-            Ok(()) => break,
-            Err(error) if transient_wait(&error) => {
-                saved = preferences.set("map_bake", serde_json::json!("always"));
-            }
-            Err(error) => panic!("save failed: {error}"),
-        }
-    }
-    saved.unwrap();
+    assert!(preferences.reload().unwrap().is_empty());
     let found = siblings(&path);
     assert_eq!(found.len(), 2, "{found:?}");
     assert_eq!(
@@ -3054,77 +3043,73 @@ fn a_preferences_quarantine_waits_for_the_files_lock() {
     );
 }
 
-/// T5.2 r4, r5 (Sol r4 F2): only malformed content is quarantined. A
-/// preferences file refused for the file itself (its size) or holding a
-/// member this build cannot hold as a row (here `nav.v2`: a member name
-/// with a `.` in it, which no row key can carry back as it was read) is
-/// never moved or replaced: reads or writes refuse visibly, every byte
-/// stays, and no quarantine file appears. The file carries no version
-/// marker: the refusal is the unrepresentable member's alone (the marker
-/// case is the next test).
-#[test]
-fn preferences_refused_for_size_or_an_unrepresentable_member_are_never_quarantined() {
-    let scratch = IsolatedEnv::enter("local-state-r4-preferences-refused");
-
-    // Larger than the bound (and not JSON either): refused for its size.
-    let preferences = preferences_at(&scratch, "oversize");
-    let path = preferences.path();
-    let oversize = vec![b'x'; MAX_PREFERENCES_BYTES as usize + 1];
-    write_private(&path, &oversize);
-    let notices = quarantine_lines(preferences.service());
-    assert!(preferences.reload().is_err(), "oversize is refused");
-    assert!(preferences
-        .set("map_bake", serde_json::json!("always"))
-        .is_err());
-    assert!(std::fs::read(&path).unwrap() == oversize, "oversize kept");
-    assert_eq!(siblings(&path), ["panel-ui.json"]);
-    assert!(notices.lock().unwrap().is_empty());
-
-    // Valid JSON with a member this build cannot hold as a row, and no
-    // version marker: read, never rewritten.
-    let preferences = preferences_at(&scratch, "unrepresentable");
-    let path = preferences.path();
-    let unrepresentable = br#"{"last_focus":"alice","nav.v2":{"zones":"all"}}"#;
-    write_private(&path, unrepresentable);
-    let notices = quarantine_lines(preferences.service());
-    preferences.reload().unwrap();
-    assert_eq!(preferences.value("last_focus").unwrap(), "alice");
-    assert!(preferences
-        .set("map_bake", serde_json::json!("always"))
-        .is_err());
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        unrepresentable,
-        "the unrepresentable document is kept"
-    );
-    assert_eq!(siblings(&path), ["panel-ui.json"]);
-    assert!(notices.lock().unwrap().is_empty());
+/// The refusal the first open of `preferences` ends with.
+fn refused_snapshot(preferences: &Preferences) -> PreferenceError {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        match preferences.snapshot() {
+            Err(error) if error.is_not_ready() => {}
+            Err(error) => return error,
+            Ok(_) => panic!("the preferences opened"),
+        }
+        assert!(Instant::now() < deadline, "never settled");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
-/// T5.2 r5 (Sol r4 F2): the preferences rule is lossless
-/// representability, not a version or known-member check. `panel-ui.json`
-/// has no version marker of its own, so a `schema_version` member another
-/// build wrote is a member like any other: when every member can be held
-/// as a row, a save keeps them all, a member this build does not know
-/// among them, adds its own, and nothing is refused or moved aside.
+/// T5.2 r4, r5 (Sol r4 F2), T5.3 §5.1: only malformed content is
+/// quarantined. A legacy file refused for its size or holding a member this
+/// build cannot hold as a row (`nav.v2`: a member name with a `.`) is never
+/// moved, replaced or partly imported: the preferences are refused with the
+/// recovery commands, every byte stays, and no copy appears.
+#[test]
+fn preferences_refused_for_size_or_an_unrepresentable_member_are_never_quarantined() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-r4-preferences-refused");
+    let oversize = vec![b'x'; MAX_PREFERENCES_BYTES as usize + 1];
+    let unrepresentable = br#"{"last_focus":"alice","nav.v2":{"zones":"all"}}"#.to_vec();
+    for (case, bytes) in [("oversize", oversize), ("unrepresentable", unrepresentable)] {
+        let mut notices = None;
+        let preferences = preferences_at(&scratch, case, Some(&bytes), |service| {
+            notices = Some(quarantine_lines(service));
+        });
+        let path = preferences.service().root().preferences_file();
+        let text = refused_snapshot(&preferences).to_string();
+        assert!(
+            text.contains("state preferences recover --defaults"),
+            "{case}: {text}"
+        );
+        assert!(preferences
+            .set("map_bake", serde_json::json!("always"))
+            .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "{case}: kept");
+        assert_eq!(siblings(&path), ["panel-ui.json"], "{case}");
+        assert!(notices.unwrap().lock().unwrap().is_empty(), "{case}");
+    }
+}
+
+/// T5.2 r5 (Sol r4 F2), T5.3: the preferences rule is lossless
+/// representability, not a version or known-member check. A
+/// `schema_version` member another build wrote is a member like any other:
+/// the import keeps it and every member this build does not know, a save
+/// adds its own, and nothing is refused or copied aside.
 #[test]
 fn a_preferences_version_marker_is_kept_by_a_save_like_any_other_member() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r5-preferences-version-marker");
-    let preferences = preferences_at(&scratch, "marker");
-    let path = preferences.path();
-    write_private(
-        &path,
-        br#"{"schema_version":99,"last_focus":"alice","future_preference":{"enabled":true}}"#,
+    let preferences = preferences_at(
+        &scratch,
+        "marker",
+        Some(br#"{"schema_version":99,"last_focus":"alice","future_preference":{"enabled":true}}"#),
+        |_| {},
     );
-    let notices = quarantine_lines(preferences.service());
     preferences.reload().unwrap();
     assert_eq!(preferences.value("last_focus").unwrap(), "alice");
     preferences
         .set("map_bake", serde_json::json!("always"))
         .expect("a version marker and an unknown member do not refuse a save");
-    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(
-        saved,
+        durable_json(&preferences),
         serde_json::json!({
             "schema_version": 99,
             "last_focus": "alice",
@@ -3133,29 +3118,40 @@ fn a_preferences_version_marker_is_kept_by_a_save_like_any_other_member() {
         }),
         "every member is kept, the marker and the unknown one too"
     );
-    assert_eq!(siblings(&path), ["panel-ui.json"]);
-    assert!(notices.lock().unwrap().is_empty());
+    let path = preferences.service().root().preferences_file();
+    assert_eq!(siblings(&path), ["panel-ui.json.migrated"]);
 }
 
-/// T5.2 r4: a preferences file refused for its permissions is never
+/// T5.2 r4, T5.3 §5.1: a legacy file refused for its permissions is never
 /// quarantined, whatever it holds: group/other-writable or unreadable,
-/// even with malformed content, it is refused and keeps every byte.
+/// even with malformed content, it is refused, no ledger or defaults are
+/// saved, and it keeps every byte.
 #[cfg(unix)]
 #[test]
 fn preferences_refused_for_permissions_are_never_quarantined() {
+    let _state_lease = crate::test_process::state();
     if running_as_root() {
         return;
     }
     let scratch = IsolatedEnv::enter("local-state-r4-preferences-permissions");
     for mode in [0o666, 0o000] {
-        let preferences = preferences_at(&scratch, &format!("mode-{mode:o}"));
-        let path = preferences.path();
+        let case = format!("mode-{mode:o}");
+        let root = StateRoot::new(scratch.home.join(&case).join(".274bot"));
+        let path = root.preferences_file();
         let bytes = b"{not valid json".to_vec();
         write_private(&path, &bytes);
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
-        let notices = quarantine_lines(preferences.service());
-        let refused = preferences.reload();
-        assert!(refused.is_err(), "mode {mode:o}: refused");
+        let mut notices = None;
+        let preferences = preferences_at(&scratch, &case, None, |service| {
+            notices = Some(quarantine_lines(service));
+        });
+        let refused = refused_snapshot(&preferences);
+        assert!(
+            refused
+                .to_string()
+                .contains("No source ledger or defaults were saved"),
+            "mode {mode:o}: {refused}"
+        );
         assert!(
             preferences
                 .set("map_bake", serde_json::json!("always"))
@@ -3165,269 +3161,58 @@ fn preferences_refused_for_permissions_are_never_quarantined() {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), bytes, "mode {mode:o}: kept");
         assert_eq!(siblings(&path), ["panel-ui.json"], "mode {mode:o}");
-        assert!(notices.lock().unwrap().is_empty(), "mode {mode:o}");
+        assert!(notices.unwrap().lock().unwrap().is_empty(), "mode {mode:o}");
     }
 }
 
-/// FU:15 (S3a): a preferences file that names a field twice in one
-/// object — at the top level or inside a nested object — is refused
-/// whole instead of read keeping one of the two values: reads and saves
-/// refuse with the field, the object it sits in and the remedy, every
-/// byte stays, nothing appears beside the file, and the operator's
-/// warning names the file and the cause.
+/// T5.3 §6 (S4 headed check D-2): a setting saved while the state database
+/// is refused for its permissions fails at once with the refusal's own
+/// path, cause and remedy, not only the code ("store I/O error"), so the
+/// setting that tried to save tells the operator what to fix.
+#[cfg(unix)]
 #[test]
-fn a_preferences_file_with_a_duplicate_field_is_refused_and_kept() {
-    let scratch = IsolatedEnv::enter("local-state-s3a-preferences-duplicate");
-    for (case, bytes, field, object) in [
-        (
-            "top-level",
-            br#"{"last_focus":"alice","last_focus":"bob"}"#.to_vec(),
-            "last_focus",
-            "the top level",
-        ),
-        (
-            "nested",
-            br#"{"nav":{"allow_teleports":true,"allow_teleports":false}}"#.to_vec(),
-            "allow_teleports",
-            r#"the object "nav""#,
-        ),
-    ] {
-        let (preferences, notices) = preferences_with_notices(&scratch, case);
-        let path = preferences.path();
-        write_private(&path, &bytes);
-        let cause = format!(
-            "field {field:?} is named twice in {object}; edit the file to remove one of them"
-        );
-        assert!(
-            matches!(
-                preferences
-                    .service()
-                    .readback_lease(&identity(LocalStateDomain::Preferences, "alice"), WAIT),
-                Err(ErrorCode::Failed {
-                    domain: LocalStateDomain::Preferences,
-                    reason: FailureReason::Schema
-                })
-            ),
-            "{case}: {notices:?}"
-        );
-        let error = preferences.document().unwrap_err();
-        assert_eq!(error.path(), path.display().to_string(), "{case}");
-        assert_eq!(error.cause(), cause, "{case}");
-        assert_eq!(
-            error.code(),
-            Some(ErrorCode::Failed {
-                domain: LocalStateDomain::Preferences,
-                reason: FailureReason::Schema,
-            }),
-            "{case}"
-        );
-        assert!(preferences.reload().is_err(), "{case}: reads refuse it");
-        assert!(
-            preferences
-                .set("map_bake", serde_json::json!("always"))
-                .is_err(),
-            "{case}: a save refuses it"
-        );
-        assert_eq!(
-            std::fs::read(&path).unwrap(),
-            bytes,
-            "{case}: every byte stays"
-        );
-        assert_eq!(
-            directory_entries(&path),
-            ["panel-ui.json"],
-            "{case}: nothing is written beside it: no quarantine copy, no staging file, \
-             not even the writer's lock, because the save refuses at submission"
-        );
-        let notices = notices.lock().unwrap().clone();
-        assert_eq!(notices.len(), 1, "{case}: {notices:?}");
-        assert_eq!(notices[0].0, Level::Warn, "{case}: the operator's notice");
-        assert!(
-            notices[0]
-                .1
-                .contains(&format!("preferences file refused path={}", path.display())),
-            "{case}: {notices:?}"
-        );
-        assert!(notices[0].1.contains(&cause), "{case}: {notices:?}");
-        drop(preferences);
+fn a_save_refused_by_database_permissions_names_the_cause_and_the_remedy() {
+    let _state_lease = crate::test_process::state();
+    if running_as_root() {
+        return;
     }
-}
-
-/// FU:15 (S3a): a preferences file without duplicate fields loads with
-/// exactly the values a plain `serde_json` read held before, and the
-/// same field name in two different objects (`future.same` and
-/// `future.other.same`, one `name` per element of `layout`) is not a
-/// duplicate.
-#[test]
-fn a_preferences_file_without_duplicate_fields_loads_as_before() {
-    let scratch = IsolatedEnv::enter("local-state-s3a-preferences-valid");
-    let preferences = preferences_at(&scratch, "valid");
-    let path = preferences.path();
-    let bytes = br#"{
-        "last_focus": "alice",
-        "nav": {"allow_teleports": true},
-        "pvp": {"start_fights": true},
-        "layout": [{"name": "mine"}, {"name": "yours"}],
-        "future": {"same": 1, "other": {"same": 2}}
-    }"#
-    .to_vec();
-    write_private(&path, &bytes);
-    // The expected document is what the fixture holds, decided before
-    // anything reads the file: a read that rewrote the file and cached the
-    // rewritten document could not satisfy this comparison.
-    let expected: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_slice(&bytes).unwrap();
-    let lease = preferences
-        .service()
-        .readback_lease(&identity(LocalStateDomain::Preferences, "alice"), WAIT)
-        .unwrap();
-    assert!(lease.is_some(), "the file loads");
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        bytes,
-        "the read keeps every byte of the file it read"
-    );
-    assert_eq!(
-        directory_entries(&path),
-        ["panel-ui.json"],
-        "a read writes nothing, not even the writer's lock"
-    );
-    assert_eq!(*preferences.document().unwrap(), expected);
-    assert_eq!(preferences.value("last_focus").unwrap(), "alice");
-    assert!(preferences.walk_globals().unwrap().allow_teleports);
-    assert!(preferences.pvp_globals().unwrap().start_fights);
-}
-
-/// One save queued before its store's first read finishes: `bytes` are
-/// written, the service is opened with its first read held, a
-/// single-member save is queued, the read is released, and the request's
-/// terminal is waited out. Returns the terminal, the file's path and the
-/// notices seen from the service's opening.
-fn queued_cold_save(
-    scratch: &IsolatedEnv,
-    case: &str,
-    bytes: &[u8],
-    key: &str,
-    value: serde_json::Value,
-) -> (Result<(), PreferenceError>, std::path::PathBuf, NoticeLines) {
-    let (entered_tx, entered_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-    let release_rx = std::sync::Mutex::new(release_rx);
-    let first = AtomicBool::new(true);
-    let refused = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let sink = Arc::clone(&refused);
-    let service = LocalStateService::open_with_state(
-        StateRoot::new(scratch.home.join(case).join(".274bot")),
-        &[LocalStateDomain::Preferences],
-        Arc::new(RequestIdMinter::new()),
-        State {
-            read_stall: Some(Arc::new(move || {
-                if first.swap(false, Ordering::SeqCst) {
-                    entered_tx.send(()).unwrap();
-                    release_rx.lock().unwrap().recv().unwrap();
-                }
-            })),
-            hooks: Hooks {
-                read_refusal: Some(Arc::new(move |level, line| {
-                    sink.lock().unwrap().push((level, line.to_string()));
-                })),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-    );
-    let preferences = service.preferences();
-    write_private(&preferences.path(), bytes);
-    entered_rx
-        .recv_timeout(WAIT)
-        .expect("the worker is held in its first read");
-    let Update::Queued(mut watch) = preferences.begin_set(key, value).unwrap() else {
-        panic!("the save is queued before the first read finishes");
+    let scratch = IsolatedEnv::enter("local-state-s4-refused-save-cause");
+    let case = "group-writable";
+    let database = {
+        let preferences = preferences_at(&scratch, case, None, |_| {});
+        let Update::Queued(mut initial) = preferences
+            .begin_set("map_bake", serde_json::json!("always"))
+            .expect("the first save is accepted")
+        else {
+            panic!("the first save is queued");
+        };
+        initial
+            .wait(WAIT)
+            .expect("the first save settles")
+            .expect("the first save creates the database");
+        preferences.service().root().database_file()
     };
-    release_tx.send(()).unwrap();
-    let settled = watch.wait(WAIT).expect("the request settles");
-    let path = preferences.path();
-    drop(preferences);
-    drop(service);
-    (settled, path, refused)
-}
-
-/// FU:15 (S3a): a save queued before the first read finishes reads the
-/// file under the writer's lock and is refused there. The lock file it
-/// opens first is the writer's own, never-removed lock (`WriteLock` in
-/// `local_state/files.rs`), which a valid save leaves too — so the
-/// refused cold save must leave exactly the files a valid cold save
-/// leaves: the document's bytes, the lock, nothing else — no quarantine
-/// copy, no default document — with the refusal's cause and the
-/// operator's warning.
-#[test]
-fn a_refused_cold_save_leaves_the_files_a_valid_save_leaves() {
-    let scratch = IsolatedEnv::enter("local-state-s3a-cold-save");
-    let refused_bytes = br#"{"last_focus":"alice","last_focus":"bob"}"#.to_vec();
-    let (settled, path, notices) = queued_cold_save(
-        &scratch,
-        "refused",
-        &refused_bytes,
-        "map_bake",
-        serde_json::json!("always"),
-    );
-    let error = settled.expect_err("the refused file is never saved over");
-    // The queued result carries the bounded failure code; the refusal's
-    // own cause and remedy reach the operator through the warning below.
-    assert_eq!(
-        error.code(),
-        Some(ErrorCode::Failed {
-            domain: LocalStateDomain::Preferences,
-            reason: FailureReason::Schema,
-        }),
-        "{error:?}"
-    );
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        refused_bytes,
-        "every byte of the refused file stays"
-    );
-    assert!(
-        notices
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|(level, line)| *level == Level::Warn
-                && line.contains("preferences file refused")
-                && line.contains(path.display().to_string().as_str())
-                && line.contains("is named twice")),
-        "{:?}",
-        notices.lock().unwrap()
-    );
-    let refused_files = directory_entries(&path);
-
-    let (settled, path, _) = queued_cold_save(
-        &scratch,
-        "valid",
-        br#"{"last_focus":"alice"}"#,
-        "map_bake",
-        serde_json::json!("always"),
-    );
-    settled.expect("the valid save lands");
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "last_focus": "alice",
-            "map_bake": "always",
-        }))
-        .unwrap(),
-        "the valid save wrote the merged document"
-    );
-    let valid_files = directory_entries(&path);
-    assert_eq!(
-        valid_files,
-        ["panel-ui.json", "panel-ui.json.lock"],
-        "a valid cold save leaves the document and the writer's never-removed lock"
-    );
-    assert_eq!(
-        refused_files, valid_files,
-        "the refused cold save leaves exactly the files a valid save leaves"
-    );
+    std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o664)).unwrap();
+    let preferences = preferences_at(&scratch, case, None, |_| {});
+    let refused = refused_snapshot(&preferences).to_string();
+    let error = match preferences.begin_set("map_bake", serde_json::json!("never")) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("a refused store accepted a save"),
+    };
+    std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let shown = database.display().to_string();
+    for needle in [
+        shown.as_str(),
+        "writable by other users",
+        &format!("chmod 600 {shown}"),
+    ] {
+        assert!(
+            refused.contains(needle),
+            "snapshot lacks {needle:?}: {refused}"
+        );
+        assert!(error.contains(needle), "save lacks {needle:?}: {error}");
+    }
+    assert!(!error.contains("store I/O error"), "{error}");
 }
 
 /// FU:15 (S3a): the duplicate-field check costs no more than the parse it
@@ -3591,24 +3376,24 @@ fn current_loadouts_with_duplicate_names_are_refused_and_kept() {
     );
 }
 
-/// A compound preference patch remains queued while its file publication is
+/// A compound preference patch remains queued while its database write is
 /// held. The service owns its whole intent; polling only observes the outcome.
 #[test]
 fn a_queued_preferences_update_finishes_without_losing_compound_intent() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-t33-queued-update");
-    let preferences = preferences_at(&scratch, "queued");
+    let preferences = preferences_at(&scratch, "queued", None, |_| {});
     preferences.reload().unwrap();
     let (release, gate) = mpsc::channel::<()>();
     let gate = std::sync::Mutex::new(gate);
     let first = AtomicBool::new(true);
     preferences
         .service()
-        .set_write_hook(Arc::new(move |path, bytes| {
+        .set_write_stall_for_test(Arc::new(move || {
             if first.swap(false, Ordering::SeqCst) {
-                // The busy disk: the first file write waits for the test.
+                // The busy disk: the first write waits for the test.
                 let _ = gate.lock().unwrap().recv();
             }
-            vault::write_private_file(path, bytes)
         }));
 
     let mut patch = PreferencePatch::new();
@@ -3626,7 +3411,7 @@ fn a_queued_preferences_update_finishes_without_losing_compound_intent() {
         queued.poll().is_none(),
         "still queued while the disk is held"
     );
-    assert!(!preferences.path().exists(), "nothing written yet");
+    assert!(preferences.value("a").is_none(), "nothing written yet");
 
     release.send(()).unwrap();
     // A hang guard, not a pass condition: the writer settles both edits
@@ -3635,22 +3420,20 @@ fn a_queued_preferences_update_finishes_without_losing_compound_intent() {
         .wait(Duration::from_secs(600))
         .expect("the queued update settles")
         .expect("both edits are durable");
-    let saved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(preferences.path()).unwrap()).unwrap();
-    assert_eq!(saved, serde_json::json!({"a": 1, "b": 2}));
+    assert_eq!(
+        durable_json(&preferences),
+        serde_json::json!({"a": 1, "b": 2})
+    );
     assert_eq!(preferences.value("b").unwrap(), 2);
 }
 #[test]
 fn preference_patch_rebases_nested_intent_and_refreshes_walk_projection() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-patch-rebase");
-    let preferences = preferences(&scratch);
-    let path = preferences.path();
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    write_private(
-        &path,
+    let preferences = preferences_from(
+        &scratch,
         br#"{"nav":{"allow_teleports":false,"allow_wilderness":false},"theme":"dark"}"#,
     );
-    preferences.reload().unwrap();
 
     let before = preferences.document().unwrap();
     let mut after = before.as_ref().clone();
@@ -3658,11 +3441,19 @@ fn preference_patch_rebases_nested_intent_and_refreshes_walk_projection() {
     after["theme"] = serde_json::json!({"density": "compact"});
     let patch = PreferencePatch::between(&before, &after).unwrap();
 
-    // The worker observes this outside edit before it applies member intent.
-    write_private(
-        &path,
-        br#"{"nav":{"allow_teleports":false,"allow_wilderness":true},"theme":"light","outside":7}"#,
-    );
+    // Another writer (a second service on the root, as another process)
+    // commits first: the worker reads it inside its own transaction before
+    // it applies member intent.
+    let outside = self::preferences(&scratch);
+    outside.reload().unwrap();
+    let mut edit =
+        PreferencePatch::member(&["nav", "allow_wilderness"], Some(true.into())).unwrap();
+    edit.set_member(&["theme"], Some("light".into())).unwrap();
+    edit.set_member(&["outside"], Some(7.into())).unwrap();
+    let Update::Queued(mut done) = outside.begin_patch(edit).unwrap() else {
+        panic!("the outside edit is queued");
+    };
+    done.wait(WAIT).unwrap().unwrap();
     let audits = audits(preferences.service());
     let update = preferences.begin_patch(patch).unwrap();
     match update {
@@ -3695,10 +3486,9 @@ fn preference_patch_rebases_nested_intent_and_refreshes_walk_projection() {
 
 #[test]
 fn the_pvp_setting_projects_off_by_default_and_follows_one_member_write() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-pvp-projection");
-    let preferences = preferences(&scratch);
-    write_private(&preferences.path(), br#"{"nav":{"allow_teleports":true}}"#);
-    preferences.reload().unwrap();
+    let preferences = preferences_from(&scratch, br#"{"nav":{"allow_teleports":true}}"#);
     assert!(
         !preferences.pvp_globals().unwrap().start_fights,
         "absent = off"
@@ -3735,13 +3525,11 @@ fn a_malformed_pvp_member_fails_closed_with_a_safe_typed_cause() {
         ("not-an-object", br#"{"pvp":true}"#.as_slice()),
     ] {
         let scratch = IsolatedEnv::enter(&format!("local-state-pvp-projection-error-{label}"));
-        let preferences = preferences(&scratch);
-        write_private(&preferences.path(), document);
-        preferences.reload().unwrap();
+        let preferences = preferences_from(&scratch, document);
         let error = preferences
             .pvp_globals()
             .expect_err("a malformed pvp member is not a setting");
-        assert!(error.path().ends_with("panel-ui.json"));
+        assert!(error.path().ends_with("state.sqlite3"));
         assert!(error.cause().contains("pvp"), "{label}");
         assert!(!error.cause().contains("private-sensitive-value"));
         // The rest of the document stays readable and the walk view is not hurt.
@@ -3752,9 +3540,15 @@ fn a_malformed_pvp_member_fails_closed_with_a_safe_typed_cause() {
 
 #[test]
 fn the_pvp_setting_is_not_ready_while_the_store_is_cold_or_refused() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-pvp-cold");
+    // An over-size legacy file is refused at the import: no store, no setting.
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    write_private(
+        &root.preferences_file(),
+        &vec![b' '; MAX_PREFERENCES_BYTES as usize + 1],
+    );
     let preferences = preferences(&scratch);
-    write_private(&preferences.path(), b"{not-json");
     assert!(preferences.reload().is_err());
     assert!(
         preferences.pvp_globals().is_err(),
@@ -3764,18 +3558,17 @@ fn the_pvp_setting_is_not_ready_while_the_store_is_cold_or_refused() {
 
 #[test]
 fn malformed_walk_projection_reports_safe_typed_cause() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-walk-projection-error");
-    let preferences = preferences(&scratch);
-    write_private(
-        &preferences.path(),
+    let preferences = preferences_from(
+        &scratch,
         br#"{"nav":{"allow_teleports":"private-sensitive-value"}}"#,
     );
-    preferences.reload().unwrap();
 
     let error = preferences
         .walk_globals()
         .expect_err("a non-boolean walk setting is not a typed view");
-    assert!(error.path().ends_with("panel-ui.json"));
+    assert!(error.path().ends_with("state.sqlite3"));
     assert!(error.cause().contains("nav.allow_teleports"));
     assert!(!error.cause().contains("private-sensitive-value"));
     assert_eq!(error.code(), None);
@@ -3783,6 +3576,7 @@ fn malformed_walk_projection_reports_safe_typed_cause() {
 
 #[test]
 fn dropping_preference_watch_keeps_service_owned_request_and_result() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-watch-drop");
     let preferences = preferences(&scratch);
     preferences.reload().unwrap();
@@ -3834,6 +3628,7 @@ fn dropping_preference_watch_keeps_service_owned_request_and_result() {
 
 #[test]
 fn compound_preference_patch_rebases_after_cold_hydration_and_frontend_drop() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-compound-preference-drop");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.preferences_file();
@@ -3932,6 +3727,7 @@ fn compound_preference_patch_rebases_after_cold_hydration_and_frontend_drop() {
 
 #[test]
 fn cold_preference_document_and_walk_fail_before_hydration() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-cold-read");
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -3972,22 +3768,37 @@ fn cold_preference_document_and_walk_fail_before_hydration() {
 
     release_tx.send(()).unwrap();
     preferences.reload().unwrap();
-    assert!(preferences.document().unwrap().is_empty());
     assert!(
-        !preferences.path().exists(),
-        "readiness does not save defaults"
+        preferences.document().unwrap().is_empty(),
+        "readiness fabricates no saved keys"
+    );
+    assert!(
+        !preferences.service().root().preferences_file().exists(),
+        "readiness writes no JSON"
     );
     assert_cached_reads_allocate_nothing();
 
-    write_private(&preferences.path(), b"{not-json");
-    assert!(preferences.reload().is_err());
-    assert!(preferences.document().is_err());
-    assert!(preferences.walk_globals().is_err());
-    assert_cached_reads_allocate_nothing();
+    // A refused store: a damaged database at another root.
+    let refused_root = StateRoot::new(scratch.home.join("refused").join(".274bot"));
+    vault::create_private_dir(&refused_root.state_dir()).unwrap();
+    vault::create_private_file(&refused_root.database_file(), &[0x5a; 4096]).unwrap();
+    let refused = LocalStateService::open_process(refused_root).preferences();
+    let _ = refused_snapshot(&refused);
+    assert!(refused.document().is_err());
+    assert!(refused.walk_globals().is_err());
+    let allocations = allocation_counter::measure(|| {
+        for _ in 0..256 {
+            let _ = std::hint::black_box(refused.document());
+            let _ = std::hint::black_box(refused.walk_globals());
+        }
+    });
+    assert_eq!(allocations.count_total, 0, "{allocations:?}");
+    assert_eq!(allocations.bytes_total, 0, "{allocations:?}");
 }
 
 #[test]
 fn preference_results_outlive_neutral_history_and_bound_new_admission() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-result-bound");
     let preferences = preferences(&scratch);
     preferences.reload().unwrap();
@@ -4060,6 +3871,7 @@ fn preference_results_outlive_neutral_history_and_bound_new_admission() {
 
 #[test]
 fn preference_byte_limit_refuses_before_queue_capacity_and_releases_credit() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-byte-bound");
     let preferences = preferences(&scratch);
     preferences.reload().unwrap();
@@ -4150,6 +3962,7 @@ fn preference_byte_limit_refuses_before_queue_capacity_and_releases_credit() {
 
 #[test]
 fn fix_r1_shutdown_finishes_a_cold_preference_before_the_nonzero_bound() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-cold-shutdown-finish");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let (entered_tx, entered_rx) = mpsc::channel();
@@ -4227,30 +4040,30 @@ fn fix_r1_shutdown_finishes_a_cold_preference_before_the_nonzero_bound() {
         lines.lock().unwrap().is_empty(),
         "no duplicate terminal line"
     );
-    let saved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root.preferences_file()).unwrap()).unwrap();
+    drop(state_after_shutdown(&root));
+}
+
+/// What a fresh service at `root` reads as durable, and that service.
+fn state_after_shutdown(root: &StateRoot) -> Arc<LocalStateService> {
+    let reopened = LocalStateService::open_process(root.clone());
+    let saved =
+        serde_json::Value::Object(reopened.preferences().reload().unwrap().as_ref().clone());
     assert_eq!(
         saved,
         serde_json::json!({"nav":{"allow_teleports":true,"allow_wilderness":true}})
     );
+    reopened
 }
 
+/// T5.3: a save that changes nothing durable (the member already holds
+/// the value) commits nothing: no version, no write, no saved-state line.
 #[test]
-fn fix_r1_semantic_noop_rewrite_has_one_saved_state_info_line() {
+fn a_semantic_noop_save_commits_nothing_and_logs_no_saved_state_line() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-noop-audit");
-    let preferences = preferences(&scratch);
-    let bytes = b"{ \"nav\" : { \"allow_teleports\" : true } }\n";
-    write_private(&preferences.path(), bytes);
-    preferences.reload().unwrap();
+    let preferences = preferences_from(&scratch, b"{ \"nav\" : { \"allow_teleports\" : true } }\n");
     let commits = audits(preferences.service());
-    let publications = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&publications);
-    preferences
-        .service()
-        .set_write_hook(Arc::new(move |path, bytes| {
-            counted.fetch_add(1, Ordering::SeqCst);
-            vault::write_private_file(path, bytes)
-        }));
+    let before = preferences.snapshot().unwrap().version();
     let Update::Queued(mut watch) = preferences
         .begin_patch(
             PreferencePatch::member(&["nav", "allow_teleports"], Some(true.into())).unwrap(),
@@ -4260,22 +4073,17 @@ fn fix_r1_semantic_noop_rewrite_has_one_saved_state_info_line() {
         panic!("the semantic no-op is accepted");
     };
     assert_eq!(watch.wait(WAIT), Some(Ok(())));
+    assert!(commits.lock().unwrap().is_empty(), "no saved-state line");
+    assert_eq!(preferences.snapshot().unwrap().version(), before);
     assert_eq!(
-        publications.load(Ordering::SeqCst),
-        1,
-        "the file is rewritten"
+        durable_json(&preferences),
+        serde_json::json!({"nav":{"allow_teleports":true}})
     );
-    let commits = commits.lock().unwrap();
-    assert_eq!(commits.len(), 1, "every actual rewrite logs one info line");
-    assert_eq!(commits[0].identity().account().profile(), "operator");
-    assert_eq!(commits[0].action(), CommitAction::PreferencesWrite);
-    let saved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(preferences.path()).unwrap()).unwrap();
-    assert_eq!(saved, serde_json::json!({"nav":{"allow_teleports":true}}));
 }
 
 #[test]
 fn shutdown_cancels_a_cold_compound_preference_once_without_saving_defaults() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-cold-cancel");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let (entered_tx, entered_rx) = mpsc::channel();
@@ -4317,15 +4125,14 @@ fn shutdown_cancels_a_cold_compound_preference_once_without_saving_defaults() {
     let preferences = reopened.preferences();
     preferences.reload().unwrap();
     assert!(preferences.document().unwrap().is_empty());
-    assert!(!preferences.path().exists());
+    assert!(!preferences.service().root().preferences_file().exists());
 }
 
 #[test]
 fn nested_preference_intent_replaces_a_scalar_parent_without_losing_siblings() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-scalar-parent");
-    let preferences = preferences(&scratch);
-    write_private(&preferences.path(), br#"{"nav":7,"other":{"keep":true}}"#);
-    preferences.reload().unwrap();
+    let preferences = preferences_from(&scratch, br#"{"nav":7,"other":{"keep":true}}"#);
     let patch = PreferencePatch::member(&["nav", "allow_teleports"], Some(true.into())).unwrap();
     let Update::Queued(mut watch) = preferences.begin_patch(patch).unwrap() else {
         panic!("the scalar-to-object edit is accepted");
@@ -4381,12 +4188,9 @@ fn preference_audit_is_bounded_redacted_and_absent_for_a_noop() {
 /// the version once, and a cold store has no snapshot.
 #[test]
 fn preference_snapshot_versions_move_once_per_durable_change() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-preference-snapshot");
-    let preferences = preferences(&scratch);
-    let path = preferences.path();
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    write_private(&path, br#"{"theme":"dark"}"#);
-    preferences.reload().unwrap();
+    let preferences = preferences_from(&scratch, br#"{"theme":"dark"}"#);
 
     let first = preferences.snapshot().unwrap();
     let again = preferences.snapshot().unwrap();
@@ -4412,8 +4216,16 @@ fn preference_snapshot_versions_move_once_per_durable_change() {
     assert!(written.version() > first.version());
     assert_eq!(written.document()["theme"], "light");
 
-    // Another writer's change, seen once the document is read again.
-    write_private(&path, br#"{"theme":"other","outside":1}"#);
+    // Another writer's change (a second service, as another process), seen
+    // once the document is read again.
+    let other = self::preferences(&scratch);
+    other.reload().unwrap();
+    let mut edit = PreferencePatch::member(&["theme"], Some("other".into())).unwrap();
+    edit.set_member(&["outside"], Some(1.into())).unwrap();
+    let Update::Queued(mut done) = other.begin_patch(edit).unwrap() else {
+        panic!("the outside edit is queued");
+    };
+    done.wait(WAIT).unwrap().unwrap();
     preferences.reload().unwrap();
     let outside = preferences.snapshot().unwrap();
     assert!(outside.version() > written.version());

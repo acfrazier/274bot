@@ -524,6 +524,17 @@ state through the real seams after `submit` has returned.
 |---|---|
 | `frontend-core/src/{command,log,log_file,map_bake,prefs,quester_paths,setting}.rs`, `frontend-core/src/session/prefs.rs`, `host-play/src/local_state.rs`, `host-play/src/local_state/frontend.rs`, `panel/src/{fleet_toolbar,log_pane,picker,ui_state,wall}.rs`, `tui/src/{lib,settings,shell}.rs` | `frontend-core.driver-command-headless` runs the held-then-failed table over every saved setting, the A-durable/B-failed case with a second process between, the session-file sink and the failure expiry through `HeadlessDriver`. `host-play.local-state-headless` runs the preference snapshot version test with the rest of the service. `panel.settings-feedback-headless` runs the same sequence through the panel session, the render-all dialog's drawn failure and the cold start. `tui.settings-feedback-headless` runs the popup row at 120x40 and 80x24, its expiry and the cold start. |
 
+## Preferences database
+
+The preferences live in the SQLite WAL state database
+`<root>/state/state.sqlite3` (T5.3-S4). These cells have no game-world
+fixture: the service, its root-use lease and its maintenance commands are
+driven on isolated homes.
+
+| Changed paths | Proof |
+|---|---|
+| `Cargo.lock`, `host-play/Cargo.toml`, `host-play/src/local_state/{files,maintenance,root_use,sql}.rs`, `host-play/src/{instance_lock,resource_view,walk_permissions}.rs`, `frontend-core/src/{nav_prefs,walk_permissions}.rs`, `api/src/local_state.rs`, `vault/src/{lib,private_file}.rs`, `panel/src/main.rs`, `tui/src/main.rs` | `host-play.local-state-headless` runs the SQL backend, legacy import, per-setting writes, retry/busy, checkpoint and maintenance-command tests. `host-play.{instance-lock,resource-view,walk-permissions}-headless`, `frontend-core.{nav-prefs,walk-permissions}-headless`, `api.local-state-headless` and `vault.private-file-headless` run the module tests of each changed file. `panel.state-recover-binary` and `tui.state-recover-binary` run `state preferences recover --defaults` through each real binary entry on a fresh isolated HOME: it must exit 0 and create the state database (an export on an empty home refuses with exit 1, by design); the selector is the maintenance-command parse test. |
+
 ## Essence router call paths
 
 The essence files and the shared `navigation.rs` file select the 289

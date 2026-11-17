@@ -140,6 +140,66 @@ pub fn write_private_fixture(
     Ok(())
 }
 
+/// A process local-state service on the state root `root` whose legacy
+/// `panel-ui.json` is over the size bound: the first open refuses the
+/// preferences (no import, no defaults), and every save fails at once. The
+/// legacy file's path is returned for [`repair_refused_state`].
+pub fn open_refused_state(
+    root: &std::path::Path,
+) -> (
+    std::sync::Arc<host_play::local_state::LocalStateService>,
+    std::path::PathBuf,
+) {
+    use host_play::local_state::{LocalStateService, StateRoot};
+    let legacy = StateRoot::new(root.to_path_buf()).preferences_file();
+    write_private_fixture(
+        &legacy,
+        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+    )
+    .expect("write the over-size legacy preferences");
+    let service = LocalStateService::open_process(StateRoot::new(root.to_path_buf()));
+    let preferences = frontend_core::UiPreferences::of_service_for_test(&service);
+    assert!(
+        preferences.reload().is_err(),
+        "an over-size legacy file refuses the preferences"
+    );
+    (service, legacy)
+}
+
+/// Replace the refused legacy file at `legacy` with a private valid empty
+/// document, as the operator's recovery does: the next read imports it and
+/// the preferences work.
+pub fn repair_refused_state(preferences: &frontend_core::UiPreferences, legacy: &std::path::Path) {
+    write_private_fixture(legacy, b"{}").expect("write the repaired legacy preferences");
+    preferences
+        .reload()
+        .expect("the repaired legacy file imports");
+}
+
+/// The saved preferences as one JSON object, read through the store (a
+/// fresh read, so another writer's save is seen too).
+pub fn saved_preferences(preferences: &frontend_core::UiPreferences) -> serde_json::Value {
+    let document = preferences.reload().expect("the preferences read");
+    serde_json::Value::Object(document.as_ref().clone())
+}
+
+/// Another process's save: a second service over the same state root as
+/// `preferences` replaces the member `key` with `value`, and it is durable
+/// when this returns.
+pub fn peer_saves(preferences: &frontend_core::UiPreferences, key: &str, value: serde_json::Value) {
+    let database = preferences.path();
+    let root = database
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the state root");
+    let peer = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(root.to_path_buf()),
+    );
+    frontend_core::UiPreferences::of_service_for_test(&peer)
+        .set(key, value)
+        .expect("the peer's save is durable");
+}
+
 /// Give the app these Browse cards and the core picker choice of each (the
 /// pump copies both from the session): what the fleet-card picker lists.
 pub fn set_cards(app: &mut TuiApp, cards: Vec<crate::script_shape::BrowseCard>) {

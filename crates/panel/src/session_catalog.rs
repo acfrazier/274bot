@@ -275,7 +275,7 @@ impl Session {
         let Some(selection) = self.scripts.browse_selection().map(ScriptChoice::duplicate) else {
             return;
         };
-        self.error = None;
+        self.clear_message();
         self.script_sel = Some(selection.duplicate());
         if let Some(profile) = self.focused_name() {
             self.submit_script_command(
@@ -284,8 +284,11 @@ impl Session {
             );
         }
         if let Some(parent) = path.parent() {
-            let _ = self.persist_panel_serializable(&["script_load_last_dir"], parent);
+            // The view takes the folder before its save is submitted, so a
+            // save that fails at once (a refused store) puts the saved
+            // folder back with its reason.
             self.ui.script_load_last_dir = Some(parent.to_path_buf());
+            let _ = self.persist_panel_serializable(&["script_load_last_dir"], parent);
         }
         self.script_load_open = false;
     }

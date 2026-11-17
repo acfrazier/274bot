@@ -124,6 +124,8 @@ pub use play_scripts::{
 };
 mod play_slots;
 #[cfg(test)]
+mod test_process;
+#[cfg(test)]
 use api::snapshot::{GameSnapshot, WorldTile};
 #[cfg(test)]
 use host::{wake_channel, DetectedRandom, Pump};

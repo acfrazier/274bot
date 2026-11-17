@@ -526,10 +526,11 @@ pub struct TuiSession {
     /// text, so a result is copied there only when it changed.
     shown_result: Option<(Option<api::identity::RequestId>, String)>,
     persist_ui: bool,
-    /// The retained core error last projected, so expiry does not show it again.
-    shown_preference_error: Option<String>,
     /// The Load-order failure last put on the message line.
     shown_order_failure: Option<String>,
+    /// The preference wait cause last put on the message line (a reader
+    /// holding the WAL, another process's lock), so it shows once per wait.
+    shown_wait: Option<&'static str>,
     /// What the log pane's status line last said about the session file
     /// ([`TuiSession::refresh_session_log_status`]).
     session_file_shown: SessionFileShown,
@@ -636,6 +637,9 @@ pub(crate) mod seam {
 
     pub(crate) struct Seam {
         session: TuiSession,
+        /// The legacy file that refuses the session's preferences, while
+        /// [`Seam::refuse_preference_writes`] holds.
+        refused_legacy: Option<std::path::PathBuf>,
     }
 
     impl Seam {
@@ -646,7 +650,10 @@ pub(crate) mod seam {
             let session =
                 TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
                     .expect("isolated script settings are readable");
-            Self { session }
+            Self {
+                session,
+                refused_legacy: None,
+            }
         }
 
         /// Restore preferences while serializing access to the process-wide
@@ -730,27 +737,22 @@ pub(crate) mod seam {
                 .expect("SetFleetFilter opens");
         }
 
-        /// Make the session's preferences refuse writes (a file past the
-        /// size bound), as a damaged store does.
+        /// Make the session's preferences refuse writes: the session moves
+        /// to a store whose legacy file is over the size bound, as a
+        /// refused store does.
         pub(crate) fn refuse_preference_writes(&mut self) {
-            let path = self.session.preferences.path().to_path_buf();
-            crate::test_support::write_private_fixture(
-                &path,
-                vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
-            )
-            .expect("write the oversized preferences file");
-            assert!(self.session.preferences.reload().is_err());
+            let root = frontend_core::scripts::paths::bot_home().join("refused-state");
+            self.refused_legacy = Some(self.session.bind_refused_preferences(&root));
         }
 
-        /// Undo [`Self::refuse_preference_writes`]: a valid empty document.
+        /// Undo [`Self::refuse_preference_writes`]: the operator replaces the
+        /// legacy file with a valid one, and the next read imports it.
         pub(crate) fn allow_preference_writes(&mut self) {
-            let path = self.session.preferences.path().to_path_buf();
-            crate::test_support::write_private_fixture(&path, b"{}")
-                .expect("write an empty preferences document");
-            self.session
-                .preferences
-                .reload()
-                .expect("the empty document loads");
+            let legacy = self
+                .refused_legacy
+                .take()
+                .expect("the preferences were refused first");
+            crate::test_support::repair_refused_state(&self.session.preferences, &legacy);
         }
     }
 }
@@ -774,6 +776,19 @@ impl TuiSession {
             .expect("isolated script settings are readable")
     }
 
+    /// Move the session to a store whose preferences are refused at open
+    /// (an over-size legacy file under `root`); returns that file's path.
+    #[cfg(test)]
+    fn bind_refused_preferences(&mut self, root: &std::path::Path) -> std::path::PathBuf {
+        let (service, legacy) = crate::test_support::open_refused_state(root);
+        self.core.bind_local_state(service);
+        self.preferences = self
+            .core
+            .preferences()
+            .expect("the session's local state was bound just now");
+        legacy
+    }
+
     fn with_launcher(
         launcher: frontend_core::launch::ProfileLauncher,
         permit: frontend_core::launch::InstancePermit,
@@ -782,15 +797,19 @@ impl TuiSession {
         let _quester_paths_test_guard = seam::lock_quester_paths_test_state();
         #[cfg(test)]
         frontend_core::test_support::IsolatedStores::ensure_thread();
+        // A missing store is a first run; a refused or corrupt one is said out
+        // loud (and nothing is saved over a refused one): logged once, and shown
+        // on the message line by the first pump. Script-settings load failures
+        // stop startup.
         let (scripts, restore_error) = frontend_core::Scripts::open_default()?;
-        if let Some(error) = restore_error {
-            eprintln!("tui-play: {error}");
-        }
         // The composition root opens the process local-state service once;
         // every consumer clones these preferences and the loadouts form
         // writes through the same service.
         let mut core = OperatorSession::open(permit);
-        core.open_process_state();
+        if let Some(error) = restore_error {
+            core.report_library_error(error);
+        }
+        core.open_process_state(frontend_core::prefs::StateFrontend::Tui);
         let loadouts = LoadoutForm::operator_of(&core);
         let preferences = core
             .preferences()
@@ -851,8 +870,8 @@ impl TuiSession {
             shown_result: None,
             copied_capacity: None,
             persist_ui: true,
-            shown_preference_error: None,
             shown_order_failure: None,
+            shown_wait: None,
             session_file_shown: SessionFileShown::default(),
             startup_profiles: Vec::new(),
             startup_focus: None,
@@ -3696,21 +3715,6 @@ impl TuiSession {
         self.error_expiry.resolve(&mut app.error, |_| met);
     }
 
-    /// Project each retained preference failure once, and clear it on recovery.
-    fn project_preference_error(&mut self, app: &mut TuiApp) {
-        let current = self.core.preference_error();
-        if self.shown_preference_error.as_deref() == current {
-            return;
-        }
-        if self.shown_preference_error.is_some() && app.error == self.shown_preference_error {
-            app.error = None;
-        }
-        self.shown_preference_error = current.map(str::to_owned);
-        if let Some(error) = &self.shown_preference_error {
-            app.error = Some(error.clone());
-        }
-    }
-
     /// The one preference reconciliation of a pump: every accepted write
     /// settles by its request, and every model (the bake gate, the Quester
     /// source, the walk grants, the session file) follows the latest durable
@@ -3781,6 +3785,14 @@ impl TuiSession {
                 app.error = Some(text.to_owned());
             }
         }
+        // While a save waits for the database, the message line says why.
+        let wait = self.core.preference_wait_cause();
+        if wait != self.shown_wait {
+            self.shown_wait = wait;
+            if let Some(cause) = wait {
+                app.error = Some(cause.to_owned());
+            }
+        }
         let pending = |setting| matches!(self.core.setting_status(setting), SettingStatus::Pending);
         app.set_pending_settings(crate::app::PendingSettings {
             all: !self.persist_ui,
@@ -3813,7 +3825,14 @@ impl TuiSession {
             }
             self.apply_startup_requests();
         }
-        self.project_preference_error(app);
+        // A startup refusal (the script library store, the preferences store)
+        // shows on the message line once with its path and cause, and leaves
+        // it when the refusal clears. The settings popup keeps the
+        // preferences refusal in full while it stands (the line cuts it).
+        self.core.project_startup_error(&mut app.error);
+        if app.preferences_refused.as_deref() != self.core.preference_error() {
+            app.preferences_refused = self.core.preference_error().map(str::to_owned);
+        }
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_pvp_start_fights(app);

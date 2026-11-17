@@ -6,13 +6,25 @@
 //! Operator commands submit changed-member intent to the process writer.
 //! Reads use its immutable cache. Neither operation waits for storage.
 
+use serde_json::{Map, Value};
 #[cfg(any(test, feature = "test-support"))]
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use host_play::local_state::{PreferenceError, PreferencePatch, PreferenceSnapshot, Update};
-use serde_json::{Map, Value};
+pub use host_play::local_state::{
+    Frontend as StateFrontend, PreferenceError, PreferencePatch, PreferenceSnapshot, Update,
+};
+
+/// Run a `state preferences …` maintenance command line (the arguments
+/// after the binary name) for the shipped `frontend`, before any frontend,
+/// vault or Play startup: same-root export, or a recovery that preserves
+/// the old database set and starts a new preference history. `None` when
+/// the arguments are not a maintenance command; otherwise the process exit
+/// code, after the report or refusal is printed.
+pub fn maintenance_command(frontend: StateFrontend, args: &[String]) -> Option<i32> {
+    host_play::local_state::maintenance_command(frontend, args)
+}
 
 /// A handle on the preferences document. [`Self::share`] gives another
 /// handle on the same document (no copy of it).
@@ -34,9 +46,16 @@ impl UiPreferences {
         Self::new(self.inner.clone())
     }
 
-    /// The preferences file.
+    /// The state database behind the preferences, for messages.
     pub fn path(&self) -> PathBuf {
         self.inner.path()
+    }
+
+    /// Why the next save is waiting, while it is (another process holds
+    /// the guard or the write lock, or a reader keeps the WAL from its
+    /// reset). This never waits.
+    pub fn wait_cause(&self) -> Option<&'static str> {
+        self.inner.wait_cause()
     }
 
     /// The cached document, or its cold/refused state. This never waits.

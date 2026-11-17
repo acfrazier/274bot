@@ -32,6 +32,10 @@ vault = { path = "../vault" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 parking_lot = "0.12"
 png = "0.18.1"
+# The operator preferences database (T5.3, `local_state::sql`). Defaults off:
+# no cache or wasm features; `bundled` compiles SQLite 3.53.2 from
+# libsqlite3-sys 0.38.2 (fixed by the lockfile), `limits` sets length limits.
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "limits"] }
 
 [dev-dependencies]
 api = { path = "../api", features = ["test-support"] }
@@ -51,6 +55,9 @@ hold-model = { path = "../../tools/hold-model" }
 # conformance test drives the real Guardian, claim adapter, slot and seat with
 # its traces (`src/guardian_seat_conformance_tests.rs`).
 seat-model = { path = "../../tools/seat-model" }
+# Test-only: a scalar SQL function lets a test hold the writer inside a
+# real SQL statement (T5.3 §9.5); product builds keep the function API off.
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "limits", "functions"] }
 
 # These harnesses use the optional scenario runner even for their offline tests.
 [[test]]

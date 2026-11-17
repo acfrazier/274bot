@@ -342,26 +342,26 @@ pub(crate) fn is_launch_choice(path: &[String]) -> bool {
     )
 }
 
-/// The panel view of the preferences after a change: the latest durable
-/// `document` with the previews of the requests still `pending` laid over
-/// it (oldest first, so the newest of a member wins). What the panel does
+/// The panel view after a change: the `saved` panel preferences (the latest
+/// durable document, or what an unreadable store loads before any was
+/// adopted) with the previews of the requests still `pending` laid over
+/// them (oldest first, so the newest of a member wins). What the panel does
 /// not read from the document stays as `current` has it: the saved choices
 /// the core owns (draw switches, bake choice, notices, session file, walk
 /// grants, the special-areas overlay and the manual-walk pause) and the
 /// server revision (its owner follows it). The remembered raster and memory
-/// mode follow the document while no bot is focused (`bot_focused` false);
-/// with a bot focused the controls show that bot's own saved modes, so they
-/// stay. A member this does not name follows the document, so a new
-/// panel-owned member is rebased by default.
+/// mode follow the saved value while no bot is focused (`bot_focused`
+/// false); with a bot focused the controls show that bot's own saved modes,
+/// so they stay. A member this does not name follows the saved value, so a
+/// new panel-owned member is rebased by default.
 pub(crate) fn rebased<'a>(
-    path: &Path,
     current: &PanelUiState,
-    document: &Map<String, Value>,
+    saved: PanelUiState,
     pending: impl IntoIterator<Item = (&'a [String], &'a Option<Value>)>,
     bot_focused: bool,
-) -> Result<PanelUiState, PanelUiStateError> {
+) -> PanelUiState {
     let next = apply_pending_members(
-        load_snapshot(path, document)?,
+        saved,
         pending
             .into_iter()
             .filter(|(path, _)| !is_launch_choice(path)),
@@ -384,7 +384,7 @@ pub(crate) fn rebased<'a>(
     } else {
         (next.raster, next.lowmem)
     };
-    Ok(PanelUiState {
+    PanelUiState {
         capture: current.capture,
         sidecar_50: current.sidecar_50,
         focused_50: current.focused_50,
@@ -397,7 +397,7 @@ pub(crate) fn rebased<'a>(
         server_revision: current.server_revision,
         nav,
         ..next
-    })
+    }
 }
 
 fn apply_json_member(root: &mut Map<String, Value>, path: &[String], value: &Option<Value>) {
@@ -625,9 +625,8 @@ mod tests {
     fn partial_nav_object_without_allow_wilderness_keeps_focus_and_colors() {
         // A supported partial preference document may omit `allow_wilderness`.
         // Its default must not make deserialization reset the whole UI state.
-        let (_dir, prefs) = scratch("ui-partial-nav");
-        crate::test_support::write_private_fixture(
-            prefs.path(),
+        let (_dir, prefs) = crate::test_support::scratch_with_legacy(
+            "ui-partial-nav",
             r##"{
   "last_focus": "alice",
   "collapsed": {"bob": {"nav": true}},
@@ -649,8 +648,8 @@ mod tests {
     "component_flood": false
   }
 }"##,
-        )
-        .unwrap();
+        );
+        // The old file is imported whole at the first open.
         prefs.reload().unwrap();
         let back = load_from(&prefs).unwrap();
         assert_eq!(
@@ -740,7 +739,7 @@ mod tests {
     #[test]
     fn overlapping_panel_save_and_single_key_nav_writer_keep_both_edits() {
         let (dir, prefs) = scratch("ui-nav-overlap");
-        // The single-key writers are a second service on the same files: a
+        // The single-key writers are a second service on the same root: a
         // peer frontend's writes, as far as the panel's preferences can tell.
         let peer = frontend_core::UiPreferences::of_service_for_test(&scratch_service(&dir));
         patiently(|| {
@@ -786,8 +785,7 @@ mod tests {
         // concurrent stress loop: a single-key writer lands, then the panel
         // saves its older in-memory state.
         set_patiently(&peer, "nav", nav.clone());
-        let after_writer: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
+        let after_writer = crate::test_support::preferences_on_disk(&prefs);
         assert_eq!(after_writer["last_focus"], "before");
         assert_eq!(after_writer["nav"]["allow_teleports"], true);
         assert_eq!(after_writer["nav"]["allow_wilderness"], false);
@@ -796,8 +794,7 @@ mod tests {
 
         patiently(|| save_to_checked(&prefs, &panel_state).map_err(|error| error.to_string()))
             .unwrap();
-        let after_panel_save: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
+        let after_panel_save = crate::test_support::preferences_on_disk(&prefs);
         assert_eq!(after_panel_save["last_focus"], "panel-save");
         assert_eq!(after_panel_save["capture"], true);
         assert_eq!(after_panel_save["nav"]["show_nav_path"], true);
@@ -824,8 +821,7 @@ mod tests {
             "show_nav_path": true
         });
         set_patiently(&peer, "nav", nav.clone());
-        let after_second_writer: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
+        let after_second_writer = crate::test_support::preferences_on_disk(&prefs);
         assert_eq!(after_second_writer["last_focus"], "panel-save");
         assert_eq!(after_second_writer["capture"], true);
         assert_eq!(after_second_writer["nav"]["show_nav_path"], true);
@@ -867,8 +863,7 @@ mod tests {
         panel.join().unwrap();
         writer.join().unwrap();
 
-        let document: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
+        let document = crate::test_support::preferences_on_disk(&prefs);
         assert_eq!(document["last_focus"], "panel-save");
         assert_eq!(document["capture"], true);
         assert_eq!(document["nav"]["show_nav_path"], true);
@@ -911,36 +906,48 @@ mod tests {
         assert!(loaded.collapsed.is_empty());
     }
 
-    /// A corrupt preferences file (not JSON) is refused by reads, so the panel
-    /// uses defaults in memory. The established next-save recovery moves the
-    /// original bytes aside before writing fresh preferences.
+    /// A malformed legacy `panel-ui.json` at the first open is copied byte
+    /// for byte to `panel-ui.json.corrupt-<time>` (and kept in place), and
+    /// defaults start, once. The panel's next save lands in the database;
+    /// the product never writes `panel-ui.json` or a `.new` side file.
     #[test]
-    fn corrupt_prefs_are_moved_aside_and_the_save_lands_in_fresh_preferences() {
-        let (dir, prefs) = scratch("ui-corrupt");
+    fn a_corrupt_legacy_file_is_copied_aside_once_and_the_save_lands_in_the_database() {
         let corrupt = b"{ not valid json";
-        crate::test_support::write_private_fixture(prefs.path(), corrupt).unwrap();
+        let (dir, prefs) = crate::test_support::scratch_with_legacy("ui-corrupt", corrupt);
         prefs
             .reload()
-            .expect_err("a corrupt preferences file is refused by reads");
+            .expect("defaults start after a malformed legacy file");
         assert_eq!(load_from(&prefs).unwrap(), PanelUiState::default());
-        assert_eq!(std::fs::read(prefs.path()).unwrap(), corrupt);
+        let backups = || -> Vec<std::path::PathBuf> {
+            std::fs::read_dir(&*dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("panel-ui.json.corrupt-")
+                })
+                .collect()
+        };
+        assert_eq!(backups().len(), 1, "{:?}", backups());
+        assert_eq!(std::fs::read(&backups()[0]).unwrap(), corrupt);
+        assert_eq!(
+            std::fs::read(dir.join("panel-ui.json")).unwrap(),
+            corrupt,
+            "the legacy file is kept in place"
+        );
         let state = PanelUiState {
             last_focus: Some("alice".into()),
             ..Default::default()
         };
         patiently(|| save_to_checked(&prefs, &state).map_err(|error| error.to_string())).unwrap();
-        let backups: Vec<_> = std::fs::read_dir(&*dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("panel-ui.json.corrupt-")
-            })
-            .collect();
-        assert_eq!(backups.len(), 1, "{backups:?}");
-        assert_eq!(std::fs::read(&backups[0]).unwrap(), corrupt);
+        assert_eq!(backups().len(), 1, "the copy is made once: {:?}", backups());
+        assert_eq!(
+            std::fs::read(dir.join("panel-ui.json")).unwrap(),
+            corrupt,
+            "the product never writes panel-ui.json"
+        );
         assert!(!dir.join("panel-ui.json.new").exists());
         assert_eq!(
             load_from(&prefs).unwrap().last_focus.as_deref(),
@@ -948,24 +955,27 @@ mod tests {
         );
     }
 
-    /// A preferences file refused for the file itself (here: larger than
-    /// the bound) is never written over or moved: no save lands, no side
-    /// file takes the panel's state, and the panel starts from defaults.
+    /// A legacy preferences file refused for the file itself (here: larger
+    /// than the bound) is never imported, written over or moved: no save
+    /// lands, no side file takes the panel's state, and the refusal names
+    /// the path and the recovery commands.
     #[test]
     fn save_refuses_oversize_prefs_and_leaves_the_file_untouched() {
-        let (dir, prefs) = scratch("ui-oversize");
         let oversize = vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1];
-        std::fs::write(prefs.path(), &oversize).unwrap();
+        let (dir, prefs) = crate::test_support::scratch_with_legacy("ui-oversize", &oversize);
         prefs
             .reload()
             .expect_err("an oversize preferences file is refused");
+        let refusal = prefs.snapshot().expect_err("the refusal stays").to_string();
+        assert!(refusal.contains("panel-ui.json"), "{refusal}");
+        assert!(refusal.contains("recover"), "{refusal}");
         let state = PanelUiState {
             last_focus: Some("alice".into()),
             ..Default::default()
         };
         save_to_checked(&prefs, &state).expect_err("a refused file takes no save");
         save_to(&prefs, &state);
-        assert!(std::fs::read(prefs.path()).unwrap() == oversize);
+        assert!(std::fs::read(dir.join("panel-ui.json")).unwrap() == oversize);
         let siblings: Vec<_> = std::fs::read_dir(&*dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -973,19 +983,22 @@ mod tests {
             .collect();
         assert!(
             siblings.iter().all(|name| name.ends_with(".lock")),
-            "no `.new` side file and no `.corrupt-` backup: {siblings:?}"
+            "no `.new` side file, no `.migrated` and no `.corrupt-` copy: {siblings:?}"
         );
         assert_eq!(load_from(&prefs).unwrap(), PanelUiState::default());
     }
 
-    /// A document that is valid JSON but not panel preferences is refused
-    /// the same way: the save errors and the file keeps its bytes.
+    /// A document that is valid JSON but not panel preferences is imported
+    /// as it is, and a panel save onto it is refused the same way: the save
+    /// errors and the stored document keeps its members and version.
     #[test]
     fn save_refuses_a_document_that_does_not_read_as_panel_preferences() {
-        let (dir, prefs) = scratch("ui-not-panel-prefs");
         let foreign = br#"{"last_focus":7,"peer_marker":"kept"}"#;
-        crate::test_support::write_private_fixture(prefs.path(), foreign).unwrap();
+        let (dir, prefs) = crate::test_support::scratch_with_legacy("ui-not-panel-prefs", foreign);
         prefs.reload().unwrap();
+        let before = prefs.snapshot().unwrap();
+        assert_eq!(before.document()["last_focus"], 7);
+        assert_eq!(before.document()["peer_marker"], "kept");
         let state = PanelUiState {
             last_focus: Some("alice".into()),
             ..Default::default()
@@ -997,7 +1010,9 @@ mod tests {
             error.to_string().contains("panel preferences"),
             "the error says why: {error}"
         );
-        assert_eq!(std::fs::read(prefs.path()).unwrap(), foreign);
+        let after = prefs.snapshot().unwrap();
+        assert_eq!(after.document(), before.document());
+        assert_eq!(after.version(), before.version(), "nothing was committed");
         assert!(
             !dir.join("panel-ui.json.new").exists(),
             "the panel's state is not redirected to a side file"
@@ -1020,18 +1035,22 @@ mod tests {
         save(&prefs, &state);
         assert_eq!(load(&prefs).unwrap().last_focus.as_deref(), Some("carol"));
         assert!(
-            !prefs.path().exists(),
-            "the stand-in does not write the preferences file"
+            prefs.reload().unwrap().is_empty(),
+            "the stand-in writes nothing to the preferences"
         );
     }
 
     /// The composition root opens the service where the vault already lives:
-    /// `<home>/.274bot`, with the preferences in `panel-ui.json` there.
+    /// `<home>/.274bot`, with the preferences in the state database there.
     #[test]
     fn session_preferences_sit_under_home_274bot() {
         let session = crate::session::Session::new();
         let p = session.preferences.path();
-        assert!(p.ends_with(".274bot/panel-ui.json"), "got {}", p.display());
+        assert!(
+            p.ends_with(".274bot/state/state.sqlite3"),
+            "got {}",
+            p.display()
+        );
         assert!(
             p.starts_with(frontend_core::scripts::paths::bot_home()),
             "the file sits under the thread's home, got {}",
@@ -1120,12 +1139,12 @@ mod tests {
     }
 
     /// The acknowledgement and both 50 fps choices survive a panel save and
-    /// a reload through the preferences file, next to the keys other
+    /// a reload through the preferences database, next to the keys other
     /// features wrote. Their command rows write them (`AcknowledgeNotice`,
     /// `SetDraw`) with the same preference writer, and the panel's own save,
     /// here of its default state, never does.
     #[test]
-    fn render_ack_and_50_fps_choices_round_trip_through_the_file() {
+    fn render_ack_and_50_fps_choices_round_trip_through_the_store() {
         let (_dir, prefs) = scratch("ui-render-ack");
         set_patiently(&prefs, "render_all_warning_ack", serde_json::json!(true));
         set_patiently(&prefs, "sidecar_50", serde_json::json!(true));
@@ -1137,8 +1156,7 @@ mod tests {
         assert!(back.sidecar_50);
         assert!(!back.focused_50);
         assert!(!back.capture, "other keys are kept");
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
+        let value = crate::test_support::preferences_on_disk(&prefs);
         assert_eq!(value["render_all_warning_ack"], true);
     }
 

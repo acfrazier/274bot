@@ -949,6 +949,32 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
 }
 
+/// T5.3-S4 headed check D-1: binding a profile (the vault unlock prepares
+/// one) clears an earlier action's message, but a startup refusal that still
+/// stands stays on the banner: binding a profile does not fix it.
+#[test]
+fn a_profile_install_keeps_a_standing_startup_refusal_on_the_banner() {
+    let _guard = crate::picker::lock_nav_statics();
+    let home = UpgradeHome::new();
+    let profile = home.bind(None);
+    let template = || map_host::SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let mut session = preparation_only_session();
+    session.error = Some("an earlier action's message".into());
+    session.install_prepared_template(ProfileTemplate::from_host(template()));
+    assert_eq!(session.error, None, "an action's message goes");
+
+    let refusal = "script library at /x/js-scripts.json: is writable by other users";
+    session.core.report_library_error(refusal.into());
+    session.core.project_startup_error(&mut session.error);
+    assert_eq!(session.error.as_deref(), Some(refusal));
+    session.install_prepared_template(ProfileTemplate::from_host(template()));
+    assert_eq!(
+        session.error.as_deref(),
+        Some(refusal),
+        "the standing refusal stays"
+    );
+}
+
 #[test]
 fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     let _guard = crate::picker::lock_nav_statics();
@@ -3754,49 +3780,61 @@ fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
 #[test]
 fn manual_walk_options_refresh_durable_peer_changes_and_clear_one_shot() {
     let _isolated = IsolatedStores::enter("manual-walk-permissions");
+    {
+        let mut session = Session::new();
+        // The durable writes are a peer frontend's: a second service on the
+        // session's root, seen once the session's preferences re-read.
+        let peer = thread_preferences();
+        let peer_sets_danger_zones = |session: &Session, enabled: bool| {
+            frontend_core::nav_prefs::write_nav_preference_for_test(
+                &peer,
+                frontend_core::NavPreference::AllowDangerZones,
+                enabled,
+            )
+            .map(|()| enabled)
+            .unwrap();
+            session.preferences.reload().unwrap();
+        };
+        session.ui.nav.allow_danger_zones = false;
+        peer_sets_danger_zones(&session, false);
+        assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
+
+        peer_sets_danger_zones(&session, true);
+        let globally_allowed = session.walk_find_options();
+        assert_eq!(globally_allowed.zones, ZoneExempt::all());
+        assert!(session.ui.nav.allow_danger_zones);
+
+        session.route_through_zones = true;
+        assert_eq!(
+            session.walk_find_options().zones,
+            ZoneExempt::all(),
+            "the global projection and a one-shot request permit this admission"
+        );
+        assert!(
+            !session.route_through_zones,
+            "the global grant consumes the one-shot"
+        );
+
+        peer_sets_danger_zones(&session, false);
+        assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
+        assert!(!session.ui.nav.allow_danger_zones);
+    }
+
+    // A damaged state database is refused when the next session opens it
+    // (the store holds nothing a session may trust), and the refused
+    // preferences grant nothing.
+    let database = thread_state_root().database_file();
+    for suffix in ["-wal", "-shm"] {
+        let mut side = database.clone().into_os_string();
+        side.push(suffix);
+        let _ = std::fs::remove_file(side);
+    }
+    std::fs::write(&database, b"this is not an SQLite database").unwrap();
     let mut session = Session::new();
-    // The durable writes are a peer frontend's: a second service on the
-    // session's files, seen once the session's preferences re-read.
-    let peer = thread_preferences();
-    let peer_sets_danger_zones = |session: &Session, enabled: bool| {
-        frontend_core::nav_prefs::write_nav_preference_for_test(
-            &peer,
-            frontend_core::NavPreference::AllowDangerZones,
-            enabled,
-        )
-        .map(|()| enabled)
-        .unwrap();
-        session.preferences.reload().unwrap();
-    };
-    session.ui.nav.allow_danger_zones = false;
-    peer_sets_danger_zones(&session, false);
-    assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
-
-    peer_sets_danger_zones(&session, true);
-    let globally_allowed = session.walk_find_options();
-    assert_eq!(globally_allowed.zones, ZoneExempt::all());
-    assert!(session.ui.nav.allow_danger_zones);
-
-    session.route_through_zones = true;
-    assert_eq!(
-        session.walk_find_options().zones,
-        ZoneExempt::all(),
-        "the global projection and a one-shot request permit this admission"
-    );
-    assert!(
-        !session.route_through_zones,
-        "the global grant consumes the one-shot"
-    );
-
-    peer_sets_danger_zones(&session, false);
-    assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
-    assert!(!session.ui.nav.allow_danger_zones);
-
-    std::fs::write(session.preferences.path(), b"{corrupt").unwrap();
     session
         .preferences
         .reload()
-        .expect_err("corrupt preferences are refused");
+        .expect_err("a damaged database is refused");
     assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
     assert!(!session.ui.nav.allow_danger_zones);
 }
@@ -3934,37 +3972,35 @@ fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
     assert!(!session.quester_paths.settings().enabled());
 
     session.quester_paths_folder_edit = uncommitted.to_string_lossy().into_owned();
-    // A refused preferences file (larger than the bound) refuses writes.
-    std::fs::write(
-        session.preferences.path(),
-        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
-    )
-    .unwrap();
-    assert!(session.preferences.reload().is_err());
-    let failed = session.persist_quester_paths(frontend_core::QuesterPathsView::new(
+    session.quester_paths_folder_dirty = true;
+    // The disk refuses the folder's save.
+    let disk = PanelDisk::install(&session);
+    let _ = session.persist_quester_paths(frontend_core::QuesterPathsView::new(
         false,
         uncommitted.clone(),
     ));
-    assert!(failed.is_err(), "{failed:?}");
+    let failing = disk.release();
+    settle_panel_writes(&mut session);
+    assert!(
+        session
+            .core
+            .setting_failure(frontend_core::Setting::QuesterPaths)
+            .is_some_and(|text| text.starts_with("Not saved: ")),
+        "the failed folder save shows at its setting"
+    );
     assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
     assert_eq!(
         session.quester_paths_folder_edit,
         uncommitted.to_string_lossy()
     );
+    assert_eq!(
+        session.preferences.reload().unwrap()["quester_paths"]["folder"],
+        saved.to_string_lossy().as_ref(),
+        "nothing durable changed"
+    );
 
-    std::fs::write(
-        session.preferences.path(),
-        serde_json::to_vec(&serde_json::json!({
-            "quester_paths": {
-                "enabled": false,
-                "folder": saved.to_string_lossy()
-            }
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    session.preferences.reload().unwrap();
-
+    // The disk works again.
+    failing.store(false, Ordering::SeqCst);
     session
         .persist_quester_paths_change(true, false)
         .expect("checkbox toggle saves enabled with the already-saved folder");
@@ -3978,8 +4014,7 @@ fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
     );
     assert!(session.quester_paths.settings().enabled());
     assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
-    let document: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    let document = session.preferences.reload().unwrap();
     assert_eq!(
         document["quester_paths"]["folder"],
         saved.to_string_lossy().as_ref()
@@ -4083,7 +4118,6 @@ fn start_fights_with_players_is_saved_through_its_command_and_follows_a_peer_wri
 #[cfg(unix)]
 #[test]
 fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer() {
-    use std::os::unix::fs::PermissionsExt;
     let _isolated = IsolatedStores::enter("pvp-start-fights-deferred-failure");
     let mut session = Session::new();
     session.preferences.reload().unwrap();
@@ -4135,15 +4169,19 @@ fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer
         "still waiting for the save"
     );
 
-    // The state directory refuses the write once the disk answers.
-    let state_dir = session.preferences.path().parent().unwrap().to_path_buf();
-    let original = std::fs::metadata(&state_dir).unwrap().permissions();
-    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    // The database refuses the write once the disk answers.
+    let fault_once = std::sync::atomic::AtomicBool::new(true);
+    session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .set_write_fault_for_test(std::sync::Arc::new(move || {
+            fault_once.swap(false, std::sync::atomic::Ordering::SeqCst)
+        }));
     release.send(()).unwrap();
     wait(&mut session, "the failed write never settled", &|session| {
         !session.pvp_start_fights.pending()
     });
-    std::fs::set_permissions(&state_dir, original).unwrap();
     assert!(
         session.pvp_start_fights.shown(),
         "the failed write shows the saved value (on), not the attempted off"
@@ -9993,6 +10031,100 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     assert_eq!(card.tags(), vec!["bones"]);
 }
 
+/// A panel started on refused preferences: the last Load folder and the
+/// last catalog folder, remembered by a successful script load and a
+/// successful catalog import, show the saved folder again once their saves
+/// failed at once, with the reason at the setting, and the browsers open
+/// there again.
+#[cfg(feature = "js")]
+#[test]
+fn refused_preferences_keep_the_saved_load_and_catalog_folders() {
+    let _work_service_guard = crate::work_service_test_lock();
+    let iso = IsolatedStores::enter("refused-folders");
+    let mut s = Session::new();
+    let (dir, legacy, oversize) =
+        crate::test_support::bind_refused_store(&mut s, "refused-folders");
+    let settle_refused = |s: &mut Session, path: &[&str]| {
+        for _ in 0..3 {
+            s.pump_status();
+            s.poll_panel_preferences();
+        }
+        assert!(
+            !s.preferences_pending(),
+            "{path:?}: the refused save has ended"
+        );
+        assert!(
+            s.panel_member_error(path).is_some(),
+            "{path:?}: the reason shows at the setting"
+        );
+    };
+
+    // The script load succeeds; only the folder preference is refused.
+    let saved_load = s.ui.script_load_last_dir.clone();
+    let script = dir.join("tickbot.js");
+    std::fs::write(
+        &script,
+        "export function tick(api) { api._n = (api._n||0)+1 }",
+    )
+    .unwrap();
+    s.scripts
+        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.load_js(&script);
+    assert!(s.script_sel.is_some(), "the script load succeeds");
+    settle_refused(&mut s, &["script_load_last_dir"]);
+    assert_eq!(s.ui.script_load_last_dir, saved_load);
+    s.open_script_load_browser();
+    assert_eq!(
+        s.script_load_dir,
+        crate::script_picker::default_load_browse_dir(saved_load.as_deref()),
+        "the Load browser opens at the saved folder"
+    );
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        oversize,
+        "nothing is saved over the refused file"
+    );
+
+    // A catalog whose one registered script has no source file: nothing is
+    // left to validate, so the import completes in the poll that finishes
+    // its preparation and `poll_scripts` receives the import receipt. (The
+    // receipt of a catalog whose cards still need validation does not reach
+    // the panel today; that defect is outside this test.)
+    let saved_catalog = s.ui.script_catalog_last_dir.clone();
+    let root = iso.dir().join("no-candidate-rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        r#"
+import Missing from './Missing/Missing.js';
+ScriptRegistry.register({
+  name: 'Missing',
+  description: 'Its source file is absent',
+  category: 'Prayer',
+  tags: [],
+  create: () => new Missing(),
+});
+"#,
+    )
+    .unwrap();
+    s.import_rs2b0t_catalog(&root).expect("import");
+    settle_catalog_work(&mut s);
+    settle_refused(&mut s, &["script_catalog_last_dir"]);
+    assert_eq!(s.ui.script_catalog_last_dir, saved_catalog);
+    s.open_rs2b0t_catalog_picker(false);
+    assert_eq!(
+        s.rs2b0t_catalog_dir,
+        crate::script_picker::default_load_browse_dir(saved_catalog.as_deref()),
+        "the catalog picker opens at the saved folder"
+    );
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        oversize,
+        "nothing is saved over the refused file"
+    );
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn catalog_import_validates_257_cards_in_bounded_batches() {
@@ -10380,15 +10512,12 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
     s.select("bob");
     assert!(s.background_ack_open);
     await_preference(&mut s, "last_focus", serde_json::json!("bob"));
-    // An unreadable preferences file refuses the store on every platform. (A
-    // folder replaced by a file does not: a read through it fails as
-    // `NotADirectory` on Unix but as `NotFound` on Windows, which the store
-    // reads as "no file yet", and the write then fails later, not at once.)
-    let path = s.preferences.path();
-    crate::test_support::write_private_fixture(&path, b"{malformed").unwrap();
-    assert!(s.preferences.reload().is_err());
+    // The disk refuses the save of the acknowledgement.
+    let disk = PanelDisk::install(&s);
     s.error = None;
     s.ack_background_bots();
+    let failing = disk.release();
+    settle_panel_writes(&mut s);
     assert!(
         s.background_ack_open,
         "persist failure must keep the acknowledgement visible"
@@ -10398,9 +10527,7 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
             .setting_failure(frontend_core::Setting::Notice(
                 frontend_core::OperatorNotice::BackgroundBots
             ))
-            .is_some_and(
-                |text| text.starts_with("Not saved: ") && text.contains("background bots:")
-            ),
+            .is_some_and(|text| text.starts_with("Not saved: ")),
         "the failure is shown at the notice's setting: {:?}",
         s.core.setting_failure(frontend_core::Setting::Notice(
             frontend_core::OperatorNotice::BackgroundBots
@@ -10409,8 +10536,7 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
     assert!(!frontend_core::resources::background_bots_acked(
         &s.preferences
     ));
-    std::fs::remove_file(&path).unwrap();
-    s.preferences.reload().unwrap();
+    failing.store(false, Ordering::SeqCst);
     s.ack_background_bots();
     await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
     assert!(!s.background_ack_open);
@@ -10456,11 +10582,41 @@ fn background_ack_closes_when_the_last_other_bot_retires() {
 }
 
 #[test]
-fn skip_lock_session_does_not_create_instance_lock() {
+fn skip_lock_session_takes_the_root_lease_but_no_instance_lock() {
     let iso = IsolatedStores::enter("session-skip-lock");
-    let _s = Session::with_instance(InstancePermit::skip())
+    let s = Session::with_instance(InstancePermit::skip())
         .expect("isolated script settings are readable");
-    assert!(!host_play::instance_lock_path().exists());
+    // The state database holds the root-use lease shared on its own
+    // `instance.lock` (every SQL user does; a skip permit skips only the
+    // warning), so the file exists. No exclusive instance lock is taken and
+    // no holder is recorded.
+    s.preferences.reload().unwrap();
+    let lock = host_play::instance_lock_path();
+    assert!(lock.exists(), "the root-use lease is the file's holder");
+    assert!(
+        !lock.with_file_name("instance.holder").exists(),
+        "a skip permit records no instance holder"
+    );
+    let root = thread_state_root();
+    assert!(
+        host_play::local_state::RootUse::exclusive(&root)
+            .unwrap()
+            .is_none(),
+        "the lease is held while the session lives"
+    );
+    assert!(
+        host_play::local_state::RootUse::shared(&root)
+            .unwrap()
+            .is_some(),
+        "the lease is shared, not an exclusive instance lock"
+    );
+    drop(s);
+    match host_play::try_acquire_instance_lock(host_play::InstanceKind::Tui).unwrap() {
+        host_play::InstanceLockResult::Acquired(_) => {}
+        host_play::InstanceLockResult::Contested(h) => {
+            panic!("the instance probe still works after the session: {h:?}")
+        }
+    }
     let _iso = iso;
 }
 
@@ -11526,6 +11682,81 @@ fn settings_feedback_held_then_failed_presentation_choices_revert_to_the_durable
     );
 }
 
+/// A save whose COMMIT ended in a disk error that the database could not
+/// settle may be stored (plan §4.2). The panel says its outcome is unknown,
+/// at a panel-owned setting and at a setting the core owns, and never says
+/// that it was not saved. The reason stays, and the saved values show again.
+#[test]
+fn settings_feedback_a_save_of_unknown_outcome_shows_as_unknown_not_as_not_saved() {
+    use frontend_core::command::DrawSwitch;
+    let _iso = IsolatedStores::enter("panel-s3-unknown");
+    let saved = crate::ui_state::PanelUiState {
+        show_parameters_rail: true,
+        ..Default::default()
+    };
+    seed_ui_state(&saved);
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    s.watch_setting_events();
+    let capture = s.draw_shown(DrawSwitch::CaptureInput);
+    s.core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .set_write_unknown_for_test(Arc::new(|| true));
+
+    s.persist_panel_member(
+        &["show_parameters_rail"],
+        Some(serde_json::Value::Bool(false)),
+    )
+    .unwrap();
+    s.set_capture(!capture);
+    settle_panel_writes(&mut s);
+
+    let member = s
+        .panel_member_error(&["show_parameters_rail"])
+        .expect("the failure shows at the panel-owned setting")
+        .to_owned();
+    assert!(
+        member.starts_with("Preferences save outcome unknown: "),
+        "{member}"
+    );
+    assert!(
+        member.contains("outcome is unknown") && member.contains("it was not retried"),
+        "the reason stays: {member}"
+    );
+    assert!(!member.to_lowercase().contains("not saved"), "{member}");
+    assert_eq!(
+        s.panel_preference_write_error()
+            .map(|failure| failure.heading()),
+        Some("Preference save outcome unknown:"),
+        "General config heads the failure as unknown"
+    );
+    let owned = s
+        .core
+        .setting_failure(frontend_core::Setting::Draw(DrawSwitch::CaptureInput))
+        .expect("the failure shows at the core-owned setting")
+        .to_owned();
+    assert!(owned.starts_with("Save outcome unknown: "), "{owned}");
+    assert!(
+        owned.contains("outcome is unknown") && owned.contains("it was not retried"),
+        "the reason stays: {owned}"
+    );
+    assert!(!owned.to_lowercase().contains("not saved"), "{owned}");
+    assert!(s.ui.show_parameters_rail, "the saved value shows again");
+    assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), capture);
+    let (events, incomplete) = s.take_panel_setting_events();
+    assert!(!incomplete);
+    assert!(
+        events.iter().any(|event| {
+            event.state() == frontend_core::SettingEventState::Failed
+                && event
+                    .error()
+                    .is_some_and(|error| error.contains("outcome is unknown"))
+        }),
+        "the failed event says it: {events:?}"
+    );
+}
+
 /// A typed Quest Paths folder survives any number of refresh frames, whether
 /// or not another process saved in between, and a held operational choice
 /// keeps showing the operator's choice across them.
@@ -11566,6 +11797,14 @@ fn settings_feedback_a_cold_panel_adopts_every_saved_choice_when_released_and_wr
     let saved: &[u8] = br##"{"capture":false,"sidecar_50":true,"focused_50":true,"map_bake":"always","quester_paths":{"enabled":false,"folder":"saved-source"}}"##;
     let path = host_play::local_state::StateRoot::new(state.clone()).preferences_file();
     crate::test_support::write_private_fixture(&path, saved).unwrap();
+    // The legacy file is imported whole at the first open and kept as
+    // `.migrated` evidence: its bytes are where they were or there.
+    let migrated = path.with_file_name("panel-ui.json.migrated");
+    let legacy_bytes = || {
+        std::fs::read(&path)
+            .or_else(|_| std::fs::read(&migrated))
+            .expect("the legacy file is kept")
+    };
     let mut s = Session::new();
     s.core.set_spawn_workers(false);
     let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
@@ -11589,11 +11828,7 @@ fn settings_feedback_a_cold_panel_adopts_every_saved_choice_when_released_and_wr
         s.pump_status();
         s.poll_panel_preferences();
         assert!(!s.panel_preferences_ready());
-        assert_eq!(
-            std::fs::read(&path).unwrap(),
-            saved,
-            "no default is written"
-        );
+        assert_eq!(legacy_bytes(), saved, "no default is written");
     }
     release.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -11617,10 +11852,12 @@ fn settings_feedback_a_cold_panel_adopts_every_saved_choice_when_released_and_wr
         s.quester_paths.settings().folder(),
         std::path::Path::new("saved-source")
     );
+    assert_eq!(legacy_bytes(), saved, "no default is written");
+    let document = s.preferences.reload().unwrap();
     assert_eq!(
-        std::fs::read(&path).unwrap(),
-        saved,
-        "no default is written"
+        serde_json::Value::Object(document.as_ref().clone()),
+        serde_json::from_slice::<serde_json::Value>(saved).unwrap(),
+        "the durable preferences are the saved choices, no default added"
     );
     frontend_core::test_support::scripts::reset_quester_registry();
 }
@@ -12393,4 +12630,243 @@ fn a_walk_for_a_bot_with_no_position_shows_no_position_yet_and_logs_one_refusal(
     );
     assert_eq!(error.as_deref(), Some("no position yet"), "{error:?}");
     assert_eq!(logged, 1);
+}
+
+/// The durable `debug_panel` member `key` as the preferences snapshot holds
+/// it: the saved names, empty when the member is absent.
+fn durable_debug_names(session: &Session, key: &str) -> Vec<String> {
+    session
+        .preferences
+        .document()
+        .expect("the preferences snapshot is readable")
+        .get("debug_panel")
+        .and_then(|debug| debug.get(key))
+        .and_then(serde_json::Value::as_array)
+        .map(|names| {
+            names
+                .iter()
+                .map(|name| name.as_str().expect("a saved name").to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Pump the session until `done` holds (up to 60 s: the writer's lock wait
+/// is 5 s per held write).
+fn pump_panel_until(s: &mut Session, what: &str, mut done: impl FnMut(&Session) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !done(s) {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(Instant::now() < deadline, "{what}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Astra F1 probe (T5.3-S3 round 5): a Debug save carried another setting's
+/// failed value. With the real preferences lock held by another program, the
+/// operator pins a command, then (before that save settles) sends another
+/// one. The pin's save fails busy. Once the lock is released, with no other
+/// action, the recents save lands and the durable document holds the recent
+/// command and NOT the pin: a recents save never carries the favorites.
+#[test]
+fn astra_f1_probe_a_recents_save_never_carries_a_failed_favorite() {
+    let _iso = IsolatedStores::enter("panel-s4-astra-f1");
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    let lock = crate::test_support::hold_preferences_lock(&s.preferences);
+
+    crate::debug_panel::toggle_favorite_command(&mut s, "first-favorite");
+    crate::debug_panel::remember_recent_command(&mut s, "second-recent");
+    assert!(s.panel_member_pending(&["debug_panel"]));
+
+    // The first save (the pin) fails busy; the second is still queued.
+    pump_panel_until(&mut s, "the favorite save never failed", |s| {
+        s.panel_member_error(&["debug_panel"]).is_some()
+    });
+    assert!(
+        s.panel_member_error(&["debug_panel"])
+            .is_some_and(|text| text.contains(crate::test_support::HELD_GUARD_CAUSE)),
+        "the pin failed busy: {:?}",
+        s.panel_member_error(&["debug_panel"])
+    );
+    assert!(
+        s.panel_member_pending(&["debug_panel"]),
+        "the recents save is still pending"
+    );
+    assert!(durable_debug_names(&s, "recents").is_empty());
+    assert!(durable_debug_names(&s, "favorites").is_empty());
+
+    // The lock is released and nothing else happens.
+    drop(lock);
+    settle_panel_writes(&mut s);
+    assert_eq!(durable_debug_names(&s, "recents"), ["second-recent"]);
+    assert!(
+        durable_debug_names(&s, "favorites").is_empty(),
+        "the recents save carried the failed favorite: {:?}",
+        durable_debug_names(&s, "favorites")
+    );
+    assert!(s.ui.debug_panel.favorites.is_empty());
+    assert_eq!(s.ui.debug_panel.recents, ["second-recent"]);
+    assert!(
+        s.panel_member_error(&["debug_panel", "favorites"])
+            .is_some_and(|text| text.contains(crate::test_support::HELD_GUARD_CAUSE)),
+        "the pin's failure still shows at the pin"
+    );
+    assert!(s.panel_member_error(&["debug_panel", "recents"]).is_none());
+}
+
+/// The reverse of the Astra F1 probe: the recents save fails busy while the
+/// pin's save, queued behind it, lands once the lock is released. The
+/// durable recents stay as they were and the durable pins hold only the pin.
+#[test]
+fn a_favorite_save_never_carries_a_failed_recent_command() {
+    let _iso = IsolatedStores::enter("panel-s4-favorite-reverse");
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    let lock = crate::test_support::hold_preferences_lock(&s.preferences);
+
+    crate::debug_panel::remember_recent_command(&mut s, "first-recent");
+    crate::debug_panel::toggle_favorite_command(&mut s, "second-favorite");
+
+    // The first save (the recents) fails busy; the pin's is still queued.
+    pump_panel_until(&mut s, "the recents save never failed", |s| {
+        s.panel_member_error(&["debug_panel"]).is_some()
+    });
+    assert!(
+        s.panel_member_pending(&["debug_panel"]),
+        "the pin's save is still pending"
+    );
+
+    drop(lock);
+    settle_panel_writes(&mut s);
+    assert_eq!(durable_debug_names(&s, "favorites"), ["second-favorite"]);
+    assert!(
+        durable_debug_names(&s, "recents").is_empty(),
+        "the pin's save carried the failed recent command: {:?}",
+        durable_debug_names(&s, "recents")
+    );
+    assert!(s.ui.debug_panel.recents.is_empty());
+    assert!(s
+        .panel_member_error(&["debug_panel", "favorites"])
+        .is_none());
+    assert!(s
+        .panel_member_error(&["debug_panel", "recents"])
+        .is_some_and(|text| text.contains(crate::test_support::HELD_GUARD_CAUSE)));
+}
+
+/// Write `bytes` to `path` with `mode` (group-writable is a store another
+/// user could have written, which the product readers refuse).
+#[cfg(all(unix, feature = "js"))]
+fn write_store_with_mode(path: &std::path::Path, bytes: &[u8], mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// How many process-log rows contain `needle`.
+#[cfg(all(unix, feature = "js"))]
+fn process_log_rows_with(needle: &str) -> usize {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut view = LogView::new(LogScope::Process);
+    view.edit_filter(|filter| filter.set_text(needle));
+    global().refresh(&mut view);
+    view.rows().len()
+}
+
+/// The script library store (`js-scripts.json`) refused at startup is no
+/// longer printed to stderr: the panel's error banner shows its path and
+/// cause, and the host log holds one record.
+#[cfg(all(unix, feature = "js"))]
+#[test]
+fn a_refused_script_library_store_shows_on_the_banner_at_startup() {
+    let iso = IsolatedStores::enter("panel-refused-library");
+    let store = iso.home().join(".274bot").join("js-scripts.json");
+    write_store_with_mode(&store, b"[]", 0o664);
+
+    let mut s = Session::new();
+    s.poll_panel_preferences();
+
+    let shown = s.error.clone().expect("the refusal is on the banner");
+    let path = store.display().to_string();
+    assert!(shown.contains(&path), "{shown}");
+    assert!(shown.contains("writable by other users"), "{shown}");
+    assert!(shown.contains(&format!("chmod 600 {path}")), "{shown}");
+    assert_eq!(
+        process_log_rows_with(&format!("script library not loaded: {shown}")),
+        1,
+        "one log record for the refusal"
+    );
+    assert_eq!(std::fs::read(&store).unwrap(), b"[]", "never saved over");
+
+    // The banner expires like any other message and is not shown again.
+    s.expire_error(Instant::now());
+    s.expire_error(Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT);
+    assert_eq!(s.error, None);
+    s.poll_panel_preferences();
+    assert_eq!(s.error, None, "the retained refusal does not reappear");
+}
+
+/// A preferences store another user could have written is refused; the
+/// banner shows its path and cause once the store was read, and drops it when
+/// a later snapshot reads. A refused library store stays shown beside it.
+#[cfg(all(unix, feature = "js"))]
+#[test]
+fn a_refused_preferences_store_shows_on_the_banner_with_the_library_refusal() {
+    use std::os::unix::fs::PermissionsExt;
+    let iso = IsolatedStores::enter("panel-refused-preferences");
+    let state = iso.home().join(".274bot");
+    let preferences = state.join("panel-ui.json");
+    write_store_with_mode(&preferences, b"{}", 0o664);
+    write_store_with_mode(&state.join("js-scripts.json"), b"{ not json", 0o600);
+
+    let mut s = Session::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        s.poll_panel_preferences();
+        let shown = s
+            .error
+            .as_deref()
+            .is_some_and(|text| text.contains("panel-ui.json") && text.contains("js-scripts.json"));
+        if shown || Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let Err(refusal) = s.preferences.snapshot() else {
+        panic!("the group-writable store is refused");
+    };
+    let shown = s.error.clone().expect("the refusal is on the banner");
+    assert!(shown.contains(&refusal.to_string()), "{shown}");
+    assert!(shown.contains(refusal.path()), "{shown}");
+    assert!(!refusal.cause().is_empty(), "{shown}");
+    assert!(
+        shown.contains("js-scripts.json"),
+        "the library refusal is still there: {shown}"
+    );
+    // A log row is capped (`MESSAGE_CAP`), and this refusal's text names the
+    // recovery commands of both binaries: the path and the cause lead it.
+    let logged: String = format!("preferences not loaded: {refusal}")
+        .chars()
+        .take(200)
+        .collect();
+    assert_eq!(
+        process_log_rows_with(&logged),
+        1,
+        "one log record for the refusal, however many polls saw it"
+    );
+
+    std::fs::set_permissions(&preferences, std::fs::Permissions::from_mode(0o600)).unwrap();
+    s.preferences.reload().unwrap();
+    s.poll_panel_preferences();
+    s.poll_panel_preferences();
+    assert_eq!(s.core.preference_error(), None);
+    let remaining = s.error.as_deref().expect("the library refusal stays");
+    assert!(remaining.contains("js-scripts.json"), "{remaining}");
+    assert!(
+        !remaining.contains(refusal.path()),
+        "recovery drops the preferences refusal: {remaining}"
+    );
 }

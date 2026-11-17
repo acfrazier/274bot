@@ -3048,16 +3048,17 @@ mod watchdog_restart_tests {
     fn watchdog_action_trace_is_debug_only_and_none_is_silent() {
         const CHILD: &str = "GRINCH_WATCHDOG_ACTION_LOG_TEST";
         if std::env::var(CHILD).as_deref() != Ok("1") {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "script_runtime::script_observe::watchdog_restart_tests::watchdog_action_trace_is_debug_only_and_none_is_silent",
-                    "--nocapture",
-                ])
-                .env(CHILD, "1")
-                .env_remove("BOT_DEBUG")
-                .output()
-                .expect("run isolated diagnostic sink test");
+            let output = crate::test_process::output(
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "script_runtime::script_observe::watchdog_restart_tests::watchdog_action_trace_is_debug_only_and_none_is_silent",
+                        "--nocapture",
+                    ])
+                    .env(CHILD, "1")
+                    .env_remove("BOT_DEBUG"),
+            )
+            .expect("run isolated diagnostic sink test");
             let stdout = String::from_utf8_lossy(&output.stdout);
             assert!(
                 output.status.success() && stdout.contains("1 passed; 0 failed;"),

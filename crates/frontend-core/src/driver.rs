@@ -196,7 +196,10 @@ impl HeadlessDriver {
         let walk_globals = session.adopt_operator_preferences();
         let mut quester = QuesterPathsController::default();
         quester.restore(&preferences);
-        let (scripts, _library_error) = Scripts::open_default()?;
+        let (scripts, library_error) = Scripts::open_default()?;
+        if let Some(error) = library_error {
+            session.report_library_error(error);
+        }
         let models = DriverModels {
             scripts,
             fleet: FleetModel::new(),
@@ -277,6 +280,21 @@ impl HeadlessDriver {
     /// The driven session, for state reads.
     pub fn session(&self) -> &OperatorSession<()> {
         &self.session
+    }
+
+    /// Every startup refusal standing now, each with its path and cause
+    /// (which carries the remedy): the script library store
+    /// (`js-scripts.json`) refused or corrupt, then the preferences store
+    /// refused. The preferences one appears once a [`Self::poll`] has read
+    /// the store, and clears when a later snapshot reads. `None` when
+    /// nothing is refused.
+    pub fn startup_error(&self) -> Option<&str> {
+        self.session.startup_error()
+    }
+
+    /// The script library refusal [`Self::open`] met, if any.
+    pub fn library_error(&self) -> Option<&str> {
+        self.session.library_error()
     }
 
     /// The driven session, for staging a command's inputs.

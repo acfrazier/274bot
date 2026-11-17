@@ -462,32 +462,46 @@ fn the_remembered_always_choice_bakes_without_asking() {
     assert_eq!(producer.image_runs(), 1);
 }
 
+/// A process service over a state root of its own whose legacy
+/// `panel-ui.json` holds `legacy`, written privately before the service
+/// opens the root (the first open imports it); ready once it has.
+fn preferences_with_legacy(
+    iso: &script::IsolatedEnv,
+    name: &str,
+    legacy: &[u8],
+) -> frontend_core::UiPreferences {
+    let root = iso.home.join(name);
+    vault::create_private_dir(&root).unwrap();
+    vault::write_private_file(&root.join("panel-ui.json"), legacy).unwrap();
+    let preferences = frontend_core::UiPreferences::open_for_test(root);
+    preferences.reload().unwrap();
+    preferences
+}
+
 #[test]
 fn the_choice_is_ask_when_absent_or_unknown_and_persists_beside_other_prefs() {
     let iso = script::IsolatedEnv::enter("map-bake-choice");
-    let preferences = preferences(&iso);
+    let fresh = preferences(&iso);
+    fresh.reload().unwrap();
     assert_eq!(
-        load_map_bake_choice(&preferences),
+        load_map_bake_choice(&fresh),
         MapBakeChoice::Ask,
-        "no prefs file"
+        "nothing saved"
     );
-    let path = preferences.path();
     // A 0.1.8.1 prefs file has no `map_bake` key.
-    vault::write_private_file(
-        &path,
+    let preferences = preferences_with_legacy(
+        &iso,
+        "legacy-absent",
         br#"{"last_focus":"alice","background_bots_ack":true}"#,
-    )
-    .unwrap();
-    preferences.reload().unwrap();
+    );
     assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Ask);
     frontend_core::map_bake::persist_map_bake_choice_for_test(&preferences, MapBakeChoice::Always)
         .unwrap();
     assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Always);
-    let prefs: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let prefs = preferences.reload().unwrap();
     assert_eq!(prefs["last_focus"], "alice");
     assert_eq!(prefs["background_bots_ack"], true);
     assert_eq!(prefs["map_bake"], "always");
-    vault::write_private_file(&path, br#"{"map_bake":"sometimes"}"#).unwrap();
-    preferences.reload().unwrap();
-    assert_eq!(load_map_bake_choice(&preferences), MapBakeChoice::Ask);
+    let unknown = preferences_with_legacy(&iso, "legacy-unknown", br#"{"map_bake":"sometimes"}"#);
+    assert_eq!(load_map_bake_choice(&unknown), MapBakeChoice::Ask);
 }

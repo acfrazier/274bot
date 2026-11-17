@@ -633,6 +633,10 @@ pub struct TuiApp {
     /// What the popup and the notices show beside a saved setting: pending
     /// or the retained failure (copied from the core each pump).
     pub(crate) setting_feedback: Vec<(frontend_core::Setting, SettingFeedback)>,
+    /// Why the preferences did not load (path, cause, remedy) while they
+    /// are refused (copied from the core each pump): the settings popup
+    /// shows it in full, where the one-line message would cut it.
+    pub(crate) preferences_refused: Option<String>,
     preferences_adopted: bool,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
@@ -792,6 +796,7 @@ impl TuiApp {
             shared_preferences: None,
             pending: PendingSettings::default(),
             setting_feedback: Vec::new(),
+            preferences_refused: None,
             preferences_adopted: false,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
@@ -938,6 +943,10 @@ impl TuiApp {
     /// durable source. An unbound app uses its local values for isolated
     /// widgets; production binds and rereads the shared preferences (cheap
     /// per pump: the service re-reads the file at most once per second).
+    /// Preferences that are not read yet, or refused, still give the
+    /// effective values (the fail-closed grants, the defaults): every draft
+    /// that is not held follows them, so a refused save shows the saved
+    /// value again.
     pub(crate) fn refresh_walk_permissions(&mut self) {
         if !self.preferences_adopted {
             if let Some(preferences) = self
@@ -956,18 +965,18 @@ impl TuiApp {
             self.pvp_start_fights
                 .adopt(frontend_core::pvp_start_fights(preferences).ok());
         }
-        if !self.preferences_adopted && self.shared_preferences.is_some() {
-            self.walk_permissions = view;
-        } else {
-            self.adopt_walk_permissions(view);
-            if let Some(preferences) = self
-                .shared_preferences
-                .as_ref()
-                .filter(|prefs| prefs.ready())
-                .map(frontend_core::UiPreferences::share)
-            {
-                self.follow_saved_drafts(&preferences);
-            }
+        self.adopt_walk_permissions(view);
+        // Before adoption nothing durable was read, so the defaults these
+        // readers give for an unread or refused store are the effective
+        // values; after it, an unreadable read keeps the adopted drafts.
+        let adopted = self.preferences_adopted;
+        if let Some(preferences) = self
+            .shared_preferences
+            .as_ref()
+            .filter(|prefs| !adopted || prefs.ready())
+            .map(frontend_core::UiPreferences::share)
+        {
+            self.follow_saved_drafts(&preferences);
         }
     }
 

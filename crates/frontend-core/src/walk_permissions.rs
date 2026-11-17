@@ -303,38 +303,59 @@ mod tests {
 
     struct TempStore {
         dir: PathBuf,
-        path: PathBuf,
         preferences: Preferences,
     }
 
     impl TempStore {
+        /// A fresh state root: nothing saved.
         fn new(label: &str) -> Self {
+            Self::open(Self::root(label))
+        }
+
+        /// A state root whose legacy `panel-ui.json` holds `legacy`, written
+        /// privately before the service opens the root: the first open
+        /// imports it whole (or refuses it).
+        fn with_legacy(label: &str, legacy: &[u8]) -> Self {
+            let dir = Self::root(label);
+            vault::write_private_file(&dir.join("panel-ui.json"), legacy).unwrap();
+            Self::open(dir)
+        }
+
+        fn root(label: &str) -> PathBuf {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let dir = std::env::temp_dir().join(format!(
                 "frontend-core-walk-permissions-{label}-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
-            std::fs::create_dir_all(&dir).unwrap();
+            vault::create_private_dir(&dir).unwrap();
+            dir
+        }
+
+        fn open(dir: PathBuf) -> Self {
             let preferences = Preferences::new(
                 LocalStateService::open_process(StateRoot::new(dir.clone())).preferences(),
             );
-            Self {
-                path: preferences.path(),
-                dir,
-                preferences,
-            }
+            Self { dir, preferences }
         }
 
-        /// The preferences, read again (a file the test just wrote is seen).
+        /// The preferences, read again (the first read waits for the open
+        /// and the import; a later one sees what another writer saved).
         fn prefs(&self) -> &Preferences {
             let _ = self.preferences.reload();
             &self.preferences
         }
 
-        /// The file, for writes another writer makes.
-        fn path(&self) -> &std::path::Path {
-            &self.path
+        /// The durable document, read again.
+        fn saved(&self) -> serde_json::Value {
+            serde_json::Value::Object((*self.preferences.reload().unwrap()).clone())
+        }
+
+        /// Another writer: a second process service over the same root.
+        fn peer(&self) -> Preferences {
+            Preferences::new(
+                LocalStateService::open_process(StateRoot::new(self.dir.clone())).preferences(),
+            )
         }
     }
 
@@ -351,11 +372,10 @@ mod tests {
         assert_eq!(absent, WalkGlobalsView::default());
         assert_eq!(absent.danger_level(), DangerLevel::Never);
 
-        vault::write_private_file(
-            store.path(),
+        let store = TempStore::with_legacy(
+            "read-full",
             br#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":true,"survivable_routing":false,"script_scope_notice_ack":true,"survivable_routing_notice_ack":true}}"#,
-        )
-        .unwrap();
+        );
         let view = WalkGlobalsView::read(store.prefs());
         assert_eq!(
             view.globals,
@@ -385,11 +405,10 @@ mod tests {
         assert_eq!(view.permission_enabled("allowBankFetch"), None);
         assert_eq!(view.permission_enabled("unrelated"), None);
 
-        vault::write_private_file(
-            store.path(),
+        let store = TempStore::with_legacy(
+            "read-migrated",
             br#"{"nav":{"allow_danger_zones":false,"script_scope_notice_ack":true}}"#,
-        )
-        .unwrap();
+        );
         let migrated = WalkGlobalsView::read(store.prefs());
         assert_eq!(migrated.danger_level(), DangerLevel::Never);
         assert!(
@@ -402,36 +421,53 @@ mod tests {
         );
         assert!(migrated.script_scope_notice_ack);
 
-        vault::write_private_file(store.path(), b"{truncated").unwrap();
-        let malformed = WalkGlobalsView::read(store.prefs());
-        assert_eq!(malformed.globals, WalkGlobals::fail_closed());
-        assert_eq!(malformed.danger_level(), DangerLevel::Never);
-        assert!(!malformed.globals.allow_prereq_dialogue);
-        assert!(!malformed.globals.allow_quest_start);
-        assert!(!malformed.script_scope_notice_ack);
+        // A refused preferences store (an over-size legacy file is refused,
+        // never imported) denies every grant and every notice.
+        let refused = TempStore::with_legacy(
+            "read-refused",
+            &vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+        );
+        let denied = WalkGlobalsView::read(refused.prefs());
+        assert_eq!(denied.globals, WalkGlobals::fail_closed());
+        assert_eq!(denied.danger_level(), DangerLevel::Never);
+        assert!(!denied.globals.survivable_routing);
+        assert!(!denied.globals.allow_prereq_dialogue);
+        assert!(!denied.globals.allow_quest_start);
+        assert!(!denied.script_scope_notice_ack);
+
+        // A readable store whose `nav` is not a permission object denies too.
+        let malformed = TempStore::with_legacy("read-malformed-nav", br#"{"nav":"truncated"}"#);
+        let denied = WalkGlobalsView::read(malformed.prefs());
+        assert_eq!(denied.globals, WalkGlobals::fail_closed());
+        assert_eq!(denied.danger_level(), DangerLevel::Never);
+        assert!(!denied.globals.allow_prereq_dialogue);
+        assert!(!denied.globals.allow_quest_start);
+        assert!(!denied.script_scope_notice_ack);
     }
 
-    /// A saved middle-level pair remains selected without a read rewrite.
+    /// A saved middle-level pair remains selected, and the import keeps it
+    /// as saved: reading rewrites nothing.
     #[test]
     fn saved_middle_level_loads_without_a_rewrite() {
-        let store = TempStore::new("middle");
         let middle = br#"{"nav":{"allow_danger_zones":false,"survivable_routing":true,"survivable_routing_notice_ack":true,"allow_teleports":true}}"#;
-        vault::write_private_file(store.path(), middle).unwrap();
+        let store = TempStore::with_legacy("middle", middle);
         let view = WalkGlobalsView::read(store.prefs());
         assert_eq!(view.danger_level(), DangerLevel::WhenSurvivable);
         assert!(!view.globals.allow_danger_zones);
         assert!(view.globals.survivable_routing);
         assert!(view.globals.allow_teleports);
-        assert_eq!(std::fs::read(store.path()).unwrap(), middle);
+        assert_eq!(
+            store.saved(),
+            serde_json::from_slice::<serde_json::Value>(middle).unwrap()
+        );
 
         // Always takes precedence when both stored bits are true.
-        vault::write_private_file(
-            store.path(),
+        let always = TempStore::with_legacy(
+            "middle-always",
             br#"{"nav":{"allow_danger_zones":true,"survivable_routing":true}}"#,
-        )
-        .unwrap();
+        );
         assert_eq!(
-            WalkGlobalsView::read(store.prefs()).danger_level(),
+            WalkGlobalsView::read(always.prefs()).danger_level(),
             DangerLevel::Always
         );
     }
@@ -458,9 +494,7 @@ mod tests {
         let denied = WalkGlobalsView::read(store.prefs());
         assert!(!denied.globals.allow_prereq_dialogue);
         assert!(!denied.globals.allow_quest_start);
-        let persisted =
-            serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
-                .unwrap();
+        let persisted = store.saved();
         assert_eq!(persisted["nav"]["allow_prereq_dialogue"], false);
         assert_eq!(persisted["nav"]["allow_quest_start"], false);
 
@@ -483,12 +517,10 @@ mod tests {
 
     #[test]
     fn manual_danger_uses_the_global_or_one_shot_but_global_consumes_one_shot() {
-        let store = TempStore::new("manual");
-        vault::write_private_file(
-            store.path(),
+        let store = TempStore::with_legacy(
+            "manual",
             br#"{"nav":{"allow_teleports":true,"allow_wilderness":true,"allow_bank_fetch":true,"allow_danger_zones":false}}"#,
-        )
-        .unwrap();
+        );
         let view = WalkGlobalsView::read(store.prefs());
         assert!(view.danger_this_walk(true));
         let once = view.manual_options(view.danger_this_walk(true));
@@ -501,7 +533,8 @@ mod tests {
             .zones
             .is_all());
 
-        vault::write_private_file(store.path(), br#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
+        let store =
+            TempStore::with_legacy("manual-global", br#"{"nav":{"allow_danger_zones":true}}"#);
         let global = WalkGlobalsView::read(store.prefs());
         assert!(!global.danger_this_walk(true));
         assert_eq!(
@@ -512,28 +545,28 @@ mod tests {
 
     #[test]
     fn danger_level_merges_both_bits_in_one_durable_update() {
-        let store = TempStore::new("write");
-        vault::write_private_file(
-            store.path(),
+        let store = TempStore::with_legacy(
+            "write",
             br#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"allow_wilderness":false,"allow_danger_zones":false,"survivable_routing":true,"custom":"keep"}}"#,
-        )
-        .unwrap();
+        );
         let _before = WalkGlobalsView::read(store.prefs());
-        let mut external =
-            serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
-                .unwrap();
-        external["nav"]["allow_wilderness"] = serde_json::Value::Bool(true);
-        external["nav"]["show_nav_path"] = serde_json::Value::Bool(false);
-        vault::write_private_file(store.path(), &serde_json::to_vec(&external).unwrap()).unwrap();
+        // Another process changes two members after this one read.
+        let peer = store.peer();
+        let mut external = crate::prefs::PreferencePatch::default();
+        external
+            .set_member(&["nav", "allow_wilderness"], Some(true.into()))
+            .unwrap();
+        external
+            .set_member(&["nav", "show_nav_path"], Some(false.into()))
+            .unwrap();
+        crate::prefs::settled_for_test(peer.begin_patch(external)).unwrap();
 
         crate::prefs::settled_for_test(WalkGlobalsView::persist_danger(
             store.prefs(),
             DangerLevel::WhenSurvivable,
         ))
         .unwrap();
-        let middle =
-            serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
-                .unwrap();
+        let middle = store.saved();
         assert_eq!(middle["unrelated"]["keep"], true);
         assert_eq!(middle["nav"]["custom"], "keep");
         assert_eq!(middle["nav"]["allow_wilderness"], true);
@@ -551,9 +584,7 @@ mod tests {
             DangerLevel::Always,
         ))
         .unwrap();
-        let always =
-            serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
-                .unwrap();
+        let always = store.saved();
         assert_eq!(always["nav"]["allow_danger_zones"], true);
         assert_eq!(always["nav"]["survivable_routing"], false);
 

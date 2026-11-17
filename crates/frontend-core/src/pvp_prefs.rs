@@ -226,15 +226,20 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn scratch(label: &str) -> (PathBuf, UiPreferences) {
+    /// A private scratch state root whose legacy `panel-ui.json` holds
+    /// `legacy`, written before the service opens the root (the first open
+    /// imports it), and the preferences of that service.
+    fn scratch(label: &str, legacy: &[u8]) -> (PathBuf, UiPreferences) {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
             "274bot-frontend-pvp-prefs-{}-{label}-{id}",
             std::process::id()
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        vault::create_private_dir(&dir).unwrap();
+        vault::write_private_file(&dir.join("panel-ui.json"), legacy).unwrap();
         let preferences = UiPreferences::open_for_test(dir.clone());
+        preferences.reload().unwrap();
         (dir, preferences)
     }
 
@@ -243,19 +248,15 @@ mod tests {
         let _audit = TEST_AUDIT_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (dir, prefs) = scratch("roundtrip");
-        vault::write_private_file(
-            &prefs.path(),
+        let (dir, prefs) = scratch(
+            "roundtrip",
             br#"{"last_focus":"alice","nav":{"allow_teleports":true}}"#,
-        )
-        .unwrap();
-        prefs.reload().unwrap();
+        );
         assert_eq!(pvp_start_fights(&prefs).ok(), Some(false), "absent = off");
 
         settled_for_test(write_pvp_start_fights(&prefs, true)).unwrap();
         assert_eq!(pvp_start_fights(&prefs).ok(), Some(true));
-        let saved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
+        let saved = prefs.reload().unwrap();
         assert_eq!(saved["pvp"]["start_fights"], true);
         assert_eq!(saved["last_focus"], "alice");
         assert_eq!(saved["nav"]["allow_teleports"], true);
@@ -267,13 +268,9 @@ mod tests {
 
     #[test]
     fn a_malformed_member_is_an_error_a_caller_reads_as_off() {
-        let (dir, prefs) = scratch("malformed");
-        vault::write_private_file(&prefs.path(), br#"{"pvp":{"start_fights":"yes"}}"#).unwrap();
-        prefs.reload().unwrap();
+        let (dir, prefs) = scratch("malformed", br#"{"pvp":{"start_fights":"yes"}}"#);
         assert!(pvp_start_fights(&prefs).is_err());
-        let (dir2, prefs2) = scratch("not-object");
-        vault::write_private_file(&prefs2.path(), br#"{"pvp":true}"#).unwrap();
-        prefs2.reload().unwrap();
+        let (dir2, prefs2) = scratch("not-object", br#"{"pvp":true}"#);
         assert!(pvp_start_fights(&prefs2).is_err());
         std::fs::remove_dir_all(dir).unwrap();
         std::fs::remove_dir_all(dir2).unwrap();

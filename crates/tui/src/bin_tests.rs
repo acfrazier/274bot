@@ -890,26 +890,21 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
     );
 }
 
-/// A missing vault rejects `--user` before it can request a passphrase or
-/// create the vault file.
-#[test]
-fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
-    let iso = IsolatedStores::enter("tui-user-missing-vault");
+/// The arguments of a run that stops at `--user ghost` on a missing vault
+/// (`vault_path`): `run` refuses it before binding reads the engine key or
+/// prepares the cache, so the run needs neither the host's `ENGINE_DIR` nor
+/// `LOGIN_RSAN/E`, nor a running engine.
+fn ghost_user_args(iso: &IsolatedStores, vault_path: &std::path::Path) -> Args {
     // `run` resolves the vault from its own arguments and the process home,
-    // not from the thread-pinned stores, so name the vault path explicitly.
-    let vault_path = iso.dir().join("vault-test");
-    assert!(!vault_path.exists(), "the test starts without a vault");
+    // not from the thread-pinned stores, so the vault path is named
+    // explicitly.
     let nav_dir = std::env::current_exe()
         .expect("test binary path")
         .parent()
         .and_then(std::path::Path::parent)
         .expect("target debug directory")
         .join("nav/289");
-    // The local profile resolves with any engine directory; `--user` on a
-    // missing vault is refused before binding reads the engine key or
-    // prepares the cache, so the test needs neither the host's `ENGINE_DIR`
-    // nor `LOGIN_RSAN/E`, nor a running engine.
-    let args = parse_args_from([
+    parse_args_from([
         "--profile".to_string(),
         "local-289".to_string(),
         "--engine".to_string(),
@@ -929,7 +924,17 @@ fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
         "--user".to_string(),
         "ghost".to_string(),
     ])
-    .unwrap();
+    .unwrap()
+}
+
+/// A missing vault rejects `--user` before it can request a passphrase or
+/// create the vault file.
+#[test]
+fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
+    let iso = IsolatedStores::enter("tui-user-missing-vault");
+    let vault_path = iso.dir().join("vault-test");
+    assert!(!vault_path.exists(), "the test starts without a vault");
+    let args = ghost_user_args(&iso, &vault_path);
 
     let error = run(&args, RunMode::Interactive).unwrap_err();
     assert_eq!(
@@ -943,6 +948,35 @@ fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
         !vault_path.exists(),
         "a rejected user must not create a vault"
     );
+}
+
+/// A legacy preferences source the database cannot read (a directory at its
+/// path, a file the process may not read) is no startup failure (plan §5.1,
+/// T5.3 S1 round 2): `tui-play`'s start gets past its saved-data check and
+/// stops only at what the run itself refuses (here `--user ghost` on a
+/// missing vault), never at the preferences file.
+#[test]
+fn a_bad_legacy_preferences_source_does_not_stop_the_tui_start() {
+    use frontend_core::test_support::startup::BadPreferencesSource;
+    for case in BadPreferencesSource::ALL {
+        let iso = IsolatedStores::enter(&format!("tui-bad-source-run-{}", case.label()));
+        let source = iso.home().join(".274bot").join("panel-ui.json");
+        if !case.make(&source) {
+            continue;
+        }
+        let vault_path = iso.dir().join("vault-test");
+        let args = ghost_user_args(&iso, &vault_path);
+
+        let error = run(&args, RunMode::Interactive).unwrap_err();
+        assert_eq!(
+            error,
+            unknown_profile_error("ghost"),
+            "{}: the start must reach the run's own refusal",
+            case.label()
+        );
+        assert!(!vault_path.exists());
+        case.repair(&source);
+    }
 }
 
 /// `--user` selects an existing profile as the boot focus, and an
@@ -4244,8 +4278,7 @@ fn tui_settings_map_bake_choice_is_the_panel_prefs_key() {
         frontend_core::load_map_bake_choice(&session.preferences),
         frontend_core::MapBakeChoice::Ask
     );
-    let prefs: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    let prefs = crate::test_support::saved_preferences(&session.preferences);
     assert_eq!(prefs["last_focus"], "alice", "other prefs survive");
     let _iso = iso;
 }
@@ -4521,21 +4554,15 @@ fn tui_manual_walk_pause_preference_projects_and_reports_persistence() {
     app.pause_script_on_manual_walk_abort = true;
     app.pause_script_on_manual_walk_abort_dirty = true;
     settle_preferences(&mut session, &mut app);
-    let prefs: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    let prefs = crate::test_support::saved_preferences(&session.preferences);
     assert_eq!(prefs["capture"], false);
     assert_eq!(prefs["nav"]["show_special_areas"], true);
     assert_eq!(prefs["nav"]["pause_script_on_manual_walk_abort"], true);
     assert!(!app.pause_script_on_manual_walk_abort_dirty);
 
-    // A refused preferences file (larger than the bound) refuses writes:
+    // A store refused at open (an over-size legacy file) refuses writes:
     // the failure surfaces.
-    std::fs::write(
-        session.preferences.path(),
-        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
-    )
-    .unwrap();
-    assert!(session.preferences.reload().is_err());
+    session.bind_refused_preferences(&iso.dir().join("refused-state"));
     app.pause_script_on_manual_walk_abort = false;
     app.pause_script_on_manual_walk_abort_dirty = true;
     session.pump(&mut app);
@@ -4575,8 +4602,7 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     );
     settle_preferences(&mut session, &mut app);
     assert_eq!(app.error, None);
-    let prefs: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    let prefs = crate::test_support::saved_preferences(&session.preferences);
     assert_eq!(prefs["nav"]["allow_teleports"], true);
     assert_eq!(prefs["nav"]["allow_danger_zones"], false);
     assert_eq!(prefs["nav"]["survivable_routing"], true);
@@ -4601,8 +4627,7 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     app.settings_state.row = 8;
     assert_eq!(app.on_key(enter), AppAction::None);
     settle_preferences(&mut session, &mut app);
-    let prefs: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    let prefs = crate::test_support::saved_preferences(&session.preferences);
     assert_eq!(prefs["nav"]["allow_danger_zones"], true);
     assert_eq!(prefs["nav"]["survivable_routing"], false);
     assert_eq!(
@@ -4617,11 +4642,15 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
 #[test]
 fn saved_middle_danger_preference_loads_unchanged_and_cycles_to_always() {
     let iso = IsolatedStores::enter("tui-saved-middle-danger");
-    let mut session = TuiSession::new(dummy_options());
-    session.preferences.reload().unwrap();
-    std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
     let saved = br#"{"nav":{"allow_danger_zones":false,"survivable_routing":true,"survivable_routing_notice_ack":true,"script_scope_notice_ack":true}}"#;
-    std::fs::write(session.preferences.path(), saved).unwrap();
+    crate::test_support::write_private_fixture(
+        frontend_core::scripts::paths::bot_home()
+            .join(".274bot")
+            .join("panel-ui.json"),
+        saved,
+    )
+    .unwrap();
+    let mut session = TuiSession::new(dummy_options());
     session.preferences.reload().unwrap();
     let mut app = TuiApp::new("tui");
     Seam::restore_preferences(&mut app, session.preferences.share());
@@ -4634,7 +4663,11 @@ fn saved_middle_danger_preference_loads_unchanged_and_cycles_to_always() {
         frontend_core::DangerLevel::WhenSurvivable
     );
     assert!(app.walk_permissions.script_scope_notice_ack());
-    assert_eq!(std::fs::read(session.preferences.path()).unwrap(), saved);
+    assert_eq!(
+        crate::test_support::saved_preferences(&session.preferences),
+        serde_json::from_slice::<serde_json::Value>(saved).unwrap(),
+        "the import keeps the saved object, nothing added"
+    );
 
     app.settings_state.open = true;
     app.settings_state.row = 8;
@@ -4644,8 +4677,7 @@ fn saved_middle_danger_preference_loads_unchanged_and_cycles_to_always() {
     );
     settle_preferences(&mut session, &mut app);
     assert_eq!(app.error, None);
-    let prefs: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    let prefs = crate::test_support::saved_preferences(&session.preferences);
     assert_eq!(prefs["nav"]["allow_danger_zones"], true);
     assert_eq!(prefs["nav"]["survivable_routing"], false);
     assert_eq!(
@@ -4677,8 +4709,7 @@ fn start_fights_with_players_in_the_settings_popup_is_saved_through_its_command(
     assert!(app.pvp_start_fights.shown(), "the click shows at once");
     settle_preferences(&mut session, &mut app);
     assert_eq!(app.error, None);
-    let prefs: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    let prefs = crate::test_support::saved_preferences(&session.preferences);
     assert_eq!(prefs["pvp"]["start_fights"], true);
     assert!(app.pvp_start_fights.shown());
     assert!(
@@ -4692,8 +4723,7 @@ fn start_fights_with_players_in_the_settings_popup_is_saved_through_its_command(
         AppAction::None
     );
     settle_preferences(&mut session, &mut app);
-    let prefs: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    let prefs = crate::test_support::saved_preferences(&session.preferences);
     assert_eq!(prefs["pvp"]["start_fights"], false);
     assert!(!app.pvp_start_fights.shown());
     let _iso = iso;
@@ -4706,7 +4736,6 @@ fn start_fights_with_players_in_the_settings_popup_is_saved_through_its_command(
 #[cfg(unix)]
 #[test]
 fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer() {
-    use std::os::unix::fs::PermissionsExt;
     let iso = IsolatedStores::enter("tui-pvp-start-fights-deferred-failure");
     let mut session = TuiSession::new(dummy_options());
     session.preferences.reload().unwrap();
@@ -4742,17 +4771,21 @@ fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer
         "still waiting for the save"
     );
 
-    // The state directory refuses the write once the disk answers.
-    let state_dir = session.preferences.path().parent().unwrap().to_path_buf();
-    let original = std::fs::metadata(&state_dir).unwrap().permissions();
-    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    // The database refuses the write once the disk answers.
+    let fault_once = std::sync::atomic::AtomicBool::new(true);
+    session
+        .core
+        .local_state_for_test()
+        .unwrap()
+        .set_write_fault_for_test(Arc::new(move || {
+            fault_once.swap(false, std::sync::atomic::Ordering::SeqCst)
+        }));
     release.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     while app.pvp_start_fights.pending() && Instant::now() < deadline {
         session.pump(&mut app);
         std::thread::sleep(Duration::from_millis(5));
     }
-    std::fs::set_permissions(&state_dir, original).unwrap();
     assert!(!app.pvp_start_fights.pending(), "the write never settled");
     assert!(
         app.pvp_start_fights.shown(),
@@ -4767,11 +4800,11 @@ fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer
     );
 
     // A peer turns it off: the row follows after the failure.
-    std::fs::write(
-        session.preferences.path(),
-        br#"{"pvp":{"start_fights":false}}"#,
-    )
-    .unwrap();
+    crate::test_support::peer_saves(
+        &session.preferences,
+        "pvp",
+        serde_json::json!({"start_fights": false}),
+    );
     session.preferences.reload().unwrap();
     session.pump(&mut app);
     session.pump(&mut app);
@@ -4854,12 +4887,11 @@ fn a_peer_write_between_the_click_and_its_submission_still_clears_the_earlier_fa
     // The retry turns it on. A peer saves `on` before the next pump.
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
     assert!(app.pvp_start_fights.shown(), "the retry shows at once");
-    std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
-    std::fs::write(
-        session.preferences.path(),
-        br#"{"pvp":{"start_fights":true}}"#,
-    )
-    .unwrap();
+    crate::test_support::peer_saves(
+        &session.preferences,
+        "pvp",
+        serde_json::json!({"start_fights": true}),
+    );
     session.preferences.reload().unwrap();
     settle_preferences(&mut session, &mut app);
     assert!(!app.pvp_start_fights.pending(), "the retry never settled");
@@ -4874,11 +4906,11 @@ fn a_peer_write_between_the_click_and_its_submission_still_clears_the_earlier_fa
     let other = "settings: walk permissions: the store is busy".to_string();
     app.error = Some(other.clone());
     app.on_key(settings_key(crossterm::event::KeyCode::Enter));
-    std::fs::write(
-        session.preferences.path(),
-        br#"{"pvp":{"start_fights":false}}"#,
-    )
-    .unwrap();
+    crate::test_support::peer_saves(
+        &session.preferences,
+        "pvp",
+        serde_json::json!({"start_fights": false}),
+    );
     session.preferences.reload().unwrap();
     settle_preferences(&mut session, &mut app);
     for _ in 0..40 {
@@ -4920,7 +4952,9 @@ fn a_live_run_refuses_the_start_fights_row_without_writing() {
     );
     assert_eq!(session.core.refusals(), refusals + 1, "one refusal");
     assert!(
-        !session.preferences.path().exists(),
+        crate::test_support::saved_preferences(&session.preferences)
+            .get("pvp")
+            .is_none(),
         "nothing was written in a --live run"
     );
     let _iso = iso;
@@ -5908,6 +5942,75 @@ fn settings_feedback_tui_row_shows_saving_then_the_failure_then_clears_on_retry(
     }
 }
 
+/// A save whose COMMIT ended in a disk error that the database could not
+/// settle may be stored (plan §4.2): the settings popup says on the row that
+/// the outcome is unknown, never "Not saved". The saved choice shows again,
+/// and the retry is the action that resolves the failure.
+#[test]
+fn settings_feedback_tui_row_shows_an_unknown_outcome_as_unknown_not_as_not_saved() {
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-s3-row-unknown");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    session.preferences.reload().unwrap();
+    app.restore_preferences(session.preferences.share());
+    open_settings(&mut session, &mut app);
+    app.settings_state.row = 12;
+    let unknown = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let asked = Arc::clone(&unknown);
+    session
+        .core
+        .local_state_for_test()
+        .expect("the TUI binds the process state service")
+        .set_write_unknown_for_test(Arc::new(move || {
+            asked.load(std::sync::atomic::Ordering::SeqCst)
+        }));
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let failure = loop {
+        session.pump(&mut app);
+        match app.setting_feedback(frontend_core::Setting::MapBake) {
+            Some(SettingFeedback::Failed(text)) => break text.clone(),
+            shown => assert!(
+                Instant::now() < deadline,
+                "the failure never showed on the row: {shown:?}"
+            ),
+        }
+        std::thread::yield_now();
+    };
+    let text = failure.as_str();
+    assert!(text.starts_with("Save outcome unknown: "), "{text}");
+    assert!(
+        text.contains("outcome is unknown") && text.contains("it was not retried"),
+        "the reason stays: {text}"
+    );
+    assert!(!text.to_lowercase().contains("not saved"), "{text}");
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            words.contains("map bake: ask") && words.contains("Save outcome unknown:"),
+            "{width}x{height}: the row says the outcome is unknown: {words}"
+        );
+        assert!(
+            !words.contains("Not saved:"),
+            "{width}x{height}: nothing says it was not saved: {words}"
+        );
+    }
+    assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Ask);
+
+    // The retry resolves the failure; the durable value then shows.
+    unknown.store(false, std::sync::atomic::Ordering::SeqCst);
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    session.pump(&mut app);
+    settle_preferences(&mut session, &mut app);
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            words.contains("map bake: always") && !words.contains("unknown:"),
+            "{width}x{height}: the saved choice shows: {words}"
+        );
+    }
+}
+
 /// A real file-lock timeout leaves the saved grant unchanged. A second
 /// operator action after the lock is released must reach durable storage.
 #[test]
@@ -5923,8 +6026,14 @@ fn settings_feedback_tui_teleports_retry_after_file_lock_timeout_is_durable() {
     open_settings(&mut session, &mut app);
     app.settings_state.row = 5;
     let setting = Setting::Nav(NavPreference::AllowTeleports);
-    let path = session.preferences.path();
-    let lock_path = path.with_extension("json.lock");
+    // The product guard of the preferences: `<root>/panel-ui.json.lock`.
+    let lock_path = session
+        .preferences
+        .path()
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the state root")
+        .join("panel-ui.json.lock");
     crate::test_support::write_private_fixture(&lock_path, b"").unwrap();
     let lock = std::fs::OpenOptions::new()
         .read(true)
@@ -5941,8 +6050,11 @@ fn settings_feedback_tui_teleports_retry_after_file_lock_timeout_is_durable() {
     ));
     settle_preferences(&mut session, &mut app);
     assert!(
-        matches!(session.core.setting_status(setting), SettingStatus::Failed(text) if text.contains("busy")),
-        "the real writer must time out while the file lock is held"
+        matches!(
+            session.core.setting_status(setting),
+            SettingStatus::Failed(text) if text.contains("another 274bot process is saving preferences")
+        ),
+        "the real writer must time out while the preferences guard is held"
     );
     assert!(!app.walk_permissions.globals().allow_teleports());
     assert!(!app.nav.allow_teleports());
@@ -5961,7 +6073,7 @@ fn settings_feedback_tui_teleports_retry_after_file_lock_timeout_is_durable() {
         assert!(!words.contains("saving…"), "{words}");
         assert!(!words.contains("Not saved:"), "{words}");
     }
-    let durable: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let durable = crate::test_support::saved_preferences(&session.preferences);
     assert_eq!(durable["nav"]["allow_teleports"], true);
 }
 
@@ -5999,6 +6111,86 @@ fn settings_feedback_tui_row_failure_expires_by_itself() {
     let words = screen_words(&mut app, 120, 40);
     assert!(!words.contains("Not saved:"), "{words}");
     assert!(words.contains("map bake: ask"), "{words}");
+}
+
+/// Preferences refused from the start (never adopted): a refused walk
+/// permission save shows the saved, fail-closed value again with its reason,
+/// after the reason expires, and when the popup opens again
+/// (docs/api/panel.md: "If the save fails, the control shows the saved
+/// value again").
+#[test]
+fn settings_feedback_tui_refused_preferences_show_the_saved_grant_again() {
+    use crossterm::event::KeyCode;
+    use frontend_core::{NavPreference, Setting};
+    let iso = IsolatedStores::enter("tui-s1-refused-grant");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    let legacy = session.bind_refused_preferences(&iso.dir().join("refused-state"));
+    let refused_bytes = std::fs::read(&legacy).unwrap();
+    app.restore_preferences(session.preferences.share());
+    assert!(!session.preferences.ready());
+    open_settings(&mut session, &mut app);
+    app.settings_state.row = 5;
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    settle_preferences(&mut session, &mut app);
+    let setting = Setting::Nav(NavPreference::AllowTeleports);
+    assert!(
+        session.core.setting_failure(setting).is_some(),
+        "the refused save fails"
+    );
+    assert!(!app.nav.allow_teleports(), "the draft is the saved grant");
+    // 120x40: at 80x24 the refusal text above the rows scrolls them away.
+    let words = screen_words(&mut app, 120, 40);
+    assert!(
+        words.contains("allow teleports: false") && words.contains("Not saved:"),
+        "the saved grant shows with the reason: {words}"
+    );
+
+    // A draft beside the walk grants (the map-bake choice) shows its
+    // saved value again too.
+    app.settings_state.row = 12;
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    settle_preferences(&mut session, &mut app);
+    assert!(
+        session.core.setting_failure(Setting::MapBake).is_some(),
+        "the refused save fails"
+    );
+    assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Ask);
+    let words = screen_words(&mut app, 120, 40);
+    assert!(words.contains("map bake: ask"), "{words}");
+    app.settings_state.row = 5;
+
+    // The reason expires; the row still shows the saved grant.
+    let after = Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT;
+    {
+        let (core, mut surface) = session.core_and_surface_for_preferences(&mut app);
+        core.poll_preferences_at(&mut surface, after);
+    }
+    session.project_setting_feedback(&mut app);
+    session.pump(&mut app);
+    let words = screen_words(&mut app, 120, 40);
+    assert!(!words.contains("Not saved:"), "{words}");
+    assert!(
+        words.contains("allow teleports: false") && !words.contains("allow teleports: true"),
+        "the saved grant shows after the reason expires: {words}"
+    );
+
+    // Reopened, the popup shows the saved grant too.
+    settings_press(&mut session, &mut app, KeyCode::Esc);
+    session.pump(&mut app);
+    assert!(!app.settings_state.open, "Esc closes the popup");
+    open_settings(&mut session, &mut app);
+    let words = screen_words(&mut app, 120, 40);
+    assert!(
+        words.contains("allow teleports: false") && !words.contains("allow teleports: true"),
+        "the reopened popup shows the saved grant: {words}"
+    );
+    assert!(!app.nav.allow_teleports());
+    assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Ask);
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        refused_bytes,
+        "nothing is saved over the refused file"
+    );
 }
 
 /// A cold TUI (preferences not yet read) adopts every saved choice when the
@@ -6052,10 +6244,17 @@ fn settings_feedback_tui_cold_start_adopts_saved_choices_without_writing_default
     assert!(app.nav.allow_teleports());
     assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Always);
     assert_eq!(
-        std::fs::read(&path).unwrap(),
-        saved,
+        crate::test_support::saved_preferences(&session.preferences),
+        serde_json::from_slice::<serde_json::Value>(saved).unwrap(),
         "no default is written"
     );
+    // The import keeps the exact source as `.migrated` evidence.
+    let migrated = path.with_file_name("panel-ui.json.migrated");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !migrated.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(std::fs::read(&migrated).unwrap(), saved);
 }
 
 /// Dismissing the Quester Paths status line is the `AcknowledgeNotice`
@@ -6088,15 +6287,9 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
     let mut session = TuiSession::new(dummy_options());
     let mut app = TuiApp::new("tui");
     app.restore_preferences(session.preferences.share());
-    // A refused preferences file (larger than the bound) refuses writes:
+    // A store refused at open (an over-size legacy file) refuses writes:
     // the save fails, the source stays, and no reload starts.
-    std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
-    std::fs::write(
-        session.preferences.path(),
-        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
-    )
-    .unwrap();
-    assert!(session.preferences.reload().is_err());
+    session.bind_refused_preferences(&iso.dir().join("refused-state"));
     let before_enabled = app.quester_paths.enabled();
     let before_folder = app.quester_paths.folder().to_path_buf();
     app.quester_paths.set_enabled(true);
@@ -6290,13 +6483,8 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
     let mut app = pump_two_slots(&mut session);
     assert!(app.background_notice.is_some());
     settle_preferences(&mut session, &mut app);
-    // An unreadable preferences file refuses the store on every platform. (A
-    // folder replaced by a file does not: a read through it fails as
-    // `NotADirectory` on Unix but as `NotFound` on Windows, which the store
-    // reads as "no file yet", and the write then fails later, not at once.)
-    let path = session.preferences.path();
-    crate::test_support::write_private_fixture(&path, b"{malformed").unwrap();
-    assert!(session.preferences.reload().is_err());
+    // A store refused at open (an over-size legacy file) refuses writes.
+    let legacy = session.bind_refused_preferences(&iso.dir().join("refused-state"));
     app.error = None;
     session.ack_background_bots(&mut app);
     assert!(
@@ -6322,8 +6510,7 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
     assert!(!frontend_core::resources::background_bots_acked(
         &session.preferences
     ));
-    std::fs::remove_file(&path).unwrap();
-    session.preferences.reload().unwrap();
+    crate::test_support::repair_refused_state(&session.preferences, &legacy);
     session.ack_background_bots(&mut app);
     settle_preferences(&mut session, &mut app);
     // The notice cache refreshes on its own one-second cadence.
@@ -9709,8 +9896,13 @@ fn retained_preference_failure_expires_without_reappearing_and_clears_on_recover
     for expire in [false, true] {
         let state = iso.dir().join(if expire { "expired" } else { "recovered" });
         std::fs::create_dir_all(&state).unwrap();
+        // A legacy file past the size bound refuses the preferences at open.
         let path = state.join("panel-ui.json");
-        std::fs::write(&path, b"not json").unwrap();
+        crate::test_support::write_private_fixture(
+            &path,
+            vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
+        )
+        .unwrap();
         let service = host_play::local_state::LocalStateService::open_process(
             host_play::local_state::StateRoot::new(state),
         );
@@ -9762,7 +9954,7 @@ fn retained_preference_failure_expires_without_reappearing_and_clears_on_recover
             app.error = Some("newer message".into());
         }
 
-        std::fs::write(&path, b"{}").unwrap();
+        crate::test_support::write_private_fixture(&path, b"{}").unwrap();
         session.preferences.reload().unwrap();
         session.pump(&mut app);
         session.pump(&mut app);
@@ -10772,4 +10964,224 @@ fn map_catalogue_build_failure_is_visible_and_retries_only_after_inputs_change()
         5,
         "changed profile identity permits an immediate retry"
     );
+}
+
+/// Write `bytes` to `path` with `mode` (group-writable is a store another
+/// user could have written, which the product readers refuse).
+#[cfg(all(unix, feature = "js"))]
+fn write_store_with_mode(path: &std::path::Path, bytes: &[u8], mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// Process-log rows whose text contains `needle`.
+#[cfg(all(unix, feature = "js"))]
+fn process_log_rows_with(needle: &str) -> usize {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut view = LogView::new(LogScope::Process);
+    view.edit_filter(|filter| filter.set_text(needle));
+    global().refresh(&mut view);
+    view.rows().len()
+}
+
+/// The script library store (`js-scripts.json`) refused at startup is no
+/// longer printed and dropped: the message line shows its path and cause,
+/// and the host log holds one record.
+#[cfg(all(unix, feature = "js"))]
+#[test]
+fn a_refused_script_library_store_shows_on_the_message_line_at_startup() {
+    let iso = IsolatedStores::enter("tui-refused-library");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+    let store = iso.home().join(".274bot").join("js-scripts.json");
+    write_store_with_mode(&store, b"[]", 0o664);
+
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("274bot headless");
+    session.pump(&mut app);
+
+    let shown = app
+        .error
+        .clone()
+        .expect("the refusal is on the message line");
+    let path = store.display().to_string();
+    assert!(shown.contains(&path), "{shown}");
+    assert!(shown.contains("writable by other users"), "{shown}");
+    assert!(shown.contains(&format!("chmod 600 {path}")), "{shown}");
+    assert_eq!(
+        process_log_rows_with(&format!("script library not loaded: {shown}")),
+        1,
+        "one log record for the refusal"
+    );
+    assert_eq!(std::fs::read(&store).unwrap(), b"[]", "never saved over");
+}
+
+/// A preferences store another user could have written is refused; the
+/// message line shows its path and cause once the store was read, and drops
+/// it when a later snapshot reads. A refused library store stays shown
+/// beside it.
+#[cfg(all(unix, feature = "js"))]
+#[test]
+fn a_refused_preferences_store_shows_on_the_message_line_with_the_library_refusal() {
+    use std::os::unix::fs::PermissionsExt;
+    let iso = IsolatedStores::enter("tui-refused-preferences");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+    let state = iso.home().join(".274bot");
+    let preferences = state.join("panel-ui.json");
+    write_store_with_mode(&preferences, b"{}", 0o664);
+    let library = state.join("js-scripts.json");
+    write_store_with_mode(&library, b"{ not json", 0o600);
+
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("274bot headless");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        session.pump(&mut app);
+        let shown = app
+            .error
+            .as_deref()
+            .is_some_and(|text| text.contains("panel-ui.json") && text.contains("js-scripts.json"));
+        if shown || Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let Err(refusal) = session.preferences.snapshot() else {
+        panic!("the group-writable store is refused");
+    };
+    let shown = app
+        .error
+        .clone()
+        .expect("the refusal is on the message line");
+    assert!(shown.contains(&refusal.to_string()), "{shown}");
+    assert!(shown.contains(refusal.path()), "{shown}");
+    assert!(!refusal.cause().is_empty(), "{shown}");
+    assert!(
+        shown.contains("js-scripts.json"),
+        "the library refusal is still there: {shown}"
+    );
+    // The refusal text (path, cause and remedy) is longer than a log message
+    // may be, so the record keeps its start: the search names that start.
+    let logged: String = format!("preferences not loaded: {refusal}")
+        .chars()
+        .take(frontend_core::log::MESSAGE_CAP / 2)
+        .collect();
+    assert_eq!(
+        process_log_rows_with(&logged),
+        1,
+        "one log record for the refusal, however many pumps saw it"
+    );
+    // The message line is one line and cuts the text; the settings popup
+    // shows the whole refusal (path, cause, remedy) under its rows while it
+    // stands (T5.3-S4 headed check D-3).
+    app.settings_state.open = true;
+    // The popup wraps at its width, inside words too: compare without spaces.
+    let letters: String = screen_words(&mut app, 120, 40)
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    for needle in [
+        crate::settings::PREFERENCES_NOT_LOADED,
+        "writable by other users",
+        "chmod 600",
+    ] {
+        let needle: String = needle.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(letters.contains(&needle), "{needle}: {letters}");
+    }
+    app.settings_state.open = false;
+
+    std::fs::set_permissions(&preferences, std::fs::Permissions::from_mode(0o600)).unwrap();
+    session.preferences.reload().unwrap();
+    session.pump(&mut app);
+    session.pump(&mut app);
+    assert_eq!(session.core.preference_error(), None);
+    assert_eq!(app.preferences_refused, None, "the popup drops it too");
+    let remaining = app.error.as_deref().expect("the library refusal stays");
+    assert!(remaining.contains("js-scripts.json"), "{remaining}");
+    assert!(
+        !remaining.contains(refusal.path()),
+        "recovery drops the preferences refusal: {remaining}"
+    );
+}
+
+/// A legacy preferences source the database cannot read (a directory at its
+/// path, a file the process may not read) refuses the preferences alone
+/// (plan §5.1, T5.3 S1 round 2): the message line shows its path, cause and
+/// remedy, the settings popup shows them whole while the refusal stands,
+/// and the bank hint store beside it still saves. Repairing the source
+/// lets the next read import it and drops the refusal.
+#[test]
+fn a_bad_legacy_preferences_source_shows_its_refusal_on_the_message_line() {
+    use frontend_core::test_support::startup::{bank_hint_saves, BadPreferencesSource};
+    for case in BadPreferencesSource::ALL {
+        let iso = IsolatedStores::enter(&format!("tui-bad-source-{}", case.label()));
+        let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+        let source = iso.home().join(".274bot").join("panel-ui.json");
+        if !case.make(&source) {
+            continue;
+        }
+
+        let mut session = TuiSession::new(dummy_options());
+        let mut app = TuiApp::new("274bot headless");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.error.is_none() && Instant::now() < deadline {
+            session.pump(&mut app);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let shown = app.error.clone().unwrap_or_else(|| {
+            panic!(
+                "{}: the refusal never reached the message line",
+                case.label()
+            )
+        });
+        case.assert_refusal(&shown, &source);
+        assert_eq!(session.core.preference_error(), Some(shown.as_str()));
+        // The message line is one line and cuts the text; the settings
+        // popup shows the whole refusal while it stands. It wraps at its
+        // width, inside words too: compare without spaces.
+        app.settings_state.open = true;
+        let letters: String = screen_words(&mut app, 120, 40)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        for needle in [
+            crate::settings::PREFERENCES_NOT_LOADED,
+            case.cause(),
+            "Restore readable private preferences JSON",
+        ] {
+            let needle: String = needle.chars().filter(|c| !c.is_whitespace()).collect();
+            assert!(
+                letters.contains(&needle),
+                "{}: {needle}: {letters}",
+                case.label()
+            );
+        }
+        app.settings_state.open = false;
+        assert!(
+            bank_hint_saves(&session.core, "bob"),
+            "{}: the bank hint store beside the refusal keeps working",
+            case.label()
+        );
+
+        case.repair(&source);
+        session.preferences.reload().unwrap();
+        session.pump(&mut app);
+        session.pump(&mut app);
+        assert_eq!(
+            session.core.preference_error(),
+            None,
+            "{}: the repaired source reads",
+            case.label()
+        );
+        assert_eq!(
+            app.error,
+            None,
+            "{}: the refusal is off the line",
+            case.label()
+        );
+        assert_eq!(app.preferences_refused, None, "the popup drops it too");
+    }
 }

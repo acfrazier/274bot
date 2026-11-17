@@ -70,7 +70,7 @@ fn cold_preferences_adopt_saved_startup_models_without_writing_defaults() {
     let release_rx = std::sync::Mutex::new(release_rx);
     let first = std::sync::atomic::AtomicBool::new(true);
     let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
-        host_play::local_state::StateRoot::new(state),
+        host_play::local_state::StateRoot::new(state.clone()),
         std::sync::Arc::new(move || {
             if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
                 let _ = entered.send(());
@@ -117,7 +117,22 @@ fn cold_preferences_adopt_saved_startup_models_without_writing_defaults() {
         driver.models.quester.settings().folder(),
         Path::new("saved-source")
     );
-    assert_eq!(std::fs::read(path).unwrap(), saved);
+    // Nothing was written back: the document is exactly the saved object
+    // (no defaults), and the source became `.migrated` evidence untouched.
+    let preferences = driver.session.preferences().unwrap();
+    let expected: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(saved).unwrap();
+    assert_eq!(*preferences.document().unwrap(), expected);
+    let migrated = state.join("panel-ui.json.migrated");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !migrated.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(std::fs::read(migrated).unwrap(), saved);
+    assert!(
+        !path.exists(),
+        "the legacy file is renamed, never rewritten"
+    );
 }
 
 #[test]
@@ -159,7 +174,13 @@ fn saved_pvp_settings_and_legacy_files_keep_the_typed_setting_lifecycle() {
         assert_eq!(driver.session().setting_status(setting), SettingStatus::Saved);
         assert!(!driver.models.draw.capture());
         assert!(driver.models.walk_globals.globals().allow_teleports());
-        assert_eq!(std::fs::read(&path).unwrap(), saved);
+        let expected: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_slice(saved).unwrap();
+        assert_eq!(
+            *driver.session().preferences().unwrap().document().unwrap(),
+            expected,
+            "the whole saved object is imported, nothing added"
+        );
 
         driver.session_mut().watch_setting_events(true);
         let release = hold_first_write(&driver);
@@ -599,18 +620,68 @@ fn rejected(rejection: crate::command::Rejection) -> Terminal {
     Settlement::Failed(CommandFailure::Rejected(rejection))
 }
 
-/// The preferences document on disk, as `d`'s service wrote it.
+/// The durable preferences document as the process service holds it (the
+/// database rows, read again), for `d`'s service. The product never writes
+/// `panel-ui.json`; the document is the only place a saved value lives.
 fn preferences_file(d: &HeadlessDriver) -> serde_json::Map<String, serde_json::Value> {
-    let path = d.session().preferences().expect("bound preferences").path();
-    let bytes = std::fs::read(&path).expect("the preferences file exists");
-    serde_json::from_slice(&bytes).expect("the preferences file is JSON")
+    let preferences = d.session().preferences().expect("bound preferences");
+    let document = preferences.reload().expect("the preferences read back");
+    (*document).clone()
 }
 
-/// [`preferences_file`] while a write may still be landing: `None` until
-/// the file exists and parses.
+/// [`preferences_file`] while a write may still be landing: the published
+/// document, `None` until the store is readable. This never waits.
 fn preferences_file_now(d: &HeadlessDriver) -> Option<serde_json::Value> {
-    let path = d.session().preferences().expect("bound preferences").path();
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    let document = d.session().preferences()?.document().ok()?;
+    Some(serde_json::Value::Object((*document).clone()))
+}
+
+/// The durable preferences state: its version and its document, read
+/// again. A save that changes nothing commits nothing, so both stay equal.
+fn durable_preferences(
+    d: &HeadlessDriver,
+) -> (
+    api::local_state::StoreVersion,
+    serde_json::Map<String, serde_json::Value>,
+) {
+    let preferences = d.session().preferences().expect("bound preferences");
+    preferences.reload().expect("the preferences read back");
+    let snapshot = preferences.snapshot().expect("a readable snapshot");
+    (snapshot.version(), (**snapshot.document()).clone())
+}
+
+/// The state root of `d`'s process service.
+fn state_root(d: &HeadlessDriver) -> PathBuf {
+    d.session()
+        .local_state()
+        .expect("the driver binds the process service")
+        .root()
+        .path()
+        .to_path_buf()
+}
+
+/// Hold the preferences guard `<root>/panel-ui.json.lock`, the lock every
+/// preferences writer of this product takes: a save keeps retrying without
+/// waiting and fails `Busy` five seconds after its first attempt. Dropping
+/// the file releases it.
+fn hold_preferences_guard(d: &HeadlessDriver) -> std::fs::File {
+    let mut name = state_root(d).join("panel-ui.json").into_os_string();
+    name.push(".lock");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(PathBuf::from(name))
+        .expect("the guard file");
+    lock.try_lock().expect("hold the preferences guard");
+    lock
+}
+
+/// What a second process over the same root does: save one member through
+/// its own writer and wait for the durable result.
+fn save_elsewhere(other: &crate::UiPreferences, key: &str, value: serde_json::Value) {
+    crate::prefs::settled_for_test(other.begin_set(key, value)).expect("the second process saves");
 }
 
 #[test]
@@ -712,7 +783,7 @@ fn a_vault_row_with_nothing_staged_is_refused_not_done() {
 }
 
 #[test]
-fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
+fn preference_rows_save_durably_and_a_new_session_reads_them_back() {
     use crate::nav_prefs::NavPreference;
     let _sink = crate::log_file::sink_test_lock();
     let dir = scratch("prefs");
@@ -741,7 +812,7 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
         crate::log_file::session_log_path().is_some(),
         "the session file is open"
     );
-    // The file on disk.
+    // The durable document.
     let file = preferences_file(&d);
     assert_eq!(
         file["nav"]["allow_teleports"],
@@ -900,20 +971,10 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         "the held write is pending under its stable setting identity"
     );
 
-    // Hold the preferences file's write lock so the held write fails when
-    // released: the writer's bounded lock wait runs out (the same
-    // contention the T5.3-S3 headed check uses).
-    let path = d.session().preferences().expect("bound preferences").path();
-    let mut lock_name = path.as_os_str().to_os_string();
-    lock_name.push(".lock");
-    let lock_file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(std::path::PathBuf::from(lock_name))
-        .expect("lock file");
-    lock_file.try_lock().expect("hold the write lock");
+    // Hold the preferences guard (`panel-ui.json.lock`) so the held write
+    // fails when released: the save keeps retrying without waiting and
+    // fails Busy five seconds after its first attempt.
+    let lock_file = hold_preferences_guard(&d);
     release.send(()).unwrap();
     let terminal = settled_app(&mut d, submitted.request());
     assert!(
@@ -999,14 +1060,17 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = scratch("pvp-setting");
     let mut d = driver_in(&dir, &["pvp1-alice"]);
-    let lines_with = |filter: &str, needle: &str| -> Vec<String> {
+    // The process ring holds 500 lines and every test of this binary writes to
+    // it, so an older line can leave it between two reads. The lines of one
+    // write are the ones with an order stamp above the stamp taken before it.
+    let lines_after = |filter: &str, needle: &str, stamp: u64| -> Vec<(u64, String)> {
         let mut view = LogView::new(LogScope::Process);
         view.edit_filter(|f| f.set_text(filter));
         global().refresh(&mut view);
         view.rows()
             .iter()
-            .map(|row| row.message().to_owned())
-            .filter(|line| line.contains(needle))
+            .filter(|row| row.seq() > stamp && row.message().contains(needle))
+            .map(|row| (row.seq(), row.message().to_owned()))
             .collect()
     };
     assert_eq!(
@@ -1014,7 +1078,9 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         Some(false),
         "off until the operator turns it on"
     );
-    let audit_before = lines_with("pvp.start_fights", "pvp.start_fights").len();
+    let audit_stamp = lines_after("pvp.start_fights", "pvp.start_fights", 0)
+        .last()
+        .map_or(0, |(seq, _)| *seq);
 
     let on = d
         .submit(
@@ -1027,16 +1093,12 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         preferences_file(&d)["pvp"]["start_fights"],
         serde_json::Value::Bool(true)
     );
-    let audit = lines_with("pvp.start_fights", "pvp.start_fights");
-    assert_eq!(
-        audit.len() - audit_before,
-        1,
-        "one write, one audit line: {audit:?}"
-    );
-    assert!(
-        audit.last().is_some_and(|line| line.contains("true")),
-        "{audit:?}"
-    );
+    let audit: Vec<String> = lines_after("pvp.start_fights", "pvp.start_fights", audit_stamp)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(audit.len(), 1, "one write, one audit line: {audit:?}");
+    assert!(audit[0].contains("true"), "{audit:?}");
     assert!(
         crate::pvp_prefs::pvp_start_fights(&d.session().preferences().expect("bound"))
             .expect("the projection is ready"),
@@ -1055,7 +1117,10 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         "pvp-v1 test: no preferences store in this mode",
     );
     assert_eq!(d.session().refusals(), before + 1);
-    let refusal = lines_with("command refused: SetPvpStartFights", "pvp-v1 test");
+    let refusal: Vec<String> = lines_after("command refused: SetPvpStartFights", "pvp-v1 test", 0)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
     assert_eq!(refusal.len(), 1, "{refusal:?}");
 }
 
@@ -1068,7 +1133,6 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
 #[test]
 fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write_follows() {
     use crate::{PvpSettingView, PvpWrite};
-    use std::os::unix::fs::PermissionsExt;
     let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1104,13 +1168,10 @@ fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write
     assert_eq!(view.follow(d.session()), None, "still waiting");
     assert!(!view.shown() && view.pending());
 
-    // The state directory refuses the write once the disk answers.
-    let state_dir = prefs.path().parent().expect("a directory").to_path_buf();
-    let original = std::fs::metadata(&state_dir).unwrap().permissions();
-    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    // The database refuses the write once the disk answers.
+    fault_next_write(&d);
     release.send(()).unwrap();
     let terminal = settled_app(&mut d, off.request());
-    std::fs::set_permissions(&state_dir, original).unwrap();
     assert!(
         matches!(terminal, Some(Settlement::Failed(_))),
         "the deferred write fails: {terminal:?}"
@@ -1129,8 +1190,8 @@ fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write
     assert_eq!(view.follow(d.session()), None, "reported once");
     assert!(view.shown());
 
-    // A peer turns it off in the file: the row follows it after the failure.
-    vault::write_private_file(&prefs.path(), br#"{"pvp":{"start_fights":false}}"#).unwrap();
+    // A peer turns it off in the database: the row follows it after the failure.
+    peer_sets_pvp(&d, false);
     prefs.reload().unwrap();
     d.poll();
     assert_eq!(view.follow(d.session()), None);
@@ -1138,6 +1199,36 @@ fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write
         !view.shown(),
         "a peer write stays visible after the failure"
     );
+}
+
+/// Fail the next preference write of `d`'s service at the database, once the
+/// held write is released (a refused commit).
+fn fault_next_write(d: &HeadlessDriver) {
+    let first = std::sync::atomic::AtomicBool::new(true);
+    d.session()
+        .local_state()
+        .expect("the driver binds the process service")
+        .set_write_fault_for_test(std::sync::Arc::new(move || {
+            first.swap(false, std::sync::atomic::Ordering::SeqCst)
+        }));
+}
+
+/// Another process's write of `pvp.start_fights`: a second service over the
+/// same state root, settled before it returns.
+fn peer_sets_pvp(d: &HeadlessDriver, enabled: bool) {
+    let prefs = d.session().preferences().expect("bound");
+    let root = prefs
+        .path()
+        .parent()
+        .and_then(Path::parent)
+        .expect("the state root")
+        .to_path_buf();
+    let peer = crate::prefs::UiPreferences::open_for_test(root);
+    let mut patch = crate::prefs::PreferencePatch::default();
+    patch
+        .set_member(&["pvp", "start_fights"], Some(enabled.into()))
+        .unwrap();
+    crate::prefs::settled_for_test(peer.begin_patch(patch)).unwrap();
 }
 
 /// The peer's write of `enabled` reaches the view between the click and the
@@ -1149,8 +1240,7 @@ fn peer_writes_pvp_before_submission(
     enabled: bool,
 ) {
     let prefs = d.session().preferences().expect("bound");
-    let document = format!(r#"{{"pvp":{{"start_fights":{enabled}}}}}"#);
-    vault::write_private_file(&prefs.path(), document.as_bytes()).unwrap();
+    peer_sets_pvp(d, enabled);
     prefs.reload().unwrap();
     d.poll();
     view.adopt(crate::pvp_prefs::pvp_start_fights(&prefs).ok());
@@ -1230,13 +1320,11 @@ fn a_peer_write_before_submission_keeps_the_clicks_command_followed() {
 #[test]
 fn a_peer_write_before_submission_still_reports_the_clicks_failure() {
     use crate::{PvpSettingView, PvpWrite};
-    use std::os::unix::fs::PermissionsExt;
     let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = scratch("pvp-peer-before-submit-failure");
     let mut d = driver_in(&dir, &["pvp4-alice"]);
-    let prefs = d.session().preferences().expect("bound");
     let mut view = PvpSettingView::new(false);
 
     let release = hold_first_write(&d);
@@ -1255,12 +1343,9 @@ fn a_peer_write_before_submission_still_reports_the_clicks_failure() {
         "queued, not failed"
     );
 
-    let state_dir = prefs.path().parent().expect("a directory").to_path_buf();
-    let original = std::fs::metadata(&state_dir).unwrap().permissions();
-    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    fault_next_write(&d);
     release.send(()).unwrap();
     let terminal = settled_app(&mut d, click.request());
-    std::fs::set_permissions(&state_dir, original).unwrap();
     assert!(
         matches!(terminal, Some(Settlement::Failed(_))),
         "the write fails: {terminal:?}"
@@ -1842,8 +1927,7 @@ fn view_sorts_never_write_the_order_and_refuse_a_reorder() {
     d.poll();
     let op = move_op(&d, "carol", "alice", false);
     assert_eq!(reorder(&mut d, op), Some(done()));
-    let path = d.session().preferences().expect("prefs").path();
-    let before = std::fs::read(&path).expect("file");
+    let before = durable_preferences(&d);
     for order in [crate::FleetOrder::Name, crate::FleetOrder::Status] {
         d.submit(OperatorCommand::SetFleetSort(order), Targets::Application)
             .expect("sort");
@@ -1854,7 +1938,11 @@ fn view_sorts_never_write_the_order_and_refuse_a_reorder() {
             "{order:?}"
         );
     }
-    assert_eq!(std::fs::read(&path).expect("file"), before, "byte for byte");
+    assert_eq!(
+        durable_preferences(&d),
+        before,
+        "no write: the same version and document"
+    );
     assert_eq!(order_names(&d), ["carol", "alice", "bob"]);
 }
 
@@ -1965,13 +2053,7 @@ fn a_failed_profiles_order_write_restores_the_durable_order() {
         reorder_from(&mut d, op, crate::ReorderSurface::Profiles),
         Some(done())
     );
-    let path = d.session().preferences().expect("prefs").path();
-    std::fs::write(
-        &path,
-        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
-    )
-    .expect("oversize the preferences file");
-    let _ = d.session().preferences().expect("prefs").reload();
+    fault_next_write(&d);
     let op = move_op(&d, "bob", "carol", false);
     let terminal = reorder_from(&mut d, op, crate::ReorderSurface::Profiles);
     assert!(
@@ -2188,13 +2270,12 @@ fn filtered_moves_and_marked_to_top_keep_the_other_profiles_in_order() {
     }
     assert_eq!(reorder(&mut d, crate::ReorderOp::MarkedToTop), Some(done()));
     assert_eq!(order_names(&d), ["alice", "dave", "carol", "bob"]);
-    let path = d.session().preferences().expect("prefs").path();
-    let before = std::fs::read(&path).expect("file");
+    let before = durable_preferences(&d);
     assert_eq!(reorder(&mut d, crate::ReorderOp::MarkedToTop), Some(done()));
     assert_eq!(
-        std::fs::read(&path).expect("file"),
+        durable_preferences(&d),
         before,
-        "no move, no write"
+        "no move, no write: the same version and document"
     );
 }
 
@@ -2299,26 +2380,39 @@ fn a_failed_order_write_reports_failure_and_restores_the_durable_order() {
     assert_eq!(reorder(&mut d, op), Some(done()));
     use crate::SettingEventState;
     d.session_mut().watch_setting_events(true);
-    let path = d.session().preferences().expect("prefs").path();
-    std::fs::write(
-        &path,
-        vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1],
-    )
-    .expect("oversize the preferences file");
-    let _ = d.session().preferences().expect("prefs").reload();
+    let faulted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let faulted = std::sync::Arc::clone(&faulted);
+        d.session()
+            .local_state()
+            .expect("the driver binds the process service")
+            .set_write_fault_for_test(std::sync::Arc::new(move || {
+                faulted.store(true, std::sync::atomic::Ordering::SeqCst);
+                true
+            }));
+    }
     let op = move_op(&d, "bob", "carol", false);
     let terminal = reorder(&mut d, op);
     assert!(
         matches!(terminal, Some(Settlement::Failed(_))),
         "the write is refused: {terminal:?}"
     );
+    assert!(
+        faulted.load(std::sync::atomic::Ordering::SeqCst),
+        "the refusal came from the disk fault"
+    );
     let (events, incomplete) = d.session_mut().take_setting_events();
     assert!(!incomplete);
-    assert_eq!(events.len(), 1, "{events:?}");
-    assert_eq!(events[0].setting(), "profile order");
-    assert_eq!(events[0].state(), SettingEventState::Failed);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [SettingEventState::Pending, SettingEventState::Failed],
+        "{events:?}"
+    );
+    assert!(events
+        .iter()
+        .all(|event| event.setting() == "profile order"));
     assert!(
-        events[0].error().is_some_and(|error| !error.is_empty()),
+        events[1].error().is_some_and(|error| !error.is_empty()),
         "the refusal carries its reason: {events:?}"
     );
     d.poll();
@@ -2384,20 +2478,14 @@ fn a_superseded_order_write_settles_and_the_newest_order_wins() {
     assert_eq!(settled_app(&mut d, second.request()), Some(done()));
     assert_eq!(order_names(&d), ["carol", "bob", "alice"]);
     assert_eq!(stored_order(&d), ["carol", "bob", "alice"]);
-    let path = d.session().preferences().expect("prefs").path();
-    let before = std::fs::metadata(&path).expect("file").modified().ok();
-    let bytes = std::fs::read(&path).expect("file");
+    let before = durable_preferences(&d);
     for _ in 0..3 {
         d.poll();
     }
     assert_eq!(
-        std::fs::read(&path).expect("file"),
-        bytes,
-        "no further write"
-    );
-    assert_eq!(
-        std::fs::metadata(&path).expect("file").modified().ok(),
-        before
+        durable_preferences(&d),
+        before,
+        "no further write: the same version and document"
     );
 }
 
@@ -4110,15 +4198,13 @@ fn a_pending_or_failed_deletion_keeps_the_saved_place() {
     assert_eq!(order_names(&again), saved, "after a restart");
 }
 
-/// Review R4: a 600-profile marked move whose order write fails inside the
-/// file replacement (the state directory refuses the new file) fails the
-/// command, puts the durable order back, and leaves the stored order byte
-/// for byte as before: no member of the move lands, before or after a
-/// restart. A reorder is one file write.
-#[cfg(unix)]
+/// Review R4: a 600-profile marked move whose order write fails (the disk
+/// refuses the save: a test fault answers `Io`) fails the command, puts the
+/// durable order back, and leaves the stored order as before, same version
+/// and same document: no member of the move lands, before or after a
+/// restart. A reorder is one durable write.
 #[test]
 fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = scratch("order-600-fail");
     let names: Vec<String> = (0..600).map(|i| format!("bot{i:03}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
@@ -4126,34 +4212,29 @@ fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
     d.poll();
     let writes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let refuse = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let path = d.session().preferences().expect("prefs").path();
-    let state_dir = path.parent().expect("a state directory").to_path_buf();
     {
         let writes = std::sync::Arc::clone(&writes);
         let refuse = std::sync::Arc::clone(&refuse);
-        let state_dir = state_dir.clone();
-        d.session()
+        let service = d
+            .session()
             .local_state()
-            .expect("the driver binds the process service")
-            .set_write_stall_for_test(std::sync::Arc::new(move || {
-                writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if refuse.load(std::sync::atomic::Ordering::SeqCst) {
-                    let _ = std::fs::set_permissions(
-                        &state_dir,
-                        std::fs::Permissions::from_mode(0o500),
-                    );
-                }
-            }));
+            .expect("the driver binds the process service");
+        service.set_write_stall_for_test(std::sync::Arc::new(move || {
+            writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        service.set_write_fault_for_test(std::sync::Arc::new(move || {
+            refuse.load(std::sync::atomic::Ordering::SeqCst)
+        }));
     }
     let op = move_op(&d, "bot599", "bot000", false);
     assert_eq!(reorder(&mut d, op), Some(done()));
     assert_eq!(
         writes.load(std::sync::atomic::Ordering::SeqCst),
         1,
-        "one reorder, one file write"
+        "one reorder, one durable write"
     );
     let saved = order_names(&d);
-    let bytes_before = std::fs::read(&path).expect("file");
+    let durable_before = durable_preferences(&d);
     for name in ["bot300", "bot010", "bot500"] {
         d.submit(OperatorCommand::SetMark(true), Targets::Profile(name))
             .expect("mark");
@@ -4161,7 +4242,6 @@ fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
     refuse.store(true, std::sync::atomic::Ordering::SeqCst);
     let terminal = reorder(&mut d, crate::ReorderOp::MarkedToTop);
     refuse.store(false, std::sync::atomic::Ordering::SeqCst);
-    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o700)).expect("unblock");
     assert!(
         matches!(terminal, Some(Settlement::Failed(_))),
         "the write fails: {terminal:?}"
@@ -4169,9 +4249,9 @@ fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
     d.poll();
     assert_eq!(order_names(&d), saved, "the durable order back");
     assert_eq!(
-        std::fs::read(&path).expect("file"),
-        bytes_before,
-        "byte for byte"
+        durable_preferences(&d),
+        durable_before,
+        "the stored order is as before: same version, same document"
     );
     d.session_mut().flush_writes();
     drop(d);
@@ -6665,6 +6745,94 @@ fn a_held_then_failed_saved_setting_changes_nothing_and_fails_at_its_setting() {
     }
 }
 
+/// A save whose COMMIT ended in a disk error that the database could not
+/// settle may be stored (plan §4.2). Headless sees it as unknown, never as
+/// not saved: for every saved setting, the setting's failure, the command's
+/// failure detail and the setting event all say the outcome is unknown, and
+/// nothing is applied from the save.
+#[test]
+fn a_save_of_unknown_outcome_fails_at_its_setting_as_unknown_never_as_not_saved() {
+    for case in saved_settings() {
+        let mut d = driver(&format!("s3-unknown-{}", case.name), &["alice"]);
+        d.poll();
+        d.session_mut().watch_setting_events(true);
+        let service = d
+            .session()
+            .local_state()
+            .expect("the driver binds the process service");
+        service.set_write_unknown_for_test(std::sync::Arc::new(|| true));
+        (case.stage)(&mut d);
+        let request = d
+            .submit(case.command, Targets::Application)
+            .expect("admitted")
+            .request();
+        let terminal = settled_app(&mut d, request).expect("settled");
+        assert!(
+            matches!(
+                terminal,
+                Settlement::Failed(CommandFailure::Failed(
+                    crate::command::FailureKind::WriteFailed
+                ))
+            ),
+            "{}: one failed terminal: {terminal:?}",
+            case.name
+        );
+        d.poll();
+        // The Quester source is process-wide state that other tests leave
+        // set; this test's save never applies anything, and its text is the
+        // same for every setting.
+        assert!(
+            case.name == "quester" || (case.unchanged)(&d),
+            "{}: nothing applies from a save of unknown outcome",
+            case.name
+        );
+        let failure = d
+            .session()
+            .setting_failure(case.setting)
+            .unwrap_or_else(|| panic!("{}: the failure stays at its setting", case.name))
+            .to_owned();
+        assert!(
+            failure.starts_with("Save outcome unknown: "),
+            "{}: {failure}",
+            case.name
+        );
+        assert!(
+            failure.contains("outcome is unknown") && failure.contains("it was not retried"),
+            "{}: the reason stays: {failure}",
+            case.name
+        );
+        assert!(
+            !failure.to_lowercase().contains("not saved"),
+            "{}: {failure}",
+            case.name
+        );
+        // The command's detail is bounded (the full reason is in the setting
+        // and its event): what the operator must know comes first.
+        let detail = d
+            .session()
+            .command_failure(request)
+            .unwrap_or_else(|| panic!("{}: the command carries the reason", case.name));
+        assert!(
+            detail.contains(": save outcome unknown: ")
+                && !detail.to_lowercase().contains("not saved"),
+            "{}: {detail}",
+            case.name
+        );
+        let (events, incomplete) = d.session_mut().take_setting_events();
+        assert!(!incomplete, "{}", case.name);
+        assert!(
+            events.iter().any(|event| {
+                event.state() == crate::SettingEventState::Failed
+                    && event
+                        .error()
+                        .is_some_and(|error| error.contains("outcome is unknown"))
+            }),
+            "{}: the failed event says it: {events:?}",
+            case.name
+        );
+    }
+}
+
 /// The saved session file is a durable choice and a sink: nothing opens
 /// while the write is pending or after it failed, and the file opens from
 /// the durable value.
@@ -6790,19 +6958,10 @@ fn a_durable_then_b_failed_leaves_a_active_with_a_second_process_between() {
         "A is held: nothing applied"
     );
     // A second process over the same root writes another member while A waits.
-    let root = d
-        .session()
-        .preferences()
-        .expect("prefs")
-        .path()
-        .parent()
-        .expect("state root")
-        .to_path_buf();
+    let root = state_root(&d);
     {
         let other = crate::UiPreferences::open_for_test(root);
-        other
-            .set("focused_50", serde_json::Value::Bool(false))
-            .expect("the second process writes");
+        save_elsewhere(&other, "focused_50", serde_json::Value::Bool(false));
     }
     disk.release();
     assert_eq!(settled_app(&mut d, a), Some(done()), "A is durable");
@@ -6839,19 +6998,10 @@ fn a_second_process_version_reaches_the_models_and_calls_the_surface_back() {
     let mut d = driver("s3-second-process", &["alice"]);
     d.poll();
     assert_eq!(d.models().draw_changes(), 0);
-    let root = d
-        .session()
-        .preferences()
-        .expect("prefs")
-        .path()
-        .parent()
-        .expect("state root")
-        .to_path_buf();
+    let root = state_root(&d);
     {
         let other = crate::UiPreferences::open_for_test(root);
-        other
-            .set("sidecar_50", serde_json::Value::Bool(true))
-            .expect("the second process writes");
+        save_elsewhere(&other, "sidecar_50", serde_json::Value::Bool(true));
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     while !d.models().draw().sidecar_50() && std::time::Instant::now() < deadline {
@@ -6936,4 +7086,205 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
         assert_eq!(settled_app(&mut d, request), Some(done()));
     }
     assert_eq!(d.session().refusals(), refusals + refused.len() as u64);
+}
+
+/// Process-log rows whose text contains `needle`.
+#[cfg(unix)]
+fn process_log_rows_with(needle: &str) -> usize {
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
+    view.edit_filter(|filter| filter.set_text(needle));
+    crate::log::global().refresh(&mut view);
+    view.rows().len()
+}
+
+/// Write `bytes` to `path` and give it `mode` (a store another user could
+/// have written when the mode is group-writable).
+#[cfg(unix)]
+fn write_with_mode(path: &Path, bytes: &[u8], mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// The script library store (`js-scripts.json`) refused at startup reaches
+/// the driver's startup error view with its path and its cause (the remedy
+/// included), and is logged once, instead of being ignored.
+#[cfg(all(unix, feature = "js"))]
+#[test]
+fn a_refused_script_library_store_reaches_the_startup_error_view_and_the_log() {
+    let dir = scratch("refused-library");
+    let store = script::bot_file("js-scripts.json");
+    write_with_mode(&store, b"[]", 0o664);
+
+    let driver = open_driver(&dir);
+
+    let error = driver.library_error().expect("the refusal is kept");
+    let path = store.display().to_string();
+    assert!(error.contains(&path), "{error}");
+    assert!(error.contains("writable by other users"), "{error}");
+    assert!(error.contains(&format!("chmod 600 {path}")), "{error}");
+    assert_eq!(
+        driver.startup_error(),
+        Some(error),
+        "with nothing else refused, the startup view is this refusal"
+    );
+    assert_eq!(
+        process_log_rows_with(&format!("script library not loaded: {error}")),
+        1,
+        "one log record for the refusal"
+    );
+    assert_eq!(
+        std::fs::read(&store).unwrap(),
+        b"[]",
+        "nothing is saved over a refused store"
+    );
+}
+
+/// A malformed `js-scripts.json` (owner-only, so it is the content that is
+/// refused) shows the same way.
+#[cfg(all(unix, feature = "js"))]
+#[test]
+fn a_malformed_script_library_store_reaches_the_startup_error_view() {
+    let dir = scratch("malformed-library");
+    let store = script::bot_file("js-scripts.json");
+    write_with_mode(&store, b"{ not json", 0o600);
+
+    let driver = open_driver(&dir);
+
+    let error = driver.library_error().expect("the refusal is kept");
+    assert!(error.starts_with("js-scripts.json: "), "{error}");
+    assert_eq!(driver.startup_error(), Some(error));
+}
+
+/// A first run (no `js-scripts.json`) shows no startup error.
+#[cfg(feature = "js")]
+#[test]
+fn a_missing_script_library_store_is_a_first_run_not_an_error() {
+    let dir = scratch("missing-library");
+
+    let driver = open_driver(&dir);
+
+    assert_eq!(driver.library_error(), None);
+    assert_eq!(driver.startup_error(), None);
+}
+
+/// A preferences store another user could have written is refused; the
+/// driver's startup error view names the store and the cause once a poll
+/// has read it, and drops it when a later snapshot reads.
+#[cfg(unix)]
+#[test]
+fn a_refused_preferences_store_reaches_the_startup_error_view_until_it_reads() {
+    let dir = scratch("refused-preferences");
+    let state = dir.join("refused-state");
+    let store = state.join("panel-ui.json");
+    write_with_mode(&store, b"{}", 0o664);
+
+    let _source = crate::quester_paths::registry_source_test_lock();
+    let mut driver = HeadlessDriver::open(&state, InstancePermit::skip())
+        .expect("isolated script settings are readable");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while driver.startup_error().is_none() && std::time::Instant::now() < deadline {
+        driver.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    let Err(refusal) = driver.session().preferences().unwrap().snapshot() else {
+        panic!("the group-writable store is refused");
+    };
+    let shown = driver.startup_error().expect("the refusal is shown");
+    assert_eq!(
+        shown,
+        refusal.to_string(),
+        "path and cause, as the store says"
+    );
+    assert!(shown.contains(refusal.path()), "{shown}");
+    assert!(!refusal.cause().is_empty(), "{shown}");
+    assert_eq!(
+        refusal.path(),
+        driver
+            .session()
+            .preferences()
+            .unwrap()
+            .path()
+            .display()
+            .to_string(),
+        "the store is the state database; the legacy file is named in the cause"
+    );
+    let legacy = store.display().to_string();
+    let cause = refusal.cause();
+    assert!(cause.contains(&legacy), "{shown}");
+    assert!(cause.contains("writable by other users"), "{shown}");
+    assert!(cause.contains(&format!("chmod 600 {legacy}")), "{shown}");
+    assert_eq!(driver.session().preference_error(), Some(shown));
+    // The log keeps at most `MESSAGE_CAP` characters of a line and this
+    // refusal (store path, cause, remedy) can be longer, so the record is
+    // found by its lead, which names the state database.
+    let lead = format!("preferences not loaded: preferences at {}", refusal.path());
+    assert_eq!(
+        process_log_rows_with(&lead),
+        1,
+        "one log record for the refusal, however many polls saw it"
+    );
+
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600)).unwrap();
+    driver.session().preferences().unwrap().reload().unwrap();
+    driver.poll();
+    assert_eq!(driver.startup_error(), None, "a later snapshot reads");
+}
+
+/// A legacy preferences source the database cannot read (a directory at its
+/// path, a file the process may not read) refuses the preferences alone
+/// (plan §5.1): the driver opens, its startup error view names the source
+/// with its cause and the remedy, nothing is saved over it, and the bank
+/// hint store beside it still saves. Repairing the source and reading again
+/// imports it.
+#[test]
+fn a_bad_legacy_preferences_source_refuses_the_preferences_alone() {
+    use crate::test_support::startup::{bank_hint_saves, BadPreferencesSource};
+    for case in BadPreferencesSource::ALL {
+        let dir = scratch(&format!("bad-source-{}", case.label()));
+        let state = dir.join("state");
+        let source = state.join("panel-ui.json");
+        if !case.make(&source) {
+            continue;
+        }
+
+        let _registry = crate::quester_paths::registry_source_test_lock();
+        let mut driver = HeadlessDriver::open(&state, InstancePermit::skip())
+            .expect("the bad source does not stop the driver opening");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while driver.startup_error().is_none() && std::time::Instant::now() < deadline {
+            driver.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let shown = driver
+            .startup_error()
+            .unwrap_or_else(|| panic!("{}: the refusal is never shown", case.label()))
+            .to_owned();
+        case.assert_refusal(&shown, &source);
+        assert_eq!(driver.session().preference_error(), Some(shown.as_str()));
+        assert!(
+            driver.session().preferences().unwrap().snapshot().is_err(),
+            "{}: no defaults stand in for the refused preferences",
+            case.label()
+        );
+        assert!(
+            bank_hint_saves(driver.session(), "bob"),
+            "{}: the bank hint store beside the refusal keeps working",
+            case.label()
+        );
+
+        case.repair(&source);
+        driver.session().preferences().unwrap().reload().unwrap();
+        driver.poll();
+        assert_eq!(
+            driver.startup_error(),
+            None,
+            "{}: the repaired source reads",
+            case.label()
+        );
+    }
 }

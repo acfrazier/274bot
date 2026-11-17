@@ -16,6 +16,14 @@ fn parse_args() -> panel::PanelArgs {
 }
 
 fn main() -> std::process::ExitCode {
+    // `state preferences …` maintenance commands run before any frontend,
+    // vault or Play startup, and exit.
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) =
+        frontend_core::prefs::maintenance_command(frontend_core::prefs::StateFrontend::Panel, &argv)
+    {
+        return std::process::ExitCode::from(code as u8);
+    }
     frontend_core::process::bootstrap().expect("protected V8 bootstrap on process main thread");
     let args = parse_args();
     // Before any slot starts: a Finder-launched app gets 256 open files.

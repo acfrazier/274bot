@@ -3331,6 +3331,100 @@ fn o1_same_length_uid_name_projection_invalidates_without_a_save() {
     assert!(session.order_writes.is_empty());
 }
 
+/// A quiet Load-order write whose COMMIT ended in a disk error that the
+/// database could not settle may be stored (plan §4.2): the Load order says
+/// its save outcome is unknown, in its setting and in its event, and never
+/// that it was not saved. The shown order keeps the vault's truth.
+#[test]
+fn a_quiet_load_order_write_of_unknown_outcome_is_reported_as_unknown_not_as_not_saved() {
+    let iso = crate::test_support::IsolatedStores::enter("s3-quiet-order-unknown");
+    let root = iso.dir().join("state");
+    vault::create_private_dir(&root).unwrap();
+    vault::write_private_file(
+        &root.join("panel-ui.json"),
+        &serde_json::to_vec(&serde_json::json!({
+            crate::PROFILE_ORDER_KEY: {"1": 10, "2": 20}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let service = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(root),
+    );
+    service.set_write_unknown_for_test(Arc::new(|| true));
+    let mut session = OperatorSession::<u32>::new(InstancePermit::SkipLock);
+    session.set_spawn_workers(false);
+    session.bind_local_state(service);
+    session.preferences().unwrap().reload().unwrap();
+    session.adopt_operator_preferences();
+    session.start(
+        vault_with(
+            "s3-quiet-order-unknown",
+            &[("A", 1, false), ("B", 2, false)],
+        ),
+        empty_play(),
+    );
+    session.watch_setting_events(true);
+
+    // The vault gains C: the reconcile appends it and writes the order.
+    session
+        .vault
+        .as_mut()
+        .unwrap()
+        .upsert(Profile {
+            username: "C".into(),
+            password: "pw".into(),
+            uid: 3,
+            settings: ProfileSettings::default(),
+        })
+        .unwrap();
+    session.order_reconciled_at = None;
+    session.reconcile_profile_order();
+    assert!(
+        !session.order_writes.is_empty(),
+        "the quiet write was queued"
+    );
+    let mut surface = Recorder::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session
+        .setting_failure(crate::Setting::ProfileOrder)
+        .is_none()
+    {
+        session.poll_preferences(&mut surface);
+        assert!(
+            Instant::now() < deadline,
+            "the failed write is never reported"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let failure = session
+        .setting_failure(crate::Setting::ProfileOrder)
+        .unwrap()
+        .to_owned();
+    assert!(
+        failure.starts_with("Load order save outcome unknown: "),
+        "{failure}"
+    );
+    assert!(
+        failure.contains("outcome is unknown") && failure.contains("it was not retried"),
+        "the reason stays: {failure}"
+    );
+    assert!(!failure.to_lowercase().contains("not saved"), "{failure}");
+    let (events, incomplete) = session.take_setting_events();
+    assert!(!incomplete);
+    let failed = events
+        .iter()
+        .find(|event| event.state() == crate::SettingEventState::Failed)
+        .unwrap_or_else(|| panic!("a failed event: {events:?}"));
+    assert_eq!(failed.setting(), "profile order");
+    assert_eq!(failed.error(), Some(failure.as_str()), "{events:?}");
+    assert_eq!(
+        session.profile_order().names(),
+        ["A", "B", "C"],
+        "the shown order keeps the vault's truth"
+    );
+}
+
 /// T5.3-S3: a quiet Load-order write (the reconcile after the vault gained
 /// a profile) that fails is reported at the Load order setting. The shown
 /// order keeps the vault's truth, the stored order (the file) stays what it
@@ -3340,15 +3434,16 @@ fn a_failed_quiet_load_order_write_is_reported_and_the_stored_order_stays() {
     use std::sync::atomic::AtomicBool;
     let iso = crate::test_support::IsolatedStores::enter("s3-quiet-order");
     let root = iso.dir().join("state");
-    {
-        let preferences = crate::UiPreferences::open_for_test(root.clone());
-        preferences
-            .set(
-                crate::PROFILE_ORDER_KEY,
-                serde_json::json!({"1": 10, "2": 20}),
-            )
-            .unwrap();
-    }
+    // The saved Load order is the legacy file the first open imports.
+    vault::create_private_dir(&root).unwrap();
+    vault::write_private_file(
+        &root.join("panel-ui.json"),
+        &serde_json::to_vec(&serde_json::json!({
+            crate::PROFILE_ORDER_KEY: {"1": 10, "2": 20}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
     let service = host_play::local_state::LocalStateService::open_process(
         host_play::local_state::StateRoot::new(root),
     );
@@ -3365,8 +3460,13 @@ fn a_failed_quiet_load_order_write_is_reported_and_the_stored_order_stays() {
         empty_play(),
     );
     assert_eq!(session.profile_names(), ["A", "B"]);
-    let path = session.preferences().unwrap().path();
-    let stored = std::fs::read(&path).unwrap();
+    let durable = |session: &OperatorSession<u32>| {
+        let preferences = session.preferences().unwrap();
+        preferences.reload().unwrap();
+        let snapshot = preferences.snapshot().unwrap();
+        (snapshot.version(), (**snapshot.document()).clone())
+    };
+    let stored = durable(&session);
     session.watch_setting_events(true);
 
     // The vault gains C: the reconcile appends it and writes the order.
@@ -3446,9 +3546,9 @@ fn a_failed_quiet_load_order_write_is_reported_and_the_stored_order_stays() {
         "the shown order keeps the vault's truth"
     );
     assert_eq!(
-        std::fs::read(&path).unwrap(),
+        durable(&session),
         stored,
-        "the stored order is what it was"
+        "the stored order is what it was: same version, same document"
     );
     assert!(session.order_writes.is_empty());
 
@@ -3525,7 +3625,7 @@ fn a_failed_quiet_load_order_write_is_reported_and_the_stored_order_stays() {
         [crate::SettingEventState::Saved]
     );
     assert_eq!(events[0].setting(), "profile order");
-    let file: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let file = durable(&session).1;
     let order = file[crate::PROFILE_ORDER_KEY].as_object().unwrap();
     assert_eq!(order.len(), 3, "the stored order now holds every profile");
 }

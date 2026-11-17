@@ -538,7 +538,7 @@ fn drive_startup(
         if startup.prepare_pending.is_none() {
             match state.session.profile_preparation() {
                 Ok(preparation) => {
-                    state.session.error = None;
+                    state.session.clear_message();
                     state.session.set_profile_preparing(true);
                     startup.prepare_pending = Some(preparation);
                 }
@@ -588,7 +588,7 @@ fn drive_startup(
         let fatal = boot_failure_is_fatal(&boot);
         match state.session.template_for_validation() {
             Ok(template) => {
-                state.session.error = None;
+                state.session.clear_message();
                 state.session.set_profile_preparing(true);
                 startup.validate_pending = Some(ProfileValidatePending {
                     boot,
@@ -2226,14 +2226,21 @@ fn heading_dnd(ui: &Ui, session: &mut Session, id: &str) {
         {
             if p.delivery {
                 if let Some(from) = heading_from_key(p.data) {
-                    let mut order = resolve_heading_order(&session.ui.section_order);
-                    move_heading(&mut order, &from, id);
-                    let _ = session.persist_panel_serializable(&["section_order"], &order);
-                    session.ui.section_order = order;
+                    reorder_heading(session, &from, id);
                 }
             }
         }
     }
+}
+
+/// Move heading `from` onto `onto` in the strip order. The view takes the
+/// new order before its save is submitted, so a save that fails at once
+/// (a refused store) puts the saved order back with its reason.
+fn reorder_heading(session: &mut Session, from: &str, onto: &str) {
+    let mut order = resolve_heading_order(&session.ui.section_order);
+    move_heading(&mut order, from, onto);
+    session.ui.section_order = order.clone();
+    let _ = session.persist_panel_serializable(&["section_order"], &order);
 }
 
 fn kv_row(ui: &Ui, key: &str, value: &str) {
@@ -2997,17 +3004,23 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
         {
             if p.delivery {
                 if let Some(from) = category_from_key(p.data) {
-                    let cards: Vec<_> = session.scripts.browse_cards().collect();
-                    let present = card_categories(&cards);
-                    let mut order =
-                        resolve_category_order(&session.ui.script_category_order, &present);
-                    move_category(&mut order, &from, cat);
-                    let _ = session.persist_panel_serializable(&["script_category_order"], &order);
-                    session.ui.script_category_order = order;
+                    reorder_category(session, &from, cat);
                 }
             }
         }
     }
+}
+
+/// Move script category `from` onto `onto` in the Browse order. The view
+/// takes the new order before its save is submitted, so a save that fails
+/// at once (a refused store) puts the saved order back with its reason.
+fn reorder_category(session: &mut Session, from: &str, onto: &str) {
+    let cards: Vec<_> = session.scripts.browse_cards().collect();
+    let present = card_categories(&cards);
+    let mut order = resolve_category_order(&session.ui.script_category_order, &present);
+    move_category(&mut order, from, onto);
+    session.ui.script_category_order = order.clone();
+    let _ = session.persist_panel_serializable(&["script_category_order"], &order);
 }
 
 fn browse_script_card(
@@ -3565,7 +3578,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                             if let Err(e) = session.import_rs2b0t_catalog(&cwd) {
                                 session.error = Some(e);
                             } else {
-                                session.error = None;
+                                session.clear_message();
                             }
                         }
                         ui.same_line();
@@ -3788,11 +3801,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
-            if !session.panel_preferences_ready() {
-                ui.text_disabled("Loading preferences…");
-            } else if session.preferences_pending() {
-                ui.text_disabled("Saving preferences…");
-            }
+            preferences_state_line(ui, session);
             let previous_nav = session.ui.nav.clone();
             let mut nav = previous_nav.clone();
             let mut changed = false;
@@ -3889,7 +3898,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                             .as_deref()
                             .is_some_and(|error| error.starts_with("Nav config: "))
                         {
-                            session.error = None;
+                            session.clear_message();
                         }
                         session.refresh_walk_permissions();
                     }
@@ -3984,6 +3993,13 @@ fn commit_nav_settings(
         );
     }
 
+    // The view takes the change before the panel-owned members are saved:
+    // a save that fails at once (a refused store) then puts the saved value
+    // back, and nothing here writes over it.
+    session.route_through_zones =
+        frontend_core::WalkGlobalsView::new(after.walk_globals(), after.script_scope_notice_ack)
+            .danger_this_walk(session.route_through_zones);
+    session.ui.nav = after.clone();
     macro_rules! persist_panel_nav_member {
         ($field:ident) => {
             if before.$field != after.$field {
@@ -4011,10 +4027,6 @@ fn commit_nav_settings(
     persist_panel_nav_member!(component_flood);
     persist_panel_nav_member!(camera_follow);
 
-    session.route_through_zones =
-        frontend_core::WalkGlobalsView::new(after.walk_globals(), after.script_scope_notice_ack)
-            .danger_this_walk(session.route_through_zones);
-    session.ui.nav = after;
     match failure {
         Some(error) => Err(error),
         None => Ok(()),
@@ -5305,7 +5317,7 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
 pub(crate) fn setting_feedback_line(ui: &Ui, session: &Session, setting: Setting) {
     match session.core.setting_status(setting) {
         SettingStatus::Saved => {}
-        SettingStatus::Pending => ui.text_disabled("Saving…"),
+        SettingStatus::Pending => saving_line(ui, session),
         SettingStatus::Failed(text) => {
             let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.error_rgba());
             ui.text_wrapped(text);
@@ -5320,11 +5332,20 @@ pub(crate) fn setting_feedback_line(ui: &Ui, session: &Session, setting: Setting
 /// failure; it leaves by itself after the error timeout.
 pub(crate) fn panel_member_feedback_line(ui: &Ui, session: &Session, prefix: &[&str]) {
     if session.panel_member_pending(prefix) {
-        ui.text_disabled("Saving…");
+        saving_line(ui, session);
     }
     if let Some(text) = session.panel_member_error(prefix) {
         let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.error_rgba());
         ui.text_wrapped(text);
+    }
+}
+
+/// "Saving…", and on a second line why the save is waiting while it is (a
+/// reader holding the preferences WAL, another process's lock).
+fn saving_line(ui: &Ui, session: &Session) {
+    ui.text_disabled("Saving…");
+    if let Some(cause) = session.core.preference_wait_cause() {
+        ui.text_wrapped(cause);
     }
 }
 
@@ -5408,32 +5429,38 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
     changed |= chrome_color_field(ui, "error", &mut chrome.error);
     changed |= chrome_color_field(ui, "green", &mut chrome.green);
     if changed {
-        macro_rules! persist_chrome_member {
-            ($field:ident) => {
-                if session.ui.chrome.$field != chrome.$field {
-                    let _ = session.persist_panel_serializable(
-                        &["chrome", stringify!($field)],
-                        &chrome.$field,
-                    );
-                }
-            };
-        }
-        persist_chrome_member!(accent);
-        persist_chrome_member!(accent_hover);
-        persist_chrome_member!(bg);
-        persist_chrome_member!(bg_deep);
-        persist_chrome_member!(text);
-        persist_chrome_member!(text_dim);
-        persist_chrome_member!(frame);
-        persist_chrome_member!(hover_fill);
-        persist_chrome_member!(active_fill);
-        persist_chrome_member!(border);
-        persist_chrome_member!(warn);
-        persist_chrome_member!(error);
-        persist_chrome_member!(green);
-        session.ui.chrome = chrome;
+        commit_chrome(session, chrome);
     }
     panel_member_feedback_line(ui, session, &["chrome"]);
+}
+
+/// Commit edited panel colours: each changed colour is its own member save.
+/// The view takes the colours before the saves are submitted, so a save that
+/// fails at once (a refused store) puts the saved colour back with its
+/// reason.
+fn commit_chrome(session: &mut Session, chrome: crate::theme::ChromeColors) {
+    let before = std::mem::replace(&mut session.ui.chrome, chrome.clone());
+    macro_rules! persist_chrome_member {
+        ($field:ident) => {
+            if before.$field != chrome.$field {
+                let _ = session
+                    .persist_panel_serializable(&["chrome", stringify!($field)], &chrome.$field);
+            }
+        };
+    }
+    persist_chrome_member!(accent);
+    persist_chrome_member!(accent_hover);
+    persist_chrome_member!(bg);
+    persist_chrome_member!(bg_deep);
+    persist_chrome_member!(text);
+    persist_chrome_member!(text_dim);
+    persist_chrome_member!(frame);
+    persist_chrome_member!(hover_fill);
+    persist_chrome_member!(active_fill);
+    persist_chrome_member!(border);
+    persist_chrome_member!(warn);
+    persist_chrome_member!(error);
+    persist_chrome_member!(green);
 }
 
 fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
@@ -5455,15 +5482,29 @@ fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
     edited
 }
 
-fn global_config_section(ui: &Ui, session: &mut Session) {
-    if !session.panel_preferences_ready() {
+/// The preferences' state at the top of a settings window: why they did
+/// not load (path, cause, remedy) while they are refused, else
+/// "Loading preferences…" until they are read, else "Saving
+/// preferences…" while a save is in flight.
+fn preferences_state_line(ui: &Ui, session: &Session) {
+    if let Some(refusal) = session.preferences_refused() {
+        ui.text_colored(session.ui.chrome.error_rgba(), "Preferences not loaded:");
+        ui.text_wrapped(refusal);
+    } else if !session.panel_preferences_ready() {
         ui.text_disabled("Loading preferences…");
     } else if session.preferences_pending() {
         ui.text_disabled("Saving preferences…");
     }
-    if let Some(error) = session.panel_preference_write_error() {
-        ui.text_colored(session.ui.chrome.error_rgba(), "Preference save failed:");
-        ui.text_wrapped(error);
+}
+
+fn global_config_section(ui: &Ui, session: &mut Session) {
+    preferences_state_line(ui, session);
+    // The heading says what became of the save: it failed, or (the COMMIT
+    // ended in a disk error the database could not settle) its outcome is
+    // unknown. The text under it agrees.
+    if let Some(failure) = session.panel_preference_write_error() {
+        ui.text_colored(session.ui.chrome.error_rgba(), failure.heading());
+        ui.text_wrapped(failure.text);
     }
     ui.spacing();
     ui.text_colored([1.0, 1.0, 1.0, 1.0], "Server:");
@@ -8126,6 +8167,45 @@ fn live_exit_code(live: &LiveHarness, failure: Option<&str>) -> Option<i32> {
     }
 }
 
+/// The saved-data preflight of the panel's start, before any window opens:
+/// the probe of the stores beneath `root` and its one old-format question.
+/// `Ok(None)`: startup goes on (nothing was refused). `Ok(Some(..))`: the
+/// refused files and the question the first frame asks about them. An I/O
+/// failure of the probe, or refused files a run that cannot ask about
+/// (`skip_lock`) must keep, stops the start. A legacy preferences file the
+/// state database cannot import is none of these: the probe does not open
+/// it, and the database's refusal (path, cause and remedy) shows on the
+/// preferences' own surface while the start and every other store go on.
+fn saved_data_preflight(
+    root: &frontend_core::saved_data::StateRoot,
+    skip_lock: bool,
+) -> Result<Option<(frontend_core::saved_data::SavedDataStartup, String)>, window::PanelError> {
+    let startup = frontend_core::saved_data::SavedDataStartup::check(root).map_err(|error| {
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+        window::PanelError::StartupFailure(message)
+    })?;
+    let Some(message) = startup.refusal().map(ToString::to_string) else {
+        startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+            .map_err(|error| {
+                let message = error.to_string();
+                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+                window::PanelError::StartupFailure(message)
+            })?;
+        return Ok(None);
+    };
+    if skip_lock {
+        let error = startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
+            .expect_err("the preflight found refused saved data");
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+        return Err(window::PanelError::StartupFailure(message));
+    }
+    Ok(Some((startup, message)))
+}
+
 /// Open the 274bot panel window. Call after the vault has been started.
 /// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
@@ -8141,32 +8221,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let root = frontend_core::saved_data::StateRoot::new(
         frontend_core::scripts::paths::bot_home().join(".274bot"),
     );
-    let startup = frontend_core::saved_data::SavedDataStartup::check(&root).map_err(|error| {
-        let message = error.to_string();
-        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
-        window::PanelError::StartupFailure(message)
-    })?;
-    let refusal_text = startup.refusal().map(ToString::to_string);
-    let mut saved_data_prompt = if let Some(message) = refusal_text {
-        if skip_lock {
-            let error = startup
-                .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
-                .expect_err("the preflight found refused saved data");
-            let message = error.to_string();
-            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
-            return Err(window::PanelError::StartupFailure(message));
-        }
-        Some((startup, message))
-    } else {
-        startup
-            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
-            .map_err(|error| {
-                let message = error.to_string();
-                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
-                window::PanelError::StartupFailure(message)
-            })?;
-        None
-    };
+    let mut saved_data_prompt = saved_data_preflight(&root, skip_lock)?;
     if let Some(scenario) = args.mode.prepare_fixture_name() {
         return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
             eprintln!("FAIL: {e}");

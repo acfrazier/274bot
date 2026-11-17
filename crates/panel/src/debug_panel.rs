@@ -591,8 +591,7 @@ fn draw_command_groups(
     match action {
         Some(CommandAction::Select(name)) => select_command(session, &name),
         Some(CommandAction::ToggleFavorite(name)) => {
-            session.ui.debug_panel.toggle_favorite(&name);
-            save_prefs(session);
+            toggle_favorite_command(session, &name);
         }
         None => {}
     }
@@ -1083,8 +1082,7 @@ fn send_wires<'a, I>(
                     return;
                 }
             }
-            session.ui.debug_panel.remember_recent(command_name);
-            save_prefs(session);
+            remember_recent_command(session, command_name);
             session.debug_panel.status = Some(PanelStatus {
                 success: true,
                 text: format!("Queued for {target}: {summary}"),
@@ -1103,8 +1101,7 @@ fn send_wires<'a, I>(
             }
             let report = frontend_core::MarkedCommandReport::from_parts(accepted, skipped);
             if report.accepted() > 0 {
-                session.ui.debug_panel.remember_recent(command_name);
-                save_prefs(session);
+                remember_recent_command(session, command_name);
             }
             let mut text = if report.accepted() > 0 {
                 if command_count == 1 {
@@ -1139,9 +1136,22 @@ fn send_wires<'a, I>(
     }
 }
 
-fn save_prefs(session: &mut Session) {
-    let prefs = session.ui.debug_panel.clone();
-    let _ = session.persist_panel_serializable(&["debug_panel"], &prefs);
+/// Pin or unpin one command and save the pins alone (`debug_panel.favorites`):
+/// a pin never carries the recents, which another request may still hold
+/// pending or have failed.
+pub(crate) fn toggle_favorite_command(session: &mut Session, name: &str) {
+    session.ui.debug_panel.toggle_favorite(name);
+    let favorites = session.ui.debug_panel.favorites.clone();
+    let _ = session.persist_panel_serializable(&["debug_panel", "favorites"], &favorites);
+}
+
+/// Remember one queued command and save the recents alone
+/// (`debug_panel.recents`): a send never carries the pins, which another
+/// request may still hold pending or have failed.
+pub(crate) fn remember_recent_command(session: &mut Session, name: &str) {
+    session.ui.debug_panel.remember_recent(name);
+    let recents = session.ui.debug_panel.recents.clone();
+    let _ = session.persist_panel_serializable(&["debug_panel", "recents"], &recents);
 }
 
 #[cfg(test)]

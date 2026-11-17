@@ -44,6 +44,12 @@ pub const FRONTEND_TIMEOUT: Duration = Duration::from_secs(5);
 /// again (without waiting), and a later read sees the result.
 pub const PREFERENCES_FRESHNESS: Duration = Duration::from_secs(1);
 
+/// How long the fixture-only [`Preferences::reload`] waits for the first
+/// readback, which opens the database. A bound against a hang, not a
+/// timing assertion: test and test-support only.
+#[cfg(any(test, feature = "test-support"))]
+pub const FIXTURE_READBACK_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// How many times an update reads and merges again after another writer
 /// changed the file under it.
 #[cfg(any(test, feature = "test-support"))]
@@ -96,6 +102,19 @@ pub enum PreferenceError {
         path: Arc<str>,
         /// The bounded diagnostic cause.
         cause: Arc<str>,
+    },
+    /// A save whose COMMIT ended in a disk error that the database could not
+    /// settle (it could not be reopened, or held no row of the save): it may
+    /// or may not be stored, and it was not retried (plan §4.2). The neutral
+    /// code is the `Failed(Io)` of any store I/O failure.
+    #[error("preferences at {path}: {cause}")]
+    Unresolved {
+        /// The preference key or file path associated with this error.
+        path: Arc<str>,
+        /// The bounded diagnostic cause.
+        cause: Arc<str>,
+        /// The neutral service code.
+        code: ErrorCode,
     },
 }
 
@@ -157,7 +176,8 @@ impl PreferenceError {
             Self::Store { path, .. }
             | Self::Cancelled { path, .. }
             | Self::ResultNotRetained { path, .. }
-            | Self::Other { path, .. } => path,
+            | Self::Other { path, .. }
+            | Self::Unresolved { path, .. } => path,
         }
     }
 
@@ -167,16 +187,25 @@ impl PreferenceError {
             Self::Store { cause, .. }
             | Self::Cancelled { cause, .. }
             | Self::ResultNotRetained { cause, .. }
-            | Self::Other { cause, .. } => cause,
+            | Self::Other { cause, .. }
+            | Self::Unresolved { cause, .. } => cause,
         }
     }
 
     /// The neutral service code, when the failure came from the store.
     pub fn code(&self) -> Option<ErrorCode> {
         match self {
-            Self::Store { code, .. } => Some(*code),
+            Self::Store { code, .. } | Self::Unresolved { code, .. } => Some(*code),
             Self::Cancelled { .. } | Self::ResultNotRetained { .. } | Self::Other { .. } => None,
         }
+    }
+
+    /// Whether the save's outcome is unknown: its COMMIT ended in a disk
+    /// error that the database could not settle, so the save may or may not
+    /// be stored (plan §4.2). Such a save is neither done nor "not saved": a
+    /// front end words it as unknown.
+    pub fn outcome_unknown(&self) -> bool {
+        matches!(self, Self::Unresolved { .. })
     }
 
     /// Whether this store was refused for a pre-0.2.8 saved-data shape.
@@ -205,7 +234,7 @@ impl PreferenceError {
 #[cfg(test)]
 mod preference_error_tests {
     use super::PreferenceError;
-    use api::local_state::{ErrorCode, LocalStateDomain};
+    use api::local_state::{ErrorCode, FailureReason, LocalStateDomain};
     use std::sync::Arc;
 
     #[test]
@@ -277,6 +306,44 @@ mod preference_error_tests {
             "preferences at panel-ui.json: the request's terminal result is no longer retained"
         );
     }
+
+    /// A save whose COMMIT could not be settled is its own variant: the
+    /// front ends word it from the flag, never from the cause's text, and
+    /// the neutral code stays the store I/O failure of any disk error.
+    #[test]
+    fn an_unresolved_save_is_flagged_unknown_and_keeps_the_neutral_io_code() {
+        let code = ErrorCode::Failed {
+            domain: LocalStateDomain::Preferences,
+            reason: FailureReason::Io,
+        };
+        let unresolved = PreferenceError::Unresolved {
+            path: Arc::from("state.sqlite3"),
+            cause: Arc::from("the save's outcome is unknown after a disk error at COMMIT (x)"),
+            code,
+        };
+        let refused = PreferenceError::from_code("state.sqlite3", code);
+
+        assert!(unresolved.outcome_unknown());
+        assert!(!refused.outcome_unknown());
+        assert_eq!(unresolved.code(), Some(code));
+        assert_eq!(unresolved.code(), refused.code());
+        assert_eq!(unresolved.path(), "state.sqlite3");
+        assert_eq!(
+            unresolved.cause(),
+            "the save's outcome is unknown after a disk error at COMMIT (x)"
+        );
+        assert_eq!(
+            unresolved.to_string(),
+            "preferences at state.sqlite3: the save's outcome is unknown after a disk error at COMMIT (x)"
+        );
+        for other in [
+            PreferenceError::cancelled("p", "c"),
+            PreferenceError::result_not_retained("p"),
+            PreferenceError::caused("p", "c"),
+        ] {
+            assert!(!other.outcome_unknown(), "{other}");
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -326,8 +393,29 @@ fn encoded_json_len(value: &Value) -> Result<usize, serde_json::Error> {
 
 #[cfg(test)]
 mod patch_encoding_tests {
-    use super::{encoded_json_len, PreferencePatch};
+    use super::{encoded_json_len, PatchMember, PreferencePatch};
     use serde_json::json;
+
+    /// Plan §9.2: the real retained queue entry and its size on this target.
+    /// The plan's capacity arithmetic used the 48-byte `PreferenceChange`
+    /// row; an accepted save holds `PatchMember`s (a member path and its
+    /// value) until the writer takes it. Recorded, not a budget.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn the_retained_queue_entry_sizes_are_recorded() {
+        let change = std::mem::size_of::<api::local_state::PreferenceChange>();
+        let member = std::mem::size_of::<PatchMember>();
+        let patch = std::mem::size_of::<PreferencePatch>();
+        eprintln!(
+            "T53_SIZE_OF PreferenceChange={change} PatchMember={member} PreferencePatch={patch}"
+        );
+        assert_eq!(change, 48, "two three-word string fields");
+        assert_eq!(
+            member, 96,
+            "a Vec<String> path (24) and an Option<Value> (72: serde_json's preserve_order map)"
+        );
+        assert_eq!(patch, 32, "the member Vec and its encoded length");
+    }
 
     #[test]
     fn encoded_json_len_matches_serializer_output() {
@@ -713,9 +801,16 @@ impl Preferences {
         &self.shared.identity
     }
 
-    /// The file behind the store, for messages.
+    /// The state database behind the store, for messages.
     pub fn path(&self) -> PathBuf {
-        self.service().root().preferences_file()
+        self.service().root().database_file()
+    }
+
+    /// Why the next save is waiting, while it is (another process holds
+    /// the guard or the write lock, or a reader keeps the WAL from its
+    /// reset): what a pending setting shows next to its "saving" state.
+    pub fn wait_cause(&self) -> Option<&'static str> {
+        self.shared.service.preference_wait()
     }
 
     /// The cached immutable document. Cold and refused stores fail immediately;
@@ -769,7 +864,14 @@ impl Preferences {
             .shared
             .service
             .enqueue_preference_patch(&self.shared.identity, patch)
-            .map_err(|code| PreferenceError::from_code(self.path().display().to_string(), code))?;
+            .map_err(|(code, detail)| match detail {
+                Some(cause) => PreferenceError::Store {
+                    path: Arc::from(self.path().display().to_string()),
+                    cause,
+                    code,
+                },
+                None => PreferenceError::from_code(self.path().display().to_string(), code),
+            })?;
         Ok(Update::Queued(QueuedUpdate::service(self.clone(), request)))
     }
 
@@ -804,13 +906,34 @@ impl Preferences {
         match poll {
             PreferenceWatchPoll::Pending => None,
             PreferenceWatchPoll::Missing => Some(Err(PreferenceError::result_not_retained(path()))),
-            PreferenceWatchPoll::Settled(Settlement::Completed(_)) => Some(Ok(())),
-            PreferenceWatchPoll::Settled(Settlement::Failed(code)) => {
-                Some(Err(PreferenceError::from_code(path(), code)))
-            }
-            PreferenceWatchPoll::Settled(Settlement::Cancelled(cancellation)) => Some(Err(
-                PreferenceError::cancelled(path(), format!("request cancelled ({cancellation:?})")),
-            )),
+            PreferenceWatchPoll::Settled {
+                settlement: Settlement::Completed(_),
+                ..
+            } => Some(Ok(())),
+            PreferenceWatchPoll::Settled {
+                settlement: Settlement::Failed(code),
+                detail,
+                outcome_unknown,
+            } => Some(Err(match detail {
+                Some(cause) if outcome_unknown => PreferenceError::Unresolved {
+                    path: Arc::from(path()),
+                    cause,
+                    code,
+                },
+                Some(cause) => PreferenceError::Store {
+                    path: Arc::from(path()),
+                    cause,
+                    code,
+                },
+                None => PreferenceError::from_code(path(), code),
+            })),
+            PreferenceWatchPoll::Settled {
+                settlement: Settlement::Cancelled(cancellation),
+                ..
+            } => Some(Err(PreferenceError::cancelled(
+                path(),
+                format!("request cancelled ({cancellation:?})"),
+            ))),
         }
     }
 
@@ -820,11 +943,17 @@ impl Preferences {
     }
 
     /// Read the file again and wait. Available to test fixtures and
-    /// test-support callers only.
+    /// test-support callers only. While the preferences are still cold the
+    /// readback opens the database, which a loaded CI host can delay past
+    /// [`FRONTEND_TIMEOUT`]; that first wait is [`FIXTURE_READBACK_TIMEOUT`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn reload(&self) -> io::Result<Arc<Map<String, Value>>> {
+        let wait = match self.snapshot() {
+            Err(error) if error.is_not_ready() => FIXTURE_READBACK_TIMEOUT,
+            _ => FRONTEND_TIMEOUT,
+        };
         let shared = &*self.shared;
-        let read = shared.service.readback(&shared.identity, FRONTEND_TIMEOUT);
+        let read = shared.service.readback(&shared.identity, wait);
         shared.held.lock().read_at = Some(Instant::now());
         let (lease, _) = read.map_err(|code| self.error(code))?;
         self.adopt(&lease)
@@ -867,7 +996,7 @@ impl Preferences {
         let ticket = self
             .shared
             .service
-            .start_readback(&self.shared.identity, true)
+            .start_readback(&self.shared.identity)
             .map_err(|code| self.error(code))?;
         Ok(UpdateRun {
             merge,
@@ -921,7 +1050,7 @@ impl Preferences {
                             if run.reads == UPDATE_ATTEMPTS {
                                 return Some(Err(self.error(code)));
                             }
-                            match shared.service.start_readback(&shared.identity, true) {
+                            match shared.service.start_readback(&shared.identity) {
                                 Ok(ticket) => {
                                     run.reads += 1;
                                     run.stage = Stage::Reading(ticket);

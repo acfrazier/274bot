@@ -173,6 +173,7 @@ impl TuiApp {
             pane.notice = self.settings_save.notice();
             pane.memory = self.settings_memory;
             pane.feedback = &self.setting_feedback;
+            pane.preferences_refused = self.preferences_refused.as_deref();
             pane.quester_paths_notice = self
                 .quester_paths_controller
                 .notice_text()

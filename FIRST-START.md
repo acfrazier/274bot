@@ -113,7 +113,8 @@ Next time, open the app, type your passphrase, click **Unlock vault** and click
 | `vault-prod` | Your vault, with your accounts |
 | `unpack-289` | The game files that the first start downloaded |
 | `servers.json` | The list of game servers |
-| `panel-ui.json` | Your window layout and choices |
+| `state/state.sqlite3` | Your window layout and choices (the preferences database, with its `-wal` and `-shm` files) |
+| `panel-ui.json.migrated` | The old preferences file, kept after this version imported it |
 
 ## Troubleshooting
 

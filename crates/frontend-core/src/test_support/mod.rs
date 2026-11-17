@@ -8,6 +8,7 @@ pub mod live;
 pub mod paint;
 pub mod scripts;
 pub mod session;
+pub mod startup;
 pub mod tui;
 
 use std::path::Path;

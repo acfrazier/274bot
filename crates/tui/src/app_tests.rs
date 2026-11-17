@@ -932,7 +932,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     );
     let loadouts = Loadouts::default();
     let mut app = open_map_world();
-    Seam::restore_preferences(&mut app, preferences.share());
+    // Both restores (the live store, then the refused one) share the
+    // process-wide Quester registry: no other test may restore in between.
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+    app.restore_preferences(preferences.share());
 
     app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "WalkPermissions"));
     let schema = TestSchema::setting(
@@ -1019,10 +1022,13 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
         nav_planner::zones::ZoneExempt::NONE
     );
 
-    std::fs::write(preferences.path(), "{corrupt").unwrap();
-    // A directly written file is seen after an explicit re-read; a corrupt
-    // one is refused from here on.
-    assert!(preferences.reload().is_err());
+    // A store refused at open (an over-size legacy file) is refused from
+    // here on.
+    let (refused_service, _legacy) =
+        crate::test_support::open_refused_state(&root.join("refused").join(".274bot"));
+    app.restore_preferences(frontend_core::UiPreferences::of_service_for_test(
+        &refused_service,
+    ));
     let corrupt = text(&draw(&mut app, 120, 40));
     assert!(
         corrupt.contains("avoided") && !corrupt.contains("crossing (z)"),

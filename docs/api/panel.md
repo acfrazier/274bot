@@ -63,7 +63,7 @@ offers `auto` or each listed rs2b2t world; the selected world is used on the
 next slot start. Live slot rows display the current world.
 
 After unlock, the next preference-ready poll reconciles saved profile order
-before restoring `last_focus` from `~/.274bot/panel-ui.json`.
+before restoring `last_focus` from the saved preferences.
 An earlier explicit selection keeps its focus instead.
 Preference adoption during a command never changes that command's target.
 This includes the first bot selected by Fleet **Log in**.
@@ -173,7 +173,7 @@ checkboxes on a focused profile:
   bytes on the **same** client (never a logout or restart).
 - **sidecar 50 fps** — unfocused wall members at 50 fps. Interactive /
   non-test. Scenarios never flip it. Both 50 fps checkboxes are saved in
-  `panel-ui.json` (`sidecar_50` defaults off, `focused_50` on); a restored
+  the preferences (`sidecar_50` defaults off, `focused_50` on); a restored
   setting costs nothing for a slot that isn't drawing.
 - **full rate (this run)** — `--live script_*` / smoke / `stress50_full`.
   Every drawing slot at 50 fps, focused included. Ephemeral.
@@ -246,7 +246,7 @@ then FIFO-queue **warn**, else grey. **only render focused** mirrors
 `set_draw` (the tile body shows their raster); when on, only the focused
 member paints. Unchecking it opens a **Render all wall members?** confirm:
 **OK** (once **I understand** is ticked) applies for this launch. **Don't
-show again** saves `render_all_warning_ack` in `panel-ui.json` and renders
+show again** saves `render_all_warning_ack` in the preferences and renders
 all only when that save lands: while it is pending the box stays checked and
 only the focused member paints, and if it fails the dialog shows the reason
 and nothing changes. After the saved acknowledgement, unchecking applies at
@@ -285,7 +285,7 @@ made in `frontend-core`; the panel only stages and submits.
 A click on the **Fleet** header (in the panel: the **fleet** heading)
 folds the toolbar to one summary line such as `5 marked · Gatherer`, and
 the filter while one is set. A waiting plan and the last result stay
-visible under it. The choice is saved in `panel-ui.json` as
+visible under it. The choice is saved in the preferences as
 `fleet_toolbar_open`, apart from the tile folds. In the rail the toolbar
 stays in place while the tiles under it scroll.
 
@@ -544,8 +544,8 @@ green `#04A800`. Panel background `#111`.
 ## Chrome
 
 Right strip is **330px**-class. Section headings are collapsible (persisted
-per profile in `panel-ui.json`; **script** / **parameters** default closed)
-and **drag-reorderable** (order in `panel-ui.json`). Default order:
+per profile in the preferences; **script** / **parameters** default closed)
+and **drag-reorderable** (order in the preferences). Default order:
 **status**, **resource**, **profile**, **script**, **debug**, **log**; **parameters**
 is drawn after them and is not reorderable.
 Login / WalkTo / config stay at the top.
@@ -638,7 +638,8 @@ change that sort. While a reorder saves, both the Fleet table and the
 error and the last saved order comes back. The error clears when a later
 reorder saves, or by itself after a short while.
 
-Shared preferences still use `panel-ui.json`. Reads use the latest cached
+Shared preferences live in the state database `~/.274bot/state/state.sqlite3`
+(the first start imports `panel-ui.json`; see the CHANGELOG). Reads use the latest cached
 saved state. Saves run on the process writer, so a slow disk does not block
 the panel, TUI or bot thread. Closing a settings window does not cancel an
 accepted save. Reopening it retains the pending save. Until the first read
@@ -678,8 +679,14 @@ save fails; each shows **Saving…** and the reason at its own control (the
 section order, the category chips, the folds, the rail and Grid preview folds
 inside their tile, the file dialogs, the Debug tab and the Fleet toolbar fold
 included). A failed save is final: the panel never tries it again by itself,
-also not after the other program releases the file. Only a new change of
-that setting starts a new save. The Browse window saves the category order
+also not after the other program releases the file. Every save carries one
+setting only: the setting you changed, at its own saved path. A save never
+carries the pending or failed value of another setting, also not one that
+shares a section with it (the Debug tab's saved commands and recent commands,
+two colours of the Nav config, two folds). A failed pin therefore stays unsaved
+when you send a command, and a failed recent command stays unsaved when you
+pin one. Only a new change of that setting starts a new save. The Browse
+window saves the category order
 only when you drop a chip; a category that the saved order does not name
 shows after the named ones and is not saved. With the session
 log file on, the Log window also says if the file could not be opened or
@@ -706,7 +713,7 @@ ready`, opens the [world picker](#world-picker)), card, run state (the
 script error on hover), runtime, last log line,
 time since the last progress (the watchdog's gameplay clock; `—` while
 paused, out of game or idle) and levels gained since the run's Start (the
-per-skill breakdown on hover). The choice is saved in `panel-ui.json` as
+per-skill breakdown on hover). The choice is saved in the preferences as
 `fleet_columns` (only the toggles you changed). A hidden column, or a closed
 window, reads nothing from the host.
 
@@ -781,7 +788,7 @@ now). Shipped terrain that fails verification is never installed and
 leads to the same warning. A ready cache, baked earlier or installed,
 opens without asking.
 **Always bake** and Nav config's **ask before baking terrain** set the
-shared `map_bake` key of `panel-ui.json` (`ask` when absent). POIs come from `Catalogue::from_ready` (client
+shared `map_bake` preference key (`ask` when absent). POIs come from `Catalogue::from_ready` (client
 records, authenticated `navpois`, game-data names) plus live
 `observed_services` for the focused bot. Search uses that catalogue.
 Place names keep `/` as a stored world-map line break (`Port/Sarim`); lists

@@ -1848,11 +1848,11 @@ They compose like the other grants: the global switch or the script's own
 grant allows the step, and only a per-request Forbid narrows it.
 
 The panel Nav config and TUI settings share these global permissions in
-`panel-ui.json`. Teleports and wilderness apply to manual and Rust-native
+the saved preferences. Teleports and wilderness apply to manual and Rust-native
 walks. Danger routing has three levels: **Never** (the default), **When
 survivable**, and **Always** (the global override). The middle level stores
 `allow_danger_zones=false` and `survivable_routing=true`. Reading a saved
-middle pair keeps it selected and does not rewrite the file. **Always** wins
+middle pair keeps it selected and does not rewrite the saved value. **Always** wins
 if both danger bits are true.
 
 With `host_play::NET_AVAILABLE` false, **When survivable** behaves exactly
@@ -1869,28 +1869,28 @@ Compat v1 uses Proceed through derived danger zones, with assessment logged
 only and no eating/protection/net. Explicit avoids, the frozen catalog,
 automatic jail rule, other route gates and existing banking remain hard.
 All shared preference reads and writes, including the TUI log pane, go
-through the process local-state service's preferences domain: one writer
-thread per process, and the `panel-ui.json.lock` advisory lock held across
-each write so another process takes its turn. One save is one file
-replacement: every member it changes or removes (each member of an object
-too long for one row, such as the saved Load order) lands together, or
-none does. Both frontends refresh a
-shared durable walk-permission projection for danger controls and inherited
-script rows (re-read from the file at most once a second), and manual
-admission reads it again. An absent file defaults to **Never**. If an older
-file lacks `survivable_routing`, that bit defaults to false; `allow_danger_zones`
-still selects **Never** or **Always**. A file that is not a JSON object clears
-every grant until the next preference save moves it aside, byte for byte,
-to `panel-ui.json.corrupt-<time>` under the lock (with a warning and an
-audit line) and starts fresh preferences. A file refused for itself (owner,
-mode, size) clears every grant and is never rewritten. Otherwise the rule
-is lossless representability, with no version check: a file holding a
-member this build cannot hold as a preference row (a name with a `.`,
-outside `[A-Za-z0-9_-]` or longer than 128 bytes, or a value too long even
-member by member) is read but never rewritten, and a save keeps every
-member it holds, a `schema_version` or any other member this build does
-not know included. A peer frontend's change therefore updates both the
-warning and the next walk's options.
+through the process local-state service's preferences domain, which since
+T5.3 lives in the state database `~/.274bot/state/state.sqlite3` (SQLite in
+WAL mode, one writer thread per process, no lock waits: the
+`panel-ui.json.lock` guard and the database lock are taken without waiting
+and a busy save is retried until its 5-second deadline). One save is one
+database commit: every member it changes or removes lands together, or none
+does. Both frontends refresh a shared durable walk-permission projection for
+danger controls and inherited script rows (re-checked at most once a second),
+and manual admission reads it again; until the database is open, and while it
+is refused, every grant is closed. A first start imports the whole
+`panel-ui.json` once (members this build does not know, a `schema_version`
+among them, are kept) and keeps it as `panel-ui.json.migrated`. An absent
+file defaults to **Never**. If an older file lacks `survivable_routing`, that
+bit defaults to false; `allow_danger_zones` still selects **Never** or
+**Always**. A file that is not a JSON object is kept as
+`panel-ui.json.corrupt-<time>` and defaults start, with a warning and an
+audit line. A file that is too large, holds a duplicate field, holds a member
+that cannot be a preference row (a name with a `.`, outside `[A-Za-z0-9_-]` or
+longer than 128 bytes, or a value too long even member by member), or that its
+owner or mode makes unsafe is refused, never partly imported, and every grant
+stays closed. A peer frontend's change therefore updates both the warning and
+the next walk's options.
 Danger grants permit a fallback crossing, not a shorter dangerous route:
 the router always tries the filtered safe pass first. Released Cook's
 Assistant mill walks inherit teleport permission, as their frozen callers do.

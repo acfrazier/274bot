@@ -34,7 +34,7 @@ use frontend_core::launch::{
     ProfileEnv, ProfileError, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockStage,
     ValidatedProfile,
 };
-use frontend_core::prefs::{PreferencePatch, UiPreferences, Update};
+use frontend_core::prefs::{PreferenceError, PreferencePatch, UiPreferences, Update};
 #[cfg(feature = "js")]
 use frontend_core::scripts::{CardSource, SchemaRef};
 use frontend_core::scripts::{LoadoutForm, PaintFrame, ScriptChoice, ScriptRunState};
@@ -1054,7 +1054,31 @@ struct PanelWriteError {
     owner: FeedbackOwner,
     request: u64,
     text: String,
+    /// The save's outcome is unknown: its COMMIT ended in a disk error that
+    /// the database could not settle (plan §4.2). The text says so, and so
+    /// does the General config's heading.
+    outcome_unknown: bool,
     since: Instant,
+}
+
+/// The newest panel-write failure of the focused view, as the General config
+/// shows it: the text, and the heading that says what became of the save.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PanelWriteFailure<'a> {
+    pub(crate) text: &'a str,
+    outcome_unknown: bool,
+}
+
+impl PanelWriteFailure<'_> {
+    /// "Preference save failed:", or, for a save whose outcome is unknown
+    /// (it may be stored), "Preference save outcome unknown:".
+    pub(crate) fn heading(&self) -> &'static str {
+        if self.outcome_unknown {
+            "Preference save outcome unknown:"
+        } else {
+            "Preference save failed:"
+        }
+    }
 }
 
 /// The operator's unsettled change of each saved operational setting
@@ -1820,7 +1844,7 @@ impl Session {
         // the operator preferences and loadouts for everything below, and
         // the Play this session starts adopts it too.
         let mut core = OperatorSession::open(instance);
-        core.open_process_state();
+        core.open_process_state(frontend_core::prefs::StateFrontend::Panel);
         let preferences = core
             .preferences()
             .expect("the session's local state was bound just now");
@@ -1845,11 +1869,12 @@ impl Session {
         // Loaded now through the service. A file it refused leaves the form
         // empty with the reason, which the Loadouts window shows as its status.
         let loadouts = LoadoutForm::operator_of(&core);
-        // A missing library store is a first run; library restore failures
-        // remain visible while script-settings load failures stop startup.
+        // A missing library store is a first run; a refused or corrupt one is
+        // said out loud (and nothing is saved over a refused one): logged
+        // once and shown on the banner by `follow_core_preferences`.
+        // Script-settings load failures stop startup.
         if let Some(error) = library_error {
-            eprintln!("panel: {error}");
-            process_log(Level::Error, &error);
+            core.report_library_error(error);
         }
         Ok(Self {
             focus: Arc::new(Mutex::new(crate::focus::Focus {
@@ -2080,12 +2105,16 @@ impl Session {
     /// every accepted write by its request and lets every lent model follow
     /// the latest durable snapshot ([`OperatorSession::poll_preferences`]),
     /// calling back through the surface when a saved draw switch changes;
-    /// the panel's own mirrors, drafts and capture devices then follow.
+    /// the panel's own mirrors, drafts and capture devices then follow. A
+    /// startup refusal (the script library store, the preferences store)
+    /// shows on the banner with its path and cause, and leaves it when the
+    /// refusal clears.
     fn follow_core_preferences(&mut self) {
         {
             let (core, mut surface) = self.core_and_surface();
             core.poll_preferences(&mut surface);
         }
+        self.core.project_startup_error(&mut self.error);
         self.settle_setting_drafts();
         self.sync_capture_devices();
     }
@@ -2272,7 +2301,7 @@ impl Session {
                         durable_effects.push(effect);
                     }
                 }
-                Err(error) => self.fail_panel_members(&write.members, &error.to_string()),
+                Err(error) => self.fail_panel_members(&write.members, &error),
             }
         }
         for effect in durable_effects {
@@ -2315,9 +2344,35 @@ impl Session {
         self.preferences_ready
     }
 
+    /// Why the preferences did not load (their path, the cause and the
+    /// remedy), while they are refused: the settings windows show it where
+    /// they would show "Loading preferences…".
+    pub(crate) fn preferences_refused(&self) -> Option<&str> {
+        self.core.preference_error()
+    }
+
     #[cfg(test)]
     pub(crate) fn panel_preference_writes_pending(&self) -> usize {
         self.panel_preference_writes.len()
+    }
+
+    /// Test seam: move the session to `service`, whose preferences are
+    /// refused at open, as a panel started on a refused store is: nothing
+    /// adopted, and the view is what startup shows for an unreadable store.
+    #[cfg(test)]
+    pub(crate) fn bind_refused_preferences_for_test(
+        &mut self,
+        service: Arc<host_play::local_state::LocalStateService>,
+    ) {
+        self.core.bind_local_state(service);
+        self.preferences = self
+            .core
+            .preferences()
+            .expect("the session's local state was bound just now");
+        assert!(!self.preferences.ready(), "the preferences are refused");
+        self.preferences_ready = false;
+        self.ui = crate::ui_state::load(&self.preferences).expect("an unreadable store loads");
+        self.refresh_walk_permissions();
     }
 
     /// Whether a core-owned or panel-owned preference write is still pending.
@@ -2327,13 +2382,16 @@ impl Session {
 
     /// The newest panel-write failure of the focused view (the global config
     /// shows it).
-    pub(crate) fn panel_preference_write_error(&self) -> Option<&str> {
+    pub(crate) fn panel_preference_write_error(&self) -> Option<PanelWriteFailure<'_>> {
         let focused = self.core.selected();
         self.preference_write_errors
             .iter()
             .rev()
             .find(|error| error.owner.shows_for(focused))
-            .map(|error| error.text.as_str())
+            .map(|error| PanelWriteFailure {
+                text: error.text.as_str(),
+                outcome_unknown: error.outcome_unknown,
+            })
     }
 
     /// The retained failure of the panel-owned setting whose members lie
@@ -2493,9 +2551,8 @@ impl Session {
         let patch = match PreferencePatch::member(path, value) {
             Ok(patch) => patch,
             Err(error) => {
-                let message = error.to_string();
-                self.fail_panel_members(std::slice::from_ref(&member), &message);
-                return Err(message);
+                self.fail_panel_members(std::slice::from_ref(&member), &error);
+                return Err(error.to_string());
             }
         };
         if patch.is_empty() {
@@ -2527,9 +2584,8 @@ impl Session {
                 Ok(PanelSubmit::Pending(request))
             }
             Err(error) => {
-                let message = error.to_string();
-                self.fail_panel_members(std::slice::from_ref(&member), &message);
-                Err(message)
+                self.fail_panel_members(std::slice::from_ref(&member), &error);
+                Err(error.to_string())
             }
         }
     }
@@ -2548,7 +2604,7 @@ impl Session {
                     owner: FeedbackOwner::Panel,
                 };
                 let message = error.to_string();
-                self.set_preference_write_error(&member, &message, Instant::now());
+                self.set_preference_write_error(&member, &message, false, Instant::now());
                 self.note_panel_setting(
                     &member,
                     frontend_core::SettingEventState::Failed,
@@ -2594,11 +2650,12 @@ impl Session {
     /// special-areas overlay and the manual-walk pause) take the saved value,
     /// except where the operator's own change is still pending.
     fn rebase_shared_nav_members(&mut self) {
-        let Ok(document) = self.preferences.document() else {
-            return;
+        let saved = match self.preferences.document() {
+            Ok(document) => crate::ui_state::load_snapshot(&self.preferences.path(), &document),
+            Err(_) if !self.preferences_ready => self.unadopted_panel_state(),
+            Err(_) => return,
         };
-
-        let saved = match crate::ui_state::load_snapshot(&self.preferences.path(), &document) {
+        let saved = match saved {
             Ok(saved) => saved.nav,
             Err(error) => {
                 self.report_ui_state_error(error);
@@ -2614,6 +2671,16 @@ impl Session {
         {
             self.ui.nav.pause_script_on_manual_walk_abort = saved.pause_script_on_manual_walk_abort;
         }
+    }
+
+    /// The saved panel preferences while no durable document was adopted
+    /// (the store is not read yet, or it is refused): what an unreadable
+    /// store loads, the defaults this panel started with, which are the
+    /// values in effect.
+    fn unadopted_panel_state(
+        &self,
+    ) -> Result<crate::ui_state::PanelUiState, crate::ui_state::PanelUiStateError> {
+        crate::ui_state::load(&self.preferences)
     }
 
     fn report_ui_state_error(&mut self, error: crate::ui_state::PanelUiStateError) {
@@ -2731,49 +2798,62 @@ impl Session {
     /// request still pending) again, and the failure stays at the setting
     /// until a later write of it lands or the error timeout passes. Every
     /// request has its own outcome, whatever the others carried.
-    fn fail_panel_members(&mut self, members: &[PanelPreferenceMember], error: &str) {
+    fn fail_panel_members(&mut self, members: &[PanelPreferenceMember], error: &PreferenceError) {
         let now = Instant::now();
+        let text = error.to_string();
         for member in members {
             self.launch_previews.settle(member.request);
             self.pending_panel_members
                 .retain(|pending| pending.request != member.request);
-            self.set_preference_write_error(member, error, now);
+            self.set_preference_write_error(member, &text, error.outcome_unknown(), now);
             self.note_panel_setting(
                 member,
                 frontend_core::SettingEventState::Failed,
-                Some(error),
+                Some(&text),
             );
         }
         self.rebase_panel_members();
     }
 
-    /// The panel view after a request settled: the latest durable document
-    /// with the previews of the requests still pending laid over it
-    /// ([`crate::ui_state::rebased`]). A run that saves nothing, and a
-    /// panel whose first snapshot has not arrived, have nothing to rebase.
+    /// The panel view after a request settled: the saved panel preferences
+    /// with the previews of the requests still pending laid over them
+    /// ([`crate::ui_state::rebased`]). The saved preferences are the latest
+    /// durable document once one is adopted, and before that (the store is
+    /// not read yet, or it is refused) what an unreadable store loads, so a
+    /// failed save shows the value in effect again. A run that saves
+    /// nothing has nothing to rebase; a first snapshot that arrived is
+    /// adopted next, not rebased onto.
     fn rebase_panel_members(&mut self) {
-        if !self.persist_ui || !self.preferences_ready {
+        if !self.persist_ui {
             return;
         }
-        let Ok(document) = self.preferences.document() else {
-            return;
+        let document = match self.preferences.document() {
+            Ok(document) if self.preferences_ready => Some(document),
+            Err(_) if !self.preferences_ready => None,
+            _ => return,
         };
-        let rebased = match crate::ui_state::rebased(
-            &self.preferences.path(),
-            &self.ui,
-            &document,
-            self.pending_panel_members
-                .iter()
-                .map(|member| (member.path.as_slice(), &member.value)),
-            self.core.selected().is_some(),
-        ) {
-            Ok(rebased) => rebased,
+        let saved = match &document {
+            Some(document) => crate::ui_state::load_snapshot(&self.preferences.path(), document),
+            None => self.unadopted_panel_state(),
+        };
+        let saved = match saved {
+            Ok(saved) => saved,
             Err(error) => {
                 self.report_ui_state_error(error);
                 return;
             }
         };
-        self.ui = rebased;
+        self.ui = crate::ui_state::rebased(
+            &self.ui,
+            saved,
+            self.pending_panel_members
+                .iter()
+                .map(|member| (member.path.as_slice(), &member.value)),
+            self.core.selected().is_some(),
+        );
+        let Some(document) = document else {
+            return;
+        };
         // The server revision the next session binds with follows a durable
         // value another process saved (while this panel has no choice of its
         // own pending and no profile is bound).
@@ -2793,14 +2873,23 @@ impl Session {
         }
     }
 
+    /// Show the failure of a panel-owned write at its setting. A save whose
+    /// outcome is unknown (its COMMIT ended in a disk error that the
+    /// database could not settle, plan §4.2) may be stored: it is worded as
+    /// unknown, never as not saved.
     fn set_preference_write_error(
         &mut self,
         member: &PanelPreferenceMember,
         error: &str,
+        outcome_unknown: bool,
         now: Instant,
     ) {
         let request = member.request;
-        let text = format!("Preferences not saved: {error}");
+        let text = if outcome_unknown {
+            format!("Preferences save outcome unknown: {error}")
+        } else {
+            format!("Preferences not saved: {error}")
+        };
         match self
             .preference_write_errors
             .iter_mut()
@@ -2811,6 +2900,7 @@ impl Session {
             Some(shown) => {
                 shown.request = request;
                 shown.text = text;
+                shown.outcome_unknown = outcome_unknown;
                 shown.since = now;
             }
             None => self.preference_write_errors.push(PanelWriteError {
@@ -2818,6 +2908,7 @@ impl Session {
                 owner: member.owner.clone(),
                 request,
                 text,
+                outcome_unknown,
                 since: now,
             }),
         }
@@ -2986,12 +3077,24 @@ impl Session {
 
     /// The panel's side of a newly bound profile: walk-map and Debug state
     /// from the previous binding are released and the nav bindings follow
-    /// the new profile.
+    /// the new profile; the banner drops an earlier action's message
+    /// ([`Self::clear_message`]).
     fn on_profile_installed(&mut self) {
         self.release_walk_map();
         crate::picker::bind_profile_nav(self.launcher.bound());
         self.release_debug_catalog();
-        self.error = None;
+        self.clear_message();
+    }
+
+    /// Drop the banner's message when startup moves on (a profile
+    /// preparation or validation starts, the vault unlocks, a profile is
+    /// bound) or an action succeeds, unless it is a startup refusal that
+    /// still stands (the preferences or the script library store): neither
+    /// fixes it, and it is projected once.
+    pub(crate) fn clear_message(&mut self) {
+        if self.error.as_deref() != self.core.startup_error() {
+            self.error = None;
+        }
     }
 
     /// Bind `template` as a finished preparation would (tests).
@@ -3207,7 +3310,7 @@ impl Session {
         };
         match self.core.command_failure(submitted.request()) {
             None => {
-                self.error = None;
+                self.clear_message();
                 self.vault_reset_open = false;
                 self.vault_reset_understood = false;
                 true
@@ -3253,7 +3356,7 @@ impl Session {
         }
         match self.start_play(path, pass) {
             Ok(()) => {
-                self.error = None;
+                self.clear_message();
                 true
             }
             Err((stage, msg)) => {
@@ -4809,7 +4912,7 @@ impl Session {
     fn apply_result(&mut self, result: Result<(), String>) -> bool {
         match result {
             Ok(()) => {
-                self.error = None;
+                self.clear_message();
                 true
             }
             Err(error) => {
@@ -4932,7 +5035,7 @@ impl Session {
     /// Choose the Game pane's memory mode for its next login. Durable-only
     /// like [`Self::set_focused_raster`] ([`Self::apply_lowmem_choice`]).
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
-        self.error = None;
+        self.clear_message();
         let effect = LaunchEffect::Lowmem {
             lowmem,
             profile: self.focused_name(),
@@ -5136,14 +5239,14 @@ impl Session {
                 if submitted.operation().is_some() =>
             {
                 self.cancel_startup_focus_for_removed_profile(name);
-                self.error = None;
+                self.clear_message();
                 true
             }
             Some(api::identity::Settlement::Completed(
                 frontend_core::command::Completion::Done,
             )) => {
                 self.cancel_startup_focus_for_removed_profile(name);
-                self.error = None;
+                self.clear_message();
                 true
             }
             _ => false,
@@ -5723,7 +5826,7 @@ impl Session {
             });
         if applied {
             self.route_gen = self.route_gen.wrapping_add(1);
-            self.error = None;
+            self.clear_message();
         } else {
             // The member's own reason (`not logged in`), else the generic text.
             self.error = Some(
@@ -5901,7 +6004,7 @@ impl Session {
                 })
             });
         if applied {
-            self.error = None;
+            self.clear_message();
         } else {
             self.error = Some(
                 self.core
@@ -6118,7 +6221,7 @@ impl Session {
             return;
         };
         match self.script_start_focused(&name) {
-            Ok(()) => self.error = None,
+            Ok(()) => self.clear_message(),
             Err(e) => self.error = Some(format!("script: {e}")),
         }
     }

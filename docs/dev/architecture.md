@@ -755,7 +755,8 @@ libtest exception.
 | `memory_slots.rs` | memory-run per-slot outcomes | ready latch and the failure/boundary record |
 | `audio.rs` | focused-slot speaker gate | at most one speaker |
 | `rss.rs` | process RSS and CPU sample | harness and the core's resource meter |
-| `resource_view.rs` | live-slot facts and panel-ui prefs | live worker count/traffic the core meter samples, background count, `panel-ui.json` |
+| `resource_view.rs` | live-slot facts and the background-bots preference | live worker count/traffic the core meter samples, background count, `background_bots_ack` |
+| `local_state.rs`, `local_state/{files,frontend,sql,root_use,maintenance}.rs` | process local-state service | one writer thread per process; bank hints and loadouts in files, preferences in `state/state.sqlite3` (SQLite WAL, zero lock waits, bounded WAL, idle TRUNCATE); root-use lease on `instance.lock`; `state preferences export/recover` maintenance commands |
 | `scatter.rs` | seed tiles for the wall | nav world, else Lumbridge |
 | `progress.rs` | preparation progress values | small, copy-free |
 | `quest_pair.rs` | Play-owned pair leases | bounded; never takes a slot lock or retains a world |

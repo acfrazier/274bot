@@ -10,6 +10,14 @@ static ALLOCATOR: frontend_core::process::BenchmarkAllocator =
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // `state preferences …` maintenance commands run before any frontend,
+    // vault or Play startup, and exit.
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) =
+        frontend_core::prefs::maintenance_command(frontend_core::prefs::StateFrontend::Tui, &argv)
+    {
+        return ExitCode::from(code as u8);
+    }
     if let Err(error) = frontend_core::process::bootstrap() {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
         return ExitCode::FAILURE;

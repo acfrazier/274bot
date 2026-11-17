@@ -695,6 +695,14 @@ pub struct OperatorSession<Io> {
     preference_reader: Option<crate::prefs::UiPreferences>,
     preferences_adopted: bool,
     preference_error: Option<String>,
+    /// The script library refusal startup reported
+    /// ([`Self::report_library_error`]).
+    library_error: Option<String>,
+    /// The library and preference refusals standing now, joined
+    /// ([`Self::startup_error`]).
+    startup_error: Option<String>,
+    /// What [`Self::project_startup_error`] last put on a front end's message.
+    shown_startup_error: Option<String>,
     initial_preference_failure: Option<crate::prefs::PreferenceError>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
@@ -828,6 +836,9 @@ impl<Io> OperatorSession<Io> {
             preference_reader: None,
             preferences_adopted: false,
             preference_error: None,
+            library_error: None,
+            startup_error: None,
+            shown_startup_error: None,
             initial_preference_failure: None,
             _instance: instance,
             capacity: None,
@@ -1031,6 +1042,7 @@ impl<Io> OperatorSession<Io> {
         self.local_state = Some(service);
         self.preferences_adopted = false;
         self.preference_error = None;
+        self.refresh_startup_error();
         self.initial_preference_failure = None;
         self.core_version = None;
         self.models_version = None;
@@ -1041,12 +1053,15 @@ impl<Io> OperatorSession<Io> {
 
     /// Open the process local-state service over the operator's state
     /// root (`<bot home>/.274bot`) and bind it: the composition root's one
-    /// writer of preferences and loadouts.
-    pub fn open_process_state(&mut self) {
+    /// writer of preferences and loadouts. Its refusals name `frontend`'s
+    /// maintenance commands, and it shares the instance permit's root-use
+    /// lease when the permit holds the lock.
+    pub fn open_process_state(&mut self, frontend: host_play::local_state::Frontend) {
         let root = host_play::local_state::StateRoot::new(script::bot_home().join(".274bot"));
-        self.bind_local_state(host_play::local_state::LocalStateService::open_process(
-            root,
-        ));
+        let root_use = self._instance.root_use();
+        self.bind_local_state(
+            host_play::local_state::LocalStateService::open_process_with(root, frontend, root_use),
+        );
     }
 
     /// The bound service's preferences document.
@@ -1069,6 +1084,16 @@ impl<Io> OperatorSession<Io> {
             .is_some_and(crate::prefs::PreferenceError::is_unsupported_saved_format)
     }
 
+    /// Why the next preference save is waiting, while it is (another
+    /// process holds the preferences guard or the database write lock, or a
+    /// reader keeps the WAL from its reset): what a pending setting shows
+    /// beside its "saving" state. `None` while nothing waits. Never waits.
+    pub fn preference_wait_cause(&self) -> Option<&'static str> {
+        self.preference_reader
+            .as_ref()
+            .and_then(crate::prefs::UiPreferences::wait_cause)
+    }
+
     /// Read the latest durable preference snapshot and let the
     /// session-owned state follow it once per durable version: the walk
     /// grants, the manual-walk pause, the Load order and the session file.
@@ -1084,6 +1109,7 @@ impl<Io> OperatorSession<Io> {
             Ok(snapshot) => {
                 if self.initial_preference_failure.take().is_some() {
                     self.preference_error = None;
+                    self.refresh_startup_error();
                 }
                 if self.core_version != Some(snapshot.version()) {
                     let first = self.core_version.is_none();
@@ -1101,12 +1127,72 @@ impl<Io> OperatorSession<Io> {
                     self.preferences_adopted = true;
                 }
                 if self.initial_preference_failure.as_ref() != Some(&error) {
+                    host_log!(
+                        Category::Lifecycle,
+                        Level::Error,
+                        "preferences not loaded: {error}"
+                    );
                     self.preference_error = Some(error.to_string());
                     self.initial_preference_failure = Some(error);
+                    self.refresh_startup_error();
                 }
                 None
             }
         }
+    }
+
+    /// Record that the script library store (`js-scripts.json`) was refused
+    /// or corrupt at startup, as [`crate::Scripts::open_default`] reports
+    /// it: one error record in the host log, and the text (the file's path
+    /// and the cause, which carries the remedy) kept for
+    /// [`Self::startup_error`]. Nothing is saved over a refused store.
+    pub fn report_library_error(&mut self, error: String) {
+        host_log!(
+            Category::Lifecycle,
+            Level::Error,
+            "script library not loaded: {error}"
+        );
+        self.library_error = Some(error);
+        self.refresh_startup_error();
+    }
+
+    /// The script library refusal startup reported, if any.
+    pub fn library_error(&self) -> Option<&str> {
+        self.library_error.as_deref()
+    }
+
+    /// Every startup refusal standing now, for a front end's error surface:
+    /// the script library's ([`Self::library_error`]) then the
+    /// preferences' ([`Self::preference_error`], which clears when a later
+    /// snapshot reads), each with its path and cause, joined by `"; "`.
+    pub fn startup_error(&self) -> Option<&str> {
+        self.startup_error.as_deref()
+    }
+
+    /// Put [`Self::startup_error`] on the front end's one message
+    /// (`message`: its banner or message line) when it changed, once per
+    /// change, and take it off again when the refusal clears and the message
+    /// still shows it. A later message of the front end's own is left alone,
+    /// and a message that expired is not shown again.
+    pub fn project_startup_error(&mut self, message: &mut Option<String>) {
+        if self.shown_startup_error == self.startup_error {
+            return;
+        }
+        if self.shown_startup_error.is_some() && *message == self.shown_startup_error {
+            *message = None;
+        }
+        self.shown_startup_error.clone_from(&self.startup_error);
+        if let Some(error) = &self.shown_startup_error {
+            *message = Some(error.clone());
+        }
+    }
+
+    fn refresh_startup_error(&mut self) {
+        self.startup_error = match (&self.library_error, &self.preference_error) {
+            (Some(library), Some(preferences)) => Some(format!("{library}; {preferences}")),
+            (Some(only), None) | (None, Some(only)) => Some(only.clone()),
+            (None, None) => None,
+        };
     }
 
     /// Prepare automatic startup without loading or selecting a profile.
@@ -1638,7 +1724,7 @@ impl<Io> OperatorSession<Io> {
 
     fn fail_order_write(&mut self, error: &crate::prefs::PreferenceError, was_pending: bool) {
         order_write_failed(error);
-        let text = format!("Load order not saved: {error}");
+        let text = prefs::save_failure_text(Some("Load order"), error);
         let event_error = self
             .commands
             .watching_setting_events()
@@ -4098,13 +4184,22 @@ fn record_transitions(
     }
 }
 
-/// Log a saved Load order write that failed outside a command.
+/// Log a saved Load order write that failed outside a command. A save whose
+/// outcome is unknown is not logged as unwritten (plan §4.2).
 fn order_write_failed(error: &crate::prefs::PreferenceError) {
-    host_log!(
-        Category::Lifecycle,
-        Level::Warn,
-        "profile order: the saved Load order was not written: {error}"
-    );
+    if error.outcome_unknown() {
+        host_log!(
+            Category::Lifecycle,
+            Level::Warn,
+            "profile order: the saved Load order write ended with an unknown outcome: {error}"
+        );
+    } else {
+        host_log!(
+            Category::Lifecycle,
+            Level::Warn,
+            "profile order: the saved Load order was not written: {error}"
+        );
+    }
 }
 
 #[cfg(test)]

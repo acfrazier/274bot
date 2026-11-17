@@ -1160,6 +1160,32 @@ fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile(
     assert!(startup_progress(&startup, state.session.profile_generation()).is_none());
 }
 
+/// T5.3-S4 headed check D-1: starting the final validation after the vault
+/// unlock clears the banner of an earlier message, but not a startup refusal
+/// that still stands (it is projected once, so clearing it lost it).
+#[test]
+fn startup_validation_keeps_a_standing_startup_refusal_on_the_banner() {
+    let _work_service_guard = crate::work_service_test_lock();
+    let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
+        pass: "prepared-pass".into(),
+    });
+    let refusal = "script library at /x/js-scripts.json: is writable by other users";
+    state.session.core.report_library_error(refusal.into());
+    state
+        .session
+        .core
+        .project_startup_error(&mut state.session.error);
+    drive_startup(&mut state, &mut startup);
+    assert!(startup.validate.is_some(), "the final validation started");
+    assert_eq!(state.session.error.as_deref(), Some(refusal));
+    settle_startup(&mut state, &mut startup);
+    assert_eq!(
+        state.session.error.as_deref(),
+        Some(refusal),
+        "still there once the profile is bound and the vault is open"
+    );
+}
+
 #[test]
 fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
     let _work_service_guard = crate::work_service_test_lock();
@@ -1390,15 +1416,11 @@ fn log_follow_bottom_sticks_at_end_and_releases_when_scrolled_up() {
 
 #[test]
 fn legacy_log_detached_is_ignored_without_losing_other_preferences() {
-    let dir = TestDir::new("legacy-log-ui-state");
-    let preferences = frontend_core::UiPreferences::of_service_for_test(
-        &crate::test_support::scratch_service(&dir),
-    );
-    crate::test_support::write_private_fixture(
-        preferences.path(),
+    let (_dir, preferences) = crate::test_support::scratch_with_legacy(
+        "legacy-log-ui-state",
         r#"{"last_focus":"alice","collapsed":{"alice":{"status":false}},"capture":false,"log_detached":true}"#,
-    )
-    .unwrap();
+    );
+    // The old file is imported whole at the first open.
     preferences.reload().unwrap();
 
     let loaded = crate::ui_state::load_from(&preferences).unwrap();
@@ -7427,6 +7449,117 @@ fn nav_core_edit_writes_once_and_preserves_other_members() {
     assert_eq!(receipt.version(), audits[0].version());
 }
 
+/// A panel started on refused preferences: a Nav config change that cannot
+/// be saved shows the saved value again once its save failed, for a walk
+/// grant, the manual-walk pause, the special-areas overlay and a panel-only
+/// member (docs/api/panel.md: "If the save fails, the control shows the
+/// saved value again").
+#[test]
+fn nav_edit_under_refused_preferences_shows_the_saved_values_again() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-refused");
+    let mut session = crate::session::Session::new();
+    let (_dir, legacy, oversize) =
+        crate::test_support::bind_refused_store(&mut session, "panel-nav-refused");
+    let saved = session.ui.nav.clone();
+    assert!(!saved.allow_teleports, "a refused store grants nothing");
+
+    let mut after = saved.clone();
+    after.allow_teleports = true;
+    after.pause_script_on_manual_walk_abort = !saved.pause_script_on_manual_walk_abort;
+    after.show_special_areas = !saved.show_special_areas;
+    after.hop_labels = !saved.hop_labels;
+    super::commit_nav_settings(&mut session, &saved, after)
+        .expect_err("a refused store saves nothing");
+    for _ in 0..3 {
+        session.pump_status();
+        session.poll_panel_preferences();
+        session.refresh_walk_permissions();
+    }
+    assert!(
+        !session.preferences_pending(),
+        "every refused save has ended"
+    );
+    let shown = &session.ui.nav;
+    assert_eq!(shown.allow_teleports, saved.allow_teleports);
+    assert_eq!(
+        shown.pause_script_on_manual_walk_abort,
+        saved.pause_script_on_manual_walk_abort
+    );
+    assert_eq!(shown.show_special_areas, saved.show_special_areas);
+    assert_eq!(shown.hop_labels, saved.hop_labels);
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        oversize,
+        "nothing is saved over the refused file"
+    );
+}
+
+/// A panel started on refused preferences: the strip heading order, the
+/// Browse category order and a panel colour, changed through the functions
+/// the drops and the colour editor call, show the saved value again once
+/// their saves failed at once, with the reason at the setting.
+#[test]
+fn order_and_colour_edits_under_refused_preferences_show_the_saved_values_again() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-orders-refused");
+    let mut session = crate::session::Session::new();
+    let mut present: Vec<String> = Vec::new();
+    for card in session.scripts.browse_cards() {
+        let category = crate::script_picker::display_category(card.category()).to_owned();
+        if !present.contains(&category) {
+            present.push(category);
+        }
+    }
+    assert!(present.len() > 1, "the registry has several categories");
+    let (_dir, legacy, oversize) =
+        crate::test_support::bind_refused_store(&mut session, "panel-orders-refused");
+    let saved_sections = session.ui.section_order.clone();
+    let saved_categories = session.ui.script_category_order.clone();
+    let saved_chrome = session.ui.chrome.clone();
+
+    // Each value is checked right after its own edit: a later failure
+    // rebases the whole panel view, which would hide an earlier stale one.
+    let settle = |session: &mut crate::session::Session, path: &[&str]| {
+        for _ in 0..3 {
+            session.pump_status();
+            session.poll_panel_preferences();
+        }
+        assert!(
+            !session.preferences_pending(),
+            "{path:?}: the refused save has ended"
+        );
+        assert!(
+            session.panel_member_error(path).is_some(),
+            "{path:?}: the reason shows at the setting"
+        );
+    };
+
+    super::reorder_heading(&mut session, "log", "status");
+    settle(&mut session, &["section_order"]);
+    assert_eq!(session.ui.section_order, saved_sections);
+
+    let last = present.last().expect("several categories").clone();
+    super::reorder_category(&mut session, &last, &present[0]);
+    settle(&mut session, &["script_category_order"]);
+    assert_eq!(session.ui.script_category_order, saved_categories);
+
+    let mut chrome = saved_chrome.clone();
+    chrome.accent = if chrome.accent == "#123456" {
+        "#654321".into()
+    } else {
+        "#123456".into()
+    };
+    super::commit_chrome(&mut session, chrome);
+    settle(&mut session, &["chrome", "accent"]);
+    assert_eq!(session.ui.chrome, saved_chrome);
+    assert_eq!(session.ui.section_order, saved_sections);
+    assert_eq!(session.ui.script_category_order, saved_categories);
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        oversize,
+        "nothing is saved over the refused file"
+    );
+}
+
 /// At the docked Nav config width every Routing row stays inside the content
 /// region at each Danger routing level. The drop-down spans the width, so its
 /// level names never clip; the old plain button ran past the edge at "availabl".
@@ -7764,6 +7897,17 @@ fn hold_writes(
     (release, failing)
 }
 
+/// `shown` without the panel window's Log pane (`### log ###` and what follows
+/// it). The pane draws the process log, which every test in this process
+/// writes to: a held-lock test's "Preferences not saved: …" line is not the
+/// control under test.
+fn without_log_pane(shown: String) -> String {
+    match shown.split_once("### log ###") {
+        Some((before, _)) => before.to_owned(),
+        None => shown,
+    }
+}
+
 /// Every panel-owned setting shows its own saved state at its own control,
 /// and the same rule: "Saving…" while its write is held, the failure when it
 /// failed (also after the surface was closed and drawn again), and a new write
@@ -7851,11 +7995,13 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
             draw: |ui, s| super::file_dialog_body(ui, s, super::DialogMode::File),
         },
         Surface {
-            name: "debug commands",
-            write: |s| {
-                let prefs = s.ui.debug_panel.clone();
-                let _ = s.persist_panel_serializable(&["debug_panel"], &prefs);
-            },
+            name: "debug favorites",
+            write: |s| crate::debug_panel::toggle_favorite_command(s, "cmd"),
+            draw: |ui, s| crate::debug_panel::draw(ui, s),
+        },
+        Surface {
+            name: "debug recents",
+            write: |s| crate::debug_panel::remember_recent_command(s, "cmd"),
             draw: |ui, s| crate::debug_panel::draw(ui, s),
         },
         Surface {
@@ -7903,7 +8049,7 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
             (surface.write)(&mut session);
         }
         for surface in chunk {
-            let shown = drawn_text(&mut ctx, &mut session, &surface.draw);
+            let shown = without_log_pane(drawn_text(&mut ctx, &mut session, &surface.draw));
             assert!(
                 shown.contains("Saving…"),
                 "{}: the control says it is saving: {shown}",
@@ -7920,7 +8066,7 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
         drop(release);
         settle(&mut session);
         for surface in chunk {
-            let shown = drawn_text(&mut ctx, &mut session, &surface.draw);
+            let shown = without_log_pane(drawn_text(&mut ctx, &mut session, &surface.draw));
             assert!(
                 shown.contains("Preferences not saved"),
                 "{}: the failure shows at the control: {shown}",
@@ -7942,7 +8088,7 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
             (surface.write)(&mut session);
         }
         for surface in chunk {
-            let shown = drawn_text(&mut ctx, &mut session, &surface.draw);
+            let shown = without_log_pane(drawn_text(&mut ctx, &mut session, &surface.draw));
             assert!(
                 shown.contains("Saving…") && !shown.contains("Preferences not saved"),
                 "{}: the retry resolved the failure: {shown}",
@@ -7952,7 +8098,7 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
         drop(release);
         settle(&mut session);
         for surface in chunk {
-            let shown = drawn_text(&mut ctx, &mut session, &surface.draw);
+            let shown = without_log_pane(drawn_text(&mut ctx, &mut session, &surface.draw));
             assert!(
                 !shown.contains("Saving…") && !shown.contains("Preferences not saved"),
                 "{}: saved, nothing to say: {shown}",
@@ -8201,6 +8347,193 @@ fn preference_frame(
     drawn_text(ctx, session, draw)
 }
 
+/// General config heads a panel-owned write failure by what became of the
+/// save: "Preference save failed:" over a save that did not happen, and
+/// "Preference save outcome unknown:" over one whose COMMIT ended in a disk
+/// error that the database could not settle (plan §4.2). The text under the
+/// heading agrees with it, and a newer write of the setting replaces both.
+#[test]
+fn general_config_heads_a_panel_write_failure_by_what_became_of_the_save() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-general-heading");
+    let mut ctx = dock_host_context();
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let service = session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .clone();
+    let failing = std::sync::Arc::new(AtomicBool::new(true));
+    let unknown = std::sync::Arc::new(AtomicBool::new(false));
+    let refusing = std::sync::Arc::clone(&failing);
+    service.set_write_fault_for_test(std::sync::Arc::new(move || refusing.load(Ordering::SeqCst)));
+    let unsure = std::sync::Arc::clone(&unknown);
+    service.set_write_unknown_for_test(std::sync::Arc::new(move || unsure.load(Ordering::SeqCst)));
+    // One write of a panel-owned setting, and General config once it ended
+    // in a failure.
+    let mut failed_write = |session: &mut crate::session::Session| {
+        let value = !session.ui.show_parameters_rail;
+        session
+            .persist_panel_member(
+                &["show_parameters_rail"],
+                Some(serde_json::Value::Bool(value)),
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while session.panel_preference_write_error().is_none() {
+            session.pump_status();
+            session.poll_panel_preferences();
+            assert!(Instant::now() < deadline, "the failure never settled");
+            thread::sleep(Duration::from_millis(2));
+        }
+        without_log_pane(preference_frame(&mut ctx, session, &|ui, s| {
+            super::global_config_section(ui, s)
+        }))
+    };
+
+    let shown = failed_write(&mut session);
+    assert!(shown.contains("Preference save failed:"), "{shown}");
+    assert!(shown.contains("Preferences not saved:"), "{shown}");
+    assert!(!shown.contains("outcome unknown"), "{shown}");
+
+    failing.store(false, Ordering::SeqCst);
+    unknown.store(true, Ordering::SeqCst);
+    let shown = failed_write(&mut session);
+    assert!(
+        shown.contains("Preference save outcome unknown:"),
+        "the heading says the outcome is unknown: {shown}"
+    );
+    assert!(
+        shown.contains("Preferences save outcome unknown:"),
+        "the text under it says so too: {shown}"
+    );
+    assert!(
+        !shown.contains("Preference save failed:") && !shown.contains("Preferences not saved:"),
+        "nothing says the save failed: {shown}"
+    );
+}
+
+/// T5.3-S4 headed check D-1: while the preferences are refused (here a
+/// legacy file another user could have written), General config shows why
+/// (the path, the cause and the remedy) where it would show "Loading
+/// preferences…", for as long as the refusal stands.
+#[cfg(unix)]
+#[test]
+fn refused_preferences_show_their_cause_and_remedy_in_the_settings_window() {
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = crate::test_support::imgui_context_guard();
+    let iso = frontend_core::test_support::IsolatedStores::enter("panel-s4-refused-window");
+    let legacy = iso.home().join(".274bot").join("panel-ui.json");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, b"{}").unwrap();
+    std::fs::set_permissions(&legacy, std::fs::Permissions::from_mode(0o664)).unwrap();
+    let mut ctx = dock_host_context();
+    let mut session = crate::session::Session::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.core.preference_error().is_none() {
+        session.pump_status();
+        session.poll_panel_preferences();
+        assert!(Instant::now() < deadline, "the refusal never settled");
+        thread::sleep(Duration::from_millis(2));
+    }
+    let refusal = session.core.preference_error().unwrap().to_owned();
+    for _ in 0..3 {
+        let shown = without_log_pane(preference_frame(&mut ctx, &mut session, &|ui, s| {
+            super::global_config_section(ui, s)
+        }));
+        let path = legacy.display().to_string();
+        assert!(shown.contains("Preferences not loaded:"), "{shown}");
+        assert!(shown.contains(&refusal), "{shown}");
+        assert!(shown.contains("writable by other users"), "{shown}");
+        assert!(shown.contains(&format!("chmod 600 {path}")), "{shown}");
+        assert!(!shown.contains("Loading preferences"), "{shown}");
+    }
+    std::fs::set_permissions(&legacy, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+/// A legacy preferences source the database cannot read (a directory at its
+/// path, a file the process may not read) is no startup failure (plan §5.1,
+/// T5.3 S1 round 2): the saved-data preflight of the panel's start lets it
+/// go on, the preferences' own refusal (path, cause, remedy) shows on the
+/// banner and in General config, and the bank hint store beside it still
+/// saves. Repairing the source lets the next read import it.
+#[test]
+fn a_bad_legacy_preferences_source_neither_stops_the_panel_start_nor_hides_its_refusal() {
+    use frontend_core::test_support::startup::{bank_hint_saves, BadPreferencesSource};
+    let _guard = crate::test_support::imgui_context_guard();
+    for case in BadPreferencesSource::ALL {
+        let iso = frontend_core::test_support::IsolatedStores::enter(&format!(
+            "panel-bad-source-{}",
+            case.label()
+        ));
+        let state = iso.home().join(".274bot");
+        let source = state.join("panel-ui.json");
+        if !case.make(&source) {
+            continue;
+        }
+
+        // What `run_panel` does before any window, on the same root.
+        let root = frontend_core::saved_data::StateRoot::new(state);
+        for skip_lock in [false, true] {
+            let prompt = super::saved_data_preflight(&root, skip_lock).unwrap_or_else(|error| {
+                panic!(
+                    "{}: a bad preferences source stopped the start: {error}",
+                    case.label()
+                )
+            });
+            assert!(prompt.is_none(), "{}: nothing to ask", case.label());
+        }
+
+        let mut ctx = dock_host_context();
+        let mut session = crate::session::Session::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while session.core.preference_error().is_none() {
+            session.pump_status();
+            session.poll_panel_preferences();
+            assert!(
+                Instant::now() < deadline,
+                "{}: the refusal never settled",
+                case.label()
+            );
+            thread::sleep(Duration::from_millis(2));
+        }
+        let refusal = session.core.preference_error().unwrap().to_owned();
+        case.assert_refusal(&refusal, &source);
+        assert_eq!(
+            session.error.as_deref(),
+            Some(refusal.as_str()),
+            "{}: the banner shows the refusal",
+            case.label()
+        );
+        for _ in 0..2 {
+            let shown = without_log_pane(preference_frame(&mut ctx, &mut session, &|ui, s| {
+                super::global_config_section(ui, s)
+            }));
+            assert!(shown.contains("Preferences not loaded:"), "{shown}");
+            assert!(shown.contains(&refusal), "{shown}");
+            assert!(!shown.contains("Loading preferences"), "{shown}");
+        }
+        assert!(
+            bank_hint_saves(&session.core, "bob"),
+            "{}: the bank hint store beside the refusal keeps working",
+            case.label()
+        );
+
+        case.repair(&source);
+        session.preferences.reload().unwrap();
+        session.pump_status();
+        session.poll_panel_preferences();
+        assert_eq!(
+            session.core.preference_error(),
+            None,
+            "{}: the repaired source reads",
+            case.label()
+        );
+    }
+}
+
 /// The Browse window as the operator sees it, with the General config's
 /// Global section beside it (where "Saving preferences…" shows).
 fn browse_and_global(ui: &dear_imgui_rs::Ui, session: &mut crate::session::Session) {
@@ -8227,11 +8560,11 @@ fn failed_category_drop(
     assert!(present.len() > 1, "the registry has several categories");
     let lock = crate::test_support::hold_preferences_lock(&session.preferences);
     preference_frame(ctx, session, &browse_and_global);
-    // The drop: what `category_chip_dnd` does on delivery.
-    let mut order = present;
-    order.reverse();
-    let _ = session.persist_panel_serializable(&["script_category_order"], &order);
-    session.ui.script_category_order = order.clone();
+    // The drop: the last chip onto the first, as `category_chip_dnd` does on
+    // delivery.
+    let last = present.last().expect("several categories").clone();
+    super::reorder_category(session, &last, &present[0]);
+    let order = session.ui.script_category_order.clone();
     assert!(session.preferences_pending(), "the drop is saving");
     // The writer's lock wait ends and every held write fails busy.
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -8244,7 +8577,7 @@ fn failed_category_drop(
     assert!(
         session
             .panel_member_error(&["script_category_order"])
-            .is_some_and(|text| text.contains("busy")),
+            .is_some_and(|text| text.contains(crate::test_support::HELD_GUARD_CAUSE)),
         "the drop failed busy: {:?}",
         session.panel_member_error(&["script_category_order"])
     );
@@ -8360,6 +8693,54 @@ fn settings_feedback_saving_preferences_settles_after_a_failed_save() {
         thread::sleep(Duration::from_millis(10));
     }
     drop(lock);
+}
+
+/// Audit guard (T5.3-S4): the Nav config saves each presentation member as
+/// its own setting. With the real preferences lock held, a colour change
+/// whose save fails busy is not carried by the save of the next colour the
+/// operator changes: after the lock is released the durable document holds
+/// the second colour only.
+#[test]
+fn a_nav_member_save_never_carries_another_failed_nav_member() {
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-s4-nav-members");
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let lock = crate::test_support::hold_preferences_lock(&session.preferences);
+    let before = session.ui.nav.clone();
+    let mut first = before.clone();
+    first.color_path = "#112233".into();
+    super::commit_nav_settings(&mut session, &before, first.clone()).unwrap();
+    let mut second = first.clone();
+    second.color_text = "#445566".into();
+    super::commit_nav_settings(&mut session, &first, second).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while session.panel_member_error(&["nav", "color_path"]).is_none() {
+        session.pump_status();
+        session.poll_panel_preferences();
+        assert!(Instant::now() < deadline, "the first colour never failed");
+        thread::sleep(Duration::from_millis(5));
+    }
+    drop(lock);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while session.preferences_pending() {
+        session.pump_status();
+        session.poll_panel_preferences();
+        assert!(Instant::now() < deadline, "the writes never ended");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let document = session.preferences.document().unwrap();
+    let nav = document.get("nav").and_then(serde_json::Value::as_object);
+    assert_eq!(
+        nav.and_then(|nav| nav.get("color_text"))
+            .and_then(serde_json::Value::as_str),
+        Some("#445566")
+    );
+    assert_ne!(
+        nav.and_then(|nav| nav.get("color_path"))
+            .and_then(serde_json::Value::as_str),
+        Some("#112233"),
+        "the second colour's save carried the first colour's failed value"
+    );
 }
 
 /// Headed defect 3, the visible state: with the real preferences lock held

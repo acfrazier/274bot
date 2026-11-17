@@ -198,6 +198,10 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("marked.rs::bounded_names", Excluded(FORMAT)),
     // nav_prefs.rs
+    (
+        "prefs.rs::maintenance_command",
+        Excluded("runs a `state preferences` maintenance command line before any front end, vault or Play startup; a process entry, no operator decision"),
+    ),
     // profile_form.rs: the form-save machine.
     // profile_draft.rs: the staged form draft's edit buffers.
     ("profile_draft.rs::ProfileDraft::username_mut", Staged(C::EditProfileDraft(ProfileDraftField::Username))),
@@ -639,6 +643,14 @@ const CORE: &[(&str, Decision)] = &[
     (
         "session.rs::OperatorSession::bind_local_state",
         Excluded(STARTUP),
+    ),
+    (
+        "session.rs::OperatorSession::report_library_error",
+        Excluded("startup: records the script library refusal for the error view; no operator decision"),
+    ),
+    (
+        "session.rs::OperatorSession::project_startup_error",
+        Excluded(PROJECTION),
     ),
     (
         "session.rs::OperatorSession::copy_statuses_into",

@@ -8499,6 +8499,7 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
 #[cfg(feature = "js")]
 #[test]
 fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() {
+    let _state_lease = crate::test_process::state();
     script_js::install_cards().expect("install canonical Sherlock card for compiled start test");
     let scratch = script::IsolatedEnv::enter("compiled-start-refresh");
     let mut play = run_with_io(

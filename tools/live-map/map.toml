@@ -241,6 +241,7 @@ globs = [
   # corpus and combined-pack qualification remain mandatory separate proofs.
   "crates/nav-planner/examples/route_parity.rs",
   "crates/panel/src/test_support.rs",
+  "crates/tui/src/test_support.rs",
   "**/fixtures/**",
   "**/tests.rs",
   "**/test.rs",
@@ -376,6 +377,26 @@ cells = [
   "frontend-core.driver-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
 ]
 
+
+# The preferences database (T5.3-S4): SQLite WAL state database, root-use
+# lease, legacy import, per-setting writes, `state preferences` maintenance
+# commands run by each binary before startup, private-path checks, and the
+# background-bots preference. The binary cells run the recover command through
+# each real binary entry on an isolated HOME. See README.md "Preferences database".
+[[cover]]
+globs = ["Cargo.lock", "crates/host-play/Cargo.toml", "crates/api/src/local_state.rs", "crates/frontend-core/src/nav_prefs.rs", "crates/frontend-core/src/walk_permissions.rs", "crates/host-play/src/instance_lock.rs", "crates/host-play/src/local_state/files.rs", "crates/host-play/src/local_state/maintenance.rs", "crates/host-play/src/local_state/root_use.rs", "crates/host-play/src/local_state/sql.rs", "crates/host-play/src/passphrase.rs", "crates/host-play/src/resource_view.rs", "crates/host-play/src/rss.rs", "crates/host-play/src/test_process.rs", "crates/host-play/src/walk_permissions.rs", "crates/panel/src/main.rs", "crates/tui/src/main.rs", "crates/vault/src/lib.rs", "crates/vault/src/private_file.rs"]
+cells = [
+  "host-play.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib local_state::",
+  "host-play.instance-lock-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib instance_lock::",
+  "host-play.resource-view-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib resource_view::",
+  "host-play.walk-permissions-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib walk_permissions::",
+  "frontend-core.nav-prefs-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib nav_prefs::",
+  "frontend-core.walk-permissions-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib walk_permissions::",
+  "api.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib local_state::",
+  "vault.private-file-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p vault --lib private_file::",
+  "panel.state-recover-binary|BOT_NAV_BUILD=skip ISOHOME_INTERACTIVE=1 ${ISOHOME:?} nice -n 10 cargo run --locked -p panel --bin panel-play -- state preferences recover --defaults|--locked -p host-play --lib local_state::sql_tests::maintenance_command",
+  "tui.state-recover-binary|BOT_NAV_BUILD=skip ISOHOME_INTERACTIVE=1 ${ISOHOME:?} nice -n 10 cargo run --locked -p tui --bin tui-play -- state preferences recover --defaults|--locked -p host-play --lib local_state::sql_tests::maintenance_command",
+]
 
 # These UI paths have controlled-state driver proof, not game-world fixtures.
 # session/fleet.rs routes the fleet-row commands (marks, filter, sort, the

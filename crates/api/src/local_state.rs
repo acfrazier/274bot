@@ -245,6 +245,14 @@ impl StoreVersion {
         self.0
     }
 
+    /// A version read back from the durable store that allocated it (the
+    /// state database's head and sequence columns). Only a store backend
+    /// decodes stored versions; every other caller receives versions from
+    /// leases and receipts.
+    pub const fn from_durable(raw: u64) -> Self {
+        Self(raw)
+    }
+
     /// The next version, or `None` when the space is exhausted: versions
     /// refuse instead of wrapping or reusing a value.
     pub const fn checked_next(self) -> Option<Self> {
