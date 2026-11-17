@@ -303,6 +303,8 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
         port: Some(game_port),
         asset_host: Some("127.0.0.1".into()),
         http_port: Some(http_port),
+        engine_dir: Some(engine_dir),
+        cache_dir: Some(cache_dir),
         unpack_dir: Some(scratch.join("unpack")),
         nav_pack: Some(nav_pack),
         nav_flags: Some(nav_flags),
