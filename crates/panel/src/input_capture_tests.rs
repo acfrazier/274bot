@@ -158,7 +158,6 @@ fn shifted_event_capture_preserves_two_colons_and_release_pairing() {
 
     assert_eq!(press_key, release_key);
     assert_eq!(capture_key_ch(press_key, true), Some(b':' as i32));
-    assert_eq!(capture_key_ch(press_key, true), Some(b':' as i32));
     assert_eq!(capture_key_ch(release_key, false), Some(b';' as i32));
 }
 

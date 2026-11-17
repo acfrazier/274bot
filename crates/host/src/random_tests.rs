@@ -3703,7 +3703,6 @@ fn expired_losses_are_ignored_after_the_90s_window() {
     drv.menus.clear();
     let expired = g.tick(&mut drv, &snap, &settings, 91_001, None);
     assert_ne!(expired.kind, Some(RandomKind::LostGear));
-    assert!(drv.menus.is_empty() || expired.kind != Some(RandomKind::LostGear));
 }
 
 #[test]

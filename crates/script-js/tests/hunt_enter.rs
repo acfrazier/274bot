@@ -572,8 +572,6 @@ fn gateless_completion_is_in_area_not_the_walk_waiter_or_bound() {
     let walk = call("next", token, p.clone(), None);
     assert_eq!(walk["kind"], "walk");
     assert_eq!(walk["x"], 5);
-    assert_ne!(walk["kind"], "walk-to");
-    assert_ne!(walk["kind"], "loc");
     set_observation(obs(Some(tile(5, 5, 0))));
     assert!(enter_force_bound_reached(token));
     let mut value = None;

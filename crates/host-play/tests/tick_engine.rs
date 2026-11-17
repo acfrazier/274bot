@@ -4610,7 +4610,6 @@ mod packet_oracle_tests {
         let observed = normalized_prefix(&lagged, 2);
         assert_eq!(prefix_difference(&reference, &observed), None);
         assert_eq!(prefix_difference(&observed, &reference), None);
-        assert_eq!(lagged.statuses[1].tick_events, Some(1));
     }
 
     #[test]

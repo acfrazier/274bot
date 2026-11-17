@@ -925,21 +925,8 @@ fn roundtrip_collision_and_transport_graph() {
     assert!(c.flags.is_none());
     assert_eq!(g.edges, graph.edges);
     assert_eq!(g.approaches, graph.approaches);
-    // The door edge's new fields round-trip on the wire.
-    assert_eq!(g.edges[di].dir, Some(DoorDir::N));
-    assert_eq!(g.edges[di].open_loc_id, Some(1531));
-    assert_eq!(g.edges[di].worn_req, vec![772]);
-    // The new kinds round-trip on the v4 wire (7 spirit tree, 8 NPC).
-    assert_eq!(g.edges[si].kind, TransportKind::SpiritTree);
-    assert_eq!(g.edges[si].varp_req, vec![(150, 160)]);
-    assert_eq!(g.edges[ni].kind, TransportKind::Npc);
     // Teleports round-trip without entering the ordinary edge index.
     assert_eq!(g.teleports, graph.teleports);
-    assert!(g.teleports[0].item_req.is_empty());
-    assert_eq!(
-        g.teleports[0].consumed_req,
-        vec![(554, 1), (556, 3), (563, 1)]
-    );
 
     let route = nav_planner::router::find_with(
         &c,

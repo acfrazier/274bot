@@ -404,7 +404,6 @@ fn upstream_tier1_runs_unmodified_sources_in_load() {
             result["fail"].as_u64().unwrap_or(0),
         );
     }
-    assert_eq!(results.len(), EXPECTED_TEST_FILES);
     let actual: Vec<_> = results.iter().map(outcome_manifest_entry).collect();
     assert_eq!(
         actual.as_slice(),

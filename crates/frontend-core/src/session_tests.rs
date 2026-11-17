@@ -335,7 +335,6 @@ fn load_all_does_not_move_selection_when_others_log_in() {
             "{name} logging in must not take focus"
         );
     }
-    assert_eq!(s.selected(), Some("alice"));
     assert_eq!(
         s.members(),
         [

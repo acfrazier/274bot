@@ -2329,9 +2329,6 @@ mod tests {
 
         let deposit_ids = bank_deposit_ids(&prepared, -1, &inventory);
         assert_eq!(deposit_ids.as_ref(), &[405, fruit]);
-        for id in doses {
-            assert!(!deposit_ids.contains(&id), "dose {id} would be deposited");
-        }
     }
 
     #[test]

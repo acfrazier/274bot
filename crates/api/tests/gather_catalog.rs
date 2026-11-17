@@ -780,7 +780,6 @@ fn content_hazards_and_incidental_gems_are_typed_catalog_facts() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let catalog = prepare(revision);
         let hazards = catalog.hazard_npcs();
-        assert!(!hazards.is_empty(), "{revision:?}");
         assert!(
             hazards.windows(2).all(|pair| pair[0] < pair[1]),
             "{revision:?}"

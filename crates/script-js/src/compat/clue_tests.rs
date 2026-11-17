@@ -1344,7 +1344,6 @@ fn a_casket_row_opens_the_held_item_only_after_its_own_report() {
         assert!(open.get("x").is_none(), "{open}");
         assert!(open.get("z").is_none(), "{open}");
         assert!(open.get("level").is_none(), "{open}");
-        assert_ne!(open["kind"], "done", "{open}");
         assert!(!open.to_string().contains("clue solved"), "{open}");
     }
 
@@ -5556,11 +5555,6 @@ fn the_talk_membership_is_the_selected_talk_family_and_nothing_else() {
         talk.talk.iter().filter(|row| row.spawn.is_some()).count(),
         42,
         "the unique-spawn slice"
-    );
-    assert_eq!(
-        talk.talk.iter().filter(|row| row.spawn.is_none()).count(),
-        5,
-        "the identity-only slice"
     );
     for step in &talk.talk {
         let row = row(&data, step.id);

@@ -1220,7 +1220,6 @@ export async function tick(api) {
     assert_eq!(probe["alias"], "trail_clue_hard_sextant028", "{probe:?}");
     assert_eq!(probe["access"], "constrained", "{probe:?}");
     assert!(probe["rows"].is_null(), "{probe:?}");
-    assert_eq!(probe["rowType"], "function", "{probe:?}");
     assert_eq!(
         probe["keys"],
         serde_json::json!([

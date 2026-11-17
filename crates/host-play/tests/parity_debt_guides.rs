@@ -74,15 +74,10 @@ fn desert_captain_cross_grants_only_required_ugthanki() {
         .map(|name| name.as_str().unwrap())
         .collect();
     assert_eq!(resumed_names, names);
-    let resumed_keys: Vec<_> = resumed_names
-        .iter()
-        .map(|name| table.resolve(name).unwrap())
-        .collect();
     let keys: Vec<_> = names
         .iter()
         .map(|name| table.resolve(name).unwrap())
         .collect();
-    assert_eq!(resumed_keys, keys);
     let origin = WorldTile {
         x: 3302,
         z: 3114,

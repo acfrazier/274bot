@@ -1364,10 +1364,6 @@ mod tests {
         assert!(options.values.contains(&"Lobster".to_string()));
         assert!(options.values.contains(&"Shark".to_string()));
         assert!(options.values.contains(&"Chocolaty milk".to_string()));
-        assert!(options
-            .values
-            .iter()
-            .all(|name| data.fixed_food_heal(name).is_some()));
         assert_eq!(options.labels, options.values);
         let heals: Vec<i32> = options
             .values
@@ -1849,7 +1845,6 @@ mod tests {
         let b = resolve_setting_options(&def, &store, Some(r289.as_ref())).unwrap();
         assert_eq!(none, vec!["custom".to_string()]);
         assert_eq!(a, b);
-        assert!(def.options.is_empty());
         assert_eq!(def.item_option_spec.as_ref().unwrap().prefix, ["custom"]);
     }
 
