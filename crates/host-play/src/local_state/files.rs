@@ -18,7 +18,7 @@
 //! A legacy preferences file (the first import) or a runtime settings file
 //! whose content is malformed (not JSON, or JSON that is not an object) is
 //! quarantined and a fresh document is started
-//! ([`corrupt_preferences`], [`corrupt_script_runtime_settings`]); every
+//! ([`corrupt_preferences`], [`corrupt_script_runtime_settings`]).
 //! Duplicate loadout names are refused rather than renamed apart. Preference
 //! and bank-hint documents that name a field twice in one object are refused
 //! whole rather than read keeping the last value. The legacy preferences
