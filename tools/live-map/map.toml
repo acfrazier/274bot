@@ -2082,9 +2082,9 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/nav-planner/src/map.rs", "crates/nav-planner/src/map/formats.rs", "crates/nav-planner/src/map/identity.rs", "crates/nav-planner/src/map/poi.rs", "crates/nav-planner/src/map/producer.rs"]
+globs = ["crates/nav-planner/src/map.rs", "crates/nav-planner/src/map/cache_revision.rs", "crates/nav-planner/src/map/formats.rs", "crates/nav-planner/src/map/identity.rs", "crates/nav-planner/src/map/poi.rs", "crates/nav-planner/src/map/producer.rs", "crates/nav-planner/src/map/raster.rs"]
 cells = [
-  "nav.map-contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --lib map:: -- --nocapture --test-threads=1|--locked -p nav-planner --lib map:: --",
+  "nav.map-contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p nav-planner --features api/test-support --lib map:: -- --nocapture --test-threads=1|--locked -p nav-planner --features api/test-support --lib map:: --",
 ]
 
 [[cover]]
