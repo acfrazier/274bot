@@ -121,12 +121,41 @@ def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
     return build_parser().parse_args(argv)
 
 
-def is_quest_cell(cell_name: str, cell_command: str) -> bool:
+def is_quest_cell(cell_command: str) -> bool:
     return (
-        "quester" in cell_name
-        or "QUESTER_TICK_MS" in cell_command
-        or "ENGINE_Q_DIR" in cell_command
+        "ENGINE_Q_DIR" in cell_command
+        or re.search(rf"\bWORLD_GAME_PORT={DEFAULT_QUEST_GAME_PORT}\b", cell_command)
+        is not None
+        or re.search(rf"\bWORLD_HTTP_PORT={DEFAULT_QUEST_HTTP_PORT}\b", cell_command)
+        is not None
+        or re.search(rf"--port[ =]{DEFAULT_QUEST_GAME_PORT}\b", cell_command)
+        is not None
+        or re.search(rf"--http-port[ =]{DEFAULT_QUEST_HTTP_PORT}\b", cell_command)
+        is not None
     )
+
+
+def _explicit_command_port(command: str, variable: str, flag: str) -> int | None:
+    match = re.search(rf"\b{variable}=(\d+)\b", command)
+    if match is None:
+        match = re.search(rf"--{flag}[ =](\d+)\b", command)
+    return _port(match.group(1), variable) if match is not None else None
+
+
+def cell_engine_ports(
+    cell_command: str,
+    engine_game_port: int,
+    engine_http_port: int,
+    quest_game_port: int,
+    quest_http_port: int,
+) -> tuple[bool, int, int]:
+    quest = is_quest_cell(cell_command)
+    game_port = quest_game_port if quest else engine_game_port
+    http_port = quest_http_port if quest else engine_http_port
+    if quest:
+        game_port = _explicit_command_port(cell_command, "WORLD_GAME_PORT", "port") or game_port
+        http_port = _explicit_command_port(cell_command, "WORLD_HTTP_PORT", "http-port") or http_port
+    return quest, game_port, http_port
 
 
 def reject_tick_override(cell_name: str, cell_command: str) -> None:
@@ -400,9 +429,13 @@ def build_cell_env(
     partner_prefix: str | None = None,
 ) -> tuple[dict[str, str], str]:
     reject_tick_override(cell_name, cell_command)
-    quest = is_quest_cell(cell_name, cell_command)
-    game_port = quest_game_port if quest else engine_game_port
-    http_port = quest_http_port if quest else engine_http_port
+    quest, game_port, http_port = cell_engine_ports(
+        cell_command,
+        engine_game_port,
+        engine_http_port,
+        quest_game_port,
+        quest_http_port,
+    )
     command = apply_ports(cell_command, game_port, http_port)
     env = dict(os.environ)
     env.pop("QUESTER_TICK_MS", None)
@@ -574,9 +607,6 @@ def run_all(
     results: list[RunResult] = []
     run_fn = runner or run_one_cell_by_args
     for cell in cells:
-        quest = is_quest_cell(cell.name, cell.command)
-        game_port = quest_game_port if quest else engine_game_port
-        http_port = quest_http_port if quest else engine_http_port
         cell_dir = evidence_root / cell.name
         cache_dir = cell_dir / "cache-289"
         client_dir = cell_dir / "client-unpack"
@@ -879,13 +909,10 @@ class RunCellsTests(unittest.TestCase):
         self.assertNotIn("QUESTER_TICK_MS", env)
         self.assertNotIn("QUESTER_SPEED_RESTORE", env)
 
-    def test_quest_cells_use_quest_ports_and_speed_restore(self) -> None:
+    def test_engine_q_marker_uses_quest_ports_without_cell_id(self) -> None:
         env, command = build_cell_env(
-            cell_name="host.quester-path-engine-q",
-            cell_command=(
-                "LIVE=1 WORLD_GAME_PORT=44694 "
-                "WORLD_HTTP_PORT=1180 ${ISOHOME:?} cargo test -- --port 44694 --http-port 1180"
-            ),
+            cell_name="host.not-a-quester-name",
+            cell_command="LIVE=1 ENGINE_Q_DIR=${ENGINE_Q_DIR:?} ${ISOHOME:?} cargo test",
             prefix="abc",
             live_evidence_dir="/e/cell/pass1/evidence",
             bot_cache_dir="/e/cell/cache-289",
@@ -903,10 +930,60 @@ class RunCellsTests(unittest.TestCase):
         self.assertEqual(env["WORLD_HTTP_PORT"], "3180")
         self.assertEqual(env["QUESTER_SPEED_RESTORE"], "0")
         self.assertNotIn("QUESTER_TICK_MS", env)
-        self.assertIn("47694", command)
-        self.assertIn("3180", command)
         self.assertNotIn("44594", command)
         self.assertNotIn("44694", command)
+
+    def test_prereq_engine_q_ports_override_runner_ports(self) -> None:
+        env, command = build_cell_env(
+            cell_name="host.prereq-phoenix-kitchen",
+            cell_command=(
+                "LIVE=1 WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 "
+                "${ISOHOME:?} cargo test -- --port 44694 --http-port 1180"
+            ),
+            prefix="abc",
+            live_evidence_dir="/e/cell/pass1/evidence",
+            bot_cache_dir="/e/cell/cache-289",
+            client_unpack_dir="/e/cell/client-unpack",
+            bot_unpack_dir="/e/cell/client-unpack",
+            panel_home="/e/cell/pass1/panel-home",
+            repo="/tmp/repo",
+            engine_game_port=47594,
+            engine_http_port=3080,
+            quest_game_port=47694,
+            quest_http_port=3180,
+            defaults={},
+        )
+        self.assertEqual(env["WORLD_GAME_PORT"], "44694")
+        self.assertEqual(env["WORLD_HTTP_PORT"], "1180")
+        self.assertIn("WORLD_GAME_PORT=44694", command)
+        self.assertIn("WORLD_HTTP_PORT=1180", command)
+        self.assertIn("--port 44694", command)
+        self.assertIn("--http-port 1180", command)
+        self.assertNotIn("47594", command)
+        self.assertNotIn("3080", command)
+        self.assertNotIn("47694", command)
+        self.assertNotIn("3180", command)
+
+    def test_quester_in_cell_name_does_not_select_engine_q(self) -> None:
+        env, _ = build_cell_env(
+            cell_name="host.quester-name-engine-a",
+            cell_command="LIVE=1 ${ISOHOME:?} cargo test",
+            prefix="abc",
+            live_evidence_dir="/e/cell/pass1/evidence",
+            bot_cache_dir="/e/cell/cache-289",
+            client_unpack_dir="/e/cell/client-unpack",
+            bot_unpack_dir="/e/cell/client-unpack",
+            panel_home="/e/cell/pass1/panel-home",
+            repo="/tmp/repo",
+            engine_game_port=47594,
+            engine_http_port=3080,
+            quest_game_port=47694,
+            quest_http_port=3180,
+            defaults={},
+        )
+        self.assertEqual(env["WORLD_GAME_PORT"], "47594")
+        self.assertEqual(env["WORLD_HTTP_PORT"], "3080")
+        self.assertNotIn("QUESTER_SPEED_RESTORE", env)
 
     def test_never_stop_loop_continues_after_failure(self) -> None:
         cells = [
