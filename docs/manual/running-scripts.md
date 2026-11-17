@@ -100,6 +100,9 @@ while that script walks or acts, for example when it fights or gathers. Click
 of the script, but some scripts that act in place carry on. The
 [known issues](../known-issues.toml) name the scripts this affects.
 
+To take over by hand, click **Pause** before you move the bot, then click
+**Resume**.
+
 Find the setting in the **Nav config** window of the panel. In the terminal app,
 press `o` on the Overview screen to open the settings.
 
