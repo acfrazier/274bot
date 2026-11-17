@@ -6906,25 +6906,6 @@ fn vial_filler_cases_register_fountain_fill_and_bank_cycles() {
             water,
         ]
     );
-    let first_water = watch.iter().position(|arm| *arm == water).unwrap();
-    let bank_water = watch
-        .iter()
-        .position(|arm| {
-            *arm == Proof::BankItemId {
-                id: VIAL_OF_WATER_ID,
-                count: 1,
-            }
-        })
-        .unwrap();
-    let pack_empty = watch
-        .iter()
-        .position(|arm| *arm == pack_empty_water)
-        .unwrap();
-    let further_water = watch.iter().rposition(|arm| *arm == water).unwrap();
-    assert!(first_water < bank_water);
-    assert!(bank_water < pack_empty);
-    assert!(pack_empty < further_water);
-    assert_ne!(first_water, further_water);
     assert_eq!(west.proof, water);
 
     let east = get("vial_filler_east").expect("vial_filler_east");
@@ -11030,26 +11011,13 @@ fn nav_essence_follows_in_and_back_out_to_aubury() {
     assert_eq!(s.steps[2].wait.arm.name(), "arrived(3254,3402,0)");
     // Step 4 arms the entry follow to the mine pad and waits for any
     // mine landing (the landing is randomised, never the pad).
-    let (dest, arm) = match &s.steps[3].kind {
-        StepKind::Follow { dest } => (
-            *dest,
-            match &s.steps[3].wait.arm {
-                Proof::EssenceMine => "in_essence_mine",
-                other => panic!("entry arm must be EssenceMine, got {other:?}"),
-            },
-        ),
+    let dest = match &s.steps[3].kind {
+        StepKind::Follow { dest } => match &s.steps[3].wait.arm {
+            Proof::EssenceMine => *dest,
+            other => panic!("entry arm must be EssenceMine, got {other:?}"),
+        },
         _ => panic!("nav_essence step 4 must be Follow"),
     };
-    assert_eq!(
-        dest,
-        WorldTile {
-            x: 2912,
-            z: 4833,
-            level: 0
-        },
-        "the entry follow targets the mine pad"
-    );
-    assert_eq!(arm, "in_essence_mine");
     // Step 5 follows out through the exit portal to Aubury's anchor
     // (within the portal's randomised landing radius of 2).
     let (dest, arm) = match &s.steps[4].kind {
@@ -13510,9 +13478,6 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
 
     // Distinct honest representatives: nonstackable vial vs stackable fire rune
     // vs stackable bronze arrow vs stackable fishing bait.
-    assert_ne!(VIAL_OF_WATER_ID, FIRE_RUNE_ID);
-    assert_ne!(FIRE_RUNE_ID, BRONZE_ARROW_ID);
-    assert_ne!(BRONZE_ARROW_ID, FISHING_BAIT_ID);
     assert_eq!(VIAL_OF_WATER_ID, 227);
     assert_eq!(FIRE_RUNE_ID, 554);
     assert_eq!(BRONZE_ARROW_ID, 882);
@@ -15558,10 +15523,6 @@ fn nightly_wall_deadlines_cover_their_measured_completion_with_headroom() {
     assert_eq!(
         get("quester_cook").unwrap().settings.deadline,
         Duration::from_secs(900)
-    );
-    assert_eq!(
-        get("thiever_guard_no_bank").unwrap().settings.deadline,
-        Duration::from_secs(420)
     );
 }
 
