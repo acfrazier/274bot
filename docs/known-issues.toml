@@ -334,11 +334,20 @@ text = """With "Pause script on manual movement" off, a script that acts in plac
   can continue after you move the bot yourself. This affects rs2b0t scripts
   without a Gather or Combat session and built-in scripts other than Quester
   fights. With the setting on, any running rs2b0t script pauses. A built-in
-  script pauses while it walks or acts, but not between actions."""
+  script pauses while it walks or acts, but not between actions. To take over
+  by hand, click **Pause** before you move the bot, then click **Resume**."""
 first = "0.2.6"
-target = "0.3.0"
+target = "none"
 severity = "medium"
-owner = "T2.rest native family rewrites"
+owner = "No planned fix. Pause is manual takeover."
+
+[[item.earlier]]
+until = "0.3.0"
+text = """With "Pause script on manual movement" off, a script that acts in place
+  can continue after you move the bot yourself. This affects rs2b0t scripts
+  without a Gather or Combat session and built-in scripts other than Quester
+  fights. With the setting on, any running rs2b0t script pauses. A built-in
+  script pauses while it walks or acts, but not between actions."""
 
 [[item]]
 id = "flaxrunner-spinner-bank-checks"
