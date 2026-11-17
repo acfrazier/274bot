@@ -640,7 +640,12 @@ fn hans_patrol_points(source: &str) -> Result<Vec<(WorldTile, u32)>, String> {
 
 // Npc::patrolMode, Npc.ts:760-765: increment before testing this threshold.
 fn hans_stuck_ticks(source: &str) -> Result<u32, String> {
-    source
+    let patrol = source
+        .split_once("private patrolMode(): void {")
+        .and_then(|(_, tail)| tail.split_once("\n    }"))
+        .map(|(body, _)| body)
+        .ok_or("selected engine has no patrol branch")?;
+    patrol
         .split_once("this.stuckCounter >= ")
         .and_then(|(_, tail)| tail.split_whitespace().next())
         .ok_or("selected engine has no patrol stuck threshold")?
@@ -652,7 +657,8 @@ fn hans_stuck_ticks(source: &str) -> Result<u32, String> {
 // engine 13108a91 and slot-9 content; r1-observation/result.json records laps
 // of 133 and 111 ticks. Each includes 31 idle ticks before a stuck teleport;
 // lap 1 also has a 23-tick partial block. Npc.ts:378-380 resets stuckCounter
-// on movement, so partial blocks can recur. Re-measure when the route changes.
+// on movement, so partial blocks can recur. Re-measure when the route or
+// engine movement behaviour changes.
 const HANS_MEASURED_MAX_LAP_TICKS: u32 = 133;
 
 fn hans_patrol_budget(stuck_ticks: u32, approach: u32) -> u32 {
@@ -1014,7 +1020,11 @@ patrol8=0_50_50_14_5,0\npatrol9=0_50_50_2_5,0\n[man]\n";
     let points = hans_patrol_points(route).unwrap();
     assert_eq!((points[1].0.x, points[1].0.z), (3202, 3232));
     assert_eq!(
-        hans_stuck_ticks("if (this.stuckCounter >= 32 || changedFloor)"),
+        hans_stuck_ticks(concat!(
+            "private patrolMode(): void {\n",
+            "        if (this.stuckCounter >= 32 || changedFloor) {}\n",
+            "    }\n",
+        )),
         Ok(32)
     );
     assert_eq!(hans_patrol_budget(32, 13), 178);
@@ -1023,6 +1033,28 @@ patrol8=0_50_50_14_5,0\npatrol9=0_50_50_2_5,0\n[man]\n";
     assert!(hans_patrol_points("[man]\n").is_err());
     assert!(hans_patrol_points("[hans]\ndefaultmode=wander\n").is_err());
     assert!(hans_patrol_points("[hans]\ndefaultmode=patrol\n").is_err());
+}
+
+#[test]
+fn hans_stuck_threshold_is_scoped_to_the_patrol_branch() {
+    let reordered = concat!(
+        "private playerEscapeMode(): void {\n",
+        "        if (this.stuckCounter >= 5 && !atMaxRangeBoth) {}\n",
+        "    }\n",
+        "    private patrolMode(): void {\n",
+        "        if (this.stuckCounter >= 32 || changedFloor) {}\n",
+        "    }\n",
+    );
+    assert_eq!(hans_stuck_ticks(reordered), Ok(32));
+    let missing_patrol_threshold = concat!(
+        "private patrolMode(): void {\n",
+        "        this.updateMovement();\n",
+        "    }\n",
+        "    private playerEscapeMode(): void {\n",
+        "        if (this.stuckCounter >= 5 && !atMaxRangeBoth) {}\n",
+        "    }\n",
+    );
+    assert!(hans_stuck_ticks(missing_patrol_threshold).is_err());
 }
 
 fn hans_target_snapshot(network_x: i32) -> GameSnapshot {
