@@ -19,8 +19,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   matching operation. Missing partner rows produce a typed fixture reason.
 - Hans interaction retries temporary absence or unreachable tiles and re-targets
   his current network tile each game tick. Its finite fixture deadline uses a
-  measured lap calibration, the selected engine's stuck threshold and the initial
-  approach distance; route changes require re-measurement.
+  measured lap calibration, the selected engine's patrol-branch stuck threshold
+  and the initial approach distance. Route or engine movement changes require
+  re-measurement.
 - Six live cells share the nightly controller's optional `NIGHTLY_QUIET_LOCK`
   lookup instead of a fixed host path. Callers must export it to arm the guards;
   current live-map routes do not.
