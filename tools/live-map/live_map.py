@@ -727,6 +727,9 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(
                 {cell.name for cell in moved_plan.cells},
                 {
+                    "client.protocol-377-wire-headless",
+                    "host.menu-377-hans-live",
+                    "host.receipt-377-client-live",
                     "host.scriptless-idle-held",
                     "host.transport-dead-server",
                     "host.transport-relog",
