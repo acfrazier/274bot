@@ -555,6 +555,7 @@ text = """The game does not say when a poison has ended. A paused script whose
   past that or gets a cure."""
 first = "0.2.9"
 target = "0.3.0"
+fixed = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
