@@ -462,7 +462,7 @@ fn run(case: Case) -> Result<(), String> {
     let mut relogin_requested = false;
     let mut last_status = None;
     let result = (|| loop {
-        if Path::new("/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock").exists() {
+        if nightly_quiet_lock_held() {
             return Err("MAC-QUIET.lock appeared".into());
         }
         if let Some(error) = play.script_last_error(&account) {
