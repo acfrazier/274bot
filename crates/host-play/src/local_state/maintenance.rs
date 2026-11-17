@@ -30,7 +30,7 @@ use super::sql::{self, Frontend, Legacy, SqlFailure};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaintenanceAction {
     /// `state preferences export --same-root`: write the latest durable
-    /// preferences as `panel-ui.json` in the same root, for 0.2.5.
+    /// preferences as `panel-ui.json` in the same root, for 0.2.9.
     ExportSameRoot,
     /// `state preferences recover --source <path>`: preserve the database
     /// set, then start a new preference history from a private, valid JSON
@@ -63,7 +63,7 @@ pub fn maintenance_help(frontend: Frontend) -> String {
          --defaults\n\nStop every 274bot process for this root first; the command refuses while \
          another new-version process uses it. The root is the one normal use resolves \
          (<home>/.274bot).\n\nexport --same-root writes the latest saved preferences as \
-         panel-ui.json in the same root, for 0.2.5. A changed file there is imported once at \
+         panel-ui.json in the same root, for 0.2.9. A changed file there is imported once at \
          the next start of this version; an unchanged one is ignored.\n\nrecover first \
          preserves the whole database set (state.sqlite3, -wal and -shm) in a private \
          state/preserved-<time> directory, then starts a new preference history: its version \
@@ -236,8 +236,8 @@ fn export(
     );
     Ok(format!(
         "Exported preferences {} to {} (export {}, sha256 {}){kept}. Stop this version before \
-         starting 0.2.5 in this home. The next start of this version imports the file once if \
-         0.2.5 changed it.",
+         starting 0.2.9 in this home. The next start of this version imports the file once if \
+         0.2.9 changed it.",
         exported.version,
         exported.path.display(),
         exported.export_id,

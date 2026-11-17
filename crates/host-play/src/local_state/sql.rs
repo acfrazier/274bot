@@ -1047,7 +1047,7 @@ impl Db {
 
     /// Bring the legacy `panel-ui.json` in, under the guard: the first
     /// import, a malformed source's defaults, or the once-only reimport of
-    /// a published export that 0.2.5 changed (plan §5.1, §5.2). An export
+    /// a published export that 0.2.9 changed (plan §5.1, §5.2). An export
     /// that was interrupted after its prepared row is resolved first, in
     /// every ledger state, so Ready never precedes its publication or its
     /// refusal. `Some` when a valid import committed and its source still
@@ -1477,7 +1477,7 @@ impl Db {
     /// its digest is the recorded one, replaces the name (a copy of an
     /// unrelated file is kept first), is synced and recorded published.
     /// Anything else refuses with the full retry command, and the old
-    /// legacy file is never taken for a 0.2.5 edit.
+    /// legacy file is never taken for a 0.2.9 edit.
     fn resolve_prepared_export(
         &mut self,
         guard: &files::WriteLock,

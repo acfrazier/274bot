@@ -3980,6 +3980,13 @@ fn commit_nav_settings(
         );
     }
 
+    // The view takes the change before the panel-owned members are saved:
+    // a save that fails at once (a refused store) then puts the saved value
+    // back, and nothing here writes over it.
+    session.route_through_zones =
+        frontend_core::WalkGlobalsView::new(after.walk_globals(), after.script_scope_notice_ack)
+            .danger_this_walk(session.route_through_zones);
+    session.ui.nav = after.clone();
     macro_rules! persist_panel_nav_member {
         ($field:ident) => {
             if before.$field != after.$field {
@@ -4007,10 +4014,6 @@ fn commit_nav_settings(
     persist_panel_nav_member!(component_flood);
     persist_panel_nav_member!(camera_follow);
 
-    session.route_through_zones =
-        frontend_core::WalkGlobalsView::new(after.walk_globals(), after.script_scope_notice_ack)
-            .danger_this_walk(session.route_through_zones);
-    session.ui.nav = after;
     match failure {
         Some(error) => Err(error),
         None => Ok(()),

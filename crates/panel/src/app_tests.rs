@@ -7453,6 +7453,58 @@ fn nav_core_edit_writes_once_and_preserves_other_members() {
     assert_eq!(receipt.version(), audits[0].version());
 }
 
+/// A panel started on refused preferences: a Nav config change that cannot
+/// be saved shows the saved value again once its save failed, for a walk
+/// grant, the manual-walk pause, the special-areas overlay and a panel-only
+/// member (docs/api/panel.md: "If the save fails, the control shows the
+/// saved value again").
+#[test]
+fn nav_edit_under_refused_preferences_shows_the_saved_values_again() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-refused");
+    let mut session = crate::session::Session::new();
+    let dir = crate::test_support::TestDir::new("panel-nav-refused");
+    let legacy = dir.join("panel-ui.json");
+    let oversize = vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1];
+    crate::test_support::write_private_fixture(&legacy, &oversize).unwrap();
+    let service = crate::test_support::scratch_service(&dir);
+    frontend_core::UiPreferences::of_service_for_test(&service)
+        .reload()
+        .expect_err("an over-size legacy file refuses the preferences");
+    session.bind_refused_preferences_for_test(service);
+    let saved = session.ui.nav.clone();
+    assert!(!saved.allow_teleports, "a refused store grants nothing");
+
+    let mut after = saved.clone();
+    after.allow_teleports = true;
+    after.pause_script_on_manual_walk_abort = !saved.pause_script_on_manual_walk_abort;
+    after.show_special_areas = !saved.show_special_areas;
+    after.hop_labels = !saved.hop_labels;
+    super::commit_nav_settings(&mut session, &saved, after)
+        .expect_err("a refused store saves nothing");
+    for _ in 0..3 {
+        session.pump_status();
+        session.poll_panel_preferences();
+        session.refresh_walk_permissions();
+    }
+    assert!(
+        !session.preferences_pending(),
+        "every refused save has ended"
+    );
+    let shown = &session.ui.nav;
+    assert_eq!(shown.allow_teleports, saved.allow_teleports);
+    assert_eq!(
+        shown.pause_script_on_manual_walk_abort,
+        saved.pause_script_on_manual_walk_abort
+    );
+    assert_eq!(shown.show_special_areas, saved.show_special_areas);
+    assert_eq!(shown.hop_labels, saved.hop_labels);
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        oversize,
+        "nothing is saved over the refused file"
+    );
+}
+
 /// At the docked Nav config width every Routing row stays inside the content
 /// region at each Danger routing level. The drop-down spans the width, so its
 /// level names never clip; the old plain button ran past the edge at "availabl".

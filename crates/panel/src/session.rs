@@ -2356,6 +2356,25 @@ impl Session {
         self.panel_preference_writes.len()
     }
 
+    /// Test seam: move the session to `service`, whose preferences are
+    /// refused at open, as a panel started on a refused store is: nothing
+    /// adopted, and the view is what startup shows for an unreadable store.
+    #[cfg(test)]
+    pub(crate) fn bind_refused_preferences_for_test(
+        &mut self,
+        service: Arc<host_play::local_state::LocalStateService>,
+    ) {
+        self.core.bind_local_state(service);
+        self.preferences = self
+            .core
+            .preferences()
+            .expect("the session's local state was bound just now");
+        assert!(!self.preferences.ready(), "the preferences are refused");
+        self.preferences_ready = false;
+        self.ui = crate::ui_state::load(&self.preferences).expect("an unreadable store loads");
+        self.refresh_walk_permissions();
+    }
+
     /// Whether a core-owned or panel-owned preference write is still pending.
     pub(crate) fn preferences_pending(&self) -> bool {
         self.core.preferences_pending() || !self.panel_preference_writes.is_empty()
@@ -2631,11 +2650,12 @@ impl Session {
     /// special-areas overlay and the manual-walk pause) take the saved value,
     /// except where the operator's own change is still pending.
     fn rebase_shared_nav_members(&mut self) {
-        let Ok(document) = self.preferences.document() else {
-            return;
+        let saved = match self.preferences.document() {
+            Ok(document) => crate::ui_state::load_snapshot(&self.preferences.path(), &document),
+            Err(_) if !self.preferences_ready => self.unadopted_panel_state(),
+            Err(_) => return,
         };
-
-        let saved = match crate::ui_state::load_snapshot(&self.preferences.path(), &document) {
+        let saved = match saved {
             Ok(saved) => saved.nav,
             Err(error) => {
                 self.report_ui_state_error(error);
@@ -2651,6 +2671,16 @@ impl Session {
         {
             self.ui.nav.pause_script_on_manual_walk_abort = saved.pause_script_on_manual_walk_abort;
         }
+    }
+
+    /// The saved panel preferences while no durable document was adopted
+    /// (the store is not read yet, or it is refused): what an unreadable
+    /// store loads, the defaults this panel started with, which are the
+    /// values in effect.
+    fn unadopted_panel_state(
+        &self,
+    ) -> Result<crate::ui_state::PanelUiState, crate::ui_state::PanelUiStateError> {
+        crate::ui_state::load(&self.preferences)
     }
 
     fn report_ui_state_error(&mut self, error: crate::ui_state::PanelUiStateError) {
@@ -2785,33 +2815,45 @@ impl Session {
         self.rebase_panel_members();
     }
 
-    /// The panel view after a request settled: the latest durable document
-    /// with the previews of the requests still pending laid over it
-    /// ([`crate::ui_state::rebased`]). A run that saves nothing, and a
-    /// panel whose first snapshot has not arrived, have nothing to rebase.
+    /// The panel view after a request settled: the saved panel preferences
+    /// with the previews of the requests still pending laid over them
+    /// ([`crate::ui_state::rebased`]). The saved preferences are the latest
+    /// durable document once one is adopted, and before that (the store is
+    /// not read yet, or it is refused) what an unreadable store loads, so a
+    /// failed save shows the value in effect again. A run that saves
+    /// nothing has nothing to rebase; a first snapshot that arrived is
+    /// adopted next, not rebased onto.
     fn rebase_panel_members(&mut self) {
-        if !self.persist_ui || !self.preferences_ready {
+        if !self.persist_ui {
             return;
         }
-        let Ok(document) = self.preferences.document() else {
-            return;
+        let document = match self.preferences.document() {
+            Ok(document) if self.preferences_ready => Some(document),
+            Err(_) if !self.preferences_ready => None,
+            _ => return,
         };
-        let rebased = match crate::ui_state::rebased(
-            &self.preferences.path(),
-            &self.ui,
-            &document,
-            self.pending_panel_members
-                .iter()
-                .map(|member| (member.path.as_slice(), &member.value)),
-            self.core.selected().is_some(),
-        ) {
-            Ok(rebased) => rebased,
+        let saved = match &document {
+            Some(document) => crate::ui_state::load_snapshot(&self.preferences.path(), document),
+            None => self.unadopted_panel_state(),
+        };
+        let saved = match saved {
+            Ok(saved) => saved,
             Err(error) => {
                 self.report_ui_state_error(error);
                 return;
             }
         };
-        self.ui = rebased;
+        self.ui = crate::ui_state::rebased(
+            &self.ui,
+            saved,
+            self.pending_panel_members
+                .iter()
+                .map(|member| (member.path.as_slice(), &member.value)),
+            self.core.selected().is_some(),
+        );
+        let Some(document) = document else {
+            return;
+        };
         // The server revision the next session binds with follows a durable
         // value another process saved (while this panel has no choice of its
         // own pending and no profile is bound).

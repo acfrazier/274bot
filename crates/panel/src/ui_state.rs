@@ -342,26 +342,26 @@ pub(crate) fn is_launch_choice(path: &[String]) -> bool {
     )
 }
 
-/// The panel view of the preferences after a change: the latest durable
-/// `document` with the previews of the requests still `pending` laid over
-/// it (oldest first, so the newest of a member wins). What the panel does
+/// The panel view after a change: the `saved` panel preferences (the latest
+/// durable document, or what an unreadable store loads before any was
+/// adopted) with the previews of the requests still `pending` laid over
+/// them (oldest first, so the newest of a member wins). What the panel does
 /// not read from the document stays as `current` has it: the saved choices
 /// the core owns (draw switches, bake choice, notices, session file, walk
 /// grants, the special-areas overlay and the manual-walk pause) and the
 /// server revision (its owner follows it). The remembered raster and memory
-/// mode follow the document while no bot is focused (`bot_focused` false);
-/// with a bot focused the controls show that bot's own saved modes, so they
-/// stay. A member this does not name follows the document, so a new
-/// panel-owned member is rebased by default.
+/// mode follow the saved value while no bot is focused (`bot_focused`
+/// false); with a bot focused the controls show that bot's own saved modes,
+/// so they stay. A member this does not name follows the saved value, so a
+/// new panel-owned member is rebased by default.
 pub(crate) fn rebased<'a>(
-    path: &Path,
     current: &PanelUiState,
-    document: &Map<String, Value>,
+    saved: PanelUiState,
     pending: impl IntoIterator<Item = (&'a [String], &'a Option<Value>)>,
     bot_focused: bool,
-) -> Result<PanelUiState, PanelUiStateError> {
+) -> PanelUiState {
     let next = apply_pending_members(
-        load_snapshot(path, document)?,
+        saved,
         pending
             .into_iter()
             .filter(|(path, _)| !is_launch_choice(path)),
@@ -384,7 +384,7 @@ pub(crate) fn rebased<'a>(
     } else {
         (next.raster, next.lowmem)
     };
-    Ok(PanelUiState {
+    PanelUiState {
         capture: current.capture,
         sidecar_50: current.sidecar_50,
         focused_50: current.focused_50,
@@ -397,7 +397,7 @@ pub(crate) fn rebased<'a>(
         server_revision: current.server_revision,
         nav,
         ..next
-    })
+    }
 }
 
 fn apply_json_member(root: &mut Map<String, Value>, path: &[String], value: &Option<Value>) {

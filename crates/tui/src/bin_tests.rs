@@ -6113,6 +6113,86 @@ fn settings_feedback_tui_row_failure_expires_by_itself() {
     assert!(words.contains("map bake: ask"), "{words}");
 }
 
+/// Preferences refused from the start (never adopted): a refused walk
+/// permission save shows the saved, fail-closed value again with its reason,
+/// after the reason expires, and when the popup opens again
+/// (docs/api/panel.md: "If the save fails, the control shows the saved
+/// value again").
+#[test]
+fn settings_feedback_tui_refused_preferences_show_the_saved_grant_again() {
+    use crossterm::event::KeyCode;
+    use frontend_core::{NavPreference, Setting};
+    let iso = IsolatedStores::enter("tui-s1-refused-grant");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    let legacy = session.bind_refused_preferences(&iso.dir().join("refused-state"));
+    let refused_bytes = std::fs::read(&legacy).unwrap();
+    app.restore_preferences(session.preferences.share());
+    assert!(!session.preferences.ready());
+    open_settings(&mut session, &mut app);
+    app.settings_state.row = 5;
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    settle_preferences(&mut session, &mut app);
+    let setting = Setting::Nav(NavPreference::AllowTeleports);
+    assert!(
+        session.core.setting_failure(setting).is_some(),
+        "the refused save fails"
+    );
+    assert!(!app.nav.allow_teleports(), "the draft is the saved grant");
+    // 120x40: at 80x24 the refusal text above the rows scrolls them away.
+    let words = screen_words(&mut app, 120, 40);
+    assert!(
+        words.contains("allow teleports: false") && words.contains("Not saved:"),
+        "the saved grant shows with the reason: {words}"
+    );
+
+    // A draft beside the walk grants (the map-bake choice) shows its
+    // saved value again too.
+    app.settings_state.row = 12;
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    settle_preferences(&mut session, &mut app);
+    assert!(
+        session.core.setting_failure(Setting::MapBake).is_some(),
+        "the refused save fails"
+    );
+    assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Ask);
+    let words = screen_words(&mut app, 120, 40);
+    assert!(words.contains("map bake: ask"), "{words}");
+    app.settings_state.row = 5;
+
+    // The reason expires; the row still shows the saved grant.
+    let after = Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT;
+    {
+        let (core, mut surface) = session.core_and_surface_for_preferences(&mut app);
+        core.poll_preferences_at(&mut surface, after);
+    }
+    session.project_setting_feedback(&mut app);
+    session.pump(&mut app);
+    let words = screen_words(&mut app, 120, 40);
+    assert!(!words.contains("Not saved:"), "{words}");
+    assert!(
+        words.contains("allow teleports: false") && !words.contains("allow teleports: true"),
+        "the saved grant shows after the reason expires: {words}"
+    );
+
+    // Reopened, the popup shows the saved grant too.
+    settings_press(&mut session, &mut app, KeyCode::Esc);
+    session.pump(&mut app);
+    assert!(!app.settings_state.open, "Esc closes the popup");
+    open_settings(&mut session, &mut app);
+    let words = screen_words(&mut app, 120, 40);
+    assert!(
+        words.contains("allow teleports: false") && !words.contains("allow teleports: true"),
+        "the reopened popup shows the saved grant: {words}"
+    );
+    assert!(!app.nav.allow_teleports());
+    assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Ask);
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        refused_bytes,
+        "nothing is saved over the refused file"
+    );
+}
+
 /// A cold TUI (preferences not yet read) adopts every saved choice when the
 /// read is released, and writes no default over the file meanwhile.
 #[test]

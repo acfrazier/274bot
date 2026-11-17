@@ -115,11 +115,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   one home. A save no longer rewrites a JSON file: each save is one database
   commit at a new version, and the log keeps one line per save that names what
   changed.
-- Before running 0.2.5 in the same home, stop all 274bot processes, then run
+- Before running 0.2.9 in the same home, stop all 274bot processes, then run
   `panel-play state preferences export --same-root` or
-  `tui-play state preferences export --same-root`. Without the export, 0.2.5
+  `tui-play state preferences export --same-root`. Without the export, 0.2.9
   shows default preferences, because the import renamed `panel-ui.json`. Stop
-  0.2.5 before you start this version again: it imports a changed exported file
+  0.2.9 before you start this version again: it imports a changed exported file
   once; an unchanged one does not replace the saved preferences. If a stop or
   crash interrupted the export, the next start of this version completes it
   from its staged file, or refuses with the command to run again. A
@@ -190,8 +190,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   both user ids and says that a mode change does not fix ownership. While the
   preferences stay refused, the panel's Nav config and General config and the
   terminal app's settings popup show the whole reason and what to do, instead
-  of "Loading preferences…", and a setting you change shows the same reason
-  beside it. The panel banner keeps the refusal when a profile loads.
+  of "Loading preferences…", and a setting you change shows its saved value
+  again, with the same reason beside it. The panel banner keeps the refusal
+  when a profile loads.
 
 ### Scripts
 

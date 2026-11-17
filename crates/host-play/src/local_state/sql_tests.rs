@@ -1253,7 +1253,7 @@ fn same_root_export_is_ignored_unchanged_and_reimported_once_when_changed() {
     drop(preferences);
     drop(service);
     run_preferences_maintenance(&root, Frontend::Tui, &MaintenanceAction::ExportSameRoot).unwrap();
-    // The file-only reader and writer of 0.2.5.
+    // The file-only reader and writer of 0.2.9.
     let old_read = || -> serde_json::Value {
         serde_json::from_str(&vault::read_private_file(&root.preferences_file(), 1 << 20).unwrap())
             .unwrap()
@@ -1263,7 +1263,7 @@ fn same_root_export_is_ignored_unchanged_and_reimported_once_when_changed() {
     let unchanged = open(&scratch);
     assert_eq!(ready(&unchanged.preferences()).version(), saved);
     drop(unchanged);
-    // 0.2.5 changes the file: imported once as the latest intent.
+    // 0.2.9 changes the file: imported once as the latest intent.
     let mut changed = old_read();
     changed["last_focus"] = json!("frank");
     vault::write_private_file(
@@ -1718,7 +1718,7 @@ fn crash_export_at(root: &StateRoot, point: &str) {
 /// Plan §5.2, §5.4: an export interrupted before its publication, after
 /// its rename, or before its published marker is completed by the next
 /// start from its export ID and verified digest: never mistaken for a
-/// 0.2.5 edit, never imported, and an unrelated file at the name is kept.
+/// 0.2.9 edit, never imported, and an unrelated file at the name is kept.
 #[test]
 fn an_interrupted_export_completes_from_its_staged_bytes_at_the_next_start() {
     crate::test_process::isolate_state_test!(
@@ -1758,7 +1758,7 @@ fn an_interrupted_export_completes_from_its_staged_bytes_at_the_next_start() {
         }
         drop(service);
         // The completed export is an ordinary published one: unchanged
-        // bytes are ignored, and a 0.2.5 edit imports once.
+        // bytes are ignored, and a 0.2.9 edit imports once.
         assert_eq!(
             ready(&open(&scratch).preferences()).version().get(),
             version,
