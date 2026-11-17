@@ -17,6 +17,7 @@
 //! headed, the `run_with_io` hook headless), so no thread sleeps inside the
 //! shared layer.
 
+pub mod actor;
 mod catalog;
 pub mod evidence;
 pub mod fixture;
@@ -615,6 +616,9 @@ pub enum StepKind {
     /// Read the current menu's typed operation and target entries while this
     /// step is armed. It accepts an immutable client view and sends nothing.
     ObserveMenu,
+    /// Sample only the selected actor's immutable native view. Sends nothing.
+    /// Pair the wait arm with a top-level actor proof for the same selector.
+    ObserveActor { actor: api::snapshot::ActorSelector },
     /// Begin a named interval over existing read-only combat, HP and target views.
     /// Transit outside an interval is disclosed but does not invalidate the run.
     /// A death label exempts ALL combat only if HP zero is observed before End.

@@ -15,16 +15,16 @@ const CRATE_TILE: (i32, i32, i32) = (3380, 3268, 0);
 // Outside the fighting rings, inside the selected Duel Arena challenge zone.
 const START_TILES: [(i32, i32, i32); 2] = [(3383, 3269, 0), (3383, 3270, 0)];
 
-struct Peer {
-    name: String,
-    client: Client,
-    snapshot: GameSnapshot,
+pub(super) struct Peer {
+    pub(super) name: String,
+    pub(super) client: Client,
+    pub(super) snapshot: GameSnapshot,
     pump: Pump,
-    renderer: Renderer,
+    pub(super) renderer: Renderer,
 }
 
 impl Peer {
-    fn new(bound: &Bound377, name: String, offset: i32) -> Result<Self, String> {
+    pub(super) fn new(bound: &Bound377, name: String, offset: i32) -> Result<Self, String> {
         let mut client = bound.template.prepare_client(fresh_uid(offset), false)?;
         client.set_draw(false);
         client.maininit();
@@ -44,7 +44,7 @@ impl Peer {
         })
     }
 
-    fn login(&mut self) -> Result<(), String> {
+    pub(super) fn login(&mut self) -> Result<(), String> {
         if interact::login(
             &mut self.client,
             &self.name,
@@ -60,7 +60,7 @@ impl Peer {
         }
     }
 
-    fn tick(&mut self) {
+    pub(super) fn tick(&mut self) {
         self.client.mainloop();
         host::publish_snapshot(
             &mut self.snapshot,
@@ -75,7 +75,7 @@ impl Peer {
         self.client.set_draw(false);
     }
 
-    fn state(&self) -> Value {
+    pub(super) fn state(&self) -> Value {
         json!({
             "account":self.name,
             "tile":self.snapshot.tile(),
@@ -96,7 +96,7 @@ impl Peer {
         })
     }
 
-    fn player_slot(&self, name: &str) -> Option<usize> {
+    pub(super) fn player_slot(&self, name: &str) -> Option<usize> {
         let userhash = JString::to_userhash(name);
         self.client.players.iter().position(|player| {
             player
@@ -252,7 +252,7 @@ fn raw_row(client: &Client, index: usize) -> Value {
     json!({"index":index,"action":client.menu_action[index],"params":[client.menu_param_a[index],client.menu_param_b[index],client.menu_param_c[index]],"option":client.menu_option[index]})
 }
 
-fn wait_pair(
+pub(super) fn wait_pair(
     peers: &mut [Peer; 2],
     phase: &str,
     mut ready: impl FnMut(&mut [Peer; 2]) -> bool,

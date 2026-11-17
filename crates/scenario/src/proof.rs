@@ -122,6 +122,26 @@ pub enum Proof {
         operation: MenuOperation,
         target: MenuTargetSelector,
     },
+    /// The selected actor has active overhead text with these native style codes.
+    /// Requires a matching `ObserveActor`; a bare snapshot check fails closed.
+    ActorChatStyle {
+        actor: api::snapshot::ActorSelector,
+        colour: i32,
+        effect: i32,
+    },
+    /// The selected actor currently displays this exact overhead text.
+    /// Requires a matching `ObserveActor`, not a chat-ring message.
+    OverheadText {
+        actor: api::snapshot::ActorSelector,
+        text: &'static str,
+    },
+    /// Continuous observation saw this text with positive remaining cycles,
+    /// a decreasing timer, and then no text with timer zero on the same actor
+    /// and session. Disappearance, replacement, and session changes do not pass.
+    OverheadTextLifetime {
+        actor: api::snapshot::ActorSelector,
+        text: &'static str,
+    },
     /// `arrived_ring(x, z, level, min..=max)`: on the level, Chebyshev
     /// `min..=max` from the tile — where a File card's own walk from a
     /// known Start tile ends when it picks a destination by distance.
@@ -487,6 +507,13 @@ impl Proof {
             } => format!("visited_within({min_x}..={max_x},{min_z}..={max_z},{level})"),
             Proof::MenuHasEntry { operation, target } => {
                 format!("menu_has_entry({operation:?},{target:?})")
+            }
+            Proof::ActorChatStyle { actor, colour, effect } => {
+                format!("actor_chat_style({actor:?},{colour},{effect})")
+            }
+            Proof::OverheadText { actor, text } => format!("overhead_text({actor:?},{text:?})"),
+            Proof::OverheadTextLifetime { actor, text } => {
+                format!("overhead_text_lifetime({actor:?},{text:?})")
             }
             Proof::ArrivedRing {
                 x,
@@ -1079,7 +1106,10 @@ impl Proof {
                     .is_some_and(|loc| loc_action_matches(loc, action));
                 has == *present
             }
-            Proof::MenuHasEntry { .. } => false,
+            Proof::MenuHasEntry { .. }
+            | Proof::ActorChatStyle { .. }
+            | Proof::OverheadText { .. }
+            | Proof::OverheadTextLifetime { .. } => false,
             Proof::LoggedOut => !snap.ingame(),
             Proof::IngameScene2 => snap.ingame() && snap.scene_state() == 2,
             Proof::RenderViewReady {
