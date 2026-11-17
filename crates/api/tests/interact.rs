@@ -2364,7 +2364,6 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
             SendReason::AlreadyIngame => "AlreadyIngame",
             SendReason::DriverRejected => "DriverRejected",
         };
-        assert!(!label.is_empty());
     }
     let distinct = reasons.iter().map(discriminant).collect::<HashSet<_>>();
     assert_eq!(
