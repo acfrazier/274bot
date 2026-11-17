@@ -306,6 +306,16 @@ class FixedTest(Fixture):
         self.assertFalse(
             known_issues.applies(by_id["beta-crash"], "1.1.1", self.order))
 
+    def test_fixed_release_can_match_the_item_target(self):
+        text = FIXED_LEDGER.replace(
+            'target = "1.1.0"', 'target = "1.2.0"').replace(
+                'fixed = "1.1.0"', 'fixed = "1.2.0"')
+        self.ledger.write_text(text, encoding="utf-8")
+        items = known_issues.load_ledger(self.ledger, self.order)
+        item = next(item for item in items if item["id"] == "beta-crash")
+        self.assertTrue(known_issues.applies(item, "1.1.0", self.order))
+        self.assertFalse(known_issues.applies(item, "1.2.0", self.order))
+
     def test_unknown_fixed_rejected(self):
         text = FIXED_LEDGER.replace('fixed = "1.1.0"', 'fixed = "9.9.9"')
         self.ledger.write_text(text, encoding="utf-8")
@@ -330,6 +340,59 @@ class FixedTest(Fixture):
         self.ledger.write_text(text, encoding="utf-8")
         with self.assertRaises(ValueError):
             known_issues.load_ledger(self.ledger, self.order)
+
+
+CLOSED_LEDGER = """\
+[[item]]
+id = "intended-behavior"
+kind = "known-issue"
+area = "Scripts"
+text = "A documented behavior."
+first = "1.0.0"
+target = "none"
+severity = "low"
+owner = "script behavior"
+closed = "1.2.0"
+closed_reason = "by-design"
+"""
+
+
+class ClosedTest(Fixture):
+    def setUp(self):
+        super().setUp()
+        self.ledger.write_text(CLOSED_LEDGER, encoding="utf-8")
+        self.items = known_issues.load_ledger(self.ledger, self.order)
+
+    def test_closed_item_renders_before_but_not_at_closure(self):
+        item = self.items[0]
+        self.assertTrue(known_issues.applies(item, "1.1.0", self.order))
+        self.assertFalse(known_issues.applies(item, "1.2.0", self.order))
+        before = self.render("1.1.0")
+        after = self.render("1.2.0")
+        self.assertIn("documented behavior", before)
+        self.assertEqual(after, "")
+
+    def test_closed_item_keeps_published_check(self):
+        self.write_section("1.1.0", self.render("1.1.0"))
+        self.assertEqual(self.check("1.1.0"), [])
+
+    def test_invalid_closure_metadata_is_rejected(self):
+        invalid_ledgers = (
+            CLOSED_LEDGER.replace('closed = "1.2.0"\n', ""),
+            CLOSED_LEDGER.replace('closed_reason = "by-design"\n', ""),
+            CLOSED_LEDGER.replace(
+                'closed_reason = "by-design"',
+                'closed_reason = "fixed"'),
+            CLOSED_LEDGER.replace('closed = "1.2.0"', 'closed = "1.0.0"'),
+            CLOSED_LEDGER.replace(
+                'target = "none"',
+                'target = "1.1.0"\nfixed = "1.1.0"'),
+        )
+        for text in invalid_ledgers:
+            with self.subTest(text=text):
+                self.ledger.write_text(text, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    known_issues.load_ledger(self.ledger, self.order)
 
 
 RELEASE_CHANGELOG = """# Changelog
@@ -629,6 +692,18 @@ class NextReleaseTest(unittest.TestCase):
     def test_longer_chain(self):
         self.assertEqual(
             known_issues.next_release(["1.0.0", "1.0.1", "1.1.0"]), "1.1.1")
+
+    def test_changelog_releases_skips_bracketed_unreleased(self):
+        with tempfile.TemporaryDirectory() as directory:
+            changelog = Path(directory) / "CHANGELOG.md"
+            changelog.write_text(
+                "## [Unreleased]\n"
+                "## [1.1.0] — Test\n"
+                "## [1.0.0] — Test\n",
+                encoding="utf-8")
+            self.assertEqual(
+                known_issues.changelog_releases(changelog),
+                ["1.0.0", "1.1.0"])
 
     def test_no_headings(self):
         with self.assertRaises(ValueError):

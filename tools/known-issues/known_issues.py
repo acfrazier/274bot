@@ -3,16 +3,19 @@
 
 The ledger lives in ``docs/known-issues.toml`` (one ``[[item]]`` table per
 item). An item is open at release X when its ``listed`` release (default
-``first``) is not newer than X and its ``fixed`` release (when set) is newer
-than X. ``first`` is the first affected release, or the release under
-development when no shipped release has the problem; ``listed`` differs only
-when the item was found after ``first`` had shipped. The commit that
-fixes an item sets ``fixed`` to the release carrying the fix; items are never
-deleted, so checks of already published releases keep passing. For the same
-reason, rewording an item that a published release lists keeps the old text in
-an ``[[item.earlier]]`` table whose ``until`` is the first release with the new
-wording. Never edit the ``### Known issues`` / ``### Not in this release``
-blocks in ``CHANGELOG.md`` by hand; regenerate them instead:
+``first``) is not newer than X and neither ``fixed`` nor ``closed`` is at or
+before X. ``fixed`` records a real fix; ``closed`` and ``closed_reason`` remove
+an item from later release notes without claiming it was fixed. Valid closure
+reasons are ``by-design``, ``upstream``, ``internal`` and ``not-promised``.
+``first`` is the first affected release, or the release under development
+when no shipped release has the problem; ``listed`` differs only when the
+item was found after ``first`` had shipped. The commit that fixes an item
+sets ``fixed`` to the release carrying the fix. Never delete items, so checks
+of published releases keep passing. Rewording a published item keeps its old
+text in an ``[[item.earlier]]`` table whose ``until`` is the first release
+with the new wording. Never edit the ``### Known issues`` /
+``### Not in this release`` blocks in ``CHANGELOG.md`` by hand; regenerate
+them instead:
 
     python3 tools/known-issues/known_issues.py render --release 0.2.9
     python3 tools/known-issues/known_issues.py check --release 0.2.9
@@ -53,6 +56,7 @@ NOT_IN_RELEASE = "not-in-release"
 DEFERRED = "deferred"
 KINDS = (NOT_IN_RELEASE, KNOWN_ISSUE, DEFERRED)
 SEVERITIES = ("critical", "high", "medium", "low")
+CLOSED_REASONS = ("by-design", "upstream", "internal", "not-promised")
 WIDTH = 80
 
 SECTION_RE = re.compile(r"^## \[([^\]]+)\]")
@@ -88,12 +92,12 @@ def load_ledger(path, order):
     """Read and validate the ledger; return items in file order.
 
     ``order`` is the CHANGELOG release order (oldest first, from
-    :func:`changelog_releases`). The optional ``listed`` (default ``first``)
-    and ``fixed`` releases must name a known release or the next release.
-    ``listed`` is not earlier than ``first`` and is earlier than ``fixed``;
-    ``fixed`` is later than ``first``. So a typo cannot silently keep an item
-    open or close it too early. Unknown fields are rejected for the same
-    reason."""
+    :func:`changelog_releases`). ``listed`` (default ``first``) and ``fixed``
+    releases must name a known release or the next release, except ``fixed``
+    may also match the item's target. ``closed`` can name any later release
+    and requires a ``closed_reason`` from :data:`CLOSED_REASONS`. An item
+    cannot be both fixed and closed. Unknown fields are rejected.
+    """
     import tomllib
 
     with open(path, "rb") as handle:
@@ -113,7 +117,9 @@ def load_ledger(path, order):
         for key in required:
             if key not in entry or str(entry[key]).strip() == "":
                 raise ValueError(f"{path}: item is missing {key!r}: {entry!r}")
-        unknown = sorted(set(entry) - set(required) - {"fixed", "listed", "earlier"})
+        unknown = sorted(
+            set(entry) - set(required)
+            - {"fixed", "listed", "earlier", "closed", "closed_reason"})
         if unknown:
             raise ValueError(
                 f"{path}: item {entry.get('id')!r} has unknown "
@@ -140,10 +146,11 @@ def load_ledger(path, order):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} has an empty 'fixed' release")
             version_key(fixed)
-            if fixed not in names:
+            if fixed not in names and fixed != str(entry["target"]):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} names an unknown "
-                    f"'fixed' release {fixed!r}")
+                    f"'fixed' release {fixed!r}; it must be known, next, or "
+                    "the item's target")
             if not newer_than(names, fixed, first):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'fixed' release {fixed!r} "
@@ -167,6 +174,37 @@ def load_ledger(path, order):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'listed' release {listed!r} "
                     f"is not earlier than 'fixed' {fixed!r}")
+        has_closed = "closed" in entry
+        has_closed_reason = "closed_reason" in entry
+        if has_closed != has_closed_reason:
+            raise ValueError(
+                f"{path}: item {entry['id']!r} must set 'closed' and "
+                "'closed_reason' together")
+        closed = None
+        closed_reason = None
+        if has_closed:
+            closed = str(entry["closed"]).strip()
+            if closed == "":
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} has an empty 'closed' release")
+            version_key(closed)
+            if not newer_than(names, closed, first):
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} 'closed' release {closed!r} "
+                    f"is not later than 'first' {first!r}")
+            if not newer_than(names, closed, listed):
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} 'closed' release {closed!r} "
+                    f"is not later than 'listed' {listed!r}")
+            if fixed is not None:
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} cannot have both "
+                    "'fixed' and 'closed'")
+            closed_reason = str(entry["closed_reason"]).strip()
+            if closed_reason not in CLOSED_REASONS:
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} has invalid "
+                    f"'closed_reason' {closed_reason!r}")
         earlier = []
         for wording in entry.get("earlier", []):
             if set(wording) != {"until", "text"} or str(wording["text"]).strip() == "":
@@ -201,17 +239,19 @@ def load_ledger(path, order):
             "owner": str(entry["owner"]),
             "fixed": fixed,
             "earlier": earlier,
+            "closed": closed,
+            "closed_reason": closed_reason,
         })
     return items
 
 
 def changelog_releases(changelog_path):
-    """Release names in chronological order (oldest first)."""
+    """Release names in chronological order (oldest first), excluding Unreleased."""
     order = []
     with open(changelog_path, encoding="utf-8") as handle:
         for line in handle:
             match = SECTION_RE.match(line.rstrip("\n"))
-            if match:
+            if match and match.group(1) != "Unreleased":
                 order.append(match.group(1))
     order.reverse()
     return order
@@ -264,16 +304,17 @@ def extended_order(order, release, items=()):
 def applies(item, release, order):
     """Whether the item is open at ``release``.
 
-    Open means its ``listed`` release (``first`` when unset) is not newer
-    than ``release`` and its ``fixed`` release (when set) is newer than
-    ``release``. A release with no CHANGELOG heading yet (the next release)
-    counts as newer than every heading. Fixed items stay in the ledger as
-    history; ``render`` and ``check`` simply skip them where they are closed."""
+    Open means `listed` (default `first`) is not newer than `release`, and
+    neither `fixed` nor `closed` has reached `release`. Closed items stay in
+    the ledger for historical checks; render and check skip them after closure."""
     if item["first"] not in order and item["first"] != next_release(order):
         raise ValueError(
             f"ledger item {item['id']!r} names an unknown release {item['first']!r}")
     names = extended_order(order, release, (item,))
     if names.index(item["listed"]) > names.index(release):
+        return False
+    closed = item.get("closed")
+    if closed is not None and not newer_than(names, closed, release):
         return False
     fixed = item.get("fixed")
     return fixed is None or names.index(release) < names.index(fixed)
@@ -433,8 +474,8 @@ def carried_rows(items, order, release):
     ruling flag. The carry count and the ruling flag count from ``first``,
     the true age of the problem, whatever release first listed it in.
 
-    Items closed at ``release`` (already fixed) and items not yet listed
-    (``listed`` is newer) have no row: the table describes the queried
+    Items fixed or otherwise closed at `release`, and items not yet listed
+    (`listed` is newer), have no row: the table describes the queried
     release only."""
     rows = []
     for item in items:

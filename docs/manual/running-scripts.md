@@ -144,6 +144,11 @@ Scripts written for rs2b0t run, but a call that 274bot does not support stops th
 script with `not impl`. To move accounts and script settings from rs2b0t, see
 [Import your accounts from rs2b0t](importing-from-rs2b0t.md).
 
+The upstream rs2b0t project tracks catalog-script defects in issues #893, #895
+and #897.
+Call `reader.locBox`, `reader.overlayPosWorld` and `reader.projectAreaGameWorld`
+by name for first-tick values, because computed names can return `null` once.
+
 ## Start and stop many bots
 
 The Fleet toolbar has **Start** and **Stop** buttons. They act on the marked bots.
