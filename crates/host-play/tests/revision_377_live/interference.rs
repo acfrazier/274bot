@@ -614,12 +614,13 @@ fn nettle_disturbance(
     let before = previous["hitpoints"].as_i64();
     let after = sample["hitpoints"].as_i64();
     let stat_damage = before.zip(after).is_some_and(|(a, b)| a - b == 2);
+    // Snapshot ticks are observer-local; hitmark loop cycles share the client clock.
     let next_damage = sample["hitpoints"] == previous["hitpoints"]
         && sample["tile"] == next["tile"]
-        && sample["tick"]
-            .as_u64()
-            .zip(next["tick"].as_u64())
-            .is_some_and(|(a, b)| a == b || b == a + 1)
+        && sample["hitmarks"]["loop_cycle"]
+            .as_i64()
+            .zip(next["hitmarks"]["loop_cycle"].as_i64())
+            .is_some_and(|(a, b)| b == a + 1)
         && before
             .zip(next["hitpoints"].as_i64())
             .is_some_and(|(a, b)| a - b == 2);
@@ -658,7 +659,9 @@ fn recorded_fresh_hitmark_can_precede_the_stat_packet() {
             "hitmark_cycle":277,"hitmarks":{"loop_cycle":207,
                 "marks":[{"value":2,"kind":1,"cycle":277}]}}
     });
-    let next = json!({"tick":9,"tile":START_TILE,"hitpoints":8});
+    // The runner and diagnostic GameSnapshots have independent tick counters.
+    let next = json!({"tick":5,"tile":START_TILE,"hitpoints":8,
+        "hitmarks":{"loop_cycle":208}});
     assert_eq!(nettle_disturbance(&event, &next, "interference"), Ok(()));
     let mut npc = event.clone();
     npc["targeting_npcs"] = json!([4]);
@@ -685,6 +688,14 @@ fn recorded_fresh_hitmark_can_precede_the_stat_packet() {
         nettle_disturbance(&event, &extra_hit, "interference"),
         Err(DisturbanceFixture::NettleNotObserved)
     );
+    for cycle in [207, 209] {
+        let mut not_next = next.clone();
+        not_next["hitmarks"]["loop_cycle"] = json!(cycle);
+        assert_eq!(
+            nettle_disturbance(&event, &not_next, "interference"),
+            Err(DisturbanceFixture::NettleNotObserved)
+        );
+    }
     let mut stale = event.clone();
     stale["sample"]["hitmarks"]["marks"][0]["cycle"] = json!(0);
     assert_eq!(
