@@ -284,11 +284,6 @@ fn rune_precheck_matches_ids_not_names_and_ignores_a_staff() {
     ));
     let token = begin();
     let named = call(Some(&data), token, site(json!({})), None);
-    assert_ne!(
-        kind(&named),
-        "teleport",
-        "display names must not satisfy SpellRune.id"
-    );
     assert!(matches!(kind(&named), "log" | "walk" | "walk-near"));
 
     reset();

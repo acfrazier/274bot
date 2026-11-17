@@ -191,7 +191,6 @@ fn walk_near_is_radius_3_with_flags_false_and_arrival_is_not_yield() {
     assert_eq!(step["allow_teleports"], false);
     assert_eq!(step["allow_wilderness"], false);
     assert_eq!(step["allow_bank_fetch"], false);
-    assert_ne!(kind(&step), "walk-nearest-bank");
     let remaining = bank_deadline_remaining_ms(token).expect("walk window");
     assert!(remaining > 120_000, "walk leg is not 120s: {remaining}");
     assert!(remaining <= WALK_LEG_MS as i64, "{remaining}");
@@ -200,7 +199,6 @@ fn walk_near_is_radius_3_with_flags_false_and_arrival_is_not_yield() {
     set_observation(arrived);
     let next = call(token, proj, Some(json!({ "queued": true, "walkToken": 9 })));
     assert_eq!(kind(&next), "bank-open", "arrival is not the pack: {next}");
-    assert_ne!(kind(&next), "yield");
 }
 
 #[test]

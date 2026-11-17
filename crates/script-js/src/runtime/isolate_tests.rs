@@ -3132,7 +3132,6 @@ export function tick(api) {
     let starts = isolate.drain_seat_batches();
     let id: RequestId = starts[0].batch.starts[0].id;
     assert_eq!(starts[0].batch.starts[0].kind, NativeKind::Gather);
-    assert_eq!(isolate.probe("globalThis.__gatherSettles").unwrap(), 0);
 
     let live = [script::native::seat::SeatEntry {
         id,

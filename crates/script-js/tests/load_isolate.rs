@@ -10890,18 +10890,6 @@ export default class T extends LoopingBot {
         serde_json::json!("boolean"),
         "shouldEatFood returns boolean: {parsed:?}"
     );
-    assert!(
-        parsed["shouldEat"].is_boolean(),
-        "shouldEat boolean value: {parsed:?}"
-    );
-    assert!(
-        parsed["shouldEatFood"].is_boolean(),
-        "shouldEatFood boolean value: {parsed:?}"
-    );
-    assert!(
-        parsed["shouldEatToUseFood"].is_boolean(),
-        "shouldEatToUseFood boolean value: {parsed:?}"
-    );
     // hp=3 at safety floor with Shark heal 20 → eat
     assert_eq!(
         parsed["shouldEat"],

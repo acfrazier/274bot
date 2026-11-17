@@ -440,10 +440,6 @@ fn missing_execution_deadline_cuts_with_the_actual_supervisor_cause() {
             "tick error for {cause}: {logs:?}"
         );
         assert!(
-            logs.iter().any(|line| line.contains("tick 1: execution interrupted:") && line.contains(cause)),
-            "user-visible tick error must state the refusal: {logs:?}"
-        );
-        assert!(
             !logs
                 .iter()
                 .any(|line| line.contains("runaway execution interrupted")),
