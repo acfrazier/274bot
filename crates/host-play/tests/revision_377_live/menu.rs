@@ -164,9 +164,17 @@ impl Peer {
         if !self.client.is_menu_open {
             return Err("right click did not open the real menu".into());
         }
-        let index = (0..self.client.menu_num_entries as usize)
-            .find(|&index| self.client.menu_option[index].starts_with(label))
-            .ok_or_else(|| format!("open player menu lost {label}"))?;
+        let index = player_option_row(
+            self.client.menu_option[..self.client.menu_num_entries as usize]
+                .iter()
+                .map(String::as_str),
+            name,
+            label,
+        )
+        .map_err(|reason| {
+            json!({"failure_class":"fixture","reason":reason,"player":name,"operation":label})
+                .to_string()
+        })?;
         let row = raw_row(&self.client, index);
         let (origin_x, origin_y) = match self.client.menu_area {
             0 => (4, 4),
@@ -246,6 +254,47 @@ impl Peer {
             "normal pointer did not pick Crate {CRATE_ID} at {CRATE_TILE:?}"
         ))
     }
+}
+
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+enum PlayerMenuFixture {
+    ExpectedPlayerOptionMissing,
+}
+
+fn player_option_row<'a>(
+    rows: impl IntoIterator<Item = &'a str>,
+    name: &str,
+    label: &str,
+) -> Result<usize, PlayerMenuFixture> {
+    let expected = JString::to_screen_name(name);
+    rows.into_iter()
+        .position(|row| {
+            row.strip_prefix(label)
+                .and_then(|suffix| suffix.strip_prefix(" @whi@"))
+                .and_then(|suffix| suffix.split_once("@yel@"))
+                .is_some_and(|(actual, _)| actual == expected)
+        })
+        .ok_or(PlayerMenuFixture::ExpectedPlayerOptionMissing)
+}
+
+#[test]
+fn recorded_player_menu_selects_the_exact_partner_not_a_leftover() {
+    // Recorded client row format, with account names anonymized.
+    let rows = [
+        "Trade with @whi@Earlier 0@yel@ (level-3)",
+        "Trade with @whi@Partner 0@yel@ (level-3)",
+        "Challenge @whi@Partner 0@yel@ (level-3)",
+    ];
+    assert_eq!(player_option_row(rows, "partner_0", "Trade with"), Ok(1));
+    assert_eq!(player_option_row(rows, "partner_0", "Challenge"), Ok(2));
+    assert_eq!(
+        player_option_row(rows, "partner", "Trade with"),
+        Err(PlayerMenuFixture::ExpectedPlayerOptionMissing)
+    );
+    assert_eq!(
+        player_option_row(rows, "missing_0", "Trade with"),
+        Err(PlayerMenuFixture::ExpectedPlayerOptionMissing)
+    );
 }
 
 fn raw_row(client: &Client, index: usize) -> Value {
