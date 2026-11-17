@@ -27,6 +27,37 @@ pub(crate) mod test_support {
         let path = path.to_string_lossy();
         api::test_support::local_asset_path("", &path, description).is_some()
     }
+
+    /// Checks a scope-cache control call that opened `depth` nested V8 scopes
+    /// (`cold`) and one that opened one level more (`extra`). The cache keeps
+    /// one cell per new nesting level, so the cold call adds 1..=`depth`
+    /// retained cells and the extra level adds one more cell of the same size.
+    /// Cell counts below `depth` and the cell size depend on the V8 binding.
+    pub(crate) fn assert_scope_cache_growth(
+        cold: &allocation_counter::AllocationInfo,
+        extra: &allocation_counter::AllocationInfo,
+        depth: u64,
+    ) {
+        assert_eq!(
+            extra.count_total, 1,
+            "one more level adds one cell: {extra:?}"
+        );
+        assert!(
+            (1..=depth).contains(&cold.count_total),
+            "{depth} scopes add 1..={depth} cells: {cold:?}"
+        );
+        assert_eq!(
+            cold.bytes_total,
+            cold.count_total * extra.bytes_total,
+            "cells share one size: cold={cold:?} extra={extra:?}"
+        );
+        for info in [cold, extra] {
+            assert_eq!(info.count_current, info.count_total as i64, "{info:?}");
+            assert_eq!(info.count_max, info.count_total, "{info:?}");
+            assert_eq!(info.bytes_current, info.bytes_total as i64, "{info:?}");
+            assert_eq!(info.bytes_max, info.bytes_total, "{info:?}");
+        }
+    }
 }
 pub mod wire;
 

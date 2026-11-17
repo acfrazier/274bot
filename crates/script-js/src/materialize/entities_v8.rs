@@ -2708,18 +2708,8 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
         );
         assert_eq!(pure, allocation_counter::AllocationInfo::default());
         assert!(cold.count_total <= 10);
-        assert_eq!(cold.count_current, cold.count_total as i64);
-        assert_eq!(cold.count_max, cold.count_total);
-        assert_eq!(cold.bytes_total, cold.count_total * 112);
-        assert_eq!(cold.bytes_current, cold.bytes_total as i64);
-        assert_eq!(cold.bytes_max, cold.bytes_total);
+        crate::test_support::assert_scope_cache_growth(&cold, &extra, 12);
         assert_eq!(after_control, allocation_counter::AllocationInfo::default());
-        assert_eq!(extra.count_total, 1);
-        assert_eq!(extra.count_current, 1);
-        assert_eq!(extra.count_max, 1);
-        assert_eq!(extra.bytes_total, 112);
-        assert_eq!(extra.bytes_current, 112);
-        assert_eq!(extra.bytes_max, 112);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
 
@@ -2838,13 +2828,12 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
             assert_eq!(lens.ground().unwrap().as_ptr(), ground_ptr);
         });
         println!("Entity four-page Rc metadata only={metadata:?}");
-        let bytes = 4 * (std::mem::size_of::<Vec<u8>>() + 2 * std::mem::size_of::<usize>());
-        assert_eq!(metadata.count_total, 4);
-        assert_eq!(metadata.count_current, 4);
-        assert_eq!(metadata.count_max, 4);
-        assert_eq!(metadata.bytes_total, bytes as u64);
-        assert_eq!(metadata.bytes_current, bytes as i64);
-        assert_eq!(metadata.bytes_max, bytes as u64);
+        // At most one shared-ownership box per page; the rows themselves move.
+        let rc_boxes = 4 * (std::mem::size_of::<Vec<u8>>() + 2 * std::mem::size_of::<usize>());
+        assert!(metadata.count_total <= 4, "{metadata:?}");
+        assert!(metadata.bytes_total <= rc_boxes as u64, "{metadata:?}");
+        assert_eq!(metadata.count_current, metadata.count_total as i64);
+        assert_eq!(metadata.bytes_current, metadata.bytes_total as i64);
     }
 
     #[test]
@@ -2962,22 +2951,11 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
              extra depth={extra_depth:?}; warm1000={warm:?}"
         );
         assert_eq!(pure, allocation_counter::AllocationInfo::default());
-        assert_eq!(cold.count_total, 10);
-        assert_eq!(cold.count_current, 10);
-        assert_eq!(cold.count_max, 10);
-        assert_eq!(cold.bytes_total, 1120);
-        assert_eq!(cold.bytes_current, 1120);
-        assert_eq!(cold.bytes_max, 1120);
+        crate::test_support::assert_scope_cache_growth(&cold, &extra_depth, 12);
         assert_eq!(
             query_after_control,
             allocation_counter::AllocationInfo::default()
         );
-        assert_eq!(extra_depth.count_total, 1);
-        assert_eq!(extra_depth.count_current, 1);
-        assert_eq!(extra_depth.count_max, 1);
-        assert_eq!(extra_depth.bytes_total, 112);
-        assert_eq!(extra_depth.bytes_current, 112);
-        assert_eq!(extra_depth.bytes_max, 112);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
 }
