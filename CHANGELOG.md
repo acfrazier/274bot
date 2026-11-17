@@ -106,8 +106,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 - A saved Fight now works. The Guardian fights the event with the combat engine
   that scripts use, for River troll, Rock golem, Zombie, Shade, Watchman and
-  Tree spirit. It eats the food the bot already carries and keeps enough
-  Hitpoints to walk away. It prices that walk on every game tick from the
+  Tree spirit. It eats the food the bot already carries. The estimate assumes
+  the escape walk is uninterrupted. If the bot is held up once on the way, the
+  Guardian can choose a new spot, and the escape can take a few steps longer
+  than the estimate allowed. It prices that walk on every game tick from the
   scene the bot stands in, for the tile the Guardian's own escape walks to, so
   a wall or a closed door that changes the way out is counted before the next
   attack. The client sends at most 25 waypoints (the corners of its route) in

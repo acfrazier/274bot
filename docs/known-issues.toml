@@ -1118,3 +1118,16 @@ fixed = "0.3.0"
 target = "0.3.0"
 severity = "low"
 owner = "compat (rs2b0t quest-definition modules not served)"
+
+[[item]]
+id = "guardian-fight-interrupted-escape"
+kind = "known-issue"
+area = "Combat"
+text = """The Guardian's Fight option checks that the bot can still escape before it
+  attacks. That check assumes the escape walk is uninterrupted. If the bot is
+  held up once on the way, the Guardian can choose a new spot, and the escape
+  can take a few steps longer than the check allowed."""
+first = "0.3.0"
+target = "none"
+severity = "low"
+owner = "operator (revisit if it causes trouble)"
