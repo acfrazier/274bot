@@ -741,6 +741,127 @@ fn wrong_hint_profile_account_or_schema_is_refused_not_absent_and_never_loaded()
     );
 }
 
+/// Duplicate fields make a hint file ambiguous, so the service must refuse
+/// it instead of using serde_json's last value. Refusals keep the source
+/// bytes, write no empty hint, and name the path, cause and remedy.
+#[test]
+fn duplicate_fields_in_bank_hint_files_are_refused_and_never_written() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-duplicate-hints");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let cases: [(&str, Vec<u8>, &str); 3] = [
+        (
+            "alice",
+            br#"{
+                "schema_version": 1,
+                "schema_version": 1,
+                "profile": "local-289",
+                "account": "alice",
+                "revision": 289,
+                "content": "test-content",
+                "observed_at_unix": 5,
+                "rows": [[995, 5]]
+            }"#
+            .to_vec(),
+            r#"field "schema_version" is named twice in the top level; edit the file to remove one of them"#,
+        ),
+        (
+            "bob",
+            br#"{
+                "schema_version": 1,
+                "profile": "local-289",
+                "account": "bob",
+                "revision": 289,
+                "content": "test-content",
+                "observed_at_unix": 5,
+                "rows": [[995, 5]],
+                "future": {"same": 1, "same": 2}
+            }"#
+            .to_vec(),
+            r#"field "same" is named twice in the object "future"; edit the file to remove one of them"#,
+        ),
+        (
+            "carol",
+            br#"{
+                "profile": "local-289",
+                "account": "carol",
+                "observed_at_unix": 5,
+                "rows": [[995, 5]],
+                "future": 1,
+                "future": 2
+            }"#
+            .to_vec(),
+            r#"field "future" is named twice in the top level; edit the file to remove one of them"#,
+        ),
+    ];
+    for (account, bytes, _) in &cases {
+        write_private(&root.bank_hint_file(PROFILE, account), bytes);
+    }
+    let startup = crate::saved_data::SavedDataStartup::check(&root).unwrap();
+    assert!(
+        startup.refusal().is_none(),
+        "a duplicate field is not an old-format move-aside prompt"
+    );
+
+    let notices = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&notices);
+    let state = State {
+        hooks: Hooks {
+            read_refusal: Some(Arc::new(move |_, line| {
+                sink.lock().unwrap().push(line.to_string());
+            })),
+            ..Hooks::default()
+        },
+        ..State::default()
+    };
+    let service = LocalStateService::open_with_state(
+        root.clone(),
+        &[LocalStateDomain::BankHints],
+        Arc::new(RequestIdMinter::new()),
+        state,
+    );
+    for (account, bytes, cause) in &cases {
+        let identity = bank_identity(account);
+        let path = root.bank_hint_file(PROFILE, account);
+        let refused = ErrorCode::Failed {
+            domain: LocalStateDomain::BankHints,
+            reason: FailureReason::Schema,
+        };
+        assert_eq!(
+            service.readback_lease(&identity, WAIT),
+            Err(refused),
+            "{account}"
+        );
+        assert_eq!(service.lease(&identity), Err(refused), "{account}");
+        assert_eq!(
+            service.submit(hint_edit(&identity, None, vec![(995, 99)], 9)),
+            SubmitReceipt::Refused(refused),
+            "{account}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            *bytes,
+            "{account}: source kept"
+        );
+        assert_eq!(
+            siblings(&path),
+            vec![path.file_name().unwrap().to_string_lossy().into_owned()],
+            "{account}: no empty or quarantine file"
+        );
+        let path_text = path.display().to_string();
+        let notices = notices.lock().unwrap();
+        let notice = notices
+            .iter()
+            .find(|notice| notice.contains(&path_text))
+            .unwrap_or_else(|| panic!("{account}: no refusal notice for {path_text}"));
+        assert!(notice.contains(cause), "{account}: {notice}");
+        assert!(
+            notice.contains("it is neither leased nor written until it reads cleanly"),
+            "{account}: {notice}"
+        );
+    }
+    assert_eq!(notices.lock().unwrap().len(), cases.len());
+}
 /// r2 item 5: every refused hint file the review attacked (unparseable,
 /// another schema, another identity, group/other-writable, unreadable)
 /// stays refused for leases and submissions and keeps its bytes.

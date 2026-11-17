@@ -154,6 +154,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   field, is still the unreadable file: its bytes are kept in a
   `.corrupt-` copy and default preferences start, whatever fields it
   also names.
+- Bank-hint JSON files that name a field twice in one object are refused,
+  not read with the last value. The refusal names the file, field and
+  object, and tells you to edit the file to remove the duplicate. The file
+  stays unchanged. The service leases and writes no empty hint until the
+  file is fixed.
 - Preferences now live in a SQLite database, `.274bot/state/state.sqlite3`
   (with its `-wal` and `-shm` files), instead of `panel-ui.json`. The first
   start of this version imports the whole `panel-ui.json`, members it does not

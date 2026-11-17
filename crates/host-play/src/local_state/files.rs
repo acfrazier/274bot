@@ -19,11 +19,10 @@
 //! whose content is malformed (not JSON, or JSON that is not an object) is
 //! quarantined and a fresh document is started
 //! ([`corrupt_preferences`], [`corrupt_script_runtime_settings`]); every
-//! other refusal leaves the file unchanged. Duplicate loadout names are
-//! refused rather than renamed apart, and a preferences file that names a
-//! field twice in one object is refused whole rather than read keeping the
-//! last value ([`object_without_duplicate_fields`], which the legacy
-//! import reads through).
+//! Duplicate loadout names are refused rather than renamed apart. Preference
+//! and bank-hint documents that name a field twice in one object are refused
+//! whole rather than read keeping the last value. The legacy preferences
+//! import and the bank-hint reader use [`object_without_duplicate_fields`].
 //! A hint document from before schema 1 is refused as a whole, never
 //! rewritten or partially loaded. The service logs each changed refusal with
 //! its file path.
@@ -812,16 +811,8 @@ impl<'de> de::Visitor<'de> for NoDuplicateFields<'_, 'de> {
     }
 }
 
-/// Parses `raw` into a JSON object, refusing a file that names a field
-/// twice in one object at any level. The shape errors win over the
-/// duplicates: a file whose content is not JSON, or whose root is not an
-/// object, is refused (and, on the first import, quarantined) as
-/// malformed even when it also names a field twice, so a duplicate is
-/// reported only for a document that parsed whole into an object. Every
-/// other read result is the plain `serde_json` parse: a valid file holds
-/// exactly the values it held before the check. The legacy preferences
-/// import (`sql::read_legacy`) reads the file through this.
-pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, Value>, ReadError> {
+/// Parses complete JSON while retaining the first duplicate-field finding.
+fn value_and_duplicate_fields(raw: &str) -> Result<(Value, Option<ReadError>), ReadError> {
     let found = std::cell::RefCell::new(None);
     let mut parser = serde_json::Deserializer::from_str(raw);
     let document = NoDuplicateFields {
@@ -831,10 +822,19 @@ pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, V
     .deserialize(&mut parser)
     .map_err(ReadError::Json)?;
     parser.end().map_err(ReadError::Json)?;
+    Ok((document, found.into_inner()))
+}
+
+/// Parses `raw` into a JSON object, refusing a file that names a field
+/// twice in one object at any level. JSON and root-shape errors win over
+/// duplicates, so invalid JSON or a non-object root keeps its existing
+/// refusal. The legacy preferences import (`sql::read_legacy`) reads this.
+pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, Value>, ReadError> {
+    let (document, duplicate) = value_and_duplicate_fields(raw)?;
     let Value::Object(document) = document else {
         return Err(ReadError::NotAnObject);
     };
-    if let Some(duplicate) = found.borrow_mut().take() {
+    if let Some(duplicate) = duplicate {
         return Err(duplicate);
     }
     Ok(document)
@@ -887,7 +887,14 @@ pub(super) fn read(
             revision,
             content,
         } => {
-            let value: Value = serde_json::from_str(&raw)?;
+            let (value, duplicate) = value_and_duplicate_fields(&raw)?;
+            // Keep strict rejection limited to recognized hint documents so
+            // malformed legacy data retains its existing classification.
+            if value.is_object() {
+                if let Some(duplicate) = duplicate {
+                    return Err(duplicate);
+                }
+            }
             if let Some((found_profile, found_account)) = unversioned_hint_identity(&value) {
                 if found_profile != profile || found_account != account {
                     return Err(ReadError::Identity {
@@ -1039,13 +1046,13 @@ pub(super) fn read(
 
 /// Whether `raw` is a complete hint document from before schema 1: the
 /// shape [`read`] refuses as [`ReadError::UnsupportedSavedFormat`]. The
-/// startup probe uses this same check, so the probe and the reader agree.
+/// startup probe uses this same strict check, so duplicate fields are not
+/// treated as an old-format move-aside request.
 pub(crate) fn hint_has_pre_0_2_8_shape(raw: &str) -> bool {
-    serde_json::from_str::<Value>(raw)
-        .ok()
-        .as_ref()
-        .and_then(unversioned_hint_identity)
-        .is_some()
+    let Ok(fields) = object_without_duplicate_fields(raw) else {
+        return false;
+    };
+    unversioned_hint_identity(&Value::Object(fields)).is_some()
 }
 
 /// Profile and account from a complete pre-schema hint document. This
