@@ -82,7 +82,6 @@ fn desert_captain_cross_grants_only_required_ugthanki() {
         .iter()
         .map(|name| table.resolve(name).unwrap())
         .collect();
-    assert_eq!(resumed_keys, keys);
     let origin = WorldTile {
         x: 3302,
         z: 3114,

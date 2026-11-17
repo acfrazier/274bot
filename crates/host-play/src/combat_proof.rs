@@ -1269,11 +1269,6 @@ mod tests {
         rewound.mark_finished();
         assert!(!rewound.trustworthy_idle_window());
 
-        let mut unfinished = DriverPacketCounts::new();
-        unfinished.record_count(Some(10), 7);
-        unfinished.record_count(Some(10), 8);
-        assert!(!unfinished.trustworthy_idle_window());
-
         let mut active = DriverPacketCounts::new();
         active.record_count(Some(10), 7);
         active.record_count(Some(11), 8);

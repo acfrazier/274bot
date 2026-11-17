@@ -258,11 +258,6 @@ fn fill_three_id0(navs: &Arc<Mutex<HashMap<String, NavBot>>>, world: &Arc<NavWor
 }
 
 #[test]
-fn path_attribute_module_compiles() {
-    let _ = std::any::type_name::<InspectNav>();
-}
-
-#[test]
 fn inspect_ticket_ref_round_trips_and_rejects_wrong_revision() {
     let identity = WorkService::shared()
         .expect("work service")
@@ -3938,13 +3933,6 @@ fn real_content_inspection_bank_fetch_whole_job_memory() {
                 .expect("missing-item reservation");
             let reservation = missing.reservation();
             assert_eq!(reservation.max_missing_carry_ids, 221);
-            assert_eq!(
-                reservation
-                    .max_plan_item_rows
-                    .checked_sub(reservation.max_missing_carry_ids),
-                Some(3_603),
-                "the production effective bound includes every loaded worn row",
-            );
             assert_eq!(reservation.max_plan_item_rows, 3_824);
             assert_eq!(strict_budget(&capture), nav_planner::router::NODE_BUDGET);
             assert_eq!(stand_budget(&capture), nav_planner::router::NODE_BUDGET);

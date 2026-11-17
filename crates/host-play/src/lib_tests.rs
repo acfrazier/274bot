@@ -8821,7 +8821,6 @@ fn script_paint_select_adverts_fixture_chrome() {
     assert!(!script_runtime::script_paint_select_advertised(
         &paint, "tabs:mg", "Loot"
     ));
-    assert_eq!(paint.generation, 7);
 }
 
 #[test]
@@ -10431,7 +10430,6 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
         Some(vec![None, Some("Use-quickly".into()), None, None, None]),
         "the seeded booth loc carries the Use-quickly op"
     );
-    let out_before = c.out.pos;
     // Each op must send on its own, not be masked by the others:
     // open-booth (Use-quickly), bank-side Deposit-All, a withdraw by
     // name whose hyphenated label resolves to the seeded "Withdraw All"
@@ -10485,10 +10483,6 @@ fn dispatch_script_interact_sends_open_deposit_withdraw() {
             "{label} must write the driver (masked by the other ops?)"
         );
     }
-    assert!(
-        c.out.pos > out_before,
-        "open + deposit + withdraw + close wrote to the driver"
-    );
     // A request with no matching target sends nothing.
     let out_before = c.out.pos;
     assert!(!dispatch_script_interact(

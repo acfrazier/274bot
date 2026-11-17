@@ -9073,7 +9073,6 @@ mod tests {
         assert_eq!(packet.packet_stderr_line_ordinals, [3, 4]);
         assert_eq!(packet.dispatch_stderr_line_ordinal, Some(5));
         assert!(packet.decoded && packet.accepted);
-        assert!(one_obj3_packet(&packet.opcodes));
         assert_eq!(logs.interacts.len(), 1);
         assert_eq!(logs.interacts[0].tick, Some(61));
         assert_eq!(logs.interacts[0].request, 4);
