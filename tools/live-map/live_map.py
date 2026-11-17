@@ -645,6 +645,15 @@ class LiveMapTests(unittest.TestCase):
                 self.assertEqual(plan.uncovered, ())
                 self.assertEqual(plan.unclassified, ())
 
+    def test_377_outbound_login_path_selects_headless_wire_fixture(self) -> None:
+        config = load_map()
+        plan = make_plan(
+            ["vendor/fr-client-rust/crates/client/src/client/outbound_377.rs"], config
+        )
+        self.assertIn("client.protocol-377-wire-headless", {cell.name for cell in plan.cells})
+        self.assertEqual(plan.uncovered, ())
+        self.assertEqual(plan.unclassified, ())
+
     def test_diff_expands_real_submodule_paths_and_requires_missing_commit_fetch(self) -> None:
         raw_evidence = os.environ.get("LIVE_MAP_TEST_TMPDIR")
         raw_root = os.environ.get("LIVE_EVIDENCE_DIR")
