@@ -285,6 +285,17 @@ def matches_any(path: str, globs: list[str]) -> bool:
     return any(matches(path, pattern) for pattern in globs)
 
 
+def _is_exact_test_source_cover(path: str, config: dict[str, Any]) -> bool:
+    return any(
+        pattern.endswith(".rs")
+        and "/tests/" in f"/{pattern}"
+        and not any(character in pattern for character in "*?[]")
+        and matches(path, pattern)
+        for row in config["cover"]
+        for pattern in row["globs"]
+    )
+
+
 def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
     unique_paths = sorted(set(paths))
     live_globs = config["live"]["globs"]
@@ -294,18 +305,17 @@ def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
     not_live: list[str] = []
     unclassified: list[str] = []
     for path in unique_paths:
-        covered = any(
-            matches_any(path, row["globs"]) for row in config["cover"]
-        )
+        covered = any(matches_any(path, row["globs"]) for row in config["cover"])
+        exact_test_source = _is_exact_test_source_cover(path, config)
         excluded = matches_any(path, excluded_globs) and not matches_any(
             path, live_exceptions
         )
         is_live = matches_any(path, live_globs)
-        if covered:
+        if exact_test_source:
             live_paths.append(path)
         elif excluded:
             not_live.append(path)
-        elif is_live:
+        elif covered or is_live:
             live_paths.append(path)
         else:
             unclassified.append(path)
@@ -495,7 +505,7 @@ class LiveMapTests(unittest.TestCase):
         self.assertEqual(plan.unclassified, ())
         self.assertEqual(plan.not_live, ("crates/nav/src/router_tests.rs", "tools/check.py"))
 
-    def test_explicit_cover_overrides_not_live_glob(self) -> None:
+    def test_exact_test_source_cover_overrides_not_live_glob(self) -> None:
         path = "crates/host-play/tests/revision_377_live/menu.rs"
         config = validate_map(
             {
@@ -519,6 +529,19 @@ class LiveMapTests(unittest.TestCase):
         self.assertEqual(plan.not_live, ())
         self.assertEqual(plan.uncovered, ())
         self.assertEqual(plan.unclassified, ())
+
+    def test_wildcard_covers_and_non_test_exact_covers_stay_not_live(self) -> None:
+        config = load_map()
+        for path in (
+            "crates/script/src/quester/inventory_tests.rs",
+            "Cargo.lock",
+        ):
+            with self.subTest(path=path):
+                plan = make_plan([path], config)
+                self.assertEqual(plan.cells, ())
+                self.assertEqual(plan.uncovered, ())
+                self.assertEqual(plan.unclassified, ())
+                self.assertEqual(plan.not_live, (path,))
 
     def test_diff_of_live_test_sources_selects_their_cells(self) -> None:
         config = load_map()
