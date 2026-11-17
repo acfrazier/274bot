@@ -187,8 +187,11 @@ impl Session {
                     let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
                         &frontend_core::scripts::paths::rs2b0t_import_file(),
                     );
+                    // The view takes the folder before its save is
+                    // submitted, so a save that fails at once (a refused
+                    // store) puts the saved folder back with its reason.
+                    self.ui.script_catalog_last_dir = Some(root.clone());
                     let _ = self.persist_panel_serializable(&["script_catalog_last_dir"], &root);
-                    self.ui.script_catalog_last_dir = Some(root);
                     self.rs2b0t_catalog_open = false;
                     self.clear_message();
                 }

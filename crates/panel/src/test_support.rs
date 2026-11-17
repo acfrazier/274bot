@@ -108,6 +108,26 @@ pub(crate) fn scratch_with_legacy(
     (dir, preferences)
 }
 
+/// Bind `session` to a store refused at open (an over-size legacy
+/// `panel-ui.json` under a scratch root named for `label`), as a panel
+/// started on a refused store is. Returns the scratch root, the legacy
+/// file and its bytes.
+pub(crate) fn bind_refused_store(
+    session: &mut crate::session::Session,
+    label: &str,
+) -> (TestDir, PathBuf, Vec<u8>) {
+    let dir = TestDir::new(label);
+    let legacy = dir.join("panel-ui.json");
+    let oversize = vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1];
+    write_private_fixture(&legacy, &oversize).unwrap();
+    let service = scratch_service(&dir);
+    frontend_core::UiPreferences::of_service_for_test(&service)
+        .reload()
+        .expect_err("an over-size legacy file refuses the preferences");
+    session.bind_refused_preferences_for_test(service);
+    (dir, legacy, oversize)
+}
+
 /// The state root `preferences` belongs to (`<root>/state/state.sqlite3`).
 pub(crate) fn preferences_root(preferences: &frontend_core::UiPreferences) -> PathBuf {
     preferences

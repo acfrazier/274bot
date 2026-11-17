@@ -7453,26 +7453,6 @@ fn nav_core_edit_writes_once_and_preserves_other_members() {
     assert_eq!(receipt.version(), audits[0].version());
 }
 
-/// Bind `session` to a store refused at open (an over-size legacy
-/// `panel-ui.json` under a scratch root named for `label`), as a panel
-/// started on a refused store is. Returns the scratch root, the legacy
-/// file and its bytes.
-fn bind_refused_store(
-    session: &mut crate::session::Session,
-    label: &str,
-) -> (crate::test_support::TestDir, std::path::PathBuf, Vec<u8>) {
-    let dir = crate::test_support::TestDir::new(label);
-    let legacy = dir.join("panel-ui.json");
-    let oversize = vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1];
-    crate::test_support::write_private_fixture(&legacy, &oversize).unwrap();
-    let service = crate::test_support::scratch_service(&dir);
-    frontend_core::UiPreferences::of_service_for_test(&service)
-        .reload()
-        .expect_err("an over-size legacy file refuses the preferences");
-    session.bind_refused_preferences_for_test(service);
-    (dir, legacy, oversize)
-}
-
 /// A panel started on refused preferences: a Nav config change that cannot
 /// be saved shows the saved value again once its save failed, for a walk
 /// grant, the manual-walk pause, the special-areas overlay and a panel-only
@@ -7482,7 +7462,8 @@ fn bind_refused_store(
 fn nav_edit_under_refused_preferences_shows_the_saved_values_again() {
     let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-refused");
     let mut session = crate::session::Session::new();
-    let (_dir, legacy, oversize) = bind_refused_store(&mut session, "panel-nav-refused");
+    let (_dir, legacy, oversize) =
+        crate::test_support::bind_refused_store(&mut session, "panel-nav-refused");
     let saved = session.ui.nav.clone();
     assert!(!saved.allow_teleports, "a refused store grants nothing");
 
@@ -7533,7 +7514,8 @@ fn order_and_colour_edits_under_refused_preferences_show_the_saved_values_again(
         }
     }
     assert!(present.len() > 1, "the registry has several categories");
-    let (_dir, legacy, oversize) = bind_refused_store(&mut session, "panel-orders-refused");
+    let (_dir, legacy, oversize) =
+        crate::test_support::bind_refused_store(&mut session, "panel-orders-refused");
     let saved_sections = session.ui.section_order.clone();
     let saved_categories = session.ui.script_category_order.clone();
     let saved_chrome = session.ui.chrome.clone();

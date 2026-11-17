@@ -284,8 +284,11 @@ impl Session {
             );
         }
         if let Some(parent) = path.parent() {
-            let _ = self.persist_panel_serializable(&["script_load_last_dir"], parent);
+            // The view takes the folder before its save is submitted, so a
+            // save that fails at once (a refused store) puts the saved
+            // folder back with its reason.
             self.ui.script_load_last_dir = Some(parent.to_path_buf());
+            let _ = self.persist_panel_serializable(&["script_load_last_dir"], parent);
         }
         self.script_load_open = false;
     }

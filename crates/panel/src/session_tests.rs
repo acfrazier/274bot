@@ -10031,6 +10031,100 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     assert_eq!(card.tags(), vec!["bones"]);
 }
 
+/// A panel started on refused preferences: the last Load folder and the
+/// last catalog folder, remembered by a successful script load and a
+/// successful catalog import, show the saved folder again once their saves
+/// failed at once, with the reason at the setting, and the browsers open
+/// there again.
+#[cfg(feature = "js")]
+#[test]
+fn refused_preferences_keep_the_saved_load_and_catalog_folders() {
+    let _work_service_guard = crate::work_service_test_lock();
+    let iso = IsolatedStores::enter("refused-folders");
+    let mut s = Session::new();
+    let (dir, legacy, oversize) =
+        crate::test_support::bind_refused_store(&mut s, "refused-folders");
+    let settle_refused = |s: &mut Session, path: &[&str]| {
+        for _ in 0..3 {
+            s.pump_status();
+            s.poll_panel_preferences();
+        }
+        assert!(
+            !s.preferences_pending(),
+            "{path:?}: the refused save has ended"
+        );
+        assert!(
+            s.panel_member_error(path).is_some(),
+            "{path:?}: the reason shows at the setting"
+        );
+    };
+
+    // The script load succeeds; only the folder preference is refused.
+    let saved_load = s.ui.script_load_last_dir.clone();
+    let script = dir.join("tickbot.js");
+    std::fs::write(
+        &script,
+        "export function tick(api) { api._n = (api._n||0)+1 }",
+    )
+    .unwrap();
+    s.scripts
+        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.load_js(&script);
+    assert!(s.script_sel.is_some(), "the script load succeeds");
+    settle_refused(&mut s, &["script_load_last_dir"]);
+    assert_eq!(s.ui.script_load_last_dir, saved_load);
+    s.open_script_load_browser();
+    assert_eq!(
+        s.script_load_dir,
+        crate::script_picker::default_load_browse_dir(saved_load.as_deref()),
+        "the Load browser opens at the saved folder"
+    );
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        oversize,
+        "nothing is saved over the refused file"
+    );
+
+    // A catalog whose one registered script has no source file: nothing is
+    // left to validate, so the import completes in the poll that finishes
+    // its preparation and `poll_scripts` receives the import receipt. (The
+    // receipt of a catalog whose cards still need validation does not reach
+    // the panel today; that defect is outside this test.)
+    let saved_catalog = s.ui.script_catalog_last_dir.clone();
+    let root = iso.dir().join("no-candidate-rs2b0t");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        r#"
+import Missing from './Missing/Missing.js';
+ScriptRegistry.register({
+  name: 'Missing',
+  description: 'Its source file is absent',
+  category: 'Prayer',
+  tags: [],
+  create: () => new Missing(),
+});
+"#,
+    )
+    .unwrap();
+    s.import_rs2b0t_catalog(&root).expect("import");
+    settle_catalog_work(&mut s);
+    settle_refused(&mut s, &["script_catalog_last_dir"]);
+    assert_eq!(s.ui.script_catalog_last_dir, saved_catalog);
+    s.open_rs2b0t_catalog_picker(false);
+    assert_eq!(
+        s.rs2b0t_catalog_dir,
+        crate::script_picker::default_load_browse_dir(saved_catalog.as_deref()),
+        "the catalog picker opens at the saved folder"
+    );
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        oversize,
+        "nothing is saved over the refused file"
+    );
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn catalog_import_validates_257_cards_in_bounded_batches() {
