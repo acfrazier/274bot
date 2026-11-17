@@ -1,9 +1,8 @@
 //! Shared live-harness helpers for the `e2e` tests.
 //!
-//! Every test is `#[ignore]` and additionally returns early unless `LIVE=1`,
-//! so the default `cargo test` (and even `-- --ignored` without the env
-//! var) stays green with no engine running. With `LIVE=1` against the local
-//! engine a failure prints `FAIL: ...` and exits 1 (rs2b0t e2e style).
+//! Every test is `#[ignore]` and prints a skip reason unless `LIVE=1`.
+//! This keeps default tests safe without an engine.
+//! With `LIVE=1`, failures print `FAIL: ...` and exit 1 (rs2b0t e2e style).
 #![allow(
     dead_code,
     reason = "shared across live test binaries; each binary uses a subset, so expect would misfire"
@@ -25,7 +24,12 @@ pub fn fail(msg: &str) -> ! {
 
 /// `LIVE=1` gates the ignored tests.
 pub fn live() -> bool {
-    std::env::var("LIVE").as_deref() == Ok("1")
+    if std::env::var("LIVE").as_deref() == Ok("1") {
+        true
+    } else {
+        eprintln!("SKIP live e2e test: set LIVE=1 to run against the local engine");
+        false
+    }
 }
 
 /// A throwaway encrypted vault holding `user`/`pass` profiles with stable

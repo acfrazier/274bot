@@ -7,6 +7,7 @@ const PROBE: &str = "API_LOCAL_ASSET_POLICY_PROBE";
 #[test]
 fn missing_asset_probe() {
     let Some(path) = std::env::var_os(PROBE) else {
+        eprintln!("SKIP missing_asset_probe: child-only helper for asset-policy tests");
         return;
     };
     assert!(api::test_support::local_asset_path(

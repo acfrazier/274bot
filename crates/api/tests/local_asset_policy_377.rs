@@ -10,6 +10,7 @@ const PRESENT: &str = "API_LOCAL_ASSET_377_POLICY_PRESENT";
 #[test]
 fn asset_377_probe() {
     let Some(default) = std::env::var_os(PROBE) else {
+        eprintln!("SKIP asset_377_probe: child-only helper for asset-policy tests");
         return;
     };
     let actual = api::test_support::local_asset_path_377(
