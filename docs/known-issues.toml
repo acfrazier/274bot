@@ -1,13 +1,16 @@
 # Known issues and release gaps: single source of truth.
 #
-# One [[item]] table per item. The `text` holds the end-user wording as it
+# One [[item]] table per item. The `text` holds end-user wording as it
 # appears in the CHANGELOG (workaround included); `render` appends the "X has
 # the same problem." sentence from `first` and the CHANGELOG release order.
-# An item is open at release X when `first` is not newer than X and `fixed`
-# (when set) is newer than X. Lifecycle: add the item with `first`; the
-# commit that fixes it sets `fixed` to the release carrying the fix; never
-# delete an item, so checks of published releases keep passing. `fixed` must
-# name a known release or the next one and must be later than `first`.
+# An item is open at release X when `listed` (default `first`) is not newer
+# than X and neither `fixed` nor `closed` is at or before X.
+# Set `fixed` only for a real fix. Set `closed` and `closed_reason` to remove
+# an item from later release notes without claiming it was fixed. Reasons:
+# `by-design`, `upstream`, `internal` and `not-promised`.
+# Never delete an item, so checks of published releases keep passing. `fixed`
+# must name a known release, the next release or the item's target. `closed`
+# must be later than `first`.
 # Never edit the CHANGELOG blocks by hand; regenerate them with
 # tools/known-issues/known_issues.py.
 
@@ -64,6 +67,8 @@ first = "0.2.4"
 target = "none"
 severity = "low"
 owner = "scripts-misc"
+closed = "0.3.0"
+closed_reason = "by-design"
 
 [[item.earlier]]
 until = "0.2.9"
@@ -205,6 +210,8 @@ listed = "0.2.5"
 target = "0.3.0"
 severity = "medium"
 owner = "upstream rs2b0t BrimhavenAgility (rs2b2t/rs2b0t#893, still open at the 0.2.9 cut)"
+closed = "0.3.0"
+closed_reason = "upstream"
 
 [[item]]
 id = "bank-deposit-callback-delay"
@@ -446,6 +453,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T2 survival phase 2 (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "survival-shop-cure-planned"
@@ -456,6 +465,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T2 survival phase 2 (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "survival-spawn-or-made-cure-planned"
@@ -467,6 +478,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T2 survival phase 2 (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "survival-green-hitsplat-reserve"
@@ -479,6 +492,8 @@ listed = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
+closed = "0.3.0"
+closed_reason = "by-design"
 
 [[item]]
 id = "survival-strange-fruit-not-fetched"
@@ -511,6 +526,8 @@ listed = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
+closed = "0.3.0"
+closed_reason = "by-design"
 
 [[item]]
 id = "survival-poison-line-waits-for-creatures"
@@ -525,6 +542,8 @@ listed = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
+closed = "0.3.0"
+closed_reason = "by-design"
 
 [[item]]
 id = "survival-pause-outlasts-poison"
@@ -550,6 +569,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "survival-cure-waits-for-bank-transfer"
@@ -565,6 +586,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
+closed = "0.3.0"
+closed_reason = "by-design"
 
 [[item]]
 id = "survival-reconnect-forgets-poison"
@@ -722,6 +745,8 @@ listed = "0.2.7"
 target = "0.3.0"
 severity = "medium"
 owner = "upstream rs2b0t FireGiant (rs2b2t/rs2b0t#895, still open at the 0.2.9 cut) / survival phase 3"
+closed = "0.3.0"
+closed_reason = "upstream"
 
 [[item]]
 id = "quester-undeclared-step-damage"
@@ -735,6 +760,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "medium"
 owner = "QUEST-TERRA (next backlog review)"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "survival-area-timer-damage"
@@ -749,6 +776,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "medium"
 owner = "SURVIVAL-P2-DESIGN (next backlog review)"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "quester-hazard-food-recovery"
@@ -763,6 +792,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "SURVIVAL-P2-DESIGN"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "gnome-magic-chopper-full-pack-fruit"
@@ -778,6 +809,8 @@ listed = "0.2.8"
 target = "0.3.0"
 severity = "low"
 owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
+closed = "0.3.0"
+closed_reason = "upstream"
 
 [[item]]
 id = "compat-reader-hidden-side-tab"
@@ -807,6 +840,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "COMPAT-FINISH ClientAdapter"
+closed = "0.3.0"
+closed_reason = "by-design"
 
 [[item]]
 id = "background-work-stops-after-slow-disk"
@@ -868,6 +903,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "Navigation backlog review at 0.3.0"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "tick-normal-trees"
@@ -879,6 +916,8 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "tick-karambwan"
@@ -890,6 +929,8 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
+closed = "0.3.0"
+closed_reason = "by-design"
 
 [[item]]
 id = "tick-flinch"
@@ -902,6 +943,8 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "tick-reclick"
@@ -913,6 +956,8 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
+closed = "0.3.0"
+closed_reason = "by-design"
 
 [[item]]
 id = "tick-rune-pickaxe"
@@ -925,6 +970,8 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
+closed = "0.3.0"
+closed_reason = "by-design"
 
 [[item]]
 id = "tick-eat-arm"
@@ -937,6 +984,8 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
+closed = "0.3.0"
+closed_reason = "not-promised"
 [[item]]
 id = "combat-prep-weapon-in-flight"
 kind = "known-issue"
@@ -992,6 +1041,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T1.4 transport and T1 idea 16 (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "internal"
 
 [[item]]
 id = "sqlite-preferences-deferred"
@@ -1004,6 +1055,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T5.3-S4 (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "internal"
 
 [[item]]
 id = "pvp-prayer-flicking-deferred"
@@ -1015,6 +1068,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "PvP V3 (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "account-aware-target-picking-deferred"
@@ -1028,6 +1083,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "medium"
 owner = "Baked reachability BR3-BR7 and account-aware target choice (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "gatherer-bullroarer-batch-deferred"
@@ -1039,6 +1096,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "Gatherer U39 (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "fair-rendering-deferred"
@@ -1051,6 +1110,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "Render fairness S2-S5 qualification and activation (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "internal"
 
 [[item]]
 id = "snapshot-hot-path-deferred"
@@ -1063,6 +1124,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T1 hot snapshot ideas 2-4 (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "internal"
 
 [[item]]
 id = "bounded-runtime-logging-deferred"
@@ -1075,6 +1138,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T1 bounded logging (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "internal"
 
 [[item]]
 id = "nav-executor-split-deferred"
@@ -1086,6 +1151,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "Nav split S4 I-exec-closure (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "internal"
 
 [[item]]
 id = "crossing-risk-policy-credit-deferred"
@@ -1099,6 +1166,8 @@ first = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "Survivable P1-D/E and S3 runtime estimate activation (review again for 0.3.0)"
+closed = "0.3.0"
+closed_reason = "not-promised"
 
 [[item]]
 id = "gatherer-gas-hazard-escape"

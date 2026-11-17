@@ -157,6 +157,10 @@ The Gatherer cuts trees, mines rock or fishes. It needs the tool for the job:
 an axe, a pickaxe, or the fishing tool and its bait. If the tool is missing, it
 can take one from your bank.
 
+Karambwan fishing uses a fixed delay, so the Knife technique does not apply.
+A rune pickaxe mines every three ticks, so the Knife technique adds no speed.
+The rs2b0t fly and iron re-click methods give no gain on revision 289.
+
 ## Gatherer: choose what to gather and where
 
 | Setting | Default | What it does |
@@ -259,6 +263,17 @@ Combat eats food, drinks potions and uses protection prayers during a fight. It
 keeps the prayers you turned on. It turns off only the prayers that it turned on.
 A protection prayer that it turns on can switch off a different protection prayer
 that you had on. It does not turn that one back on.
+
+The bot keeps its poison reserve after a green hitsplat until it receives a
+poison message, sees a poison tick or drinks a cure.
+When poison is unclear, the bot assumes the strongest poison until a tick shows
+its value, which can cause an early cure or pause.
+
+When the game reports poison before its creatures update, the bot waits for that
+update to identify which creature poisoned it. A cure needed at once is drunk at
+once. A cure needed only for the worst case is drunk one game tick later.
+During a bank transfer, a built-in script lets the transfer settle or time out
+before it closes the bank and drinks a needed cure.
 
 ## Where to go next
 

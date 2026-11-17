@@ -1449,10 +1449,11 @@ The built-in Gatherer can use the kit in revision 289. External scripts do not
 get an unseen-button request from this setting. Shared server-ordered script
 authoring remains a separate capability.
 
-The knife technique shortens supported mining, fishing and oak-or-higher
-woodcutting cycles to three ticks when its inputs land on schedule. Normal
-trees are not in this release. A rune pickaxe has no gain, and karambwan
-fishing has no usable action-delay variable; those methods gather normally.
+The Knife technique shortens supported mining, fishing and oak-or-higher
+woodcutting cycles to three ticks when its inputs land on schedule. The Knife
+is offered for oak and higher trees; normal trees use the ordinary cadence. A
+rune pickaxe has no gain, and karambwan fishing has no usable action-delay
+variable; those methods gather normally.
 The kit needs a members world, one knife and at least one normal log in the
 pack. A members-only refusal turns the technique off for the run. Eating
 uses the existing checked eat operation and pauses one technique cycle.
