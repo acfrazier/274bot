@@ -17,8 +17,9 @@ use crate::native::{
     ActionContext, ActionError, NativeMachine, PvpGlobals, ReturnStallRecovery, WalkEnd,
     WalkRequest, QUEST_WALK_MAX_ATTEMPTS,
 };
-use crate::survival::cure::{self, CureDecision, CureInputs};
+use crate::survival::cure::{self, CureDecision, CureInputs, CurePoison};
 use crate::survival::eat;
+use api::condition::{poison_math, PoisonState};
 use api::prayer::PrayerObservation;
 use api::snapshot::ItemView;
 use std::num::NonZeroU64;
@@ -283,6 +284,10 @@ pub struct Combat {
     phase: Phase,
     flags: u16,
     stand_walk_failures: u8,
+    /// The walking ticks of the Guardian's escape, as the adapter last priced
+    /// them for this observation. `0` is unknown: a fight with an
+    /// [`EscapeReserve`] never attacks on an unknown walk.
+    escape_walk: u16,
 }
 const OBSERVED: u16 = 1;
 const EMITTED: u16 = 2;
@@ -367,7 +372,7 @@ impl NativeMachine for Combat {
                     ActionError::PvpRefused(PvpRefusal::NotOptedIn)
                 })?,
             ),
-            Target::Npc { .. } | Target::Attacker { .. } => None,
+            Target::Npc { .. } | Target::Attacker { .. } | Target::ExactNpc { .. } => None,
         };
         if request.tactic != Tactic::Open || matches!(request.fallback, Fallback::FaceTank { .. }) {
             return Err(unavailable("tactic slice"));
@@ -384,6 +389,14 @@ impl NativeMachine for Combat {
                 .iter()
                 .any(|id| tables.npc_fact(*id).is_some_and(|row| row.attackable))
             {
+                return Err(unavailable("unattackable npc target"));
+            }
+        }
+        if let Target::ExactNpc { npc_type, .. } = &request.target {
+            if tables.npc(*npc_type).is_none() {
+                return Err(unavailable("combat npc facts"));
+            }
+            if !tables.npc_fact(*npc_type).is_some_and(|row| row.attackable) {
                 return Err(unavailable("unattackable npc target"));
             }
         }
@@ -482,6 +495,7 @@ impl NativeMachine for Combat {
             phase: Phase::Prep,
             flags: 0,
             stand_walk_failures: 0,
+            escape_walk: 0,
         };
         if let Some(frame) = begin_frame.as_ref() {
             if let Some(open) =
@@ -769,7 +783,15 @@ impl NativeMachine for Combat {
             let lines = select::lines(danger, arbiter::stat(&frame, 3).1).with_poison(poison_fire);
             let food_available =
                 self.emergency_food_available(&frame, danger, cx.protected_items());
-            self.safety_end(&frame, tick, danger, lines.emergency, food_available);
+            let escape_stop = self.escape_stop(&frame, tick, danger, cx);
+            self.safety_end(
+                &frame,
+                tick,
+                danger,
+                lines.emergency,
+                food_available,
+                escape_stop,
+            );
             self.counters.locked = self.counters.locked.saturating_add(1);
             return Poll::Pending;
         }
@@ -841,6 +863,33 @@ impl NativeMachine for Combat {
 }
 
 impl Combat {
+    /// The input lock and eat/drink clocks as the machine projects them
+    /// now, for the Guardian child's hand-over to its upkeep guard.
+    pub fn handoff_schedule(&self) -> Schedule {
+        self.projected_schedule()
+    }
+    /// The fight has ended and admitted cleanup (prayers, ammunition) is
+    /// finishing before the machine reports.
+    pub fn winding_down(&self) -> bool {
+        self.phase == Phase::WindDown
+    }
+    /// The bite this machine admitted and has not seen settle, for the hand-over
+    /// to the upkeep guard: the guard must not issue it again.
+    pub fn pending_bite(&self) -> Option<super::guard::PendingBite> {
+        self.pending
+            .iter()
+            .find(|pending| pending.row.kind == RowKind::Eat)
+            .map(|pending| super::guard::PendingBite {
+                id: pending.row.id,
+                tick: self.last_tick.wrapping_sub(u16::from(pending.age)),
+                hp: self.eat_hp,
+            })
+    }
+    /// Price the escape for the next observation (see
+    /// [`EscapeReserve`](super::EscapeReserve)): the full walking-tick bound.
+    pub fn set_escape_walk(&mut self, ticks: u16) {
+        self.escape_walk = ticks;
+    }
     pub fn input_lock(&self) -> Option<u16> {
         let schedule = self.projected_schedule();
         schedule
@@ -1517,10 +1566,12 @@ impl Combat {
     fn reselect_npc_target(&mut self, frame: &Frame<'_>, tick: u16) {
         // Only authored NPC selection depends on the executable style's reach.
         // Keep player engagement, self-defence and suspended-target policy.
-        if matches!(self.request.target, Target::Npc { .. })
-            && self
-                .engaged
-                .is_none_or(|actor| actor.kind == ActorKind::Npc)
+        if matches!(
+            self.request.target,
+            Target::Npc { .. } | Target::ExactNpc { .. }
+        ) && self
+            .engaged
+            .is_none_or(|actor| actor.kind == ActorKind::Npc)
         {
             self.observe_target(frame, tick, true);
         }
@@ -1625,6 +1676,7 @@ impl Combat {
                         let same = ty == self.engaged_type();
                         let listed = match &self.request.target {
                             Target::Npc { types, .. } => types.contains(&ty),
+                            Target::ExactNpc { npc_type, .. } => ty == *npc_type,
                             _ => same,
                         };
                         present = listed
@@ -2250,6 +2302,80 @@ impl Combat {
     fn antifire(&self, tick: u16) -> bool {
         self.flags & ANTIFIRE != 0 && elapsed(tick, self.antifire_sip) < 600
     }
+    /// The Fight-to-Flee line of a Guardian event fight (design V11D 5.3):
+    /// true when the fight must hand over now. It needs the escape priced
+    /// (`escape_walk != 0`). With no unreserved food it holds at or below
+    /// the line; food that remains keeps the ordinary bite tiers. A request
+    /// without an [`EscapeReserve`] never stops here.
+    fn escape_stop(
+        &self,
+        frame: &Frame<'_>,
+        tick: u16,
+        danger: Option<i32>,
+        cx: &ActionContext<'_>,
+    ) -> bool {
+        let Some(reserve) = self.request.escape_reserve else {
+            return false;
+        };
+        if self.escape_walk == 0 {
+            return true;
+        }
+        let food_left = self.request.allow.food
+            && arbiter::food_by_excluding(frame, &self.tables, None, cx.protected_items(), |_| {
+                true
+            })
+            .is_some();
+        if food_left {
+            return false;
+        }
+        arbiter::stat(frame, 3).0 <= self.escape_cost(tick, danger, reserve, cx).flee_hp()
+    }
+    /// The inputs of the Fight-to-Flee line for this observation.
+    fn escape_cost(
+        &self,
+        tick: u16,
+        danger: Option<i32>,
+        reserve: EscapeReserve,
+        cx: &ActionContext<'_>,
+    ) -> super::EscapeCost {
+        let schedule = self.projected_schedule();
+        let poisoned = cx.condition().filter(|condition| {
+            matches!(
+                condition.poison,
+                PoisonState::Onset { .. } | PoisonState::Poisoned { .. }
+            )
+        });
+        let outlook = poisoned.map(|condition| {
+            poison_math::remaining(
+                condition.poison,
+                crate::survival::math::exposure(&self.threats, &self.tables, tick),
+                tick,
+                cx.poison_unknown_pulse(),
+            )
+        });
+        // A cure drink the escape can need before it starts locks input for
+        // three ticks (`Schedule::admitted`).
+        let cure_lock = i32::from(poisoned.is_some() && cx.cure_poison() != CurePoison::Never) * 3;
+        let interval = self
+            .threats
+            .iter(tick)
+            .map(|threat| threat.rate)
+            .filter(|rate| *rate > 0)
+            .fold(reserve.interval.max(1), u8::min);
+        super::EscapeCost {
+            hit: reserve.hit.max(danger.unwrap_or(0)),
+            interval: i32::from(interval),
+            walk: i32::from(self.escape_walk),
+            lock: if schedule.locked(tick) {
+                i32::from(schedule.input_lock.wrapping_sub(tick))
+            } else {
+                0
+            } + cure_lock,
+            poison_fire: outlook.map_or(0, |outlook| i32::from(outlook.per_fire_now)),
+            poison_fires: outlook.map_or(0, |outlook| i32::from(outlook.fires)),
+            poison_total: outlook.map_or(0, |outlook| i32::from(outlook.total)),
+        }
+    }
     fn safety_end(
         &mut self,
         frame: &Frame<'_>,
@@ -2257,12 +2383,14 @@ impl Combat {
         danger: Option<i32>,
         emergency: i32,
         food_available: bool,
+        escape_stop: bool,
     ) {
         if self.phase == Phase::Escape || self.phase == Phase::WindDown {
             return;
         }
         let no_food =
-            danger != Some(0) && arbiter::stat(frame, 3).0 <= emergency && !food_available;
+            (danger != Some(0) && arbiter::stat(frame, 3).0 <= emergency && !food_available)
+                || escape_stop;
         let no_fire = self.flags & SHIELD_OVERRIDE != 0
             && !self.shield(frame)
             && !self.antifire(tick)
@@ -2669,7 +2797,15 @@ impl Combat {
         }
         let mut lines = select::lines(danger, hp_max).with_poison(poison_fire);
         let food_available = self.emergency_food_available(frame, danger, cx.protected_items());
-        self.safety_end(frame, tick, danger, lines.emergency, food_available);
+        let escape_stop = self.escape_stop(frame, tick, danger, cx);
+        self.safety_end(
+            frame,
+            tick,
+            danger,
+            lines.emergency,
+            food_available,
+            escape_stop,
+        );
         if self.cure_row(&mut plan, frame, tick, danger, lines.eat, cx) {
             return Ok(plan);
         }

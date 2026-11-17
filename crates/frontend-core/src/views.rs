@@ -1583,25 +1583,94 @@ fn elapsed_from(phase: Phase, s: &SlotStatus) -> Option<Instant> {
     }
 }
 
-/// `dialog: mysterious old man (hold) (off)`. Returns false when nothing
-/// is detected.
+/// `dialog: mysterious old man (hold) (off)`, then, when the Guardian
+/// publishes how it answers the event, ` | Fighting River troll.` (design
+/// V11D 7.1). Returns false when nothing is detected.
 fn write_random(out: &mut String, random: &host_play::RandomStatus) -> bool {
     let Some(kind) = random.kind else {
         return false;
     };
-    let _ = write!(
-        out,
-        "{}: {}",
-        random_kind_name(kind),
-        random.name.as_deref().unwrap_or("?")
-    );
+    let name = random.name.as_deref().unwrap_or("?");
+    let _ = write!(out, "{}: {}", random_kind_name(kind), name);
     if random.hold {
         out.push_str(" (hold)");
     }
     if !random.toggle {
         out.push_str(" (off)");
     }
+    if let Some(response) = random.response {
+        out.push_str(" | ");
+        write_random_response(out, name, response);
+    }
     true
+}
+
+/// The words for how the Guardian answers the event `name` now: the one
+/// runtime sentence the panel and the TUI both show. A bounded failure never
+/// reads as handled, and a reason is a short phrase, not a token. It writes
+/// into `out` and allocates nothing of its own.
+pub fn write_random_response(out: &mut String, name: &str, response: api::random::RandomResponse) {
+    use api::random::{ResponseReason, ResponseState};
+    /// The event name with its first letter in capitals.
+    fn event(out: &mut String, name: &str) {
+        let mut chars = name.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+        }
+    }
+    let reason = match response.reason {
+        None => None,
+        Some(ResponseReason::Immune) => Some("cannot be damaged"),
+        Some(ResponseReason::NotFought) => Some("Fight does not apply"),
+        Some(ResponseReason::EscapeReserve) => Some("Hitpoints cannot pay for the escape"),
+        Some(ResponseReason::UnavailableFacts) => Some("facts for the fight are missing"),
+        Some(ResponseReason::UnavailableSetup) => Some("the held setup cannot fight"),
+        Some(ResponseReason::Cancelled) => Some("the fight was cancelled"),
+        Some(ResponseReason::ExhaustedBudget) => Some("out of time"),
+        Some(ResponseReason::FightEnded) => Some("the fight ended"),
+    };
+    match response.state {
+        ResponseState::Fighting => {
+            out.push_str("Fighting ");
+            event(out, name);
+            out.push('.');
+        }
+        ResponseState::Fleeing => {
+            if response.reason == Some(ResponseReason::NotFought) {
+                out.push_str("Fleeing angry ");
+                event(out, name);
+            } else {
+                out.push_str("Fleeing ");
+                event(out, name);
+                if let Some(reason) = reason {
+                    out.push_str(": ");
+                    out.push_str(reason);
+                }
+            }
+            out.push('.');
+        }
+        ResponseState::Picking => {
+            out.push_str("Picking ");
+            event(out, name);
+            out.push_str(" fruit.");
+        }
+        ResponseState::ScriptOwned => {
+            out.push_str("Script handling ");
+            event(out, name);
+            out.push('.');
+        }
+        ResponseState::Stopped => {
+            event(out, name);
+            out.push_str(": handling stopped");
+            if let Some(reason) = reason {
+                out.push_str(" \u{2014} ");
+                out.push_str(reason);
+            }
+            out.push('.');
+        }
+        ResponseState::HandlingOff => out.push_str("Random-event handling is off."),
+    }
 }
 
 /// Guardian kind names (kebab-case).

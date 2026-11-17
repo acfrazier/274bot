@@ -36,6 +36,7 @@ use crate::surface::{
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
+use api::random::{FightCancel, FightOffer, FightRead, FightReason, FightToken};
 use serde::Serialize;
 
 // The seat's host ids occupy the high host range. Other process services
@@ -519,6 +520,11 @@ pub struct SlotScript {
     evidence_wait_run: Option<api::selected::RunKey>,
     /// Host-side Stop cleanup outlives the revoked native action owner.
     stop_prayer_cleanup: crate::combat::RaisedPrayers,
+    /// The one Guardian Fight child (design V11D 4.1). It lives in the slot,
+    /// not in a card or its run, so a slot that never loaded a card has a
+    /// home for it. It has its own ledger and active clock, and no
+    /// ordinary run's poll or emission touches it.
+    guardian: Option<Box<crate::combat::guardian::GuardianChild>>,
     incarnation: u64,
     /// The bound server profile's world type, bound by the host on spawn.
     world_members: api::selected::Truth,
@@ -647,6 +653,7 @@ impl SlotScript {
             pair_evidence: None,
             evidence_wait_run: None,
             stop_prayer_cleanup: crate::combat::RaisedPrayers::empty(),
+            guardian: None,
             incarnation: 0,
             world_members: api::selected::Truth::Unknown,
             control_generation: 0,
@@ -1284,6 +1291,7 @@ impl SlotScript {
 
     /// Operator-Start bookkeeping shared by an immediate and a queued Start.
     fn reset_for_fresh_start(&mut self) {
+        self.guardian_revoke(FightCancel::Replaced);
         self.watchdog.arm_fresh(Instant::now());
         self.want_run = true;
         self.last_error = None;
@@ -1636,6 +1644,7 @@ impl SlotScript {
     /// it to Resume; a watchdog recovery walk is re-armed on Resume instead
     /// ([`ProgressWatchdog::defer_recovery`]).
     pub fn pause(&mut self) {
+        self.guardian_revoke(FightCancel::Paused);
         self.want_run = false;
         self.evidence_wait_run = None;
         self.native_runtime.clear_note_progress();
@@ -1762,6 +1771,13 @@ impl SlotScript {
     }
 
     fn stop_with_reason(&mut self, reason: StopReason, message: &'static str) {
+        match reason {
+            StopReason::Operator => self.guardian_revoke(FightCancel::Stopped),
+            StopReason::Removed => self.guardian_revoke(FightCancel::SessionEnded),
+            StopReason::Replaced => self.guardian_revoke(FightCancel::Replaced),
+            StopReason::Error => self.guardian_revoke(FightCancel::CardFailed),
+            StopReason::Completed => {}
+        }
         self.terminal_native_status = None;
         let native = self.compiled.is_some()
             || self.preparing.is_some()
@@ -1900,6 +1916,7 @@ impl SlotScript {
     }
 
     fn session_boundary(&mut self, reconnect: bool) -> bool {
+        self.guardian_revoke(FightCancel::SessionEnded);
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
         self.native_runtime.clock.observe(Instant::now(), false);
@@ -2807,9 +2824,7 @@ impl SlotScript {
         authority: &crate::native::HostAuthority,
         allow: crate::native::PrereqAllow,
     ) -> bool {
-        self.native_runtime
-            .ledger
-            .as_mut()
+        self.ledger_of(authority.run())
             .is_some_and(|ledger| ledger.capture_walk_prereq_allow(authority, allow))
     }
 
@@ -2824,7 +2839,8 @@ impl SlotScript {
         {
             return;
         }
-        let Some(ledger) = self.native_runtime.ledger.as_mut() else {
+        let child = self.guardian_owns(authority.run());
+        let Some(ledger) = self.ledger_of(authority.run()) else {
             return;
         };
         if ledger.owner.as_ref().is_some_and(|owner| {
@@ -2842,7 +2858,7 @@ impl SlotScript {
             // with the same request number. Its accepted terminal is the
             // authority for freeing that reservation, even when the host has
             // already armed a newer route.
-            if let Some(id) = native_walk_id(request_id) {
+            if let Some(id) = native_walk_id(request_id).filter(|_| !child) {
                 if self.guardian_held {
                     if !self.held_walk_terminals.contains(&id)
                         && self.held_walk_terminals.len() < api::script_contract::MAX_WALK_RELEASES
@@ -2869,7 +2885,7 @@ impl SlotScript {
         {
             return;
         }
-        let Some(ledger) = self.native_runtime.ledger.as_mut() else {
+        let Some(ledger) = self.ledger_of(authority.run()) else {
             return;
         };
         if ledger.owner.as_ref().is_some_and(|owner| {
@@ -2884,7 +2900,7 @@ impl SlotScript {
         authority: &crate::native::HostAuthority,
         receipt: crate::native::InteractionReceipt,
     ) {
-        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+        if let Some(ledger) = self.ledger_of(authority.run()) {
             ledger.complete_interaction(authority, receipt);
         }
     }
@@ -2895,7 +2911,7 @@ impl SlotScript {
         authority: &crate::native::HostAuthority,
         completion: crate::native::ServerOrderedCompletion,
     ) {
-        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+        if let Some(ledger) = self.ledger_of(authority.run()) {
             ledger.complete_server_ordered(authority, completion);
         }
     }
@@ -2905,7 +2921,7 @@ impl SlotScript {
         authority: &crate::native::HostAuthority,
         receipt: crate::native_bank::BankPickReceipt,
     ) {
-        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+        if let Some(ledger) = self.ledger_of(authority.run()) {
             ledger.complete_bank_pick(authority, receipt);
         }
     }
@@ -2916,7 +2932,7 @@ impl SlotScript {
         authority: &crate::native::HostAuthority,
         receipt: crate::native_bank::ServicePickReceipt,
     ) {
-        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+        if let Some(ledger) = self.ledger_of(authority.run()) {
             ledger.complete_service_pick(authority, receipt);
         }
     }
@@ -2926,7 +2942,7 @@ impl SlotScript {
         authority: &crate::native::HostAuthority,
         receipt: crate::native::AssessReceipt,
     ) {
-        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+        if let Some(ledger) = self.ledger_of(authority.run()) {
             ledger.complete_assess_walk(authority, receipt);
         }
     }
@@ -4735,6 +4751,162 @@ impl SlotScript {
         }
     }
 
+    /// Offer a Guardian Fight to this slot (design V11D 4.1): the shared
+    /// Combat core against one exact event actor. Any child held before is
+    /// replaced. A slot that never loaded a card can host the child.
+    pub fn guardian_offer(
+        &mut self,
+        offer: FightOffer,
+        selected: &Arc<api::game_data::SelectedGameData>,
+    ) -> Result<(), FightReason> {
+        if self.incarnation == 0 {
+            return Err(FightReason::NoService);
+        }
+        let protected = self.compiled.as_ref().and_then(|run| {
+            catch_unwind(AssertUnwindSafe(|| run.script.protected_items()))
+                .ok()
+                .flatten()
+        });
+        let run = crate::combat::guardian::child_run(
+            self.incarnation,
+            offer.token.serial,
+            self.work_epoch,
+        );
+        let child = crate::combat::guardian::GuardianChild::begin(offer, run, selected, protected)?;
+        self.guardian_revoke(FightCancel::Replaced);
+        self.guardian = Some(Box::new(child));
+        Ok(())
+    }
+
+    /// Revoke the held Guardian child before the next dispatch, whatever the
+    /// card state: the cancellation is recorded for the Guardian's next read
+    /// and the prayers the core raised go to the host's cleanup.
+    pub fn guardian_revoke(&mut self, cancel: FightCancel) {
+        let Some(child) = self.guardian.as_mut() else {
+            return;
+        };
+        child.revoke(cancel);
+        let owed = child.take_prayer_cleanup();
+        self.stop_prayer_cleanup.merge(owed);
+    }
+
+    /// As [`Self::guardian_revoke`], for the child of `token` only.
+    pub fn guardian_revoke_token(&mut self, token: FightToken, cancel: FightCancel) {
+        if self.guardian_token() == Some(token) {
+            self.guardian_revoke(cancel);
+        }
+    }
+
+    /// The token of the held child, if any.
+    pub fn guardian_token(&self) -> Option<FightToken> {
+        self.guardian.as_ref().map(|child| child.token())
+    }
+
+    /// What the Guardian reads about the child of `token`; `None` when the
+    /// slot holds no such child.
+    pub fn guardian_read(&self, token: FightToken) -> Option<FightRead> {
+        self.guardian
+            .as_ref()
+            .filter(|child| child.token() == token)
+            .map(|child| child.read())
+    }
+
+    /// The Guardian folded the child's end: drop it. A child still alive is
+    /// revoked first.
+    pub fn guardian_release(&mut self, token: FightToken) {
+        if self.guardian_token() != Some(token) {
+            return;
+        }
+        if !self.guardian.as_ref().is_some_and(|child| child.done()) {
+            self.guardian_revoke(FightCancel::SettingChanged);
+        }
+        self.guardian = None;
+    }
+
+    /// One observation of the Guardian child, in a frame the host built.
+    /// `online` is the host's word that the session is current and ready
+    /// apart from the Guardian's own hold, and that no manual takeover holds
+    /// the account.
+    pub fn guardian_tick(&mut self, ctx: &mut ScriptCtx<'_>, online: bool) {
+        if let Some(child) = self.guardian.as_mut() {
+            child.step(ctx, online);
+        }
+    }
+
+    /// Whether an admitted action of the Guardian child waits for dispatch.
+    pub fn guardian_has_actions(&self) -> bool {
+        self.guardian
+            .as_ref()
+            .is_some_and(|child| child.has_actions())
+    }
+
+    /// The next admitted action of the Guardian child, custody released to the
+    /// host dispatch.
+    pub fn take_guardian_action(&mut self) -> Option<crate::native::HostAction> {
+        self.guardian.as_mut()?.take_action()
+    }
+
+    /// The next admitted row the host dispatch sends. The Guardian child's
+    /// rows go first. `child_only` leaves the card's own rows where they are:
+    /// the Guardian holds the card, so only its child's rows may go out.
+    pub fn take_dispatch_action(&mut self, child_only: bool) -> Option<crate::native::HostAction> {
+        if let Some(action) = self.take_guardian_action() {
+            return Some(action);
+        }
+        if child_only {
+            return None;
+        }
+        self.take_native_action()
+    }
+
+    /// Run the single upkeep guard of the walk out for the child of `token`
+    /// once for this observation (see
+    /// [`crate::combat::guardian::GuardianChild::escape_upkeep`]).
+    pub fn guardian_escape_upkeep(
+        &mut self,
+        token: FightToken,
+        tick: u16,
+        upkeep: impl FnOnce(&mut Option<crate::combat::WalkGuard>),
+    ) -> Option<bool> {
+        let child = self
+            .guardian
+            .as_mut()
+            .filter(|child| child.token() == token)?;
+        child.escape_upkeep(tick, upkeep)
+    }
+
+    /// The first click of the walk out of the child of `token` reached the
+    /// Driver (see [`crate::combat::guardian::GuardianChild::escape_sent`]).
+    pub fn guardian_escape_sent(&mut self, token: FightToken) {
+        if let Some(child) = self
+            .guardian
+            .as_mut()
+            .filter(|child| child.token() == token)
+        {
+            child.escape_sent();
+        }
+    }
+
+    fn guardian_owns(&self, run: api::selected::RunKey) -> bool {
+        self.guardian
+            .as_ref()
+            .is_some_and(|child| child.run() == run)
+    }
+
+    /// The ledger that owns `run`'s actions: the Guardian child's own, or the
+    /// slot's.
+    fn ledger_of(
+        &mut self,
+        run: api::selected::RunKey,
+    ) -> Option<&mut Box<crate::native::ledger::Ledger>> {
+        match self.guardian.as_mut() {
+            Some(child) if child.run() == run => {
+                child.ledger_for(run).and_then(|ledger| ledger.as_mut())
+            }
+            _ => self.native_runtime.ledger.as_mut(),
+        }
+    }
+
     pub fn memory_metrics(&self) -> Option<serde_json::Value> {
         self.surface
             .as_ref()
@@ -4956,3 +5128,7 @@ mod seat_wire_tests;
 #[cfg(test)]
 #[path = "slot/seat_family_tests.rs"]
 mod seat_family_tests;
+
+#[cfg(test)]
+#[path = "slot/guardian_tests.rs"]
+mod guardian_tests;

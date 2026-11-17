@@ -915,6 +915,14 @@ impl ActionHandle<crate::combat::Combat> {
         }
     }
 
+    /// Price the Guardian event fight's escape for the next poll: the full
+    /// walking-tick bound, `0` for unknown.
+    pub fn set_escape_walk(&self, ticks: u16) {
+        if let Some(machine) = self.machine.borrow_mut().as_mut() {
+            machine.set_escape_walk(ticks);
+        }
+    }
+
     /// Read accepted combat prayer-cleanup debt without polling the machine.
     pub fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         let machine = self.machine.borrow();

@@ -257,7 +257,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
         .ok_or("no minted live account")?
         .clone();
     let passphrase = profiles.passphrase().to_owned();
-    let vault_path = profiles.tui_vault();
+    let vault_path = profiles.tui_vault(&[]);
 
     let mut session = TuiSession::new_bound(template);
     session.mainland = true;

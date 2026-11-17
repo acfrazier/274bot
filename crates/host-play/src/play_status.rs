@@ -208,15 +208,31 @@ impl Clone for SlotStatus {
         self.script_paint.clone_from(&source.script_paint);
         self.condition = source.condition;
         self.survival = source.survival;
-        let (random, from) = (&mut self.random, &source.random);
-        random.kind.clone_from(&from.kind);
-        random.name.clone_from(&from.name);
-        random.ours = from.ours;
-        random.handling = from.handling;
-        random.hold = from.hold;
-        random.toggle = from.toggle;
-        random.claim.clone_from(&from.claim);
-        random.cooldown = from.cooldown;
+        // Every field is named, so a field added to the status cannot be left
+        // out of the copy a poll makes.
+        let RandomStatus {
+            kind,
+            name,
+            ours,
+            handling,
+            hold,
+            toggle,
+            claim,
+            cooldown,
+            response,
+            fight,
+        } = &source.random;
+        let random = &mut self.random;
+        random.kind.clone_from(kind);
+        random.name.clone_from(name);
+        random.ours = *ours;
+        random.handling = *handling;
+        random.hold = *hold;
+        random.toggle = *toggle;
+        random.claim.clone_from(claim);
+        random.cooldown = *cooldown;
+        random.response = *response;
+        random.fight = *fight;
     }
 }
 
@@ -735,4 +751,52 @@ pub(super) fn publish_session_boundary_status(
         }
     }
     session_boundary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use api::random::{FightToken, RandomResponse, ResponseReason, ResponseState};
+
+    /// A poll copies rows with `clone_from`, which reuses the destination's
+    /// buffers: every field of the Guardian's published status must come
+    /// across, the typed response and the fight token included.
+    #[test]
+    fn a_polled_status_row_carries_every_field_of_the_guardians_status() {
+        let mut source = SlotStatus {
+            username: "amy".into(),
+            ..SlotStatus::default()
+        };
+        source.random = RandomStatus {
+            kind: Some(api::RandomKind::Evade),
+            name: Some("river troll".into()),
+            ours: true,
+            handling: true,
+            hold: true,
+            toggle: true,
+            claim: crate::RandomClaim::Handle,
+            cooldown: true,
+            response: Some(RandomResponse {
+                state: ResponseState::Fleeing,
+                reason: Some(ResponseReason::EscapeReserve),
+            }),
+            fight: Some(FightToken {
+                session: 3,
+                serial: 4,
+            }),
+        };
+        // A row retained from an earlier poll, with another answer.
+        let mut copy = SlotStatus {
+            username: "amy".into(),
+            ..SlotStatus::default()
+        };
+        copy.random.response = Some(RandomResponse {
+            state: ResponseState::Fighting,
+            reason: None,
+        });
+        copy.clone_from(&source);
+        assert_eq!(copy.random, source.random);
+        assert_eq!(copy.random.response, source.random.response);
+        assert_eq!(copy.random.fight, source.random.fight);
+    }
 }

@@ -267,6 +267,7 @@ pub fn offensives_worth(
 pub fn requested_worth(request: &CombatRequest, tables: &CombatTables) -> bool {
     match &request.target {
         Target::Npc { types, .. } => types.iter().any(|ty| durable_npc(*ty, tables)),
+        Target::ExactNpc { npc_type, .. } => durable_npc(*npc_type, tables),
         _ => false,
     }
 }
@@ -402,6 +403,24 @@ pub mod facts {
             hit
         };
         u8::try_from(maximum).ok()
+    }
+
+    /// The greatest hit the shared melee and ranged formulas give the stats of
+    /// a row whose bespoke attack handler only adds a ranged branch of the same
+    /// formulas. The Rock golem is that row: its handler throws a stone for
+    /// `~combat_maxhit(npc_stat(ranged))` and otherwise takes the default melee
+    /// attack (`macro_event_rock_golem.rs2:24-68`). A forced total still wins.
+    pub fn golem_max_hit(row: &NpcNameRow) -> Option<i32> {
+        if row.forced_max_hit.is_some() {
+            return None;
+        }
+        [
+            stat_max(row.strength, row.strengthbonus),
+            stat_max(row.ranged, row.rangebonus),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
     }
 
     pub(super) fn stat_max(stat: Option<i32>, bonus: Option<i32>) -> Option<i32> {
@@ -553,6 +572,15 @@ pub fn pick_target(
                 )
             })
             .map(|threat| threat.actor),
+        Target::ExactNpc { index, npc_type } => frame
+            .npcs
+            .iter()
+            .find(|npc| {
+                npc.index == usize::from(*index) && npc.r#type == usize::try_from(*npc_type).ok()
+            })
+            .filter(|npc| !corpse(npc))
+            .and_then(npc_actor)
+            .filter(|actor| actor_attackable(frame, *actor)),
         Target::Player { name } => frame
             .players
             .iter()
@@ -747,7 +775,10 @@ pub fn single_way_attacker(
                 )
             })
             .map(|threat| threat.actor),
-        Target::Attacker { npcs: false, .. } | Target::Player { .. } => None,
+        // The exact actor is the only legal target: a refusal never retargets.
+        Target::Attacker { npcs: false, .. } | Target::Player { .. } | Target::ExactNpc { .. } => {
+            None
+        }
     }
 }
 #[inline]

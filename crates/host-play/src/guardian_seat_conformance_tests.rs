@@ -264,6 +264,7 @@ fn bounds() -> GuardianBounds {
         window: false,
         retain: false,
         ent_hold: 2,
+        fight: false,
     }
 }
 

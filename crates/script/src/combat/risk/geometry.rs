@@ -231,7 +231,8 @@ fn attached(view: RouteView<'_>, leg: usize) -> bool {
             matches!(row, LegView::Walk(tiles) if tiles.last() == Some(&hop.effective_takeoff()))
         })
 }
-fn walk_ticks(tiles: usize) -> Result<i32, UnknownWhy> {
+/// The conservative walking bound of `tiles` steps in ticks: `(3 * tiles + 1) / 2`.
+pub(crate) fn walk_ticks(tiles: usize) -> Result<i32, UnknownWhy> {
     let tiles = i32::try_from(tiles).map_err(|_| UnknownWhy::Overflow)?;
     tiles
         .checked_mul(3)

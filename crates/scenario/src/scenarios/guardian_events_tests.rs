@@ -459,3 +459,140 @@ fn every_engine_patch_user_is_documented() {
         );
     }
 }
+
+/// The combat level the content computes the event tier from
+/// (`macro_events.rs2:175-181`: under 11 is the lowest tier), for the stats a
+/// fight cell's `setstat` cheats leave a fresh account with.
+fn seeded_combat_level(seed: &[&str]) -> i32 {
+    let mut levels = [1i32; 7];
+    levels[3] = 10;
+    for cmd in seed {
+        let mut words = cmd.split_whitespace();
+        if words.next() != Some("setstat") {
+            continue;
+        }
+        let stat = words.next().unwrap();
+        let level: i32 = words.next().unwrap().parse().unwrap();
+        let index = [
+            "attack",
+            "defence",
+            "strength",
+            "hitpoints",
+            "ranged",
+            "prayer",
+            "magic",
+        ]
+        .iter()
+        .position(|name| *name == stat)
+        .unwrap_or_else(|| panic!("a fight seed sets {stat}"));
+        levels[index] = level;
+    }
+    let [attack, defence, strength, hitpoints, ranged, prayer, magic] = levels;
+    let base = (defence + hitpoints + prayer / 2) as f64 * 0.25;
+    let melee = (attack + strength) as f64 * 0.325;
+    let range = (ranged / 2 + ranged) as f64 * 0.325;
+    let mage = (magic / 2 + magic) as f64 * 0.325;
+    (base + melee.max(range).max(mage)).floor() as i32
+}
+
+/// Every saved-Fight cell saves Fight for exactly its own event, observes one
+/// event with the oracle its table row names, and an armed cell seeds the
+/// account's own fight stats, weapon and food before it stands at the site. A
+/// fight cell stays at the event's lowest tier: the seed keeps the combat
+/// level under 11.
+#[test]
+fn the_fight_cells_save_fight_for_their_event_and_stay_at_the_lowest_tier() {
+    let mut names = Vec::new();
+    for (name, activity, event, trigger, oracle, fight, armed) in GUARDIAN_FIGHT_CELLS {
+        assert!(!names.contains(name), "{name} is listed twice");
+        names.push(*name);
+        let scenario = crate::get(name).unwrap_or_else(|| panic!("{name} is not registered"));
+        assert_eq!(scenario.settings.guardian_fight, *fight, "{name}");
+        assert_eq!(
+            fight,
+            &[*event],
+            "{name}: Fight is saved for its own event only"
+        );
+        assert_eq!(
+            scenario.settings.start_script,
+            Some(activity.start_script())
+        );
+        let observed: Vec<_> = scenario
+            .steps
+            .iter()
+            .filter_map(|step| match step.kind {
+                StepKind::ObserveRandomEvent { cell } => Some(cell),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(observed.len(), 1, "{name}");
+        assert_eq!(observed[0].oracle, *oracle);
+        assert_eq!(observed[0].trigger, *trigger);
+        let seeds = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "seed the account's own fight stats, weapon and food");
+        let stand = scenario
+            .steps
+            .iter()
+            .position(|step| step.name == "stand at the real activity site")
+            .unwrap();
+        assert_eq!(
+            seeds.is_some(),
+            *armed,
+            "{name}: armed cells seed the fight"
+        );
+        if let Some(seeds) = seeds {
+            assert!(seeds < stand, "{name}: the seed comes before the stand");
+            let seed = FIGHT_SEED;
+            assert!(
+                seeded_combat_level(seed) < 11,
+                "{name}: the seeded stats keep the event at its lowest tier"
+            );
+            let food: i32 = seed
+                .iter()
+                .find_map(|cmd| cmd.strip_prefix("give lobster "))
+                .map(|count| count.parse().unwrap())
+                .expect("a fight seed gives food");
+            assert_eq!(
+                food, FIGHT_FOOD,
+                "{name}: the seed gives the food the step waits for"
+            );
+        }
+    }
+    assert!(
+        GUARDIAN_FIGHT_CELLS
+            .iter()
+            .any(|cell| matches!(cell.4, Oracle::Fight { .. })),
+        "one cell fights a listed event to its end"
+    );
+    assert!(
+        GUARDIAN_FIGHT_CELLS
+            .iter()
+            .any(|cell| cell.2 == "swarm" && matches!(cell.4, Oracle::Evade { .. })),
+        "one cell saves Fight for an event it does not apply to and expects the flee"
+    );
+}
+
+/// The Fight cell's window is not the expected length of one fight: it holds
+/// the Guardian's whole-episode failure budget and the resumption after it, so
+/// the roll of the fight cannot end the cell before the product's own bound.
+/// The cell's wall-clock deadline holds that window in real time, at the
+/// 600 ms a game tick takes, and the two minutes of seed, Start and first XP
+/// before it, so a long roll is not a timeout either.
+#[test]
+fn the_fight_cell_window_holds_the_episode_budget_and_the_resumption() {
+    let scenario = crate::get("guardian_fight_river_troll").expect("the Fight cell is registered");
+    let observe = scenario.steps.last().unwrap();
+    assert!(matches!(observe.kind, StepKind::ObserveRandomEvent { .. }));
+    let window = observe.wait.budget_ticks;
+    assert!(
+        window >= u32::from(api::random::EVADE_EPISODE_TICKS) + crate::random_episode::RESUME_TICKS,
+        "the {window}-tick window must hold the whole-episode budget and the resumption"
+    );
+    let setup = Duration::from_secs(120);
+    assert!(
+        scenario.settings.deadline >= Duration::from_millis(u64::from(window) * 600) + setup,
+        "the deadline must hold {window} game ticks of 600 ms and the setup before them"
+    );
+}

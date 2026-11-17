@@ -72,6 +72,18 @@ const WALK_BACK_SLACK: i32 = 2;
 /// Consecutive game ticks an event NPC must be absent before it counts as gone
 /// (a view-edge flicker is not a despawn).
 const GONE_TICKS: u32 = 3;
+/// Game ticks from the end of a saved-Fight episode to the activity's next
+/// fresh XP: the bound the Swarm cell uses for the flee's return and first
+/// catch (`guardian_events.rs`).
+pub(crate) const RESUME_TICKS: u32 = 120;
+/// The longest a saved-Fight episode can run, in observed game ticks: the
+/// onset window, the Guardian's whole-episode failure budget (an actor that
+/// outlasts it is let go) and the activity's resumption after it.
+pub(crate) const FIGHT_EPISODE_TICKS: u32 =
+    ONSET_TICKS + api::random::EVADE_EPISODE_TICKS as u32 + RESUME_TICKS;
+/// Game ticks of slack between the actor's first targeting and the start of
+/// the Guardian's whole-episode clock, plus the ticks its hold takes to rise.
+const BUDGET_SLACK_TICKS: u32 = HOLD_RISE_TICKS + 2;
 /// A tile jump larger than this between two observed game ticks is a teleport.
 /// The content's failed-event punishment (`[queue,macro_event_fail_teleport]`)
 /// moves the player to a far random location.
@@ -123,6 +135,16 @@ pub enum Oracle {
     /// hold is released only after the escape (`guardian.rs`
     /// `refresh_evade` / `step_evade`).
     Evade { npc: &'static str },
+    /// Hostile event NPC under a saved Fight (one of the six listed events).
+    /// The cell never gates on a chance outcome: it requires proof that the
+    /// player targeted the exact actor and dealt damage (the actor's health
+    /// bar falls), then accepts every end the product bounds, as long as the
+    /// Guardian releases the hold and the activity resumes: the actor gone
+    /// (killed or removed), the hand over to Flee after the fight (the bot
+    /// leaves the chase range), or the Guardian's whole-episode failure
+    /// budget with the actor still standing. Leaving the chase range before
+    /// any attack means the Guardian fled instead of fighting.
+    Fight { npc: &'static str },
     /// Talking event (`DIALOG_NAMES`): the Guardian walks to and talks to
     /// the NPC, drains the dialogue, the NPC leaves, the reward arrives.
     Dialog { npc: &'static str, reward: Reward },
@@ -199,6 +221,9 @@ pub(crate) struct FrameNpc {
     pub type_id: Option<usize>,
     pub tile: (i32, i32),
     pub targets_local: bool,
+    /// The health bar, `(health, total)`: it shows the damage dealt to the
+    /// actor, which only the actor's own row can tell.
+    pub health: (i32, i32),
 }
 
 /// The per-game-tick facts the oracle judges. Built from the live snapshot by
@@ -250,6 +275,7 @@ impl Frame {
                         index: npc.index,
                         type_id: npc.r#type,
                         tile: (npc.tile.x, npc.tile.z),
+                        health: (npc.health, npc.total_health),
                         targets_local: self_slot >= 0
                             && npc.target.is_some_and(|target| {
                                 target.kind == ActorKind::Player
@@ -343,7 +369,7 @@ impl Frame {
 /// The NPC name an oracle tracks, if it tracks one.
 fn event_npc_name(oracle: Oracle) -> Option<&'static str> {
     match oracle {
-        Oracle::Evade { npc } | Oracle::Dialog { npc, .. } => Some(npc),
+        Oracle::Evade { npc } | Oracle::Fight { npc } | Oracle::Dialog { npc, .. } => Some(npc),
         Oracle::Pick => Some("Strange plant"),
         _ => None,
     }
@@ -396,6 +422,10 @@ pub struct RandomEventEpisode {
     returned: Option<u32>,
     retargeted: bool,
     targeted_ticks: u32,
+    /// Fight: the first tick the player targeted the exact event actor.
+    fought: Option<u32>,
+    /// Fight: the first tick the player's Hitpoints XP rose above the baseline.
+    damage: Option<u32>,
     // NPC presence (evade / dialog / pick).
     npc_seen: Option<u32>,
     absent_ticks: u32,
@@ -444,6 +474,8 @@ impl RandomEventEpisode {
             returned: None,
             retargeted: false,
             targeted_ticks: 0,
+            fought: None,
+            damage: None,
             npc_seen: None,
             absent_ticks: 0,
             npc_gone: None,
@@ -520,6 +552,7 @@ impl RandomEventEpisode {
             "present": npc.is_some(),
             "targeting": npc.is_some_and(|n| n.targets_local),
             "distance": distance,
+            "health": npc.map(|n| n.health),
         })
     }
 
@@ -773,7 +806,9 @@ impl RandomEventEpisode {
         let sent = self.send_tick?;
         let baseline = self.baseline.as_ref()?;
         let present = match self.cell.oracle {
-            Oracle::Evade { .. } => frame.npcs.iter().any(|npc| npc.targets_local),
+            Oracle::Evade { .. } | Oracle::Fight { .. } => {
+                frame.npcs.iter().any(|npc| npc.targets_local)
+            }
             Oracle::Dialog { .. } | Oracle::Pick => frame
                 .tile
                 .is_some_and(|(x, z, _)| frame.npcs.iter().any(|npc| cheb((x, z), npc.tile) <= 15)),
@@ -813,6 +848,7 @@ impl RandomEventEpisode {
     fn judge_class(&mut self, frame: &Frame, fresh: bool, onset: u32) -> Option<Verdict> {
         match self.cell.oracle {
             Oracle::Evade { npc } => self.judge_evade(frame, fresh, npc),
+            Oracle::Fight { npc } => self.judge_fight(frame, fresh, npc),
             Oracle::Dialog { npc, reward } => self.judge_dialog(frame, fresh, onset, npc, reward),
             Oracle::Pick => {
                 self.track_npc(frame, fresh);
@@ -1003,6 +1039,134 @@ impl RandomEventEpisode {
         }
     }
 
+    /// A saved Fight against a listed event (see [`Oracle::Fight`]).
+    fn judge_fight(&mut self, frame: &Frame, fresh: bool, npc: &'static str) -> Option<Verdict> {
+        if self.attacker.is_none() {
+            if let Some(found) = frame.npcs.iter().find(|n| n.targets_local) {
+                let maxrange = self.maxrange(found.type_id);
+                self.attacker = Some(Attacker {
+                    index: found.index,
+                    type_id: found.type_id,
+                    start: found.tile,
+                    maxrange,
+                });
+                self.first_target = Some(frame.tick);
+                let start = found.tile;
+                self.note(
+                    frame,
+                    "attacker",
+                    json!({"index": found.index, "type": found.type_id, "start": [start.0, start.1], "maxrange": maxrange}),
+                );
+            }
+        }
+        let attacker = self.attacker?;
+        let Some(maxrange) = attacker.maxrange else {
+            return Some(Verdict::Fail(format!(
+                "oracle: no content maxrange for {npc} type {:?}",
+                attacker.type_id
+            )));
+        };
+        self.track_npc(frame, fresh);
+        let first = self.first_target.unwrap_or(frame.tick);
+        if self.hold_rise.is_none() && frame.tick.saturating_sub(first) > HOLD_RISE_TICKS {
+            return Some(Verdict::Fail(format!(
+                "the Guardian did not take the slot within {HOLD_RISE_TICKS} game ticks of {npc} \
+                 targeting the bot (first targeted at game tick {first})"
+            )));
+        }
+        if self.fought.is_none()
+            && frame
+                .local_target
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(npc))
+        {
+            self.fought = Some(frame.tick);
+            self.note(frame, "fighting", json!(frame.local_target));
+        }
+        // Damage is the actor's health bar falling below its total: an event
+        // actor's XP multiplier can round the Hitpoints XP of every hit to
+        // zero (`combat_xp_multiplier`, `combat.rs2:88-117`), so XP is no
+        // proof that damage lands.
+        let health = frame
+            .npcs
+            .iter()
+            .find(|n| n.index == attacker.index)
+            .map(|n| n.health);
+        if self.damage.is_none() && health.is_some_and(|(now, total)| total > 0 && now < total) {
+            self.damage = Some(frame.tick);
+            self.note(frame, "damage_dealt", json!({"health": health}));
+        }
+        let present = frame.npcs.iter().any(|n| n.index == attacker.index);
+        let targeting = frame
+            .npcs
+            .iter()
+            .any(|n| n.index == attacker.index && n.targets_local);
+        if let Some((x, z, _)) = frame.tile {
+            let distance = cheb((x, z), attacker.start);
+            self.max_distance = self.max_distance.max(distance);
+            if self.escape.is_none()
+                && self.npc_gone.is_none()
+                && outside_chase_range((x, z), attacker.start, maxrange)
+            {
+                self.escape = Some((frame.tick, distance));
+                self.note(
+                    frame,
+                    "escaped",
+                    json!({"distance": distance, "maxrange": maxrange}),
+                );
+                // The hand over to Flee is a bound the product has, but only
+                // after the fight: an escape with no attack and no damage is
+                // the Flee the Guardian had before it could fight.
+                if self.fought.is_none() || self.damage.is_none() {
+                    return Some(Verdict::Fail(format!(
+                        "the Guardian fled from {npc} at game tick {} ({distance} tiles from its \
+                         start {:?}, maxrange {maxrange}) before it fought it: a saved Fight \
+                         attacks the exact actor first (fought {:?}, damage {:?})",
+                        frame.tick, attacker.start, self.fought, self.damage
+                    )));
+                }
+            }
+        }
+        if self.hold_rise.is_none() || frame.hold {
+            return None;
+        }
+        // The hold is released. Every end the product bounds is accepted: the
+        // actor gone (killed or removed), the hand over to Flee after the
+        // fight, and the whole-episode failure budget with the actor still
+        // standing. Any other release is the Guardian giving the fight up.
+        let budget = self.budget_spent(frame);
+        if present && self.npc_gone.is_none() && self.escape.is_none() && !budget {
+            return Some(Verdict::Fail(format!(
+                "the Guardian released the hold at game tick {} while {npc} still stood: the fight \
+                 did not run to an end the product bounds (fought {:?}, damage {:?})",
+                frame.tick, self.fought, self.damage
+            )));
+        }
+        let ended = self.npc_gone.is_some() || budget || (self.escape.is_some() && !targeting);
+        if ended {
+            if self.fought.is_none() || self.damage.is_none() {
+                return Some(Verdict::Fail(format!(
+                    "{npc} is gone and the hold is released, but the bot never fought it \
+                     (fought {:?}, damage {:?})",
+                    self.fought, self.damage
+                )));
+            }
+            self.resolve_when(frame, true);
+        }
+        None
+    }
+
+    /// The Guardian's whole-episode failure budget has run out: its clock
+    /// counts fresh observations from the actor's detection, which is the
+    /// actor's first targeting of the bot, and it lets go of the actor after
+    /// [`api::random::EVADE_EPISODE_TICKS`] of them.
+    fn budget_spent(&self, frame: &Frame) -> bool {
+        self.first_target.is_some_and(|first| {
+            frame.tick.saturating_sub(first) + BUDGET_SLACK_TICKS
+                >= u32::from(api::random::EVADE_EPISODE_TICKS)
+        })
+    }
+
     fn judge_evade(&mut self, frame: &Frame, fresh: bool, npc: &'static str) -> Option<Verdict> {
         if self.attacker.is_none() {
             if let Some(found) = frame.npcs.iter().find(|n| n.targets_local) {
@@ -1177,6 +1341,8 @@ impl RandomEventEpisode {
             "attacker": self.attacker.map(|a| json!({"index": a.index, "type": a.type_id, "start": [a.start.0, a.start.1], "maxrange": a.maxrange})),
             "first_target": self.first_target,
             "targeted_ticks": self.targeted_ticks,
+            "fought": self.fought,
+            "damage_dealt": self.damage,
             "max_distance": self.max_distance,
             "escape": self.escape.map(|(tick, distance)| json!({"tick": tick, "distance": distance})),
             "returned_inside_range": self.returned,

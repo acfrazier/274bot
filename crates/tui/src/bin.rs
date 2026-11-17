@@ -1455,6 +1455,7 @@ impl TuiSession {
         let fleet_start = view.fleet_start();
         #[cfg(feature = "js")]
         let inject_companion_as = view.inject_companion_as().map(str::to_owned);
+        let guardian_fight = view.guardian_fight();
         let settings_inject = scenario.settings_inject();
         #[cfg(feature = "js")]
         let mut settings_inject = settings_inject;
@@ -1508,7 +1509,7 @@ impl TuiSession {
         }
         #[cfg(feature = "js")]
         let fleet_cards = scenario.fleet_cards(names)?;
-        let path = profiles.tui_vault();
+        let path = profiles.tui_vault(guardian_fight);
         self.live_logout = Some(Arc::new(Mutex::new(Vec::new())));
         self.unlock_at(&path, profiles.passphrase())?;
         self.core.configure_live_core(names)?;

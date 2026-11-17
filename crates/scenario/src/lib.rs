@@ -155,6 +155,11 @@ pub struct ScenarioSettings {
     /// respawn, restock and return could also satisfy sets this, so a death
     /// and a recovery cannot stand in for the intended trip.
     pub fail_on_death: bool,
+    /// Guardian event keys (`river troll`, `swarm`, ...) the live profile
+    /// saves as Fight before the run starts, as the operator's settings
+    /// would. Every other event keeps the default Flee. The frontend's live
+    /// harness writes them into the minted profile's saved policies.
+    pub guardian_fight: &'static [&'static str],
 }
 /// Harness-owned multi-slot catalog launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,6 +416,7 @@ impl Default for ScenarioSettings {
             fixture_prereqs: None,
             fixture_loadouts: None,
             fail_on_death: false,
+            guardian_fight: &[],
         }
     }
 }

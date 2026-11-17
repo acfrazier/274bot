@@ -46,6 +46,7 @@ pub(crate) use guardian_events::{
     guardian_event_maze_scenario, guardian_event_mime_scenario, guardian_event_old_man_scenario,
     guardian_event_strange_box_load_claim_scenario, guardian_event_strange_box_scenario,
     guardian_event_strange_plant_scenario, guardian_event_swarm_scenario,
+    guardian_fight_river_troll_scenario, guardian_fight_swarm_flee_scenario,
     guardian_skill_big_fish_scenario, guardian_skill_ent_scenario, guardian_skill_gas_scenario,
     guardian_skill_lost_axe_same_kind_head_scenario, guardian_skill_lost_axe_scenario,
     guardian_skill_lost_pickaxe_scenario, guardian_skill_river_troll_scenario,

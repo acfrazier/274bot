@@ -7521,8 +7521,9 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
     }
     ui.text_wrapped("Off: show event status only; do not handle or hold events.");
     let policies_open = ui.collapsing_header("Policies", TreeNodeFlags::NONE);
-    ui.set_item_tooltip(frontend_core::GUARDIAN_FIGHT_UNAVAILABLE);
+    ui.set_item_tooltip(frontend_core::GUARDIAN_FIGHT_HELP);
     if policies_open {
+        ui.text_wrapped(frontend_core::GUARDIAN_FIGHT_HELP);
         for (event, label) in frontend_core::GUARDIAN_EVENTS {
             ui.text_disabled(label);
             ui.same_line();
@@ -7562,6 +7563,13 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
                     Targets::Application,
                 );
             }
+            // The TUI tells the operator who picks Fight for an event it does
+            // not apply to what the event gets instead; the warning colour
+            // says the same here.
+            let notice = policy == frontend_core::GuardianPolicy::Fight
+                && !frontend_core::guardian_fight_applies(event);
+            let _warn = notice.then(|| ui.push_style_color(StyleColor::Text, WARN));
+            ui.text_wrapped(frontend_core::guardian_event_help(event));
         }
     }
     let mut auto = session.profile_editor.draft().settings().lamp_auto();
@@ -7758,7 +7766,6 @@ fn random_event_policy_combo(
     if let Some(_open) = ui.begin_combo_with_flags(&id, policy.label(), options) {
         for option in frontend_core::GuardianPolicy::OPTIONS {
             let selected = option == *policy;
-            let _disabled = (!option.available()).then(|| ui.begin_disabled());
             if ui
                 .selectable_config(option.label())
                 .selected(selected)
@@ -7775,14 +7782,14 @@ fn random_event_policy_combo(
     changed
 }
 
-/// Apply one picked policy choice to the draft: a choice that is not
-/// available is refused, picking the current choice changes nothing, and any
-/// other choice replaces it. Returns whether the draft changed.
+/// Apply one picked policy choice to the draft: picking the current choice
+/// changes nothing and any other choice replaces it. Returns whether the
+/// draft changed.
 fn apply_random_event_policy(
     policy: &mut frontend_core::GuardianPolicy,
     option: frontend_core::GuardianPolicy,
 ) -> bool {
-    if !option.available() || *policy == option {
+    if *policy == option {
         return false;
     }
     *policy = option;

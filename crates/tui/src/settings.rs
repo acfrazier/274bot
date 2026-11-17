@@ -26,7 +26,6 @@ use crate::app::SettingFeedback;
 
 /// The popup's title while no profile is bound to it.
 pub const TITLE: &str = "settings";
-const EVENT_POLICY_UNAVAILABLE: &str = frontend_core::GUARDIAN_FIGHT_UNAVAILABLE;
 
 /// The last line of a selected setting taller than the viewport: which of
 /// its lines are hidden and the key that shows them.
@@ -124,10 +123,9 @@ pub enum SettingsEdit {
 pub enum SettingsKey {
     /// A profile setting edit for the app to stage and submit.
     Changed(SettingsEdit),
-    /// An unavailable policy gets a Flee edit and a reason to show.
+    /// A Fight saved for an event it does not apply to, with the event's
+    /// own explanation to show.
     ChangedWithNotice(SettingsEdit, &'static str),
-    /// The selected setting is unavailable; show the refusal reason.
-    Refused(&'static str),
     /// The remembered map-bake choice changed; persist it to the shared
     /// prefs (`panel-ui.json`).
     MapBake,
@@ -420,18 +418,20 @@ impl<'a> SettingsPane<'a> {
             _ => SettingsKey::Consumed,
         }
     }
+    /// Cycle the selected event's policy, Flee then Fight then Flee. Fight on
+    /// an event it does not apply to is saved all the same, and the notice
+    /// says what that event gets instead.
     fn activate_event_policy(&mut self) -> SettingsKey {
         let (event, _) = GUARDIAN_EVENTS[self.state.random_event_index % GUARDIAN_EVENTS.len()];
-        if self.settings.random_event_policy(event) == GuardianPolicy::Flee {
-            return SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE);
+        let policy = match self.settings.random_event_policy(event) {
+            GuardianPolicy::Flee => GuardianPolicy::Fight,
+            GuardianPolicy::Fight => GuardianPolicy::Flee,
+        };
+        let edit = SettingsEdit::RandomEventPolicy { event, policy };
+        if policy == GuardianPolicy::Fight && !frontend_core::guardian_fight_applies(event) {
+            return SettingsKey::ChangedWithNotice(edit, frontend_core::guardian_event_help(event));
         }
-        SettingsKey::ChangedWithNotice(
-            SettingsEdit::RandomEventPolicy {
-                event,
-                policy: GuardianPolicy::Flee,
-            },
-            EVENT_POLICY_UNAVAILABLE,
-        )
+        SettingsKey::Changed(edit)
     }
 
     fn activate_value(&mut self) {
@@ -650,6 +650,11 @@ impl Widget for SettingsPane<'_> {
         });
         let quester_heading = format!("{QUESTER_HEADING}: {QUEST_PATHS_HEADING}");
         let combat_note = format!("Combat: {}", frontend_core::START_FIGHTS_NOTE);
+        let policy_help = format!(
+            "{} {event_label}: {}",
+            frontend_core::GUARDIAN_FIGHT_HELP,
+            frontend_core::guardian_event_help(event_key)
+        );
         let note_style = Style::default().fg(Color::DarkGray);
         let heading_style = Style::default().add_modifier(Modifier::BOLD);
         // Lead-ins sit above their first row. A lead-in adds to its row's block
@@ -659,7 +664,7 @@ impl Widget for SettingsPane<'_> {
             None,
             None,
             None,
-            Some((frontend_core::GUARDIAN_FIGHT_UNAVAILABLE, note_style)),
+            Some((policy_help.as_str(), note_style)),
             Some((ROUTING_SCOPE_NOTE, note_style)),
             None,
             None,
@@ -1188,15 +1193,12 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use frontend_core::{CurePoison, GuardianPolicy, SettingsDraft};
+    use frontend_core::{CurePoison, GuardianPolicy, SettingsDraft, GUARDIAN_EVENTS};
     use frontend_core::{MapBakeChoice, MemoryNotice, NavPreference};
 
     use frontend_core::{DangerLevel, WalkGlobals};
 
-    use super::{
-        SettingsEdit, SettingsKey, SettingsPane, SettingsState, EVENT_POLICY_UNAVAILABLE,
-        LAMP_SKILLS,
-    };
+    use super::{SettingsEdit, SettingsKey, SettingsPane, SettingsState, LAMP_SKILLS};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1402,50 +1404,81 @@ mod tests {
         }
     }
 
+    /// Enter on the event-policy row cycles Flee, Fight, Flee. A Fight for an
+    /// event it does not apply to (Swarm, Strange plant) is saved all the
+    /// same and comes back with that event's own explanation.
     #[test]
-    fn popup_returns_supported_policy_reset_and_refuses_fight() {
+    fn popup_cycles_the_policy_and_explains_events_fight_does_not_apply_to() {
         let mut settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
-        let mut state = SettingsState {
-            open: true,
-            row: 4,
-            ..Default::default()
-        };
-
-        let policy = GuardianPolicy::Fight;
-        settings.set_random_event_policy("river troll", policy);
-        let changed = {
-            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
+        let mut press = |settings: &SettingsDraft, event_index: usize| {
+            let mut state = SettingsState {
+                open: true,
+                row: 4,
+                random_event_index: event_index,
+                ..Default::default()
+            };
+            let mut pane = SettingsPane::new(settings, &mut nav, &mut bake, &mut state);
             pane.on_key(key(KeyCode::Enter))
         };
+
+        let troll = GUARDIAN_EVENTS
+            .iter()
+            .position(|(key, _)| *key == "river troll")
+            .unwrap();
+        let fight = press(&settings, troll);
         assert_eq!(
-            changed,
-            SettingsKey::ChangedWithNotice(
-                SettingsEdit::RandomEventPolicy {
-                    event: "river troll",
+            fight,
+            SettingsKey::Changed(SettingsEdit::RandomEventPolicy {
+                event: "river troll",
+                policy: GuardianPolicy::Fight,
+            }),
+            "Flee becomes Fight for a listed event, with no refusal and no notice"
+        );
+        settings.set_random_event_policy("river troll", GuardianPolicy::Fight);
+        let flee = press(&settings, troll);
+        assert_eq!(
+            flee,
+            SettingsKey::Changed(SettingsEdit::RandomEventPolicy {
+                event: "river troll",
+                policy: GuardianPolicy::Flee,
+            }),
+            "Fight becomes Flee again"
+        );
+
+        for excluded in ["swarm", "strange plant"] {
+            let index = GUARDIAN_EVENTS
+                .iter()
+                .position(|(key, _)| *key == excluded)
+                .unwrap();
+            let picked = press(&settings, index);
+            assert_eq!(
+                picked,
+                SettingsKey::ChangedWithNotice(
+                    SettingsEdit::RandomEventPolicy {
+                        event: excluded,
+                        policy: GuardianPolicy::Fight,
+                    },
+                    frontend_core::guardian_event_help(excluded),
+                ),
+                "{excluded}: Fight is saved and the notice says what the event gets instead"
+            );
+            assert!(
+                frontend_core::guardian_event_help(excluded).starts_with("Fight does not apply"),
+                "{excluded}: the notice names the non-applicability"
+            );
+            settings.set_random_event_policy(excluded, GuardianPolicy::Fight);
+            let back = press(&settings, index);
+            assert_eq!(
+                back,
+                SettingsKey::Changed(SettingsEdit::RandomEventPolicy {
+                    event: excluded,
                     policy: GuardianPolicy::Flee,
-                },
-                EVENT_POLICY_UNAVAILABLE,
-            )
-        );
-        assert_eq!(
-            settings.random_event_policy("river troll"),
-            policy,
-            "the caller applies the supported reset"
-        );
-        settings.set_random_event_policy("river troll", GuardianPolicy::Flee);
-
-        let refused = {
-            let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
-            pane.on_key(key(KeyCode::Enter))
-        };
-        assert_eq!(refused, SettingsKey::Refused(EVENT_POLICY_UNAVAILABLE));
-        assert_eq!(
-            settings.random_event_policy("river troll"),
-            GuardianPolicy::Flee,
-            "selecting the unavailable Fight is refused"
-        );
+                }),
+                "{excluded}: Flee is a plain change with no notice"
+            );
+        }
     }
 
     #[test]
