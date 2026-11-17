@@ -207,6 +207,10 @@ globs = [
   "crates/host-play/src/script_bank_harness.rs",
   "crates/script/src/native/server_ordered.rs",
   "crates/script-js/host-js/index.d.ts",
+  # This revision changes only a cfg(test) assertion in
+  # isolated_env_restores_bot_home_and_deletes_scratch. That test still checks
+  # the bot_file path and bot_home after drop. Production helpers are unchanged.
+  "crates/script/src/isolated_env.rs",
   # Approved merge ancestry: workspace version/lint declarations and a test-only
   # terminal benchmark seam (the remaining memory.rs change is comment-only).
   "Cargo.toml",
