@@ -5,6 +5,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
+### Revision 377 client
+
+- The asset connection sends the Java heartbeat while in game when prefetch
+  priorities remain or no disk cache exists. Failed heartbeat writes use the
+  Java timeout counter. Revision 274 and revision 289 behavior stays unchanged.
+
 ### Revision 377 login
 
 - Revision 377 login failures show clearer messages. An outdated-client
