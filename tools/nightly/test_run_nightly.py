@@ -485,8 +485,23 @@ class StableTreeTests(unittest.TestCase):
 
     def test_prune_trees_without_a_trees_folder_is_a_no_op(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(rn, "ROOT", Path(tmp)):
+            root = Path(tmp)
+            (root / "dev").mkdir()
+            (root / "dev" / "keep.txt").write_text("kept\n", encoding="utf-8")
+            (root / "old-branch").mkdir()
+            (root / "runs.json").write_text("{}\n", encoding="utf-8")
+
+            def snapshot():
+                return sorted(
+                    (str(path.relative_to(root)), path.read_bytes() if path.is_file() else None)
+                    for path in root.rglob("*"))
+
+            before = snapshot()
+            logged = []
+            with mock.patch.object(rn, "ROOT", root), mock.patch.object(rn, "log", logged.append):
                 rn.prune_trees(["dev"])
+            self.assertEqual(snapshot(), before)
+            self.assertEqual(logged, [])
 
 
 class GuardDefaultsTests(unittest.TestCase):
