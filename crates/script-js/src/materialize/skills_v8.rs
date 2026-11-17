@@ -317,15 +317,11 @@ globalThis.checkSixScopes = () => __scope_cache_control(true);
              extra scope={extra_depth:?}; warm1000={warm:?}"
         );
         assert_eq!(pure, allocation_counter::AllocationInfo::default());
-        assert_eq!(cold.count_total, 3);
-        assert_eq!(cold.bytes_total, 3 * extra_depth.bytes_total);
+        crate::test_support::assert_scope_cache_growth(&cold, &extra_depth, 5);
         assert_eq!(
             skills_after_control,
             allocation_counter::AllocationInfo::default()
         );
-        assert_eq!(extra_depth.count_total, 1);
-        assert_eq!(extra_depth.count_current, 1);
-        assert_eq!(extra_depth.bytes_current, extra_depth.bytes_total as i64);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
 

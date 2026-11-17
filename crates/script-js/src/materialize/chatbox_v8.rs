@@ -638,18 +638,7 @@ mod tests {
             }
         });
         assert_eq!(pure, allocation_counter::AllocationInfo::default());
-        assert_eq!(cold.count_total, 1);
-        assert_eq!(cold.count_current, 1);
-        assert_eq!(cold.count_max, 1);
-        assert_eq!(cold.bytes_total, 112);
-        assert_eq!(cold.bytes_current, 112);
-        assert_eq!(cold.bytes_max, 112);
-        assert_eq!(deeper.count_total, 1);
-        assert_eq!(deeper.count_current, 1);
-        assert_eq!(deeper.count_max, 1);
-        assert_eq!(deeper.bytes_total, 112);
-        assert_eq!(deeper.bytes_current, 112);
-        assert_eq!(deeper.bytes_max, 112);
+        crate::test_support::assert_scope_cache_growth(&cold, &deeper, 3);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
 

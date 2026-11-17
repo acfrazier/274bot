@@ -1329,16 +1329,11 @@ globalThis.checkFourScopes = () => __scope_cache_control(true);
              extra scope={extra_depth:?}; warm1000={warm:?}"
         );
         assert_eq!(pure, allocation_counter::AllocationInfo::default());
-        assert_eq!(cold.count_total, 1);
-        assert_eq!(cold.count_current, 1);
-        assert_eq!(cold.bytes_total, 112);
-        assert_eq!(cold.bytes_total, extra_depth.bytes_total);
+        crate::test_support::assert_scope_cache_growth(&cold, &extra_depth, 3);
         assert_eq!(
             cooking_after_control,
             allocation_counter::AllocationInfo::default()
         );
-        assert_eq!(extra_depth.count_total, 1);
-        assert_eq!(extra_depth.count_current, 1);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
     const BANK_SHAPE_TEST_NAME: &str =

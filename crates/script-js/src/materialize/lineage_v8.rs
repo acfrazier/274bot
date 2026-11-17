@@ -993,25 +993,39 @@ mod tests {
         enter_root(&mut runtime, install_interact_capture).unwrap();
         runtime
     }
-    #[test]
-    fn finite_async_side_modules_do_not_share_the_tick_timeout() {
+
+    const TICK: Duration = Duration::from_millis(50);
+    const SIDE_WAIT: Duration = TICK.saturating_add(Duration::from_millis(10));
+
+    /// Side modules whose top-level awaits each outlast the runtime tick
+    /// timeout. Tokio's paused test clock advances only when the runtime is
+    /// idle, so the timers fire in deadline order without host scheduling.
+    fn paused_clock_load() -> (Runtime, Vec<rustyscript::Module>) {
         crate::runtime::platform::bootstrap_test_v8_platform();
-        let mut runtime = Runtime::new(RuntimeOptions {
-            timeout: Duration::from_millis(50),
-            ..Default::default()
-        })
+        let tokio = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .start_paused(true)
+            .build()
+            .unwrap();
+        let mut runtime = Runtime::with_tokio_runtime(
+            RuntimeOptions {
+                timeout: TICK,
+                ..Default::default()
+            },
+            Rc::new(tokio),
+        )
         .unwrap();
         install(&mut runtime, false).unwrap();
         runtime
             .register_async_function(
                 "finish_side",
                 rustyscript::async_callback!(|_arg: i32| async move {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    tokio::time::sleep(SIDE_WAIT).await;
                     Ok::<i32, Error>(1)
                 }),
             )
             .unwrap();
-        let sides: Vec<_> = (0..4)
+        let sides = (0..4)
             .map(|n| {
                 rustyscript::Module::new(
                     format!("/rs2b0t/bot/scripts/bot/side{n}.js"),
@@ -1019,11 +1033,39 @@ mod tests {
                 )
             })
             .collect();
+        (runtime, sides)
+    }
+
+    #[test]
+    fn finite_async_side_modules_do_not_share_the_tick_timeout() {
         let main = rustyscript::Module::new(
             "/rs2b0t/bot/scripts/bot/main.js",
             "export const done = true;",
         );
+
+        // Control: the same load under the tick timeout times out, so the
+        // paused clock does drive the tick deadline in this setup.
+        let (mut control, sides) = paused_clock_load();
+        let tick_bounded = enter_root(&mut control, |runtime| {
+            runtime
+                .load_modules(&main, sides.iter().collect())
+                .map(|_| ())
+        });
+        assert!(
+            matches!(tick_bounded, Err(Error::Timeout(_))),
+            "{tick_bounded:?}"
+        );
+
+        let (mut runtime, sides) = paused_clock_load();
+        let clock = runtime.tokio_runtime();
+        let started = clock.block_on(async { tokio::time::Instant::now() });
         load_modules(&mut runtime, &main, sides.iter().collect()).unwrap();
+        let elapsed = clock.block_on(async { tokio::time::Instant::now() }) - started;
+        assert!(elapsed > TICK, "{elapsed:?}");
+        assert!(
+            elapsed < crate::runtime::isolate::SETUP_TIMEOUT,
+            "{elapsed:?}"
+        );
     }
 
     // `rust-interact-gate-bypass` removes the native caps; this direct callback
