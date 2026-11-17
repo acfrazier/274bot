@@ -136,6 +136,11 @@ fn required_path(name: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+// The nightly controller owns this optional path (run_nightly.py).
+fn nightly_quiet_lock_held(path: Option<&std::ffi::OsStr>) -> bool {
+    path.is_some_and(|path| !path.is_empty() && Path::new(path).exists())
+}
+
 fn require_live_guard() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("set LIVE=1 to run revision-377 qualification".into());
@@ -573,6 +578,134 @@ fn direct_step_toward(
     Err("no collision-reachable one-tile direct step remains inside loaded Lumbridge".into())
 }
 
+fn hans_patrol_budget(source: &str, approach: u32) -> Result<u32, String> {
+    let section = source
+        .split_once("[hans]\n")
+        .ok_or("selected content has no [hans] NPC")?
+        .1
+        .split("\n[")
+        .next()
+        .unwrap_or_default();
+    if !section.lines().any(|line| line == "defaultmode=patrol") {
+        return Err("selected Hans does not use the expected patrol mode".into());
+    }
+    let mut route = std::collections::BTreeMap::new();
+    for line in section.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let Some(ordinal) = key.strip_prefix("patrol") else {
+            continue;
+        };
+        let ordinal: usize = ordinal.parse().map_err(|_| "invalid Hans patrol ordinal")?;
+        let (coord, delay) = value
+            .split_once(',')
+            .ok_or("invalid Hans patrol waypoint")?;
+        let coords = coord
+            .split('_')
+            .map(str::parse::<i32>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "invalid Hans patrol coordinate")?;
+        let [level, mx, mz, x, z] = coords.as_slice() else {
+            return Err("invalid Hans patrol coordinate width".into());
+        };
+        let tile = WorldTile {
+            x: mx * 64 + x,
+            z: mz * 64 + z,
+            level: *level,
+        };
+        if !lumbridge(tile) {
+            return Err("Hans patrol leaves the loaded Lumbridge region".into());
+        }
+        let delay: u32 = delay.parse().map_err(|_| "invalid Hans patrol delay")?;
+        if route.insert(ordinal, (tile, delay)).is_some() {
+            return Err("duplicate Hans patrol ordinal".into());
+        }
+    }
+    if route.len() < 2 || route.keys().copied().ne(1..=route.len()) {
+        return Err("Hans patrol waypoints are missing or nonconsecutive".into());
+    }
+    let points = route.values().collect::<Vec<_>>();
+    // Cardinal distance bounds each direct patrol leg. Include every authored
+    // pause and one waypoint-transition tick (Npc::patrolMode). One full lap
+    // plus the observed initial approach bounds the chase and dialogue wait.
+    let lap = points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .map(|(from, to)| from.0.x.abs_diff(to.0.x) + from.0.z.abs_diff(to.0.z) + from.1 + 1)
+        .sum::<u32>();
+    Ok(approach + lap)
+}
+
+fn talk_to_patrolling_hans(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
+    budget_ticks: u32,
+) -> Result<(), String> {
+    let first_tick = snapshot.tick();
+    // The selected engine advances one game tick per 600 ms. The wall
+    // deadline also terminates a disconnected or non-advancing fixture.
+    let deadline = Instant::now() + Duration::from_millis(u64::from(budget_ticks) * 600);
+    let mut requested_tick = None;
+    loop {
+        let started = Instant::now();
+        if snapshot.modals().chat != -1 && !snapshot.chat_modal_texts().is_empty() {
+            record(
+                "npc-dialogue-applied",
+                snapshot,
+                json!({"budget_ticks":budget_ticks}),
+            );
+            return Ok(());
+        }
+        if !snapshot.ingame()
+            || client.error_loading
+            || snapshot.tick().wrapping_sub(first_tick) >= budget_ticks
+            || Instant::now() >= deadline
+        {
+            record(
+                "npc-dialogue-deadline",
+                snapshot,
+                json!({"budget_ticks":budget_ticks}),
+            );
+            return Err("Hans patrol-derived approach/dialogue deadline".into());
+        }
+        let current = nearest_talk_npc(snapshot, LUMBRIDGE_HANS_TYPE_ID)
+            .ok_or("Hans is absent or unreachable during approach")?;
+        if requested_tick != Some(snapshot.tick()) {
+            let npc = snapshot
+                .npcs()
+                .iter()
+                .find(|npc| npc.index == current.index)
+                .ok_or("current Hans disappeared")?;
+            record(
+                "npc-current-tile-retarget",
+                snapshot,
+                json!({"npc_index":current.index,"npc_tile":current.tile,
+                    "distance":current.distance,"budget_ticks":budget_ticks}),
+            );
+            if current.distance > 1 {
+                accepted(
+                    Interactions::new(snapshot, client).walk(current.tile),
+                    "approach current Hans",
+                )?;
+            } else {
+                accepted(
+                    Interactions::new(snapshot, client)
+                        .interact(OpTarget::Npc(npc), ActionSpec::Label(TALK_ACTION.into())),
+                    "current Hans Talk-to",
+                )?;
+            }
+            requested_tick = Some(snapshot.tick());
+        }
+        client.mainloop();
+        host::publish_snapshot(snapshot, client, pump.drain_client(client));
+        if let Some(rest) = Duration::from_millis(20).checked_sub(started.elapsed()) {
+            std::thread::sleep(rest);
+        }
+    }
+}
+
 fn run_live_interaction() -> Result<(), String> {
     let bound = load_bound_377()?;
     resource_record(&bound);
@@ -724,59 +857,64 @@ fn run_live_interaction() -> Result<(), String> {
             json!({"from": origin, "target": target, "same_loaded_region": true}),
         );
 
-        let current = nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID);
-        let npc = current
-            .and_then(|current| {
-                snapshot
-                    .npcs()
-                    .iter()
-                    .find(|npc| npc.index == current.index)
-            })
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "NPC type {} is no longer nearby and reachable with {TALK_ACTION}",
-                    choice.type_id
-                )
-            })?;
         if snapshot.modals().chat != -1 || !snapshot.chat_modal_texts().is_empty() {
             return Err("NPC dialogue was already open before the interaction".into());
         }
+        let current = nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID)
+            .ok_or("Hans disappeared before approach")?;
+        let source_path = bound
+            .engine_dir
+            .parent()
+            .ok_or("engine has no content sibling")?
+            .join("content/scripts/_unpack/377/all.npc");
+        let source = fs::read_to_string(&source_path).map_err(|error| {
+            format!(
+                "read selected Hans patrol {}: {error}",
+                source_path.display()
+            )
+        })?;
+        let budget = hans_patrol_budget(&source, current.distance)?;
         record(
-            "npc-talk-request",
+            "npc-patrol-derived-budget",
             &snapshot,
-            json!({
-                "npc_type_id": npc.r#type,
-                "npc_index": npc.index,
-                "npc_name": npc.name,
-                "npc_tile": npc.tile,
-                "action": TALK_ACTION,
-            }),
+            json!({"source":source_path,"approach_tiles":current.distance,
+                "budget_ticks":budget,"tick_ms":600}),
         );
-        accepted(
-            Interactions::new(&snapshot, &mut client)
-                .interact(OpTarget::Npc(&npc), ActionSpec::Label(TALK_ACTION.into())),
-            "numeric NPC Talk-to",
-        )?;
-        wait_for(
-            &mut client,
-            &mut snapshot,
-            &mut pump,
-            "npc-dialogue-applied",
-            Duration::from_secs(30),
-            |state| state.modals().chat != -1 && !state.chat_modal_texts().is_empty(),
-        )?;
-        record(
-            "npc-dialogue-applied",
-            &snapshot,
-            json!({"npc_type_id":choice.type_id, "npc_index":npc.index}),
-        );
+        talk_to_patrolling_hans(&mut client, &mut snapshot, &mut pump, budget)?;
         Ok(())
     })();
     if client.ingame {
         client.logout();
     }
     result
+}
+
+#[test]
+fn hans_deadline_uses_the_selected_patrol_in_numeric_waypoint_order() {
+    let route = "[hans]\ndefaultmode=patrol\n\
+patrol1=0_50_50_7_33,0\npatrol10=0_50_50_2_32,0\n\
+patrol2=0_50_50_11_30,0\npatrol3=0_50_50_19_30,0\n\
+patrol4=0_50_50_19_22,10\npatrol5=0_50_50_21_22,0\n\
+patrol6=0_50_50_21_12,0\npatrol7=0_50_50_18_9,0\n\
+patrol8=0_50_50_14_5,0\npatrol9=0_50_50_2_5,0\n[man]\n";
+    // 94 cardinal tiles + 10 authored pause ticks + 10 transitions + 13 approach.
+    assert_eq!(hans_patrol_budget(route, 13), Ok(127));
+    assert_eq!(hans_patrol_budget(route, 1), Ok(115));
+    assert!(hans_patrol_budget("[man]\n", 13).is_err());
+    assert!(hans_patrol_budget("[hans]\ndefaultmode=wander\n", 13).is_err());
+    assert!(hans_patrol_budget("[hans]\ndefaultmode=patrol\n", 13).is_err());
+}
+
+#[test]
+fn nightly_quiet_lock_uses_the_configured_path() -> Result<(), String> {
+    let home = ScratchHome::new()?;
+    let lock = home.0.join("configured-quiet");
+    assert!(!nightly_quiet_lock_held(None));
+    assert!(!nightly_quiet_lock_held(Some(std::ffi::OsStr::new(""))));
+    assert!(!nightly_quiet_lock_held(Some(lock.as_os_str())));
+    fs::create_dir(&lock).map_err(|error| error.to_string())?;
+    assert!(nightly_quiet_lock_held(Some(lock.as_os_str())));
+    Ok(())
 }
 
 fn talk_target_snapshot(rows: [(usize, i32, i32); 2]) -> GameSnapshot {
