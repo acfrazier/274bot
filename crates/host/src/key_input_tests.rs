@@ -347,3 +347,72 @@ fn unused_and_warmed_key_consumers_allocate_nothing_on_the_owner_thread() {
         eprintln!("key input: 1000 disabled frames={} allocations; 128 warmed owner cycles={} allocations", disabled.count_total, armed.count_total);
     }).join().unwrap();
 }
+
+#[test]
+fn key_slot_storage_size_ceiling() {
+    let user_bytes = std::mem::size_of::<super::UserInput>();
+    let slot_bytes = std::mem::size_of::<SlotInput>();
+    assert!(
+        user_bytes <= 192,
+        "user input uses {user_bytes} bytes, ceiling 192"
+    );
+    assert!(
+        slot_bytes <= 576,
+        "slot input uses {slot_bytes} bytes, ceiling 576"
+    );
+    eprintln!("key slot storage: user={user_bytes} slot={slot_bytes}");
+}
+
+#[test]
+fn slot_construction_and_first_script_key_have_bounded_allocations() {
+    std::thread::spawn(|| {
+        for slot in 0..2 {
+            let mut input = None;
+            let construction = allocation_counter::measure(|| {
+                input = Some(SlotInput::new());
+            });
+            let input = input.unwrap();
+            let mut shell = GameShell::new();
+            let now = Instant::now();
+            let first_use = allocation_counter::measure(|| {
+                let identity = input.authority.publish_live();
+                let ticket = input
+                    .authority
+                    .script_key_gesture(identity, gesture())
+                    .unwrap();
+                consume(&input, &mut shell, now);
+                assert_eq!(
+                    input.authority.key_progress(ticket).unwrap().phase,
+                    KeyPhase::Held
+                );
+                consume(&input, &mut shell, now + Duration::from_millis(100));
+                assert_eq!(
+                    input.authority.key_progress(ticket).unwrap().phase,
+                    KeyPhase::Released
+                );
+            });
+            assert!(construction.count_total <= 2, "{construction:?}");
+            assert!(construction.bytes_total <= 648, "{construction:?}");
+            // Cold consumption also initializes the platform's four slot mutexes.
+            assert!(first_use.count_total <= 5, "{first_use:?}");
+            assert!(first_use.bytes_total <= 336, "{first_use:?}");
+            assert!(construction.bytes_total + first_use.bytes_total <= 984);
+            let reused = allocation_counter::measure(|| {
+                let identity = input.authority.publish_live();
+                input
+                    .authority
+                    .script_key_gesture(identity, gesture())
+                    .unwrap();
+                consume(&input, &mut shell, now);
+                consume(&input, &mut shell, now + Duration::from_millis(100));
+            });
+            assert_eq!(reused.count_total, 0, "{reused:?}");
+            assert_eq!(reused.bytes_current, 0, "{reused:?}");
+            eprintln!(
+                "key slot {slot}: construction={construction:?}; first_use={first_use:?}; reused={reused:?}"
+            );
+        }
+    })
+    .join()
+    .unwrap();
+}

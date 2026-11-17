@@ -376,6 +376,31 @@ mod tests {
     use super::NativeInputAuthority;
 
     #[test]
+    fn key_authority_storage_size_ceiling() {
+        let permit_bytes = std::mem::size_of::<super::NativeInputPermit>();
+        let authority_bytes = std::mem::size_of::<NativeInputAuthority>();
+        assert!(
+            permit_bytes <= 24,
+            "native input permit uses {permit_bytes} bytes, ceiling 24"
+        );
+        assert!(
+            authority_bytes <= 40,
+            "native input authority uses {authority_bytes} bytes, ceiling 40"
+        );
+        eprintln!("key storage: permit={permit_bytes} authority={authority_bytes}");
+    }
+
+    #[test]
+    fn boxed_key_storage_size_ceiling() {
+        let bytes = std::mem::size_of::<super::KeyState>();
+        assert!(
+            bytes <= 80,
+            "boxed key state uses {bytes} bytes, ceiling 80"
+        );
+        eprintln!("boxed key storage: {bytes} bytes");
+    }
+
+    #[test]
     fn publish_live_enables_a_fresh_identity() {
         let a = NativeInputAuthority::new();
         assert!(!a.lock().eligible());
