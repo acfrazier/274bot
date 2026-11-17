@@ -18,14 +18,14 @@ code 1 means a live path has no cell or a path is unclassified. Exit code 2
 means the input or Git diff is invalid.
 Do not use a broad live glob to hide an uncovered path.
 
-Run the self-tests with temporary Git repositories. The real-submodule test
-stores its temporary repository under `LIVE_MAP_TEST_TMPDIR`, which must be
-inside the configured `LIVE_EVIDENCE_DIR`. Do not use `/tmp`.
+The self-test does not need caller-provided `LIVE_EVIDENCE_DIR` or
+`LIVE_MAP_TEST_TMPDIR`. It creates a temporary evidence root and test
+directory under the repository, then removes them. The real-submodule test
+checks that the test directory is inside the evidence root and outside the
+system temporary directory.
 
 ```sh
-LIVE_EVIDENCE_DIR=/path/to/evidence \
-LIVE_MAP_TEST_TMPDIR=/path/to/evidence/live-map-self-test \
-  python3 -B tools/live-map/live_map.py --self-test
+python3 -B tools/live-map/live_map.py --self-test
 ```
 
 ## Validate test selectors

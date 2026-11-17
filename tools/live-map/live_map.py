@@ -808,9 +808,22 @@ class LiveMapTests(unittest.TestCase):
 
 
 def self_test() -> int:
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(LiveMapTests)
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
-    return 0 if result.wasSuccessful() else 1
+    with tempfile.TemporaryDirectory(
+        prefix=".live-map-self-test-", dir=ROOT
+    ) as temp:
+        evidence_root = Path(temp) / "evidence"
+        test_tmpdir = evidence_root / "live-map-test"
+        test_tmpdir.mkdir(parents=True)
+        with patch.dict(
+            os.environ,
+            {
+                "LIVE_EVIDENCE_DIR": str(evidence_root),
+                "LIVE_MAP_TEST_TMPDIR": str(test_tmpdir),
+            },
+        ):
+            suite = unittest.defaultTestLoader.loadTestsFromTestCase(LiveMapTests)
+            result = unittest.TextTestRunner(verbosity=2).run(suite)
+            return 0 if result.wasSuccessful() else 1
 
 
 def main(argv: list[str] | None = None) -> int:
