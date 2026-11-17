@@ -145,6 +145,10 @@ globs = [
   "rust-toolchain.toml",
   "vendor/fr-client-rust/Cargo.lock",
   "vendor/fr-client-rust/rust-toolchain.toml",
+  # Source-only protocol oracles do not run in a client session.
+  "vendor/fr-client-rust/tools/Revision377WireOracle.java",
+  "vendor/fr-client-rust/tools/verify_revision_377_contract.py",
+  "vendor/fr-client-rust/tools/verify_revision_377_wire.py",
   # These 377-only client paths are never reached by 274/289. The
   # revision_377_rebuild and build.rs region_tests provide offline proof.
   "vendor/fr-client-rust/crates/client/src/client/runtime_377.rs",
@@ -2392,7 +2396,6 @@ cells = [
 # P00 exercises the real 377 login path; controlled sockets prove refusals and fragments.
 [[cover]]
 globs = [
-  "vendor/fr-client-rust",
   "vendor/fr-client-rust/crates/client/src/client/client.rs",
   "vendor/fr-client-rust/crates/client/src/io/**",
 ]
