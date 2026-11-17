@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use api::native_input::{NativeInputAuthority, NativeInputPermit};
 
@@ -400,6 +400,14 @@ pub enum MouseOwner {
     Script { generation: u64, seq: u64 },
 }
 
+/// Ownership of one held key. User and script state never share a bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyOwner {
+    None,
+    User,
+    Script { ticket: u64 },
+}
+
 /// A winning human left-click's movement intent, not proof of a sent packet.
 /// Classified against the displayed client state before mainloop changes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -501,6 +509,8 @@ struct UserInput {
     /// Keys this user channel applied. The release latch must not clear
     /// `key_held` bits set with `GameShell::apply_key` outside `SlotInput`.
     held_keys: [bool; 128],
+    script_key: Option<(u64, i32)>,
+    user_key_down: u128,
 }
 
 impl UserInput {
@@ -516,13 +526,18 @@ impl UserInput {
     fn note_key(&mut self, ch: i32, down: bool) {
         if ch > 0 && ch < 128 {
             self.held_keys[ch as usize] = down;
+            if down {
+                self.user_key_down |= 1_u128 << ch;
+            }
         }
     }
 
     fn release_held_keys(&mut self, shell: &mut GameShell) {
         for (ch, held) in self.held_keys.iter_mut().enumerate().skip(1) {
             if *held {
-                shell.apply_key(false, 0, ch as i32);
+                if !self.script_key.is_some_and(|(_, key)| key == ch as i32) {
+                    shell.apply_key(false, 0, ch as i32);
+                }
                 *held = false;
             }
         }
@@ -563,6 +578,8 @@ impl SlotInput {
                 keyboard_enabled: true,
                 release_pending: false,
                 held_keys: [false; 128],
+                script_key: None,
+                user_key_down: 0,
             }),
             authority: NativeInputAuthority::new(),
             mouse: Mutex::new(MouseState::new()),
@@ -681,7 +698,12 @@ impl SlotInput {
                     if down {
                         self.foreign_local_input();
                     }
-                    shell.apply_key(down, 0, ch);
+                    if down
+                        || user.held_keys.get(ch as usize).copied().unwrap_or(false)
+                        || !user.script_key.is_some_and(|(_, key)| key == ch)
+                    {
+                        shell.apply_key(down, 0, ch);
+                    }
                     user.note_key(ch, down);
                 }
                 InputEv::Move { .. } | InputEv::Down { .. } | InputEv::Key { .. } => {}
@@ -780,8 +802,9 @@ impl SlotInput {
     /// User drain, script consume, latch. Holds the authority mutex across
     /// apply + latch and returns the winning click owner, not the held owner.
     pub fn consume_native_frame(&self, shell: &mut GameShell) -> MouseOwner {
-        let permit = self.authority.lock();
+        let mut permit = self.authority.lock();
         self.drain_user(shell);
+        self.consume_script_key(shell, &mut permit, Instant::now());
         self.consume_script_mouse(shell, &permit);
         shell.latch_click();
         let mut mouse = self.mouse.lock().unwrap();
@@ -805,6 +828,60 @@ impl SlotInput {
     /// A subsequent native frame replaces an untaken fact rather than replaying it.
     pub fn take_manual_move_intent(&self) -> Option<ManualMoveIntent> {
         self.mouse.lock().unwrap().manual_move_intent.take()
+    }
+
+    /// Current physical-input owner, without allocating an observer.
+    pub fn key_owner(&self, ch: i32) -> KeyOwner {
+        let user = self.rx.lock().unwrap();
+        if user.held_keys.get(ch as usize).copied().unwrap_or(false) {
+            KeyOwner::User
+        } else if let Some((ticket, _)) = user.script_key.filter(|(_, key)| *key == ch) {
+            KeyOwner::Script { ticket }
+        } else {
+            KeyOwner::None
+        }
+    }
+
+    /// Session teardown releases keys through the same ownership rules.
+    pub fn cancel_native_keys(&self, shell: &mut GameShell) {
+        let mut permit = self.authority.lock();
+        permit.cancel_keys();
+        self.consume_script_key(shell, &mut permit, Instant::now());
+    }
+
+    pub(crate) fn key_input_active(&self) -> bool {
+        self.authority.lock().pending_key().is_some()
+            || self.rx.lock().unwrap().script_key.is_some()
+    }
+
+    fn consume_script_key(
+        &self,
+        shell: &mut GameShell,
+        permit: &mut NativeInputPermit,
+        now: Instant,
+    ) {
+        let mut user = self.rx.lock().unwrap();
+        if permit.pending_key().is_some_and(|(_, key)| {
+            let ch = key.shell_char();
+            user.held_keys[ch as usize] || user.user_key_down & (1_u128 << ch) != 0
+        }) {
+            permit.cancel_keys();
+        }
+        user.user_key_down = 0;
+        let next = permit.consume_key(now, self.host_consume_allowed.load(Ordering::Acquire));
+        let next = next.map(|(ticket, key)| (ticket, key.shell_char()));
+        if user.script_key != next {
+            if let Some((_, ch)) = user.script_key.take() {
+                if !user.held_keys[ch as usize] {
+                    shell.apply_key(false, 0, ch);
+                }
+            }
+            if let Some((_, ch)) = next {
+                self.foreign_local_input();
+                shell.apply_key(true, 0, ch);
+            }
+            user.script_key = next;
+        }
     }
 
     fn consume_script_mouse(&self, shell: &mut GameShell, permit: &NativeInputPermit) {
@@ -2540,3 +2617,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "key_input_tests.rs"]
+mod key_input_tests;

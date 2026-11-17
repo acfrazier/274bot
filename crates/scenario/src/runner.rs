@@ -551,6 +551,7 @@ pub struct ScenarioRunner {
     run_receipt: Option<Box<RunReceipt>>,
     /// Allocated only for scenarios that explicitly request measured windows.
     combat_observer: Option<Box<CombatObserver>>,
+    key_run: Option<Box<crate::keys::KeyRun>>,
 }
 
 impl ScenarioRunner {
@@ -610,6 +611,11 @@ impl ScenarioRunner {
             scenario.seed.mainland || scenario.settings.require_mainland_base;
         let engine_speed_ms = scenario.settings.nav.engine_speed_ms;
         let receipt_prefixes = receipt_prefixes(&scenario);
+        let key_run = scenario
+            .steps
+            .iter()
+            .any(|step| matches!(step.kind, StepKind::KeyGesture { .. }))
+            .then(Box::default);
         let combat_observer = scenario
             .steps
             .iter()
@@ -685,6 +691,7 @@ impl ScenarioRunner {
             pass_gate: None,
             run_receipt: Some(Box::default()),
             combat_observer,
+            key_run,
         };
         if let Some(message) = invalid_observation {
             runner.record_fail(&message);
@@ -799,6 +806,26 @@ impl ScenarioRunner {
     #[allow(clippy::type_complexity)]
     pub fn set_shot_sink(&mut self, sink: Box<dyn FnMut(&str, &GameSnapshot) + Send>) {
         self.shot_sink = Some(sink);
+    }
+
+    /// Whether this scenario needs its slot's ordinary native input authority.
+    pub fn needs_key_input(&self) -> bool {
+        self.key_run.as_ref().is_some_and(|run| run.input.is_none())
+    }
+
+    /// Bind the existing slot input, never a separate shell or packet path.
+    pub fn set_key_input(&mut self, input: Arc<api::native_input::NativeInputAuthority>) {
+        if let Some(run) = &mut self.key_run {
+            if run.input.is_none() {
+                run.input = Some(input);
+            }
+        }
+    }
+
+    fn cancel_keys(&mut self) {
+        if let Some(run) = &mut self.key_run {
+            run.cancel();
+        }
     }
 
     /// Fire the shot sink at the terminal state (PASS **and** FAIL) with
@@ -1184,6 +1211,12 @@ impl ScenarioRunner {
             &self.snapshot,
             client.gens.session,
         );
+        if let Some(run) = &mut self.key_run {
+            if let Err(reason) = run.observe(&self.snapshot, client.gens.session) {
+                self.finish_fail(reason);
+                return;
+            }
+        }
         if !matches!(self.phase, Phase::Cleaning) {
             if let Some(reason) = self
                 .combat_observer
@@ -1489,6 +1522,9 @@ impl ScenarioRunner {
                 && stall_combat_holds
                 && bank_return_ready;
             let arm_holds = match &self.current_step().kind {
+                StepKind::KeyGesture { .. } => {
+                    arm_holds && self.key_run.as_ref().is_some_and(|run| run.released())
+                }
                 StepKind::Await { ready, .. } => ready(&self.snapshot),
                 StepKind::Relog => {
                     self.relog_left_session
@@ -1797,6 +1833,10 @@ impl ScenarioRunner {
             return false;
         }
         match proof {
+            Proof::CameraDelta => self
+                .key_run
+                .as_ref()
+                .is_some_and(|run| run.camera_delta(&self.snapshot)),
             Proof::ScriptIdle => self.script_idle,
             Proof::All(proofs) => proofs.iter().all(|proof| self.holds(*proof)),
             Proof::ScriptReceipt { prefix } => self
@@ -2454,7 +2494,9 @@ impl ScenarioRunner {
     fn dispatch_kind(&self) -> &'static str {
         match self.current_step().kind {
             StepKind::Perform { .. } | StepKind::Repeat { .. } => "legacy-closure",
-            StepKind::MakeProduct { .. } | StepKind::EnterAmount { .. } => "interaction",
+            StepKind::MakeProduct { .. }
+            | StepKind::EnterAmount { .. }
+            | StepKind::KeyGesture { .. } => "interaction",
             StepKind::NativeSeedDeposit { .. } => "fixture-deposit",
             StepKind::DrainDialogs { .. } => "dialogue",
             StepKind::Relog => "relog",
@@ -2544,6 +2586,15 @@ impl ScenarioRunner {
             }
             StepKind::EnterAmount { value } => {
                 crate::ui_actions::enter_amount(&self.snapshot, client, *value).map(|()| "accepted")
+            }
+            StepKind::KeyGesture { key, duration_ms } => {
+                let gesture = api::native_input::KeyGesture::new(*key, *duration_ms)
+                    .map_err(|error| error.to_string())?;
+                self.key_run
+                    .as_mut()
+                    .ok_or("key input was not armed")?
+                    .begin(gesture, &self.snapshot, client.gens.session)?;
+                Ok("accepted")
             }
             StepKind::DrainDialogs { choice } => {
                 let mut ix = Interactions::new(&self.snapshot, client);
@@ -2805,6 +2856,7 @@ impl ScenarioRunner {
     }
 
     fn finish_pass(&mut self) {
+        self.cancel_keys();
         if let Some(observer) = self.combat_observer.as_ref() {
             if let Some(reason) = observer.invalid_reason() {
                 self.finish_invalid(reason);
@@ -2822,6 +2874,7 @@ impl ScenarioRunner {
         if matches!(self.phase, Phase::Cleaning) {
             return;
         }
+        self.cancel_keys();
         if let Some(observer) = self.combat_observer.as_mut() {
             observer.terminal();
         }
@@ -2836,6 +2889,7 @@ impl ScenarioRunner {
         if matches!(self.phase, Phase::Cleaning) {
             return;
         }
+        self.cancel_keys();
         if let Some(observer) = self.combat_observer.as_mut() {
             observer.terminal();
         }
@@ -2852,6 +2906,7 @@ impl ScenarioRunner {
         if matches!(self.phase, Phase::Cleaning) {
             return;
         }
+        self.cancel_keys();
         if let Some(observer) = self.combat_observer.as_mut() {
             observer.terminal();
         }
@@ -3054,6 +3109,7 @@ impl ScenarioRunner {
     }
 
     fn record_pass(&mut self) {
+        self.cancel_keys();
         let window_open = self
             .combat_observer
             .as_mut()
@@ -3094,6 +3150,10 @@ impl ScenarioRunner {
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
         evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
+        evidence.keys = self
+            .key_run
+            .as_mut()
+            .map_or_else(Vec::new, |run| std::mem::take(&mut run.records));
         evidence.interference = self
             .combat_observer
             .take()
@@ -3119,6 +3179,7 @@ impl ScenarioRunner {
     }
 
     fn record_terminal(&mut self, outcome: &'static str, msg: &str) {
+        self.cancel_keys();
         if let Some(observer) = self.combat_observer.as_mut() {
             observer.terminal();
         }
@@ -3181,6 +3242,10 @@ impl ScenarioRunner {
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
         evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
+        evidence.keys = self
+            .key_run
+            .as_mut()
+            .map_or_else(Vec::new, |run| std::mem::take(&mut run.records));
         evidence.interference = self
             .combat_observer
             .take()

@@ -46,6 +46,10 @@ fn stamp_mouse_gesture_identity(
     input_identity: u64,
     gestures: &mut MouseGestureIdentities,
 ) {
+    if let script::interact::InteractReq::KeyGesture { identity, .. } = req {
+        *identity = input_identity;
+        return;
+    }
     let script::interact::InteractReq::Mouse { down, identity, .. } = req else {
         return;
     };

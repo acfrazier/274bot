@@ -82,6 +82,9 @@ pub enum Proof {
     BankClosed,
     /// A Make-X count prompt is currently open.
     AmountPrompt,
+    /// The admitted native gesture was released after its duration and changed
+    /// the observed orbit camera. Bare snapshot checks fail closed.
+    CameraDelta,
     /// The bank window is open and its contents have loaded (`fresh_bank`).
     BankOpen,
     /// `arrived(x, z, level)`: standing on the tile (or adjacent to it
@@ -466,6 +469,7 @@ impl Proof {
             }
             Proof::BankClosed => "bank_closed".to_string(),
             Proof::AmountPrompt => "amount_prompt".to_string(),
+            Proof::CameraDelta => "camera_delta".to_string(),
             Proof::BankOpen => "bank_open".to_string(),
             Proof::Arrived { x, z, level } => format!("arrived({x},{z},{level})"),
             Proof::ArrivedNear {
@@ -820,6 +824,7 @@ impl Proof {
                     && !snap.bank_loaded()
             }
             Proof::AmountPrompt => snap.ingame() && snap.count_dialog_open(),
+            Proof::CameraDelta => false,
             Proof::Arrived { x, z, level } => snap.tile().is_some_and(|(tx, tz, tl)| {
                 arrived(
                     Tile {

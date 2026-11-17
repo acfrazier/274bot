@@ -458,6 +458,15 @@ pub enum InteractReq {
         #[serde(default)]
         code: String,
     },
+    /// Bounded camera-key hold through the normal native input consumer.
+    /// `identity` is stamped by the runtime, not supplied by a script.
+    #[serde(rename = "key-gesture")]
+    KeyGesture {
+        key: String,
+        duration_ms: u32,
+        #[serde(default)]
+        identity: u64,
+    },
     /// One canvas MouseEvent. Coordinates stay f64 until native mapping.
     /// `identity` is the native permit at production; JS does not set it.
     #[serde(rename = "mouse")]

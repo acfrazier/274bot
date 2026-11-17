@@ -252,6 +252,67 @@ impl Rig {
 }
 
 #[test]
+fn key_scenario_binds_only_its_driven_slots_native_input() {
+    use api::native_input::{GestureKey, KeyPhase};
+    for (driven, other) in [(SLOT, PEER), (PEER, SLOT)] {
+        let mut scenario = queue_scenario();
+        scenario.seed.profiles = vec![(driven, driven)];
+        scenario.steps = vec![Step {
+            name: "hold the driven slot's arrow",
+            kind: StepKind::KeyGesture {
+                key: GestureKey::ArrowLeft,
+                duration_ms: 1000,
+            },
+            wait: Wait {
+                arm: Proof::IngameScene2,
+                budget_ticks: 100,
+            },
+        }];
+        scenario.proof = Proof::IngameScene2;
+        let Some(mut rig) = Rig::with(scenario) else {
+            return;
+        };
+        rig.start_on(driven, ScriptFlow::Continue);
+        rig.start_on(other, ScriptFlow::Continue);
+        let start = rig.play.script_start_handle();
+        let own_input = start.native_input(driven).unwrap();
+        let other_input = start.native_input(other).unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&own_input, &other_input));
+        rig.frame_on(other);
+        assert!(own_input.lock().pending_key().is_none());
+        for _ in 0..8 {
+            rig.client.bump_gens(ServerProt::PLAYER_INFO);
+            rig.frame_on(driven);
+            if own_input.lock().pending_key().is_some() {
+                break;
+            }
+        }
+        let (ticket, key) = own_input
+            .lock()
+            .pending_key()
+            .expect("the production frame must bind the driven slot's native authority");
+        assert_eq!(key, GestureKey::ArrowLeft);
+        assert_eq!(
+            own_input
+                .lock()
+                .consume_key(std::time::Instant::now(), true),
+            Some((ticket, GestureKey::ArrowLeft))
+        );
+        assert_eq!(
+            own_input.key_progress(ticket).unwrap().phase,
+            KeyPhase::Held
+        );
+        rig.frame_on(other);
+        assert!(other_input
+            .lock()
+            .consume_key(std::time::Instant::now(), true)
+            .is_none());
+        assert!(other_input.key_progress(ticket).is_none());
+        assert!(matches!(rig.status(), RunnerStatus::Running { .. }));
+    }
+}
+
+#[test]
 fn a_blocked_queue_fails_the_scenario_while_the_final_watch_is_pending() {
     let Some(mut rig) = Rig::new() else {
         return;

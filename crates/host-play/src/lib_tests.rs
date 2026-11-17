@@ -13365,6 +13365,87 @@ export default class T extends LoopingBot {
     assert_eq!(c.shell.mouse_click_x, 50);
 }
 
+#[test]
+fn script_key_handoff_admits_only_valid_current_identity_requests() {
+    use api::native_input::{GestureKey, KeyPhase};
+    use script::interact::InteractReq;
+    let input = SlotInput::new();
+    let authority = input.authority();
+    let identity = authority.publish_live();
+    for (key, duration_ms, owner) in [
+        ("Enter", 100, identity),
+        ("ArrowLeft", 0, identity),
+        ("ArrowLeft", 10001, identity),
+        ("ArrowLeft", 100, identity.wrapping_sub(1)),
+    ] {
+        assert!(take_script_interacts(
+            vec![InteractReq::KeyGesture {
+                key: key.into(),
+                duration_ms,
+                identity: owner
+            }],
+            Some(&input)
+        )
+        .is_empty());
+        assert!(authority.lock().pending_key().is_none());
+    }
+    assert!(take_script_interacts(
+        vec![InteractReq::KeyGesture {
+            key: "ArrowLeft".into(),
+            duration_ms: 100,
+            identity
+        }],
+        Some(&input)
+    )
+    .is_empty());
+    let mut shell = client::client::GameShell::new();
+    input.consume_native_frame(&mut shell);
+    assert_eq!(
+        shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+        1
+    );
+    assert_eq!(authority.key_progress(1).unwrap().phase, KeyPhase::Held);
+    authority.revoke();
+    input.consume_native_frame(&mut shell);
+    assert_eq!(
+        shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+        0
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn real_js_key_gesture_uses_production_identity_and_normal_host_handoff() {
+    use api::native_input::GestureKey;
+    use script::interact::InteractReq;
+    let input = SlotInput::new();
+    let authority = input.authority();
+    let identity = authority.publish_live();
+    let iso = script_js::LoadIsolate::spawn(
+        "export default class T extends LoopingBot { loop() { __rs2b0t_host.interact.push({ op: 'key-gesture', key: 'ArrowLeft', duration_ms: 100, identity: 999 }); } }".into(),
+        script_js::LoadShape::CompatClass,
+        vec![],
+    ).unwrap();
+    iso.on_game_tick_at(1, identity);
+    iso.probe("true").unwrap();
+    let requests = iso.drain_interacts();
+    assert!(requests.iter().any(|request| matches!(request, InteractReq::KeyGesture { identity: owner, duration_ms: 100, .. } if *owner == identity)), "{requests:?}");
+    assert!(take_script_interacts(requests, Some(&input)).is_empty());
+    let mut shell = client::client::GameShell::new();
+    input.consume_native_frame(&mut shell);
+    assert_eq!(
+        shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+        1
+    );
+    iso.join();
+    authority.revoke();
+    input.consume_native_frame(&mut shell);
+    assert_eq!(
+        shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+        0
+    );
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn canvas_mouse_parked_old_up_preserves_fresh_producer_hold() {

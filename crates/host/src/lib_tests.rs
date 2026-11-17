@@ -1555,6 +1555,156 @@ fn client_frame_releases_held_keys_when_capture_disabled() {
 }
 
 #[test]
+fn native_key_disconnect_and_relog_release_before_the_next_session_frame() {
+    use api::native_input::{GestureKey, KeyGesture, KeyPhase};
+    for exit in ["disconnect", "relog"] {
+        let mut client = test_client();
+        let input = SlotInput::new();
+        let lease = input
+            .authority()
+            .key_gesture(KeyGesture::new(GestureKey::ArrowLeft, 1000).unwrap())
+            .unwrap();
+        input.consume_native_frame(&mut client.shell);
+        assert_eq!(
+            client.shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+            1
+        );
+        if exit == "relog" {
+            client.gens.session = client.gens.session.wrapping_add(1);
+        }
+        client.ingame = false;
+        let mut slot = SlotLoop::new();
+        let mut sends = 0;
+        Host::client_frame(
+            &mut client,
+            &mut slot,
+            "key-exit",
+            Some(&input),
+            None,
+            &mut sends,
+            None,
+        );
+        assert_eq!(
+            lease.progress().unwrap().phase,
+            KeyPhase::Cancelled,
+            "{exit}"
+        );
+        assert_eq!(
+            client.shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+            0,
+            "{exit}"
+        );
+        client.ingame = true;
+        input.consume_native_frame(&mut client.shell);
+        assert_eq!(
+            client.shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+            0,
+            "{exit} must not replay"
+        );
+    }
+}
+
+#[test]
+fn native_key_probe_return_releases_a_held_script_key() {
+    use api::native_input::{GestureKey, KeyGesture, KeyPhase};
+    let mut client = test_client();
+    client.ingame = true;
+    let input = SlotInput::new();
+    let authority = input.authority();
+    let identity = authority.publish_live();
+    let ticket = authority
+        .script_key_gesture(
+            identity,
+            KeyGesture::new(GestureKey::ArrowLeft, 10_000).unwrap(),
+        )
+        .unwrap();
+    input.consume_native_frame(&mut client.shell);
+    let ch = GestureKey::ArrowLeft.shell_char();
+    assert_eq!(
+        authority.key_progress(ticket).unwrap().phase,
+        KeyPhase::Held
+    );
+    assert_eq!(client.shell.key_held[ch as usize], 1);
+    let mut probed = false;
+    Host::run_client(
+        &mut client,
+        "alice",
+        ProfileSettings::default(),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Mutex::new("strength".to_string())),
+        Some(Arc::clone(&input)),
+        None,
+        None,
+        ScriptRunPolicy::default(),
+        |_, _, _, _, _| panic!("the exit probe must return before another client frame"),
+        |client| {
+            probed = true;
+            assert_eq!(client.shell.key_held[ch as usize], 1);
+            true
+        },
+        |_: &DetectedRandom| RandomClaim::Host,
+    );
+    assert!(probed);
+    assert_eq!(
+        authority.key_progress(ticket).unwrap().phase,
+        KeyPhase::Cancelled
+    );
+    assert_eq!(client.shell.key_held[ch as usize], 0);
+    assert_eq!(input.key_owner(ch), crate::slot_io::KeyOwner::None);
+    assert!(!input.key_input_active());
+}
+
+#[test]
+fn native_key_action_pumps_the_headless_host_camera_without_a_render_head() {
+    use api::native_input::{GestureKey, KeyGesture, KeyPhase};
+    use client::client::ClientPlayer;
+    let mut client = test_client();
+    client.error_loading = false;
+    client.ingame = true;
+    client.scene_state = 2;
+    client.local_player = Some(ClientPlayer::at(50, 50));
+    client.set_draw(false);
+    let input = SlotInput::new();
+    assert!(!frame_cadence(&client, Some(&input)));
+    let lease = input
+        .authority()
+        .key_gesture(KeyGesture::new(GestureKey::ArrowLeft, 1000).unwrap())
+        .unwrap();
+    assert!(frame_cadence(&client, Some(&input)));
+    let before = client.orbit_camera_yaw;
+    let mut slot = SlotLoop::new();
+    let mut sends = 0;
+    Host::client_frame(
+        &mut client,
+        &mut slot,
+        "headless-key",
+        Some(&input),
+        None,
+        &mut sends,
+        None,
+    );
+    assert_ne!(client.orbit_camera_yaw, before);
+    assert!(!client.draw);
+    assert!(slot.head.is_none());
+    assert_eq!(lease.progress().unwrap().phase, KeyPhase::Held);
+    drop(lease);
+    Host::client_frame(
+        &mut client,
+        &mut slot,
+        "headless-key",
+        Some(&input),
+        None,
+        &mut sends,
+        None,
+    );
+    assert_eq!(
+        client.shell.key_held[GestureKey::ArrowLeft.shell_char() as usize],
+        0
+    );
+}
+
+#[test]
 fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
     use client::client::{ClientNpc, MiniMenuAction};
     for (x, y, action, expected, event_packet) in [

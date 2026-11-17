@@ -3003,6 +3003,23 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         ],
     },
     InteractVariant {
+        op: "key-gesture",
+        fields: &[
+            TsField {
+                name: "key",
+                ty: "'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'",
+                optional: false,
+                doc: Some("Camera key sent through normal native input."),
+            },
+            TsField {
+                name: "duration_ms",
+                ty: "number",
+                optional: false,
+                doc: Some("Hold duration in milliseconds, from 1 to 10000."),
+            },
+        ],
+    },
+    InteractVariant {
         op: "mouse",
         fields: &[
             TsField {

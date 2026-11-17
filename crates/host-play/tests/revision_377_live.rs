@@ -47,6 +47,9 @@ mod menu;
 #[path = "revision_377_live/interference.rs"]
 mod interference;
 
+#[path = "revision_377_live/keys.rs"]
+mod keys;
+
 #[path = "revision_377_live/quester.rs"]
 mod quester;
 

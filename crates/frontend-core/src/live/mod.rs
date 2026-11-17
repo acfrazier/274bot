@@ -1500,6 +1500,14 @@ impl RunnerHandle {
             return;
         };
         if runner.drives(name) {
+            if runner.needs_key_input() {
+                if let Some(input) = start_handle
+                    .as_ref()
+                    .and_then(|handle| handle.native_input(name))
+                {
+                    runner.set_key_input(input);
+                }
+            }
             if runner.wants_script_paint() {
                 let paint = start_handle.as_ref().and_then(|handle| handle.paint(name));
                 if let Some(paint) = paint {
