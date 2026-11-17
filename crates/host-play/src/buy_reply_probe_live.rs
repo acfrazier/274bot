@@ -45,12 +45,6 @@ use super::combat_proof::{
 use super::gather_bait_live::PlayerInfoClock;
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
-const ENGINE_L_GAME_PORT: u16 = 47_594;
-const ENGINE_L_HTTP_PORT: u16 = 3_080;
-const REFERENCE_NAV_PACK: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack";
-const REFERENCE_NAV_FLAGS: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navflags";
 const KEEPER_CONFIG: &str = "gerrant";
 const ITEM_ALIAS: &str = "feather";
 const COINS_ALIAS: &str = "coins";
@@ -366,25 +360,27 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
         .ok_or_else(|| "buy reply probe requires a per-run BOT_CACHE_DIR clone".to_owned())?;
     let nav_pack = std::env::var_os("GATHERER_NAV_PACK")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(REFERENCE_NAV_PACK));
+        .ok_or_else(|| "buy reply probe requires GATHERER_NAV_PACK".to_owned())?;
     let nav_flags = std::env::var_os("GATHERER_NAV_FLAGS")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(REFERENCE_NAV_FLAGS));
-    for path in [&nav_pack, &nav_flags] {
+        .unwrap_or_else(|| nav_pack.with_extension("navflags"));
+    let game_port = crate::live_ports::required_port("WORLD_GAME_PORT")?;
+    let http_port = crate::live_ports::required_port("WORLD_HTTP_PORT")?;
+    for (name, path) in [
+        ("GATHERER_NAV_PACK", &nav_pack),
+        ("GATHERER_NAV_FLAGS", &nav_flags),
+    ] {
         if !path.is_file() {
-            return Err(format!(
-                "required R289 navigation input is absent: {}",
-                path.display()
-            ));
+            return Err(format!("{name} is not a file: {}", path.display()));
         }
     }
     Ok(ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
-        port: Some(ENGINE_L_GAME_PORT),
+        port: Some(game_port),
         asset_host: Some("127.0.0.1".into()),
-        http_port: Some(ENGINE_L_HTTP_PORT),
+        http_port: Some(http_port),
         engine_dir: Some(engine_dir),
         cache_dir: Some(cache_dir),
         unpack_dir: Some(scratch.join("unpack")),
@@ -394,7 +390,6 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
         ..ProfileOptions::default()
     })
 }
-
 fn probe_scenario(stand: WorldTile, trace: Arc<Mutex<ProbeTrace>>) -> Scenario {
     let mut scenario = scenario::quester_stage(
         "buy_reply_probe_engine_l",
@@ -1998,6 +1993,12 @@ fn run_live_probe() {
 
     let options = profile_options(&scratch)
         .unwrap_or_else(|error| panic!("buy reply probe prerequisites: {error}"));
+    let engine_game_port = options
+        .port
+        .expect("profile options require WORLD_GAME_PORT");
+    let engine_http_port = options
+        .http_port
+        .expect("profile options require WORLD_HTTP_PORT");
     let nav_pack = options.nav_pack.clone().expect("selected navigation pack");
     let nav_flags = options
         .nav_flags
@@ -2239,8 +2240,8 @@ fn run_live_probe() {
         "engine": {
             "name": "L",
             "host": "127.0.0.1",
-            "game_port": ENGINE_L_GAME_PORT,
-            "http_port": ENGINE_L_HTTP_PORT,
+            "game_port": engine_game_port,
+            "http_port": engine_http_port,
             "tick_ms": 600,
             "measured_player_info_clock": script_trace["player_info_clock"],
             "selected_revision": "R289",
@@ -2328,7 +2329,7 @@ fn run_live_probe() {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, BOT_CPU=1, an owned three-byte BOT_LIVE_NAME_PREFIX, Engine L at 127.0.0.1:47594/3080 (600 ms), R289 navigation/cache inputs, and LIVE_EVIDENCE_DIR"]
+#[ignore = "requires LIVE=1, BOT_CPU=1, an owned three-byte BOT_LIVE_NAME_PREFIX, configured GATHERER_GAME_PORT/GATHERER_HTTP_PORT, R289 navigation/cache inputs, and LIVE_EVIDENCE_DIR"]
 fn live_buy_reply_probe_engine_l() {
     run_live_probe();
 }

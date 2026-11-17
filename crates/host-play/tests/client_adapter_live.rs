@@ -397,6 +397,12 @@ fn seed_frame(client: &mut Client, held: bool, shared: &Mutex<SeedPrep>) {
 fn required(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("{name} is required for the ClientAdapter live cell"))
 }
+fn required_port(name: &str) -> Result<u16, String> {
+    let value = required(name)?;
+    value
+        .parse::<u16>()
+        .map_err(|_| format!("{name} must be a valid u16 port: {value:?}"))
+}
 
 fn required_path(name: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(required(name)?);
@@ -434,11 +440,10 @@ fn run_cell(receipt: &mut Value) -> Result<(), String> {
         return Err("BOT_CPU=1 is required for headless live scene capture".into());
     }
     if std::env::var("BOT_NAV_BUILD").as_deref() != Ok("skip") {
-        return Err("BOT_NAV_BUILD=skip and the explicit v17 WORLD_NAV_PACK are required".into());
+        return Err("BOT_NAV_BUILD=skip and WORLD_NAV_PACK are required".into());
     }
-    if required("WORLD_GAME_PORT")? != "47594" || required("WORLD_HTTP_PORT")? != "3080" {
-        return Err("ClientAdapter live cell requires Aubaine Engine L ports 47594/3080".into());
-    }
+    let game_port = required_port("WORLD_GAME_PORT")?;
+    let http_port = required_port("WORLD_HTTP_PORT")?;
     let prefix = required("BOT_LIVE_NAME_PREFIX")?;
     if prefix.is_empty() || prefix.len() > 4 {
         return Err("BOT_LIVE_NAME_PREFIX must contain one to four characters".into());
@@ -495,8 +500,8 @@ fn run_cell(receipt: &mut Value) -> Result<(), String> {
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(47594),
-        http_port: Some(3080),
+        port: Some(game_port),
+        http_port: Some(http_port),
         cache_dir: Some(cache_dir),
         nav_pack: Some(nav_pack),
         engine_dir: Some(engine_dir),
@@ -641,9 +646,9 @@ fn run_and_record() -> Result<(), String> {
         "cell": TEST_NAME,
         "verdict": "FAIL",
         "engine": "Engine L",
-        "host": "Aubaine",
-        "game_port": 47594,
-        "http_port": 3080,
+        "host": "127.0.0.1",
+        "game_port": std::env::var("WORLD_GAME_PORT").ok().and_then(|port| port.parse::<u16>().ok()),
+        "http_port": std::env::var("WORLD_HTTP_PORT").ok().and_then(|port| port.parse::<u16>().ok()),
         "bank_tile": BANK_TILE,
         "started_at_unix_ms": SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -668,7 +673,7 @@ fn run_and_record() -> Result<(), String> {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, isolated HOME, pinned catalog and Aubaine Engine L"]
+#[ignore = "requires LIVE=1, isolated HOME, catalog input, and an Engine L profile"]
 fn reader_bank_count_stats_bounds_and_stale_guards() {
     run_and_record().unwrap_or_else(|error| panic!("{error}"));
 }

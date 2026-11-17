@@ -237,7 +237,7 @@ mod tests {
     fn real_289_multiway_keys_match_distinct_content_rows() {
         let Some(path) = api::test_support::local_asset_path(
             "BOT_NAV_CONTENT_DIR_MULTIWAY_CSV",
-            "/Users/acfrazier/experiments/lostcity-289/content/maps/multiway.csv",
+            "",
             "289 content maps/multiway.csv",
         ) else {
             return;

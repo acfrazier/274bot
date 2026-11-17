@@ -35,12 +35,6 @@ use super::combat_proof::{
 };
 use super::{run_with_template, ProfileOptions, ScriptStartHandle};
 
-const ENGINE_L_GAME_PORT: u16 = 47_594;
-const ENGINE_L_HTTP_PORT: u16 = 3_080;
-const REFERENCE_NAV_PACK: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack";
-const REFERENCE_NAV_FLAGS: &str =
-    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navflags";
 const SEED_COINS: i32 = 100_000;
 const SEED_BAIT: i32 = 5;
 const HARPOON_TARGET: i32 = 1;
@@ -274,9 +268,12 @@ fn fixture(
 }
 
 fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
-    let engine_dir = std::env::var_os("BOT_ENGINE_DIR")
+    let engine_dir = std::env::var_os("GATHERER_ENGINE_DIR")
+        .or_else(|| std::env::var_os("BOT_ENGINE_DIR"))
         .map(PathBuf::from)
-        .ok_or_else(|| "acquire shop live cells require BOT_ENGINE_DIR".to_owned())?;
+        .ok_or_else(|| {
+            "acquire shop live cells require GATHERER_ENGINE_DIR or BOT_ENGINE_DIR".to_owned()
+        })?;
     let cache_dir = std::env::var_os("BOT_CACHE_DIR")
         .map(PathBuf::from)
         .filter(|path| path.is_dir())
@@ -285,27 +282,27 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
         })?;
     let nav_pack = std::env::var_os("GATHERER_NAV_PACK")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(REFERENCE_NAV_PACK));
+        .ok_or_else(|| "acquire shop live cells require GATHERER_NAV_PACK".to_owned())?;
     let nav_flags = std::env::var_os("GATHERER_NAV_FLAGS")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(REFERENCE_NAV_FLAGS));
-    for path in [&nav_pack, &nav_flags] {
+        .unwrap_or_else(|| nav_pack.with_extension("navflags"));
+    let game_port = crate::live_ports::required_port("WORLD_GAME_PORT")?;
+    let http_port = crate::live_ports::required_port("WORLD_HTTP_PORT")?;
+    for (name, path) in [
+        ("GATHERER_NAV_PACK", &nav_pack),
+        ("GATHERER_NAV_FLAGS", &nav_flags),
+    ] {
         if !path.is_file() {
-            return Err(format!(
-                "required R289 reference navigation file is absent: {}",
-                path.display()
-            ));
+            return Err(format!("{name} is not a file: {}", path.display()));
         }
     }
     Ok(ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
-        port: Some(ENGINE_L_GAME_PORT),
+        port: Some(game_port),
         asset_host: Some("127.0.0.1".into()),
-        http_port: Some(ENGINE_L_HTTP_PORT),
-        engine_dir: Some(engine_dir),
-        cache_dir: Some(cache_dir),
+        http_port: Some(http_port),
         unpack_dir: Some(scratch.join("unpack")),
         nav_pack: Some(nav_pack),
         nav_flags: Some(nav_flags),
@@ -1217,18 +1214,24 @@ fn run_cell(kind: CellKind) {
     std::fs::create_dir_all(&scratch).expect("create evidence and scratch directories");
     let options =
         profile_options(&scratch).unwrap_or_else(|error| panic!("live prerequisites: {error}"));
-    let nav_pack = options.nav_pack.clone().expect("reference navigation pack");
+    let engine_game_port = options
+        .port
+        .expect("profile options require WORLD_GAME_PORT");
+    let engine_http_port = options
+        .http_port
+        .expect("profile options require WORLD_HTTP_PORT");
+    let nav_pack = options.nav_pack.clone().expect("selected navigation pack");
     let nav_flags = options
         .nav_flags
         .clone()
-        .expect("reference navigation flags");
+        .expect("selected navigation flags");
     let template = options
         .resolve(None)
         .expect("resolve R289 Engine L profile")
         .prepare_template()
-        .expect("prepare isolated R289 reference-pack template");
+        .expect("prepare isolated R289 selected-pack template");
     let selected = game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
-    let nav_world = template.world().expect("reference navigation world");
+    let nav_world = template.world().expect("selected navigation world");
     if nav_world.named_bank_facts().is_none() {
         nav_world
             .bind_named_bank_facts(&selected)
@@ -1552,7 +1555,11 @@ fn run_cell(kind: CellKind) {
         "schema": "gatherer-a4-core-acquire-shop-live-r1",
         "cell": kind.name(),
         "account": account,
-        "engine": {"host": "127.0.0.1", "game_port": ENGINE_L_GAME_PORT, "http_port": ENGINE_L_HTTP_PORT},
+        "engine": {
+            "host": "127.0.0.1",
+            "game_port": engine_game_port,
+            "http_port": engine_http_port,
+        },
         "model": "openai-codex/gpt-6-luna",
         "selected_revision": "R289",
         "reference_nav_pack": nav_pack,

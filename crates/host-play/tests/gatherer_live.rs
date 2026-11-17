@@ -6641,6 +6641,12 @@ fn mint_profile(account: &str, password: &str, offset: i32) -> Result<Profile, S
     })
 }
 
+#[derive(Default)]
+struct ProfilePortOverrides {
+    game_port: Option<u16>,
+    http_port: Option<u16>,
+}
+
 fn selected_profile(
     nav_pack: PathBuf,
     engine_dir: PathBuf,
@@ -6648,25 +6654,25 @@ fn selected_profile(
     cache_dir: Option<PathBuf>,
     nav_flags: Option<PathBuf>,
     temp: &Path,
-    game_port: Option<u16>,
+    port_overrides: ProfilePortOverrides,
 ) -> Result<(Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>), String> {
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(game_port.unwrap_or_else(|| {
+        port: Some(port_overrides.game_port.unwrap_or_else(|| {
             std::env::var("GATHERER_GAME_PORT")
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(47594)
         })),
-        http_port: Some(
+        http_port: Some(port_overrides.http_port.unwrap_or_else(|| {
             std::env::var("GATHERER_HTTP_PORT")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(3080),
-        ),
+                .unwrap_or(3080)
+        })),
         cache_dir,
         nav_pack: Some(nav_pack),
         nav_flags,
@@ -6872,7 +6878,10 @@ fn run_cell_with_fixture(
         cache_dir,
         nav_flags,
         temp.path(),
-        relay.as_ref().map(|relay| relay.port),
+        ProfilePortOverrides {
+            game_port: relay.as_ref().map(|relay| relay.port),
+            ..ProfilePortOverrides::default()
+        },
     )?;
     if case == LiveCase::BankCost {
         configure_bank_cost_plan(&template, &mut plan)?;
@@ -8799,7 +8808,7 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
         cache_dir,
         nav_flags,
         temp.path(),
-        None,
+        ProfilePortOverrides::default(),
     )?;
     let names = host_play::mint_live_names(1);
     let account = names

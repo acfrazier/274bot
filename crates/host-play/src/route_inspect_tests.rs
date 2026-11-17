@@ -3152,31 +3152,53 @@ fn native_observation_without_compat_harvests_completed_inspection() {
 }
 
 fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<ObjNames>)> {
-    const CACHE_VERSION_HASH: &str = "37214163f1e6ceca";
-    let pack = api::test_support::local_asset_path("WORLD_NAV_PACK",
-    "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack",
-    "reviewed real 289 navpack",)?;
-    let snapshot_root = api::test_support::local_asset_path("BOT_NAV_SNAPSHOT_ROOT",
-    "/Volumes/dev-scratch/274bot-evidence/NAV-SHANTAY-EDGE/cache-snapshots/revision-289/90f072568dab9327ad49aaecb804f8335d3803504ed56f72626b4b83fab84f47/37214163f1e6ceca4c349c15c867331510b9ccbb7e11f7ecbf434dfb331c9afb",
-    "decoded 289 cache snapshot root",)?;
-
-    let cache_dir = snapshot_root.join(CACHE_VERSION_HASH);
+    let pack = api::test_support::local_asset_path(
+        "WORLD_NAV_PACK",
+        "",
+        "current revision-289 navigation pack for route inspection",
+    )?;
+    let snapshot_root = api::test_support::local_asset_path(
+        "BOT_NAV_SNAPSHOT_ROOT",
+        "",
+        "decoded revision-289 cache snapshot root",
+    )?;
+    let versionlist_path = snapshot_root.join("versionlist");
+    api::test_support::local_asset_path(
+        "",
+        &versionlist_path.to_string_lossy(),
+        "versionlist in BOT_NAV_SNAPSHOT_ROOT for route inspection",
+    )?;
+    let versionlist = std::fs::read(&versionlist_path).expect("cache snapshot versionlist");
+    let cache_version = client::unpack::version_hash(&versionlist);
+    let manifest = match client::unpack::snapshot_state_for_version(
+        &snapshot_root.to_string_lossy(),
+        &cache_version,
+        &versionlist,
+    ) {
+        client::unpack::SnapshotState::Ready(manifest) => manifest,
+        state => panic!(
+            "BOT_NAV_SNAPSHOT_ROOT cache snapshot is not verified: {}",
+            state.describe()
+        ),
+    };
+    let cache_dir = snapshot_root.join(&manifest.version);
     let config_path = cache_dir.join("config");
     api::test_support::local_asset_path(
         "",
         &config_path.to_string_lossy(),
-        "decoded revision 289 config archive for route inspection",
+        "config archive in verified cache snapshot for route inspection",
     )?;
     let config_bytes = std::fs::read(config_path).expect("decoded config archive");
     let cache = Arc::new(Cache::unpack(&client::io::JagFile::new(config_bytes)));
     let obj_names = names(&cache);
 
-    let mut loaded_world = NavWorld::load_pack(&pack).expect("real revision-289 navpack");
+    let mut loaded_world =
+        NavWorld::load_pack(&pack).expect("WORLD_NAV_PACK is a valid R289 navpack");
     let flags_path = pack.with_extension("navflags");
     api::test_support::local_asset_path(
         "",
         &flags_path.to_string_lossy(),
-        "raw revision 289 flags for route inspection",
+        "raw revision 289 flags beside WORLD_NAV_PACK",
     )?;
     let flags = nav_planner::pack::read_flags_sidecar(&flags_path).expect("raw flags sidecar");
     assert_eq!(flags.origin, loaded_world.collision.origin);
@@ -3197,9 +3219,29 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
 #[test]
 fn real_content_inspection_capture_bytes() {
     use crate::script_runtime::SettledStart as _;
+    let Some(capture_baseline_path) =
+        std::env::var_os("T5W_INSPECT_CAPTURE_BASELINE").map(std::path::PathBuf::from)
+    else {
+        eprintln!(
+            "Skipping real_content_inspection_capture_bytes: T5W_INSPECT_CAPTURE_BASELINE is not set"
+        );
+        return;
+    };
+    if !capture_baseline_path.is_file() {
+        if std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true")) {
+            eprintln!(
+                "Skipping real_content_inspection_capture_bytes: T5W_INSPECT_CAPTURE_BASELINE is not an available file"
+            );
+            return;
+        }
+        panic!(
+            "T5W_INSPECT_CAPTURE_BASELINE must name an existing capture file: {}",
+            capture_baseline_path.display()
+        );
+    }
     let Some(old_capture) = api::test_support::local_asset_path(
         "T5W_INSPECT_CAPTURE_BASELINE",
-        "/Volumes/dev-scratch/274bot-evidence/TRACK-T5/T5W/inspection-old-capture-r5/inspect.fb",
+        "",
         "immutable old inspection capture",
     ) else {
         return;
