@@ -269,8 +269,9 @@ poison message, sees a poison tick or drinks a cure.
 When poison is unclear, the bot assumes the strongest poison until a tick shows
 its value, which can cause an early cure or pause.
 
-If poison arrives before creature updates, the bot waits one tick to identify
-its source but cures at once if needed.
+When the game reports poison before its creatures update, the bot waits for that
+update to identify which creature poisoned it. A cure needed at once is drunk at
+once. A cure needed only for the worst case is drunk one game tick later.
 During a bank transfer, a built-in script lets the transfer settle or time out
 before it closes the bank and drinks a needed cure.
 

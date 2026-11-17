@@ -908,7 +908,7 @@ target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
 closed = "0.3.0"
-closed_reason = "by-design"
+closed_reason = "not-promised"
 
 [[item]]
 id = "tick-karambwan"
