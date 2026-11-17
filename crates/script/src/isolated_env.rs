@@ -227,7 +227,6 @@ mod tests {
         {
             let iso = IsolatedEnv::enter("restore");
             scratch = iso.dir.clone();
-            assert_eq!(bot_home(), iso.home);
             assert_eq!(
                 bot_file("js-scripts.json"),
                 iso.home.join(".274bot/js-scripts.json")

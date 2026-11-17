@@ -864,7 +864,6 @@ mod tests {
         eprintln!("RiskInput legacy={old} new={new} delta={}", new - old);
         assert_eq!(old, 120);
         assert_eq!(new, 124);
-        assert_eq!(new - old, 4);
         assert!(new <= 128);
     }
 

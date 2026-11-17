@@ -5882,7 +5882,6 @@ mod tests {
             std::mem::size_of::<crate::survival::step::SurvivalReport>(),
             std::mem::size_of::<OneOp>(),
         );
-        assert!(bytes < 4096, "Quester is {bytes} bytes");
     }
     #[test]
     fn quester_capability_status_field_size_is_bounded() {

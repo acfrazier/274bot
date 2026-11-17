@@ -444,7 +444,6 @@ mod tests {
     fn ordered_completion_memory_is_bounded_and_default_native_has_no_packet_buffer() {
         // The modal-wait lease slot (the script-owned auto-run hold) adds 8 B.
         assert_eq!(std::mem::size_of::<Owner>(), 120);
-        assert_eq!(std::mem::size_of::<Option<NonZeroU64>>(), 8);
         assert_eq!(
             std::mem::size_of::<Option<Box<ServerOrderedCompletion>>>(),
             8

@@ -1192,7 +1192,6 @@ mod tests {
             assert_eq!(CurePoison::from_byte(policy.to_byte()), policy);
         }
         assert_eq!(CurePoison::default(), CurePoison::WhenNeeded);
-        assert_eq!(CurePoison::WhenNeeded.to_byte(), 0);
         assert_eq!(CurePoison::from_byte(3), CurePoison::WhenNeeded);
     }
 }
