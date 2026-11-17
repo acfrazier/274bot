@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use api::identity::{RequestId, Settlement};
 use host_play::local_state::{QueuedUpdate, Update};
@@ -504,6 +504,25 @@ impl<Io> OperatorSession<Io> {
     /// Whether an accepted preferences save still awaits its terminal result.
     pub fn preferences_pending(&self) -> bool {
         self.commands.preferences_pending() || !self.order_writes.is_empty()
+    }
+
+    /// Wait for queued preference writes to settle without consuming the UI's result.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wait_preference_writes_for_test(&mut self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        for write in self.commands.pref_writes() {
+            let wait = deadline.saturating_duration_since(Instant::now());
+            if !write.queued.wait_for_completion(wait) {
+                return false;
+            }
+        }
+        for write in &mut self.order_writes {
+            let wait = deadline.saturating_duration_since(Instant::now());
+            if !write.wait_for_completion(wait) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Ask the session to record saved-setting transitions for this front

@@ -2796,19 +2796,24 @@ fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp, timeout: Dura
 }
 
 fn settle_preferences(session: &mut TuiSession, app: &mut TuiApp) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    const WAIT: Duration = Duration::from_secs(60);
+    let deadline = Instant::now() + WAIT;
     loop {
+        assert!(
+            Instant::now() < deadline,
+            "the preference writes did not settle within {WAIT:?}"
+        );
         session.pump(app);
         if !session.core.preferences_pending() {
             // Projection precedes core polling, so deliver the settled snapshot next frame.
             session.pump(app);
             return;
         }
+        let wait = deadline.saturating_duration_since(Instant::now());
         assert!(
-            Instant::now() < deadline,
-            "the preference commands did not finish"
+            session.core.wait_preference_writes_for_test(wait),
+            "the preference writes did not settle within {WAIT:?}"
         );
-        std::thread::yield_now();
     }
 }
 

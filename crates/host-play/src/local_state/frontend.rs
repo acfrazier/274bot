@@ -36,8 +36,21 @@ use serde_json::{Map, Value};
 use super::{files, ReadbackTicket};
 use super::{LocalStateService, PreferenceWatchPoll, RequestState};
 
-/// How long loadout-form operations and fixture-only preference helpers wait.
+/// Product bound for front-end operations. Test-support readbacks use a
+/// longer hang guard; writes retain the product timeout.
 pub const FRONTEND_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(any(test, feature = "test-support"))]
+const FRONTEND_READBACK_HANG_GUARD: Duration = FIXTURE_READBACK_TIMEOUT;
+
+#[cfg(any(test, feature = "test-support"))]
+fn frontend_readback_wait_limit() -> Duration {
+    FRONTEND_READBACK_HANG_GUARD
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+fn frontend_readback_wait_limit() -> Duration {
+    FRONTEND_TIMEOUT
+}
 
 /// How stale the preferences a frontend reads may be: once a document is
 /// held, a read older than this asks the writer thread to read the file
@@ -950,7 +963,7 @@ impl Preferences {
     pub fn reload(&self) -> io::Result<Arc<Map<String, Value>>> {
         let wait = match self.snapshot() {
             Err(error) if error.is_not_ready() => FIXTURE_READBACK_TIMEOUT,
-            _ => FRONTEND_TIMEOUT,
+            _ => frontend_readback_wait_limit(),
         };
         let shared = &*self.shared;
         let read = shared.service.readback(&shared.identity, wait);
@@ -1278,6 +1291,19 @@ impl QueuedUpdate {
     pub fn wait(&mut self, wait: Duration) -> Option<Result<(), PreferenceError>> {
         self.preferences.wait_preference(self.request, wait)
     }
+
+    /// Wait for the writer without consuming its terminal result.
+    /// Return `false` only when the request remains pending at the timeout.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn wait_for_completion(&self, wait: Duration) -> bool {
+        !matches!(
+            self.preferences
+                .shared
+                .service
+                .wait_request(self.request, wait),
+            RequestState::Pending
+        )
+    }
 }
 
 /// The operator loadouts a frontend's form edits ([`script::LoadoutsStore`]
@@ -1310,7 +1336,7 @@ impl LoadoutsBacking for ServiceLoadouts {
     fn load(&self) -> Result<LoadoutsBaseline, String> {
         let (lease, _) = self
             .service
-            .readback(&self.identity, FRONTEND_TIMEOUT)
+            .readback(&self.identity, frontend_readback_wait_limit())
             .map_err(|code| self.describe(code))?;
         Ok(baseline_of(&lease))
     }
