@@ -295,27 +295,6 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_prayer_varps(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
-            let copies_los = match &*state {
-                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
-                    case.copies_line_of_sight()
-                }
-                CoreWatchState::Running { witness, .. } => witness.case.copies_line_of_sight(),
-                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
-            };
-            let copies_actor = match &*state {
-                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
-                    case.copies_actor_observation()
-                }
-                CoreWatchState::Running { witness, .. } => witness.case.copies_actor_observation(),
-                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
-            };
-            let copies_fight = match &*state {
-                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
-                    case.copies_fight_field()
-                }
-                CoreWatchState::Running { witness, .. } => witness.case.copies_fight_field(),
-                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
-            };
             let hunt = match &*state {
                 CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
                     case.hunt_cell()
@@ -331,15 +310,6 @@ impl CoreWatch {
             }
             if copies_prayer {
                 observation.attach_prayer_varps(snapshot);
-            }
-            if copies_los {
-                observation.attach_line_of_sight(snapshot, paint);
-            }
-            if copies_actor {
-                observation.attach_actor_observation(snapshot, paint);
-            }
-            if copies_fight {
-                observation.attach_fight_field(snapshot, paint);
             }
             if let Some(cell) = hunt {
                 observation.attach_hunt(cell, snapshot, paint, acts);
@@ -363,51 +333,6 @@ impl CoreWatch {
                 case.copies_route_inspect()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_route_inspect(),
-            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
-        }
-    }
-
-    /// True only for the line-of-sight File card. Callers attach paint and
-    /// compact collision identity only then.
-    pub fn copies_line_of_sight(&self) -> bool {
-        if !self.active.load(Ordering::Acquire) {
-            return false;
-        }
-        match &*self.inner.lock().unwrap() {
-            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
-                case.copies_line_of_sight()
-            }
-            CoreWatchState::Running { witness, .. } => witness.case.copies_line_of_sight(),
-            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
-        }
-    }
-
-    /// True only for the actor-observation File card. Callers attach paint and
-    /// one packed NPC row only then.
-    pub fn copies_actor_observation(&self) -> bool {
-        if !self.active.load(Ordering::Acquire) {
-            return false;
-        }
-        match &*self.inner.lock().unwrap() {
-            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
-                case.copies_actor_observation()
-            }
-            CoreWatchState::Running { witness, .. } => witness.case.copies_actor_observation(),
-            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
-        }
-    }
-
-    /// True only for the fight-field File card. Callers attach paint and
-    /// one packed NPC row only then.
-    pub fn copies_fight_field(&self) -> bool {
-        if !self.active.load(Ordering::Acquire) {
-            return false;
-        }
-        match &*self.inner.lock().unwrap() {
-            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
-                case.copies_fight_field()
-            }
-            CoreWatchState::Running { witness, .. } => witness.case.copies_fight_field(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }

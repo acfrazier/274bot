@@ -5,8 +5,12 @@ use script_js::{LoadIsolate, LoadShape};
 /// One NativeTick v2 card, ticked once with no posted page: the method reads
 /// no snapshot, so nothing here posts one.
 fn probe(src: &str) -> serde_json::Value {
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![])
-        .expect("spawn clue-pack test isolate");
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .expect("spawn clue-pack test isolate");
     iso.on_game_tick(1);
     let value = iso
         .probe("globalThis.__probe")
@@ -23,7 +27,6 @@ fn probe(src: &str) -> serde_json::Value {
 #[test]
 fn v2_clue_pack_plan_is_a_sync_helper_result_over_caller_numbers() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const plan = api.clue.packPlan({
     hostWant: 20,
@@ -86,7 +89,6 @@ export function tick(api) {
 #[test]
 fn v2_clue_pack_plan_widens_past_i32_and_a_huge_room_is_not_no_room() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const wide = api.clue.packPlan({ perCast: 2147483647 });
   const room = api.clue.packPlan({
@@ -116,7 +118,6 @@ export function tick(api) {
 #[test]
 fn v2_clue_pack_plan_no_room_is_the_whole_result() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const noRoom = api.clue.packPlan({ hostWant: 20, freeSlots: 0 });
   const reserved = api.clue.packPlan({ hostWant: 20, freeSlots: 2, reserveSlots: 3 });
@@ -169,7 +170,6 @@ export function tick(api) {
 #[test]
 fn v2_clue_pack_plan_absent_and_present_split_invalid_args() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     omitted: api.clue.packPlan(),
@@ -268,20 +268,19 @@ export function tick(api) {
 }
 
 #[test]
-fn v2_clue_pack_plan_is_not_a_request_op_and_pushes_no_interact() {
+fn v2_clue_pack_plan_does_not_push_interact() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
-  let requested = null;
-  try { api.request({ op: 'packPlan' }); requested = 'ok'; }
-  catch (e) { requested = String(e && (e.message || e)); }
-  globalThis.__probe = JSON.stringify({
-    plan: api.clue.packPlan({ hostWant: 6, freeSlots: 22 }),
-    requested,
-  });
+  const plan = api.clue.packPlan({ hostWant: 6, freeSlots: 22 });
+  globalThis.__probe = JSON.stringify({ plan });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     iso.on_game_tick(1);
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
@@ -289,13 +288,6 @@ export function tick(api) {
     iso.join();
     assert_eq!(value["plan"]["ok"], true, "{value:?}");
     assert_eq!(value["plan"]["value"]["food"], 6, "{value:?}");
-    assert!(
-        value["requested"]
-            .as_str()
-            .unwrap_or("")
-            .contains("not impl"),
-        "{value:?}"
-    );
     assert!(
         interacts.is_empty(),
         "packPlan must not push interact: {interacts:?}"
@@ -342,7 +334,6 @@ fn example_clue_pack_v2_is_one_read_only_plan_call() {
 #[test]
 fn v2_clue_hard_kit_status_is_the_frozen_first_failure() {
     let src = r#"
-export const apiVersion = 2;
 function kit(over) {
   return Object.assign({
     attack: 60,
@@ -447,7 +438,6 @@ export function tick(api) {
 #[test]
 fn v2_clue_hard_kit_widens_the_dose_and_shark_sums() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const dose = api.clue.hardKit({
     attack: 60, lostCity: true,
@@ -490,7 +480,6 @@ export function tick(api) {
 #[test]
 fn v2_clue_hard_kit_requires_every_field_and_rejects_a_converted_one() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     omitted: api.clue.hardKit(),
@@ -590,13 +579,9 @@ export function tick(api) {
 }
 
 #[test]
-fn v2_clue_hard_kit_is_not_a_request_op_and_pushes_no_interact() {
+fn v2_clue_hard_kit_does_not_push_interact() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
-  let requested = null;
-  try { api.request({ op: 'hardKit' }); requested = 'ok'; }
-  catch (e) { requested = String(e && (e.message || e)); }
   globalThis.__probe = JSON.stringify({
     kit: api.clue.hardKit({
       attack: 60, lostCity: true,
@@ -607,11 +592,15 @@ export function tick(api) {
     run: typeof api.clue.run,
     challengeAnswer: typeof api.clue.challengeAnswer,
     deposit: typeof api.clue.deposit,
-    requested,
   });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     iso.on_game_tick(1);
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
@@ -633,56 +622,60 @@ export function tick(api) {
         assert_eq!(value[key], "undefined", "{key} {value:?}");
     }
     assert!(
-        value["requested"]
-            .as_str()
-            .unwrap_or("")
-            .contains("not impl"),
-        "{value:?}"
-    );
-    assert!(
         interacts.is_empty(),
         "hardKit must not push interact: {interacts:?}"
     );
 }
 
 #[test]
-fn example_clue_hard_kit_v2_is_one_read_only_kit_call() {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("clue_hard_kit_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
+fn native_clue_hard_kit_source_is_one_read_only_kit_call() {
+    let src = r#"
+export function tick(api) {
+  const kit = api.clue.hardKit({
+    attack: 60, lostCity: true,
+    items: [{ id: 1231, count: 1 }, { id: 185, count: 1 }, { id: 385, count: 15 }],
+  });
+  api.log(JSON.stringify(kit));
+}
+"#;
     assert!(!src.contains("request("));
     assert!(!src.contains("h.interact"));
     assert!(!src.contains("api.snapshot"));
-    assert!(!src.contains("questStatus"));
-    assert!(!src.contains("includeBank"));
     assert!(!src.contains("challengeAnswer"));
     assert!(!src.contains("deposit"));
     assert_eq!(src.matches("api.clue").count(), 1);
     assert_eq!(src.matches("hardKit").count(), 1);
-    let js = script_js::transpile_ts(&src).expect("transpile clue_hard_kit_v2.ts");
-    let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     iso.on_game_tick(1);
     let err = iso
         .probe("globalThis.__rs2b0t_host.lastError || ''")
         .unwrap();
     let logs = iso.drain_logs();
+    let interacts = iso.drain_interacts();
     iso.join();
-    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    assert_eq!(err.as_str().unwrap_or(""), "", "fixture lastError: {err:?}");
     let last = logs
         .iter()
         .rev()
         .find(|line| line.contains("\"status\""))
-        .unwrap_or_else(|| panic!("example logged a kit status; logs={logs:?}"));
+        .unwrap_or_else(|| panic!("fixture logged a kit status; logs={logs:?}"));
     let kit: serde_json::Value = serde_json::from_str(last).unwrap();
     assert_eq!(kit["ok"], true, "{kit:?}");
     assert_eq!(kit["value"]["status"], "ready", "{kit:?}");
+    assert!(
+        interacts.is_empty(),
+        "read-only kit call pushed {interacts:?}"
+    );
 }
 
 #[test]
 fn v2_clue_keep_is_a_sync_helper_result_over_caller_names() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const spade = api.clue.keep({ name: 'Spade' });
   const shark = api.clue.keep({ name: 'Shark' });
@@ -693,32 +686,25 @@ export function tick(api) {
     keys: spade.value ? Object.keys(spade.value) : 'no-value',
     error: spade.error,
     type: typeof api.clue.keep,
-    // The six frozen identities, after the ASCII lower and with no trim.
     coins: api.clue.keep({ name: 'COINS' }).value.keep,
     shantay: api.clue.keep({ name: 'Shantay pass' }).value.keep,
     trio: api.clue.keep({ name: 'sextant' }).value.keep
       && api.clue.keep({ name: 'Watch' }).value.keep
       && api.clue.keep({ name: 'chart' }).value.keep,
     padded: api.clue.keep({ name: ' spade' }).value.keep,
-    // The frozen substrings, wherever they land, and the frozen pirate
-    // casket with them.
     scroll: api.clue.keep({ name: 'Clue scroll' }).value.keep,
     trail: api.clue.keep({ name: 'trail_clue_hard_sextant028' }).value.keep,
     pirate: api.clue.keep({ name: 'Casket' }).value.keep
       && api.clue.keep({ name: 'Pirate casket' }).value.keep,
-    // Food is never implied, and a miss is ok false rather than an error.
     sharkOk: shark.ok,
     shark: shark.value && shark.value.keep,
     sharkError: shark.error,
     blank: api.clue.keep({ name: '' }).value.keep,
-    // Extra is additive and compared by ASCII equality: it cannot widen the
-    // match, and it cannot un-keep a constant or a substring hit.
     extra: api.clue.keep({ name: 'Rune scimitar', extra: ['rune scimitar'] }).value.keep,
     extraUpper: api.clue.keep({ name: 'RUNE SCIMITAR', extra: ['rune scimitar'] }).value.keep,
     extraWide: api.clue.keep({ name: 'Rune scimitar', extra: ['Rune'] }).value.keep,
     extraMiss: api.clue.keep({ name: 'Rune scimitar', extra: [] }).value.keep,
     extraCannotUnkeep: api.clue.keep({ name: 'Clue scroll', extra: ['Shark'] }).value.keep,
-    // Extra input keys are ignored: they are not an inventory or bank read.
     extraKeys: api.clue.keep({
       name: 'Coins', extra: ['Shark'], snapshot: {}, items: [], bank: { coins: 1 },
     }).value.keep,
@@ -736,7 +722,6 @@ export function tick(api) {
     for key in ["coins", "shantay", "trio", "scroll", "trail", "pirate"] {
         assert_eq!(value[key], true, "{key} {value:?}");
     }
-    // Nothing is trimmed, so the padded name is not the identity.
     assert_eq!(value["padded"], false, "{value:?}");
     assert_eq!(value["sharkOk"], true, "{value:?}");
     assert_eq!(value["shark"], false, "{value:?}");
@@ -759,7 +744,6 @@ export function tick(api) {
 #[test]
 fn v2_clue_keep_requires_a_name_and_an_all_string_extra() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     omitted: api.clue.keep(),
@@ -768,8 +752,6 @@ export function tick(api) {
     array: api.clue.keep([]),
     stringArg: api.clue.keep('Spade'),
     numberArg: api.clue.keep(1),
-    // name is required: a missing, null, or converted one is invalid-args
-    // rather than an empty or stringified name.
     empty: api.clue.keep({}),
     nullName: api.clue.keep({ name: null }),
     undefinedName: api.clue.keep({ name: undefined }),
@@ -777,8 +759,6 @@ export function tick(api) {
     boolName: api.clue.keep({ name: true }),
     boxedName: api.clue.keep({ name: new String('Spade') }),
     arrayName: api.clue.keep({ name: ['Spade'] }),
-    // extra is optional, but a present null, non-array, or non-string
-    // element is invalid-args.
     extraNull: api.clue.keep({ name: 'Spade', extra: null }),
     extraString: api.clue.keep({ name: 'Spade', extra: 'Shark' }),
     extraNumber: api.clue.keep({ name: 'Spade', extra: 3 }),
@@ -791,7 +771,6 @@ export function tick(api) {
     extraArrayElement: api.clue.keep({ name: 'Spade', extra: [['Shark']] }),
     extraObjectElement: api.clue.keep({ name: 'Spade', extra: [{ name: 'Shark' }] }),
     extraSparse: api.clue.keep({ name: 'Spade', extra: new Array(1) }),
-    // The present shapes that are not errors.
     blankName: api.clue.keep({ name: '' }),
     emptyExtra: api.clue.keep({ name: 'spade', extra: [] }),
     blankEntry: api.clue.keep({ name: '', extra: [''] }),
@@ -839,13 +818,9 @@ export function tick(api) {
 }
 
 #[test]
-fn v2_clue_keep_is_not_a_request_op_and_pushes_no_interact() {
+fn v2_clue_keep_does_not_push_interact() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
-  let requested = null;
-  try { api.request({ op: 'keep' }); requested = 'ok'; }
-  catch (e) { requested = String(e && (e.message || e)); }
   globalThis.__probe = JSON.stringify({
     kept: api.clue.keep({ name: 'Clue scroll' }),
     begin: typeof api.clue.begin,
@@ -854,11 +829,15 @@ export function tick(api) {
     deposit: typeof api.clue.deposit,
     retry: typeof api.clue.retry,
     noteDeath: typeof api.clue.noteDeath,
-    requested,
   });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     iso.on_game_tick(1);
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
@@ -877,24 +856,18 @@ export function tick(api) {
         assert_eq!(value[key], "undefined", "{key} {value:?}");
     }
     assert!(
-        value["requested"]
-            .as_str()
-            .unwrap_or("")
-            .contains("not impl"),
-        "{value:?}"
-    );
-    assert!(
         interacts.is_empty(),
         "keep must not push interact: {interacts:?}"
     );
 }
 
 #[test]
-fn example_clue_keep_v2_is_one_read_only_keep_call() {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("clue_keep_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
+fn native_clue_keep_source_is_one_read_only_keep_call() {
+    let src = r#"
+export function tick(api) {
+  api.log(JSON.stringify(api.clue.keep({ name: 'Clue scroll' })));
+}
+"#;
     assert!(!src.contains("request("));
     assert!(!src.contains("h.interact"));
     assert!(!src.contains("api.snapshot"));
@@ -902,21 +875,30 @@ fn example_clue_keep_v2_is_one_read_only_keep_call() {
     assert!(!src.contains("challengeAnswer"));
     assert_eq!(src.matches("api.clue").count(), 1);
     assert_eq!(src.matches("api.clue.keep(").count(), 1);
-    let js = script_js::transpile_ts(&src).expect("transpile clue_keep_v2.ts");
-    let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     iso.on_game_tick(1);
     let err = iso
         .probe("globalThis.__rs2b0t_host.lastError || ''")
         .unwrap();
     let logs = iso.drain_logs();
+    let interacts = iso.drain_interacts();
     iso.join();
-    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    assert_eq!(err.as_str().unwrap_or(""), "", "fixture lastError: {err:?}");
     let last = logs
         .iter()
         .rev()
         .find(|line| line.contains("\"keep\""))
-        .unwrap_or_else(|| panic!("example logged a keep result; logs={logs:?}"));
+        .unwrap_or_else(|| panic!("fixture logged a keep result; logs={logs:?}"));
     let keep: serde_json::Value = serde_json::from_str(last).unwrap();
     assert_eq!(keep["ok"], true, "{keep:?}");
     assert_eq!(keep["value"]["keep"], true, "{keep:?}");
+    assert!(
+        interacts.is_empty(),
+        "read-only keep call pushed {interacts:?}"
+    );
 }

@@ -1864,7 +1864,9 @@ mod tests {
             frontend_core::test_support::tui::start_script_source(
                 &play,
                 name,
-                "export function tick(api) { api._n = (api._n||0)+1 }".into(),
+                frontend_core::test_support::scripts::native_fixture(
+                    "export function tick(api) { api._n = (api._n||0)+1 }",
+                ),
                 LoadShape::NativeTick,
             )
             .expect("start");

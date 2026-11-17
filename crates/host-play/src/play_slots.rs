@@ -1782,11 +1782,7 @@ fn spawn_slot_thread(
                             } else {
                                 (None, None)
                             };
-                            let catalog_paint = if obs_catalog_core.copies_line_of_sight()
-                                || obs_catalog_core.copies_actor_observation()
-                                || obs_catalog_core.copies_fight_field()
-                                || copies_hunt
-                            {
+                            let catalog_paint = if copies_hunt {
                                 script_paint_of(&slot_scripts, name)
                             } else {
                                 None

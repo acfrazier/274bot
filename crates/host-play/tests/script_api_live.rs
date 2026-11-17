@@ -32,7 +32,6 @@ const WALK_START_TILE: WorldTile = WorldTile {
 const CATHERBY: (i32, i32, i32, i32) = (2791, 3438, 2814, 3475);
 
 const WALK_OPTIONS_SOURCE: &str = r#"
-export const apiVersion = 2;
 let started = false;
 export function tick(api) {
   if (!started) {
@@ -73,7 +72,6 @@ const AXE: i32 = 1351;
 const LOGS: i32 = 1511;
 const JOURNAL_ROOT: i32 = 8134;
 const JOURNAL_SCRIPT: &str = r#"
-export const apiVersion = 2;
 let first = false;
 let second = false;
 export async function tick(api) {
@@ -664,21 +662,23 @@ fn save(name: &str, value: &Value) {
     println!("receipt={}\n{value}", path.display());
 }
 
+fn prepared_native(source: &str) -> script_js::PreparedTestOrigin {
+    let origin = script_js::native_fixture(source);
+    script_js::prepare_raw_origin_for_test("script-api-live.js", &origin, &[])
+        .expect("native script API fixture prepares")
+}
+
 fn gather_cell() {
     let (play, account, fixture) = start_fixture(false);
     fixture.lock().unwrap().started = true;
     let source = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../script-js/examples/gather_quest_v2.js"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../script-js/examples/gather_quest_v2.ts"),
     )
     .expect("runnable sample");
-    play.script_start_load(
-        &account,
-        source,
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .expect("Load authoritative sample");
+    let prepared = script_js::prepare_raw_origin_for_test("gather_quest_v2.ts", &source, &[])
+        .expect("manifest-bearing gather sample prepares");
+    play.script_start_load(&account, prepared.js, prepared.checked, None, vec![])
+        .expect("Load authoritative sample");
     let mut running_seen = false;
     let mut gathering_seen = false;
     let mut status_yielded = 0;
@@ -805,14 +805,9 @@ fn assert_journal(out: &Value, ordinal: u32, probe: &Value) {
 fn journal_cell() {
     let (play, account, fixture) = start_fixture(true);
     fixture.lock().unwrap().started = true;
-    play.script_start_load(
-        &account,
-        JOURNAL_SCRIPT.into(),
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .expect("Load public journal consumer");
+    let prepared = prepared_native(JOURNAL_SCRIPT);
+    play.script_start_load(&account, prepared.js, prepared.checked, None, vec![])
+        .expect("Load public journal consumer");
     let mut logs = Vec::new();
     wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
         take_logs(play, &account, &mut logs);
@@ -892,7 +887,6 @@ fn journal_cell() {
 /// read settles, so the host can see the second read's lease without a free
 /// sample between them. Each read must own its own hold.
 const COMPAT_JOURNAL_TWICE_SCRIPT: &str = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -909,14 +903,9 @@ export async function tick(api) {
 fn compat_journal_twice_cell() {
     let (play, account, fixture) = start_fixture(true);
     fixture.lock().unwrap().started = true;
-    play.script_start_load(
-        &account,
-        COMPAT_JOURNAL_TWICE_SCRIPT.into(),
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .expect("Load the compatibility journal consumer");
+    let prepared = prepared_native(COMPAT_JOURNAL_TWICE_SCRIPT);
+    play.script_start_load(&account, prepared.js, prepared.checked, None, vec![])
+        .expect("Load the compatibility journal consumer");
     let mut logs = Vec::new();
     wait_for(&play, &account, &fixture, Duration::from_secs(60), |play| {
         take_logs(play, &account, &mut logs);
@@ -966,7 +955,6 @@ fn compat_journal_twice_cell() {
 }
 
 const RUNTIME_SOURCE: &str = r#"
-export const apiVersion = 2;
 let ticks = 0;
 export function tick(api) {
   if (++ticks === 1) {
@@ -981,11 +969,12 @@ fn runtime_cell(restart: bool) {
     let (play, account, fixture) = start_fixture(false);
     let mut generations = Vec::new();
     let mut observed_logs = Vec::new();
+    let prepared = prepared_native(RUNTIME_SOURCE);
     for _ in 0..if restart { 2 } else { 1 } {
         play.script_start_load(
             &account,
-            RUNTIME_SOURCE.into(),
-            script_js::LoadShape::NativeTick,
+            prepared.js.clone(),
+            prepared.checked,
             None,
             vec![],
         )
@@ -1123,14 +1112,11 @@ export default class RuntimeCompatProbe extends LoopingBot {
 
 fn runtime_compat_cell() {
     let (play, account, fixture) = start_fixture(false);
-    play.script_start_load(
-        &account,
-        RUNTIME_COMPAT_SOURCE.into(),
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .expect("start runtime compatibility probe");
+    let prepared =
+        script_js::prepare_raw_origin_for_test("runtime-compat.js", RUNTIME_COMPAT_SOURCE, &[])
+            .expect("compatibility runtime fixture prepares");
+    play.script_start_load(&account, prepared.js, prepared.checked, None, vec![])
+        .expect("start runtime compatibility probe");
     let mut logs = Vec::new();
     wait_for(&play, &account, &fixture, Duration::from_secs(45), |play| {
         take_logs(play, &account, &mut logs);
@@ -1602,14 +1588,9 @@ fn gather_walk_variant(
     fixture: &Arc<Mutex<Fixture>>,
     allow_danger_zones: bool,
 ) -> Value {
-    play.script_start_load(
-        account,
-        walk_options_source(allow_danger_zones),
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .expect("start Load Gather walk-options proof");
+    let prepared = prepared_native(&walk_options_source(allow_danger_zones));
+    play.script_start_load(account, prepared.js, prepared.checked, None, vec![])
+        .expect("start Load Gather walk-options proof");
 
     let mut logs = Vec::new();
     if allow_danger_zones {

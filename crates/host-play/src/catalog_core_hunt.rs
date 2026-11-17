@@ -1,5 +1,5 @@
-//! Host-owned evidence for the v2 hunt File cells: hold, retreat, walk spot,
-//! enter, leave, key, cell and bank.
+//! Host-owned evidence for the retained v2 hunt File cells: walk spot, key,
+//! cell and bank.
 //!
 //! Each example is `*Begin` + one awaited `*Run` (FENCE Q2). Its paint says
 //! only what the host cannot see: how the run settled and the tiles the
@@ -14,49 +14,29 @@
 //! A script that never starts the run sends none of the family's requests
 //! and never moves, so no cell can pass on its paint alone.
 //!
-//! Known limit: the ledger cannot tell a request the run's Rust machine
-//! emitted from one the script queued itself. Both reach host-play merged in
-//! one interact batch, and tagging them would need a new isolate wire. A
-//! script that queues the family's walk itself, with any nonzero request id,
-//! and then walks there can satisfy the walk-only cells (hold, walk spot,
-//! enter, leave, bank) without the run. The gates defend against a missing
-//! or no-op run, not against a script that forges the family's requests.
+//! The ledger cannot distinguish requests emitted by a run's Rust machine
+//! from requests queued directly by the script. Both reach host-play in one
+//! interact batch, and tagging them would need a new isolate wire.
 
 use std::collections::VecDeque;
 
 use api::snapshot::GameSnapshot;
 use serde::{Deserialize, Serialize};
 
-use super::{LineOfSightTile, Observation};
+use super::Observation;
 
-pub const HOLD_SPOT_V2_STOP: &str = "hold spot qualification complete";
-pub const HOLD_SPOT_RECEIPT_PREFIX: &str = "hold-spot-receipt:";
-pub const HOLD_SPOT_MIN_CHEB: i32 = 2;
-pub const HOLD_SPOT_MAX_CHEB: i32 = 6;
-pub const RETREAT_SPOT_V2_STOP: &str = "retreat spot qualification complete";
-pub const RETREAT_SPOT_RECEIPT_PREFIX: &str = "retreat-spot-receipt:";
-pub const RETREAT_SPOT_MIN_CHEB: i32 = 2;
-pub const RETREAT_SPOT_MAX_CHEB: i32 = 6;
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightTile {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+}
+
 pub const WALK_SPOT_V2_STOP: &str = "walk spot qualification complete";
 pub const WALK_SPOT_RECEIPT_PREFIX: &str = "walk-spot-receipt:";
-/// Chebyshev 12 is Hold's walk-back. This cell requires a longer walk-in.
+/// Chebyshev 13–20 separates this longer walk-in from nearby actions.
 pub const WALK_SPOT_MIN_CHEB: i32 = 13;
 pub const WALK_SPOT_MAX_CHEB: i32 = 20;
-pub const ENTER_LAIR_V2_STOP: &str = "enter lair qualification complete";
-pub const ENTER_LAIR_RECEIPT_PREFIX: &str = "enter-lair-receipt:";
-/// Greater than the approach skip of 1, and not Hold's 2-tile walk-back.
-/// Inclusive 8–16. Do not copy Walk's `> 12` gate.
-pub const ENTER_LAIR_MIN_CHEB: i32 = 8;
-pub const ENTER_LAIR_MAX_CHEB: i32 = 16;
-pub const LEAVE_LAIR_V2_STOP: &str = "leave lair qualification complete";
-pub const LEAVE_LAIR_RECEIPT_PREFIX: &str = "leave-lair-receipt:";
-/// Inclusive 8–16. Not Hold's 2-tile walk and not Walk's `> 12` gate.
-pub const LEAVE_LAIR_MIN_CHEB: i32 = 8;
-pub const LEAVE_LAIR_MAX_CHEB: i32 = 16;
-/// The leave family's walk-out radius.
-pub const LEAVE_LAIR_RADIUS: i32 = 3;
-/// The leave File card's curated lair box is the Start tile ± 2.
-pub const LEAVE_LAIR_BOX_PAD: i32 = 2;
 pub const ACQUIRE_KEY_V2_STOP: &str = "acquire key qualification complete";
 pub const ACQUIRE_KEY_RECEIPT_PREFIX: &str = "acquire-key-receipt:";
 /// The key family's corridor walk and pickup radius (`hunt_key.rs`).
@@ -97,8 +77,7 @@ pub const JAIL_CELL: HuntBox = HuntBox {
     max_z: 9689,
     level: 0,
 };
-/// The File cards' projected lair fixture. No real tile is inside it, so a
-/// run never takes the leave leg.
+/// Projected lair box for the retained Key and Cell Start baselines.
 pub const HUNT_LAIR_FIXTURE: HuntBox = HuntBox {
     min_x: 40,
     max_x: 60,
@@ -118,18 +97,12 @@ pub const HUNT_ACT_ROWS: usize = 32;
 const HUNT_CYCLE_ACTS: usize = 256;
 const KBD_TILE: (i32, i32) = (3017, 3849);
 const KBD_LOCS: [i32; 4] = [1765, 1766, 1816, 1817];
-const EDGEVILLE: (i32, i32) = (3094, 3493);
-const VARROCK: (i32, i32) = (3213, 3424);
 
 /// One v2 hunt File cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HuntCell {
-    Hold,
-    Retreat,
     WalkSpot,
-    Enter,
-    Leave,
     Key,
     Cell,
     Bank,
@@ -138,11 +111,7 @@ pub enum HuntCell {
 impl HuntCell {
     pub fn stop_reason(self) -> &'static str {
         match self {
-            Self::Hold => HOLD_SPOT_V2_STOP,
-            Self::Retreat => RETREAT_SPOT_V2_STOP,
             Self::WalkSpot => WALK_SPOT_V2_STOP,
-            Self::Enter => ENTER_LAIR_V2_STOP,
-            Self::Leave => LEAVE_LAIR_V2_STOP,
             Self::Key => ACQUIRE_KEY_V2_STOP,
             Self::Cell => CELL_V2_STOP,
             Self::Bank => BANK_V2_STOP,
@@ -151,30 +120,25 @@ impl HuntCell {
 
     pub fn receipt_prefix(self) -> &'static str {
         match self {
-            Self::Hold => HOLD_SPOT_RECEIPT_PREFIX,
-            Self::Retreat => RETREAT_SPOT_RECEIPT_PREFIX,
             Self::WalkSpot => WALK_SPOT_RECEIPT_PREFIX,
-            Self::Enter => ENTER_LAIR_RECEIPT_PREFIX,
-            Self::Leave => LEAVE_LAIR_RECEIPT_PREFIX,
             Self::Key => ACQUIRE_KEY_RECEIPT_PREFIX,
             Self::Cell => CELL_V2_RECEIPT_PREFIX,
             Self::Bank => BANK_V2_RECEIPT_PREFIX,
         }
     }
 
-    /// The settled value a passing run reports. Hold, retreat and walk spot
-    /// settle `null` and prove arrival by the host tile; the boolean runs
-    /// must settle `true` (a stepper that gives up settles `false`).
+    /// Walk spot settles `null` and proves arrival by the host tile; the
+    /// item and bank runs must settle `true`.
     fn settled_value(self) -> Option<bool> {
         match self {
-            Self::Hold | Self::Retreat | Self::WalkSpot => None,
+            Self::WalkSpot => None,
             _ => Some(true),
         }
     }
 
-    /// The run takes a one-shot site whose key the receipt names.
+    /// Walk spot takes no site; other retained cells name their one-shot site.
     fn names_site(self) -> bool {
-        !matches!(self, Self::Hold | Self::Retreat | Self::WalkSpot)
+        !matches!(self, Self::WalkSpot)
     }
 
     /// The inventory item whose arrival proves the run.
@@ -307,9 +271,6 @@ pub struct HuntReceipt {
     pub here: LineOfSightTile,
     /// The run's destination.
     pub dest: LineOfSightTile,
-    /// Enter: the lair box the site names.
-    #[serde(default, rename = "box")]
-    pub area: Option<HuntBox>,
     /// The one-shot site's key.
     #[serde(default)]
     pub key: Option<String>,
@@ -368,21 +329,6 @@ fn kbd_tile(tile: LineOfSightTile) -> bool {
     (tile.x, tile.z) == KBD_TILE
 }
 
-fn town_tile(tile: LineOfSightTile) -> bool {
-    (tile.x, tile.z) == EDGEVILLE || (tile.x, tile.z) == VARROCK
-}
-
-/// The leave card's curated lair: the Start tile ± 2.
-pub fn leave_lair_box(from: LineOfSightTile) -> HuntBox {
-    HuntBox {
-        min_x: from.x - LEAVE_LAIR_BOX_PAD,
-        max_x: from.x + LEAVE_LAIR_BOX_PAD,
-        min_z: from.z - LEAVE_LAIR_BOX_PAD,
-        max_z: from.z + LEAVE_LAIR_BOX_PAD,
-        level: from.level,
-    }
-}
-
 /// Start predicate. The run has not begun, so nothing it proves may already
 /// hold: key and cell start outside the cell, away from the door and without
 /// the key they fetch; bank starts outside its approach radius.
@@ -391,9 +337,7 @@ pub fn hunt_baseline_ready(cell: HuntCell, baseline: &Observation) -> bool {
         return false;
     };
     let placed = match cell {
-        HuntCell::Hold | HuntCell::Retreat | HuntCell::WalkSpot => true,
-        HuntCell::Enter => !kbd_tile(from),
-        HuntCell::Leave => !kbd_tile(from) && !town_tile(from),
+        HuntCell::WalkSpot => true,
         HuntCell::Key => {
             !JAIL_CELL.contains(from)
                 && !HUNT_LAIR_FIXTURE.contains(from)
@@ -580,61 +524,12 @@ impl HuntDeliveryCycle {
         let walk_to = |act: &ScriptAct| matches!(act, ScriptAct::WalkTo { .. });
         let exact_to = |act: &ScriptAct, open: bool| walk_exact(act, dest, open);
         match cell {
-            // The world walk (teleports off) to dest and nothing else.
-            HuntCell::Hold => {
-                in_ring(from, dest, HOLD_SPOT_MIN_CHEB, HOLD_SPOT_MAX_CHEB)
-                    && here == dest
-                    && self.first(|act| exact_to(act, true)).is_some()
-                    && self.all_walks(|act| exact_to(act, true))
-                    && !self.any(|act| walk_to(act) || scene_op(act))
-            }
-            // The scene walk-to dest; no world walk.
-            HuntCell::Retreat => {
-                in_ring(from, dest, RETREAT_SPOT_MIN_CHEB, RETREAT_SPOT_MAX_CHEB)
-                    && here == dest
-                    && self
-                        .first(|act| matches!(act, ScriptAct::WalkTo { dest: d } if *d == dest))
-                        .is_some()
-                    && !self.any(|act| {
-                        matches!(act, ScriptAct::Walk { .. })
-                            || matches!(act, ScriptAct::WalkTo { dest: d } if *d != dest)
-                            || scene_op(act)
-                    })
-            }
-            // The world walk to a dest past Hold's walk-back; no walk-near.
+            // The long world walk to a requested spot; no walk-near.
             HuntCell::WalkSpot => {
                 in_ring(from, dest, WALK_SPOT_MIN_CHEB, WALK_SPOT_MAX_CHEB)
                     && here == dest
                     && self.first(|act| exact_to(act, true)).is_some()
                     && self.all_walks(|act| exact_to(act, true))
-                    && !self.any(|act| walk_to(act) || scene_op(act))
-            }
-            // The gateless approach walk into the lair box; inside at the end.
-            HuntCell::Enter => {
-                let Some(area) = receipt.area else {
-                    return false;
-                };
-                in_ring(from, dest, ENTER_LAIR_MIN_CHEB, ENTER_LAIR_MAX_CHEB)
-                    && !area.contains(from)
-                    && area.contains(dest)
-                    && area.contains(here)
-                    && self.first(|act| exact_to(act, false)).is_some()
-                    && self.all_walks(|act| exact_to(act, false))
-                    && !self.any(|act| walk_to(act) || scene_op(act))
-            }
-            // The gateless walk-near walkOut from the Start box. The family
-            // settles `true` as soon as here leaves the box, so the end tile
-            // is outside it and on the way to walkOut, not necessarily there.
-            HuntCell::Leave => {
-                let area = leave_lair_box(from);
-                in_ring(from, dest, LEAVE_LAIR_MIN_CHEB, LEAVE_LAIR_MAX_CHEB)
-                    && !area.contains(dest)
-                    && !town_tile(from)
-                    && !town_tile(dest)
-                    && !area.contains(here)
-                    && cheb(here, dest) < cheb(from, dest)
-                    && self.walked_near(dest, LEAVE_LAIR_RADIUS).is_some()
-                    && self.all_walks(|act| walk_near_closed(act, dest, LEAVE_LAIR_RADIUS))
                     && !self.any(|act| walk_to(act) || scene_op(act))
             }
             // The corridor walk, then the Jailer attack; the jail key held.
@@ -715,9 +610,8 @@ fn in_ring(from: LineOfSightTile, dest: LineOfSightTile, min: i32, max: i32) -> 
     (min..=max).contains(&cheb(from, dest))
 }
 
-/// A `walk` to exactly `dest` with a request id and teleports off. `open`:
-/// the family's world walk may use the wilderness and bank fetch (Hold,
-/// WalkToSpot); otherwise every route permission is off.
+/// A `walk` to exactly `dest` with a request id and teleports off. WalkSpot
+/// may use wilderness and bank fetch; other routes keep them off.
 fn walk_exact(act: &ScriptAct, dest: LineOfSightTile, open: bool) -> bool {
     matches!(act, ScriptAct::Walk {
         dest: d,

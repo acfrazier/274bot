@@ -154,6 +154,21 @@ fn wait_script_state(play: &Play, name: &str, want: script::RunState) {
     assert_eq!(play.script_state(name), want);
 }
 
+#[cfg(feature = "js")]
+fn prepared_test_card(
+    source: &str,
+    shape: script_js::LoadShape,
+) -> Arc<script_js::surface::JsStartCard> {
+    crate::script_runtime::prepared_test_start_card(source, shape, Vec::new())
+        .expect("host-play JS fixture prepares")
+}
+
+#[cfg(feature = "js")]
+fn native_test_card(body: &str) -> Arc<script_js::surface::JsStartCard> {
+    let source = script_js::native_fixture(body);
+    prepared_test_card(&source, script_js::LoadShape::NativeTick)
+}
+
 #[test]
 fn terminal_startup_error_is_only_the_producer_asset_failure() {
     let mut status = SlotStatus {
@@ -7358,14 +7373,9 @@ fn every_script_stop_retires_the_run_walk_and_only_that_runs_walk() {
             .collect()
     };
     let start = |play: &Play, identity: &str| {
-        play.script_start_load(
-            "alice",
-            "export function tick(api) {}".into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            vec![],
-        )
-        .unwrap();
+        let card = native_test_card("export function tick(api) {}");
+        play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+            .unwrap();
         wait_script_state(play, "alice", script::RunState::Running);
         play.script_attach_identity("alice", identity);
     };
@@ -7650,14 +7660,9 @@ fn fenced_script_stop_requires_same_identity_and_generation() {
         |_, _, _| {},
     );
     play.attach_arm("alice", SlotArm::new(7, false));
-    play.script_start_load(
-        "alice",
-        "export function tick(api) {}".into(),
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .unwrap();
+    let card = native_test_card("export function tick(api) {}");
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+        .unwrap();
     wait_script_state(&play, "alice", script::RunState::Running);
     play.script_attach_identity("alice", "card:a");
     let generation = play.script_runtime_generation("alice").unwrap();
@@ -7970,25 +7975,15 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
         |_, _, _| {},
     );
     play.attach_arm("alice", SlotArm::new(7, false));
-    let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-    play.script_start_load(
-        "alice",
-        src.clone(),
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .unwrap();
+    let card = native_test_card("export function tick(api) { api._n = (api._n||0)+1 }");
+    let src = card.source.to_string();
+    let checked = card.checked;
+    play.script_start_load("alice", src.clone(), checked, None, vec![])
+        .unwrap();
     wait_script_state(&play, "alice", script::RunState::Running);
 
     let err = play
-        .script_start_load(
-            "alice",
-            src.clone(),
-            script_js::LoadShape::NativeTick,
-            None,
-            vec![],
-        )
+        .script_start_load("alice", src.clone(), checked, None, vec![])
         .unwrap_err();
     assert!(err.contains("active"), "err was {err}");
 
@@ -7997,7 +7992,7 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
 
     // Unknown slot: never creates an entry, and never a V8 runtime.
     let err = play
-        .script_start_load("ghost", src, script_js::LoadShape::NativeTick, None, vec![])
+        .script_start_load("ghost", src, checked, None, vec![])
         .unwrap_err();
     assert!(err.contains("no slot"), "err was {err}");
     assert!(
@@ -8081,9 +8076,7 @@ fn client_frame_and_lifecycle_hooks_do_not_hold_slot_and_are_watchdog_bounded() 
         |_, _, _| {},
     );
     play.attach_arm("alice", SlotArm::new(7, false));
-    play.script_start_load(
-        "alice",
-        r#"
+    let source = r#"
 import { BotHost } from '../../runtime/BotHost.js';
 globalThis.__frameCalled = false;
 globalThis.__hangFrame = false;
@@ -8105,13 +8098,10 @@ export default class T extends LoopingBot {
         while (true) {}
     }
 }
-"#
-        .to_string(),
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .unwrap();
+"#;
+    let card = prepared_test_card(source, script_js::LoadShape::CompatClass);
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+        .unwrap();
     let slot = script_slot(&play.scripts, "alice").expect("script slot exists");
     let startup_deadline = Instant::now() + Duration::from_secs(5);
     while play.script_state("alice") != script::RunState::Running
@@ -8258,16 +8248,10 @@ fn script_start_returns_before_setup_and_stop_before_reap() {
         |_, _, _| {},
     );
     play.attach_arm("alice", SlotArm::new(7, false));
-    let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+    let card = native_test_card("export function tick(api) { api._n = (api._n||0)+1 }");
     let t0 = Instant::now();
-    play.script_start_load(
-        "alice",
-        src.clone(),
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .unwrap();
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+        .unwrap();
     assert!(
         t0.elapsed() < Duration::from_millis(500),
         "Start blocked: {:?}",
@@ -8320,19 +8304,13 @@ fn script_poll_start_never_loses_an_outcome_to_the_slot_threads_observe() {
             }
         })
     };
-    let good = "export function tick(api) {}";
-    let bad = "throw new Error('race-proof');\nexport function tick(api) {}";
+    let good = native_test_card("export function tick(api) {}");
+    let bad = native_test_card("throw new Error('race-proof');\nexport function tick(api) {}");
     let (mut ready, mut failed) = (0, 0);
     for i in 0..100 {
-        let src = if i % 2 == 0 { good } else { bad };
-        play.script_start_load(
-            "alice",
-            src.into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            vec![],
-        )
-        .unwrap();
+        let card = if i % 2 == 0 { &good } else { &bad };
+        play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match play.script_poll_start("alice") {
@@ -8380,12 +8358,12 @@ fn script_start_handle_explicit_loadouts_starts() {
     let mut bag = serde_json::Map::new();
     bag.insert("loadout".into(), serde_json::json!("Memory food"));
     bag.insert("banking".into(), serde_json::json!("Auto"));
-    let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+    let card = native_test_card("export function tick(api) { api._n = (api._n||0)+1 }");
     play.script_start_handle()
         .start_load_with_loadouts(
             "alice",
-            src,
-            script_js::LoadShape::NativeTick,
+            card.source.to_string(),
+            card.checked,
             Some(bag),
             vec![],
             &[api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)],
@@ -8419,14 +8397,15 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
         api::loadout::Loadout::new("First"),
         api::loadout::Loadout::new("Second"),
     ];
+    let card = native_test_card("export function tick() {}");
     for wanted in ["", " SECOND "] {
         let mut bag = serde_json::Map::new();
         bag.insert("loadout".into(), serde_json::json!(wanted));
         start
             .start_load_with_loadouts(
                 "alice",
-                "export function tick() {}".into(),
-                script_js::LoadShape::NativeTick,
+                card.source.to_string(),
+                card.checked,
                 Some(bag),
                 vec![],
                 &rows,
@@ -8447,8 +8426,8 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
     let ambiguous = start
         .start_load_with_loadouts(
             "alice",
-            "export function tick() {}".into(),
-            script_js::LoadShape::NativeTick,
+            card.source.to_string(),
+            card.checked,
             Some(bag.clone()),
             vec![],
             &ambiguous_rows,
@@ -8464,8 +8443,8 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
     let unknown = start
         .start_load_with_loadouts(
             "alice",
-            "export function tick() {}".into(),
-            script_js::LoadShape::NativeTick,
+            card.source.to_string(),
+            card.checked,
             Some(bag),
             vec![],
             &ambiguous_rows,
@@ -8649,14 +8628,9 @@ const first = SettingsStore.resolve('WalkTo', {
 globalThis.__firstResolve = first.destination;
 export function tick(api) {}
 "#;
-    play.script_start_load(
-        "alice",
-        source.into(),
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .unwrap();
+    let card = native_test_card(source);
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+        .unwrap();
     wait_script_state(&play, "alice", script::RunState::Running);
     let first = {
         let slot = script_slot(&play.scripts, "alice").expect("started slot exists");
@@ -8700,10 +8674,11 @@ fn live_start_retains_the_card_for_a_second_start() {
         catalog: None,
         pair: None,
     };
+    let card = native_test_card("export function tick() {}");
     let mut pending = vec![crate::live_start::PendingCatalogStart::load(
         "alice",
-        "export function tick() {}".into(),
-        script_js::LoadShape::NativeTick,
+        card.source.to_string(),
+        card.checked,
         None,
         vec![],
         vec![],
@@ -8753,8 +8728,8 @@ fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
     );
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_paint_click("alice", "gobank", 0);
-    let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-    play.script_start_load("alice", src, script_js::LoadShape::NativeTick, None, vec![])
+    let card = native_test_card("export function tick(api) { api._n = (api._n||0)+1 }");
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
         .unwrap();
     play.script_paint_click("alice", "", 0);
     play.script_paint_click("alice", "gobank", 0);
@@ -8784,8 +8759,8 @@ fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
     );
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_paint_select("alice", "strip:k", "Options", 0);
-    let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-    play.script_start_load("alice", src, script_js::LoadShape::NativeTick, None, vec![])
+    let card = native_test_card("export function tick(api) { api._n = (api._n||0)+1 }");
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
         .unwrap();
     play.script_paint_select("alice", "strip:k", "", 0);
     play.script_paint_select("alice", "strip:k", "Options", 0);
@@ -8951,11 +8926,12 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         .is_err());
     #[cfg(feature = "js")]
     {
+        let card = native_test_card("export function tick() {}");
         assert!(play
             .script_start_load(
                 "alice",
-                "export function tick() {}".into(),
-                script_js::LoadShape::NativeTick,
+                card.source.to_string(),
+                card.checked,
                 None,
                 Vec::new(),
             )
@@ -8963,8 +8939,8 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         assert!(play
             .script_start_load_typed(
                 "alice",
-                "export function tick() {}".into(),
-                script_js::LoadShape::NativeTick,
+                card.source.to_string(),
+                card.checked,
                 None,
                 Vec::new(),
             )
@@ -8973,8 +8949,8 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         assert!(start
             .start_load(
                 "alice",
-                "export function tick() {}".into(),
-                script_js::LoadShape::NativeTick,
+                card.source.to_string(),
+                card.checked,
                 None,
                 Vec::new(),
             )
@@ -8982,8 +8958,8 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         assert!(start
             .start_load_with_loadouts(
                 "alice",
-                "export function tick() {}".into(),
-                script_js::LoadShape::NativeTick,
+                card.source.to_string(),
+                card.checked,
                 None,
                 Vec::new(),
                 &[],
@@ -9850,13 +9826,14 @@ fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
     let mut slot = slot.lock().unwrap();
     let game_data =
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 game data");
+    let card = crate::script_runtime::prepared_test_start_card(
+        source,
+        script_js::LoadShape::CompatClass,
+        vec![],
+    )
+    .expect("compat bank fixture prepares");
     let start = crate::script_runtime::js_surface_start(
-        crate::script_runtime::js_start_card(
-            name,
-            source.to_string(),
-            script_js::LoadShape::CompatClass,
-            vec![],
-        ),
+        card,
         None,
         Some(Arc::clone(&game_data)),
         Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -20103,8 +20080,8 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
     assert_eq!(script_js::scene::line_of_sight::raw_flag_at(-1), None);
 
     let iso = script_js::LoadIsolate::spawn(
-        r#"
-export const apiVersion = 2;
+        script_js::native_fixture(
+            r#"
 export function tick(api) {
   const c = api.snapshot.collision;
   const here = { x: 3201, z: 3201, level: 0 };
@@ -20117,8 +20094,8 @@ export function tick(api) {
     blocked: api.lineOfSight({ from: here, to: { x: 3208, z: 3201, level: 0 }, size: 1 }),
   };
 }
-"#
-        .into(),
+"#,
+        ),
         script_js::LoadShape::NativeTick,
         vec![],
     )
@@ -21237,14 +21214,11 @@ fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressu
         .prayer_by_name("Protect from Melee")
         .expect("Protect from Melee row")
         .varp;
+    let origin = script_js::native_fixture(
+        "export function tick(api) { globalThis.__active = api.prayerActive({ name: 'Protect from Melee' }).value; }",
+    );
     let iso = script_js::LoadIsolate::spawn_with_game_data(
-        r#"
-export const apiVersion = 2;
-export function tick(api) {
-  globalThis.__active = api.prayerActive({ name: 'Protect from Melee' }).value;
-}
-"#
-        .into(),
+        origin,
         script_js::LoadShape::NativeTick,
         vec![],
         game_data,
@@ -22821,14 +22795,12 @@ fn pause_clears_live_recovery_walk() {
         |_, _, _| {},
     );
     play.attach_arm("alice", SlotArm::new(7, false));
-    play.script_start_load(
-        "alice",
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let card = prepared_test_card(
+        "export default class T extends LoopingBot { loop() {} }",
         script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .unwrap();
+    );
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+        .unwrap();
     force_watchdog_recovering(
         &mut script_slot(&play.scripts, "alice").unwrap().lock().unwrap(),
         (100, 100, 0),
@@ -22924,14 +22896,12 @@ fn operator_stop_stops_the_script_walk() {
         |_, _, _| {},
     );
     play.attach_arm("alice", SlotArm::new(7, false));
-    play.script_start_load(
-        "alice",
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let card = prepared_test_card(
+        "export default class T extends LoopingBot { loop() {} }",
         script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .unwrap();
+    );
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+        .unwrap();
     play.navs
         .lock()
         .unwrap()
@@ -22964,14 +22934,12 @@ fn operator_pause_stops_an_ordinary_script_walk() {
         |_, _, _| {},
     );
     play.attach_arm("alice", SlotArm::new(7, false));
-    play.script_start_load(
-        "alice",
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let card = prepared_test_card(
+        "export default class T extends LoopingBot { loop() {} }",
         script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .unwrap();
+    );
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+        .unwrap();
     assert!(script_slot(&play.scripts, "alice")
         .unwrap()
         .lock()
@@ -23654,13 +23622,14 @@ impl ReconnectRig {
         let slot = script_slot_or_insert(&scripts, "alice");
         let ready_session = {
             let mut slot = slot.lock().unwrap();
+            let card = crate::script_runtime::prepared_test_start_card(
+                &source,
+                script_js::LoadShape::CompatClass,
+                vec![],
+            )
+            .expect("bank-wake fixture prepares");
             let start = crate::script_runtime::js_surface_start(
-                crate::script_runtime::js_start_card(
-                    "bank wake test",
-                    source,
-                    script_js::LoadShape::CompatClass,
-                    vec![],
-                ),
+                card,
                 None,
                 Some(selected),
                 named_banks,
@@ -28074,13 +28043,18 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     let statuses = Arc::new(Mutex::new(Vec::new()));
     let world_opt = Some(Arc::clone(&world));
 
-    let source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../script-js/examples/bone_burier_v2.js"),
-    )
-    .unwrap();
-    let iso =
-        script_js::LoadIsolate::spawn(source, script_js::LoadShape::NativeTick, vec![]).unwrap();
+    let origin_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../script-js/examples/bone_burier_v2.ts");
+    let origin = std::fs::read_to_string(&origin_path).unwrap();
+    let (execution, checked) = script_js::compile_origin(&origin_path, &origin).unwrap();
+    assert_eq!(checked.shape(), script_js::LoadShape::NativeTick);
+    let source = script_js::NativeFixture::new("BoneBurier")
+        .settings(
+            "{ boneName: { type: 'string', default: 'Bones', label: 'Bone name', \
+             help: 'The unnoted inventory and bank item to bury' } }",
+        )
+        .source(&execution);
+    let iso = script_js::LoadIsolate::spawn(source, checked.shape(), vec![]).unwrap();
     let filler = [(999, 1)];
     let post = |tick: u64, here: (i32, i32, i32), snapshot: &GameSnapshot| {
         with_script_snapshot_input(
@@ -28298,9 +28272,8 @@ fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
     let navs = test_navs("native-v2");
     bind_test_route_scope(&navs, "native-v2");
     let statuses = Arc::new(Mutex::new(Vec::new()));
-    let iso = script_js::LoadIsolate::spawn(
+    let origin = script_js::native_fixture(
         r#"
-export const apiVersion = 2;
 let phase = 0;
 export function tick(api) {
   if (phase === 0) {
@@ -28329,12 +28302,10 @@ export function tick(api) {
     });
   }
 }
-"#
-        .into(),
-        script_js::LoadShape::NativeTick,
-        vec![],
-    )
-    .unwrap();
+"#,
+    );
+    let iso =
+        script_js::LoadIsolate::spawn(origin, script_js::LoadShape::NativeTick, vec![]).unwrap();
     let post = |tick: u64, here: WorldTile, snapshot: &GameSnapshot| {
         with_script_snapshot_input(
             tick,
@@ -33040,13 +33011,14 @@ export default class T extends LoopingBot {
     }
 }
 "#;
+        let card = crate::script_runtime::prepared_test_start_card(
+            source,
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("compatibility route fixture prepares");
         let start = crate::script_runtime::js_surface_start(
-            crate::script_runtime::js_start_card(
-                "test card",
-                source.to_owned(),
-                script_js::LoadShape::CompatClass,
-                vec![],
-            ),
+            card,
             None,
             Some(selected),
             Arc::new(api::named_banks::NamedBankFacts::empty()),

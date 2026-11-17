@@ -2268,10 +2268,6 @@ fn parse_live_args_script_walk_accepted() {
         Ok(RunMode::Live("script_nav_paint_path".into()))
     );
     assert_eq!(
-        parse_live_args(["--live", "script_bone_burier_v2_js"], None),
-        Ok(RunMode::Live("script_bone_burier_v2_js".into()))
-    );
-    assert_eq!(
         parse_live_args(["--live", "script_bone_burier_v2_ts"], None),
         Ok(RunMode::Live("script_bone_burier_v2_ts".into()))
     );
@@ -2329,8 +2325,6 @@ fn parse_args_run_prepared_requires_script_live() {
     assert!(parse_args(["--prepare-fixture", "nope"], None).is_err());
     let ts = parse_args(["--prepare-fixture", "bone_burier_v2_ts"], None).unwrap();
     assert_eq!(ts.mode, RunMode::PrepareFixture("bone_burier_v2_ts".into()));
-    let js = parse_args(["--prepare-fixture", "bone_burier_v2_js"], None).unwrap();
-    assert_eq!(js.mode, RunMode::PrepareFixture("bone_burier_v2_js".into()));
     assert_eq!(
         frontend_core::test_support::live::scenario("bone_burier_v2_ts")
             .unwrap()

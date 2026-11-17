@@ -9,7 +9,7 @@ mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
 
-const IDLE: &str = "export const apiVersion = 2;\nexport function tick(api) {}\n";
+const IDLE: &str = "export function tick(api) {}\n";
 
 const GAS_CONSUMER: &str = r#"
 import { GAS_ROCK_IDS } from '../../data/miningRocks.js';
@@ -43,8 +43,9 @@ fn idle_isolates_never_acquire_the_family_and_consumers_release_it() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     assert!(data.try_gathering().is_none());
 
+    let idle_source = script_js::native_fixture(IDLE);
     let idle: Vec<LoadIsolate> = (0..4)
-        .map(|_| start(IDLE, LoadShape::NativeTick, &data))
+        .map(|_| start(&idle_source, LoadShape::NativeTick, &data))
         .collect();
     assert!(
         data.try_gathering().is_none(),

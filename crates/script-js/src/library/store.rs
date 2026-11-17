@@ -12,7 +12,10 @@ pub use catalog::{CatalogSnapshotError, CatalogWorkerError};
 
 use std::path::{Path, PathBuf};
 
-use crate::library::js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
+use crate::library::js_cache::{default_js_cache_root, CacheMeta, CacheRole, CachedJs, JsCache};
+use crate::library::prepare::{check_origin, checked_family, CheckedLoad, CheckedOrigin};
+use script::manifest::ScriptManifest;
+use std::sync::Arc;
 
 use crate::library::rs2b0t_registry::{
     absolute_clean, parse_registry_with_sources, persist_rs2b0t_root_at, script_file_path,
@@ -21,19 +24,23 @@ use script::card::{ScriptKind, ScriptSource, SettingDef};
 
 use super::shape::{
     catalog_unloadable, first_unloadable_for_card, first_unloadable_for_card_bounded, is_reserved,
-    raw_content_fingerprint, raw_content_fingerprint_bounded, resolve_api_family,
-    resolve_sibling_modules_bounded, ApiFamily, FirstUnloadableWork, LoadShape,
-    PreparationFingerprintWork, SiblingCompilationWork, UnloadReason, MAX_PREPARATION_RESULT_BYTES,
-    MAX_PREPARATION_SIBLINGS, MAX_PREPARATION_SOURCE_BYTES, MAX_SOURCE_BYTES,
+    raw_content_fingerprint, raw_content_fingerprint_bounded, resolve_sibling_modules_bounded,
+    ApiFamily, FirstUnloadableWork, LoadShape, PreparationFingerprintWork, SiblingCompilationWork,
+    UnloadReason, MAX_PREPARATION_RESULT_BYTES, MAX_PREPARATION_SIBLINGS,
+    MAX_PREPARATION_SOURCE_BYTES, MAX_SOURCE_BYTES,
 };
 
-/// A loaded JS bot: picker name, origin path, loader shape, origin text,
-/// cached JS (SHA object), execution kind, provenance, and content hash.
+/// A loaded JS bot: picker name, origin path, checked load identity, origin
+/// text, cached execution JS (SHA object), execution kind, provenance, and
+/// content hash.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JsCard {
     pub name: String,
     pub path: PathBuf,
-    pub shape: LoadShape,
+    /// Shape, API family and declared capabilities from static preparation.
+    pub checked: CheckedLoad,
+    /// The checked native manifest of a manifest-form card.
+    pub manifest: Option<Arc<ScriptManifest>>,
     pub origin: String,
     pub js: String,
     pub kind: ScriptKind,
@@ -46,8 +53,6 @@ pub struct JsCard {
     /// Why the card cannot Start: an unresolved import or a catalog policy
     /// hold. `None` means Start may spawn; `not impl` members do not set this.
     pub unloadable: Option<UnloadReason>,
-    /// Provenance only — not part of identity or the cache key.
-    pub api_family: ApiFamily,
 }
 
 /// Stage of a retained per-source load failure.
@@ -198,6 +203,93 @@ impl JsCard {
 
     pub fn assignment(&self) -> vault::ScriptAssignment {
         script::identity::card_assignment(self.source, &self.path, &self.name)
+    }
+
+    /// The checked loader shape.
+    pub fn shape(&self) -> LoadShape {
+        self.checked.shape()
+    }
+
+    /// The checked API family.
+    pub fn api_family(&self) -> ApiFamily {
+        self.checked.family()
+    }
+}
+
+/// One checked entry origin and its cached execution JavaScript.
+struct CompiledEntry {
+    origin: CheckedOrigin,
+    cached: CachedJs,
+}
+
+impl CompiledEntry {
+    fn checked(&self) -> CheckedLoad {
+        self.origin.checked()
+    }
+
+    fn manifest(&self) -> Option<Arc<ScriptManifest>> {
+        self.origin.manifest().cloned()
+    }
+}
+
+/// Why an entry origin did not compile.
+enum EntryRefusal {
+    Origin(crate::library::prepare::OriginRefusal),
+    Cache(String),
+}
+
+impl EntryRefusal {
+    /// The text of the refusal, prefixed by the card name.
+    fn message(&self, name: &str) -> String {
+        match self {
+            Self::Origin(crate::library::prepare::OriginRefusal::NotBotShape) => {
+                format!("not a bot shape: {name}")
+            }
+            Self::Origin(other) => format!("{name}: {other}"),
+            Self::Cache(error) => format!("{name}: {error}"),
+        }
+    }
+
+    fn is_declaration(&self) -> bool {
+        matches!(
+            self,
+            Self::Origin(crate::library::prepare::OriginRefusal::Declaration(_))
+        )
+    }
+}
+
+/// Check `origin` and fetch its entry-role execution JavaScript.
+fn compile_entry(
+    cache: &JsCache,
+    path: &Path,
+    origin: &str,
+    source: ScriptSource,
+) -> Result<CompiledEntry, EntryRefusal> {
+    let checked = check_origin(path, origin).map_err(EntryRefusal::Origin)?;
+    let cached = cache
+        .get_or_compile(
+            CacheRole::Entry,
+            path,
+            origin,
+            checked.execution(origin),
+            cache_meta(checked.checked(), source),
+        )
+        .map_err(EntryRefusal::Cache)?;
+    Ok(CompiledEntry {
+        origin: checked,
+        cached,
+    })
+}
+
+/// A File card's settings schema: its manifest settings, or the compat
+/// `SETTINGS` export.
+fn file_settings_schema(
+    manifest: Option<&ScriptManifest>,
+    origin: &str,
+) -> Result<Vec<SettingDef>, String> {
+    match manifest {
+        Some(manifest) => Ok(manifest.settings_schema().to_vec()),
+        None => crate::library::rs2b0t_registry::try_settings_schema_from_source(origin),
     }
 }
 
@@ -358,25 +450,29 @@ impl JsLibrary {
                     continue;
                 }
             };
-            let Ok((shape, api_family)) = resolve_api_family(&origin) else {
-                continue;
-            };
-            if shape == LoadShape::Reject {
-                continue;
-            }
             if is_reserved(&entry.name) {
                 continue;
             }
-            let cached = match self.cache.get_or_transpile(
-                &path,
-                origin.as_bytes(),
-                cache_meta(shape, ScriptSource::File, api_family),
-            ) {
-                Ok(c) => c,
-                Err(_) => continue,
+            let compiled = match compile_entry(&self.cache, &path, &origin, ScriptSource::File) {
+                Ok(compiled) => compiled,
+                Err(refusal) => {
+                    // A shape that is not a bot stays silently unrestored, as
+                    // before; a refused declaration names its migration.
+                    if refusal.is_declaration() {
+                        self.note_err(
+                            ScriptSource::File,
+                            &path,
+                            &entry.name,
+                            &refusal.message(&entry.name),
+                            Some(&origin),
+                            None,
+                        );
+                    }
+                    continue;
+                }
             };
             let settings_schema =
-                match crate::library::rs2b0t_registry::try_settings_schema_from_source(&origin) {
+                match file_settings_schema(compiled.manifest().as_deref(), &origin) {
                     Ok(schema) => schema,
                     Err(reason) => {
                         self.note_err(
@@ -385,28 +481,31 @@ impl JsLibrary {
                             &entry.name,
                             &reason,
                             Some(&origin),
-                            Some(api_family),
+                            Some(compiled.checked().family()),
                         );
                         continue;
                     }
                 };
             let unloadable =
                 first_unloadable_for_card(&origin, &path).map(UnloadReason::UnsupportedImport);
+            let manifest = compiled.manifest();
+            let (description, category, tags) = card_metadata(manifest.as_deref(), "", "", &[]);
+            let checked = compiled.checked();
             self.cards.push(JsCard {
                 name: entry.name,
                 path,
-                shape,
+                checked,
+                manifest,
                 origin,
-                js: cached.js,
-                kind: shape_to_kind(shape),
+                js: compiled.cached.js,
+                kind: shape_to_kind(checked.shape()),
                 source: ScriptSource::File,
-                sha256: cached.sha256,
-                description: String::new(),
-                category: String::new(),
-                tags: Vec::new(),
+                sha256: compiled.cached.sha256,
+                description,
+                category,
+                tags,
                 settings_schema,
                 unloadable,
-                api_family,
             });
             if let Some(last) = self.cards.last().cloned() {
                 self.remember_fingerprint(&last);
@@ -415,9 +514,10 @@ impl JsLibrary {
         Ok(())
     }
 
-    /// Register a JS bot from a filesystem path. Reads the origin, caches
-    /// transpiled JS under `~/.274bot/js-cache`, and statically parses
-    /// `export const SETTINGS` for the picker schema. V8 only runs on
+    /// Register a JS bot from a filesystem path. Reads the origin, checks its
+    /// manifest or compat shape, caches the execution JS under
+    /// `~/.274bot/js-cache`, and reads the picker schema from the manifest
+    /// (or the compat `export const SETTINGS`). V8 only runs on
     /// Start. Loading the same file path replaces its previous card;
     /// different paths remain distinct even when their file stems match.
     pub fn load(&mut self, path: &Path) -> Result<JsCard, String> {
@@ -439,7 +539,7 @@ impl JsLibrary {
                 let origin = std::fs::read_to_string(path).ok();
                 let family = origin
                     .as_deref()
-                    .and_then(|text| resolve_api_family(text).ok().map(|(_, family)| family));
+                    .and_then(|text| checked_family(path, text));
                 self.note_err(
                     ScriptSource::File,
                     path,
@@ -465,39 +565,30 @@ impl JsLibrary {
         if is_reserved(&name) {
             return Err(format!("reserved: {name}"));
         }
-        let (shape, api_family) =
-            resolve_api_family(&origin).map_err(|e| format!("{name}: {e}"))?;
-        if shape == LoadShape::Reject {
-            return Err(format!("not a bot shape: {name}"));
-        }
-        let cached = self
-            .cache
-            .get_or_transpile(
-                path,
-                origin.as_bytes(),
-                cache_meta(shape, ScriptSource::File, api_family),
-            )
+        let compiled = compile_entry(&self.cache, path, &origin, ScriptSource::File)
+            .map_err(|refusal| refusal.message(&name))?;
+        let manifest = compiled.manifest();
+        let settings_schema = file_settings_schema(manifest.as_deref(), &origin)
             .map_err(|e| format!("{name}: {e}"))?;
-        let settings_schema =
-            crate::library::rs2b0t_registry::try_settings_schema_from_source(&origin)
-                .map_err(|e| format!("{name}: {e}"))?;
         let unloadable =
             first_unloadable_for_card(&origin, path).map(UnloadReason::UnsupportedImport);
+        let (description, category, tags) = card_metadata(manifest.as_deref(), "", "", &[]);
+        let checked = compiled.checked();
         let card = JsCard {
             name,
             path: path.to_path_buf(),
-            shape,
+            checked,
+            manifest,
             origin,
-            js: cached.js,
-            kind: shape_to_kind(shape),
+            js: compiled.cached.js,
+            kind: shape_to_kind(checked.shape()),
             source: ScriptSource::File,
-            sha256: cached.sha256,
-            description: String::new(),
-            category: String::new(),
-            tags: Vec::new(),
+            sha256: compiled.cached.sha256,
+            description,
+            category,
+            tags,
             settings_schema,
             unloadable,
-            api_family,
         };
         let new_cards: Vec<JsCard> = self
             .cards
@@ -578,7 +669,7 @@ impl JsLibrary {
                     &card.name,
                     &diagnostic,
                     Some(&card.origin),
-                    Some(card.api_family),
+                    Some(card.api_family()),
                 );
                 // The typed spawn boundary, not diagnostic text, owns the stage.
                 failure.stage = LoadStage::RuntimeLoad;
@@ -625,7 +716,7 @@ impl JsLibrary {
                     &card.name,
                     &diagnostic,
                     Some(card.origin.as_str()),
-                    Some(card.api_family),
+                    Some(card.api_family()),
                 ));
             }
             // A catalog policy hold is not a load failure. The picker reads
@@ -641,7 +732,7 @@ impl JsLibrary {
     pub fn refresh(&mut self, source: ScriptSource, name: &str) -> Result<(), String> {
         let prior = self
             .get(source, name)
-            .map(|c| (c.path.clone(), c.api_family));
+            .map(|c| (c.path.clone(), c.api_family()));
         match self.refresh_unrecorded(source, name) {
             Ok(()) => {
                 if let Some(card) = self.get(source, name).cloned() {
@@ -662,16 +753,15 @@ impl JsLibrary {
     fn candidate_settings_schema(
         &self,
         card: &JsCard,
+        manifest: Option<&ScriptManifest>,
         origin: &str,
     ) -> Result<Vec<SettingDef>, String> {
         match card.source {
             ScriptSource::Catalog => {
                 self.resolve_catalog_settings_schema(&card.name, &card.path, origin)
             }
-            ScriptSource::File | ScriptSource::Builtin => {
-                crate::library::rs2b0t_registry::try_settings_schema_from_source(origin)
-                    .map_err(|error| format!("{}: {error}", card.name))
-            }
+            ScriptSource::File | ScriptSource::Builtin => file_settings_schema(manifest, origin)
+                .map_err(|error| format!("{}: {error}", card.name)),
         }
     }
 
@@ -685,36 +775,43 @@ impl JsLibrary {
         let path = original.path.clone();
         let origin = std::fs::read_to_string(&path)
             .map_err(|e| format!("refresh {}: {e}", path.display()))?;
-        let settings_schema = self.candidate_settings_schema(&original, &origin)?;
-        let (shape, api_family) =
-            resolve_api_family(&origin).map_err(|e| format!("{name}: {e}"))?;
-        if shape == LoadShape::Reject {
-            return Err(format!("not a bot shape: {name}"));
-        }
-        let cached = self
-            .cache
-            .get_or_transpile(
-                &path,
-                origin.as_bytes(),
-                cache_meta(shape, source, api_family),
-            )
-            .map_err(|e| format!("{name}: {e}"))?;
+        let compiled = compile_entry(&self.cache, &path, &origin, source)
+            .map_err(|refusal| refusal.message(name))?;
+        let manifest = compiled.manifest();
+        let settings_schema =
+            self.candidate_settings_schema(&original, manifest.as_deref(), &origin)?;
         let unloadable = catalog_unloadable(
             name,
             source,
-            &cached.sha256,
+            &compiled.cached.sha256,
             &path,
             first_unloadable_for_card(&origin, &path),
         );
+        // Catalog metadata comes from the registry; a File card's metadata
+        // comes only from its own manifest.
+        let (description, category, tags) = if source == ScriptSource::Catalog {
+            card_metadata(
+                manifest.as_deref(),
+                &original.description,
+                &original.category,
+                &original.tags,
+            )
+        } else {
+            card_metadata(manifest.as_deref(), "", "", &[])
+        };
+        let checked = compiled.checked();
         let card = &mut self.cards[idx];
         card.path = path;
-        card.shape = shape;
+        card.checked = checked;
+        card.manifest = manifest;
         card.origin = origin;
-        card.js = cached.js;
-        card.kind = shape_to_kind(shape);
-        card.sha256 = cached.sha256;
+        card.js = compiled.cached.js;
+        card.kind = shape_to_kind(checked.shape());
+        card.sha256 = compiled.cached.sha256;
         card.unloadable = unloadable;
-        card.api_family = api_family;
+        card.description = description;
+        card.category = category;
+        card.tags = tags;
         card.settings_schema = settings_schema;
         let snap = card.clone();
         self.remember_fingerprint(&snap);
@@ -853,7 +950,7 @@ impl JsLibrary {
             &prepared.card.name,
             diagnostic,
             prepared.fingerprint.clone(),
-            Some(prepared.card.api_family),
+            Some(prepared.card.api_family()),
         );
         // Validation batches are the typed runtime boundary; diagnostic
         // wording does not decide whether this was a transpile failure.
@@ -903,7 +1000,12 @@ impl JsLibrary {
     pub fn cards_needing_transpile(&self) -> Vec<(ScriptSource, String)> {
         self.cards
             .iter()
-            .filter(|c| c.js.is_empty() && !self.cache.is_cached(c.origin.as_bytes()))
+            .filter(|c| {
+                c.js.is_empty()
+                    && !self
+                        .cache
+                        .is_cached(CacheRole::Entry, &c.path, c.origin.as_bytes())
+            })
             .map(|c| (c.source, c.name.clone()))
             .collect()
     }
@@ -1051,7 +1153,7 @@ impl CardPreparationTemplate {
             tags: card.tags.clone(),
             settings_schema: card.settings_schema.clone(),
             unloadable: card.unloadable.clone(),
-            api_family: Some(card.api_family),
+            api_family: Some(card.api_family()),
         }
     }
 
@@ -1098,27 +1200,39 @@ impl CardPreparationTemplate {
     fn build(
         &self,
         origin: String,
-        cached: CachedJs,
-        shape: LoadShape,
-        api_family: ApiFamily,
+        compiled: CompiledEntry,
         settings_schema: Vec<SettingDef>,
         unloadable: Option<UnloadReason>,
     ) -> JsCard {
+        let checked = compiled.checked();
+        let manifest = compiled.manifest();
+        // Catalog metadata comes from the registry; a File card's metadata
+        // comes only from its own manifest.
+        let (description, category, tags) = if self.source == ScriptSource::Catalog {
+            card_metadata(
+                manifest.as_deref(),
+                &self.description,
+                &self.category,
+                &self.tags,
+            )
+        } else {
+            card_metadata(manifest.as_deref(), "", "", &[])
+        };
         JsCard {
             name: self.name.clone(),
             path: self.path.clone(),
-            shape,
+            checked,
+            manifest,
             origin,
-            js: cached.js,
-            kind: shape_to_kind(shape),
+            js: compiled.cached.js,
+            kind: shape_to_kind(checked.shape()),
             source: self.source,
-            sha256: cached.sha256,
-            description: self.description.clone(),
-            category: self.category.clone(),
-            tags: self.tags.clone(),
+            sha256: compiled.cached.sha256,
+            description,
+            category,
+            tags,
             settings_schema,
             unloadable,
-            api_family,
         }
     }
 }
@@ -1241,10 +1355,8 @@ impl CardPreparationSnapshot {
             match raw_content_fingerprint_bounded(&self.template.path, &origin, source_limit) {
                 Ok(fingerprint) => fingerprint,
                 Err(error) => {
-                    let family = resolve_api_family(&origin)
-                        .ok()
-                        .map(|(_, family)| family)
-                        .or(self.template.api_family);
+                    let family =
+                        checked_family(&self.template.path, &origin).or(self.template.api_family);
                     return Ok(self.failed_outcome(error, Some(&origin), family, source_limit));
                 }
             };
@@ -1332,10 +1444,7 @@ impl CardPreparationSnapshot {
         match prepared {
             Ok(prepared) => Ok(prepared),
             Err(error) => {
-                let family = resolve_api_family(&origin)
-                    .ok()
-                    .map(|(_, family)| family)
-                    .or(fallback_family);
+                let family = checked_family(&self.template.path, &origin).or(fallback_family);
                 Err((error, origin, family))
             }
         }
@@ -1346,6 +1455,8 @@ impl CardPreparationSnapshot {
         origin: &str,
         source_limit: usize,
     ) -> Result<PreparedCard, PrepareRejection> {
+        let checked = check_origin(&self.template.path, origin)
+            .map_err(|refusal| EntryRefusal::Origin(refusal).message(&self.template.name))?;
         let settings_schema = if let Some(schema) = &self.catalog_settings_schema {
             schema.clone()
         } else {
@@ -1358,19 +1469,18 @@ impl CardPreparationSnapshot {
                     source_limit,
                 )?,
                 ScriptSource::File | ScriptSource::Builtin => {
-                    crate::library::rs2b0t_registry::try_settings_schema_from_source(origin)
+                    file_settings_schema(checked.manifest().map(|m| m.as_ref()), origin)
                         .map_err(|error| format!("{}: {error}", self.template.name))?
                 }
             }
         };
-        let (shape, api_family) = resolve_api_family(origin)
-            .map_err(|error| format!("{}: {error}", self.template.name))?;
-        if shape == LoadShape::Reject {
-            return Err(format!("not a bot shape: {}", self.template.name).into());
-        }
         let cache = JsCache::new(self.cache_root.clone());
-        let meta = cache_meta(shape, self.template.source, api_family);
-        let object = cache.object_path(&JsCache::origin_sha(origin.as_bytes()));
+        let meta = cache_meta(checked.checked(), self.template.source);
+        let object = cache.object_path(
+            CacheRole::Entry,
+            &self.template.path,
+            &JsCache::origin_sha(origin.as_bytes()),
+        );
         if std::fs::metadata(&object)
             .is_ok_and(|metadata| metadata.len() > MAX_PREPARATION_RESULT_BYTES as u64)
         {
@@ -1379,7 +1489,13 @@ impl CardPreparationSnapshot {
             ));
         }
         let cached = cache
-            .get_or_transpile(&self.template.path, origin.as_bytes(), meta.clone())
+            .get_or_compile(
+                CacheRole::Entry,
+                &self.template.path,
+                origin,
+                checked.execution(origin),
+                meta.clone(),
+            )
             .map_err(|error| format!("{}: {error}", self.template.name))?;
         let mut result_bytes = self
             .template
@@ -1430,9 +1546,10 @@ impl CardPreparationSnapshot {
         }
         let card = self.template.build(
             origin.to_string(),
-            cached,
-            shape,
-            api_family,
+            CompiledEntry {
+                origin: checked,
+                cached,
+            },
             settings_schema,
             unloadable,
         );
@@ -1551,7 +1668,7 @@ pub(crate) struct CardPreparationTask {
     pending_failure: Option<(String, Option<ApiFamily>)>,
     settings_schema: Option<Vec<SettingDef>>,
     has_catalog_settings_schema: bool,
-    shape: Option<LoadShape>,
+    checked: Option<CheckedOrigin>,
     api_family: Option<ApiFamily>,
     meta: Option<CacheMeta>,
     cached: Option<CachedJs>,
@@ -1584,7 +1701,7 @@ impl CardPreparationTask {
             pending_failure: None,
             settings_schema: None,
             has_catalog_settings_schema,
-            shape: None,
+            checked: None,
             api_family: None,
             meta: None,
             cached: None,
@@ -1658,7 +1775,7 @@ impl CardPreparationTask {
                             self.phase = CardPreparationPhase::Complete;
                             return Ok(Some(CardPreparationOutcome::Unchanged));
                         }
-                        self.phase = CardPreparationPhase::Settings;
+                        self.phase = CardPreparationPhase::Shape;
                     }
                 }
             }
@@ -1677,12 +1794,14 @@ impl CardPreparationTask {
                             origin,
                             self.source_limit,
                         ),
-                        ScriptSource::File | ScriptSource::Builtin => {
-                            crate::library::rs2b0t_registry::try_settings_schema_from_source(origin)
-                                .map_err(|error| {
-                                    format!("{}: {error}", self.snapshot.template.name)
-                                })
-                        }
+                        ScriptSource::File | ScriptSource::Builtin => file_settings_schema(
+                            self.checked
+                                .as_ref()
+                                .and_then(CheckedOrigin::manifest)
+                                .map(|manifest| manifest.as_ref()),
+                            origin,
+                        )
+                        .map_err(|error| format!("{}: {error}", self.snapshot.template.name)),
                     };
                     match result {
                         Ok(schema) => Some(schema),
@@ -1692,35 +1811,34 @@ impl CardPreparationTask {
                         }
                     }
                 };
-                self.phase = CardPreparationPhase::Shape;
+                self.phase = CardPreparationPhase::Cache;
             }
             CardPreparationPhase::Shape => {
                 let origin = self.origin.as_deref().expect("origin was read");
-                let (shape, api_family) = match resolve_api_family(origin) {
-                    Ok(resolved) => resolved,
-                    Err(error) => {
-                        let error = format!("{}: {error}", self.snapshot.template.name);
-                        let family = self.failure_family();
+                let checked = match check_origin(&self.snapshot.template.path, origin) {
+                    Ok(checked) => checked,
+                    Err(refusal) => {
+                        let error =
+                            EntryRefusal::Origin(refusal).message(&self.snapshot.template.name);
+                        let family = self.snapshot.template.api_family;
                         return self.begin_failure(error, family);
                     }
                 };
-                if shape == LoadShape::Reject {
-                    return self.begin_failure(
-                        format!("not a bot shape: {}", self.snapshot.template.name),
-                        Some(api_family),
-                    );
-                }
-                self.shape = Some(shape);
-                self.api_family = Some(api_family);
-                self.phase = CardPreparationPhase::Cache;
+                self.api_family = Some(checked.checked().family());
+                self.checked = Some(checked);
+                self.phase = CardPreparationPhase::Settings;
             }
             CardPreparationPhase::Cache => {
                 let origin = self.origin.as_deref().expect("origin was read");
-                let shape = self.shape.expect("shape was resolved");
-                let api_family = self.api_family.expect("API family was resolved");
+                let checked = self.checked.as_ref().expect("origin was checked");
+                let api_family = checked.checked().family();
                 let cache = JsCache::new(self.snapshot.cache_root.clone());
-                let meta = cache_meta(shape, self.snapshot.template.source, api_family);
-                let object = cache.object_path(&JsCache::origin_sha(origin.as_bytes()));
+                let meta = cache_meta(checked.checked(), self.snapshot.template.source);
+                let object = cache.object_path(
+                    CacheRole::Entry,
+                    &self.snapshot.template.path,
+                    &JsCache::origin_sha(origin.as_bytes()),
+                );
                 if std::fs::metadata(&object)
                     .is_ok_and(|metadata| metadata.len() > MAX_PREPARATION_RESULT_BYTES as u64)
                 {
@@ -1729,9 +1847,11 @@ impl CardPreparationTask {
                         Some(api_family),
                     );
                 }
-                let cached = match cache.get_or_transpile(
+                let cached = match cache.get_or_compile(
+                    CacheRole::Entry,
                     &self.snapshot.template.path,
-                    origin.as_bytes(),
+                    origin,
+                    checked.execution(origin),
                     meta.clone(),
                 ) {
                     Ok(cached) => cached,
@@ -1932,9 +2052,10 @@ impl CardPreparationTask {
                 let cached = self.cached.take().expect("cached card exists");
                 let card = self.snapshot.template.build(
                     self.origin.take().expect("origin was read"),
-                    cached,
-                    self.shape.expect("shape was resolved"),
-                    self.api_family.expect("API family was resolved"),
+                    CompiledEntry {
+                        origin: self.checked.take().expect("origin was checked"),
+                        cached,
+                    },
                     self.settings_schema
                         .take()
                         .expect("settings schema was resolved"),
@@ -1958,14 +2079,10 @@ impl CardPreparationTask {
         Ok(None)
     }
 
+    /// The family named in a failure notice: the one this candidate checked,
+    /// else the previous accepted card's. Never a new classification.
     fn failure_family(&self) -> Option<ApiFamily> {
-        self.api_family
-            .or_else(|| {
-                self.origin
-                    .as_deref()
-                    .and_then(|origin| resolve_api_family(origin).ok().map(|(_, family)| family))
-            })
-            .or(self.snapshot.template.api_family)
+        self.api_family.or(self.snapshot.template.api_family)
     }
 
     fn begin_failure(
@@ -2064,12 +2181,30 @@ fn shape_label(shape: LoadShape) -> &'static str {
     }
 }
 
-fn cache_meta(shape: LoadShape, source: ScriptSource, family: ApiFamily) -> CacheMeta {
+fn cache_meta(checked: CheckedLoad, source: ScriptSource) -> CacheMeta {
     CacheMeta {
-        kind: shape_to_kind(shape),
+        kind: shape_to_kind(checked.shape()),
         source,
-        shape: Some(shape_label(shape).into()),
-        api_family: Some(family.as_str().into()),
+        shape: Some(shape_label(checked.shape()).into()),
+        api_family: Some(checked.family().as_str().into()),
+    }
+}
+
+/// Picker metadata: a manifest-form card reads its own manifest; other cards
+/// keep the metadata that their source already supplies.
+fn card_metadata(
+    manifest: Option<&ScriptManifest>,
+    description: &str,
+    category: &str,
+    tags: &[String],
+) -> (String, String, Vec<String>) {
+    match manifest {
+        Some(manifest) => (
+            manifest.description().to_owned(),
+            manifest.category().to_owned(),
+            manifest.tags().to_vec(),
+        ),
+        None => (description.to_owned(), category.to_owned(), tags.to_vec()),
     }
 }
 

@@ -1,7 +1,11 @@
 //! Content-addressed JS cache under `~/.274bot/js-cache`. Origin bytes
 //! (TS or JS) are SHA-256 hashed; hits return the cached object without
-//! calling `transpile_ts`. Misses transpile `.ts` origins (plain `.js`
-//! is stored verbatim) and write `objects/<hex>.js` plus `manifest.json`.
+//! compiling again. Objects live under the `host-compile-v1` namespace, split
+//! by origin media and module role:
+//! `host-compile-v1/{js,ts}/{entry,sibling}/objects/<origin-sha>.js`, each
+//! directory with its own provenance `manifest.json`. An entry object holds
+//! the execution source with compile-time declarations erased; a sibling
+//! object keeps every export. Objects outside the namespace are never hits.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -47,7 +51,29 @@ struct Manifest {
     objects: HashMap<String, ManifestEntry>,
 }
 
-/// SHA-256 content cache for transpiled JS.
+/// The module role of a cached object. An entry and a sibling compiled from
+/// the same origin bytes never share an object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheRole {
+    /// The card's entry module, with compile-time declarations erased.
+    Entry,
+    /// An ordinary sibling module, compiled from its origin unchanged.
+    Sibling,
+}
+
+impl CacheRole {
+    fn dir(self) -> &'static str {
+        match self {
+            Self::Entry => "entry",
+            Self::Sibling => "sibling",
+        }
+    }
+}
+
+/// The host transform namespace. A future incompatible transform changes it.
+const HOST_COMPILE_NAMESPACE: &str = "host-compile-v1";
+
+/// SHA-256 content cache for compiled JS.
 #[derive(Debug)]
 pub struct JsCache {
     root: PathBuf,
@@ -67,8 +93,18 @@ impl JsCache {
         &self.root
     }
 
-    pub fn object_path(&self, sha256: &str) -> PathBuf {
-        self.root.join("objects").join(format!("{sha256}.js"))
+    fn namespace(&self, role: CacheRole, origin: &Path) -> PathBuf {
+        self.root
+            .join(HOST_COMPILE_NAMESPACE)
+            .join(origin_media(origin))
+            .join(role.dir())
+    }
+
+    /// The object file for `origin` (its media) in `role`, keyed by `sha256`.
+    pub fn object_path(&self, role: CacheRole, origin: &Path, sha256: &str) -> PathBuf {
+        self.namespace(role, origin)
+            .join("objects")
+            .join(format!("{sha256}.js"))
     }
 
     /// SHA-256 of origin bytes (the cache key). Does not read or write.
@@ -76,45 +112,45 @@ impl JsCache {
         hex_sha256(bytes)
     }
 
-    /// True when `objects/<sha>.js` already exists for these origin bytes.
-    pub fn is_cached(&self, bytes: &[u8]) -> bool {
-        self.object_path(&hex_sha256(bytes)).is_file()
+    /// True when the `role` object for these origin bytes already exists.
+    pub fn is_cached(&self, role: CacheRole, origin: &Path, bytes: &[u8]) -> bool {
+        self.object_path(role, origin, &hex_sha256(bytes)).is_file()
     }
 
-    fn manifest_path(&self) -> PathBuf {
-        self.root.join("manifest.json")
-    }
-
-    /// Return cached JS for `bytes` keyed by SHA-256. On miss, transpile
-    /// `.ts` origins (or store `.js` verbatim), write the object file, and
-    /// update `manifest.json`. Never writes beside `origin` on disk.
-    pub fn get_or_transpile(
+    /// Return cached JS for `origin_text`, keyed by its SHA-256 within
+    /// `role` and the origin's media. On miss, compile `execution` (the
+    /// origin with compile-time declarations erased, or the origin itself):
+    /// transpile `.ts` media, store JS media verbatim, write the object and
+    /// update that directory's `manifest.json`. Never writes beside `origin`.
+    pub fn get_or_compile(
         &self,
+        role: CacheRole,
         origin: &Path,
-        bytes: &[u8],
+        origin_text: &str,
+        execution: &str,
         meta: CacheMeta,
     ) -> Result<CachedJs, String> {
-        self.ensure_layout()?;
-        let sha256 = hex_sha256(bytes);
-        let object = self.object_path(&sha256);
+        let namespace = self.namespace(role, origin);
+        self.ensure_layout(&namespace)?;
+        let sha256 = hex_sha256(origin_text.as_bytes());
+        let object = self.object_path(role, origin, &sha256);
         if object.is_file() {
             let js = std::fs::read_to_string(&object)
                 .map_err(|e| format!("read cached {}: {e}", object.display()))?;
             return Ok(CachedJs { sha256, js });
         }
 
-        let text = std::str::from_utf8(bytes)
-            .map_err(|_| format!("origin {} is not UTF-8", origin.display()))?;
         let media = origin_media(origin);
-        let js = match media.as_str() {
-            "js" => text.to_string(),
-            _ => transpile_ts(text)?,
+        let js = match media {
+            "js" => execution.to_string(),
+            _ => transpile_ts(execution)?,
         };
 
         vault::write_private_file(&object, js.as_bytes())
             .map_err(|e| format!("write cached {}: {e}", object.display()))?;
 
-        let mut manifest = self.read_manifest();
+        let manifest_path = namespace.join("manifest.json");
+        let mut manifest = read_manifest(&manifest_path);
         manifest.objects.insert(
             sha256.clone(),
             ManifestEntry {
@@ -122,26 +158,34 @@ impl JsCache {
                 origin: origin.to_string_lossy().into_owned(),
                 kind: script_kind_label(meta.kind),
                 source: script_source_label(meta.source),
-                media,
+                media: media.to_string(),
                 shape: meta.shape,
                 api_family: meta.api_family,
             },
         );
-        self.write_manifest(&manifest)?;
+        write_manifest(&manifest_path, &manifest)?;
 
         Ok(CachedJs { sha256, js })
     }
 
-    fn ensure_layout(&self) -> Result<(), String> {
-        let objects = self.root.join("objects");
+    fn ensure_layout(&self, namespace: &Path) -> Result<(), String> {
+        let objects = namespace.join("objects");
         std::fs::create_dir_all(&objects)
             .map_err(|e| format!("cache layout {}: {e}", self.root.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            for dir in [&self.root, &objects] {
+            let mut dir = objects.as_path();
+            loop {
                 std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
                     .map_err(|e| format!("cache mode {}: {e}", dir.display()))?;
+                if dir == self.root {
+                    break;
+                }
+                match dir.parent() {
+                    Some(parent) => dir = parent,
+                    None => break,
+                }
             }
         }
         let marker = objects.join(".keep");
@@ -151,21 +195,18 @@ impl JsCache {
         }
         Ok(())
     }
+}
 
-    fn read_manifest(&self) -> Manifest {
-        let path = self.manifest_path();
-        let Ok(raw) = std::fs::read_to_string(&path) else {
-            return Manifest::default();
-        };
-        serde_json::from_str(&raw).unwrap_or_default()
-    }
+fn read_manifest(path: &Path) -> Manifest {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Manifest::default();
+    };
+    serde_json::from_str(&raw).unwrap_or_default()
+}
 
-    fn write_manifest(&self, manifest: &Manifest) -> Result<(), String> {
-        let json =
-            serde_json::to_string_pretty(manifest).map_err(|e| format!("manifest.json: {e}"))?;
-        vault::write_private_file(&self.manifest_path(), json.as_bytes())
-            .map_err(|e| format!("manifest.json: {e}"))
-    }
+fn write_manifest(path: &Path, manifest: &Manifest) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(manifest).map_err(|e| format!("manifest.json: {e}"))?;
+    vault::write_private_file(path, json.as_bytes()).map_err(|e| format!("manifest.json: {e}"))
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {
@@ -173,10 +214,10 @@ fn hex_sha256(bytes: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn origin_media(origin: &Path) -> String {
+fn origin_media(origin: &Path) -> &'static str {
     match origin.extension().and_then(|s| s.to_str()) {
-        Some("js") | Some("mjs") | Some("cjs") => "js".to_string(),
-        _ => "ts".to_string(),
+        Some("js") | Some("mjs") | Some("cjs") => "js",
+        _ => "ts",
     }
 }
 

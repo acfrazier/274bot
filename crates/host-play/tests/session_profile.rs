@@ -840,16 +840,11 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
     assert!(play.login_queue_uids().is_empty());
     #[cfg(feature = "js")]
     {
-        // The loader/start handle accepts the user's script under revision 289.
-        // Runtime actions remain subject to the actual host/client capabilities.
+        let origin = script_js::native_fixture("export function tick(api) {}");
+        let prepared = script_js::prepare_raw_origin_for_test("session-profile.js", &origin, &[])
+            .expect("native profile fixture prepares");
         play.script_start_handle()
-            .start_load(
-                "fixture",
-                "export function tick(api) {}".into(),
-                script_js::LoadShape::NativeTick,
-                None,
-                vec![],
-            )
+            .start_load("fixture", prepared.js, prepared.checked, None, vec![])
             .unwrap();
         play.script_stop("fixture");
     }

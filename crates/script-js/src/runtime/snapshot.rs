@@ -2477,7 +2477,7 @@ mod tests {
 
     fn spawn_isolate() -> LoadIsolate {
         LoadIsolate::spawn(
-            "export function tick(api) {}".into(),
+            crate::native_fixture("export function tick(api) {}"),
             LoadShape::NativeTick,
             vec![],
         )

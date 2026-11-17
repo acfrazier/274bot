@@ -135,7 +135,7 @@ impl LoadedCardSnapshot {
             schema: card.settings_schema.clone(),
             path: card.path.clone(),
             source: CardSource::from_script(card.source),
-            shape: LoadShape::from_script(card.shape),
+            shape: LoadShape::from_script(card.shape()),
             origin: card.origin.clone(),
             js: card.js.clone(),
             sha256: card.sha256.clone(),
@@ -271,7 +271,8 @@ impl Scripts {
     }
 
     #[cfg(feature = "js")]
-    /// A recorded load failure's API family (`unversioned`, `v1`, `v2`).
+    /// A recorded load failure's API family (`v1`, `v2`), when the failed
+    /// candidate established one.
     pub fn load_failure_api_family(&self, identity_key: &str) -> Option<String> {
         self.js()
             .load_failure(identity_key)
@@ -286,9 +287,12 @@ impl Scripts {
     }
 
     #[cfg(feature = "js")]
-    /// Whether the transpile cache already holds `origin` (tests).
-    pub fn is_transpile_cached(&self, origin: &str) -> bool {
-        self.js().cache().is_cached(origin.as_bytes())
+    /// Whether the cache already holds the entry object for `origin` read
+    /// from `path` (tests).
+    pub fn is_transpile_cached(&self, path: &Path, origin: &str) -> bool {
+        self.js()
+            .cache()
+            .is_cached(script_js::CacheRole::Entry, path, origin.as_bytes())
     }
 
     /// Save `profile`'s last successful assignment from a test fixture
@@ -807,8 +811,45 @@ pub fn assign_compiled<Io>(
 }
 
 #[cfg(feature = "js")]
+/// Manifest-form native source for a test `body` with empty settings, so
+/// panel and TUI tests build native fixtures without naming the script crate.
+pub fn native_fixture(body: &str) -> String {
+    script_js::native_fixture(body)
+}
+
+#[cfg(feature = "js")]
+/// Manifest-form native source named `name` with the `settings` object
+/// literal of its manifest.
+pub fn native_fixture_with(name: &str, settings: &str, body: &str) -> String {
+    script_js::NativeFixture::new(name)
+        .settings(settings)
+        .source(body)
+}
+
+#[cfg(feature = "js")]
+/// Prepare raw test `source` through the common origin check and require the
+/// expected loader `shape`. A native source needs a manifest; `siblings` are
+/// `(module URL, source)` pairs.
+pub(crate) fn prepared_test_start(
+    source: &str,
+    shape: LoadShape,
+    siblings: &[(String, String)],
+) -> Result<(String, script_js::CheckedLoad), String> {
+    let prepared = script_js::prepare_raw_origin_for_test("bot.js", source, siblings)
+        .map_err(|refusal| refusal.to_string())?;
+    if LoadShape::from_script(prepared.checked.shape()) != shape {
+        return Err(format!(
+            "origin prepared as {:?}, the test expects {shape:?}",
+            prepared.checked.shape()
+        ));
+    }
+    Ok((prepared.js, prepared.checked))
+}
+
+#[cfg(feature = "js")]
 /// Start `source` JS on `name`'s slot with a frontend loader shape (tests):
-/// the direct Play load the live walk tests drive.
+/// the direct Play load the live walk tests drive. The raw source goes
+/// through the common preparation first.
 pub fn play_start_load<Io>(
     core: &OperatorSession<Io>,
     name: &str,
@@ -817,9 +858,10 @@ pub fn play_start_load<Io>(
     bag: Option<Map<String, Value>>,
     siblings: Vec<(String, String)>,
 ) -> Result<(), String> {
+    let (js, checked) = prepared_test_start(&source, shape, &siblings)?;
     core.play_for_test()
         .ok_or_else(|| "Play disappeared".to_string())?
-        .script_start_load(name, source, shape.to_script(), bag, siblings)
+        .script_start_load(name, js, checked, bag, siblings)
 }
 
 /// A native card's published status as owned frontend values: the

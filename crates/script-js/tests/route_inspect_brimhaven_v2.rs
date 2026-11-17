@@ -125,10 +125,13 @@ fn load_actual_example() -> LoadIsolate {
     let dir = scratch();
     let mut library = JsLibrary::with_cache(dir.join("cards.json"), dir.join("cache"));
     let card = library.load(&path).expect("transpile/load actual example");
-    assert_eq!(card.shape, LoadShape::NativeTick);
-    assert_eq!(card.api_family, ApiFamily::V2);
+    let shape = card.shape();
+    assert_eq!(shape, LoadShape::NativeTick);
+    assert_eq!(card.api_family(), ApiFamily::V2);
     assert!(card.unloadable.is_none(), "{:?}", card.unloadable);
-    LoadIsolate::spawn(card.js, card.shape, vec![]).expect("spawn actual example")
+    // Spawn takes the raw origin; the manifest export is not in compiled JS.
+    let origin = script_js::transpile_ts(&card.origin).expect("transpile actual example");
+    LoadIsolate::spawn(origin, shape, vec![]).expect("spawn actual example")
 }
 
 fn inspect_routes(iso: &LoadIsolate) -> Vec<InteractReq> {

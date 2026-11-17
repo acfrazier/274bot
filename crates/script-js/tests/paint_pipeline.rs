@@ -14,10 +14,10 @@ use script_js::LoadIsolate;
 pub mod common;
 
 fn spawn(src: &str) -> LoadIsolate {
-    let shape = script_js::detect_shape(src);
-    LoadIsolate::spawn(src.to_string(), shape, vec![]).expect("bot loads")
+    let prepared = script_js::prepare_raw_origin_for_test("fixture.js", src, &[])
+        .expect("prepare compat paint fixture");
+    LoadIsolate::spawn(src.to_string(), prepared.checked.shape(), vec![]).expect("bot loads")
 }
-
 fn tick(iso: &LoadIsolate, n: u64) {
     iso.on_game_tick(n);
     let _ = iso.probe("0");

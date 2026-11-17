@@ -107,11 +107,17 @@ impl Frames {
         let slot = crate::script_slot_or_insert(&scripts, "test");
         {
             let mut slot = slot.lock().unwrap();
+            let prepared = crate::script_runtime::prepared_test_start_card(
+                &source(body),
+                script_js::LoadShape::CompatClass,
+                vec![],
+            )
+            .expect("compat seat-answer fixture prepares");
             let start = crate::script_runtime::js_surface_start(
                 crate::script_runtime::js_start_card(
                     "test",
-                    source(body),
-                    script_js::LoadShape::CompatClass,
+                    prepared.source.to_string(),
+                    prepared.checked,
                     vec![],
                 ),
                 None,

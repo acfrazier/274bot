@@ -26,6 +26,12 @@ fn example(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn authoritative_source() -> String {
+    let source = std::fs::read_to_string(example("bone_burier_v2.ts"))
+        .expect("read authoritative BoneBurier TypeScript");
+    script_js::transpile_ts(&source).expect("transpile authoritative BoneBurier TypeScript")
+}
+
 fn scratch() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("274bot-bone-burier-v2-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create bone-burier scratch directory");
@@ -307,28 +313,38 @@ fn simulate_serial_buries(
 }
 
 #[test]
-fn authoritative_typescript_and_built_javascript_load_as_v2() {
+fn authoritative_typescript_loads_as_v2() {
     let dir = scratch();
     let mut library = JsLibrary::with_cache(dir.join("cards.json"), dir.join("cache"));
-    let ts_path = example("bone_burier_v2.ts");
-    let js_path = example("bone_burier_v2.js");
-    let ts = library.load(&ts_path).unwrap();
-    let js = library.load(&js_path).unwrap();
+    let ts = library.load(&example("bone_burier_v2.ts")).unwrap();
 
-    assert_eq!(ts.shape, LoadShape::NativeTick);
-    assert_eq!(ts.api_family, ApiFamily::V2);
-    assert_eq!(js.shape, LoadShape::NativeTick);
-    assert_eq!(js.api_family, ApiFamily::V2);
+    assert_eq!(ts.checked.shape(), LoadShape::NativeTick);
+    assert_eq!(ts.checked.family(), ApiFamily::V2);
     assert!(ts.unloadable.is_none(), "unexpected TS import failure");
-    assert!(js.unloadable.is_none(), "unexpected JS import failure");
+    assert!(ts.manifest.is_some(), "native card keeps its manifest");
     assert_eq!(ts.settings_schema.len(), 1);
     assert_eq!(ts.settings_schema[0].id, "boneName");
-    assert!(js.js.contains("apiVersion"));
+    assert!(!ts.js.contains("export const manifest"));
+}
+
+#[test]
+fn inline_javascript_manifest_loads_as_v2() {
+    let dir = scratch();
+    let path = dir.join("inline.js");
+    let source = script_js::native_fixture("export function tick() {}");
+    std::fs::write(&path, source).unwrap();
+    let mut library = JsLibrary::with_cache(dir.join("cards.json"), dir.join("cache"));
+    let card = library
+        .load(&path)
+        .expect("manifest-bearing JS fixture loads");
+
+    assert!(card.checked.v2_native());
+    assert!(card.manifest.is_some());
 }
 
 #[test]
 fn built_example_stops_cleanly_without_snapshot_and_settings_are_isolated() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let left = LoadIsolate::spawn(source.clone(), LoadShape::NativeTick, vec![]).unwrap();
     let right = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     let mut left_settings = serde_json::Map::new();
@@ -363,7 +379,7 @@ fn built_example_stops_cleanly_without_snapshot_and_settings_are_isolated() {
 
 #[test]
 fn built_example_emits_native_withdraw_load_after_opening_bank() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = spawn_banking(source);
     let bones = [ItemRowInput::nc(Some("Bones"), 2)];
     let unrelated = [ItemRowInput::nc(Some("Coins"), 10)];
@@ -441,7 +457,7 @@ fn built_example_emits_native_withdraw_load_after_opening_bank() {
 
 #[test]
 fn built_example_keeps_walk_nearest_bank_pending_past_short_op_bound() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     let filler = [ItemRowInput::nc(Some("Coins"), 1)];
     let stands = [BankStandInput {
@@ -504,7 +520,7 @@ fn built_example_keeps_walk_nearest_bank_pending_past_short_op_bound() {
 
 #[test]
 fn built_example_walk_pending_clears_on_usable_bank_arrival_without_walk_outcome_seq() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     let filler = [ItemRowInput::nc(Some("Coins"), 1)];
     let stands = [bone_stand()];
@@ -590,7 +606,7 @@ fn built_example_walk_pending_clears_on_usable_bank_arrival_without_walk_outcome
 
 #[test]
 fn built_example_walk_pending_fails_closed_after_extended_bound() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     let filler = [ItemRowInput::nc(Some("Coins"), 1)];
     let stands = [BankStandInput {
@@ -646,7 +662,7 @@ fn built_example_walk_pending_fails_closed_after_extended_bound() {
 
 #[test]
 fn unloaded_or_missing_bank_is_not_exhaustion_and_eventually_stops() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     for tick in 1..15 {
         let mut s = base_snapshot();
@@ -664,7 +680,7 @@ fn unloaded_or_missing_bank_is_not_exhaustion_and_eventually_stops() {
 
 #[test]
 fn built_example_does_not_resend_bury_while_inventory_unchanged() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     let approach = bone_approach();
     let stand = [bone_stand()];
@@ -701,7 +717,7 @@ fn built_example_does_not_resend_bury_while_inventory_unchanged() {
 
 #[test]
 fn built_example_bury_pending_times_out_from_original_send_tick() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     let bones = [ItemRowInput::nc(Some("Bones"), 1)];
     let mut s = base_snapshot();
@@ -730,7 +746,7 @@ fn built_example_bury_pending_times_out_from_original_send_tick() {
 
 #[test]
 fn built_example_delayed_inventory_loss_counts_exactly_once() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     let bones = [ItemRowInput::nc(Some("Bones"), 4)];
     let mut s = base_snapshot();
@@ -757,7 +773,7 @@ fn built_example_delayed_inventory_loss_counts_exactly_once() {
 
 #[test]
 fn built_example_open_pending_does_not_resend_while_bank_stays_closed() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     let approach = bone_approach();
     let stand = [bone_stand()];
@@ -782,7 +798,7 @@ fn built_example_open_pending_does_not_resend_while_bank_stays_closed() {
 
 #[test]
 fn built_example_load_pending_does_not_resend_while_inventory_unchanged() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = spawn_banking(source);
     let bank_bones = [ItemRowInput::nc(Some("Bones"), 28)];
     let mut s = base_snapshot();
@@ -831,7 +847,7 @@ fn built_example_load_pending_does_not_resend_while_inventory_unchanged() {
 
 #[test]
 fn built_example_emits_native_bank_load_after_five_burials() {
-    let source = std::fs::read_to_string(example("bone_burier_v2.js")).unwrap();
+    let source = authoritative_source();
     let iso = spawn_banking(source);
     let approach = bone_approach();
     let stand = [bone_stand()];

@@ -511,11 +511,17 @@ fn duel_trainer_schema_defaults_prepare_with_native_counterpart_identity() {
         };"#,
     );
     let watch = duel_watch();
+    let prepared = script_js::prepare_raw_origin_for_test(
+        "duel.js",
+        "export default class T extends LoopingBot { loop() {} }",
+        &[],
+    )
+    .expect("compatibility pair fixture prepares");
     host_play::live_start::pair_starts(
         &["alice".into(), "bob".into()],
         PairCase::Duel,
-        String::new(),
-        script_js::LoadShape::CompatClass,
+        prepared.js,
+        prepared.checked,
         &schema,
         Vec::new(),
         &watch,

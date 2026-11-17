@@ -525,11 +525,14 @@ impl Pair {
 
     /// Load the phased consumer on account `index` and wait until it runs.
     fn load(&self, index: usize) {
+        let origin = script_js::native_fixture(PHASED_CONSUMER);
+        let prepared = script_js::prepare_raw_origin_for_test("pvp.ts", &origin, &[])
+            .expect("native PvP consumer prepares");
         self.play
             .script_start_load(
                 &self.accounts[index],
-                PHASED_CONSUMER.to_string(),
-                script_js::LoadShape::NativeTick,
+                prepared.js,
+                prepared.checked,
                 None,
                 vec![],
             )

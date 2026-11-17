@@ -613,18 +613,8 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::RangingGuildFull => ranging_guild_full_baseline_ready(baseline),
         CoreCase::BrimhavenMossInspectV1 => brimhaven_moss_inspect_v1_baseline_ready(baseline),
         CoreCase::RouteInspectBrimhavenV2 => route_inspect_brimhaven_v2_baseline_ready(baseline),
-        CoreCase::PrayerV2 | CoreCase::PrayerV1 => prayer_delivery_baseline_ready(baseline),
-        CoreCase::LineOfSightV2 => line_of_sight_baseline_ready(baseline),
-        CoreCase::ActorObservationV2 => actor_observation_baseline_ready(baseline),
-        CoreCase::FightFieldV2 => fight_field_baseline_ready(baseline),
-        CoreCase::HoldSpotV2
-        | CoreCase::RetreatSpotV2
-        | CoreCase::WalkSpotV2
-        | CoreCase::EnterLairV2
-        | CoreCase::LeaveLairV2
-        | CoreCase::AcquireKeyV2
-        | CoreCase::CellV2
-        | CoreCase::BankV2 => case
+        CoreCase::PrayerV2 => prayer_delivery_baseline_ready(baseline),
+        CoreCase::WalkSpotV2 | CoreCase::AcquireKeyV2 | CoreCase::CellV2 | CoreCase::BankV2 => case
             .hunt_cell()
             .is_some_and(|cell| hunt_baseline_ready(cell, baseline)),
     };
@@ -975,26 +965,11 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::RouteInspectBrimhavenV2 => {
             "Captain Barnaby pier (2683,3272,0) r4, ingame && scene_state==2"
         }
-        CoreCase::PrayerV2 | CoreCase::PrayerV1 => {
+        CoreCase::PrayerV2 => {
             "ingame && scene_state==2, prayer base>=selected Protect from Melee level, positive points, selected prayer varps present and 0"
         }
-        CoreCase::LineOfSightV2 => {
-            "ingame && scene_state==2 && SceneView.available, here in published collision bounds"
-        }
-        CoreCase::ActorObservationV2 => {
-            "ingame && scene_state==2 && SceneView.available, here on the published plane"
-        }
-        CoreCase::FightFieldV2 => {
-            "ingame && scene_state==2 && SceneView.available, here on the published plane"
-        }
-        CoreCase::HoldSpotV2 | CoreCase::RetreatSpotV2 | CoreCase::WalkSpotV2 => {
+        CoreCase::WalkSpotV2 => {
             "ingame && scene_state==2 && SceneView.available, host here on the published plane"
-        }
-        CoreCase::EnterLairV2 => {
-            "ingame && scene_state==2 && SceneView.available, host here not the KBD tile"
-        }
-        CoreCase::LeaveLairV2 => {
-            "ingame && scene_state==2 && SceneView.available, host here not the KBD, Edgeville or Varrock tile"
         }
         CoreCase::AcquireKeyV2 => {
             "ingame && scene_state==2 && SceneView.available, host here outside the jail cell and the projected lair box, Chebyshev > 1 from the corridor (2931,9690,0), no Jail key held"

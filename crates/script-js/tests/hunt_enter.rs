@@ -1081,7 +1081,6 @@ fn approach_walk(drained: &[InteractReq]) -> bool {
 #[test]
 fn v2_enter_run_settles_the_yield_value_and_refuses_an_unknown_token() {
     let src = r#"
-export const apiVersion = 2;
 const site = {
   key: 'heroes-blue',
   boxes: [{ minX: 0, maxX: 10, minZ: 0, maxZ: 10, level: 0 }],
@@ -1098,7 +1097,12 @@ export async function tick(api) {
   globalThis.__done = await api.enterRun({ token }, {});
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     for tick in 1..=3 {
         iso.post_snapshot(script_js::wire::encode_snapshot(&empty_snapshot(
             tick,

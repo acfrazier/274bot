@@ -90,20 +90,23 @@ impl BankSlot {
     ) -> Self {
         let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289)
             .expect("R289 selected game data");
-        let source = Arc::<str>::from(source.into());
-        let family = script_js::resolve_api_family(&source)
-            .ok()
-            .map(|(_, family)| family);
+        let origin = source.into();
+        let prepared = script_js::prepare_raw_origin_for_test("bot.js", &origin, &[])
+            .expect("prepare bank slot test origin");
+        assert_eq!(
+            prepared.checked.shape(),
+            shape,
+            "bank slot test origin prepared to another shape"
+        );
         let mut slot = SlotScript::new();
         slot.bind_incarnation(1);
         slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         slot.start_surface_with_settings(script::surface::SurfaceStart {
             card: Arc::new(script_js::surface::JsStartCard {
                 card_name: "bank slot test".into(),
-                source,
-                shape,
+                source: Arc::<str>::from(prepared.js),
+                checked: prepared.checked,
                 siblings: Arc::<[(String, String)]>::from([]),
-                family,
             }),
             settings_bag: settings.map(|settings| Arc::new(settings.clone())),
             game_data: Some(game_data),

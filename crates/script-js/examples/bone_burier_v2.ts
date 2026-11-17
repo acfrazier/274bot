@@ -2,20 +2,27 @@ import { Bank } from '../../api/bank/Bank.js';
 type BankStand = import('../host-js/index.d.ts').BankStand;
 type ItemRow = import('../host-js/index.d.ts').ItemRow;
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
+import type { ScriptManifest } from '../host-js/index.d.ts';
 
-/**
- * Small native JS API v2 example. The TypeScript file is authoritative;
- * bone_burier_v2.js uses a plain esbuild ESM transform, so the inline v2 exports remain loadable.
- */
-export const apiVersion = 2;
-export const SETTINGS = {
-    boneName: {
-        type: 'string',
-        default: 'Bones',
-        label: 'Bone name',
-        description: 'The unnoted inventory and bank item to bury',
+/** Small native JS API v2 example: bury bones and restock from a bank. */
+export const manifest = {
+    apiVersion: 2,
+    name: 'BoneBurier',
+    version: '1.0.0',
+    author: '274bot',
+    description: 'Bury bones and restock from a supported bank.',
+    category: 'Prayer',
+    tags: ['prayer', 'banking'],
+    settings: {
+        boneName: {
+            type: 'string',
+            default: 'Bones',
+            label: 'Bone name',
+            help: 'The unnoted inventory and bank item to bury',
+        },
     },
-};
+    capabilities: [],
+} as const satisfies ScriptManifest;
 
 type Phase = 'finding-bank' | 'opening-bank' | 'loading' | 'burying' | 'stopping';
 type Pending = { kind: 'walk' | 'open' | 'close' | 'bury'; sent: number; before: number; seq: number };

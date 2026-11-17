@@ -4905,14 +4905,14 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     );
     play.attach_arm("alice", SlotArm::new(7, false));
     let source = "export function tick(api) {}";
-    play.script_start_load(
-        "alice",
-        source.into(),
+    let card = crate::script_runtime::prepared_test_start_card(
+        &script_js::native_fixture(source),
         script_js::LoadShape::NativeTick,
-        None,
-        vec![],
+        Vec::new(),
     )
-    .unwrap();
+    .expect("native manual-walk fixture prepares");
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+        .unwrap();
     wait_script_state(&play, "alice", script::RunState::Running);
     play.navs
         .lock()
@@ -4945,14 +4945,8 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     drop(navs);
     assert!(!play.script_walk_cancelled_by_user("alice"));
 
-    play.script_start_load(
-        "alice",
-        source.into(),
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .unwrap();
+    play.script_start_load("alice", card.source.to_string(), card.checked, None, vec![])
+        .unwrap();
     wait_script_state(&play, "alice", script::RunState::Running);
     let mut client = nav_client();
     let mut snapshot = GameSnapshot::new();
@@ -5195,14 +5189,16 @@ fn takeover_is_refused_for_an_absent_revoked_or_completed_owner() {
 fn in_place_load_rig() -> Rig {
     let mut rig = open_rig(false);
     rig.slot().lock().unwrap().stop();
-    let start = crate::script_runtime::js_surface_start(
-        crate::script_runtime::js_start_card(
-            "native walk test",
-            "export function tick(api) { globalThis.s2Ticks = (globalThis.s2Ticks || 0) + 1; }"
-                .into(),
-            script_js::LoadShape::NativeTick,
-            Vec::new(),
+    let prepared = crate::script_runtime::prepared_test_start_card(
+        &script_js::native_fixture(
+            "export function tick(api) { globalThis.s2Ticks = (globalThis.s2Ticks || 0) + 1; }",
         ),
+        script_js::LoadShape::NativeTick,
+        Vec::new(),
+    )
+    .expect("native walk fixture prepares");
+    let start = crate::script_runtime::js_surface_start(
+        prepared,
         None,
         None,
         Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -5229,13 +5225,14 @@ fn bank_trip_options_capture_the_existing_script_bank_preferences() {
     for (mage, zanaris) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut rig = open_rig(false);
         rig.slot().lock().unwrap().stop();
+        let prepared = crate::script_runtime::prepared_test_start_card(
+            &script_js::native_fixture("export function tick(api) {}"),
+            script_js::LoadShape::NativeTick,
+            Vec::new(),
+        )
+        .expect("native bank preference fixture prepares");
         let start = crate::script_runtime::js_surface_start(
-            crate::script_runtime::js_start_card(
-                "bank trip preferences",
-                "export const apiVersion = 2; export function tick(api) {}".into(),
-                script_js::LoadShape::NativeTick,
-                Vec::new(),
-            ),
+            prepared,
             serde_json::json!({"useMageBank": mage, "useZanarisBank": zanaris})
                 .as_object()
                 .cloned()
@@ -7713,13 +7710,14 @@ mod s2b_admission_contract {
             ));
         };
 
+        let card = crate::script_runtime::prepared_test_start_card(
+            &script_js::native_fixture("export function tick(api) {}"),
+            script_js::LoadShape::NativeTick,
+            Vec::new(),
+        )
+        .expect("native walk fixture prepares");
         let start = crate::script_runtime::js_surface_start(
-            crate::script_runtime::js_start_card(
-                "native walk test",
-                "export function tick(api) {}".into(),
-                script_js::LoadShape::NativeTick,
-                Vec::new(),
-            ),
+            card,
             None,
             None,
             Arc::new(api::named_banks::NamedBankFacts::empty()),

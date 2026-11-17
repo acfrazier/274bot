@@ -173,7 +173,7 @@ struct DecisionFacts {
 #[derive(Debug, Clone)]
 struct CatalogStart {
     source: String,
-    shape: script_js::LoadShape,
+    checked: script_js::CheckedLoad,
     settings_bag: Option<Map<String, Value>>,
     siblings: Vec<(String, String)>,
     loadouts: Vec<api::loadout::Loadout>,
@@ -390,7 +390,7 @@ impl LiveState {
                 handle.start_load_with_loadouts(
                     &self.account,
                     self.catalog.source.clone(),
-                    self.catalog.shape,
+                    self.catalog.checked,
                     self.catalog.settings_bag.clone(),
                     self.catalog.siblings.clone(),
                     &self.catalog.loadouts,
@@ -619,7 +619,7 @@ fn catalog_start(
             kind: card.kind,
             source: card.source,
             shape: None,
-            api_family: Some(card.api_family.as_str().into()),
+            api_family: Some(card.api_family().as_str().into()),
         },
     )?;
     let loadouts = scenario
@@ -636,7 +636,7 @@ fn catalog_start(
         .collect();
     Ok(CatalogStart {
         source: card.js,
-        shape: card.shape,
+        checked: card.checked,
         settings_bag: Some(settings_bag),
         siblings,
         loadouts,

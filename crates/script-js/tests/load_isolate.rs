@@ -57,29 +57,26 @@ fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
     assert_eq!(slot.state(), want, "last_error={:?}", slot.last_error());
 }
 
-// The brief's native fixture: exported `tick` that counts on its own
-// global (the `api` object is host-owned: `api.tick` is the only member,
-// every other read/set throws `not impl`).
-const NATIVE_TICK: &str =
-    "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1 }";
+// Manifest-bearing native fixture: each tick increments its own global.
+const NATIVE_TICK: &str = "export const manifest = { apiVersion: 2, name: 'test', version: '1', author: 'test', description: 'test tick', category: 'Tests', tags: [], settings: {}, capabilities: [] };\n\
+     export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1 }";
 
 fn start_js_surface(
     slot: &mut SlotScript,
     source: impl Into<String>,
     shape: LoadShape,
 ) -> Result<(), script::slot::StartLoadError> {
-    let source = Arc::<str>::from(source.into());
-    let family = script_js::resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
+    let source = source.into();
+    let prepared = script_js::prepare_raw_origin_for_test("test.js", &source, &[])
+        .expect("prepare test surface origin");
+    assert_eq!(prepared.checked.shape(), shape, "test surface shape");
     slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
     slot.start_surface(script::surface::SurfaceStart {
         card: Arc::new(script_js::surface::JsStartCard {
             card_name: "test card".into(),
-            source,
-            shape,
+            source: Arc::<str>::from(prepared.js),
+            checked: prepared.checked,
             siblings: Arc::<[(String, String)]>::from([]),
-            family,
         }),
         settings_bag: None,
         game_data: None,
@@ -673,7 +670,7 @@ fn js_library_load_native_tick_file_adds_card() {
     let card = lib.load(&path).expect("native tick file loads");
     assert_eq!(card.name, "tickbot");
     assert_eq!(card.path, path);
-    assert_eq!(card.shape, LoadShape::NativeTick);
+    assert_eq!(card.checked.shape(), LoadShape::NativeTick);
     assert_eq!(card.origin, NATIVE_TICK);
 
     assert_eq!(lib.cards().len(), 1);
@@ -688,11 +685,9 @@ fn js_library_same_stem_keeps_paths_distinct_and_same_path_replaces() {
     let store = dir.join("js-scripts.json");
     let a = write_file(&dir, "t.js", NATIVE_TICK);
     let sub = scratch("same_name_b");
-    let b = write_file(
-        &sub,
-        "t.js",
-        "export function tick(api) { globalThis.__rs_n = 99 }",
-    );
+    let other_origin =
+        script_js::native_fixture("export function tick(api) { globalThis.__rs_n = 99 }");
+    let b = write_file(&sub, "t.js", &other_origin);
     let mut lib = test_library(&dir);
 
     let first = lib.load(&a).unwrap();
@@ -706,8 +701,9 @@ fn js_library_same_stem_keeps_paths_distinct_and_same_path_replaces() {
     assert_ne!(first.identity_key(), card.identity_key());
     assert_eq!(lib.cards().len(), 2, "different paths keep both cards");
 
-    let replacement = "export function tick(api) { globalThis.__rs_n = 101 }";
-    std::fs::write(&b, replacement).unwrap();
+    let replacement =
+        script_js::native_fixture("export function tick(api) { globalThis.__rs_n = 101 }");
+    std::fs::write(&b, &replacement).unwrap();
     let updated = lib.load(&b).unwrap();
     assert_eq!(updated.identity_key(), card.identity_key());
     assert_eq!(updated.origin, replacement);
@@ -767,20 +763,20 @@ fn js_library_load_bone_burier_named_file_is_ok() {
 
     let card = lib.load(&path).expect("BoneBurier.ts is not reserved");
     assert_eq!(card.name, "BoneBurier");
-    assert_eq!(card.shape, LoadShape::CompatClass);
+    assert_eq!(card.checked.shape(), LoadShape::CompatClass);
     assert_eq!(lib.cards().len(), 1);
 
     let native = write_file(&dir, "BoneBurier.js", NATIVE_TICK);
     let card = lib.load(&native).expect("BoneBurier.js is not reserved");
     assert_eq!(card.name, "BoneBurier");
-    assert_eq!(card.shape, LoadShape::NativeTick);
+    assert_eq!(card.checked.shape(), LoadShape::NativeTick);
     assert_eq!(
         lib.cards().len(),
         2,
         "different extensions are different paths"
     );
     let ts = lib.cards().iter().find(|c| c.path == path).unwrap();
-    assert_eq!(ts.shape, LoadShape::CompatClass);
+    assert_eq!(ts.checked.shape(), LoadShape::CompatClass);
     assert_ne!(ts.identity_key(), card.identity_key());
 }
 
@@ -812,7 +808,7 @@ fn js_library_restore_reads_persisted_paths() {
     lib.restore().unwrap();
     assert_eq!(lib.cards().len(), 1);
     assert_eq!(lib.cards()[0].name, "tickbot");
-    assert_eq!(lib.cards()[0].shape, LoadShape::NativeTick);
+    assert_eq!(lib.cards()[0].checked.shape(), LoadShape::NativeTick);
     assert_eq!(lib.cards()[0].source, ScriptSource::File);
     assert_eq!(lib.cards()[0].origin, NATIVE_TICK);
 }
@@ -833,7 +829,8 @@ fn isolate_spawn_ticks_probe_and_joins() {
 #[test]
 fn isolate_timer_api_fails_as_a_script_error_and_survives() {
     let iso = spawn_ready(
-        r#"
+        script_js::native_fixture(
+            r#"
 export function tick() {
     globalThis.__before_timer = (globalThis.__before_timer || 0) + 1;
     try { globalThis.setTimeout(() => {}, 0); } catch (e) { (globalThis.__timer_errors ||= []).push(String(e)); }
@@ -842,8 +839,8 @@ export function tick() {
     try { clearInterval(0); } catch (e) { globalThis.__timer_errors.push(String(e)); }
     try { new Function("setTimeout(() => {}, 0)")(); } catch (e) { globalThis.__timer_errors.push(String(e)); }
 }
-"#
-        .into(),
+"#,
+        ),
         LoadShape::NativeTick,
         vec![],
     );
@@ -933,13 +930,14 @@ fn pause_after_execution_entry(iso: &LoadIsolate) {
 #[test]
 fn pause_allows_an_in_budget_sync_tick_to_finish() {
     let iso = spawn_ready(
-        "export function tick() {
+        script_js::native_fixture(
+            "export function tick() {
             globalThis.__entered = (globalThis.__entered || 0) + 1;
             const start = Date.now();
             while (Date.now() - start < 300) {}
             globalThis.__finished = (globalThis.__finished || 0) + 1;
-        }"
-        .into(),
+        }",
+        ),
         LoadShape::NativeTick,
         vec![],
     );
@@ -983,15 +981,16 @@ fn pause_allows_an_in_budget_async_compat_loop_to_resume() {
 #[test]
 fn pause_allows_an_in_budget_async_native_tick_to_resume() {
     let iso = spawn_ready(
-        "export async function tick() {
+        script_js::native_fixture(
+            "export async function tick() {
             globalThis.__ticks = (globalThis.__ticks || 0) + 1;
             await Promise.resolve();
             globalThis.__continued = (globalThis.__continued || 0) + 1;
             const start = Date.now();
             while (Date.now() - start < 300) {}
             globalThis.__done = (globalThis.__done || 0) + 1;
-        }"
-        .into(),
+        }",
+        ),
         LoadShape::NativeTick,
         vec![],
     );
@@ -1044,7 +1043,6 @@ export default class T extends LoopingBot {
         }
         ("H1", true) => {
             r#"
-export const apiVersion = 2;
 let __wake;
 const __gate = new Promise((resolve) => { __wake = resolve; });
 (async () => { await __gate; __spin(); globalThis.__sideDone = true; })();
@@ -1075,7 +1073,6 @@ export default class T extends LoopingBot {
         }
         ("H1b", true) => {
             r#"
-export const apiVersion = 2;
 async function __helper() { await null; __spin(); globalThis.__helperDone = true; }
 export async function tick() {
     const entry = __enter();
@@ -1116,7 +1113,6 @@ export default class T extends LoopingBot {
         }
         ("H3", true) => {
             r#"
-export const apiVersion = 2;
 let __release = null;
 BotHost.addTickListener(() => {
     if (globalThis.__rs2b0t_host.tick === 8 && __release) {
@@ -1142,7 +1138,12 @@ export async function tick() {
         }
         _ => unreachable!("unknown H probe"),
     };
-    [imports, CUT_TRACKING, body].concat()
+    let source = [imports, CUT_TRACKING, body].concat();
+    if v2 {
+        script_js::native_fixture(&source)
+    } else {
+        source
+    }
 }
 
 fn h2_probe_source(v2: bool, background_delay: u64) -> String {
@@ -1150,7 +1151,6 @@ fn h2_probe_source(v2: bool, background_delay: u64) -> String {
     let body = if v2 {
         format!(
             r#"
-export const apiVersion = 2;
 export async function tick() {{
     const entry = __enter();
     if (entry === 1) {{
@@ -1195,7 +1195,12 @@ export default class T extends LoopingBot {{
 }}"#
         )
     };
-    [imports, CUT_TRACKING, &body].concat()
+    let source = [imports, CUT_TRACKING, &body].concat();
+    if v2 {
+        script_js::native_fixture(&source)
+    } else {
+        source
+    }
 }
 
 fn dispatch_slot_tick(slot: &mut SlotScript, driver: &mut NullDriver, tick: u64) {
@@ -1373,11 +1378,13 @@ fn background_waiters_do_not_wedge_cut_restart() {
 
 #[test]
 fn dispatch_watchdog_uses_active_execution_start_and_tick() {
-    let source = [
-        CUT_TRACKING,
-        "export function tick() { if (globalThis.__rs2b0t_host.tick === 3) __spin(); }",
-    ]
-    .concat();
+    let source = script_js::native_fixture(
+        &[
+            CUT_TRACKING,
+            "export function tick() { if (globalThis.__rs2b0t_host.tick === 3) __spin(); }",
+        ]
+        .concat(),
+    );
     let mut slot = SlotScript::new();
     start_js_surface(&mut slot, source, LoadShape::NativeTick).unwrap();
     wait_slot_state(&mut slot, script::RunState::Running);
@@ -1436,11 +1443,13 @@ fn dispatch_watchdog_uses_active_execution_start_and_tick() {
 
 #[test]
 fn repeated_cut_restarts_are_bounded() {
-    let source = [
-        CUT_TRACKING,
-        "export function tick() { __enter(); __spin(); }",
-    ]
-    .concat();
+    let source = script_js::native_fixture(
+        &[
+            CUT_TRACKING,
+            "export function tick() { __enter(); __spin(); }",
+        ]
+        .concat(),
+    );
     let mut slot = SlotScript::new();
     start_js_surface(&mut slot, source, LoadShape::NativeTick).unwrap();
     wait_slot_state(&mut slot, script::RunState::Running);
@@ -1489,11 +1498,11 @@ fn repeated_cut_restarts_are_bounded() {
 // lifecycle future is still parked, the cut is ambiguous. It must be reported,
 // but must not reset the parked lifecycle runner and admit a second flight.
 fn assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
-    source: &str,
+    source: impl AsRef<str>,
     shape: LoadShape,
     pause: bool,
 ) {
-    let iso = spawn_ready(source.to_string(), shape, vec![]);
+    let iso = spawn_ready(source.as_ref().to_string(), shape, vec![]);
     iso.on_game_tick(1);
     iso.probe("true")
         .expect("first lifecycle call parks on its long wait");
@@ -1596,10 +1605,10 @@ export default class T extends LoopingBot {
 "#
 }
 
-fn side_continuation_v2_source() -> &'static str {
-    r#"
+fn side_continuation_v2_source() -> String {
+    script_js::native_fixture(
+        r#"
 import { Execution } from '../../api/execution/Execution.js';
-export const apiVersion = 2;
 export async function tick() {
     const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
     globalThis.__active = (globalThis.__active || 0) + 1;
@@ -1618,7 +1627,8 @@ export async function tick() {
     globalThis.__active -= 1;
     globalThis.__done = (globalThis.__done || 0) + 1;
 }
-"#
+"#,
+    )
 }
 
 #[test]
@@ -1657,80 +1667,81 @@ fn watchdog_interrupt_in_side_wait_keeps_v2_tick_single_flight() {
     );
 }
 
-fn assert_interrupt_in_paint_keeps_native_single_flight(pause: bool) {
+fn assert_interrupt_in_paint_keeps_compat_single_flight(pause: bool) {
     let iso = spawn_ready(
         r#"
 import { Execution } from '../../api/execution/Execution.js';
-const paint = globalThis.__rs2b0t_call_on_paint;
-globalThis.__rs2b0t_call_on_paint = (...args) => {
-    if (globalThis.__rs2b0t_host.tick === 2) {
-        const start = Date.now();
-        while (Date.now() - start < 900) {}
+export default class T extends LoopingBot {
+    async loop() {
+        const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
+        globalThis.__active = (globalThis.__active || 0) + 1;
+        globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
+        if (entry === 1) await Execution.delayTicks(3);
+        globalThis.__done = (globalThis.__done || 0) + 1;
+        globalThis.__active -= 1;
     }
-    return paint(...args);
-};
-export async function tick() {
-    const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
-    globalThis.__active = (globalThis.__active || 0) + 1;
-    globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
-    if (entry === 1) await Execution.delayTicks(3);
-    globalThis.__done = (globalThis.__done || 0) + 1;
-    globalThis.__active -= 1;
+    onPaint() {
+        if (globalThis.__rs2b0t_host.tick === 2) {
+            const start = Date.now();
+            while (Date.now() - start < 900) {}
+        }
+    }
 }
 "#
         .into(),
-        LoadShape::NativeTick,
+        LoadShape::CompatClass,
         vec![],
     );
     iso.on_game_tick(1);
-    iso.probe("true").expect("first native tick parks");
+    iso.probe("true").expect("first compat loop parks");
     assert_eq!(
         iso.probe("__entries")
-            .expect("read entries after native paint interruption"),
+            .expect("read entries after compat paint interruption"),
         1
     );
 
     iso.on_game_tick(2);
     let deadline = Instant::now() + Duration::from_secs(2);
     while !iso.execution_active() {
-        assert!(Instant::now() < deadline, "paint tick never entered");
+        assert!(Instant::now() < deadline, "paint callback never entered");
         thread::yield_now();
     }
     if pause {
         iso.pause();
         iso.probe("true")
-            .expect("Pause must settle the interrupted paint");
+            .expect("Pause must settle the interrupted paint callback");
         iso.resume();
         iso.probe("true").expect("Resume must be observed");
         iso.on_game_tick(3);
-        iso.probe("true").expect("settle resumed native paint tick");
+        iso.probe("true")
+            .expect("settle resumed compat paint callback");
     } else {
         thread::sleep(Duration::from_millis(650));
         iso.on_game_tick(3);
         iso.probe("true")
-            .expect("watchdog must settle the interrupted paint");
+            .expect("watchdog must settle the interrupted paint callback");
     }
     for tick in 4..=5 {
         iso.on_game_tick(tick);
-        iso.probe("true").expect("settle next native paint tick");
+        iso.probe("true").expect("settle next compat paint tick");
     }
 
     assert_eq!(
         iso.probe("__entries")
-            .expect("read entries after native paint interruption"),
+            .expect("read entries after compat paint interruption"),
         2,
-        "paint interruption must not reset the parked tick"
+        "paint interruption must not reset the parked loop"
     );
     assert_eq!(
         iso.probe("__done")
-            .expect("read completed native paint count"),
+            .expect("read completed compat paint count"),
         2
     );
     assert_eq!(
         iso.probe("__maxActive")
-            .expect("read active native paint count"),
+            .expect("read active compat paint count"),
         1,
-        "the parked tick must remain single-flight"
+        "the parked loop must remain single-flight"
     );
     let logs = iso.drain_logs();
     assert!(
@@ -1740,20 +1751,20 @@ export async function tick() {
     );
     assert!(
         logs.iter()
-            .all(|line| !line.contains("runaway tick interrupted")),
-        "paint must not be attributed to the parked tick: {logs:?}"
+            .all(|line| !line.contains("runaway loop interrupted")),
+        "paint must not be attributed to the parked loop: {logs:?}"
     );
     iso.join();
 }
 
 #[test]
-fn pause_interrupt_in_paint_keeps_native_tick_single_flight() {
-    assert_interrupt_in_paint_keeps_native_single_flight(true);
+fn pause_interrupt_in_paint_keeps_compat_loop_single_flight() {
+    assert_interrupt_in_paint_keeps_compat_single_flight(true);
 }
 
 #[test]
-fn watchdog_interrupt_in_paint_keeps_native_tick_single_flight() {
-    assert_interrupt_in_paint_keeps_native_single_flight(false);
+fn watchdog_interrupt_in_paint_keeps_compat_loop_single_flight() {
+    assert_interrupt_in_paint_keeps_compat_single_flight(false);
 }
 
 #[test]
@@ -1828,7 +1839,8 @@ export default class T extends LoopingBot {
 #[test]
 fn queued_pause_resume_tick_pause_keeps_final_pause_intent() {
     let iso = spawn_ready(
-        "export function tick() {
+        script_js::native_fixture(
+            "export function tick() {
             globalThis.__entries = (globalThis.__entries || 0) + 1;
             if (globalThis.__entries === 1) {
                 const start = Date.now();
@@ -1836,8 +1848,8 @@ fn queued_pause_resume_tick_pause_keeps_final_pause_intent() {
             } else {
                 for (;;) {}
             }
-        }"
-        .into(),
+        }",
+        ),
         LoadShape::NativeTick,
         vec![],
     );
@@ -2056,8 +2068,8 @@ export default class T extends LoopingBot {
 // (5e) A throwing tick is logged, not fatal.
 #[test]
 fn isolate_logs_tick_errors() {
-    let src = "export function tick(api) { throw new Error('boom') }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+    let src = script_js::native_fixture("export function tick(api) { throw new Error('boom') }");
+    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_n"); // round-trip: the tick finished first
     let logs = iso.drain_logs();
@@ -2076,13 +2088,15 @@ fn slow_tick_is_interrupted_and_isolate_survives() {
     // The first tick publishes a start handshake. The runaway body records
     // entry before spinning forever, so scheduler order cannot make the
     // post-interrupt probe ambiguous.
-    let src = "export function tick(api) { \
+    let src = script_js::native_fixture(
+        "export function tick(api) { \
         if (!globalThis.__started) { globalThis.__started = true; return; } \
         globalThis.__entered = (globalThis.__entered|0) + 1; \
         globalThis.__rs_n = (globalThis.__rs_n||0)+1; \
         if (globalThis.__entered === 1) { for(;;){} } \
-    }";
-    let iso = spawn_ready(src.to_string(), LoadShape::NativeTick, vec![]);
+    }",
+    );
+    let iso = spawn_ready(src, LoadShape::NativeTick, vec![]);
     iso.on_game_tick(1);
     assert_eq!(
         iso.probe("globalThis.__started").unwrap(),
@@ -2134,15 +2148,16 @@ fn slow_tick_is_interrupted_and_isolate_survives() {
 #[test]
 fn session_reset_keeps_the_active_runaway_deadline() {
     let iso = spawn_ready(
-        "export function tick() {
+        script_js::native_fixture(
+            "export function tick() {
             if (!globalThis.__started) {
                 globalThis.__started = true;
                 return;
             }
             globalThis.__entered = true;
             for (;;) {}
-        }"
-        .into(),
+        }",
+        ),
         LoadShape::NativeTick,
         vec![],
     );
@@ -2189,10 +2204,10 @@ fn session_reset_keeps_the_active_runaway_deadline() {
 
 /// The first tick's JS runs past the budget, spinning `ms` milliseconds.
 fn slow_first_tick(ms: u32) -> String {
-    format!(
+    script_js::native_fixture(&format!(
         "export function tick(api) {{ globalThis.__rs_n = (globalThis.__rs_n||0)+1; \
          if (globalThis.__rs_n === 1) {{ const t = Date.now(); while (Date.now() - t < {ms}) {{}} }} }}"
-    )
+    ))
 }
 
 // M12: the host posts a Snapshot before every Tick, so the stale-skip after
@@ -2234,7 +2249,8 @@ fn slow_tick_skips_queued_ticks_past_their_snapshots() {
 
 #[test]
 fn slow_tick_diagnostics_keep_the_executed_tick_identity() {
-    let source = r#"
+    let source = script_js::native_fixture(
+        r#"
 export function tick() {
     globalThis.__runs = (globalThis.__runs || 0) + 1;
     if (globalThis.__runs === 1) {
@@ -2243,8 +2259,9 @@ export function tick() {
         throw new Error('slow-one');
     }
 }
-"#;
-    let iso = spawn_ready(source.to_string(), LoadShape::NativeTick, vec![]);
+"#,
+    );
+    let iso = spawn_ready(source, LoadShape::NativeTick, vec![]);
     let mut snapshot = base_snapshot();
     snapshot.tick = 1;
     post_snapshot_input(&iso, &snapshot);
@@ -2411,11 +2428,13 @@ export default class T extends LoopingBot {
 // tick's wait facts still reach the host.
 #[test]
 fn malformed_interact_rows_are_logged_not_dropped_silently() {
-    let src = "export function tick(api) { const h = globalThis.__rs2b0t_host; \
+    let src = script_js::native_fixture(
+        "export function tick(api) { const h = globalThis.__rs2b0t_host; \
                h.waitEnqueues = 1; \
                (h.interact ||= []).push({ op: 'no-such-op' }, 42, new Uint8Array(2), \
-               { op: new Uint8Array(1) }, 10n, { op: 'mouse', down: true, x: 1, y: 2 }); }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+               { op: new Uint8Array(1) }, 10n, { op: 'mouse', down: true, x: 1, y: 2 }); }",
+    );
+    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("1");
     assert!(
@@ -2427,7 +2446,10 @@ fn malformed_interact_rows_are_logged_not_dropped_silently() {
     );
     assert_eq!(
         iso.drain_lifecycle(),
-        vec![script::interact::InteractReq::WaitEnqueued],
+        vec![
+            script::interact::InteractReq::LoopSettled,
+            script::interact::InteractReq::WaitEnqueued,
+        ],
         "the wait facts survive"
     );
     let logs = iso.drain_logs();
@@ -2447,11 +2469,12 @@ fn malformed_interact_rows_are_logged_not_dropped_silently() {
 #[test]
 fn join_bounds_a_runaway_tick() {
     let iso = spawn_ready(
-        "export function tick(api) { \
+        script_js::native_fixture(
+            "export function tick(api) { \
             if (!globalThis.__started) { globalThis.__started = true; return; } \
             if (!globalThis.__entered) { globalThis.__entered = true; while(true){} } \
-        }"
-        .to_string(),
+        }",
+        ),
         LoadShape::NativeTick,
         vec![],
     );
@@ -2633,7 +2656,7 @@ fn js_library_loads_compat_class_ts() {
     let mut lib = test_library(&dir);
 
     let card = lib.load(&path).expect("compat class TS loads");
-    assert_eq!(card.shape, LoadShape::CompatClass);
+    assert_eq!(card.checked.shape(), LoadShape::CompatClass);
     assert_eq!(card.name, "Burier");
     assert_eq!(lib.cards().len(), 1);
 }
@@ -3645,12 +3668,11 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// M1a: onPaint (or, for a native tick, the paint pass) runs exactly once
-// per tick for every non-v2 shape — while the runner is in flight on an
-// Execution wait and after it settles. The runner is single-flight: the
-// parked first `loop()`/`tick` is not re-entered until its wait settles.
+// M1a: `onPaint` runs once per tick for both v1 compat shapes while `loop`
+// is parked on an Execution wait and after it settles. The loop stays
+// single-flight until its wait settles.
 #[test]
-fn onpaint_runs_exactly_once_per_tick_for_every_shape() {
+fn onpaint_runs_exactly_once_per_tick_for_v1_shapes() {
     let class = r#"
 import { Execution } from '../../api/execution/Execution.js';
 export default class T extends LoopingBot {
@@ -3676,25 +3698,11 @@ export default defineBot({
     },
 });
 "#;
-    // A native tick has no onPaint: count the paint passes themselves.
-    let native = r#"
-import { Execution } from '../../api/execution/Execution.js';
-const paint = globalThis.__rs2b0t_call_on_paint;
-globalThis.__rs2b0t_call_on_paint = (bot) => {
-    globalThis.__paints = (globalThis.__paints || 0) + 1;
-    return paint(bot);
-};
-export async function tick(api) {
-    globalThis.__loops = (globalThis.__loops || 0) + 1;
-    if (globalThis.__loops === 1) await Execution.delayTicks(2);
-}
-"#;
     for (shape, src) in [
-        (LoadShape::CompatClass, class),
-        (LoadShape::CompatDefineBot, define_bot),
-        (LoadShape::NativeTick, native),
+        (LoadShape::CompatClass, class.to_string()),
+        (LoadShape::CompatDefineBot, define_bot.to_string()),
     ] {
-        let iso = LoadIsolate::spawn(src.to_string(), shape, vec![]).unwrap();
+        let iso = LoadIsolate::spawn(src, shape, vec![]).unwrap();
         for n in 1..=4 {
             iso.on_game_tick(n);
             assert_eq!(
@@ -3941,11 +3949,12 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// BotHost tick listeners fire once per eligible posted tick for the v1
-// native `tick(api)` shape too — not only while a wait is parked.
+// Manifest native ticks deliver every posted tick to BotHost listeners,
+// including while the V2 tick itself is parked.
 #[test]
 fn native_tick_listeners_fire_every_posted_tick() {
-    let src = r#"
+    let src = script_js::native_fixture(
+        r#"
 import { BotHost } from '../../runtime/BotHost.js';
 import { Execution } from '../../api/execution/Execution.js';
 globalThis.__fired = [];
@@ -3954,8 +3963,9 @@ export async function tick(api) {
     globalThis.__n = (globalThis.__n || 0) + 1;
     if (globalThis.__n === 2) await Execution.delayTicks(3);
 }
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+"#,
+    );
+    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
     for n in 1..=8 {
         iso.on_game_tick(n);
     }
@@ -3963,8 +3973,8 @@ export async function tick(api) {
         iso.probe("__fired").unwrap(),
         serde_json::json!([1, 2, 3, 4, 5, 6, 7, 8])
     );
-    // Parked on tick 2 until tick 5, then one run per tick.
-    assert_eq!(iso.probe("__n").unwrap(), 5);
+    // Parked on tick 2 until tick 5, then runs once per remaining tick.
+    assert_eq!(iso.probe("__n").unwrap(), 6);
     iso.join();
 }
 
@@ -4344,9 +4354,11 @@ export default class T extends LoopingBot {
 // costs only the frame — the tick's log lines still arrive.
 #[test]
 fn malformed_paint_record_keeps_the_ticks_logs() {
-    let src = "export function tick(api) { const h = globalThis.__rs2b0t_host; \
-               h.paint = 'not a frame'; (h.log ||= []).push('still logged'); }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+    let src = script_js::native_fixture(
+        "export function tick(api) { const h = globalThis.__rs2b0t_host; \
+               h.paint = 'not a frame'; (h.log ||= []).push('still logged'); }",
+    );
+    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("1");
     let logs = iso.drain_logs();
@@ -4847,29 +4859,6 @@ export default class T extends LoopingBot {
         iso.drain_interacts(),
         vec![script::interact::InteractReq::AnswerCount { value: 27 }],
         "Answer-Count waits for the posted count dialog"
-    );
-    iso.join();
-}
-
-// Task 3 — the native tick `api` is a Proxy: `api.tick` is set by the
-// host and readable; every other member read or set throws `not impl`.
-#[test]
-fn isolate_native_tick_api_is_throw_on_missing_proxy() {
-    let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1 }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
-    iso.on_game_tick(1);
-    iso.on_game_tick(2);
-    let n = iso.probe("__rs_n").unwrap();
-    assert_eq!(n, 2, "two ticks reached the JS tick function");
-    let tick = iso.probe("__rs_api.tick").expect("api.tick is set");
-    assert_eq!(tick, 2, "api.tick holds the dispatched tick number");
-    assert!(
-        iso.probe("__rs_api._n").is_err(),
-        "reading an unknown api member throws"
-    );
-    assert!(
-        iso.probe("__rs_api.missing = 1").is_err(),
-        "setting an unknown api member throws"
     );
     iso.join();
 }
@@ -11309,16 +11298,16 @@ export default class T extends LoopingBot {
 
 #[test]
 fn session_reset_discards_unread_old_interactions_and_preserves_the_isolate() {
-    let iso = LoadIsolate::spawn(
-        r#"export function tick(api) {
+    let iso = spawn_ready(
+        script_js::native_fixture(
+            r#"export function tick(api) {
             globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
             globalThis.__rs2b0t_host.interact.push({op:"set-camera-yaw", yaw:globalThis.__rs_n});
-        }"#
-        .to_string(),
+        }"#,
+        ),
         LoadShape::NativeTick,
         vec![],
-    )
-    .unwrap();
+    );
     iso.on_game_tick(1);
     // Probe is ordered behind the real tick but does not pump its reply queue:
     // the interaction batch is still unread when the session changes.

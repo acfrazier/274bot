@@ -72,14 +72,14 @@ fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
             CacheMeta {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
-                shape: Some(format!("{:?}", card.shape)),
+                shape: Some(format!("{:?}", card.shape())),
                 api_family: None,
             },
         )
         .unwrap_or_else(|error| panic!("{name} sibling resolution failed: {error}"));
         let isolate = LoadIsolate::spawn_with_game_data(
             card.js.clone(),
-            card.shape,
+            card.shape(),
             siblings,
             selected.clone(),
         )

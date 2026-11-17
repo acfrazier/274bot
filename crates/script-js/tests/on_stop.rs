@@ -56,8 +56,7 @@ fn join_returns_onstop_this_log() {
 #[test]
 fn tracked_examplebot_stop_log() {
     let js = examplebot_source();
-    let shape = script_js::detect_shape(&js);
-    let iso = LoadIsolate::spawn(js, shape, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(js, LoadShape::CompatDefineBot, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("1");
     let logs = iso.join();
@@ -391,7 +390,7 @@ fn credited_transfer_refusal_and_actual_join_reopen_admission() {
     );
     assert!(matches!(
         LoadIsolate::spawn(
-            "export function tick() {}".into(),
+            script_js::native_fixture("export function tick() {}"),
             LoadShape::NativeTick,
             vec![]
         ),
@@ -650,7 +649,9 @@ fn peer_isolate_is_untouched() {
 #[test]
 fn native_tick_join_is_bounded_without_onstop() {
     let iso = LoadIsolate::spawn(
-        "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1; }".into(),
+        script_js::native_fixture(
+            "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1; }",
+        ),
         LoadShape::NativeTick,
         vec![],
     )

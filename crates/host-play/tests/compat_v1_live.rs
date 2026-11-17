@@ -59,7 +59,7 @@ struct LiveSession<'a> {
 }
 struct PreparedScriptTask {
     js: String,
-    shape: LoadShape,
+    checked: script_js::CheckedLoad,
     settings: Map<String, Value>,
     siblings: Vec<(String, String)>,
 }
@@ -631,10 +631,12 @@ fn wait_for_inventory_count(
 }
 
 fn start_script(session: &LiveSession<'_>, source: String) -> Result<(), String> {
+    let prepared = script_js::prepare_raw_origin_for_test("compat.js", &source, &[])
+        .expect("compatibility fixture prepares");
     session.play.script_start_load(
         &session.account,
-        source,
-        LoadShape::CompatClass,
+        prepared.js,
+        prepared.checked,
         None,
         vec![],
     )
@@ -847,7 +849,7 @@ fn start_prepared_task(session: &LiveSession<'_>, card: PreparedScriptTask) -> R
     session.play.script_start_handle().start_load(
         &session.account,
         card.js,
-        card.shape,
+        card.checked,
         Some(card.settings),
         card.siblings,
     )
@@ -932,10 +934,10 @@ fn prepare_catalog_task(
     if let Some(import) = &card.unloadable {
         return Err(format!("{card_name} is unloadable: {import}"));
     }
-    if card.shape != LoadShape::CompatClass {
+    if card.shape() != LoadShape::CompatClass {
         return Err(format!(
             "{card_name} has unexpected Load shape {:?}",
-            card.shape
+            card.shape()
         ));
     }
     let explicit = Map::new();
@@ -948,12 +950,12 @@ fn prepare_catalog_task(
             kind: card.kind,
             source: card.source,
             shape: None,
-            api_family: Some(card.api_family.as_str().into()),
+            api_family: Some(card.api_family().as_str().into()),
         },
     )?;
     Ok(PreparedScriptTask {
         js: card.js,
-        shape: card.shape,
+        checked: card.checked,
         settings,
         siblings,
     })
@@ -1011,10 +1013,10 @@ fn prepare_file_task(
     if let Some(import) = &card.unloadable {
         return Err(format!("{card_name} is unloadable: {import}"));
     }
-    if card.shape != LoadShape::CompatClass {
+    if card.shape() != LoadShape::CompatClass {
         return Err(format!(
             "{card_name} has unexpected Load shape {:?}",
-            card.shape
+            card.shape()
         ));
     }
     let settings = script::merge_bag(&card.settings_schema, &Map::new(), Some(&Map::new()));
@@ -1026,12 +1028,12 @@ fn prepare_file_task(
             kind: card.kind,
             source: card.source,
             shape: None,
-            api_family: Some(card.api_family.as_str().into()),
+            api_family: Some(card.api_family().as_str().into()),
         },
     )?;
     Ok(PreparedScriptTask {
         js: card.js,
-        shape: card.shape,
+        checked: card.checked,
         settings,
         siblings,
     })
@@ -1062,7 +1064,7 @@ fn run_tree_cell(receipt: &mut Receipt) -> Result<(), String> {
         .start_load_with_loadouts(
             &session.account,
             card.js,
-            card.shape,
+            card.checked,
             Some(card.settings),
             card.siblings,
             &loadouts,

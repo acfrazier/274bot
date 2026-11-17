@@ -7,7 +7,7 @@ use script::native::snapshot_source::{NativeFactsInput, SnapshotInput, TileInput
 use script::slot::{RunState, SlotScript};
 use script::surface::{SurfaceCard, SurfaceStart};
 use script_js::surface::{JsStartCard, JsSurfaceFactory, JsSurfaceRun};
-use script_js::{resolve_api_family, LoadShape};
+use script_js::{native_fixture, prepare_raw_origin_for_test, LoadShape};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,14 +30,15 @@ fn surface_start(
     shape: LoadShape,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
 ) -> SurfaceStart {
-    let source = source.into();
-    let family = resolve_api_family(&source).ok().map(|(_, family)| family);
+    let origin: Arc<str> = source.into();
+    let prepared =
+        prepare_raw_origin_for_test("bot.js", &origin, &[]).expect("prepare slot test origin");
+    assert_eq!(prepared.checked.shape(), shape, "slot test origin shape");
     let card: Arc<dyn SurfaceCard> = Arc::new(JsStartCard {
         card_name: "slot test".into(),
-        source,
-        shape,
+        source: Arc::<str>::from(prepared.js),
+        checked: prepared.checked,
         siblings: Arc::from(Vec::<(String, String)>::new()),
-        family,
     });
     SurfaceStart {
         card,
@@ -263,7 +264,12 @@ export function tick() {
 }
 "#;
     let mut slot = js_slot(0);
-    start_js_running(&mut slot, source, LoadShape::NativeTick, None);
+    start_js_running(
+        &mut slot,
+        native_fixture(source),
+        LoadShape::NativeTick,
+        None,
+    );
 
     surface_tick(&mut slot, 1);
     assert_eq!(probe(&mut slot, "globalThis.__ticks"), serde_json::json!(1));
@@ -307,7 +313,12 @@ export function tick() {
 }
 "#;
     let mut slot = js_slot(0);
-    start_js_running(&mut slot, source, LoadShape::NativeTick, None);
+    start_js_running(
+        &mut slot,
+        native_fixture(source),
+        LoadShape::NativeTick,
+        None,
+    );
     surface_tick(&mut slot, 1);
     let _ = probe(&mut slot, "true");
     let _ = slot.drain_logs();
@@ -372,7 +383,12 @@ export function tick() {
 }
 "#;
     let mut slot = js_slot(0);
-    start_js_running(&mut slot, source, LoadShape::NativeTick, None);
+    start_js_running(
+        &mut slot,
+        native_fixture(source),
+        LoadShape::NativeTick,
+        None,
+    );
     surface_tick(&mut slot, 1);
     let _ = probe(&mut slot, "true");
     let _ = slot.drain_logs();
@@ -760,7 +776,7 @@ fn js_surface_start_runs_after_v8_setup() {
     let t0 = Instant::now();
     start_js(
         &mut slot,
-        "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }",
+        native_fixture("export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }"),
         LoadShape::NativeTick,
         None,
     );
@@ -782,7 +798,7 @@ fn js_surface_setup_failure_preserves_v8_diagnostic() {
     let mut slot = js_slot(0);
     start_js(
         &mut slot,
-        "throw new Error('zz-setup-proof');\nexport function tick(api) {}",
+        native_fixture("throw new Error('zz-setup-proof');\nexport function tick(api) {}"),
         LoadShape::NativeTick,
         None,
     );
@@ -822,11 +838,12 @@ fn js_onstop_completes_before_queued_start() {
 
 #[test]
 fn js_surface_start_all_over_n_members_does_not_block() {
-    let src = "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }";
+    let src =
+        native_fixture("export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }");
     let mut slots: Vec<SlotScript> = (0..4).map(|_| js_slot(0)).collect();
     let t0 = Instant::now();
     for slot in &mut slots {
-        start_js(slot, src, LoadShape::NativeTick, None);
+        start_js(slot, src.as_str(), LoadShape::NativeTick, None);
         assert_eq!(slot.state(), RunState::Starting);
     }
     assert!(

@@ -69,6 +69,29 @@ pub enum LoadIsolateError {
     /// The operating system refused to create the isolate thread.
     #[error("isolate thread: {0}")]
     ThreadSpawn(#[source] std::io::Error),
+    /// A test spawn's raw origin did not prepare to the expected shape.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[error("test origin preparation: {0}")]
+    TestPreparation(String),
+}
+
+/// Prepare a test spawn's raw origin through the common origin check. The
+/// origin is JavaScript media; `expected` is the shape that the test asserts.
+#[cfg(any(test, feature = "test-hooks"))]
+fn prepare_test_origin(
+    origin: &str,
+    expected: LoadShape,
+    siblings: &[(String, String)],
+) -> Result<(String, crate::library::prepare::CheckedLoad), LoadIsolateError> {
+    let prepared = crate::library::prepare::prepare_raw_origin_for_test("bot.js", origin, siblings)
+        .map_err(|refusal| LoadIsolateError::TestPreparation(refusal.to_string()))?;
+    if prepared.checked.shape() != expected {
+        return Err(LoadIsolateError::TestPreparation(format!(
+            "origin prepared as {:?}, the test expects {expected:?}",
+            prepared.checked.shape()
+        )));
+    }
+    Ok((prepared.js, prepared.checked))
 }
 
 static NEXT_PAINT_GENERATION: AtomicU64 = AtomicU64::new(1);
@@ -404,6 +427,10 @@ pub struct LoadIsolate {
     /// Interact requests forwarded by the tick thread (the shim
     /// `Bank`/`Banking` queue), drained by the host like logs.
     interacts: Mutex<Vec<QueuedInteract>>,
+    /// Test observation of every current-generation interact batch exactly
+    /// as the isolate thread encoded it, before host decoding.
+    #[cfg(any(test, feature = "test-hooks"))]
+    interact_wire: Mutex<Vec<Vec<u8>>>,
     /// Watchdog lifecycle facts are separate from gameplay interactions.
     lifecycle: Mutex<Vec<script::interact::InteractReq>>,
     /// Ordered typed seat batches, each retaining its source generation and
@@ -653,7 +680,7 @@ pub(crate) struct GameplayFactory;
 impl GameplayFactory {
     #[cfg(test)]
     pub(crate) fn spawn_with_content(
-        js: String,
+        origin: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
@@ -661,10 +688,11 @@ impl GameplayFactory {
         wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
         execution: Option<api::identity::ExecutionId>,
     ) -> Result<LoadIsolate, LoadIsolateError> {
+        let (js, checked) = prepare_test_origin(&origin, shape, &siblings)?;
         Self::spawn_with_content_and_state(
             js,
             "test card".into(),
-            shape,
+            checked,
             siblings,
             game_data,
             named_banks,
@@ -681,7 +709,7 @@ impl GameplayFactory {
     pub(crate) fn spawn_with_content_and_state(
         js: String,
         card_name: std::sync::Arc<str>,
-        shape: LoadShape,
+        checked: crate::library::prepare::CheckedLoad,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
@@ -692,7 +720,7 @@ impl GameplayFactory {
         LoadIsolate::spawn_inner(
             js,
             card_name,
-            shape,
+            checked,
             siblings,
             game_data,
             named_banks,
@@ -704,21 +732,24 @@ impl GameplayFactory {
 }
 
 impl LoadIsolate {
-    /// Spawn the isolate thread with already-cached JS (no transpile).
+    /// Spawn a test isolate from raw origin. The origin goes through the
+    /// common preparation first: a native source needs a manifest, and
+    /// `shape` is the shape the test expects preparation to find.
     /// Returns as soon as the thread is created; V8 setup is resolved by
     /// [`LoadIsolate::poll_ready`]. Missing process-root
     /// [`crate::bootstrap_v8_platform`] or thread-create failure is returned
     /// synchronously, before any runtime worker is started.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn spawn(
-        js: String,
+        origin: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
     ) -> Result<Self, LoadIsolateError> {
+        let (js, checked) = prepare_test_origin(&origin, shape, &siblings)?;
         Self::spawn_inner(
             js,
             "test card".into(),
-            shape,
+            checked,
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -730,15 +761,16 @@ impl LoadIsolate {
     /// Spawn with selected wilderness rules for read-only contract tests.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn spawn_with_wilderness_rules(
-        js: String,
+        origin: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         wilderness_rules: std::sync::Arc<dyn script::surface::WildernessLevels>,
     ) -> Result<Self, LoadIsolateError> {
+        let (js, checked) = prepare_test_origin(&origin, shape, &siblings)?;
         Self::spawn_inner(
             js,
             "test card".into(),
-            shape,
+            checked,
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -751,15 +783,16 @@ impl LoadIsolate {
     /// Spawn a test isolate that owns a native seat execution.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn spawn_with_execution(
-        js: String,
+        origin: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         execution: api::identity::ExecutionId,
     ) -> Result<Self, LoadIsolateError> {
+        let (js, checked) = prepare_test_origin(&origin, shape, &siblings)?;
         Self::spawn_inner(
             js,
             "test card".into(),
-            shape,
+            checked,
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -772,15 +805,16 @@ impl LoadIsolate {
     /// until the isolate's one startup publication is complete.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn spawn_with_game_data(
-        js: String,
+        origin: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: std::sync::Arc<api::game_data::SelectedGameData>,
     ) -> Result<Self, LoadIsolateError> {
+        let (js, checked) = prepare_test_origin(&origin, shape, &siblings)?;
         Self::spawn_inner(
             js,
             "test card".into(),
-            shape,
+            checked,
             siblings,
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -793,16 +827,17 @@ impl LoadIsolate {
     /// Spawn with selected-revision facts and named aliases.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn spawn_with_content(
-        js: String,
+        origin: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<Self, LoadIsolateError> {
+        let (js, checked) = prepare_test_origin(&origin, shape, &siblings)?;
         Self::spawn_inner(
             js,
             "test card".into(),
-            shape,
+            checked,
             siblings,
             game_data,
             named_banks,
@@ -816,15 +851,16 @@ impl LoadIsolate {
     /// used by production runtime settings.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn spawn_with_local_state(
-        js: String,
+        origin: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         local_state: std::sync::Arc<script::local_state::SlotState>,
     ) -> Result<Self, LoadIsolateError> {
+        let (js, checked) = prepare_test_origin(&origin, shape, &siblings)?;
         Self::spawn_inner(
             js,
             "test card".into(),
-            shape,
+            checked,
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -852,7 +888,7 @@ impl LoadIsolate {
     fn spawn_inner(
         js: String,
         card_name: std::sync::Arc<str>,
-        shape: LoadShape,
+        checked: crate::library::prepare::CheckedLoad,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
@@ -873,9 +909,9 @@ impl LoadIsolate {
         let thread_counters = counters.clone();
         let work_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let thread_generation = work_generation.clone();
-        let compat_journal = (shape != LoadShape::Reject).then(|| {
-            std::sync::Arc::new(crate::compat::quest_journal::CompatJournalLease::default())
-        });
+        let compat_journal = Some(std::sync::Arc::new(
+            crate::compat::quest_journal::CompatJournalLease::default(),
+        ));
         let thread_compat_journal = compat_journal.clone();
         let teardown = std::sync::Arc::new(Mutex::new(Teardown::new()));
         let thread_teardown = teardown.clone();
@@ -916,7 +952,7 @@ impl LoadIsolate {
                 isolate_main(
                     js,
                     card_name,
-                    shape,
+                    checked,
                     siblings,
                     game_data,
                     named_banks,
@@ -982,6 +1018,8 @@ impl LoadIsolate {
             tick_outcome_error_generation: Mutex::new(None),
             script_cut: AtomicBool::new(false),
             interacts: Mutex::new(Vec::new()),
+            #[cfg(any(test, feature = "test-hooks"))]
+            interact_wire: Mutex::new(Vec::new()),
             seat_batches: Mutex::new(VecDeque::new()),
             lifecycle: Mutex::new(Vec::new()),
             held_releases: Mutex::new(Vec::new()),
@@ -1699,6 +1737,14 @@ impl LoadIsolate {
             .test_hook_timeout = Some(timeout);
     }
 
+    /// Take the raw current-generation interact batches the isolate thread
+    /// sent since the last call, in arrival order and before host decoding.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn take_interact_wire_for_test(&self) -> Vec<Vec<u8>> {
+        self.pump_logs();
+        std::mem::take(&mut *lock_after_isolate_failure(&self.interact_wire))
+    }
+
     /// Drain current-generation interactions and any AbortWalk releases
     /// retained across a kept reconnect. Prior-session gameplay is discarded.
     pub fn drain_interacts_stamped(&self) -> Vec<QueuedInteract> {
@@ -2255,6 +2301,8 @@ impl LoadIsolate {
                         }
                         continue;
                     }
+                    #[cfg(any(test, feature = "test-hooks"))]
+                    lock_after_isolate_failure(&self.interact_wire).push(bytes.clone());
                     match crate::wire::decode_interact_batch(&bytes) {
                         Ok(reqs) => {
                             let mut lifecycle = lock_after_isolate_failure(&self.lifecycle);

@@ -530,7 +530,7 @@ impl FrameState {
 
 struct PreparedCard {
     js: String,
-    shape: script_js::LoadShape,
+    checked: script_js::CheckedLoad,
     settings: Map<String, Value>,
     siblings: Vec<(String, String)>,
     identity: Value,
@@ -732,7 +732,7 @@ fn prepare_catalog_card(root: &Path, temp: &Path) -> Result<(PreparedCard, Strin
             kind: card.kind,
             source: card.source,
             shape: None,
-            api_family: Some(card.api_family.as_str().into()),
+            api_family: Some(card.api_family().as_str().into()),
         },
     )?;
     let sibling_hashes = siblings
@@ -750,14 +750,14 @@ fn prepare_catalog_card(root: &Path, temp: &Path) -> Result<(PreparedCard, Strin
         "source_path": card.path,
         "source_sha256": card.sha256,
         "compiled_sha256": script_js::JsCache::origin_sha(card.js.as_bytes()),
-        "load_shape": format!("{:?}", card.shape),
+        "load_shape": format!("{:?}", card.shape()),
         "siblings": sibling_hashes,
         "settings": Value::Object(settings.clone())
     });
     Ok((
         PreparedCard {
             js: card.js,
-            shape: card.shape,
+            checked: card.checked,
             settings,
             siblings,
             identity,
@@ -1450,19 +1450,19 @@ fn run_cell(cell: Cell, receipt: &mut Receipt) -> Result<(), String> {
             play.script_start_handle().start_load(
                 account,
                 card.js,
-                card.shape,
+                card.checked,
                 Some(card.settings),
                 card.siblings,
             )?;
         }
         None => {
-            play.script_start_load(
-                account,
-                GATHERING_PROBE_SOURCE.to_owned(),
-                script_js::LoadShape::CompatClass,
-                None,
-                vec![],
-            )?;
+            let prepared = script_js::prepare_raw_origin_for_test(
+                "gathering-probe.js",
+                GATHERING_PROBE_SOURCE,
+                &[],
+            )
+            .map_err(|error| error.to_string())?;
+            play.script_start_load(account, prepared.js, prepared.checked, None, vec![])?;
         }
     }
     let script_started_ms = frame_state

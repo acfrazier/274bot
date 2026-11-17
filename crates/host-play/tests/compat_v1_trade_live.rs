@@ -606,14 +606,11 @@ fn wait_for_trade_prep(play: &Play, state: &Mutex<Vec<TradeSlot>>) {
 }
 
 fn start_script(play: &Play, account: &str, role: &str, partner: &str, stranger: &str) {
-    play.script_start_load(
-        account,
-        trade_source(role, partner, stranger),
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .expect("start paired Trade compatibility script");
+    let source = trade_source(role, partner, stranger);
+    let prepared = script_js::prepare_raw_origin_for_test("trade.js", &source, &[])
+        .expect("compatibility trade fixture prepares");
+    play.script_start_load(account, prepared.js, prepared.checked, None, vec![])
+        .expect("start paired Trade compatibility script");
 }
 
 fn wait_for_log(

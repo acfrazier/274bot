@@ -12,7 +12,6 @@ use {script::native::snapshot_source::NativeFactsInput, script_js::wire::Isolate
 
 const LIVE_SOURCE: &str = r#"
 const channel = new BroadcastChannel(__GATHER_CHANNEL__);
-export const apiVersion = 2;
 export function tick(api) {
   const page = api.snapshot.gather;
   globalThis.__page = page;
@@ -47,6 +46,12 @@ globalThis.__receivedMessages = [];
 channel.onmessage = event => globalThis.__receivedMessages.push(event.data);
 export function tick(_api) {}
 "#;
+
+fn prepared_native(source: &str) -> script_js::PreparedTestOrigin {
+    let origin = script_js::native_fixture(source);
+    script_js::prepare_raw_origin_for_test("gather-live.ts", &origin, &[])
+        .expect("native gather live fixture prepares")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SeedPhase {
@@ -723,10 +728,11 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         },
     );
 
+    let receiver = prepared_native(&receiver_source);
     play.script_start_load(
         &receiver_account,
-        receiver_source,
-        script_js::LoadShape::NativeTick,
+        receiver.js,
+        receiver.checked,
         None,
         vec![],
     )
@@ -736,14 +742,9 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         Duration::from_secs(30),
         || play.script_state(&receiver_account) == script::RunState::Running,
     );
-    play.script_start_load(
-        &account,
-        live_source,
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .expect("start public API v2 Load script");
+    let live = prepared_native(&live_source);
+    play.script_start_load(&account, live.js, live.checked, None, vec![])
+        .expect("start public API v2 Load script");
     wait_until("Load script Running", Duration::from_secs(30), || {
         play.script_state(&account) == script::RunState::Running
     });
@@ -1101,21 +1102,16 @@ fn live_quest_progress_complete_cook_through_load_api() {
         assert!(state.1.is_none(), "fixture error: {:?}", state.1);
         state.0 == 7
     });
-    play.script_start_load(
-        &account,
-        r#"export const apiVersion = 2;
-export async function tick(api) {
+    let progress = prepared_native(
+        r#"export async function tick(api) {
   if (globalThis.__started) return;
   globalThis.__started = true;
   globalThis.__paths = api.questPaths();
   globalThis.__progress = await api.questProgress({quest:'cook'});
-}"#
-        .into(),
-        script_js::LoadShape::NativeTick,
-        None,
-        vec![],
-    )
-    .expect("start progress public Load consumer");
+}"#,
+    );
+    play.script_start_load(&account, progress.js, progress.checked, None, vec![])
+        .expect("start progress public Load consumer");
     wait_until("progress Load Running", Duration::from_secs(30), || {
         play.script_state(&account) == script::RunState::Running
     });

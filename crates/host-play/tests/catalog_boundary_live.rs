@@ -231,7 +231,7 @@ fn witness<'a>(
 #[derive(Clone)]
 struct PendingStart {
     js: String,
-    shape: script_js::LoadShape,
+    checked: script_js::CheckedLoad,
     settings: Option<Map<String, Value>>,
     siblings: Vec<(String, String)>,
 }
@@ -362,7 +362,7 @@ impl LiveState {
             match handle.start_load(
                 &self.account,
                 pending.js.clone(),
-                pending.shape,
+                pending.checked,
                 pending.settings.clone(),
                 pending.siblings.clone(),
             ) {
@@ -559,7 +559,7 @@ fn prepare_catalog_card(
             kind: card.kind,
             source: card.source,
             shape: None,
-            api_family: Some(card.api_family.as_str().into()),
+            api_family: Some(card.api_family().as_str().into()),
         },
     )?;
     let sibling_hashes = siblings
@@ -582,7 +582,7 @@ fn prepare_catalog_card(
     Ok((
         PendingStart {
             js: card.js,
-            shape: card.shape,
+            checked: card.checked,
             settings: (!settings.is_empty()).then_some(settings),
             siblings,
         },
@@ -3015,16 +3015,14 @@ export default class NativeStop extends LoopingBot {{
         );
         let mut slot = script::SlotScript::new();
         slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
-        let family = script_js::resolve_api_family(&source)
-            .ok()
-            .map(|(_, family)| family);
+        let prepared = script_js::prepare_raw_origin_for_test("bot.js", &source, &[])
+            .expect("compatibility stop fixture prepares");
         slot.start_surface(script::surface::SurfaceStart {
             card: Arc::new(script_js::surface::JsStartCard {
                 card_name: "NativeStop".into(),
-                source: source.into(),
-                shape: script_js::LoadShape::CompatClass,
+                source: prepared.js.into(),
+                checked: prepared.checked,
                 siblings: Arc::from([]),
-                family,
             }),
             settings_bag: None,
             game_data: None,

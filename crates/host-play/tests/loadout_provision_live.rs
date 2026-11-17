@@ -375,10 +375,13 @@ impl LiveState {
             .with_carry(SUPPLY_NAME, SUPPLY_QTY as u32)];
         let mut bag = Map::new();
         bag.insert("loadout".into(), json!(PRESET_NAME));
+        let prepared =
+            script_js::prepare_raw_origin_for_test("loadout-provision.js", PROVISION_JS, &[])
+                .map_err(|error| error.to_string())?;
         handle.start_load_with_loadouts(
             &self.account,
-            PROVISION_JS.to_string(),
-            script_js::LoadShape::CompatClass,
+            prepared.js,
+            prepared.checked,
             Some(bag),
             vec![],
             &rows,

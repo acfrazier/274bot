@@ -265,14 +265,10 @@ fn compat_v1_walking_probeable() {
             .ready
     });
 
-    play.script_start_load(
-        account,
-        PROBE_SOURCE.to_owned(),
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .expect("start compatibility v1 walking probe through normal Load");
+    let prepared = script_js::prepare_raw_origin_for_test("walking-probe.js", PROBE_SOURCE, &[])
+        .expect("compatibility walking fixture prepares");
+    play.script_start_load(account, prepared.js, prepared.checked, None, vec![])
+        .expect("start compatibility v1 walking probe through normal Load");
     let result = parse_result(&play, account, CELL_DEADLINE);
     assert_eq!(
         result["blockedProbeable"].as_bool(),

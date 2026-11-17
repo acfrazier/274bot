@@ -1084,6 +1084,8 @@ fn run_compat_cell(spec: &CompatSpec) {
     );
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
     let script = compat_script(spec.body);
+    let prepared_script = script_js::prepare_raw_origin_for_test("bank-core.js", &script, &[])
+        .expect("compat bank-core script prepares");
     let cell = Cell::new(
         spec.bound,
         spec.seed,
@@ -1166,8 +1168,8 @@ fn run_compat_cell(spec: &CompatSpec) {
         if begin {
             if let Err(error) = play.script_start_load(
                 &account,
-                script.clone(),
-                script_js::LoadShape::CompatClass,
+                prepared_script.js.clone(),
+                prepared_script.checked,
                 None,
                 vec![],
             ) {

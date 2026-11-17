@@ -668,7 +668,7 @@ mod tests {
     #[test]
     fn poisoned_isolate_deadline_does_not_poison_process_registry() {
         let isolate = LoadIsolate::spawn(
-            "export function tick() {}".into(),
+            crate::native_fixture("export function tick() {}"),
             super::super::LoadShape::NativeTick,
             vec![],
         )
@@ -709,7 +709,7 @@ mod tests {
         }
         assert_eq!(worker_count(), 1);
         let peer = LoadIsolate::spawn(
-            "export function tick() {}".into(),
+            crate::native_fixture("export function tick() {}"),
             super::super::LoadShape::NativeTick,
             vec![],
         )
@@ -744,7 +744,7 @@ mod tests {
         }
 
         let isolate = LoadIsolate::spawn(
-            "export function tick() {}".into(),
+            crate::native_fixture("export function tick() {}"),
             super::super::LoadShape::NativeTick,
             vec![],
         )
@@ -776,7 +776,7 @@ mod tests {
         drop(registry);
         assert_eq!(worker_count(), 1, "one poisoned isolate cannot stop JS");
         let peer = LoadIsolate::spawn(
-            "export function tick() {}".into(),
+            crate::native_fixture("export function tick() {}"),
             super::super::LoadShape::NativeTick,
             vec![],
         )

@@ -232,7 +232,7 @@ value applies; omission is not proof of no requirement.
 | --- | --- | --- |
 | When V8 exists | Never | JS/TS Start or isolated catalog validation only |
 | Wake | PLAYER_INFO advances the observed tick; changed evidence can re-poll machines at the same tick | same, with eligible compat rows/condition waits pumped without another JS game tick |
-| House API | Rust `tick(&mut NativeTick) -> Result<ScriptFlow, ScriptFailure>` | `export function tick` **or** `defineBot`; explicit `export const apiVersion = 2` is JS API v2 ([js-api-v2.md](js-api-v2.md)) |
+| House API | Rust `tick(&mut NativeTick) -> Result<ScriptFlow, ScriptFailure>` | `export const manifest` plus `export function tick` (JS API v2, [js-api-v2.md](js-api-v2.md)) **or** an rs2b0t `defineBot`/default-export class |
 
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
@@ -297,13 +297,11 @@ owns the slot, not saved for replay after it ends: an old route must not regain
 foreground authority after a native session. The carried host walk is not counted as a
 dropped script row. When the session ends ordinary game dispatch resumes.
 The Load-slot seat's worked example is
-`crates/script-js/examples/gather_quest_v2.ts` (authoritative) beside
-`gather_quest_v2.js` (checked-in plain-JS form): one Power-mode gather session
+`crates/script-js/examples/gather_quest_v2.ts`: one Power-mode gather session
 to a drop quota, then one read-only `questProgress` check, with no script game
 actions. See [js-api-v2.md](js-api-v2.md) "Worked example: GatherQuest v2".
-The combat seat's examples are `fight_v2.ts` (one fight) and
-`combat_showcase_v2.ts` (melee, ranged and magic fights, prayer, eating and a
-clean stop); see "Combat sessions" there.
+The combat seat's example is `combat_showcase_v2.ts` (melee, ranged and magic
+fights, prayer, eating and a clean stop); see "Combat sessions" there.
 
 An offline slot logs in while a login is wanted (auto-login or a Log in) or a
 script is running or paused on it (rs2b0t's `autoLogin || scriptActive()`,
@@ -1634,9 +1632,13 @@ treats them as untrusted input:
 ### Content-addressed transpile cache
 
 Origin bytes (TS or JS) are hashed with **SHA-256**. Hits under
-`~/.274bot/js-cache/objects/<hex>.js` skip transpile; misses transpile `.ts`
-(plain `.js` stored verbatim) and update `manifest.json`. Reload that sees
-unchanged origin bytes reports nothing changed and does not re-transpile.
+`~/.274bot/js-cache/host-compile-v1/{js,ts}/{entry,sibling}/objects/<hex>.js`
+skip compilation; misses transpile `.ts` (plain `.js` is stored verbatim) and
+update that directory's `manifest.json`. An entry object holds the script with
+its `manifest` (or compat `hostCapabilities`) declaration replaced by a `;` and
+spaces; a sibling object keeps every export. Files left in the older
+`js-cache/objects/` folder are never used. Reload that sees unchanged origin
+bytes reports nothing changed and does not re-transpile.
 Sibling/import dependencies participate in the prepared-card fingerprint
 used by manual reload.
 

@@ -71,9 +71,9 @@ fn load_regions(source: String) -> (serde_json::Value, Duration) {
 }
 
 fn static_regions_source() -> String {
-    source(&format!(
-        "import * as regions from '{REGIONS_URL}';\nglobalThis.__regionsKeys = Object.keys(regions).sort();"
-    ))
+    source(
+        "import * as regions from '../../api/map/regions.js';\nglobalThis.__regionsKeys = Object.keys(regions).sort();",
+    )
 }
 
 #[test]

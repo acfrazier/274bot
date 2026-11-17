@@ -248,9 +248,8 @@ fn traversal_source(destination: Tile, method: &str) -> String {
 
 #[cfg(feature = "js")]
 fn v2_walk_source(destination: Tile) -> String {
-    format!(
-        r#"export const apiVersion = 2;
-        export function tick(api) {{
+    let body = format!(
+        r#"export function tick(api) {{
             if (!globalThis.__manual_started) {{
                 globalThis.__manual_started = true;
                 globalThis.__manual_walk_result = null;
@@ -265,7 +264,8 @@ fn v2_walk_source(destination: Tile) -> String {
             }}
         }}"#,
         destination.x, destination.z, destination.level
-    )
+    );
+    frontend_core::test_support::scripts::native_fixture(&body)
 }
 
 #[cfg(feature = "js")]

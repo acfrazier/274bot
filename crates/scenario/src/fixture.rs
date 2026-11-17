@@ -412,16 +412,16 @@ pub fn harness_writer_script() -> Result<PathBuf, String> {
 }
 
 /// Offline writer preset id for a registered scenario name.
-/// `thiever` keeps its existing preset. The two v2 File scenarios share
-/// `bone_burier_v2`. The owned-plant lifecycle reuses the prepared mainland
-/// `thiever` world state; its macro-event injection remains post-Start.
+/// `thiever` keeps its existing preset. The File scenario uses the
+/// `bone_burier_v2` fixture; the owned-plant lifecycle reuses the prepared
+/// mainland `thiever` world state, with its macro-event injection post-Start.
 /// Unknown names stay fail-closed.
 pub fn fixture_preset_for(scenario: &str) -> Result<&'static str, String> {
     match scenario {
         "thiever" | "strange_plant_owned" => Ok("thiever"),
-        "bone_burier_v2_ts" | "bone_burier_v2_js" => Ok("bone_burier_v2"),
+        "bone_burier_v2_ts" => Ok("bone_burier_v2"),
         other => Err(format!(
-            "offline prepare has no server-native preset for {other} yet (known: thiever, strange_plant_owned, bone_burier_v2_ts, bone_burier_v2_js)"
+            "offline prepare has no server-native preset for {other} yet (known: thiever, strange_plant_owned, bone_burier_v2_ts)"
         )),
     }
 }
@@ -840,10 +840,6 @@ mod tests {
             fixture_preset_for("bone_burier_v2_ts").unwrap(),
             "bone_burier_v2"
         );
-        assert_eq!(
-            fixture_preset_for("bone_burier_v2_js").unwrap(),
-            "bone_burier_v2"
-        );
         let err = fixture_preset_for("bone_burier").unwrap_err();
         assert!(err.contains("bone_burier"), "{err}");
         assert!(err.contains("thiever"), "{err}");
@@ -853,52 +849,50 @@ mod tests {
 
     #[test]
     fn bone_burier_v2_fixture_prereqs_exclude_bank_contents() {
-        for name in ["bone_burier_v2_ts", "bone_burier_v2_js"] {
-            let s = get(name).expect(name);
-            let prereqs = fixture_prereqs_of(&s);
-            assert!(
-                prereqs.iter().any(|p| matches!(
-                    p,
-                    Proof::Item {
-                        name: "Bones",
-                        count: 5
-                    }
-                )),
-                "{name} carried bones"
-            );
-            assert!(
-                prereqs
-                    .iter()
-                    .any(|p| matches!(p, Proof::SideTabAvailable { index: 3 })),
-                "{name} side tab"
-            );
-            assert!(
-                prereqs.iter().any(|p| matches!(
-                    p,
-                    Proof::ArrivedNear {
-                        x: 3253,
-                        z: 3421,
-                        level: 0,
-                        radius: 8
-                    }
-                )),
-                "{name} Varrock East bank tile"
-            );
-            assert!(
-                !prereqs.iter().any(|p| matches!(
-                    p,
-                    Proof::BankItem { .. } | Proof::BankItemAtMost { .. } | Proof::BankClosed
-                )),
-                "{name} must not require a bank row at login"
-            );
-            let run = as_run_prepared(s).expect("run-prepared");
-            assert!(!run.seed.mainland);
-            assert!(!run_prepared_has_setup_cheats(&run));
-            assert!(run.settings.start_file.is_some());
-            assert_eq!(run.settings.start_script, None);
-        }
+        let name = "bone_burier_v2_ts";
+        let s = get(name).expect(name);
+        let prereqs = fixture_prereqs_of(&s);
+        assert!(
+            prereqs.iter().any(|p| matches!(
+                p,
+                Proof::Item {
+                    name: "Bones",
+                    count: 5
+                }
+            )),
+            "{name} carried bones"
+        );
+        assert!(
+            prereqs
+                .iter()
+                .any(|p| matches!(p, Proof::SideTabAvailable { index: 3 })),
+            "{name} side tab"
+        );
+        assert!(
+            prereqs.iter().any(|p| matches!(
+                p,
+                Proof::ArrivedNear {
+                    x: 3253,
+                    z: 3421,
+                    level: 0,
+                    radius: 8
+                }
+            )),
+            "{name} Varrock East bank tile"
+        );
+        assert!(
+            !prereqs.iter().any(|p| matches!(
+                p,
+                Proof::BankItem { .. } | Proof::BankItemAtMost { .. } | Proof::BankClosed
+            )),
+            "{name} must not require a bank row at login"
+        );
+        let run = as_run_prepared(s).expect("run-prepared");
+        assert!(!run.seed.mainland);
+        assert!(!run_prepared_has_setup_cheats(&run));
+        assert!(run.settings.start_file.is_some());
+        assert_eq!(run.settings.start_script, None);
     }
-
     #[test]
     fn thiever_fixture_prereqs_are_explicit() {
         let s = thiever();

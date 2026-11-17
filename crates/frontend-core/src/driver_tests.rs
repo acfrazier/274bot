@@ -4311,17 +4311,15 @@ fn run_compiled_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
 /// status row, as the slot's observe does after a tick.
 #[cfg(feature = "js")]
 fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
-    d.session()
-        .play()
-        .expect("play")
-        .script_start_load(
-            name,
-            "export function tick(api) { api._n = (api._n || 0) + 1 }".into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            vec![],
-        )
-        .expect("start");
+    crate::test_support::scripts::play_start_load(
+        d.session(),
+        name,
+        script_js::native_fixture("export function tick(api) { api._n = (api._n || 0) + 1 }"),
+        crate::scripts::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .expect("start");
     wait_state(d, name, ScriptRunState::Running);
     helper_paint(generation).publish(d.session().play().expect("play"), name);
     d.poll();
@@ -5821,17 +5819,15 @@ fn publish_walks(d: &HeadlessDriver, names: &[&str], walk: Option<(i32, i32, i32
 #[cfg(feature = "js")]
 fn start_loop_scripts(d: &mut HeadlessDriver, names: &[&str]) {
     for name in names {
-        d.session()
-            .play()
-            .expect("play")
-            .script_start_load(
-                name,
-                "export function tick(api) {}".into(),
-                script_js::LoadShape::NativeTick,
-                None,
-                vec![],
-            )
-            .expect("start");
+        crate::test_support::scripts::play_start_load(
+            d.session(),
+            name,
+            script_js::native_fixture("export function tick(api) {}"),
+            crate::scripts::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .expect("start");
     }
     for name in names {
         wait_state(d, name, ScriptRunState::Running);

@@ -2146,11 +2146,8 @@ ScriptRegistry.register({
 
 #[test]
 fn live_scenario_looks_up_v2_file_ids_and_keeps_v1() {
-    let js = live_scenario("script_bone_burier_v2_js").expect("js");
     let ts = live_scenario("script_bone_burier_v2_ts").expect("ts");
     let v1 = live_scenario("script_bone_burier").expect("v1");
-    assert_eq!(js.view().name(), "bone_burier_v2_js");
-    assert_eq!(js.view().start_file(), Some("bone_burier_v2.js"));
     assert_eq!(ts.view().name(), "bone_burier_v2_ts");
     assert_eq!(ts.view().start_file(), Some("bone_burier_v2.ts"));
     assert_eq!(v1.view().start_script(), Some("BoneBurier"));
@@ -2295,56 +2292,50 @@ fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
 
 #[cfg(feature = "js")]
 #[test]
-fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
-    let ts = live_example_path("bone_burier_v2.ts").expect("ts example");
-    let js = live_example_path("bone_burier_v2.js").expect("js example");
-    for (name, path) in [
-        ("bone_burier_v2_ts", ts.as_path()),
-        ("bone_burier_v2_js", js.as_path()),
-    ] {
-        let iso = IsolatedStores::enter(&format!("tui-bone-v2-{name}"));
-        let mut session = TuiSession::new(dummy_options());
-        session.core.set_spawn_workers(false);
-        session.scripts.use_library_at(
-            iso.dir().join("js-scripts.json"),
-            iso.dir().join("js-cache"),
-        );
-        session.scripts.load_card(&ts).expect("preload ts");
-        session.scripts.load_card(&js).expect("preload js");
-        session
-            .scripts
-            .set_legacy_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
-        let identity = file_identity(path);
-        session
-            .scripts
-            .set_legacy_str(CardSource::File, &identity, "boneName", "identity");
-        session
-            .live_prepare_script(frontend_core::live::Scenario::get(name).expect("registered"))
-            .expect("prepare");
-        assert_eq!(
-            session.script_sel,
-            Some(ScriptChoice::loaded(CardSource::File, &identity)),
-            "{name} must select the canonical-path identity"
-        );
-        assert_ne!(
-            session.script_sel,
-            Some(ScriptChoice::loaded(CardSource::File, "bone_burier_v2"))
-        );
-        let pending = session.core.live_runner().pending_starts_for_test();
-        let [pending] = pending.as_slice() else {
-            panic!("{name}: one File start stashed, got {}", pending.len());
-        };
-        let bag = pending.bag.clone().expect("settings bag");
-        assert_eq!(bag.get("boneName"), Some(&serde_json::json!("identity")));
-        assert!(
-            pending.loadouts.is_empty(),
-            "native-v2 File starts keep ordinary operator loadout behavior"
-        );
-        assert_eq!(
-            session.core.live_runner().wait_script_stop(),
-            Some("confirmed loaded current-generation bank exhaustion")
-        );
-    }
+fn live_prepare_bone_burier_v2_selects_the_example_by_identity() {
+    let path = live_example_path("bone_burier_v2.ts").expect("ts example");
+    let name = "bone_burier_v2_ts";
+    let iso = IsolatedStores::enter(&format!("tui-bone-v2-{name}"));
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session.scripts.use_library_at(
+        iso.dir().join("js-scripts.json"),
+        iso.dir().join("js-cache"),
+    );
+    session.scripts.load_card(&path).expect("preload ts");
+    session
+        .scripts
+        .set_legacy_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
+    let identity = file_identity(&path);
+    session
+        .scripts
+        .set_legacy_str(CardSource::File, &identity, "boneName", "identity");
+    session
+        .live_prepare_script(frontend_core::live::Scenario::get(name).expect("registered"))
+        .expect("prepare");
+    assert_eq!(
+        session.script_sel,
+        Some(ScriptChoice::loaded(CardSource::File, &identity)),
+        "{name} must select the canonical-path identity"
+    );
+    assert_ne!(
+        session.script_sel,
+        Some(ScriptChoice::loaded(CardSource::File, "bone_burier_v2"))
+    );
+    let pending = session.core.live_runner().pending_starts_for_test();
+    let [pending] = pending.as_slice() else {
+        panic!("{name}: one File start stashed, got {}", pending.len());
+    };
+    let bag = pending.bag.clone().expect("settings bag");
+    assert_eq!(bag.get("boneName"), Some(&serde_json::json!("identity")));
+    assert!(
+        pending.loadouts.is_empty(),
+        "native-v2 File starts keep ordinary operator loadout behavior"
+    );
+    assert_eq!(
+        session.core.live_runner().wait_script_stop(),
+        Some("confirmed loaded current-generation bank exhaustion")
+    );
 }
 
 #[cfg(feature = "js")]
@@ -2834,8 +2825,8 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     let path = iso.dir().join("retry.ts");
     let helper = iso.dir().join("gate.ts");
     std::fs::write(&helper, "export const fail = true;").unwrap();
-    let src = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-initial-load');\nexport function tick(api) {}";
-    std::fs::write(&path, src).unwrap();
+    let src = frontend_core::test_support::scripts::native_fixture("import { fail } from './gate.js';\nif (fail) throw new Error('tui-initial-load');\nexport function tick(api) {}");
+    std::fs::write(&path, &src).unwrap();
     let card = session.scripts.load_card(&path).unwrap();
     let sel = ScriptChoice::loaded(CardSource::File, &path.to_string_lossy());
     session.script_start(&mut app, &sel);
@@ -2869,7 +2860,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
         session
             .scripts
             .load_failure_fingerprint(card.identity_key()),
-        Some(raw_content_fingerprint(&path, src))
+        Some(raw_content_fingerprint(&path, &src))
     );
     assert_eq!(
         session
@@ -2952,7 +2943,9 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
 fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(7, false));
-    let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+    let src = frontend_core::test_support::scripts::native_fixture(
+        "export function tick(api) { api._n = (api._n||0)+1 }",
+    );
     start_script_source(&play, "alice", src, LoadShape::NativeTick).unwrap();
     wait_script_state(&play, "alice", ScriptRunState::Running);
 
@@ -2982,7 +2975,9 @@ fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
 fn paint_button_action_does_not_queue_a_wire_cmd() {
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(7, false));
-    let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+    let src = frontend_core::test_support::scripts::native_fixture(
+        "export function tick(api) { api._n = (api._n||0)+1 }",
+    );
     start_script_source(&play, "alice", src, LoadShape::NativeTick).unwrap();
     wait_script_state(&play, "alice", ScriptRunState::Running);
     let mut session = TuiSession::new(dummy_options());
@@ -3023,7 +3018,9 @@ fn running_play(names: &[&str]) -> Play {
     let mut play = empty_play();
     for (uid, name) in names.iter().enumerate() {
         play.attach_arm(name, SlotArm::new(uid as i32 + 1, false));
-        let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+        let src = frontend_core::test_support::scripts::native_fixture(
+            "export function tick(api) { api._n = (api._n||0)+1 }",
+        );
         start_script_source(&play, name, src, LoadShape::NativeTick).unwrap();
         wait_script_state(&play, name, ScriptRunState::Running);
     }
@@ -8011,7 +8008,7 @@ fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
     let path = iso.dir().join("retry.ts");
     std::fs::write(
         &path,
-        "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-first-load');\nexport function tick(api) {}\n",
+        frontend_core::test_support::scripts::native_fixture("import { fail } from './gate.js';\nif (fail) throw new Error('tui-first-load');\nexport function tick(api) {}\n"),
     )
     .unwrap();
     let card = session.scripts.load_card(&path).unwrap();
@@ -8554,7 +8551,9 @@ fn memory_relog_confirms_while_a_script_runs() {
     start_script_source(
         &play,
         "alice",
-        "export function tick(api) { api._n = (api._n||0)+1 }".to_string(),
+        frontend_core::test_support::scripts::native_fixture(
+            "export function tick(api) { api._n = (api._n||0)+1 }",
+        ),
         LoadShape::NativeTick,
     )
     .unwrap();

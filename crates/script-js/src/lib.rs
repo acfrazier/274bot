@@ -62,12 +62,21 @@ pub(crate) mod test_support {
 pub mod wire;
 
 pub use library::shape::{
-    collect_raw_sibling_hashes, detect_shape, first_unloadable_for_card,
-    first_unloadable_specifier, is_catalog_dim, is_reserved, live_example_path,
-    live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
-    raw_content_fingerprint, resolve_api_family, resolve_sibling_path, scan_import_specifiers,
+    collect_raw_sibling_hashes, first_unloadable_for_card, first_unloadable_specifier,
+    is_catalog_dim, is_reserved, live_example_path, live_file_fixture_path, live_file_fixture_stem,
+    raw_content_fingerprint, resolve_sibling_path, scan_import_specifiers,
     scan_same_folder_js_imports, scan_scripts_sibling_js_imports, sibling_module_url, ApiFamily,
     LoadShape, UnloadReason, VersionDiag, CATALOG_DIM,
+};
+
+pub use library::prepare::{
+    check_origin, compile_origin, CheckedLoad, CheckedOrigin, OriginRefusal,
+};
+
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub use library::prepare::{
+    native_fixture, prepare_raw_origin_for_test, NativeFixture, PreparedTestOrigin,
 };
 
 pub use library::shape::{resolve_sibling_modules, transpile_ts};
@@ -99,7 +108,7 @@ pub use runtime::bindings::main_module_for_import_gate_test;
 
 pub use runtime::platform::bootstrap_v8_platform;
 
-pub use library::js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
+pub use library::js_cache::{default_js_cache_root, CacheMeta, CacheRole, CachedJs, JsCache};
 pub use library::rs2b0t_registry::{
     clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file, parse_registry,
     parse_registry_with_sources, persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path,

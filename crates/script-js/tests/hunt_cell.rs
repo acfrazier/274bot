@@ -1163,7 +1163,6 @@ export default class T extends LoopingBot {
 #[test]
 fn v2_cell_run_settles_true_for_a_keyless_site_and_false_for_kbd() {
     let src = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -1172,7 +1171,12 @@ export async function tick(api) {
   globalThis.__done = await api.cellRun({ key: 'brimhaven-iron', keyItem: null }, {});
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     for tick in 1..=3 {
         iso.post_snapshot(script_js::wire::encode_snapshot(&empty_snapshot(
             tick,

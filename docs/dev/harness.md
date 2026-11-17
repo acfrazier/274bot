@@ -253,7 +253,7 @@ scenario cells, besides the `host-play` live tests that seed a bank:
 `auto_fighter_bank`, `auto_fighter_food_override`, `auto_fighter_targets`,
 `bank_fletcher`, `bank_fletcher_cut_string`, `bank_fletcher_headless`,
 `bank_fletcher_shafts`, `bank_fletcher_string`, `bone_burier`,
-`bone_burier_v2_js`, `bone_burier_v2_ts`, `brimhaven_moss_inspect_v1`,
+`bone_burier_v2_ts`, `brimhaven_moss_inspect_v1`,
 `chaos_druid_bank`, `cook_bot`, `cook_bot_lobster`, `fire_giant_bank`,
 `fire_giant_bank_prepared`, `fire_giant_camelot_prepared`, `flax_aio_spin`,
 `flax_spinner`, `flour_collector`, `gem_cutter`, `gem_cutter_named`,
@@ -1396,17 +1396,15 @@ cargo run -p script-js --example regen_checked_in -- host-js
 ```
 
 The pinned TypeScript 5.8.3 consumer probes check the generated declarations,
-including the `gather_quest_v2.ts` sample. Its probe checks with and without
-`--strict`, emits JavaScript, and requires the checked-in
-`gather_quest_v2.js` to match that emit:
+including the `gather_quest_v2.ts` sample with and without `--strict`:
 
 ```sh
-cargo test -p script --test host_js -- --ignored tsc
+cargo test -p script-js --test host_js -- --ignored tsc
 ```
 
 ### Live cells
 
-The ignored `script_api_live` tests load the checked-in `gather_quest_v2.js`
+The ignored `script_api_live` tests load the checked-in `gather_quest_v2.ts`
 through the real Load path and exercise it against a local R289 server. The
 engine and game/cache endpoints must be reachable on `127.0.0.1:45594` and
 `127.0.0.1:2080`. Provide a matching `WORLD_ENGINE_DIR` and `WORLD_NAV_PACK`,

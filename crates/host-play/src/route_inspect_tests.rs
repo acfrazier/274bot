@@ -2516,12 +2516,8 @@ fn post_and_apply(
 #[cfg(feature = "js")]
 #[test]
 fn integrated_host_publish_bytes_isolate_ack_without_new_request() {
-    let src = r#"
-export const apiVersion = 2;
-export function tick() {}
-"#;
-    let iso = script_js::LoadIsolate::spawn(src.into(), script_js::LoadShape::NativeTick, vec![])
-        .unwrap();
+    let src = script_js::native_fixture("export function tick() {}");
+    let iso = script_js::LoadIsolate::spawn(src, script_js::LoadShape::NativeTick, vec![]).unwrap();
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
 
@@ -2807,11 +2803,7 @@ export function tick() {}
 #[cfg(feature = "js")]
 fn spawn_native_iso() -> script_js::LoadIsolate {
     script_js::LoadIsolate::spawn(
-        r#"
-export const apiVersion = 2;
-export function tick() {}
-"#
-        .into(),
+        script_js::native_fixture("export function tick() {}"),
         script_js::LoadShape::NativeTick,
         vec![],
     )
@@ -3322,7 +3314,7 @@ fn real_content_inspection_capture_bytes() {
         .lock()
         .unwrap()
         .start_load_settled(
-            "export const apiVersion = 2; export function tick() {}".to_string(),
+            script_js::native_fixture("export function tick() {}"),
             script_js::LoadShape::NativeTick,
             vec![],
         )

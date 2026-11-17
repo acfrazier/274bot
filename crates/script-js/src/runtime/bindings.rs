@@ -207,7 +207,7 @@ fn json_tile(value: Option<&serde_json::Value>) -> Option<api::WorldTile> {
 pub(super) fn wire_runtime(
     runtime: &mut Runtime,
     source: &str,
-    shape: LoadShape,
+    checked: crate::library::prepare::CheckedLoad,
     siblings: &[(String, String)],
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
@@ -217,14 +217,7 @@ pub(super) fn wire_runtime(
     loc_projection_interest: std::sync::Arc<std::sync::atomic::AtomicBool>,
     card_name: &str,
 ) -> Result<(), String> {
-    if shape == LoadShape::Reject {
-        return Err("not a bot shape".to_string());
-    }
     let source = crate::shim::remap_catalog_imports(source);
-    let family = match crate::library::shape::parse_declared_api_version(&source) {
-        Ok(Some(2)) => crate::library::shape::ApiFamily::V2,
-        _ => crate::library::shape::ApiFamily::Unversioned,
-    };
     runtime
         .register_function(
             "__rs2b0t_now",
@@ -867,7 +860,7 @@ pub(super) fn wire_runtime(
     crate::materialize::lineage_v8::eval::<()>(runtime, content.as_str())
         .map_err(|e| format!("content: {e}"))?;
     let bot = rustyscript::Module::new(crate::shim::BOT_MODULE, source);
-    let main = main_module(shape, family);
+    let main = main_module(checked.shape());
     // Side modules load in order, so the shim modules (which the bot imports)
     // must precede the bot's own module.
     let mut side = crate::shim::shim_modules();
@@ -904,35 +897,6 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("load: {e}"))?;
     Ok(())
 }
-
-/// Native wrapper: re-export the module's `tick` behind a global that
-/// receives the tick number and a persistent `api` object. `api` is a
-/// Proxy: the host owns it (`api.tick` is set each tick); reading or
-/// writing any other member throws `not impl` — a script stashes its own
-/// state elsewhere, never in host-owned slots. A synchronous tick returns
-/// `null`; an async one returns its never-rejecting settle promise, which
-/// the isolate thread holds so the tick is not re-entered while pending.
-const NATIVE_MAIN: &str = r#"
-import { tick } from './bot.js';
-const api = new Proxy({}, {
-get(target, prop) {
-    if (typeof prop === 'symbol') return undefined;
-    if (prop === 'tick') return target.tick;
-    throw new Error('not impl: api.' + String(prop));
-},
-set(target, prop, value) {
-    if (prop === 'tick') { target.tick = value; return true; }
-    throw new Error('not impl: api.' + String(prop));
-},
-});
-globalThis.__rs_api = api;
-globalThis.__rs_tick = (n) => {
-api.tick = n;
-const r = tick(api);
-if (!r || typeof r.then !== 'function') return null;
-return Promise.resolve(r).then(() => null, (e) => String((e && e.message) || e));
-};
-"#;
 
 /// Bind one bounded append-only host queue before any user module runs.
 /// Compat V1 direct pushes and V2 API requests share the same CPED capture.
@@ -1016,6 +980,7 @@ import { machineNow, runMachine } from '../../shim/_kernel.js';
 const SNAPSHOT_KEYS = new Set([
   'ingame','here','inv','inv_size','stats','bank','bank_side','bank_open','bank_loaded',
   'bank_generation','bank_snapshot_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
+  'bank_selection',
   'puzzle_board','puzzle_board_generation',
   'withdraw_x_result_seq','withdraw_x_result',
   'bank_op_result_seq','bank_op_result',  'walk_outcome_seq','walk_outcome_generation',
@@ -1740,12 +1705,11 @@ globalThis.__rs2b0t_compat_loop = () => __rs2b0t_invoke('loop');
 globalThis.__rs2b0t_compat_on_pause = () => __rs2b0t_invoke_sync('onPause');
 globalThis.__rs2b0t_compat_on_resume = () => __rs2b0t_invoke_sync('onResume');
 "#;
-fn main_module(shape: LoadShape, family: crate::library::shape::ApiFamily) -> rustyscript::Module {
+/// The host main module for a checked shape. A native tick card is always a
+/// manifest-form v2 card; preparation never yields a `Reject` load.
+fn main_module(shape: LoadShape) -> rustyscript::Module {
     match shape {
-        LoadShape::NativeTick if family == crate::library::shape::ApiFamily::V2 => {
-            rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_V2_MAIN)
-        }
-        LoadShape::NativeTick => rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_MAIN),
+        LoadShape::NativeTick => rustyscript::Module::new(crate::shim::MAIN_MODULE, NATIVE_V2_MAIN),
         LoadShape::CompatDefineBot => rustyscript::Module::new(
             crate::shim::MAIN_MODULE,
             format!("{COMPAT_MAIN}{COMPAT_RUNNER}"),
@@ -1754,15 +1718,12 @@ fn main_module(shape: LoadShape, family: crate::library::shape::ApiFamily) -> ru
             crate::shim::MAIN_MODULE,
             format!("{COMPAT_CLASS_MAIN}{COMPAT_RUNNER}"),
         ),
-        LoadShape::Reject => unreachable!("rejected above"),
+        LoadShape::Reject => unreachable!("a checked load is never Reject"),
     }
 }
 
 #[cfg(feature = "test-hooks")]
 #[doc(hidden)]
-pub fn main_module_for_import_gate_test(
-    shape: LoadShape,
-    family: crate::library::shape::ApiFamily,
-) -> rustyscript::Module {
-    main_module(shape, family)
+pub fn main_module_for_import_gate_test(shape: LoadShape) -> rustyscript::Module {
+    main_module(shape)
 }

@@ -21,7 +21,6 @@ use {
 const PAST_WINDOW_MS: u64 = 3_100;
 
 const SCRIPT: &str = r#"
-export const apiVersion = 2;
 globalThis.__questRequest = null;
 globalThis.__questStarted = false;
 globalThis.__questBegin = null;
@@ -235,7 +234,7 @@ impl Journal {
 
     fn with_script(js: &str) -> Self {
         Self {
-            iso: LoadIsolate::spawn(js.to_string(), LoadShape::NativeTick, vec![])
+            iso: LoadIsolate::spawn(script_js::native_fixture(js), LoadShape::NativeTick, vec![])
                 .expect("spawn quest-journal native isolate"),
             buf: IsolateBuf::new(),
             fingerprint: None,

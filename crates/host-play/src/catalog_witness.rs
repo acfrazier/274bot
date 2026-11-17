@@ -62,9 +62,6 @@ pub struct CoreWitness {
     pub brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle,
     pub route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle,
     pub prayer_delivery_cycle: PrayerDeliveryCycle,
-    pub line_of_sight_cycle: LineOfSightDeliveryCycle,
-    pub actor_observation_cycle: ActorObservationDeliveryCycle,
-    pub fight_field_cycle: FightFieldDeliveryCycle,
     pub hunt_cycle: HuntDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
@@ -140,9 +137,6 @@ impl CoreWitness {
             brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle::default(),
             route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle::default(),
             prayer_delivery_cycle: PrayerDeliveryCycle::default(),
-            line_of_sight_cycle: LineOfSightDeliveryCycle::default(),
-            actor_observation_cycle: ActorObservationDeliveryCycle::default(),
-            fight_field_cycle: FightFieldDeliveryCycle::default(),
             hunt_cycle: HuntDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
@@ -369,17 +363,8 @@ impl CoreWitness {
             self.route_inspect_brimhaven_v2_cycle
                 .observe(&self.baseline, observation);
         }
-        if matches!(self.case, CoreCase::PrayerV2 | CoreCase::PrayerV1) {
+        if matches!(self.case, CoreCase::PrayerV2) {
             self.prayer_delivery_cycle.observe(observation);
-        }
-        if matches!(self.case, CoreCase::LineOfSightV2) {
-            self.line_of_sight_cycle.observe(observation);
-        }
-        if matches!(self.case, CoreCase::ActorObservationV2) {
-            self.actor_observation_cycle.observe(observation);
-        }
-        if matches!(self.case, CoreCase::FightFieldV2) {
-            self.fight_field_cycle.observe(observation);
         }
         if let Some(cell) = self.case.hunt_cell() {
             self.hunt_cycle.observe(cell, &self.baseline, observation);
@@ -614,38 +599,13 @@ impl CoreWitness {
             CoreCase::RangingGuildFull => self
                 .ranging_guild_full_cycle
                 .observe_script_lifecycle(receipt),
-            CoreCase::PrayerV2 | CoreCase::PrayerV1 => {
+            CoreCase::PrayerV2 => {
                 if let Some(expected) = self.case.prayer_stop_reason() {
                     self.prayer_delivery_cycle
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
-            CoreCase::LineOfSightV2 => {
-                if let Some(expected) = self.case.los_stop_reason() {
-                    self.line_of_sight_cycle
-                        .observe_script_lifecycle(receipt, expected);
-                }
-            }
-            CoreCase::ActorObservationV2 => {
-                if let Some(expected) = self.case.actor_stop_reason() {
-                    self.actor_observation_cycle
-                        .observe_script_lifecycle(receipt, expected);
-                }
-            }
-            CoreCase::FightFieldV2 => {
-                if let Some(expected) = self.case.fight_field_stop_reason() {
-                    self.fight_field_cycle
-                        .observe_script_lifecycle(receipt, expected);
-                }
-            }
-            CoreCase::HoldSpotV2
-            | CoreCase::RetreatSpotV2
-            | CoreCase::WalkSpotV2
-            | CoreCase::EnterLairV2
-            | CoreCase::LeaveLairV2
-            | CoreCase::AcquireKeyV2
-            | CoreCase::CellV2
-            | CoreCase::BankV2 => {
+            CoreCase::WalkSpotV2 | CoreCase::AcquireKeyV2 | CoreCase::CellV2 | CoreCase::BankV2 => {
                 if let Some(cell) = self.case.hunt_cell() {
                     self.hunt_cycle
                         .observe_script_lifecycle(receipt, cell.stop_reason());
@@ -866,21 +826,12 @@ impl CoreWitness {
             CoreCase::RangingGuildFull => self.ranging_guild_full_cycle.qualified(),
             CoreCase::BrimhavenMossInspectV1 => self.brimhaven_moss_inspect_cycle.qualified(),
             CoreCase::RouteInspectBrimhavenV2 => self.route_inspect_brimhaven_v2_cycle.qualified(),
-            CoreCase::PrayerV2 | CoreCase::PrayerV1 => self.prayer_delivery_cycle.qualified(),
-            CoreCase::LineOfSightV2 => self.line_of_sight_cycle.qualified(),
-            CoreCase::ActorObservationV2 => self.actor_observation_cycle.qualified(),
-            CoreCase::FightFieldV2 => self.fight_field_cycle.qualified(),
-            CoreCase::HoldSpotV2
-            | CoreCase::RetreatSpotV2
-            | CoreCase::WalkSpotV2
-            | CoreCase::EnterLairV2
-            | CoreCase::LeaveLairV2
-            | CoreCase::AcquireKeyV2
-            | CoreCase::CellV2
-            | CoreCase::BankV2 => self
-                .case
-                .hunt_cell()
-                .is_some_and(|cell| self.hunt_cycle.qualified(cell)),
+            CoreCase::PrayerV2 => self.prayer_delivery_cycle.qualified(),
+            CoreCase::WalkSpotV2 | CoreCase::AcquireKeyV2 | CoreCase::CellV2 | CoreCase::BankV2 => {
+                self.case
+                    .hunt_cell()
+                    .is_some_and(|cell| self.hunt_cycle.qualified(cell))
+            }
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -978,8 +929,6 @@ impl CoreWitness {
             "brimhaven_moss_inspect_cycle": self.brimhaven_moss_inspect_cycle,
             "route_inspect_brimhaven_v2_cycle": self.route_inspect_brimhaven_v2_cycle,
             "prayer_delivery_cycle": self.prayer_delivery_cycle,
-            "line_of_sight_cycle": self.line_of_sight_cycle,
-            "fight_field_cycle": self.fight_field_cycle,
             "hunt_cycle": self.hunt_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
