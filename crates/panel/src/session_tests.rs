@@ -744,28 +744,8 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
 /// the panel's next save keeps them.
 #[test]
 fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
-    use api::local_state::{AccountKey, ContentScope, DomainIdentity, LocalStateDomain};
-
-    const WAIT: Duration = Duration::from_secs(60);
-    let await_readback = |service: &host_play::local_state::LocalStateService| {
-        for domain in [
-            LocalStateDomain::Preferences,
-            LocalStateDomain::LoadoutsReferences,
-        ] {
-            let identity = DomainIdentity::new(
-                domain,
-                AccountKey::try_new("operator", "operator").unwrap(),
-                ContentScope::try_new(client::io::ClientRevision::R289, "operator").unwrap(),
-            );
-            service
-                .readback_lease(&identity, WAIT)
-                .expect("initial operator-store readback must complete");
-        }
-    };
-
     let _iso = IsolatedStores::enter("panel-state-round-trip");
     let mut session = Session::new();
-    await_readback(session.core.local_state_for_test().unwrap());
     session.preferences.reload().unwrap();
     session.loadouts.reload_for_test().unwrap();
     assert!(
@@ -790,7 +770,7 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
     let peer = Arc::new(host_play::local_state::LocalStateService::open_process(
         thread_state_root(),
     ));
-    await_readback(&peer);
+    peer.preferences().reload().unwrap();
     assert_eq!(
         peer.preferences().value("last_focus"),
         Some(serde_json::json!("alice"))

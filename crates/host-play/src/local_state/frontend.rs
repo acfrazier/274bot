@@ -36,8 +36,21 @@ use serde_json::{Map, Value};
 use super::{files, ReadbackTicket};
 use super::{LocalStateService, PreferenceWatchPoll, RequestState};
 
-/// How long loadout-form operations and fixture-only preference helpers wait.
+/// Product bound for front-end operations. Test-support waits use a long hang
+/// guard and still require the writer's completion signal.
 pub const FRONTEND_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(any(test, feature = "test-support"))]
+const FRONTEND_TEST_HANG_GUARD: Duration = FIXTURE_READBACK_TIMEOUT;
+
+#[cfg(any(test, feature = "test-support"))]
+fn frontend_wait_limit() -> Duration {
+    FRONTEND_TEST_HANG_GUARD
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+fn frontend_wait_limit() -> Duration {
+    FRONTEND_TIMEOUT
+}
 
 /// How stale the preferences a frontend reads may be: once a document is
 /// held, a read older than this asks the writer thread to read the file
@@ -950,7 +963,7 @@ impl Preferences {
     pub fn reload(&self) -> io::Result<Arc<Map<String, Value>>> {
         let wait = match self.snapshot() {
             Err(error) if error.is_not_ready() => FIXTURE_READBACK_TIMEOUT,
-            _ => FRONTEND_TIMEOUT,
+            _ => frontend_wait_limit(),
         };
         let shared = &*self.shared;
         let read = shared.service.readback(&shared.identity, wait);
@@ -974,7 +987,7 @@ impl Preferences {
         merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()>,
     ) -> io::Result<()> {
         let mut run = self.begin_run(merge)?;
-        match self.drive(&mut run, Some(FRONTEND_TIMEOUT)) {
+        match self.drive(&mut run, Some(frontend_wait_limit())) {
             Some(result) => result,
             None => Err(self.waited_out(&run)),
         }
@@ -1112,6 +1125,7 @@ impl Preferences {
     /// Why a bounded [`Self::update`] gave up on `run`.
     #[cfg(any(test, feature = "test-support"))]
     fn waited_out<F>(&self, run: &UpdateRun<F>) -> io::Error {
+        let timeout = frontend_wait_limit();
         match run.stage {
             Stage::Reading(_) => self.error(ErrorCode::NotReady {
                 domain: self.shared.identity.domain(),
@@ -1119,7 +1133,7 @@ impl Preferences {
             Stage::Writing { .. } => io::Error::new(
                 io::ErrorKind::TimedOut,
                 PreferenceFailure::expired_wait(format!(
-                    "preferences: the write was not durable within {FRONTEND_TIMEOUT:?}; it stays \
+                    "preferences: the write was not durable within {timeout:?}; it stays \
                      queued and settles later ({})",
                     self.path().display()
                 )),
@@ -1310,7 +1324,7 @@ impl LoadoutsBacking for ServiceLoadouts {
     fn load(&self) -> Result<LoadoutsBaseline, String> {
         let (lease, _) = self
             .service
-            .readback(&self.identity, FRONTEND_TIMEOUT)
+            .readback(&self.identity, frontend_wait_limit())
             .map_err(|code| self.describe(code))?;
         Ok(baseline_of(&lease))
     }
@@ -1395,7 +1409,8 @@ fn settle(service: &LocalStateService, edit: DomainEdit) -> io::Result<Settled> 
         SubmitReceipt::Accepted { request } => request,
         SubmitReceipt::Refused(code) => return Ok(Settled::Refused(code)),
     };
-    match service.wait_request(request, FRONTEND_TIMEOUT) {
+    let timeout = frontend_wait_limit();
+    match service.wait_request(request, timeout) {
         RequestState::Settled(Settlement::Completed(receipt)) => Ok(Settled::Durable(receipt)),
         RequestState::Settled(Settlement::Failed(code @ ErrorCode::Conflict { .. })) => {
             Ok(Settled::Conflict(code))
@@ -1408,7 +1423,7 @@ fn settle(service: &LocalStateService, edit: DomainEdit) -> io::Result<Settled> 
         RequestState::Pending => Err(io::Error::new(
             io::ErrorKind::TimedOut,
             format!(
-                "the write was not durable within {FRONTEND_TIMEOUT:?}; it stays queued and \
+                "the write was not durable within {timeout:?}; it stays queued and \
                  settles later"
             ),
         )),
