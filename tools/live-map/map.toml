@@ -2393,14 +2393,24 @@ cells = [
   "host.keys-377-native-duration-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} PARITY_KEYS_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact keys::native_key_duration_377 --nocapture --test-threads=1",
 ]
 
-# P00 exercises the real 377 login path; controlled sockets prove refusals and fragments.
+# Shared login and I/O paths use the checked-in Java wire fixture without a world.
+# Reviewers add the two 377 live cells when shared hunks change 377 login code.
 [[cover]]
 globs = [
   "vendor/fr-client-rust/crates/client/src/client/client.rs",
   "vendor/fr-client-rust/crates/client/src/io/**",
 ]
 cells = [
+  "client.protocol-377-wire-headless|${ISOHOME:?} cargo test --locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --test revision_377_wire -- --nocapture|--locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --test revision_377_wire --",
+]
+
+# Revision-specific protocol changes select both 377 login/world cells.
+[[cover]]
+globs = [
+  "vendor/fr-client-rust/crates/client/src/client/outbound_377.rs",
+  "vendor/fr-client-rust/crates/client/src/io/client_prot_377.rs",
+]
+cells = [
   "host.receipt-377-client-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p tui --bin tui-play -- --revision 377 --engine ${ENGINE_377_DIR:?} --cache ${CLIENT_377_CACHE_DIR:?} --unpack ${CLIENT_377_UNPACK_DIR:?} --nav-pack ${NAV_PACK_377:?} --nav-flags ${NAV_FLAGS_377:?} --live script_client_377|--locked -p scenario --features api/test-support --lib receipt_",
   "host.menu-377-hans-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact live_377_attaches_walks_and_interacts_with_numeric_npc --nocapture --test-threads=1",
-  "client.protocol-377-wire-headless|${ISOHOME:?} cargo test --locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --test revision_377_wire -- --nocapture|--locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --test revision_377_wire --",
 ]
