@@ -616,6 +616,35 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(plan.uncovered, ())
             self.assertEqual(plan.unclassified, ("mystery/file.rs",))
 
+    def test_shared_protocol_paths_select_headless_without_377_live_cells(self) -> None:
+        config = load_map()
+        for path in (
+            "vendor/fr-client-rust/crates/client/src/client/client.rs",
+            "vendor/fr-client-rust/crates/client/src/io/ondemand.rs",
+            "vendor/fr-client-rust/crates/client/src/io/packet.rs",
+        ):
+            with self.subTest(path=path):
+                plan = make_plan([path], config)
+                self.assertEqual(
+                    {cell.name for cell in plan.cells if "377" in cell.name},
+                    {"client.protocol-377-wire-headless"},
+                )
+                self.assertEqual(plan.uncovered, ())
+                self.assertEqual(plan.unclassified, ())
+
+    def test_377_protocol_paths_select_both_live_cells(self) -> None:
+        config = load_map()
+        required = {"host.receipt-377-client-live", "host.menu-377-hans-live"}
+        for path in (
+            "vendor/fr-client-rust/crates/client/src/client/outbound_377.rs",
+            "vendor/fr-client-rust/crates/client/src/io/client_prot_377.rs",
+        ):
+            with self.subTest(path=path):
+                plan = make_plan([path], config)
+                self.assertTrue(required.issubset({cell.name for cell in plan.cells}))
+                self.assertEqual(plan.uncovered, ())
+                self.assertEqual(plan.unclassified, ())
+
     def test_diff_expands_real_submodule_paths_and_requires_missing_commit_fetch(self) -> None:
         raw_evidence = os.environ.get("LIVE_MAP_TEST_TMPDIR")
         raw_root = os.environ.get("LIVE_EVIDENCE_DIR")
@@ -685,6 +714,7 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(
                 {cell.name for cell in login_plan.cells},
                 {
+                    "client.protocol-377-wire-headless",
                     "host.scriptless-idle-held",
                     "host.transport-dead-server",
                     "host.transport-relog",
@@ -733,6 +763,7 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(
                 {cell.name for cell in moved_plan.cells},
                 {
+                    "client.protocol-377-wire-headless",
                     "host.scriptless-idle-held",
                     "host.transport-dead-server",
                     "host.transport-relog",

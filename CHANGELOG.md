@@ -5,6 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
+### Revision 377 login
+
+- Revision 377 login failures show clearer messages. An outdated-client
+  refusal asks you to reload the page instead of suggesting a login-key problem.
+
 ### Scenario observations
 
 - Scenario runners can extract cache-defined varbits with a no-send step.
