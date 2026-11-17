@@ -12626,10 +12626,11 @@ fn m0_timeout_without_an_eligible_moment_is_invalid_not_fail() {
 
 /// A real `ScenarioRunner` that failed (review-r3-sol/deadline-probe.rs):
 /// one step whose arm `stat(16)>=999` never holds on a seeded test client.
-/// A one-tick budget gives a step failure in the first tick. A budget of
-/// 999 ticks with a zero deadline gives the runner's deadline failure in
-/// the first tick. Returns the runner, its error and the time from just
-/// before the runner was made to the read of its status.
+/// A one-tick budget needs a dispatch poll and a later game tick. For the
+/// zero-deadline case, the helper keeps a live deadline until the step fails.
+/// It then restores the requested deadline before the caller reads status.
+/// A 999-tick budget with a zero deadline still fails on the first poll.
+/// Returns the runner, its error and the time from construction to status read.
 fn m0_failed_runner(deadline: Duration, budget_ticks: u32) -> (ScenarioRunner, String, Duration) {
     use client::client::{Client, ClientConfig, ClientPlayer};
     use client::io::ServerProt;
@@ -12655,6 +12656,12 @@ fn m0_failed_runner(deadline: Duration, budget_ticks: u32) -> (ScenarioRunner, S
         c.bump_gens(prot);
     }
     let arm = Proof::Stat { id: 16, min: 999 };
+    let defer_deadline = deadline == Duration::ZERO && budget_ticks == 1;
+    let run_deadline = if defer_deadline {
+        Duration::from_secs(600)
+    } else {
+        deadline
+    };
     let scenario = Scenario {
         name: "m0-runner-failure",
         seed: scenario::Seed {
@@ -12671,7 +12678,7 @@ fn m0_failed_runner(deadline: Duration, budget_ticks: u32) -> (ScenarioRunner, S
         proof: arm,
         companions: vec![],
         settings: scenario::ScenarioSettings {
-            deadline,
+            deadline: run_deadline,
             ..Default::default()
         },
     };
@@ -12679,9 +12686,17 @@ fn m0_failed_runner(deadline: Duration, budget_ticks: u32) -> (ScenarioRunner, S
     let mut runner = ScenarioRunner::new(scenario);
     runner.set_scene_settle(Duration::ZERO);
     runner.tick(&mut c);
+    if budget_ticks == 1 {
+        assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+    }
     let RunnerStatus::Failed(error) = runner.status() else {
         panic!("the real runner must fail, got {:?}", runner.status());
     };
+    if defer_deadline {
+        runner.set_deadline(deadline);
+    }
     (runner, error, made.elapsed())
 }
 
