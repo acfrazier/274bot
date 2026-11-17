@@ -7,9 +7,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Revision 377 login
 
-- Login refusals for codes 6, 18 and 22–26 now use the reference client's
-  messages. Code 6 no longer identifies the login key as the only cause.
-  Revisions 274 and 289 retain their existing messages and retry behavior.
+- Revision 377 login failures show clearer messages. An outdated-client
+  refusal asks you to reload the page instead of suggesting a login-key problem.
 
 ### Scenario observations
 
