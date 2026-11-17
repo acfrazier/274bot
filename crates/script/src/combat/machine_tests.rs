@@ -5943,6 +5943,40 @@ fn melee_prep_waits_for_split_weapon_wear_frame() {
     assert!(matches!(harness.poll(&scene.snapshot, 3), Poll::Pending));
     harness.drain(None);
     assert_eq!(harness.machine.end, None);
+
+    let mut missing_scene = Scene::new("cow");
+    let missing_sword = missing_scene.held("bronze_scimitar", 0);
+    let missing_id = missing_sword.def.id;
+    missing_scene.inventory.push(missing_sword.clone());
+    missing_scene.refresh();
+
+    let mut missing_request = missing_scene.request();
+    missing_request.set_kit(Arc::new(CompiledKit {
+        worn: Arc::from([(3, missing_id)]),
+        ..CompiledKit::default()
+    }));
+    let mut missing_harness = Harness::new(&missing_scene, missing_request);
+
+    let missing_first = missing_harness.pending_batch(&missing_scene, 1);
+    assert!(contains_wear(
+        &missing_first,
+        missing_sword.def.name.as_deref().unwrap()
+    ));
+
+    missing_scene.inventory.clear();
+    missing_scene.refresh();
+    assert!(matches!(
+        missing_harness.poll(&missing_scene.snapshot, 2),
+        Poll::Pending
+    ));
+    assert_eq!(missing_harness.drain(None).len(), 0);
+    assert_eq!(missing_harness.machine.end, None);
+
+    let report = missing_harness.ready(&missing_scene, 3);
+    assert_eq!(
+        report.end,
+        CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Weapon))
+    );
 }
 
 #[test]
