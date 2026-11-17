@@ -314,6 +314,14 @@ class FixedTest(Fixture):
         self.assertTrue(known_issues.applies(item, "1.1.0", self.order))
         self.assertFalse(known_issues.applies(item, "1.2.0", self.order))
 
+    def test_next_minor_first_release_loads(self):
+        text = FIXED_LEDGER.replace('first = "1.0.0"', 'first = "1.2.0"')
+        self.ledger.write_text(text, encoding="utf-8")
+        items = known_issues.load_ledger(self.ledger, self.order)
+        item = next(item for item in items if item["id"] == "alpha-gap")
+        self.assertFalse(known_issues.applies(item, "1.1.0", self.order))
+        self.assertTrue(known_issues.applies(item, "1.2.0", self.order))
+
     def test_fixed_release_can_match_the_next_minor_target(self):
         text = FIXED_LEDGER.replace(
             'target = "1.1.0"', 'target = "1.2.0"').replace(
@@ -413,14 +421,22 @@ class ClosedTest(Fixture):
 
 
 class SkippedReleaseTest(Fixture):
-    def test_skip_is_rejected_for_fixed_closed_and_earlier_until(self):
+    def test_skip_is_rejected_for_every_release_reference(self):
         self.order = ["0.2.6", "0.2.7", "0.2.8", "0.2.9", "0.2.9.1"]
         earlier_base = CLOSED_LEDGER.replace(
             'first = "1.0.0"', 'first = "0.2.6"')
         skipped_earlier = (
             earlier_base.replace('closed = "1.2.0"', 'closed = "0.3.0"')
             + '\n[[item.earlier]]\nuntil = "0.4.0"\ntext = "Old wording."\n')
+        common_base = LEDGER.replace(
+            'first = "1.0.0"', 'first = "0.2.6"').replace(
+                'first = "1.0.1"', 'first = "0.2.6"')
         cases = {
+            "first": common_base.replace(
+                'first = "0.2.6"', 'first = "0.4.0"', 1),
+            "listed": common_base.replace(
+                'first = "0.2.6"\ntarget = "none"',
+                'first = "0.2.6"\nlisted = "0.4.0"\ntarget = "none"', 1),
             "fixed": FIXED_LEDGER.replace(
                 'first = "1.0.0"', 'first = "0.2.6"').replace(
                     'first = "1.0.1"', 'first = "0.2.6"').replace(
@@ -620,6 +636,13 @@ class ListedTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.load_text(LAMP_ITEM.replace('first = "0.2.0"', 'first = "0.2.6"'))
 
+    def test_next_minor_listed_release_loads(self):
+        dial = DIAL_ITEM.replace('listed = "0.2.5"', 'listed = "0.3.0"')
+        items = self.load_text(dial + LAMP_ITEM)
+        self.assertEqual(items[0]["listed"], "0.3.0")
+        self.assertFalse(known_issues.applies(items[0], "0.2.4", self.order))
+        self.assertTrue(known_issues.applies(items[0], "0.3.0", self.order))
+
     def test_reworded_item_keeps_published_wording(self):
         old = "The lamp flickers on a cold start. A fix is planned for 0.2.5."
         self.items = self.load_text(LAMP_ITEM.replace(
@@ -746,6 +769,12 @@ class NextReleaseTest(unittest.TestCase):
         self.assertEqual(
             known_issues.next_releases(["0.2.9.1"]),
             ("0.2.9.2", "0.3.0"))
+
+    def test_carried_sentence_orders_next_patch_before_next_minor(self):
+        order = ["0.2.6", "0.2.7", "0.2.8", "0.2.9", "0.2.9.1"]
+        self.assertEqual(
+            known_issues.carried_sentence("0.2.9.1", "0.3.0", order),
+            "0.2.9.1 to 0.2.9.2 have the same problem.")
 
     def test_changelog_releases_skips_bracketed_unreleased(self):
         with tempfile.TemporaryDirectory() as directory:
