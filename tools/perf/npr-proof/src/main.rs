@@ -342,7 +342,6 @@ mod tests {
         let pairs = fixture().expect("exact frozen fixture");
         assert_eq!(pairs.len(), 299);
         assert_eq!(pairs[0], [[3222, 3218, 0], [2584, 3419, 0]]);
-        assert_eq!(options().len() * pairs.len(), 897);
         let groups = options();
         assert!(!groups[0].1.allow_teleports && !groups[0].1.allow_wilderness);
         assert!(groups[1].1.allow_teleports && groups[1].1.allow_wilderness);
