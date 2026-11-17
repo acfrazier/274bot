@@ -638,6 +638,7 @@ fn hans_patrol_points(source: &str) -> Result<Vec<(WorldTile, u32)>, String> {
         .collect())
 }
 
+// Npc::patrolMode, Npc.ts:760-765: increment before testing this threshold.
 fn hans_stuck_ticks(source: &str) -> Result<u32, String> {
     source
         .split_once("this.stuckCounter >= ")
@@ -1111,6 +1112,33 @@ fn hans_present_without_dialogue_still_expires() {
         hans_approach_action(&snapshot, 70, 4, false, None),
         HansApproachAction::Deadline
     ));
+}
+
+#[test]
+fn nightly_quiet_lock_environment_probe() {
+    let expected = std::env::var_os("NIGHTLY_QUIET_LOCK")
+        .is_some_and(|path| !path.is_empty() && Path::new(&path).exists());
+    assert_eq!(nightly_quiet_lock_held(), expected);
+}
+
+#[test]
+fn nightly_quiet_lock_callsite_uses_the_configured_variable() -> Result<(), String> {
+    let home = ScratchHome::new()?;
+    let lock = home.0.join("callsite-quiet");
+    fs::create_dir(&lock).map_err(|error| error.to_string())?;
+    let result = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+        .args(["--exact", "nightly_quiet_lock_environment_probe", "--nocapture"])
+        .env("NIGHTLY_QUIET_LOCK", &lock)
+        .env_remove("NIGHTLY_QUIET_LOCK_WRONG")
+        .output()
+        .map_err(|error| error.to_string())?;
+    assert!(
+        result.status.success(),
+        "quiet-lock call-site subprocess: {}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Ok(())
 }
 
 #[test]
