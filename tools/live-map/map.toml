@@ -111,6 +111,13 @@ globs = [
   "crates/script-js/src/**",
   "crates/script-js/examples/guardian_claim_toggle.js",
   "crates/script-js/examples/combat_showcase_v2.ts",
+  "crates/script-js/examples/bank_v2.ts",
+  "crates/script-js/examples/bone_burier_v2.ts",
+  "crates/script-js/examples/clue_pack_v2.ts",
+  "crates/script-js/examples/gather_quest_v2.ts",
+  "crates/script-js/examples/prayer_v2.ts",
+  "crates/script-js/examples/route_inspect_brimhaven_v2.ts",
+  "crates/script-js/examples/walk_spot_v2.ts",
   "crates/script/fonts/**",
   "crates/script-js/compat-js/*.json",
   "crates/script-js/compat-js/*.d.ts",
@@ -285,6 +292,45 @@ globs = [
   # and the BR2-S3 change adds one non-map row, so no path compiles differently.
   "crates/nav-planner/src/required-content-274.tsv",
   "crates/nav-planner/src/required-content-289.tsv",
+  # The v2 manifest cutover deleted these example cards, their scenarios and
+  # the catalog-core cases that only they used. Remove an entry if that path
+  # returns to tracked source; it then needs live coverage again.
+  "crates/host-play/src/catalog_actor.rs",
+  "crates/host-play/src/catalog_fight_field.rs",
+  "crates/host-play/src/catalog_los.rs",
+  "crates/scenario/src/scenarios/acquire_key.rs",
+  "crates/scenario/src/scenarios/actor_observation.rs",
+  "crates/scenario/src/scenarios/cell.rs",
+  "crates/scenario/src/scenarios/enter_lair.rs",
+  "crates/scenario/src/scenarios/fight_field.rs",
+  "crates/scenario/src/scenarios/hold_spot.rs",
+  "crates/scenario/src/scenarios/leave_lair.rs",
+  "crates/scenario/src/scenarios/line_of_sight.rs",
+  "crates/scenario/src/scenarios/retreat_spot.rs",
+  "crates/script-js/examples/acquire_key_v2.ts",
+  "crates/script-js/examples/actor_observation_v2.ts",
+  "crates/script-js/examples/bone_burier_v2.js",
+  "crates/script-js/examples/cell_v2.ts",
+  "crates/script-js/examples/clue_facts_v2.ts",
+  "crates/script-js/examples/clue_hard_kit_v2.ts",
+  "crates/script-js/examples/clue_held_step_v2.ts",
+  "crates/script-js/examples/clue_keep_v2.ts",
+  "crates/script-js/examples/enter_lair_v2.ts",
+  "crates/script-js/examples/fight_field_v2.ts",
+  "crates/script-js/examples/fight_v2.ts",
+  "crates/script-js/examples/gather_methods_v2.ts",
+  "crates/script-js/examples/gather_placements_v2.ts",
+  "crates/script-js/examples/gather_quest_v2.js",
+  "crates/script-js/examples/hold_spot_v2.ts",
+  "crates/script-js/examples/leave_lair_v2.ts",
+  "crates/script-js/examples/line_of_sight_v2.ts",
+  "crates/script-js/examples/loadout_potion_v2.ts",
+  "crates/script-js/examples/prayer_v1.ts",
+  "crates/script-js/examples/quest_facts_v2.ts",
+  "crates/script-js/examples/quest_status_v2.ts",
+  "crates/script-js/examples/retreat_spot_v2.ts",
+  "crates/script-js/examples/scene_observe_v2.ts",
+  "crates/script-js/examples/supply_helpers_v2.ts",
   # ADR 0019 retires these exact tracked paths. Remove an entry if that path
   # returns to tracked source; deleted-path reporting stays a separate follow-up.
   "crates/api/src/family_asset.rs",
@@ -1748,10 +1794,7 @@ cells = [
 [[cover]]
 globs = [
   "crates/host-play/src/live_start.rs",
-  "crates/host-play/src/catalog_actor.rs",
   "crates/host-play/src/catalog_core_hunt.rs",
-  "crates/host-play/src/catalog_fight_field.rs",
-  "crates/host-play/src/catalog_los.rs",
   "crates/host-play/src/catalog_observation.rs",
   "crates/host-play/src/catalog_watch.rs",
 ]
@@ -1949,6 +1992,70 @@ cells = [
   "scenario.boat-fare-retry-live|for fare_case in boat_fare_v1_ts boat_fare_far_start_v1_ts boat_fare_reconnect_v1_ts; do fare_evidence=${LIVE_EVIDENCE_DIR:?}/${fare_case}; LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=47594 BOT_HTTP_PORT=3080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${fare_evidence} BOT_EVIDENCE_DIR=${fare_evidence} ISOHOME_DIR=${fare_evidence}/home ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 47594 --asset-host 127.0.0.1 --http-port 3080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_${fare_case}; fare_rc=$?; if [ $fare_rc -ne 0 ]; then exit $fare_rc; fi; done|--locked -p script-js --lib compat::boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact",
   "script-js.boat-fare-compat-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib compat::boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact --nocapture --test-threads=1|--locked -p script-js --lib compat::boat_fare::tests::walk_to_retries_a_failed_luthas_approach_and_completes -- --exact",
   "script-js.reach-entity-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib compat::reach_entity::tests::npc_dialog_reach_reclicks_each_tick_after_a_timeout_for_eight_rounds -- --exact --nocapture --test-threads=1|--locked -p script-js --lib compat::reach_entity::tests::npc_dialog_reach_reclicks_each_tick_after_a_timeout_for_eight_rounds -- --exact",
+]
+
+# The kept manifest-form v2 File cards. Each live cell starts its example from
+# the File store through the scenario card (`start_file` in
+# scenarios/{bank,walk_spot,prayer,route_inspect}.rs and catalog.rs:623 for
+# Bone Burier). Bone Burier's prepared world is the `bone_burier_v2` preset that
+# frontend-core/src/live/mod.rs:1931 reads through `fixture_preset_for`
+# (scenario/src/fixture.rs:419). The scenario library tests check each card's
+# shape; jive.rs changed only in doc comments, so its cards need only that build.
+[[cover]]
+globs = [
+  "crates/scenario/src/fixture.rs",
+  "crates/scenario/src/scenarios/bank.rs",
+  "crates/scenario/src/scenarios/jive.rs",
+  "crates/scenario/src/scenarios/prayer.rs",
+  "crates/script-js/examples/bank_v2.ts",
+  "crates/script-js/examples/bone_burier_v2.ts",
+  "crates/script-js/examples/prayer_v2.ts",
+  "crates/script-js/examples/route_inspect_brimhaven_v2.ts",
+  "crates/script-js/examples/walk_spot_v2.ts",
+]
+cells = [
+  "scenario.bank-v2-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_bank_v2_ts|--locked -p scenario --features api/test-support --lib scenarios::bank::tests::bank_card_starts_at_the_falador_fountain -- --exact",
+  "scenario.bone-burier-v2-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_bone_burier_v2_ts|--locked -p scenario --features api/test-support --lib fixture::tests::bone_burier_v2_fixture_prereqs_exclude_bank_contents -- --exact",
+  "scenario.prayer-v2-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_prayer_v2_ts|--locked -p scenario --features api/test-support --lib scenarios::prayer::tests::v2_prestart_reads_points_and_overlay_before_start -- --exact",
+  "scenario.route-inspect-brimhaven-v2-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_route_inspect_brimhaven_v2_ts|--locked -p scenario --features api/test-support --lib scenarios::route_inspect::tests::v2_",
+  "scenario.walk-spot-v2-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_walk_spot_v2_ts|--locked -p scenario --features api/test-support --lib scenarios::walk_spot::tests::file_card_uses_mainland_seed_and_named_stop -- --exact",
+  "scenario.lib-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib",
+]
+
+# The catalog-core witness (catalog_core.rs with its #[path] children
+# catalog_case.rs, catalog_prayer.rs and catalog_witness.rs) runs only when a
+# `--live` run is qualified under `--catalog-core` (tui/src/bin.rs:111-113,
+# host-play/src/live_gate.rs:113-119). The cutover removed the deleted cards'
+# cases; Prayer V2 is the kept case whose witness arms changed
+# (catalog_witness.rs, `CoreCase::PrayerV2`). The headless watch tests drive
+# CoreWatch with controlled observations, including the Prayer V2 order.
+[[cover]]
+globs = [
+  "crates/host-play/src/catalog_case.rs",
+  "crates/host-play/src/catalog_core.rs",
+  "crates/host-play/src/catalog_prayer.rs",
+  "crates/host-play/src/catalog_witness.rs",
+]
+cells = [
+  "scenario.prayer-v2-catalog-core-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_prayer_v2_ts --catalog-core|--locked -p host-play --test catalog_core_watch prayer_v2_requires_baseline_off_then_on_then_off_and_named_stop -- --exact",
+  "host.catalog-core-watch-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test catalog_core_watch",
+]
+
+# Kept examples outside the scenario cards. The gather-and-quest live cell
+# loads gather_quest_v2.ts from the File path (host-play/tests/script_api_live.rs:671-678),
+# and the pinned TypeScript check compiles its manifest export against the
+# generated declarations (script-js/tests/host_js.rs:537-541). clue_pack_v2.ts
+# has no live card; its only consumer is the clue-pack contract test
+# (script-js/tests/clue_pack.rs:298-310).
+[[cover]]
+globs = [
+  "crates/script-js/examples/clue_pack_v2.ts",
+  "crates/script-js/examples/gather_quest_v2.ts",
+]
+cells = [
+  "host.script-api-gather-and-quest|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_api_gather_and_quest --nocapture --test-threads=1",
+  "compat.clue-pack-example-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test clue_pack -- --exact example_clue_pack_v2_is_one_read_only_plan_call",
+  "script-js.gather-quest-sample-tsc|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test host_js -- --ignored --exact tsc_gather_quest_sample_type_checks",
 ]
 
 # Process logging I/O: a controlled failing writer, not game-world proof.
