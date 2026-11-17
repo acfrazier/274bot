@@ -339,5 +339,8 @@ name = "load_picker"
 [[example]]
 name = "catalog_inventory"
 
+[[example]]
+name = "regen_checked_in"
+
 [lints]
 workspace = true

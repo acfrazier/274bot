@@ -4,12 +4,15 @@
 //! first (cold-search) duration separately from warm repetitions. Search
 //! scratch is reported as allocated entry capacities, not invented byte
 //! precision for `HashMap` buckets.
+//! This example only measures: it asserts nothing about route content. The
+//! corpus's correctness invariants run in `nav-planner`'s unit tests
+//! (`src/perf_corpus_tests.rs`).
 //! `NAV_PERF_COUNTERS_ONLY=1` disables every clock read and reports only
 //! deterministic outcomes, settled nodes and scratch capacities.
 
 use api::snapshot::WorldTile;
 use nav_planner::router::{
-    find_blocking_zones, find_first_with, find_many_with, FindOptions, RouteError, SearchCapacities,
+    find_blocking_zones, find_first_with, find_many_with, FindOptions, SearchCapacities,
 };
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
@@ -335,12 +338,12 @@ fn main() -> Result<(), String> {
                 &low,
             );
             let reached = search.results().iter().filter(|r| r.is_ok()).count();
-            assert_eq!(
-                (reached, bank_targets.len(), search.completion_partitions()),
-                (17, 19, 0)
-            );
             Observation {
-                outcome: format!("reached:{reached}/{}", bank_targets.len()),
+                outcome: format!(
+                    "reached:{reached}/{} partitions:{}",
+                    bank_targets.len(),
+                    search.completion_partitions()
+                ),
                 settled: search.settled(),
                 scratch: search.scratch_capacities(),
             }
@@ -379,10 +382,10 @@ fn main() -> Result<(), String> {
                 FindOptions::default(),
                 &rich,
             );
-            assert_eq!(
-                search.route().expect_err("Zone policy refuses this route"),
-                RouteError::NoPath
-            );
+            // Correctness of the refusal and its witness is held by
+            // `perf_corpus_tests` in the nav-planner test lane; this case
+            // only records what the search reported.
+            let refusal = search.route().err();
             let blocked = find_blocking_zones(
                 &world.collision,
                 &world.graph,
@@ -391,18 +394,14 @@ fn main() -> Result<(), String> {
                 FindOptions::default(),
                 &rich,
                 &[],
-            )
-            .expect("zone refusal witness");
-            let table = world.graph.zones.as_ref().expect("v12 zones");
-            let mut names: Vec<_> = blocked.iter().map(|&key| table.name(key)).collect();
-            names.sort_unstable();
-            assert_eq!(
-                names,
-                vec!["white-wolf-mountain", "wolf@2647,3584,0"],
-                "single-target refusal reports only the best relaxed-route witness"
             );
+            let mut names: Vec<_> = match (&blocked, world.graph.zones.as_ref()) {
+                (Some(keys), Some(table)) => keys.iter().map(|&key| table.name(key)).collect(),
+                _ => Vec::new(),
+            };
+            names.sort_unstable();
             Observation {
-                outcome: format!("NoPath blocked:{names:?}"),
+                outcome: format!("{refusal:?} blocked:{names:?}"),
                 settled: search.settled(),
                 scratch: search.scratch_capacities(),
             }
@@ -421,21 +420,20 @@ fn main() -> Result<(), String> {
                 FindOptions::default(),
                 &rich,
             );
-            let route = search.route(0).expect("rich-state back-ridge route");
-            let tiles: usize = route
-                .legs
-                .iter()
-                .map(|leg| match leg {
-                    nav_planner::router::Leg::Walk { tiles } => tiles.len(),
-                    nav_planner::router::Leg::Transport { .. } => 1,
-                })
-                .sum();
-            // Combat 126: nav-wwm-route's collision-flood hunter zones open the
-            // back of White Wolf Mountain above combat 50 (356 tiles, 177.5
-            // ticks, NAV-WWM-ROUTE report §Routes), replacing the 683-tile detour.
-            assert_eq!((route.ticks, tiles), (177.5, 356));
+            // Route length is reported, not asserted: the monotone-in-
+            // permissions invariant lives in `perf_corpus_tests`.
+            let tiles = search.route(0).ok().map(|route| {
+                route
+                    .legs
+                    .iter()
+                    .map(|leg| match leg {
+                        nav_planner::router::Leg::Walk { tiles } => tiles.len(),
+                        nav_planner::router::Leg::Transport { .. } => 1,
+                    })
+                    .sum::<usize>()
+            });
             Observation {
-                outcome: format!("{:?}", search.results()[0]),
+                outcome: format!("{:?} tiles:{tiles:?}", search.results()[0]),
                 settled: search.settled(),
                 scratch: search.scratch_capacities(),
             }

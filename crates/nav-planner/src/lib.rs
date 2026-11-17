@@ -52,3 +52,7 @@ mod service_pick_tests;
 #[cfg(test)]
 #[path = "world_memory_tests.rs"]
 pub(crate) mod world_memory_tests;
+
+#[cfg(test)]
+#[path = "perf_corpus_tests.rs"]
+mod perf_corpus_tests;

@@ -1,5 +1,5 @@
 // Host JS living index.d.ts — our verbs, not rs2b0t names.
-use script_js::tooling::host_js::{host_js_path, render_host_js_dts, write_host_js_dts};
+use script_js::tooling::host_js::{host_js_path, render_host_js_dts};
 
 #[test]
 fn host_js_dts_is_fresh() {
@@ -9,7 +9,7 @@ fn host_js_dts_is_fresh() {
     let rendered = render_host_js_dts();
     assert_eq!(
         on_disk, rendered,
-        "host-js/index.d.ts is stale; run: cargo test -p script-js --test host_js regen_host_js -- --ignored"
+        "host-js/index.d.ts is stale; run: cargo run -p script-js --example regen_checked_in -- host-js"
     );
 }
 
@@ -738,10 +738,3 @@ function readWalkOutcome(snapshot: NativeSnapshot): boolean | null {
 
 void readWalkOutcome;
 "#;
-/// Writes `host-js/index.d.ts` from the host verb tables.
-#[test]
-#[ignore]
-fn regen_host_js() {
-    write_host_js_dts().expect("write host-js/index.d.ts");
-    eprintln!("wrote {}", host_js_path().display());
-}

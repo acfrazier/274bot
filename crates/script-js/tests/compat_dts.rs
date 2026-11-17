@@ -451,22 +451,6 @@ export const Gatherer: {
     fs::remove_dir_all(&scratch).expect("remove isolated generator copy");
 }
 
-/// Exercise the declaration-tree export used by frozen recounts. Set COMPAT_DTS_TREE
-/// to keep the output at a caller-selected path.
-#[test]
-#[ignore]
-fn write_compat_dts_tree_to_env() {
-    let persistent = std::env::var_os("COMPAT_DTS_TREE");
-    let dir = persistent.as_deref().map(PathBuf::from).unwrap_or_else(|| {
-        std::env::temp_dir().join(format!("compat-dts-tree-{}", std::process::id()))
-    });
-    script_js::tooling::compat_dts::write_compat_dts_tree(&dir).expect("write compat dts tree");
-    eprintln!("wrote tree {}", dir.display());
-    if persistent.is_none() {
-        fs::remove_dir_all(&dir).expect("remove temporary compat dts tree");
-    }
-}
-
 fn drift_for_game_source(source: &str) -> Vec<String> {
     let authored = load_authored_dts().expect("generated compat declarations");
     let shim = collect_compat_surface_from(&[("/rs2b0t/bot/api/game/Game.js", source)]);

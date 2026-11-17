@@ -194,7 +194,7 @@ fn path_schema_matches_generator() {
     assert_eq!(
         actual,
         render(),
-        "{} is stale; run: cargo test -p script --test path_schema regen_path_schema -- --ignored",
+        "{} is stale; run: cargo run -p script --example regen_path_schema --features path-schema",
         path_schema_path().display()
     );
 }
@@ -534,12 +534,6 @@ fn generated_step_schema_accepts_optional_hazard() {
     .expect("hazard omission stays valid");
     assert!(omitted.hazard.is_none());
 }
-#[test]
-#[ignore]
-fn regen_path_schema() {
-    std::fs::write(path_schema_path(), render()).expect("write path.schema.json");
-}
-
 #[test]
 fn bundled_paths_decode_and_compile() {
     let _home = script::IsolatedEnv::enter("path-schema-bundled");
