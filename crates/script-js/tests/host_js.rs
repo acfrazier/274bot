@@ -535,7 +535,7 @@ void api.questProgress('cook');
 
 /// Sample gate (pinned TypeScript 5.8.3): the authoritative
 /// `examples/gather_quest_v2.ts` must type-check with and without `--strict`.
-/// Its checked-in `.js` counterpart must match the compiler's emitted output.
+/// TypeScript is the only checked-in authority; its output is generated here.
 #[test]
 #[ignore = "requires npx and TypeScript 5.8.3"]
 fn tsc_gather_quest_sample_type_checks() {
@@ -600,13 +600,6 @@ fn tsc_gather_quest_sample_type_checks() {
         String::from_utf8_lossy(&emitted_output.stdout),
         String::from_utf8_lossy(&emitted_output.stderr)
     );
-    let emitted = std::fs::read(emit_dir.join("gather_quest_v2.js"))
-        .expect("read emitted gather-quest JavaScript");
-    assert_eq!(
-        emitted.as_slice(),
-        include_bytes!("../examples/gather_quest_v2.js"),
-        "checked-in gather_quest_v2.js must match the pinned TypeScript emit"
-    );
     std::fs::remove_dir_all(&dir).expect("remove gather-quest sample dir");
 }
 
@@ -627,38 +620,32 @@ fn tsc_combat_samples_type_check() {
     std::fs::create_dir_all(&examples).expect("create sample examples dir");
     std::fs::write(host_js.join("index.d.ts"), render_host_js_dts())
         .expect("write sample declarations");
-    for (name, source) in [
-        ("fight_v2.ts", include_str!("../examples/fight_v2.ts")),
-        (
-            "combat_showcase_v2.ts",
-            include_str!("../examples/combat_showcase_v2.ts"),
-        ),
-    ] {
-        std::fs::write(examples.join(name), source).expect("write combat sample");
-        let output = Command::new("npx")
-            .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
-            .args([
-                "--target",
-                "ES2022",
-                "--module",
-                "ESNext",
-                "--moduleResolution",
-                "Bundler",
-                "--skipLibCheck",
-                "false",
-                "--noEmit",
-                "--strict",
-            ])
-            .arg(examples.join(name))
-            .output()
-            .unwrap_or_else(|e| panic!("tsc {name} failed to spawn: {e}"));
-        assert!(
-            output.status.success(),
-            "strict {name} compile failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    let name = "combat_showcase_v2.ts";
+    let source = include_str!("../examples/combat_showcase_v2.ts");
+    std::fs::write(examples.join(name), source).expect("write combat sample");
+    let output = Command::new("npx")
+        .args(["-p", "typescript@5.8.3", "--yes", "tsc"])
+        .args([
+            "--target",
+            "ES2022",
+            "--module",
+            "ESNext",
+            "--moduleResolution",
+            "Bundler",
+            "--skipLibCheck",
+            "false",
+            "--noEmit",
+            "--strict",
+        ])
+        .arg(examples.join(name))
+        .output()
+        .unwrap_or_else(|e| panic!("tsc {name} failed to spawn: {e}"));
+    assert!(
+        output.status.success(),
+        "strict {name} compile failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     std::fs::remove_dir_all(&dir).expect("remove combat sample dir");
 }
 

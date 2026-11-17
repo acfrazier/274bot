@@ -18,8 +18,8 @@ fn ht(x: i32, z: i32) -> LineOfSightTile {
     LineOfSightTile { x, z, level: 0 }
 }
 
-/// A world walk as host-play queued it. `open`: the wilderness and bank
-/// fetch are allowed (the Hold / WalkToSpot families).
+/// A world walk as host-play queued it. The per-cell cases assert which route
+/// permissions they allow.
 fn walk_act(dest: LineOfSightTile, exact: bool, radius: i32, open: bool) -> ScriptAct {
     ScriptAct::Walk {
         dest,
@@ -146,69 +146,19 @@ impl HuntRun {
     }
 }
 
-fn hold_from() -> LineOfSightTile {
+fn walk_from() -> LineOfSightTile {
     ht(3201, 3201)
 }
 
-fn hold_dest() -> LineOfSightTile {
-    ht(3203, 3201)
-}
-
-#[test]
-fn hold_spot_passes_only_on_the_hosts_walk_and_arrival() {
-    let (from, dest) = (hold_from(), hold_dest());
-    let real = HuntRun::start("hold_spot_v2_ts", from)
-        .act(walk_act(dest, true, 0, true))
-        .at(dest)
-        .paint(hunt_receipt(done(Value::Null), from, dest, dest))
-        .stop();
-    assert!(real, "walked to dest, settled done, named stop");
-
-    // The example without its Run line: no request, no move.
-    let no_op = HuntRun::start("hold_spot_v2_ts", from)
-        .paint(hunt_receipt(done(Value::Null), from, from, dest))
-        .stop();
-    assert!(!no_op, "a no-op run cannot pass");
-
-    let claimed = HuntRun::start("hold_spot_v2_ts", from)
-        .paint(hunt_receipt(done(Value::Null), from, dest, dest))
-        .stop();
-    assert!(
-        !claimed,
-        "a painted arrival the host tile does not show cannot pass"
-    );
-
-    let unwalked = HuntRun::start("hold_spot_v2_ts", from)
-        .at(dest)
-        .paint(hunt_receipt(done(Value::Null), from, dest, dest))
-        .stop();
-    assert!(!unwalked, "arrival without this run's walk cannot pass");
-
-    let attacked = HuntRun::start("hold_spot_v2_ts", from)
-        .act(walk_act(dest, true, 0, true))
-        .act(ScriptAct::Npc {
-            name: "Goblin".into(),
-            action: "Attack".into(),
-            index: 3,
-        })
-        .at(dest)
-        .paint(hunt_receipt(done(Value::Null), from, dest, dest))
-        .stop();
-    assert!(!attacked, "a hold run that attacks cannot pass");
-
-    let boolean = HuntRun::start("hold_spot_v2_ts", from)
-        .act(walk_act(dest, true, 0, true))
-        .at(dest)
-        .paint(hunt_receipt(done(json!(false)), from, dest, dest))
-        .stop();
-    assert!(!boolean, "hold settles done(null); any other outcome fails");
+fn walk_dest() -> LineOfSightTile {
+    ht(3215, 3201)
 }
 
 #[test]
 fn hunt_cells_ignore_requests_from_before_start() {
-    let (from, dest) = (hold_from(), hold_dest());
+    let (from, dest) = (walk_from(), walk_dest());
     let before = HuntRun::start_after(
-        "hold_spot_v2_ts",
+        "walk_spot_v2_ts",
         from,
         &[],
         &[walk_act(dest, true, 0, true)],
@@ -222,8 +172,8 @@ fn hunt_cells_ignore_requests_from_before_start() {
 
 #[test]
 fn hunt_cells_fail_closed_when_ledger_rows_are_lost() {
-    let (from, dest) = (hold_from(), hold_dest());
-    let mut run = HuntRun::start("hold_spot_v2_ts", from);
+    let (from, dest) = (walk_from(), walk_dest());
+    let mut run = HuntRun::start("walk_spot_v2_ts", from);
     // More requests than the ledger keeps, between two frames.
     for _ in 0..=HUNT_ACT_ROWS {
         run.ledger.record(walk_act(dest, true, 0, true));
@@ -236,34 +186,8 @@ fn hunt_cells_fail_closed_when_ledger_rows_are_lost() {
 }
 
 #[test]
-fn retreat_spot_passes_only_on_the_hosts_walk_to_and_arrival() {
-    let (from, dest) = (ht(3201, 3201), ht(3198, 3203));
-    let real = HuntRun::start("retreat_spot_v2_ts", from)
-        .act(ScriptAct::WalkTo { dest })
-        .at(dest)
-        .paint(hunt_receipt(done(Value::Null), from, dest, dest))
-        .stop();
-    assert!(real, "walked-to dest, settled done, named stop");
-
-    let no_op = HuntRun::start("retreat_spot_v2_ts", from)
-        .paint(hunt_receipt(done(Value::Null), from, from, dest))
-        .stop();
-    assert!(!no_op, "a no-op run cannot pass");
-
-    let world_walk = HuntRun::start("retreat_spot_v2_ts", from)
-        .act(walk_act(dest, true, 0, false))
-        .at(dest)
-        .paint(hunt_receipt(done(Value::Null), from, dest, dest))
-        .stop();
-    assert!(
-        !world_walk,
-        "a retreat hop is a scene walk-to, not a world walk"
-    );
-}
-
-#[test]
 fn walk_spot_passes_only_on_the_hosts_long_walk_and_arrival() {
-    let (from, dest) = (ht(3201, 3201), ht(3215, 3201));
+    let (from, dest) = (walk_from(), walk_dest());
     let real = HuntRun::start("walk_spot_v2_ts", from)
         .act(walk_act(dest, true, 0, true))
         .at(ht(3208, 3201))
@@ -285,97 +209,15 @@ fn walk_spot_passes_only_on_the_hosts_long_walk_and_arrival() {
     assert!(!near, "walk-to-spot walks radius 0, not walk-near");
 
     let short = ht(3212, 3201);
-    let hold_back = HuntRun::start("walk_spot_v2_ts", from)
+    let short_return = HuntRun::start("walk_spot_v2_ts", from)
         .act(walk_act(short, true, 0, true))
         .at(short)
         .paint(hunt_receipt(done(Value::Null), from, short, short))
         .stop();
     assert!(
-        !hold_back,
-        "Chebyshev 11 is Hold's walk-back, not a walk to a spot"
+        !short_return,
+        "a short return walk cannot pass as a long walk to the declared spot"
     );
-}
-
-fn enter_receipt(outcome: Value, from: LineOfSightTile, here: LineOfSightTile) -> Value {
-    let mut receipt = hunt_receipt(outcome, from, here, ht(3210, 3201));
-    receipt["box"] = json!({ "minX": 3209, "maxX": 3211, "minZ": 3200, "maxZ": 3202, "level": 0 });
-    receipt["key"] = json!("enter-lair");
-    receipt
-}
-
-#[test]
-fn enter_lair_passes_only_on_the_hosts_approach_walk_into_the_box() {
-    let (from, approach, inside) = (ht(3201, 3201), ht(3210, 3201), ht(3209, 3201));
-    let real = HuntRun::start("enter_lair_v2_ts", from)
-        .act(walk_act(approach, true, 0, false))
-        .at(inside)
-        .paint(enter_receipt(done(json!(true)), from, inside))
-        .stop();
-    assert!(real, "walked into the lair box, settled true, named stop");
-
-    let no_op = HuntRun::start("enter_lair_v2_ts", from)
-        .paint(enter_receipt(done(json!(true)), from, from))
-        .stop();
-    assert!(!no_op, "a no-op run cannot pass");
-
-    let gave_up = HuntRun::start("enter_lair_v2_ts", from)
-        .act(walk_act(approach, true, 0, false))
-        .at(inside)
-        .paint(enter_receipt(done(json!(false)), from, inside))
-        .stop();
-    assert!(!gave_up, "a run that settled false is not an entry");
-
-    let open = HuntRun::start("enter_lair_v2_ts", from)
-        .act(walk_act(approach, true, 0, true))
-        .at(inside)
-        .paint(enter_receipt(done(json!(true)), from, inside))
-        .stop();
-    assert!(
-        !open,
-        "the gateless approach walks with every route permission off"
-    );
-}
-
-fn leave_receipt(outcome: Value, from: LineOfSightTile, here: LineOfSightTile) -> Value {
-    let mut receipt = hunt_receipt(outcome, from, here, ht(3210, 3201));
-    receipt["key"] = json!("leave-lair");
-    receipt
-}
-
-#[test]
-fn leave_lair_passes_only_on_the_hosts_walk_out_of_the_start_box() {
-    let (from, walk_out, out) = (ht(3201, 3201), ht(3210, 3201), ht(3204, 3201));
-    let real = HuntRun::start("leave_lair_v2_ts", from)
-        .act(walk_act(walk_out, false, 3, false))
-        .at(out)
-        .paint(leave_receipt(done(json!(true)), from, out))
-        .stop();
-    assert!(
-        real,
-        "walked out of the Start box, settled true, named stop"
-    );
-
-    let no_op = HuntRun::start("leave_lair_v2_ts", from)
-        .paint(leave_receipt(done(json!(true)), from, from))
-        .stop();
-    assert!(!no_op, "a no-op run cannot pass");
-
-    let inside = ht(3203, 3201);
-    let stayed = HuntRun::start("leave_lair_v2_ts", from)
-        .act(walk_act(walk_out, false, 3, false))
-        .at(inside)
-        .paint(leave_receipt(done(json!(true)), from, inside))
-        .stop();
-    assert!(!stayed, "a tile inside here ± 2 is still in the lair");
-
-    let mut kbd_receipt = leave_receipt(done(json!(true)), from, out);
-    kbd_receipt["key"] = json!("kbd-lair");
-    let kbd = HuntRun::start("leave_lair_v2_ts", from)
-        .act(walk_act(walk_out, false, 3, false))
-        .at(out)
-        .paint(kbd_receipt)
-        .stop();
-    assert!(!kbd, "a KBD site is never this cell");
 }
 
 /// Frozen `HERO_TILE.TAVERLEY_DUNGEON`, the key and cell cards' landing.

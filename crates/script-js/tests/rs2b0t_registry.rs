@@ -179,7 +179,8 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
     .unwrap();
     std::fs::write(
         scripts.join("AIOQuester/AIOQuester.js"),
-        "export function tick(api) { api._n = (api._n||0)+1 }",
+        script_js::NativeFixture::new("AIOQuester")
+            .source("export function tick(api) { api._n = (api._n||0)+1 }"),
     )
     .unwrap();
 
@@ -193,7 +194,7 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
     let bone = lib
         .get(ScriptSource::Catalog, "BoneBurier")
         .expect("BoneBurier card");
-    assert_eq!(bone.shape, LoadShape::CompatClass);
+    assert_eq!(bone.shape(), LoadShape::CompatClass);
     assert!(bone.origin.contains("extends LoopingBot"));
     assert!(
         bone.path.ends_with("BoneBurier.ts"),
@@ -204,7 +205,7 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
     let aio = lib
         .get(ScriptSource::Catalog, "AIOQuester")
         .expect("AIOQuester card");
-    assert_eq!(aio.shape, LoadShape::NativeTick);
+    assert_eq!(aio.shape(), LoadShape::NativeTick);
 
     // The first successful parse persisted the root path.
     assert_eq!(
@@ -251,7 +252,7 @@ ScriptRegistry.register({ name: 'WalkTo', create: () => new WalkToBot() });
     let card = lib
         .get(ScriptSource::Catalog, "AIO Teleport")
         .expect("register name is the picker name");
-    assert_eq!(card.shape, LoadShape::CompatClass);
+    assert_eq!(card.shape(), LoadShape::CompatClass);
     assert!(card.origin.contains("class T"));
     assert!(lib.get(ScriptSource::Catalog, "WalkTo").is_none());
 }

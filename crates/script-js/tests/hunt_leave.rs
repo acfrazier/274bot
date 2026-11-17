@@ -911,7 +911,6 @@ export default class T extends LoopingBot {
 #[test]
 fn v2_leave_run_settles_out_of_the_lair_and_refuses_a_missing_site() {
     let src = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -924,7 +923,12 @@ export async function tick(api) {
   }, { leaveByWalk: () => true });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     for tick in 1..=2 {
         iso.post_snapshot(encode_snapshot(&empty_snapshot(
             tick,
@@ -951,7 +955,6 @@ export async function tick(api) {
 #[test]
 fn v2_leave_run_waits_out_its_walk_and_settles_out_on_arrival() {
     let src = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -963,7 +966,12 @@ export async function tick(api) {
   }, { leaveByWalk: () => true });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     let at = |tick: u64, x: i32| {
         iso.post_snapshot(encode_snapshot(&empty_snapshot(
             tick,

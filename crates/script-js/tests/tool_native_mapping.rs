@@ -415,7 +415,12 @@ fn a_native_loop_over_holes_is_interrupted_by_the_tick_budget() {
                  }}\n\
              }}"
         );
-        let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
+        let iso = LoadIsolate::spawn(
+            script_js::native_fixture(&src),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
         // `spawn` returns before V8 setup; time the loop from Ready, not setup.
         let setup = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while matches!(iso.poll_ready(), script_js::Ready::Pending) {

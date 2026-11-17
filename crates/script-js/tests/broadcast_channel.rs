@@ -5,8 +5,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 fn spawn_ready(source: &str) -> LoadIsolate {
-    let isolate =
-        LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).expect("spawn isolate");
+    let isolate = LoadIsolate::spawn(
+        script_js::native_fixture(source),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .expect("spawn isolate");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match isolate.poll_ready() {

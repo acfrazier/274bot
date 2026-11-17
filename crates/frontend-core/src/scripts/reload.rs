@@ -2015,12 +2015,8 @@ impl Scripts {
                     );
                     return;
                 }
-                let start = ScriptStart::load(
-                    card.js.clone(),
-                    super::LoadShape::from_script(card.shape),
-                    bag.clone(),
-                    siblings.clone(),
-                );
+                let start =
+                    ScriptStart::load(card.js.clone(), card.checked, bag.clone(), siblings.clone());
                 match core.start_script(&profile, start, Some(card.identity_key())) {
                     Ok(_) => {
                         self.starts.insert(
@@ -3011,7 +3007,7 @@ impl Scripts {
         }
         let start = ScriptStart::load(
             card.js.clone(),
-            super::LoadShape::from_script(card.shape),
+            card.checked,
             bag,
             prepared.siblings.clone(),
         );

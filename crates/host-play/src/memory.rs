@@ -2126,13 +2126,15 @@ fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Arc<[api::loadout
 
 fn q4_accountleveler_probe_card(arm: Q4FrameArm, cell: Q4FrameCell) -> Result<ScriptCard, String> {
     let source = q4_accountleveler_probe_source(arm, cell)?;
-    let js = script_js::transpile_ts(&source)?;
+    let (js, checked) =
+        script_js::compile_origin(std::path::Path::new("Q4AccountlevelerProbe.ts"), &source)
+            .map_err(|refusal| refusal.to_string())?;
     let bag = script::settings_store::merge_bag(&[], &serde_json::Map::new(), None);
     Ok(ScriptCard {
         catalog: Some(crate::script_runtime::js_start_card(
             "Q4 Accountleveler Probe",
             js,
-            script_js::LoadShape::CompatClass,
+            checked,
             Vec::new(),
         )),
         bag: Arc::new(bag),
@@ -2392,14 +2394,14 @@ impl Run {
                             kind: card.kind,
                             source: card.source,
                             shape: None,
-                            api_family: Some(card.api_family.as_str().into()),
+                            api_family: Some(card.api_family().as_str().into()),
                         },
                     )?;
                     Some(ScriptCard {
                         catalog: Some(crate::script_runtime::js_start_card(
                             card.name.clone(),
                             card.js,
-                            card.shape,
+                            card.checked,
                             siblings,
                         )),
                         bag: Arc::new(bag),
@@ -3857,7 +3859,7 @@ mod tests {
                 .unwrap()
                 .start_load_settled(
                     start.source.to_string(),
-                    start.shape,
+                    start.checked.shape(),
                     start.siblings.as_ref().to_vec(),
                 )
                 .unwrap_or_else(|error| panic!("start {cell:?} Q4 probe: {error}"));
@@ -5013,7 +5015,7 @@ mod tests {
             catalog: Some(crate::script_runtime::js_start_card(
                 card.name,
                 card.js,
-                card.shape,
+                card.checked,
                 vec![],
             )),
             bag: Arc::new(serde_json::Map::new()),

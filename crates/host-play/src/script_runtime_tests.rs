@@ -327,7 +327,6 @@ impl script::native::Script for QueueMove {
 /// A v2 script that queues the exact board click beside four stale or
 /// forged shapes in the same frame, and reports the posted board.
 const PUZZLE_MOVE_V2: &str = r#"
-export const apiVersion = 2;
 export function tick(api) {
   if (globalThis.__queued) return;
   globalThis.__queued = true;
@@ -359,7 +358,6 @@ export function tick(api) {
 /// deposit beside a board click on its second, so the later frame runs
 /// with the bank gate already closed by the armed op.
 const PUZZLE_MOVE_BESIDE_DEPOSIT_V2: &str = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const n = (globalThis.__tick = (globalThis.__tick || 0) + 1);
   api.request({ op: 'deposit', name: 'Bones' });
@@ -659,7 +657,7 @@ fn puzzle_move_drains_as_opheld_on_the_posted_board() {
         .lock()
         .unwrap()
         .start_load_with_loadouts_settled(
-            PUZZLE_MOVE_V2.into(),
+            script_js::native_fixture(PUZZLE_MOVE_V2),
             script_js::LoadShape::NativeTick,
             vec![],
             &[],
@@ -1217,7 +1215,7 @@ fn puzzle_move_rides_a_frame_with_an_active_bank_op() {
         .lock()
         .unwrap()
         .start_load_with_loadouts_settled(
-            PUZZLE_MOVE_BESIDE_DEPOSIT_V2.into(),
+            script_js::native_fixture(PUZZLE_MOVE_BESIDE_DEPOSIT_V2),
             script_js::LoadShape::NativeTick,
             vec![],
             &[],

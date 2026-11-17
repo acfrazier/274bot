@@ -27,7 +27,7 @@ mod local_game_data;
 
 fn bank_slot(source: &str) -> bank_slot::BankSlot {
     bank_slot::BankSlot::new(
-        source,
+        script_js::native_fixture(source),
         LoadShape::NativeTick,
         None,
         std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -605,7 +605,6 @@ fn v2_bank_run_calls_the_leave_hook_and_stops_when_it_fails() {
     }
 
     let src = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -666,7 +665,6 @@ fn v2_bank_run_uses_the_native_bank_open_child_and_bounds_a_rejected_dispatch() 
     use script::native::{HostEffect, InteractionReceipt};
 
     let source = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
     if (started) return;

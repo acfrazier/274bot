@@ -722,7 +722,11 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let start = || {
         let mut bag = serde_json::Map::new();
         bag.insert("loadout".into(), serde_json::json!("melee"));
-        handle.start_native_tick_for_test("alice", "export function tick() {}".into(), Some(bag))
+        handle.start_native_tick_for_test(
+            "alice",
+            frontend_core::test_support::scripts::native_fixture("export function tick() {}"),
+            Some(bag),
+        )
     };
     let refused = start().expect_err("the session's service holds no melee row");
     assert!(refused.contains("\"melee\""), "{refused}");
@@ -6548,56 +6552,49 @@ fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
 
 #[cfg(feature = "js")]
 #[test]
-fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
+fn live_prepare_bone_burier_v2_selects_the_example_by_identity() {
     use frontend_core::test_support::scripts::{file_identity, live_example_path};
-    let ts = live_example_path("bone_burier_v2.ts").expect("ts example");
-    let js = live_example_path("bone_burier_v2.js").expect("js example");
-    for (name, file_name, path) in [
-        ("bone_burier_v2_ts", "bone_burier_v2.ts", ts.as_path()),
-        ("bone_burier_v2_js", "bone_burier_v2.js", js.as_path()),
-    ] {
-        let iso = IsolatedStores::enter(&format!("bone-v2-{name}"));
-        let mut s = Session::new();
-        s.scripts.use_library_at(
-            iso.dir().join("js-scripts.json"),
-            iso.dir().join("js-cache"),
-        );
-        s.scripts.load_card(&ts).expect("preload ts");
-        s.scripts.load_card(&js).expect("preload js");
-        s.scripts
-            .set_legacy_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
-        let identity = file_identity(path);
-        s.scripts
-            .set_legacy_str(CardSource::File, &identity, "boneName", "identity");
-        let scenario = frontend_core::live::Scenario::get(name).expect("registered");
-        assert_eq!(scenario.view().start_file(), Some(file_name));
-        assert_eq!(scenario.view().start_script(), None);
-        let card = s.scripts.load_card(path).expect("identity load");
-        assert_eq!(
-            card.identity_id(),
-            identity,
-            "{name} canonical-path identity"
-        );
-        assert_ne!(
-            identity, "bone_burier_v2",
-            "{name} must not use the shared stem"
-        );
-        let bag = s
-            .pending_settings_bag(CardSource::File, &identity, card.schema_ref())
-            .expect("settings bag");
-        assert_eq!(
-            bag.get("boneName"),
-            Some(&serde_json::json!("identity")),
-            "{name} settings attach to the selected File identity"
-        );
-        let stem_bag =
-            s.pending_settings_bag(CardSource::File, "bone_burier_v2", card.schema_ref());
-        assert_eq!(
-            stem_bag.as_ref().and_then(|bag| bag.get("boneName")),
-            Some(&serde_json::json!("stem")),
-            "{name} stem bag stays isolated from the File identity"
-        );
-    }
+    let path = live_example_path("bone_burier_v2.ts").expect("ts example");
+    let name = "bone_burier_v2_ts";
+    let iso = IsolatedStores::enter(&format!("bone-v2-{name}"));
+    let mut s = Session::new();
+    s.scripts.use_library_at(
+        iso.dir().join("js-scripts.json"),
+        iso.dir().join("js-cache"),
+    );
+    s.scripts.load_card(&path).expect("preload ts");
+    s.scripts
+        .set_legacy_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
+    let identity = file_identity(&path);
+    s.scripts
+        .set_legacy_str(CardSource::File, &identity, "boneName", "identity");
+    let scenario = frontend_core::live::Scenario::get(name).expect("registered");
+    assert_eq!(scenario.view().start_file(), Some("bone_burier_v2.ts"));
+    assert_eq!(scenario.view().start_script(), None);
+    let card = s.scripts.load_card(&path).expect("identity load");
+    assert_eq!(
+        card.identity_id(),
+        identity,
+        "{name} canonical-path identity"
+    );
+    assert_ne!(
+        identity, "bone_burier_v2",
+        "{name} must not use the shared stem"
+    );
+    let bag = s
+        .pending_settings_bag(CardSource::File, &identity, card.schema_ref())
+        .expect("settings bag");
+    assert_eq!(
+        bag.get("boneName"),
+        Some(&serde_json::json!("identity")),
+        "{name} settings attach to the selected File identity"
+    );
+    let stem_bag = s.pending_settings_bag(CardSource::File, "bone_burier_v2", card.schema_ref());
+    assert_eq!(
+        stem_bag.as_ref().and_then(|bag| bag.get("boneName")),
+        Some(&serde_json::json!("stem")),
+        "{name} stem bag stays isolated from the File identity"
+    );
 }
 
 #[cfg(feature = "js")]
@@ -9731,7 +9728,9 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     let path = dir.join("tickbot.js");
     std::fs::write(
         &path,
-        "export function tick(api) { api._n = (api._n||0)+1 }",
+        frontend_core::test_support::scripts::native_fixture(
+            "export function tick(api) { api._n = (api._n||0)+1 }",
+        ),
     )
     .unwrap();
 
@@ -9757,6 +9756,26 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     std::fs::write(&bad, "const x = 1;").unwrap();
     s.load_js(&bad);
     assert!(s.error.as_deref().is_some_and(|e| e.contains("shape")));
+
+    // A bare `tick` without a manifest no longer loads: the refusal names it.
+    let bare = dir.join("bare.js");
+    std::fs::write(&bare, "export function tick(api) {}").unwrap();
+    s.load_js(&bare);
+    assert!(
+        s.error.as_deref().is_some_and(|e| e.starts_with("bare: ")),
+        "{:?}",
+        s.error
+    );
+    let mut view = frontend_core::log::LogView::new(frontend_core::log::LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("manifest-required"));
+    frontend_core::log::global().refresh(&mut view);
+    assert!(
+        view.rows()
+            .iter()
+            .any(|row| row.message().contains("bare.js")),
+        "the log keeps the full refusal"
+    );
+    assert_eq!(s.scripts.cards().len(), 1, "the refused file adds no card");
 }
 
 #[test]
@@ -10044,7 +10063,9 @@ fn refused_preferences_keep_the_saved_load_and_catalog_folders() {
     let script = dir.join("tickbot.js");
     std::fs::write(
         &script,
-        "export function tick(api) { api._n = (api._n||0)+1 }",
+        frontend_core::test_support::scripts::native_fixture(
+            "export function tick(api) { api._n = (api._n||0)+1 }",
+        ),
     )
     .unwrap();
     s.scripts
@@ -10335,12 +10356,13 @@ fn select_script_card_queues_cached_output_through_worker() {
         .unwrap()
         .js()
         .is_empty());
-    assert!(s.scripts.is_transpile_cached(
-        s.scripts
-            .card_snapshot(CardSource::Catalog, "BoneBurier")
-            .unwrap()
-            .origin()
-    ));
+    let warm_card = s
+        .scripts
+        .card_snapshot(CardSource::Catalog, "BoneBurier")
+        .unwrap();
+    assert!(s
+        .scripts
+        .is_transpile_cached(warm_card.path(), warm_card.origin()));
 
     s.select_script_card(CardSource::Catalog, "BoneBurier");
     assert_eq!(

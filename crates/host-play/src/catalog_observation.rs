@@ -1,9 +1,4 @@
 use super::*;
-use super::{
-    actor::{choose_actor_observation_npc, packed_self_target, parse_actor_receipt_from_paint},
-    fight_field::{choose_fight_field_npc, parse_fight_field_receipt_from_paint},
-    los::collision_flag_at,
-};
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Observation {
     pub ingame: bool,
@@ -66,15 +61,6 @@ pub struct Observation {
     /// Missing-terminal Observation defaults are 0 and are not this value.
     pub route_inspect_live_generation: u64,
     pub route_inspect_has_terminal: bool,
-    /// Compact current-plane identity and selected pair cells. Empty unless
-    /// the active Core case asked for collision. Never a whole-grid dump.
-    pub los: LineOfSightObservation,
-    /// Compact chosen NPC + LOS helper result. Empty unless the active Core
-    /// case asked for actor observation. Never a world or NPC-table copy.
-    pub actor: ActorObservation,
-    /// Compact fight-field NPC + both LOS helper results. Empty unless the
-    /// active Core case asked for fight field. Never a world or NPC-table copy.
-    pub fight: FightFieldObservation,
     /// Compact hunt witness: the slot's act ledger and the cell's paint
     /// receipt. Empty unless the active Core case is a hunt cell.
     pub hunt: HuntObservation,
@@ -503,9 +489,6 @@ impl Observation {
             route_inspect_hops: Vec::new(),
             route_inspect_live_generation: 0,
             route_inspect_has_terminal: false,
-            los: LineOfSightObservation::default(),
-            actor: ActorObservation::default(),
-            fight: FightFieldObservation::default(),
             hunt: HuntObservation::default(),
         }
     }
@@ -564,212 +547,6 @@ impl Observation {
                 self.varps.insert(varp.index, varp.value);
             }
         }
-    }
-
-    /// Compact current-plane identity, independently selected one-step pairs,
-    /// and the script paint receipt. Never copies the collision grid.
-    pub fn attach_line_of_sight(
-        &mut self,
-        snapshot: &GameSnapshot,
-        paint: Option<&script::paint::ScriptPaint>,
-    ) {
-        let scene = snapshot.scene();
-        let identity = LineOfSightIdentity {
-            base_x: scene.base_x,
-            base_z: scene.base_z,
-            level: scene.level,
-            width: scene.width,
-            height: scene.height,
-        };
-        let here = self
-            .tile
-            .map(|(x, z, level)| LineOfSightTile { x, z, level });
-        let here_flag = here.and_then(|tile| collision_flag_at(scene, tile));
-        let (host_open, host_blocked, fixture_failure) = match here {
-            Some(tile) if scene.available => match select_line_of_sight_pairs(tile, |x, z| {
-                collision_flag_at(
-                    scene,
-                    LineOfSightTile {
-                        x,
-                        z,
-                        level: tile.level,
-                    },
-                )
-            }) {
-                Ok((open, blocked)) => (Some(open), Some(blocked), None),
-                Err(msg) => (None, None, Some(msg)),
-            },
-            _ => (None, None, None),
-        };
-        self.los = LineOfSightObservation {
-            available: scene.available,
-            identity,
-            here,
-            here_flag,
-            host_open,
-            host_blocked,
-            fixture_failure,
-            receipt: paint.and_then(parse_los_receipt_from_paint),
-        };
-    }
-
-    /// Compact host identity, one size>=1 NPC, existing LOS helper, and the
-    /// script paint receipt. Never copies the NPC table or collision grid.
-    pub fn attach_actor_observation(
-        &mut self,
-        snapshot: &GameSnapshot,
-        paint: Option<&script::paint::ScriptPaint>,
-    ) {
-        let scene = snapshot.scene();
-        let identity = LineOfSightIdentity {
-            base_x: scene.base_x,
-            base_z: scene.base_z,
-            level: scene.level,
-            width: scene.width,
-            height: scene.height,
-        };
-        let here = self
-            .tile
-            .map(|(x, z, level)| LineOfSightTile { x, z, level });
-        let receipt = paint.and_then(parse_actor_receipt_from_paint);
-        let npc = choose_actor_observation_npc(snapshot.npcs(), receipt.as_ref()).map(|row| {
-            ActorObservationNpc {
-                index: row.index as i32,
-                name: row.name.clone(),
-                size: row.size,
-                tile_x: row.tile.x,
-                tile_z: row.tile.z,
-                nx: row.network.x,
-                nz: row.network.z,
-                level: row.tile.level,
-            }
-        });
-        let (self_target_kind, self_target_index) = packed_self_target(snapshot);
-        let host_los = match (here, npc.as_ref()) {
-            (Some(from), Some(npc)) if scene.available => {
-                let query = CollisionQuery {
-                    available: scene.available,
-                    base_x: scene.base_x,
-                    base_z: scene.base_z,
-                    level: scene.level,
-                    width: scene.width,
-                    height: scene.height,
-                    flags: Arc::from(scene.collision_flags.as_slice()),
-                };
-                line_of_sight_v2(
-                    Some(&query),
-                    WorldTile {
-                        x: from.x,
-                        z: from.z,
-                        level: from.level,
-                    },
-                    WorldTile {
-                        x: npc.nx,
-                        z: npc.nz,
-                        level: npc.level,
-                    },
-                    Some(npc.size),
-                )
-                .ok()
-            }
-            _ => None,
-        };
-        self.actor = ActorObservation {
-            available: scene.available,
-            identity,
-            here,
-            npc,
-            host_los,
-            self_target_kind,
-            self_target_index,
-            receipt,
-        };
-    }
-
-    /// Compact host identity, one size>=1 NPC, both existing LOS helper
-    /// results, and the script paint receipt. Never copies the NPC table.
-    pub fn attach_fight_field(
-        &mut self,
-        snapshot: &GameSnapshot,
-        paint: Option<&script::paint::ScriptPaint>,
-    ) {
-        let scene = snapshot.scene();
-        let identity = LineOfSightIdentity {
-            base_x: scene.base_x,
-            base_z: scene.base_z,
-            level: scene.level,
-            width: scene.width,
-            height: scene.height,
-        };
-        let here = self
-            .tile
-            .map(|(x, z, level)| LineOfSightTile { x, z, level });
-        let receipt = paint.and_then(parse_fight_field_receipt_from_paint);
-        let npc =
-            choose_fight_field_npc(snapshot.npcs(), receipt.as_ref()).map(|row| FightFieldNpc {
-                index: row.index as i32,
-                size: row.size,
-                tile_x: row.tile.x,
-                tile_z: row.tile.z,
-                nx: row.network.x,
-                nz: row.network.z,
-                level: row.tile.level,
-            });
-        let query = if scene.available {
-            Some(CollisionQuery {
-                available: scene.available,
-                base_x: scene.base_x,
-                base_z: scene.base_z,
-                level: scene.level,
-                width: scene.width,
-                height: scene.height,
-                flags: Arc::from(scene.collision_flags.as_slice()),
-            })
-        } else {
-            None
-        };
-        let (host_los_network, host_los_tile) = match (here, npc.as_ref(), query.as_ref()) {
-            (Some(from), Some(npc), Some(query)) => {
-                let from_tile = WorldTile {
-                    x: from.x,
-                    z: from.z,
-                    level: from.level,
-                };
-                let network = line_of_sight_v2(
-                    Some(query),
-                    from_tile,
-                    WorldTile {
-                        x: npc.nx,
-                        z: npc.nz,
-                        level: npc.level,
-                    },
-                    Some(npc.size),
-                )
-                .ok();
-                let tile = line_of_sight_v2(
-                    Some(query),
-                    from_tile,
-                    WorldTile {
-                        x: npc.tile_x,
-                        z: npc.tile_z,
-                        level: npc.level,
-                    },
-                    Some(npc.size),
-                )
-                .ok();
-                (network, tile)
-            }
-            _ => (None, None),
-        };
-        self.fight = FightFieldObservation {
-            available: scene.available,
-            identity,
-            here,
-            npc,
-            host_los_network,
-            host_los_tile,
-            receipt,
-        };
     }
 
     pub fn equipment_id(&self, id: i32) -> i32 {

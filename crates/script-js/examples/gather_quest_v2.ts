@@ -1,26 +1,33 @@
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
 type GatherOutcome = import('../host-js/index.d.ts').GatherOutcome;
+import type { ScriptManifest } from '../host-js/index.d.ts';
 
 /**
- * Native gather-then-quest sample (JS API v2). The TypeScript file is authoritative;
- * gather_quest_v2.js is the checked-in plain-JavaScript form with the same logic
- * and loadable v2 export declarations; it is not a second implementation. Either
- * file can be loaded as a NativeApi v2 card.
+ * Native gather-then-quest sample (JS API v2).
  *
  * The script gathers Power-mode normal logs at Start (radius 12) until the live
- * status reports `dropped >= logs` (SETTINGS `logs`, default 56: two full 28-slot
+ * status reports `dropped >= logs` (setting `logs`, default 56: two full 28-slot
  * power-drop cycles), stops the session, then performs one read-only Cook's
  * Assistant progress check. It issues no game actions of its own: gathering,
  * dropping and the journal read are all host-owned.
  */
-export const apiVersion = 2;
-export const SETTINGS = {
-    logs: {
-        type: 'number',
-        default: 56,
-        label: 'Logs to gather and drop',
+export const manifest = {
+    apiVersion: 2,
+    name: 'GatherQuest',
+    version: '1',
+    author: '274bot',
+    description: 'Gathers and drops normal logs, then reads Cook\'s Assistant progress.',
+    category: 'Examples',
+    tags: ['gather', 'woodcutting', 'quest'],
+    settings: {
+        logs: {
+            type: 'number',
+            default: 56,
+            label: 'Logs to gather and drop',
+        },
     },
-};
+    capabilities: [],
+} as const satisfies ScriptManifest;
 
 let ended: GatherOutcome | null = null;
 let phase: 'start' | 'gathering' | 'stopping' | 'quest' | 'done' = 'start';

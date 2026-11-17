@@ -262,7 +262,10 @@ export default class T extends LoopingBot {
 #[test]
 fn unchanged_examplebot_counts_delta_from_seeded_xp() {
     let js = examplebot_source();
-    let shape = script_js::detect_shape(&js);
+    let shape = script_js::prepare_raw_origin_for_test("examplebot.js", &js, &[])
+        .expect("prepare ExampleBot source")
+        .checked
+        .shape();
     let iso = spawn_ready(js, shape, vec![]);
     let bones: Vec<_> = (0..25).map(bone).collect();
     let stats0 = [prayer(112)];
@@ -1134,7 +1137,7 @@ export default class T extends LoopingBot {
 #[test]
 fn numeric_probe_failure_is_not_reported_as_zero() {
     let iso = spawn_ready(
-        "export function tick() {}".to_string(),
+        script_js::native_fixture("export function tick() {}"),
         LoadShape::NativeTick,
         vec![],
     );

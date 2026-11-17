@@ -15,7 +15,6 @@ const SLOT: &str = "gather-api";
 const LOG_ID: i32 = 1511;
 const AXE_ID: i32 = 1351;
 const CLIENT_SOURCE: &str = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const page = api.snapshot.gather;
   globalThis.__lastPage = page;
@@ -42,7 +41,6 @@ export function tick(api) {
 }
 "#;
 const QUIET_SOURCE: &str = r#"
-export const apiVersion = 2;
 export function tick(_api) {}
 "#;
 
@@ -252,11 +250,17 @@ fn start_source(
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
             slot.bind_incarnation(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         }
+        let prepared = crate::script_runtime::prepared_test_start_card(
+            &script_js::native_fixture(source),
+            script_js::LoadShape::NativeTick,
+            vec![],
+        )
+        .expect("native gather fixture prepares");
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
                 "test card",
-                source.into(),
-                script_js::LoadShape::NativeTick,
+                prepared.source.to_string(),
+                prepared.checked,
                 vec![],
             ),
             None,
@@ -495,8 +499,8 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
     use script_channels::{BrokerWorld, ChannelBroker};
 
     let mut rig = GatherReconnectRig::with_empty_inventory(
-        r#"export const apiVersion = 2;
-       export function tick(api) {
+        r#"
+export function tick(api) {
          globalThis.__api = api;
          globalThis.__page = api.snapshot.gather;
          if (globalThis.__launch && !globalThis.__run) {
@@ -513,7 +517,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
 
     let channel = "rs2b0t:kq:v1:gather-api,bob,carol,dave";
     let mut receiver = GatherReconnectRig::with_source(
-        r#"export const apiVersion = 2;
+        r#"
        globalThis.__received = [];
        const channel = new BroadcastChannel('rs2b0t:kq:v1:gather-api,bob,carol,dave');
        channel.onmessage = e => __received.push(e.data);
@@ -870,7 +874,6 @@ fn api_foreground_edges_drop_owned_rows_and_restore_unowned_paused_rows() {
 }
 
 const RECONNECT_SOURCE: &str = r#"
-export const apiVersion = 2;
 globalThis.__settleCount = 0;
 export function tick(api) {
   const page = api.snapshot.gather;
@@ -1788,10 +1791,8 @@ fn progress_pending_across_reconnect_completes_once_then_admits_next_session() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let mut rig = GatherReconnectRig::with_source(
-        r#"export const apiVersion = 2;
-export function tick(api) { globalThis.__api = api; }"#,
-    );
+    let mut rig =
+        GatherReconnectRig::with_source(r#"export function tick(api) { globalThis.__api = api; }"#);
     rig.snapshot.seed_quest_statuses(
         vec![api::snapshot::QuestStatusView {
             name: "Cook's Assistant".into(),
@@ -1860,7 +1861,6 @@ export function tick(api) { globalThis.__api = api; }"#,
 }
 
 const WALK_PERMISSION_SOURCE: &str = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__api = api;
   const page = api.snapshot.gather;

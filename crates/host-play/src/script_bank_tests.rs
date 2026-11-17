@@ -86,7 +86,6 @@ fn bank_pick_v2_explicit_opt_ins_control_the_returned_bank_over_settings_default
     ] {
         let source = format!(
             r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {{
   if (started) return;
@@ -98,15 +97,18 @@ export async function tick(api) {{
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(1);
         slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
-        let settings = serde_json::json!({"useMageBank": defaults, "useZanarisBank": defaults});
+        let prepared = crate::script_runtime::prepared_test_start_card(
+            &script_js::native_fixture(&source),
+            script_js::LoadShape::NativeTick,
+            vec![],
+        )
+        .expect("native bank fixture prepares");
+        let mut settings = script::native::SettingsBag::new();
+        settings.insert("useMageBank".into(), serde_json::Value::Bool(defaults));
+        settings.insert("useZanarisBank".into(), serde_json::Value::Bool(defaults));
         let start = crate::script_runtime::js_surface_start(
-            crate::script_runtime::js_start_card(
-                "bank test",
-                source,
-                script_js::LoadShape::NativeTick,
-                vec![],
-            ),
-            settings.as_object().cloned().map(Arc::new),
+            prepared,
+            Some(Arc::new(settings)),
             Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()),
             Arc::new(NamedBankFacts::from_banks(banks.clone())),
             Arc::from(Vec::<api::loadout::Loadout>::new()),
@@ -3762,13 +3764,14 @@ async loop() {
     let slot = crate::script_slot_or_insert(&scripts, "test");
     {
         let mut slot = slot.lock().unwrap();
+        let prepared = crate::script_runtime::prepared_test_start_card(
+            source,
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("compat bank fixture prepares");
         let start = crate::script_runtime::js_surface_start(
-            crate::script_runtime::js_start_card(
-                "bank test",
-                source.into(),
-                script_js::LoadShape::CompatClass,
-                vec![],
-            ),
+            prepared,
             None,
             Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()),
             Arc::new(NamedBankFacts::from_banks(vec![])),

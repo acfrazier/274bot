@@ -19,7 +19,6 @@ use {
 use {script::CompiledId, script_js::LoadIsolate, script_js::LoadShape};
 
 const BASE_SCRIPT: &str = r#"
-export const apiVersion = 2;
 export function tick(api) { globalThis.__api = api; }
 "#;
 
@@ -136,8 +135,12 @@ fn tick_with_last(
 }
 
 fn isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(BASE_SCRIPT.into(), LoadShape::NativeTick, vec![])
-        .expect("spawn API combat runtime isolate");
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(BASE_SCRIPT),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .expect("spawn API combat runtime isolate");
     tick(&iso, 1, None, None);
     iso
 }

@@ -613,10 +613,10 @@ const DRAGON_LOOT: &[&str] = &[
 /// Ported from rs2b0t `e2e/jivedragons-live.ts` @2de6bb23 at its defaults
 /// (site blue, style range, leave teleport) with `--dusty` (key banked).
 /// Changed: started on the site's own safespot after acknowledged seeding
-/// (the black-range fixture's start shape; the Falador walk-in and cold
-/// Jailer key leg are the `acquire_key_v2_ts` cell's behaviour, not this
-/// card's combat proof). Upstream's log/counter milestones (wielded, kill,
-/// loot, banktrip) become worn-bow, Ranged XP (a blue dragon's 105 HP at
+/// (the black-range fixture's start shape; the Falador walk-in and Jailer key
+/// leg are separate from this card's combat proof). Upstream's log/counter
+/// milestones (wielded, kill, loot, banktrip) become worn-bow, Ranged XP
+/// (a blue dragon's 105 HP at
 /// the content 0.4 XP/damage ranged rate is 42 XP, `skill_combat/scripts/
 /// combat.rs2` `give_combat_experience`), pack then banked Dragon bones
 /// (the guaranteed drop). Bank timing: with `combatStyle` range at a site
@@ -1264,12 +1264,11 @@ const JIVE_DRAGONS_POTION_INJECT: &[ScriptSettingInject] = &[
 /// Ported from rs2b0t `e2e/jivedemons-live.ts` @2de6bb23 (default style
 /// range, no banked key).
 /// Changed: started on the pocket safespot with the Dusty key and the
-/// Falador escape cast carried. The upstream cold-key leg (bank read,
-/// Jailer fight, Jail key) is the `acquire_key_v2_ts` cell's behaviour;
-/// carrying the key is what upstream's `--dusty` banked-key variant
-/// proves, and without a carried key or cast a cell started inside the
-/// pocket could never leave it. Upstream's kill/loot/banktrip counter
-/// milestones become Ranged XP only: a black demon's only guaranteed
+/// Falador escape cast carried. The cold-key leg (bank read, Jailer fight,
+/// Jail key) is separate from this proof. Carrying the key is what upstream's
+/// `--dusty` variant proves; without a carried key or cast, a cell started in
+/// the pocket could never leave it. Upstream's kill/loot/banktrip counter
+/// milestones become Ranged XP only: a black demon's only guaranteed drop
 /// drop is Ashes (`all.npc` `[black_demon]` `param=death_drop,ashes`;
 /// `black_demon.rs2` rolls the rest of the table), and upstream's loot
 /// list deliberately excludes Ashes, so no banked-loot watch can be a

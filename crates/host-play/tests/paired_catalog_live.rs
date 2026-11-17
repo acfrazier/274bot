@@ -77,7 +77,7 @@ struct SlotLive {
     pump: Pump,
     start_handle: Option<ScriptStartHandle>,
     js: String,
-    shape: script_js::LoadShape,
+    checked: script_js::CheckedLoad,
     siblings: Vec<(String, String)>,
     prep: Prep,
     started: bool,
@@ -200,7 +200,7 @@ impl SlotLive {
         handle.start_load(
             &self.account,
             self.js.clone(),
-            self.shape,
+            self.checked,
             Some(self.settings.clone()),
             self.siblings.clone(),
         )?;
@@ -996,7 +996,7 @@ fn new_slot(
         pump: Pump::new(),
         start_handle: None,
         js: card.js.clone(),
-        shape: card.shape,
+        checked: card.checked,
         siblings: card.siblings.clone(),
         prep: Prep::WaitIngame,
         started: false,

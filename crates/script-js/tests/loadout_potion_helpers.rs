@@ -113,8 +113,13 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 
 fn probe_v2(src: &str, revision: ClientRevision) -> serde_json::Value {
     let data = api::game_data::for_revision(revision).expect("load loadout-potion test data");
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .expect("spawn NativeTick loadout-potion isolate");
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .expect("spawn NativeTick loadout-potion isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let value = iso
@@ -132,13 +137,13 @@ fn probe_v2(src: &str, revision: ClientRevision) -> serde_json::Value {
 #[test]
 fn v2_food_of_uses_fixed_heals_and_requires_selected_cache() {
     let iso = LoadIsolate::spawn(
-        r#"
-export const apiVersion = 2;
+        script_js::native_fixture(
+            r#"
 export function tick(api) {
   globalThis.__probe = JSON.stringify(api.foodOf({ loadout: { carry: [{ item: 'Lobster' }] }, fallback: 'Trout' }));
 }
-"#
-        .into(),
+"#,
+        ),
         LoadShape::NativeTick,
         vec![],
     )
@@ -158,7 +163,6 @@ export function tick(api) {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_v2(
             r#"
-export const apiVersion = 2;
 export function tick(api) {
   const carry = [
     { item: 'Lobster', qty: 4 },
@@ -193,7 +197,6 @@ fn v2_gear_weapon_supplies_use_hat_first_slots_and_qty_limits() {
     }
     let value = probe_v2(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
   const loadout = {
     worn: {
@@ -250,7 +253,6 @@ fn v2_range_loadout_uses_selected_darts_on_both_revisions() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_v2(
             r#"
-export const apiVersion = 2;
 export function tick(api) {
   const names = ['Bronze dart','Iron dart','Steel dart','Black dart','Mithril dart','Adamant dart','Rune dart'];
   const darts = {};
@@ -304,13 +306,13 @@ export function tick(api) {
         }
     }
     let iso = LoadIsolate::spawn(
-        r#"
-export const apiVersion = 2;
+        script_js::native_fixture(
+            r#"
 export function tick(api) {
   globalThis.__probe = JSON.stringify(api.rangeLoadoutOf({ weapon: 'Bronze dart', ammo: 'Iron arrow' }));
 }
-"#
-        .into(),
+"#,
+        ),
         LoadShape::NativeTick,
         vec![],
     )
@@ -333,7 +335,6 @@ fn v2_boost_and_plans_and_sip_keep_missingness_and_numeric_rules() {
     }
     let value = probe_v2(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
   const plans = api.plannedPotions({
     carry: [
@@ -430,7 +431,6 @@ fn new_loadout_v2_is_not_a_rustyscript_json_callback() {
     }
     let value = probe_v2(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
   const typed = globalThis.__rs2b0t_loadout_v2('boostFaded', { base: 70, effective: 70 });
   let jsonStyle = null;
@@ -457,20 +457,74 @@ export function tick(api) {
 }
 
 #[test]
-fn example_loadout_potion_v2_ts_runs_all_eight_on_real_inv_stats() {
+fn native_loadout_potion_fixture_runs_all_eight_on_real_inv_stats() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("loadout_potion_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
-    let js = script_js::transpile_ts(&src).expect("transpile loadout_potion_v2.ts");
+    let src = r#"
+export function tick(api) {
+  const loadout = {
+    name: 'melee',
+    worn: {
+      hat: 'Rune full helm',
+      righthand: 'Rune scimitar',
+      torso: 'Rune chainbody',
+    },
+    carry: [
+      { item: 'Lobster', qty: 10 },
+      { item: 'Super attack(4)', qty: 2 },
+      { item: 'Prayer potion(4)', qty: 1 },
+    ],
+    unassigned: ['old helm'],
+  };
+  const food = api.foodOf({ loadout, fallback: 'Trout' });
+  const gear = api.gearOf({ loadout });
+  const supplies = api.suppliesOf({ loadout });
+  const weapon = api.weaponOf({ loadout, fallback: 'Bronze sword' });
+  const range = api.rangeLoadoutOf({ weapon: 'Bronze dart', ammo: 'Iron arrow' });
+  const attack = api.snapshot.stats.find((row) => row.name.toLowerCase() === 'attack');
+  const faded = api.boostFaded({
+    base: attack ? attack.base : 1,
+    effective: attack ? attack.effective : 1,
+  });
+  const planned = api.plannedPotions({
+    carry: [
+      { item: 'Super attack(4)', qty: 2 },
+      { item: 'Lobster', qty: 10 },
+    ],
+  });
+  const plans = planned.ok ? planned.value : [];
+  const held = plans.map((plan) =>
+    plan.doses.reduce(
+      (n, dose) =>
+        n +
+        api.snapshot.inv
+          .filter((item) => item.name === dose)
+          .reduce((sum, item) => sum + item.count, 0),
+      0,
+    ),
+  );
+  const sip = api.potionToSip({
+    plans,
+    held,
+    levels: api.snapshot.stats.map((row) => ({
+      skill: row.name,
+      base: row.base,
+      effective: row.effective,
+    })),
+  });
+  api.log(JSON.stringify({ food, gear, supplies, weapon, range, faded, planned, sip }));
+}
+"#;
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).unwrap();
-        let iso =
-            LoadIsolate::spawn_with_game_data(js.clone(), LoadShape::NativeTick, vec![], data)
-                .unwrap();
+        let iso = LoadIsolate::spawn_with_game_data(
+            script_js::native_fixture(src),
+            LoadShape::NativeTick,
+            vec![],
+            data,
+        )
+        .unwrap();
         let inv = [item("Super attack(4)", 2436, 0, 1)];
         let stats = [stat(0, "Attack", 70, 70), stat(2, "Strength", 70, 85)];
         iso.post_snapshot(script_js::wire::encode_snapshot(&snapshot(1, &inv, &stats)));
@@ -483,13 +537,13 @@ fn example_loadout_potion_v2_ts_runs_all_eight_on_real_inv_stats() {
         assert_eq!(
             err.as_str().unwrap_or(""),
             "",
-            "example lastError: {err:?} logs={logs:?}"
+            "fixture lastError: {err:?} logs={logs:?}"
         );
         let last = logs
             .iter()
             .rev()
             .find(|line| line.contains("\"food\""))
-            .unwrap_or_else(|| panic!("example logged helper results; logs={logs:?}"));
+            .unwrap_or_else(|| panic!("fixture logged helper results; logs={logs:?}"));
         let row: serde_json::Value = serde_json::from_str(last).unwrap();
         assert_eq!(row["food"]["value"], "Lobster", "{row:?}");
         assert_eq!(

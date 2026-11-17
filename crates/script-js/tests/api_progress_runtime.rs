@@ -13,12 +13,10 @@ use {
 };
 
 const BASE_SCRIPT: &str = r#"
-export const apiVersion = 2;
 export function tick(api) { globalThis.__api = api; }
 "#;
 const JOURNAL_SCRIPT: &str = r#"
 import { Quests } from '../../api/ui/questlog/Quests.js';
-export const apiVersion = 2;
 export function tick(api) {
     globalThis.__api = api;
     globalThis.__Quests = Quests;
@@ -27,7 +25,6 @@ export function tick(api) {
 
 const DRAGON_SCRIPT: &str = r#"
 import { DRAGON_STAGE, readDragonProgress } from '../../api/ai/quests/defs/dragonslayer/journal.js';
-export const apiVersion = 2;
 export function tick(api) {
     globalThis.__api = api;
     globalThis.__DRAGON_STAGE = DRAGON_STAGE;
@@ -124,22 +121,34 @@ fn tick(iso: &LoadIsolate, tick: u64, api_progress: Option<&ProgressPage>) {
 }
 
 fn isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(BASE_SCRIPT.into(), LoadShape::NativeTick, vec![])
-        .expect("spawn progress API isolate");
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(BASE_SCRIPT),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .expect("spawn progress API isolate");
     tick(&iso, 1, None);
     iso
 }
 
 fn journal_isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(JOURNAL_SCRIPT.into(), LoadShape::NativeTick, vec![])
-        .expect("spawn journal API isolate");
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(JOURNAL_SCRIPT),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .expect("spawn journal API isolate");
     tick(&iso, 1, None);
     iso
 }
 
 fn dragon_isolate() -> LoadIsolate {
-    let iso = LoadIsolate::spawn(DRAGON_SCRIPT.into(), LoadShape::NativeTick, vec![])
-        .expect("spawn Dragon Slayer API isolate");
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(DRAGON_SCRIPT),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .expect("spawn Dragon Slayer API isolate");
     tick(&iso, 1, None);
     iso
 }

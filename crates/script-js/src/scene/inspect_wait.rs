@@ -1392,6 +1392,76 @@ mod tests {
         assert_eq!(value(token)["reason"], "stale");
     }
 
+    #[test]
+    fn inspect_value_reads_correlated_results_and_reset_stales_tokens() {
+        on_reset();
+        let first = begin();
+        let second = begin();
+        assert_ne!(first, second);
+
+        let hop = hop("Captain Barnaby", 381);
+        observe(
+            &empty_input(2),
+            &facts(
+                terminal(2, second, false, "NoPath", &[]),
+                terminal(1, first, true, "", std::slice::from_ref(&hop)),
+                0,
+                0,
+                second,
+                0,
+                0,
+            ),
+        );
+
+        assert!(settled(first));
+        assert_eq!(
+            value(first),
+            json!({
+                "ok": true,
+                "reason": "",
+                "bankPlanned": false,
+                "ticks": 2.5,
+                "request_id": first,
+                "terminal": { "x": 2698, "z": 3206, "level": 0 },
+                "hops": [{
+                    "kind": "boat",
+                    "locId": 381,
+                    "locName": "Captain Barnaby",
+                    "action": "Pay-fare",
+                    "option": 1,
+                    "from": { "x": 1, "z": 2, "level": 0 },
+                    "to": { "x": 3, "z": 4, "level": 1 },
+                    "ticks": 5
+                }]
+            })
+        );
+        assert!(settled(second));
+        assert_eq!(
+            value(second),
+            json!({
+                "ok": false,
+                "reason": "NoPath",
+                "bankPlanned": false,
+                "ticks": 0.0,
+                "request_id": second,
+                "terminal": null,
+                "hops": []
+            })
+        );
+
+        let unknown = u64::MAX;
+        assert!(settled(unknown));
+        assert_eq!(value(unknown)["request_id"], unknown);
+        assert_eq!(value(unknown)["reason"], "stale");
+
+        on_reset();
+        assert!(settled(first));
+        assert_eq!(value(first)["reason"], "stale");
+        let after_reset = begin();
+        assert!(!settled(after_reset));
+        assert_eq!(value(after_reset), Value::Null);
+    }
+
     fn route(request_id: u64, from: (i32, i32, i32), to: (i32, i32, i32)) -> InteractReq {
         InteractReq::InspectRoute {
             x: to.0,

@@ -44,7 +44,7 @@ js = ["host-play/js", "dep:script-js", "canvas-raster"]
 luau = ["host-play/luau", "dep:script-luau", "canvas-raster"]
 # Test-only lifecycle and capacity fixture seams; enabled from dev-dependencies,
 # never production builds.
-test-support = ["host-play/test-support", "host/test-support"]
+test-support = ["host-play/test-support", "host/test-support", "script-js?/test-hooks"]
 # Forwarded from the front ends (ruling D3): the opt-in Debug command
 # catalogue, the `--live`/`--smoke` harness, the memory benchmark and the
 # render diagnostics.

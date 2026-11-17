@@ -590,13 +590,10 @@ fn run_cell(receipt: &mut Value) -> Result<(), String> {
         return Err("ClientAdapter preparation did not capture a nearby bank booth".into());
     }
     let probe_source = PROBE_SOURCE.replace("__BANK_LOC_JSON__", &bank_loc.to_string());
-    play.script_start_load(
-        account,
-        probe_source,
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )?;
+    let prepared =
+        script_js::prepare_raw_origin_for_test("client-adapter-probe.js", &probe_source, &[])
+            .map_err(|error| error.to_string())?;
+    play.script_start_load(account, prepared.js, prepared.checked, None, vec![])?;
     let deadline = Instant::now() + PROBE_DEADLINE;
     let mut logs = Vec::new();
     let probe_result = loop {

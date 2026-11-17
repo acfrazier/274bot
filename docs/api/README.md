@@ -30,7 +30,7 @@ tested nor claimed.
 - [vault.md](vault.md) — encrypted profile vault, assignments, passphrase policy and channels
 - [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox, Fleet, scripts
 - [script.md](script.md) — compiled `tick` vs Load isolate; assignment, reload, cache
-- [js-api-v2.md](js-api-v2.md) — JS API v2 native authoring (`export const apiVersion = 2`)
+- [js-api-v2.md](js-api-v2.md) — JS API v2 native authoring (`export const manifest`)
 - [tui.md](tui.md) — headless operator panel (`tui-play`): same `Play`, raster Off
 
 ## Layout

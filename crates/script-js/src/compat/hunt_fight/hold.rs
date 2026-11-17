@@ -411,6 +411,96 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hold_validate_requires_an_in_area_due_state_outside_chase_and_panic() {
+        let mut projection = parse_projection(&json!({
+            "target": "Cow",
+            "style": "range",
+            "boxes": [{
+                "minX": 0,
+                "maxX": 10,
+                "minZ": 0,
+                "maxZ": 10,
+                "level": 0
+            }],
+            "safespots": [
+                { "x": 1, "z": 1, "level": 0 },
+                { "x": 9, "z": 9, "level": 0 }
+            ],
+            "hasFood": true,
+            "hpFraction": 0.5,
+            "panicHp": 0.2
+        }));
+        let mut obs = FightObservation::ready();
+        obs.here = Some(Tile {
+            x: 5,
+            z: 5,
+            level: 0,
+        });
+        assert!(hold_validate_inner(&projection, &obs));
+
+        obs.here = None;
+        assert!(!hold_validate_inner(&projection, &obs));
+        obs.here = Some(Tile {
+            x: 20,
+            z: 20,
+            level: 0,
+        });
+        assert!(!hold_validate_inner(&projection, &obs));
+
+        obs.here = Some(Tile {
+            x: 5,
+            z: 5,
+            level: 0,
+        });
+        projection.style = Style::Melee;
+        projection.site.fire_at_range = true;
+        projection.target_idx = Some(42);
+        assert!(!hold_validate_inner(&projection, &obs));
+        projection.target_idx = None;
+        assert!(hold_validate_inner(&projection, &obs));
+        projection.style = Style::Range;
+        projection.site.fire_at_range = false;
+
+        obs.here = Some(Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        });
+        assert!(!hold_validate_inner(&projection, &obs));
+
+        projection.has_food = false;
+        obs.here = Some(Tile {
+            x: 9,
+            z: 9,
+            level: 0,
+        });
+        assert!(!hold_validate_inner(&projection, &obs));
+        obs.here = Some(Tile {
+            x: 5,
+            z: 5,
+            level: 0,
+        });
+        assert!(hold_validate_inner(&projection, &obs));
+
+        projection.has_food = true;
+        obs.here = Some(Tile {
+            x: 9,
+            z: 9,
+            level: 0,
+        });
+        assert!(hold_validate_inner(&projection, &obs));
+        projection.hp_fraction = 0.19;
+        obs.here = Some(Tile {
+            x: 5,
+            z: 5,
+            level: 0,
+        });
+        assert!(!hold_validate_inner(&projection, &obs));
+        projection.hp_fraction = projection.panic_hp;
+        assert!(hold_validate_inner(&projection, &obs));
+    }
+
+    #[test]
     fn hold_consumer_emits_the_native_missiles_if_button() {
         if !api::test_support::game_data_available() {
             return;

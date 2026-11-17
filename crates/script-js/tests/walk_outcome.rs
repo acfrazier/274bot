@@ -1082,7 +1082,6 @@ export default class T extends LoopingBot {
 #[test]
 fn v2_consumer_correlates_user_input_and_retains_it_across_omitted_deltas() {
     let source = r#"
-export const apiVersion = 2;
 export function tick(api) {
     if (!globalThis.__started) {
         globalThis.__started = true;
@@ -1106,7 +1105,12 @@ export function tick(api) {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(source),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     let (initial, fingerprint) = encode_snapshot_delta_with_native(
         None,
         &base_snapshot(1, far()),

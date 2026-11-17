@@ -994,15 +994,11 @@ fn wait_for_inventory_slots(fixture: &LiveFixture, slots: usize) -> u32 {
 
 fn start_compat(fixture: &LiveFixture, source: String) -> RunKey {
     let run = fixture.seed_run.next_run().expect("next compat run key");
+    let prepared = script_js::prepare_raw_origin_for_test("prereq-compat.js", &source, &[])
+        .expect("compatibility prerequisite fixture prepares");
     fixture
         .play
-        .script_start_load(
-            &fixture.name,
-            source,
-            script_js::LoadShape::CompatClass,
-            None,
-            vec![],
-        )
+        .script_start_load(&fixture.name, prepared.js, prepared.checked, None, vec![])
         .expect("start prerequisite compat WalkTo");
     let mut settled = None;
     wait_for(
@@ -1317,15 +1313,12 @@ fn live_compat_prereq_mort_myre_denied() {
     );
     let expected_run = fixture.seed_run.next_run().expect("next compat run key");
     seed_wrong_memory(&fixture, "druidspirit", 10, expected_run);
+    let source = compat_holy_source(PREREQ_SWAMP, "allowQuestStart: false", false);
+    let prepared = script_js::prepare_raw_origin_for_test("prereq-compat.js", &source, &[])
+        .expect("compatibility prerequisite fixture prepares");
     fixture
         .play
-        .script_start_load(
-            &fixture.name,
-            compat_holy_source(PREREQ_SWAMP, "allowQuestStart: false", false),
-            script_js::LoadShape::CompatClass,
-            None,
-            vec![],
-        )
+        .script_start_load(&fixture.name, prepared.js, prepared.checked, None, vec![])
         .expect("start compat WalkTo with request-level Forbid");
 
     let fact = refusal_fact(&fixture, "druidspirit", Duration::from_secs(240));

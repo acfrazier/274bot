@@ -1594,7 +1594,7 @@ fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
         frontend_core::test_support::scripts::play_start_load(
             &rig.session().core,
             name,
-            "export function tick(api) {}".into(),
+            frontend_core::test_support::scripts::native_fixture("export function tick(api) {}"),
             frontend_core::scripts::LoadShape::NativeTick,
             None,
             Vec::new(),

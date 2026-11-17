@@ -3,8 +3,6 @@ use crate::*;
 
 /// Matches `prayer_v2.ts` `STOP_OK`.
 pub(crate) const PRAYER_V2_STOP: &str = "prayer v2 qualification complete";
-/// Matches `prayer_v1.ts` `STOP_OK`.
-pub(crate) const PRAYER_V1_STOP: &str = "prayer v1 qualification complete";
 
 const PRAYER_DEADLINE: Duration = Duration::from_secs(180);
 const PRAYER_WATCH: u32 = 240;
@@ -13,9 +11,9 @@ const PRAYER_SKILL_ID: i32 = 5;
 const PRAYER_VARP0: i32 = 83;
 /// `prayer14`, Protect from Melee's overlay varp (`PRAYER_VARP0 + 14`).
 const PROTECT_FROM_MELEE_VARP: i32 = PRAYER_VARP0 + 14;
-/// Both cards switch Protect from Melee on before they clear it. The seed
-/// sets every prayer overlay off, so only the card's own `prayerSet`
-/// satisfies this; the clear and the stop reason follow in the grace.
+/// The card switches Protect from Melee on before it clears it. The seed sets
+/// every prayer overlay off, so only its own `prayerSet` satisfies this; the
+/// clear and stop reason follow in the grace.
 const PROTECT_FROM_MELEE_ON: Proof = Proof::VarpExact {
     id: PROTECT_FROM_MELEE_VARP,
     value: 1,
@@ -66,11 +64,8 @@ fn prayer_seed_steps() -> Vec<Step> {
     steps
 }
 
-fn prayer_file_scenario(
-    name: &'static str,
-    file_name: &'static str,
-    stop: &'static str,
-) -> Scenario {
+/// Headed File v2 witness: actual `prayer_v2.ts` helpers, not a stub.
+pub(crate) fn prayer_v2_scenario() -> Scenario {
     let mut steps = prayer_seed_steps();
     steps.push(start_catalog_step());
     steps.push(Step {
@@ -84,7 +79,7 @@ fn prayer_file_scenario(
         },
     });
     Scenario {
-        name,
+        name: "prayer_v2_ts",
         seed: Seed {
             profiles: vec![("test", "test")],
             mainland: true,
@@ -97,23 +92,13 @@ fn prayer_file_scenario(
             require_mainland_base: true,
             deadline: PRAYER_DEADLINE,
             start_script: None,
-            start_file: Some(file_name),
-            wait_script_stop: Some(stop),
-            terminal_shot: Some(name),
+            start_file: Some("prayer_v2.ts"),
+            wait_script_stop: Some(PRAYER_V2_STOP),
+            terminal_shot: Some("prayer_v2_ts"),
             nav: gold_script_nav(),
             ..Default::default()
         },
     }
-}
-
-/// Headed File v2 witness: actual `prayer_v2.ts` helpers, not a stub.
-pub(crate) fn prayer_v2_scenario() -> Scenario {
-    prayer_file_scenario("prayer_v2_ts", "prayer_v2.ts", PRAYER_V2_STOP)
-}
-
-/// Headed File v1 witness: thin frozen Prayer adapter, not a catalog whale.
-pub(crate) fn prayer_v1_scenario() -> Scenario {
-    prayer_file_scenario("prayer_v1_ts", "prayer_v1.ts", PRAYER_V1_STOP)
 }
 
 #[cfg(test)]
@@ -123,7 +108,7 @@ mod tests {
     use client::client::{Client, ClientConfig};
     use client::io::ServerProt;
 
-    fn assert_prestart_seed(s: &Scenario, file: &str, stop: &str) {
+    fn assert_prestart_seed(s: &Scenario) {
         let start = s
             .steps
             .iter()
@@ -160,9 +145,9 @@ mod tests {
                 .any(|st| st.name.contains("setstat") || st.name.contains("setvar")),
             "no post-Start prayer seed"
         );
-        assert_eq!(s.settings.start_file, Some(file));
+        assert_eq!(s.settings.start_file, Some("prayer_v2.ts"));
         assert_eq!(s.settings.start_script, None);
-        assert_eq!(s.settings.wait_script_stop, Some(stop));
+        assert_eq!(s.settings.wait_script_stop, Some(PRAYER_V2_STOP));
         assert_ne!(
             s.proof,
             Proof::Stat { id: 16, min: 0 },
@@ -203,26 +188,20 @@ mod tests {
     fn prestart_stat_wait_rejects_fresh_default_prayer_1_and_accepts_observed_43() {
         let default_one = prayer_stat_snapshot(1);
         let observed_43 = prayer_stat_snapshot(43);
-        for scenario in [prayer_v2_scenario(), prayer_v1_scenario()] {
-            let arm = prestart_setstat_arm(&scenario);
-            assert!(
-                !arm.check(&default_one, None),
-                "fresh default prayer 1 must not satisfy preparation: {arm:?}"
-            );
-            assert!(
-                arm.check(&observed_43, None),
-                "observed seeded prayer 43 must satisfy preparation: {arm:?}"
-            );
-        }
+        let scenario = prayer_v2_scenario();
+        let arm = prestart_setstat_arm(&scenario);
+        assert!(
+            !arm.check(&default_one, None),
+            "fresh default prayer 1 must not satisfy preparation: {arm:?}"
+        );
+        assert!(
+            arm.check(&observed_43, None),
+            "observed seeded prayer 43 must satisfy preparation: {arm:?}"
+        );
     }
 
     #[test]
     fn v2_prestart_reads_points_and_overlay_before_start() {
-        assert_prestart_seed(&prayer_v2_scenario(), "prayer_v2.ts", PRAYER_V2_STOP);
-    }
-
-    #[test]
-    fn v1_prestart_reads_points_and_overlay_before_start() {
-        assert_prestart_seed(&prayer_v1_scenario(), "prayer_v1.ts", PRAYER_V1_STOP);
+        assert_prestart_seed(&prayer_v2_scenario());
     }
 }

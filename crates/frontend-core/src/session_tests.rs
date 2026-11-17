@@ -11,7 +11,6 @@ use vault::{Profile, ProfileSettings, Vault};
 use super::*;
 use crate::command::OperatorCommand;
 #[cfg(feature = "js")]
-use crate::scripts::LoadShape;
 use crate::surface::{SlotAttach, SlotSurface};
 use crate::ArmMirror;
 use crate::WalkGlobals;
@@ -882,7 +881,7 @@ fn reloading_during_removal_cancels_it_and_keeps_the_same_lifetime() {
 }
 
 #[cfg(feature = "js")]
-fn looping_bot(dir: &std::path::Path) -> (String, LoadShape) {
+fn looping_bot(dir: &std::path::Path) -> (String, script_js::CheckedLoad) {
     let path = dir.join("looping.ts");
     std::fs::write(
         &path,
@@ -891,7 +890,7 @@ fn looping_bot(dir: &std::path::Path) -> (String, LoadShape) {
     .unwrap();
     let mut library = script_js::JsLibrary::new(dir.join("js-scripts.json"));
     let card = library.load(&path).unwrap();
-    (card.js, LoadShape::from_script(card.shape))
+    (card.js, card.checked)
 }
 
 #[cfg(feature = "js")]
@@ -971,9 +970,15 @@ fn offline_start_and_stop_settle_through_poll() {
 #[test]
 fn a_start_refused_by_the_host_is_an_error_not_an_operation() {
     let mut s = session("start-refused", &[]);
+    let prepared = script_js::prepare_raw_origin_for_test(
+        "looping.ts",
+        "export default class T extends LoopingBot { override loop() {} }",
+        &[],
+    )
+    .unwrap();
     let refused = s.start_script(
         "ghost",
-        ScriptStart::load(String::new(), LoadShape::Reject, None, Vec::new()),
+        ScriptStart::load(prepared.js, prepared.checked, None, Vec::new()),
         None,
     );
     assert_eq!(
@@ -1340,12 +1345,7 @@ fn script_lines_reach_the_slot_log_through_the_poll() {
     let card = library.load(&path).unwrap();
     s.start_script(
         "logpoll-carol",
-        ScriptStart::load(
-            card.js,
-            LoadShape::from_script(card.shape),
-            None,
-            Vec::new(),
-        ),
+        ScriptStart::load(card.js, card.checked, None, Vec::new()),
         Some("file:broken".into()),
     )
     .unwrap();

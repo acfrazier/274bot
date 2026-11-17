@@ -14,18 +14,16 @@ use std::time::{Duration, Instant};
 fn paint_slot(source: &str, incarnation: u64) -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(incarnation);
-    let source: Arc<str> = source.into();
-    let family = script_js::resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
+    let prepared = script_js::prepare_raw_origin_for_test("bot.js", source, &[])
+        .expect("prepare held-fold test origin");
+    assert_eq!(prepared.checked.shape(), script_js::LoadShape::CompatClass);
     slot.bind_surface_factory(Arc::new(JsSurfaceFactory));
     slot.start_surface(SurfaceStart {
         card: Arc::new(JsStartCard {
             card_name: "held fold test".into(),
-            source,
-            shape: script_js::LoadShape::CompatClass,
+            source: Arc::<str>::from(prepared.js),
+            checked: prepared.checked,
             siblings: Arc::from(Vec::<(String, String)>::new()),
-            family,
         }),
         settings_bag: None,
         game_data: None,

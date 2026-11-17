@@ -1,11 +1,22 @@
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
+import type { ScriptManifest } from '../host-js/index.d.ts';
 
 /**
  * Headed File-card v2 witness. Sequential query → unknown refuse →
  * Protect from Melee ON → clear with timed_out 0 → named stop.
  * Reads NativeSnapshot `ingame` / `here` only (no `scene_state`).
  */
-export const apiVersion = 2;
+export const manifest = {
+    apiVersion: 2,
+    name: 'PrayerToggle',
+    version: '1',
+    author: '274bot',
+    description: 'Turns Protect from Melee on, clears it, and stops.',
+    category: 'Examples',
+    tags: ['prayer'],
+    settings: {},
+    capabilities: [],
+} as const satisfies ScriptManifest;
 
 const STOP_OK = 'prayer v2 qualification complete';
 const MELEE = 'Protect from Melee';

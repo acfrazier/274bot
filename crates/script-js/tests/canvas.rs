@@ -15,8 +15,9 @@ fn tick_paint(iso: &LoadIsolate, n: u64) -> std::sync::Arc<ScriptPaint> {
 }
 
 fn spawn(src: &str) -> LoadIsolate {
-    let shape = script_js::detect_shape(src);
-    LoadIsolate::spawn(src.to_string(), shape, vec![]).expect("bot loads")
+    let prepared = script_js::prepare_raw_origin_for_test("fixture.js", src, &[])
+        .expect("prepare compat paint fixture");
+    LoadIsolate::spawn(src.to_string(), prepared.checked.shape(), vec![]).expect("bot loads")
 }
 
 fn examplebot_source() -> String {

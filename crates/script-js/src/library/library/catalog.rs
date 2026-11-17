@@ -220,8 +220,8 @@ struct CatalogIncoming {
 
 #[derive(Debug)]
 struct CatalogAddedCard {
-    shape: LoadShape,
-    api_family: ApiFamily,
+    checked: CheckedLoad,
+    manifest: Option<Arc<ScriptManifest>>,
     sha256: String,
     unloadable: Option<UnloadReason>,
 }
@@ -773,8 +773,8 @@ enum CatalogAnalyzePhase {
 struct CatalogAnalyzeState {
     registration_index: usize,
     path: PathBuf,
-    shape: LoadShape,
-    api_family: ApiFamily,
+    checked: CheckedLoad,
+    manifest: Option<Arc<ScriptManifest>>,
     is_added: bool,
     sha256: Option<String>,
     addition: Option<CatalogAddedCard>,
@@ -1137,22 +1137,24 @@ impl CatalogDiffWork {
                     );
                     return record_catalog_failure(&mut self.diff, &mut self.usage, failure);
                 };
-                let (shape, api_family) = match resolve_api_family(origin) {
-                    Err(error) => {
+                let checked_origin = match check_origin(&path, origin) {
+                    Err(crate::library::prepare::OriginRefusal::NotBotShape) => return Ok(()),
+                    Err(refusal) => {
                         let failure = LoadFailure::capture_bounded(
                             ScriptSource::Catalog,
                             &path,
                             &registration.name,
-                            &error,
+                            &refusal.to_string(),
                             origin,
                             None,
                             MAX_PREPARATION_SOURCE_BYTES,
                         );
                         return record_catalog_failure(&mut self.diff, &mut self.usage, failure);
                     }
-                    Ok((LoadShape::Reject, _)) => return Ok(()),
-                    Ok(resolved) => resolved,
+                    Ok(checked) => checked,
                 };
+                let checked = checked_origin.checked();
+                let api_family = checked.family();
                 let fingerprint_work = match PreparationFingerprintWork::new(
                     &path,
                     origin,
@@ -1175,8 +1177,8 @@ impl CatalogDiffWork {
                 self.analysis = Some(CatalogAnalyzeState {
                     registration_index,
                     path,
-                    shape,
-                    api_family,
+                    checked,
+                    manifest: checked_origin.manifest().cloned(),
                     is_added: !snapshot.existing.contains_key(&registration.name),
                     sha256: None,
                     addition: None,
@@ -1209,7 +1211,7 @@ impl CatalogDiffWork {
                             &registration.name,
                             &error,
                             origin,
-                            Some(analysis.api_family),
+                            Some(analysis.checked.family()),
                             MAX_PREPARATION_SOURCE_BYTES,
                         );
                         self.analysis = None;
@@ -1264,7 +1266,7 @@ impl CatalogDiffWork {
                             &registration.name,
                             &error,
                             origin,
-                            Some(analysis.api_family),
+                            Some(analysis.checked.family()),
                             MAX_PREPARATION_SOURCE_BYTES,
                         );
                         self.analysis = None;
@@ -1300,7 +1302,7 @@ impl CatalogDiffWork {
                             &registration.name,
                             &error,
                             origin,
-                            Some(analysis.api_family),
+                            Some(analysis.checked.family()),
                             MAX_PREPARATION_SOURCE_BYTES,
                         );
                         self.analysis = None;
@@ -1323,8 +1325,8 @@ impl CatalogDiffWork {
                     first_unloadable,
                 );
                 analysis.addition = Some(CatalogAddedCard {
-                    shape: analysis.shape,
-                    api_family: analysis.api_family,
+                    checked: analysis.checked,
+                    manifest: analysis.manifest.take(),
                     sha256,
                     unloadable,
                 });
@@ -2293,23 +2295,22 @@ impl JsLibrary {
                     continue;
                 }
             };
-            let (shape, api_family) = match resolve_api_family(&origin) {
-                Ok(pair) => pair,
-                Err(e) => {
+            let checked_origin = match check_origin(&path, &origin) {
+                Ok(checked) => checked,
+                // A shape that is not a bot is skipped without a record.
+                Err(crate::library::prepare::OriginRefusal::NotBotShape) => continue,
+                Err(refusal) => {
                     self.note_err(
                         ScriptSource::Catalog,
                         &path,
                         &card.name,
-                        &e,
+                        &refusal.to_string(),
                         Some(&origin),
                         None,
                     );
                     continue;
                 }
             };
-            if shape == LoadShape::Reject {
-                continue;
-            }
             // Origin/classify only — no transpile or V8. Frontends warm
             // selected cards on WorkAdmission before Start or Transpile all.
             let sha256 = JsCache::origin_sha(origin.as_bytes());
@@ -2325,7 +2326,8 @@ impl JsLibrary {
             self.cards.push(JsCard {
                 name: card.name.clone(),
                 path,
-                shape,
+                checked: checked_origin.checked(),
+                manifest: checked_origin.manifest().cloned(),
                 origin,
                 js: String::new(),
                 kind: card.kind,
@@ -2336,7 +2338,6 @@ impl JsLibrary {
                 tags: card.tags.clone(),
                 settings_schema: card.settings_schema.clone(),
                 unloadable,
-                api_family,
             });
             n += 1;
             if let Some(last) = self.cards.last().cloned() {
@@ -2396,7 +2397,8 @@ impl JsLibrary {
             let js_card = JsCard {
                 name: card.name.clone(),
                 path: path.clone(),
-                shape: addition.shape,
+                checked: addition.checked,
+                manifest: addition.manifest.clone(),
                 origin: origin.clone(),
                 js: String::new(),
                 kind: card.kind,
@@ -2407,7 +2409,6 @@ impl JsLibrary {
                 tags: card.tags.clone(),
                 settings_schema: card.settings_schema.clone(),
                 unloadable: addition.unloadable.clone(),
-                api_family: addition.api_family,
             };
             self.fingerprints.insert(key.clone(), fingerprint.clone());
             if let Some(diagnostic) = js_card
@@ -2421,7 +2422,7 @@ impl JsLibrary {
                     &js_card.name,
                     &diagnostic,
                     fingerprint.clone(),
-                    Some(js_card.api_family),
+                    Some(js_card.api_family()),
                 ));
             } else {
                 // A catalog policy hold is not a load failure.

@@ -269,7 +269,7 @@ enum ScriptStartKind {
     #[cfg(feature = "js")]
     Load {
         js: String,
-        shape: script_js::LoadShape,
+        checked: script_js::CheckedLoad,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     },
@@ -290,17 +290,17 @@ impl ScriptStart {
     }
 
     #[cfg(feature = "js")]
-    /// Start a loaded JS/TS card.
+    /// Start a loaded JS/TS card with the checked identity from its
+    /// preparation; Start never classifies the execution source again.
     pub fn load(
         js: String,
-        shape: crate::scripts::LoadShape,
+        checked: script_js::CheckedLoad,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Self {
-        let shape = shape.to_script();
         Self(ScriptStartKind::Load {
             js,
-            shape,
+            checked,
             bag,
             siblings,
         })
@@ -3056,10 +3056,10 @@ impl<Io> OperatorSession<Io> {
             #[cfg(feature = "js")]
             ScriptStartKind::Load {
                 js,
-                shape,
+                checked,
                 bag,
                 siblings,
-            } => play.script_start_load_typed(name, js, shape, bag, siblings)?,
+            } => play.script_start_load_typed(name, js, checked, bag, siblings)?,
         }
         if !compiled {
             if let Some(identity) = identity {

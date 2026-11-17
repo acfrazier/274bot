@@ -450,7 +450,6 @@ const GATHER_SETTINGS_JSON: &str = r#"{"skill":"Woodcutting","woodcuttingResourc
 
 #[cfg(feature = "js")]
 const PROMISE_SOURCE: &str = r#"
-export const apiVersion = 2;
 const settings = { skill: 'Woodcutting', woodcuttingResources: ['normal'], location: 'Custom', customTile: { x: 3190, z: 3245, level: 0 }, disposition: 'Power', radius: 12 };
 let run = null;
 let stopRequested = false;
@@ -476,7 +475,6 @@ export function tick(api) {
 
 #[cfg(feature = "js")]
 const HOLD_SOURCE: &str = r#"
-export const apiVersion = 2;
 let started = false;
 function chooseDest(api, here) {
   const offsets = [];
@@ -541,14 +539,11 @@ export async function tick(api) {
 
 #[cfg(feature = "js")]
 fn start_load(live: &LiveCell, source: &str) {
+    let source = script_js::native_fixture(source);
+    let prepared = script_js::prepare_raw_origin_for_test("seat-live.js", &source, &[])
+        .expect("native seat fixture prepares");
     live.play
-        .script_start_load(
-            &live.account,
-            source.into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            vec![],
-        )
+        .script_start_load(&live.account, prepared.js, prepared.checked, None, vec![])
         .expect("start public Load v2 script");
 }
 

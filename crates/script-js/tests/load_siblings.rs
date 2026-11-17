@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use script_js::{
-    resolve_sibling_modules, scan_same_folder_js_imports, sibling_module_url, LoadIsolate,
-    LoadShape,
+    resolve_sibling_modules, scan_same_folder_js_imports, sibling_module_url, CacheRole,
+    LoadIsolate, LoadShape,
 };
 use {
     script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache,
@@ -76,11 +76,15 @@ fn sibling_logic_ts_is_cached_and_registered_without_v8() {
         "transpiled sibling JS: {}",
         siblings[0].1
     );
-    let logic_bytes = std::fs::read(card_dir.join("Logic.ts")).unwrap();
+    let logic_path = card_dir.join("Logic.ts");
+    let logic_bytes = std::fs::read(&logic_path).unwrap();
+    let logic_source = std::str::from_utf8(&logic_bytes).unwrap();
     let cached = cache
-        .get_or_transpile(
-            &card_dir.join("Logic.ts"),
-            &logic_bytes,
+        .get_or_compile(
+            CacheRole::Sibling,
+            &logic_path,
+            logic_source,
+            logic_source,
             CacheMeta {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::File,
@@ -90,7 +94,9 @@ fn sibling_logic_ts_is_cached_and_registered_without_v8() {
         )
         .expect("Logic.ts cached");
     assert!(
-        cache.object_path(&cached.sha256).is_file(),
+        cache
+            .object_path(CacheRole::Sibling, &logic_path, &cached.sha256)
+            .is_file(),
         "Logic.ts bytes must land in js-cache"
     );
 }

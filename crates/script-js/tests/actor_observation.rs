@@ -321,7 +321,6 @@ export default class T extends LoopingBot {
 #[test]
 fn v2_snapshot_exposes_npcs_and_self_target() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const n = api.snapshot.npcs[0];
   globalThis.__probe = {
@@ -334,7 +333,7 @@ export function tick(api) {
   };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = spawn_v2(src);
     let actions = ["Attack".to_string()];
     let npcs = [npc_row(Some("Goblin"), 4, 2832, 9825, &actions)];
     let mut snap = empty_input(1);
@@ -358,7 +357,6 @@ fn v2_line_of_sight_consumes_packed_network_sw() {
     let mut flags = [0i32; 256];
     flags[3 * 16 + 1] = 0x20000;
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const n = api.snapshot.npcs[0];
   const here = api.snapshot.here;
@@ -368,7 +366,7 @@ export function tick(api) {
   };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = spawn_v2(src);
     let actions = ["Attack".to_string()];
     let npcs = [SceneEntityInput {
         index: 1,
@@ -420,7 +418,6 @@ export function tick(api) {
 #[test]
 fn v2_omitted_delta_keeps_npcs_and_self_target() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const n = api.snapshot.npcs[0];
   globalThis.__probe = {
@@ -431,7 +428,7 @@ export function tick(api) {
   };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = spawn_v2(src);
     let actions = ["Attack".to_string()];
     let npcs = [npc_row(Some("Goblin"), 4, 2832, 9825, &actions)];
     let mut snap = empty_input(1);
@@ -453,8 +450,13 @@ export function tick(api) {
 }
 
 fn spawn_v2(source: &str) -> LoadIsolate {
-    LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![])
-        .expect("spawn actor-observation isolate")
+    let js = script_js::transpile_ts(source).expect("transpile actor-observation fixture");
+    LoadIsolate::spawn(
+        script_js::native_fixture(&js),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .expect("spawn actor-observation isolate")
 }
 
 fn open_collision<'a>(flags: &'a [i32]) -> NativeFactsInput<'a> {
@@ -499,17 +501,114 @@ fn scene_npc<'a>(actions: &'a [String]) -> SceneEntityInput<'a> {
     }
 }
 
+const ACTOR_OBSERVATION_BODY: &str = r#"
+import { Npc } from '../../api/npcs/Npcs.js';
+import { reader } from '../../adapter/ClientAdapter.js';
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+
+type NativeApi = import('../host-js/index.d.ts').NativeApi;
+
+const STOP_OK = 'actor observation qualification complete';
+const RECEIPT_PREFIX = 'actor-receipt:';
+
+export function tick(api: NativeApi): void {
+    const snap = api.snapshot;
+    if (!snap.ingame || !snap.here) return;
+    const c = snap.collision;
+    if (!c.available) return;
+
+    let n: (typeof snap.npcs)[number] | undefined;
+    for (const row of snap.npcs || []) {
+        if (!row || row.size < 1) continue;
+        if (
+            !n ||
+            row.distance < n.distance ||
+            (row.distance === n.distance && row.index < n.index)
+        ) {
+            n = row;
+        }
+    }
+    if (!n) return;
+
+    const wrapped = new Npc(n);
+    const origin = wrapped.networkOrigin();
+    const tile = wrapped.tile();
+    const faceEntity = reader.selfFaceEntity();
+    const self =
+        faceEntity < 0
+            ? { kind: 0, index: -1 }
+            : faceEntity >= 0x8000
+              ? { kind: 2, index: faceEntity - 0x8000 }
+              : { kind: 1, index: faceEntity };
+    if (wrapped.size !== n.size || origin.x !== n.nx || origin.z !== n.nz) {
+        throw new Error('v1 Npc packed fields disagree with snapshot row');
+    }
+    if (tile.x !== n.x || tile.z !== n.z || tile.level !== n.level) {
+        throw new Error('v1 Npc.tile disagrees with rendered snapshot row');
+    }
+    if (self.kind !== snap.self_target_kind || self.index !== snap.self_target_index) {
+        throw new Error('reader.selfFaceEntity disagrees with snapshot self_target_*');
+    }
+
+    const to = { x: origin.x, z: origin.z, level: n.level };
+    const v2 = api.lineOfSight({ from: snap.here, to, size: wrapped.size });
+    if (!v2.ok) throw new Error(v2.error);
+    const v1 = Reachability.lineOfSight(snap.here, to, wrapped.size);
+    if (v1 !== v2.value) {
+        throw new Error('v1 Reachability.lineOfSight must agree with api.lineOfSight');
+    }
+
+    const receipt = {
+        identity: {
+            base_x: c.base_x,
+            base_z: c.base_z,
+            level: c.level,
+            width: c.width,
+            height: c.height,
+        },
+        here: { x: snap.here.x, z: snap.here.z, level: snap.here.level },
+        npc: {
+            index: n.index,
+            name: n.name,
+            size: n.size,
+            tile: { x: n.x, z: n.z },
+            network: { x: n.nx, z: n.nz },
+            level: n.level,
+        },
+        packed: { size: wrapped.size, nx: origin.x, nz: origin.z },
+        rendered: { x: tile.x, z: tile.z },
+        self_target: { kind: self.kind, index: self.index },
+        los: { v2: v2.value, v1 },
+    };
+    const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
+    api.log(
+        `npc index=${n.index} name=${n.name} size=${n.size} tile=${n.x},${n.z} network=${n.nx},${n.nz} level=${n.level} self=${self.kind},${self.index} los=${v2.value}`,
+    );
+    api.log(line);
+    api.paint
+        .begin()
+        .title('actor observation v2')
+        .row(line)
+        .row('npc', n.index, n.name ?? '', `size=${n.size}`)
+        .row('tile', `${n.x},${n.z}`, 'network', `${n.nx},${n.nz}`, 'level', n.level)
+        .row('self', self.kind, self.index, 'los', v2.value)
+        .row('result', STOP_OK)
+        .end();
+    (globalThis as { __actorExample?: unknown }).__actorExample = { ok: true, receipt };
+    api.stop(STOP_OK);
+}
+"#;
 #[test]
 fn qualification_example_imports_are_loadable() {
-    let src = include_str!("../examples/actor_observation_v2.ts");
-    assert_eq!(script_js::first_unloadable_specifier(src), None);
+    let js = script_js::transpile_ts(ACTOR_OBSERVATION_BODY)
+        .expect("transpile actor-observation fixture");
+    let origin = script_js::native_fixture(&js);
+    assert_eq!(script_js::first_unloadable_specifier(&origin), None);
 }
 
 #[test]
 fn example_does_not_stop_without_size_ge_1_npc() {
-    let js = script_js::transpile_ts(include_str!("../examples/actor_observation_v2.ts"))
-        .expect("transpile actor_observation_v2.ts");
-    let iso = spawn_v2(&js);
+    let iso = spawn_v2(ACTOR_OBSERVATION_BODY);
     let flags = [0i32; 256];
     let mut snap = empty_input(1);
     iso.post_snapshot(encode_snapshot_with_native(&snap, open_collision(&flags)));
@@ -522,7 +621,7 @@ fn example_does_not_stop_without_size_ge_1_npc() {
     );
     iso.join();
 
-    let iso = spawn_v2(&js);
+    let iso = spawn_v2(ACTOR_OBSERVATION_BODY);
     let actions = ["Attack".to_string()];
     let npcs = [npc_row(Some("Goblin"), 0, 3205, 3201, &actions)];
     snap.npcs = &npcs;
@@ -535,9 +634,7 @@ fn example_does_not_stop_without_size_ge_1_npc() {
 
 #[test]
 fn example_executes_v1_and_v2_helpers_then_named_stop() {
-    let js = script_js::transpile_ts(include_str!("../examples/actor_observation_v2.ts"))
-        .expect("transpile actor_observation_v2.ts");
-    let iso = spawn_v2(&js);
+    let iso = spawn_v2(ACTOR_OBSERVATION_BODY);
     let flags = [0i32; 256];
     let actions = ["Attack".to_string()];
     let npcs = [scene_npc(&actions)];
@@ -582,9 +679,7 @@ fn example_executes_v1_and_v2_helpers_then_named_stop() {
 
 #[test]
 fn example_picks_nearest_size_ge_1_not_array_first() {
-    let js = script_js::transpile_ts(include_str!("../examples/actor_observation_v2.ts"))
-        .expect("transpile actor_observation_v2.ts");
-    let iso = spawn_v2(&js);
+    let iso = spawn_v2(ACTOR_OBSERVATION_BODY);
     let flags = [0i32; 256];
     let actions = ["Attack".to_string()];
     let npcs = [

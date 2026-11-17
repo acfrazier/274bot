@@ -104,8 +104,8 @@ fn collision_native<'a>(flags: &'a [i32]) -> NativeFactsInput<'a> {
 }
 
 fn spawn_v2(source: &str) -> LoadIsolate {
-    LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![])
-        .expect("spawn line-of-sight isolate")
+    let source = script_js::native_fixture(source);
+    LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).expect("spawn line-of-sight isolate")
 }
 
 const OPEN_FLAGS: [i32; 256] = [0; 256];
@@ -114,7 +114,6 @@ const OPEN_FLAGS: [i32; 256] = [0; 256];
 fn first_post_without_collision_table_is_unavailable() {
     let iso = spawn_v2(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
   const c = api.snapshot.collision;
   globalThis.__probe = {
@@ -143,7 +142,6 @@ fn public_flags_and_v2_share_posted_identity() {
     flags[5 * 16 + 1] = 0x20000;
     let iso = spawn_v2(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
   const c = api.snapshot.collision;
   const here = { x: 3201, z: 3201, level: 0 };
@@ -193,7 +191,6 @@ fn retained_view_is_historical_after_refresh() {
     second[2 * 16 + 2] = 9;
     let iso = spawn_v2(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
   if (!globalThis.__old) {
     globalThis.__old = api.snapshot.collision;
@@ -236,7 +233,6 @@ fn reset_clears_observation_pause_keeps() {
     let flags = OPEN_FLAGS;
     let iso = spawn_v2(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = {
     available: api.snapshot.collision.available,
@@ -265,31 +261,50 @@ export function tick(api) {
 }
 
 #[test]
-fn example_calls_raw_at_and_true_false_los() {
+fn fixture_publishes_open_and_blocked_line_of_sight_receipt() {
     let mut flags = OPEN_FLAGS;
-    // Adjacent east dest carries entering V_W. A dest VIS_SCENERY rock alone
-    // is not a blocked pair.
     flags[2 * 16 + 1] = 0x10000;
-    let js = script_js::transpile_ts(include_str!("../examples/line_of_sight_v2.ts"))
-        .expect("transpile line_of_sight_v2.ts");
-    let iso = spawn_v2(&js);
+    let source = r#"
+export function tick(api) {
+  const here = { x: 3201, z: 3201, level: 0 };
+  const openTo = { x: 3200, z: 3201, level: 0 };
+  const blockedTo = { x: 3202, z: 3201, level: 0 };
+  const open = api.lineOfSight({ from: here, to: openTo, size: 1 });
+  const blocked = api.lineOfSight({ from: here, to: blockedTo, size: 1 });
+  if (!open.ok) throw new Error(open.error);
+  if (!blocked.ok) throw new Error(blocked.error);
+  const receipt = {
+    here: { ...here, flag: api.snapshot.collision.flags.at(1 * 16 + 1) },
+    open: { from: here, to: openTo, v2: open.value },
+    blocked: { from: here, to: blockedTo, mask: 0x10000, v2: blocked.value },
+  };
+  const line = `los-receipt:${JSON.stringify(receipt)}`;
+  api.log(line);
+  api.paint.begin().title("line of sight fixture").row(line).end();
+  api.stop("line of sight qualification complete");
+}
+"#;
+    let iso = spawn_v2(source);
     let bytes =
         encode_snapshot_delta_with_native(None, &empty_input(1), collision_native(&flags), false).0;
     iso.post_snapshot(bytes);
     iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    let paint = iso.paint().expect("example paint receipt");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !iso.stopped() && std::time::Instant::now() < deadline {
+        let _ = iso.drain_logs();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(iso.stopped(), "receipt tick reaches the named stop");
+    let paint = iso.paint().expect("line-of-sight receipt");
     let line = paint
         .lines
         .iter()
         .find(|row| row.starts_with("los-receipt:"))
-        .expect("compact los-receipt paint line");
+        .expect("compact los receipt");
     let receipt: serde_json::Value =
         serde_json::from_str(line.strip_prefix("los-receipt:").unwrap()).unwrap();
     assert_eq!(receipt["open"]["v2"], true);
     assert_eq!(receipt["blocked"]["v2"], false);
-    assert_eq!(receipt["open"]["v1"], true);
-    assert_eq!(receipt["blocked"]["v1"], false);
     assert_eq!(receipt["here"]["flag"], 0);
     assert_eq!(receipt["open"]["from"]["x"], 3201);
     assert_eq!(receipt["blocked"]["to"]["x"], 3202);
@@ -303,98 +318,53 @@ fn example_calls_raw_at_and_true_false_los() {
 }
 
 #[test]
-fn qualification_example_reachability_import_is_loadable() {
-    let src = include_str!("../examples/line_of_sight_v2.ts");
-    assert_eq!(script_js::first_unloadable_specifier(src), None);
-}
-
-#[test]
-fn dest_vis_alone_is_fixture_failure_not_a_blocked_pair() {
+fn destination_vis_scenery_alone_is_not_a_blocked_pair() {
     let mut flags = OPEN_FLAGS;
     flags[5 * 16 + 1] = 0x20000;
-    let js = script_js::transpile_ts(include_str!("../examples/line_of_sight_v2.ts"))
-        .expect("transpile line_of_sight_v2.ts");
-    let iso = spawn_v2(&js);
+    let iso = spawn_v2(
+        r#"
+export function tick(api) {
+  globalThis.__probe = api.lineOfSight({
+    from: { x: 3201, z: 3201, level: 0 },
+    to: { x: 3205, z: 3201, level: 0 },
+    size: 1,
+  });
+}
+"#,
+    );
     let bytes =
         encode_snapshot_delta_with_native(None, &empty_input(1), collision_native(&flags), false).0;
     iso.post_snapshot(bytes);
     iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    let logs = iso.drain_logs();
+    let result = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["value"], true);
     iso.join();
-    assert!(
-        logs.iter().any(|line| line.contains("fixture failure")),
-        "dest VIS_SCENERY alone must fail the pair fixture: {logs:?}"
-    );
-    assert!(
-        logs.iter().all(|line| !line.contains("los-receipt:")),
-        "dest VIS_SCENERY alone must not publish a receipt: {logs:?}"
-    );
 }
 
 #[test]
-fn source_scenery_entering_v_is_fixture_failure_not_wall_negative() {
-    // Source at (3202,3201) has WALK_SCENERY; dest east has entering V_W.
-    // Helper would return false on source scenery before wall tracing.
+fn source_scenery_before_entering_wall_returns_false() {
     let mut flags = OPEN_FLAGS;
-    flags[2 * 16 + 1] = 0x100; // WALK_SCENERY at 3202,3201
-    flags[3 * 16 + 1] = 0x10000; // V_W at 3203,3201
-    let js = script_js::transpile_ts(include_str!("../examples/line_of_sight_v2.ts"))
-        .expect("transpile line_of_sight_v2.ts");
-    let iso = spawn_v2(&js);
-    let bytes =
-        encode_snapshot_delta_with_native(None, &empty_input(1), collision_native(&flags), false).0;
-    iso.post_snapshot(bytes);
-    iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    let logs = iso.drain_logs();
-    iso.join();
-    assert!(
-        logs.iter().any(|line| line.contains("fixture failure")),
-        "source-scenery + entering V must fail the pair fixture: {logs:?}"
-    );
-    assert!(
-        logs.iter().all(|line| !line.contains("los-receipt:")),
-        "source-scenery negative must not publish a receipt: {logs:?}"
-    );
-}
-
-#[test]
-fn example_skips_source_scenery_blocked_and_selects_clear_wall() {
-    // r=1 scenery source + V wall is closer; clear-source wall further east.
-    // Selector must continue to the clear-source wall pair.
-    let mut flags = OPEN_FLAGS;
-    // from (3202,3201)=lx2,lz1 scenery; dest (3203,3201) V_W — invalid blocked.
     flags[2 * 16 + 1] = 0x100;
     flags[3 * 16 + 1] = 0x10000;
-    // clear from (3204,3201)=lx4,lz1; dest (3205,3201) V_W — valid blocked.
-    flags[5 * 16 + 1] = 0x10000;
-    let js = script_js::transpile_ts(include_str!("../examples/line_of_sight_v2.ts"))
-        .expect("transpile line_of_sight_v2.ts");
-    let iso = spawn_v2(&js);
+    let iso = spawn_v2(
+        r#"
+export function tick(api) {
+  globalThis.__probe = api.lineOfSight({
+    from: { x: 3202, z: 3201, level: 0 },
+    to: { x: 3203, z: 3201, level: 0 },
+    size: 1,
+  });
+}
+"#,
+    );
     let bytes =
         encode_snapshot_delta_with_native(None, &empty_input(1), collision_native(&flags), false).0;
     iso.post_snapshot(bytes);
     iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    let paint = iso.paint().expect("example paint receipt");
-    let line = paint
-        .lines
-        .iter()
-        .find(|row| row.starts_with("los-receipt:"))
-        .expect("compact los-receipt paint line");
-    let receipt: serde_json::Value =
-        serde_json::from_str(line.strip_prefix("los-receipt:").unwrap()).unwrap();
-    assert_eq!(receipt["blocked"]["from"]["x"], 3204);
-    assert_eq!(receipt["blocked"]["to"]["x"], 3205);
-    assert_eq!(receipt["blocked"]["src"], 0);
-    assert_eq!(receipt["blocked"]["mask"], 0x10000);
-    assert_eq!(receipt["blocked"]["v2"], false);
-    assert_eq!(receipt["open"]["v2"], true);
-    assert_eq!(
-        iso.script_stop_receipt().expect("named helper stop").reason,
-        "line of sight qualification complete"
-    );
+    let result = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["value"], false);
     iso.join();
 }
 
@@ -402,7 +372,6 @@ fn example_skips_source_scenery_blocked_and_selects_clear_wall() {
 fn v2_invalid_args_and_size_cap_when_width_zero() {
     let iso = spawn_v2(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = {
     nonObject: api.lineOfSight(null),

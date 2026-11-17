@@ -190,7 +190,7 @@ impl Drop for RuntimeLifetime {
 pub(super) fn isolate_main(
     source: String,
     card_name: std::sync::Arc<str>,
-    shape: LoadShape,
+    checked: crate::library::prepare::CheckedLoad,
     siblings: Vec<(String, String)>,
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
@@ -277,7 +277,7 @@ pub(super) fn isolate_main(
         wire_runtime(
             runtime,
             &source,
-            shape,
+            checked,
             &siblings,
             game_data,
             named_banks,
@@ -308,11 +308,7 @@ pub(super) fn isolate_main(
         "typeof globalThis.__rs2b0t_flush_native_events === 'function'",
     )
     .unwrap_or(false);
-    let v2_native = shape == LoadShape::NativeTick
-        && matches!(
-            crate::library::shape::parse_declared_api_version(&source),
-            Ok(Some(2))
-        );
+    let v2_native = checked.v2_native();
     let _ =
         crate::materialize::lineage_v8::eval::<serde_json::Value>(&mut runtime, INSTALL_HOST_HOOKS);
     frame_ready.store(true, std::sync::atomic::Ordering::Release);
@@ -330,7 +326,10 @@ pub(super) fn isolate_main(
         proof,
         v2_native,
         events_consumed,
-        matches!(shape, LoadShape::CompatDefineBot | LoadShape::CompatClass),
+        matches!(
+            checked.shape(),
+            LoadShape::CompatDefineBot | LoadShape::CompatClass
+        ),
         execution,
         #[cfg(feature = "memory-profile")]
         counters,

@@ -74,6 +74,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   does not carry over; every other 0.2.9 saved format still loads.
 - Direct navigation-pack builds now require `--engine` with the engine checkout
   for the selected game revision. The local-data builder supplies it automatically.
+- Native JavaScript and TypeScript scripts without a manifest no longer load,
+  including scripts with only `apiVersion = 2` and `tick`, or just `tick`.
+  Load shows `manifest-required` with the source line and the fix. Fix: add
+  `export const manifest = { apiVersion: 2, name: 'My script', version: '1', author: 'Your name', description: 'What it does', category: 'Examples', tags: [], settings: {}, capabilities: [] };`,
+  move any `SETTINGS` into `manifest.settings`, and remove separate
+  `apiVersion` and `SETTINGS` exports. In `manifest.settings`, write `help`
+  instead of `description`, `string[]` instead of `list`, and remove `step`,
+  `csvToggle` and `color`. rs2b0t `defineBot` and default-export class
+  scripts are unchanged and need no manifest.
 
 ### Developer tools
 
@@ -295,6 +304,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   - AccountLeveler, unchanged, ran ten game ticks without a script error on a
     test server, once on a new Tutorial Island account and once on a mainland
     account. That was a start-and-run check, not a full training session.
+
+- A native script's manifest supplies its description, category, tags and
+  settings. The picker shows them for a loaded file. The card keeps the
+  file name as its name, so its saved settings and assignments still apply.
+- Native modules without a default export treat a `manifest` export as host
+  metadata, and every script file reserves the `hostCapabilities` export. An
+  invalid declaration refuses Load with its line and a reason. A JavaScript
+  file with a syntax error now reports it at Load instead of at Start.
+- Eight native example scripts and the compat boat-fare script replace the
+  larger collection of API probe examples. Automated tests now cover each
+  member of the script API.
+- A native script can read `api.snapshot.bank_selection`, the latest
+  select-only bank result. It was declared but always read as `undefined`.
 
 - Starting a built-in script (a Gatherer, for example) while a random-event
   guardian was handling an event on the same bot, such as a maze or a

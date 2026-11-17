@@ -191,7 +191,6 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
     warm.push(Module::new(BOT_MODULE, "export default class T {}"));
     warm.push(script_js::main_module_for_import_gate_test(
         script_js::LoadShape::CompatClass,
-        script_js::ApiFamily::Unversioned,
     ));
     filter_gated_modules_for_card_test(
         &mut warm,
@@ -221,7 +220,7 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
             CacheMeta {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
-                shape: Some(format!("{:?}", card.shape)),
+                shape: Some(format!("{:?}", card.shape())),
                 api_family: None,
             },
         ) {
@@ -247,10 +246,7 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
             modules.push(Module::new(url, source));
         }
         modules.push(Module::new(BOT_MODULE, source.as_str()));
-        modules.push(script_js::main_module_for_import_gate_test(
-            card.shape,
-            card.api_family,
-        ));
+        modules.push(script_js::main_module_for_import_gate_test(card.shape()));
         let before = modules.len();
         let roots = siblings
             .iter()

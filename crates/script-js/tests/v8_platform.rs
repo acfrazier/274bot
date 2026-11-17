@@ -207,7 +207,7 @@ fn run_child() {
 
 fn new_native_tick_isolate(label: &str) -> script_js::LoadIsolate {
     let isolate = script_js::LoadIsolate::spawn(
-        "export function tick(api) {}".to_owned(),
+        script_js::native_fixture("export function tick(api) {}"),
         script_js::LoadShape::NativeTick,
         Vec::new(),
     )

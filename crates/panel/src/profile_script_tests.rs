@@ -418,8 +418,10 @@ fn fake_catalog(root: &std::path::Path, bots: &[(&str, &str)]) {
 #[test]
 fn initial_runtime_load_failure_survives_another_card_start() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
-    let bad_source = "export const apiVersion = 2;\nthrow new Error('initial-load-proof');\nexport function tick(api) {}\n";
-    let bad_path = write_bot(&dir, "bad.ts", bad_source);
+    let bad_source = frontend_core::test_support::scripts::native_fixture(
+        "throw new Error('initial-load-proof');\nexport function tick(api) {}\n",
+    );
+    let bad_path = write_bot(&dir, "bad.ts", &bad_source);
     s.load_js(&bad_path);
     let bad_identity = s
         .scripts
@@ -454,7 +456,7 @@ fn initial_runtime_load_failure_survives_another_card_start() {
     assert_eq!(failure.stage(), LoadStage::RuntimeLoad);
     assert_eq!(
         s.scripts.load_failure_fingerprint(&bad_identity),
-        Some(raw_content_fingerprint(&bad_path, bad_source))
+        Some(raw_content_fingerprint(&bad_path, &bad_source))
     );
     assert_eq!(
         s.scripts.load_failure_api_family(&bad_identity).as_deref(),
@@ -512,8 +514,10 @@ fn the_unlock_focus_is_a_fleet_member_and_starts_a_loaded_script() {
 fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let helper = write_bot(&dir, "gate.ts", "export const fail = true;");
-    let source = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('retry-load-proof');\nexport function tick(api) {}";
-    let path = write_bot(&dir, "retry.ts", source);
+    let source = frontend_core::test_support::scripts::native_fixture(
+        "import { fail } from './gate.js';\nif (fail) throw new Error('retry-load-proof');\nexport function tick(api) {}",
+    );
+    let path = write_bot(&dir, "retry.ts", &source);
     let card = s.scripts.load_card(&path).unwrap();
     let sel = ScriptChoice::loaded(card.source(), &path.to_string_lossy());
     // Start returns before V8 setup: the runtime failure settles after
@@ -2243,7 +2247,9 @@ fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
     let bad_path = write_bot(
         &dir,
         "bad.ts",
-        "throw new Error('bulk-load-proof');\nexport function tick(api) {}\n",
+        &frontend_core::test_support::scripts::native_fixture(
+            "throw new Error('bulk-load-proof');\nexport function tick(api) {}\n",
+        ),
     );
     let good = s.scripts.load_card(&good_path).unwrap();
     let bad = s.scripts.load_card(&bad_path).unwrap();
@@ -2282,7 +2288,9 @@ fn fleet_result_follows_the_paced_starts_of_a_marked_start() {
     let bad_path = write_bot(
         &dir,
         "bad.ts",
-        "throw new Error('bulk-load-proof');\nexport function tick(api) {}\n",
+        &frontend_core::test_support::scripts::native_fixture(
+            "throw new Error('bulk-load-proof');\nexport function tick(api) {}\n",
+        ),
     );
     let good = s.scripts.load_card(&good_path).unwrap();
     let bad = s.scripts.load_card(&bad_path).unwrap();
@@ -2574,7 +2582,9 @@ fn panel_ready_start_keeps_a_newer_banner() {
     let path = write_bot(
         &dir,
         "retry.ts",
-        "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('panel-first-load');\nexport function tick(api) {}\n",
+        &frontend_core::test_support::scripts::native_fixture(
+            "import { fail } from './gate.js';\nif (fail) throw new Error('panel-first-load');\nexport function tick(api) {}\n",
+        ),
     );
     let card = s.scripts.load_card(&path).unwrap();
     let sel = ScriptChoice::loaded(card.source(), &path.to_string_lossy());

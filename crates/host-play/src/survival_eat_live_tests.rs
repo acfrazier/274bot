@@ -1773,7 +1773,7 @@ fn run_walk_case(case: EatCase, fruit_delay: bool) {
 }
 
 #[cfg(feature = "js")]
-const FIGHT_CONSUMER: &str = r#"export const apiVersion = 2;
+const FIGHT_CONSUMER: &str = r#"
 export function tick(api) {
   if (!globalThis.__eatFight) {
     globalThis.__eatFight = api.combat.fight({
@@ -1826,10 +1826,13 @@ fn run_combat_cell(fruit_delay: bool) {
             let live = cell.live.lock();
             combat_proof::record_start_baseline(&cell.account, &live.snapshot);
         }
+        let origin = script_js::native_fixture(FIGHT_CONSUMER);
+        let prepared = script_js::prepare_raw_origin_for_test("survival-eat.ts", &origin, &[])
+            .expect("native survival consumer prepares");
         match cell.play.script_start_load(
             &cell.account,
-            FIGHT_CONSUMER.to_owned(),
-            script_js::LoadShape::NativeTick,
+            prepared.js,
+            prepared.checked,
             None,
             vec![],
         ) {

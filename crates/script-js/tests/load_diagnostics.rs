@@ -14,7 +14,9 @@ use script_js::{
     PreparedCard,
 };
 const GOOD: &str = "export default class T extends LoopingBot { override loop() {} }\n";
-const GOOD_V2: &str = "export const apiVersion = 2;\nexport function tick(api) { api._n = 1; }\n";
+fn good_v2() -> String {
+    script_js::native_fixture("export function tick(api) { api._n = 1; }\n")
+}
 const BAD_PARSE: &str =
     "export default class T extends LoopingBot { override loop() { const x = \"unterminated } }\n";
 const BAD_IMPORT: &str = concat!(
@@ -76,7 +78,7 @@ fn cooperative_card_preparation_matches_the_changed_real_source() {
     let mut js = library(&dir);
     let path = write(&dir, "changed.ts", GOOD);
     let previous = js.load(&path).expect("load the original card").sha256;
-    std::fs::write(&path, GOOD_V2).expect("update card source fixture");
+    std::fs::write(&path, good_v2()).expect("update card source fixture");
     let snapshot = std::sync::Arc::new(
         js.card_preparation_snapshot(ScriptSource::File, &path.to_string_lossy(), None)
             .expect("capture a changed card"),
@@ -213,7 +215,7 @@ fn prepared_catalog_card(lib: &mut JsLibrary, cache: &JsCache, name: &str) -> Pr
         CacheMeta {
             kind: ScriptKind::Compat,
             source: ScriptSource::Catalog,
-            shape: Some(format!("{:?}", card.shape)),
+            shape: Some(format!("{:?}", card.shape())),
             api_family: None,
         },
     )
@@ -629,7 +631,7 @@ fn a_changed_retired_card_does_not_gain_a_load_failure() {
     js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .expect("register the catalog");
     let path = root.join("src/bot/scripts/Woodcutter/Woodcutter.ts");
-    std::fs::write(&path, GOOD_V2).unwrap();
+    std::fs::write(&path, good_v2()).unwrap();
     let result = prepare_catalogue(&js, &root);
     assert_eq!(result.diff.changed, ["Woodcutter"]);
     assert!(
@@ -845,23 +847,24 @@ fn catalogue_growth_past_its_measured_input_charge_is_refused() {
 }
 
 #[test]
-fn v1_and_v2_family_errors_keep_stable_identities() {
+fn missing_manifest_and_compat_version_errors_keep_stable_identities() {
     let dir = scratch("family");
     let mut js = library(&dir);
     let v1 = write(&dir, "native-v1.ts", V1_ON_NATIVE);
     let v2 = write(&dir, "compat-v2.ts", V2_ON_COMPAT);
-    let ok = write(&dir, "native-v2.ts", GOOD_V2);
+    let ok_source = good_v2();
+    let ok = write(&dir, "native-v2.ts", &ok_source);
 
     assert!(js.load(&v1).is_err());
     assert!(js.load(&v2).is_err());
     let good = js.load(&ok).unwrap();
-    assert_eq!(good.api_family, ApiFamily::V2);
+    assert_eq!(good.api_family(), ApiFamily::V2);
 
     let failures = js.load_failures();
     assert_eq!(failures.len(), 2, "{failures:?}");
-    assert!(failures
-        .iter()
-        .any(|f| { f.identity_key.contains("native-v1") && f.diagnostic.contains("api-version") }));
+    assert!(failures.iter().any(|f| {
+        f.identity_key.contains("native-v1") && f.diagnostic.contains("manifest-required")
+    }));
     assert!(failures
         .iter()
         .any(|f| { f.identity_key.contains("compat-v2") && f.diagnostic.contains("api-version") }));

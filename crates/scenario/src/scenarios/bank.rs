@@ -72,13 +72,48 @@ pub(crate) fn bank_v2_scenario() -> Scenario {
 
 #[cfg(test)]
 mod tests {
-    use super::super::acquire_key::tests::starts_at_the_landing_after_its_seed;
     use super::*;
+
+    fn assert_starts_at_landing_after_its_seed(s: &Scenario, landing: WorldTile) {
+        let start = s
+            .steps
+            .iter()
+            .position(|st| st.name == "start the catalog card")
+            .expect("catalog Start");
+        let tele = s
+            .steps
+            .iter()
+            .position(|st| {
+                matches!(
+                    st.wait.arm,
+                    Proof::Arrived { x, z, level }
+                        if (x, z, level) == (landing.x, landing.z, landing.level)
+                )
+            })
+            .expect("a pre-Start teleport to the landing");
+        assert!(tele < start, "the teleport lands before Start");
+        assert!(
+            !s.steps[start..].iter().any(|st| st.name.contains("setstat")
+                || st.name.contains("setvar")
+                || st.name.contains("seed")
+                || st.name.contains("teleport")
+                || st.name.contains("collision")
+                || st.name.contains("npc")
+                || st.name.contains("flag")),
+            "no post-Start world mutation: {:?}",
+            s.steps[start..]
+                .iter()
+                .map(|st| st.name)
+                .collect::<Vec<_>>()
+        );
+        assert!(s.seed.mainland);
+        assert!(s.settings.require_mainland_base);
+    }
 
     #[test]
     fn bank_card_starts_at_the_falador_fountain() {
         let s = bank_v2_scenario();
-        starts_at_the_landing_after_its_seed(&s, FALADOR_FOUNTAIN);
+        assert_starts_at_landing_after_its_seed(&s, FALADOR_FOUNTAIN);
         assert_eq!(s.settings.start_file, Some("bank_v2.ts"));
         assert_eq!(s.settings.wait_script_stop, Some(BANK_V2_STOP));
     }

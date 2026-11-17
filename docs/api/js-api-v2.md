@@ -5,22 +5,34 @@ application release numbering and of client revision (289 is the production
 revision; 274 is best-effort). **v1** remains the rs2b0t
 compatibility load path.
 
-Declare both:
+A v2 file has no default export. It exports a `manifest` and a `tick`
+function:
 
 ```ts
-export const apiVersion = 2;
+export const manifest = {
+    apiVersion: 2,
+    name: 'My script',
+    version: '1',
+    author: 'Your name',
+    description: 'What it does',
+    category: 'Examples',
+    tags: [],
+    settings: {},
+    capabilities: [],
+} as const satisfies ScriptManifest;
 export function tick(api: NativeApi): void;
 // or: export async function tick(api: NativeApi): Promise<void>;
 ```
 
-`export const apiVersion = 2.0` is the same version as `2`. Comments and
-string mentions of `apiVersion` are ignored. An explicit version that does
-not match the file's bot shape is rejected (`api-version-conflict`,
-`api-version-malformed`, `api-version-unsupported`,
-`api-version-missing-tick`) and never silently falls back.
-
-Unversioned `export function tick` files keep today's loader: `api.tick` is
-the only member.
+All nine manifest fields are required. The manifest must be one direct
+`export const` of literal values; Load reads it without running the script
+and removes it from the code that runs, so the script cannot read it.
+`apiVersion: 2.0` is the same version as `2`. A file without a default export
+that exports `tick` or `apiVersion` but no `manifest` is refused with
+`manifest-required`; it does not load. A manifest file must not also export
+`apiVersion`, `SETTINGS` or `hostCapabilities` (`manifest-conflicting-export`).
+An rs2b0t `defineBot` or default-export class script needs no manifest and
+loads on the v1 path as before.
 
 ## NativeApi
 
@@ -30,8 +42,8 @@ Generated types live in `crates/script/host-js/index.d.ts` (`NativeApi`,
 - `tick` — current game tick
 - `snapshot` — read-only view of the host snapshot (do not mutate; copy if
   retaining past this tick)
-- `settings.str` / `num` / `bool` — per-identity bag (`export const SETTINGS`
-  is still the schema)
+- `settings.str` / `num` / `bool` — per-identity bag (`manifest.settings` is
+  the schema)
 - `log(message)`
 - `stop(reason?)`
 - `paint.begin().title().row().gap().end()`
@@ -181,9 +193,7 @@ random handling and recovery stay in Rust.
 ## Worked example: BoneBurier v2
 
 `crates/script-js/examples/bone_burier_v2.ts` is the authoritative small
-author-facing example. `bone_burier_v2.js` is the checked-in normal-build
-JavaScript form with the same logic and loadable v2 export declarations; it is
-not a second implementation. Either file can be loaded as a NativeApi v2 card.
+author-facing example and can be loaded as a NativeApi v2 card.
 The example uses the public `NativeApi` surface and `Bank.withdrawLoad`
 over the native seat. Bury, open, close, and walk progress is snapshot-polled;
 the bank load is awaited and remains single-flight across NativeTicks:
@@ -250,7 +260,6 @@ keep their existing JSON helper paths where applicable; `foodCount` and
 cast `available()` filter). The v1 `escapeRunesFor(teleportId)` export resolves
 through the same shared Rust fact module.
 
-Example: `crates/script-js/examples/supply_helpers_v2.ts`.
 
 ## Gather query helpers
 
@@ -297,7 +306,6 @@ classify (`class: 'unclassified'`, with the content reason such as
 case-insensitive): a wood or ore key, or a fish item alias, and one key can
 name several methods. Zero matches is `unknown-resource`, not `{ rows: [] }`.
 
-Example: `crates/script-js/examples/gather_methods_v2.ts`.
 
 `gatherPlacements` returns the placements of every method a `resource` key
 names, as `GatherPlacementRow`s in ascending catalog-local id order. `region` is
@@ -318,7 +326,6 @@ its rotation, the wander `movement` region of a fishing spot and the map row it
 came from (`source`). Display names, loc ids and fishing categories are not
 keys: they are `unknown-resource`, as is an absent key.
 
-Example: `crates/script-js/examples/gather_placements_v2.ts`.
 
 ## Gather sessions
 
@@ -592,10 +599,9 @@ quest-progress read or a Hunt run is live, and `api.gather.run`,
 is live. Nothing supersedes. Compatibility (v1) scripts have no `api.combat`;
 their rs2b0t combat helpers run in v1 slots only.
 
-Examples: `crates/script-js/examples/fight_v2.ts` (one fight) and
-`crates/script-js/examples/combat_showcase_v2.ts` (melee with an attack-style
-switch, ranged, magic, prayer with a user prayer kept, eating, a potion sip
-and a clean stop).
+Example: `crates/script-js/examples/combat_showcase_v2.ts` (melee with an
+attack-style switch, ranged, magic, prayer with a user prayer kept, eating, a
+potion sip and a clean stop).
 
 ## Quest progress
 
@@ -671,12 +677,10 @@ if (out.kind === 'done' && out.value.end === 'done') {
 
 ## Worked example: GatherQuest v2
 
-`crates/script-js/examples/gather_quest_v2.ts` is the authoritative gather-then-quest
-sample. `gather_quest_v2.js` is the checked-in plain-JavaScript form with the same
-logic and loadable v2 export declarations; it is not a second implementation.
-Either file can be loaded as a NativeApi v2 card. The sample uses only the public
-`NativeApi` surface and issues no game actions of its own — gathering, dropping
-and the journal read are all host-owned:
+`crates/script-js/examples/gather_quest_v2.ts` is the authoritative
+gather-then-quest sample. It can be loaded as a NativeApi v2 card. The sample
+uses only the public `NativeApi` surface and issues no game actions of its own
+— gathering, dropping and the journal read are all host-owned:
 
 - `SETTINGS.logs` (`number`, default 56) is read with
   `api.settings.num('logs', 56)`;
@@ -741,10 +745,8 @@ for the `null` runs prove the result from the scene (the player's tile).
 
 A run settles `HuntOutcome<T>` as `done` with the value, `refused` with a reason, or `aborted` with `reset | superseded | terminated | unknown`.
 
-Examples: `crates/script-js/examples/fight_field_v2.ts`,
-`hold_spot_v2.ts`, `retreat_spot_v2.ts`, `walk_spot_v2.ts`,
-`enter_lair_v2.ts`, `leave_lair_v2.ts`, `cell_v2.ts`, `acquire_key_v2.ts`,
-and `bank_v2.ts`.
+Examples: `crates/script-js/examples/walk_spot_v2.ts` and
+`crates/script-js/examples/bank_v2.ts`.
 
 ## Quest query helpers
 
@@ -772,7 +774,6 @@ not `{ rows }` of length 1. Fields stay `id`, `component`, `display`, `varp`,
 `partial`. Empty `mustHave` is still `ok: true` with `qualification: "partial"`
 and `unknown_as_satisfied: false`. Items stay script aliases.
 
-Example: `crates/script-js/examples/quest_facts_v2.ts`.
 
 ## Quest journal
 
@@ -1069,11 +1070,7 @@ empty and not an error, while a present `null`, a non-array, or any non-string
 element (a hole included) is `invalid-args`. An empty array is a present empty
 list, and object keys on the input beyond `name` and `extra` are ignored.
 
-Example: `crates/script-js/examples/clue_facts_v2.ts` (row),
-`crates/script-js/examples/clue_held_step_v2.ts` (held step),
-`crates/script-js/examples/clue_pack_v2.ts` (pack targets),
-`crates/script-js/examples/clue_hard_kit_v2.ts` (hard-kit status), and
-`crates/script-js/examples/clue_keep_v2.ts` (keep predicate).
+Example: `crates/script-js/examples/clue_pack_v2.ts`.
 
 ### `clue.begin` / `clue.run`
 
@@ -1715,7 +1712,6 @@ height }`; collision flags stay on the page. Copies are historical: a retained
 value stays usable after a later merge, it is not live, and an action needs a
 fresh call.
 
-Example: `crates/script-js/examples/scene_observe_v2.ts`.
 
 ## Quest status
 
@@ -1764,7 +1760,6 @@ not the answer to a miss, and the identity table is not joined to fill one. No
 and no `interact` is queued. Copies are historical: a retained value stays
 usable after a later merge, it is not live, and an action needs a fresh call.
 
-Example: `crates/script-js/examples/quest_status_v2.ts`.
 
 ## Loadout and potion helpers
 
@@ -1801,7 +1796,6 @@ treated as zero: a held plan without a matching level row is
 positive integer `<= 4294967295` when supplied; planned carry `qty` is
 required.
 
-Example: `crates/script-js/examples/loadout_potion_v2.ts`.
 
 ## Line of sight
 
@@ -1822,13 +1816,6 @@ v1 `Reachability.lineOfSight(from, to, size?)` marshals the same Rust ray and
 returns `false` for invalid tiles, missing family, or a non-integer / `0` /
 `>104` size.
 
-Example: `crates/script-js/examples/line_of_sight_v2.ts`. The File witness
-selects two observed cardinal adjacent pairs from raw `flags.at` (open:
-start not `WALK_SCENERY` and entering projectile V-bit clear; blocked:
-entering V-direction bit set). `VIS_SCENERY` at the destination is not a
-blocked pair. It then calls real `api.lineOfSight` and imported
-`Reachability.lineOfSight` on those pairs. Pair selection is qualification
-fixture logic, not API policy.
 
 ## Walkable and reach
 
@@ -1847,11 +1834,8 @@ Unavailable reach is `missing-observation`, not `{ok:true, value:false}`.
 v1 `Reachability.walkable` / `canStep` / `canReach` return `false` for the
 same misses. `maxSteps` defaults to 400.
 
-Examples `walk_spot_v2.ts`, `hold_spot_v2.ts`, `retreat_spot_v2.ts`, and
-`enter_lair_v2.ts` use `api.walkable`. Missing observation does not reject a
-candidate (`!ok` is treated as walkable). `line_of_sight_v2.ts` still reads
-raw `flags.at` for V-direction pair selection; that is fixture logic, not a
-walkable helper.
+`walk_spot_v2.ts` uses `api.walkable`. Missing observation does not reject a
+candidate (`!ok` is treated as walkable).
 
 
 ## Actor observation
@@ -1868,12 +1852,6 @@ retaining past this tick.
 index. Consume dest SW + dest size with existing `api.lineOfSight`. There
 is no v2 `Npc` class.
 
-Example: `crates/script-js/examples/actor_observation_v2.ts`. The File waits
-for a posted `size>=1` NPC, choosing min `(distance, index)` among those
-rows, calls existing `api.lineOfSight` plus imported
-`Npc.size` / `Npc.networkOrigin()` / `reader.selfTarget()` /
-`Reachability.lineOfSight`, then named-stops. No size>=1 row is not
-complete.
 
 ## Puzzle board
 

@@ -191,24 +191,45 @@ fn bind_js_surface_factory(slot: &mut SlotScript) {
     slot.bind_surface_factory(shared_js_surface_factory());
 }
 
+/// The slot's retained JS identity: execution source plus the checked
+/// identity from preparation. Nothing here reads the family from the source.
 #[cfg(feature = "js")]
 pub(super) fn js_start_card(
     card_name: impl Into<Arc<str>>,
     source: String,
-    shape: script_js::LoadShape,
+    checked: script_js::CheckedLoad,
     siblings: Vec<(String, String)>,
 ) -> Arc<script_js::surface::JsStartCard> {
-    let source = Arc::<str>::from(source);
-    let family = script_js::resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
     Arc::new(script_js::surface::JsStartCard {
         card_name: card_name.into(),
-        source,
-        shape,
+        source: Arc::<str>::from(source),
+        checked,
         siblings: Arc::from(siblings),
-        family,
     })
+}
+
+/// A test Start's raw origin through the common preparation. `shape` is the
+/// shape the test expects; a native origin without a manifest is refused.
+#[cfg(all(test, feature = "js"))]
+pub(super) fn prepared_test_start_card(
+    source: &str,
+    shape: script_js::LoadShape,
+    siblings: Vec<(String, String)>,
+) -> Result<Arc<script_js::surface::JsStartCard>, String> {
+    let prepared = script_js::prepare_raw_origin_for_test("bot.js", source, &siblings)
+        .map_err(|refusal| refusal.to_string())?;
+    if prepared.checked.shape() != shape {
+        return Err(format!(
+            "origin prepared as {:?}, the test expects {shape:?}",
+            prepared.checked.shape()
+        ));
+    }
+    Ok(js_start_card(
+        "test card",
+        prepared.js,
+        prepared.checked,
+        siblings,
+    ))
 }
 
 #[cfg(all(test, feature = "js"))]
@@ -347,7 +368,7 @@ impl SettledStart for SlotScript {
     ) -> Result<(), String> {
         bind_js_surface_factory(self);
         let start = js_surface_start(
-            js_start_card("test card", source, shape, siblings),
+            prepared_test_start_card(&source, shape, siblings)?,
             None,
             None,
             Arc::new(api::named_banks::NamedBankFacts::default()),
@@ -367,7 +388,7 @@ impl SettledStart for SlotScript {
     ) -> Result<(), String> {
         bind_js_surface_factory(self);
         let start = js_surface_start(
-            js_start_card("test card", source, shape, siblings),
+            prepared_test_start_card(&source, shape, siblings)?,
             None,
             None,
             Arc::new(api::named_banks::NamedBankFacts::default()),

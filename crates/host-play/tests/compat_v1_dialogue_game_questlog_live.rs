@@ -792,14 +792,10 @@ fn close_modal(play: &Play, account: &str, fixture: &Mutex<Fixture>) {
 }
 
 fn start_script(play: &Play, account: &str, source: &str) {
-    play.script_start_load(
-        account,
-        source.to_owned(),
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .expect("start compatibility v1 Load script");
+    let prepared = script_js::prepare_raw_origin_for_test("dialogue-questlog.js", source, &[])
+        .expect("compatibility dialogue fixture prepares");
+    play.script_start_load(account, prepared.js, prepared.checked, None, vec![])
+        .expect("start compatibility v1 Load script");
 }
 
 fn take_logs(play: &Play, account: &str, logs: &mut Vec<String>) {

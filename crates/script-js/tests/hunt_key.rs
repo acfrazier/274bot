@@ -855,7 +855,6 @@ fn key_effects_never_include_forbidden_ops() {
 #[test]
 fn v2_key_run_settles_held_and_a_kbd_site_is_false() {
     let src = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -864,7 +863,12 @@ export async function tick(api) {
   globalThis.__done = await api.keyRun({ key: 'heroes-blue', keyItem: null }, {});
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     for tick in 1..=3 {
         iso.post_snapshot(script_js::wire::encode_snapshot(&empty_snapshot(
             tick,
@@ -892,7 +896,6 @@ export async function tick(api) {
 #[test]
 fn v2_key_run_from_the_mainland_walks_near_the_corridor_and_waits_for_it() {
     let src = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -904,7 +907,12 @@ export async function tick(api) {
   }, {});
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     for tick in 1..=3 {
         iso.post_snapshot(script_js::wire::encode_snapshot(&empty_snapshot(
             tick,

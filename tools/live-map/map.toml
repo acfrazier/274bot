@@ -183,8 +183,6 @@ globs = [
   "crates/host-play/Cargo.toml",
   "crates/host/Cargo.toml",
   "crates/script-js/src/tooling/compat_dts.rs",
-  # API example compiled and run by the headless actor_observation tests.
-  "crates/script-js/examples/actor_observation_v2.ts",
   # Developer inventory emitter: reads a local rs2b0t tree and prints JSON for
   # comparison; it opens no session and ships no runtime path.
   "crates/script-js/examples/catalog_inventory.rs",

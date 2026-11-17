@@ -217,15 +217,12 @@ fn live_rss_ladder_headless() {
             .iter()
             .map(|status| status.username.clone())
             .collect::<Vec<_>>();
+        let origin = script_js::native_fixture("export function tick(api) {}");
+        let prepared = script_js::prepare_raw_origin_for_test("rss-ladder.js", &origin, &[])
+            .expect("native RSS fixture prepares");
         for name in &names {
-            play.script_start_load(
-                name,
-                "export function tick(api) {}".into(),
-                script_js::LoadShape::NativeTick,
-                None,
-                vec![],
-            )
-            .unwrap_or_else(|error| fail(&format!("rss_ladder Load {name}: {error}")));
+            play.script_start_load(name, prepared.js.clone(), prepared.checked, None, vec![])
+                .unwrap_or_else(|error| fail(&format!("rss_ladder Load {name}: {error}")));
         }
         let until = Instant::now() + Duration::from_secs(30);
         while names

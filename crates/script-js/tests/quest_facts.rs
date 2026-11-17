@@ -370,8 +370,13 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 
 fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
     let data = api::game_data::for_revision(revision).expect("load quest-facts test data");
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .expect("spawn quest-facts test isolate");
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .expect("spawn quest-facts test isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let value = iso
@@ -407,7 +412,6 @@ fn v2_identity_and_prereqs_are_sync_helper_results() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const death = api.questIdentity({ id: 'death' });
   const named = api.questIdentity({ name: 'Death Plateau' });
@@ -498,7 +502,6 @@ export function tick(api) {
 #[test]
 fn v2_invalid_args_before_missing_slot_and_missing_family() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     omitted: api.questIdentity(),
@@ -519,7 +522,12 @@ export function tick(api) {
   });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let empty: serde_json::Value =
@@ -552,7 +560,7 @@ export function tick(api) {
     }
 
     let iso = LoadIsolate::spawn_with_game_data(
-        src.into(),
+        script_js::native_fixture(src),
         LoadShape::NativeTick,
         vec![],
         data_without_family(),
@@ -592,7 +600,6 @@ fn v2_install_is_typed_not_a_json_op_or_interact() {
     }
     let value = probe(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
   const row = api.questIdentity({ id: 'cook' });
   let requested = null;
@@ -625,22 +632,18 @@ export function tick(api) {
 }
 
 #[test]
-fn example_quest_facts_v2_is_one_read_only_fact_call() {
+fn v2_quest_identity_is_one_read_only_fact_call() {
     if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("quest_facts_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
-    assert!(!src.contains("request("));
-    assert!(!src.contains("h.interact"));
-    assert!(!src.contains("0xF800"));
-    assert!(!src.contains("0x00F800"));
-    assert!(!src.contains("%qp"));
-    assert!(!src.contains("varp"));
-    assert_eq!(src.matches("api.quest").count(), 1);
-    let js = script_js::transpile_ts(&src).expect("transpile quest_facts_v2.ts");
+    let js = script_js::native_fixture(
+        r#"
+export function tick(api) {
+  const row = api.questIdentity({ id: 'death' });
+  api.log(JSON.stringify(row));
+}
+"#,
+    );
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
     let iso = LoadIsolate::spawn_with_game_data(js, LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
@@ -650,12 +653,12 @@ fn example_quest_facts_v2_is_one_read_only_fact_call() {
         .unwrap();
     let logs = iso.drain_logs();
     iso.join();
-    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    assert_eq!(err.as_str().unwrap_or(""), "", "fixture lastError: {err:?}");
     let last = logs
         .iter()
         .rev()
         .find(|line| line.contains("\"id\""))
-        .unwrap_or_else(|| panic!("example logged a fact call; logs={logs:?}"));
+        .unwrap_or_else(|| panic!("fixture logged a fact call; logs={logs:?}"));
     let row: serde_json::Value = serde_json::from_str(last).unwrap();
     assert_eq!(row["ok"], true, "{row:?}");
     assert_eq!(row["value"]["id"], "death");

@@ -394,14 +394,11 @@ fn real_engine_a_compat_inspect_route_and_traversal_cross_heroes_guild() {
         std::thread::sleep(Duration::from_millis(20));
     };
 
-    play.script_start_load(
-        &account,
-        COMPAT_SOURCE.to_owned(),
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .expect("start compat InspectRoute/Traversal script");
+    let prepared =
+        script_js::prepare_raw_origin_for_test("quest-evidence-compat.js", COMPAT_SOURCE, &[])
+            .expect("compatibility quest evidence fixture prepares");
+    play.script_start_load(&account, prepared.js, prepared.checked, None, vec![])
+        .expect("start compat InspectRoute/Traversal script");
     let travel_deadline = Instant::now() + Duration::from_secs(240);
     let terminal = loop {
         let failure = state

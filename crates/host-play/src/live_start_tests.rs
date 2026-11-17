@@ -1,5 +1,12 @@
 use super::*;
 use crate::catalog_core::{CoreCase, Observation};
+#[cfg(feature = "js")]
+fn prepared_native(body: &str) -> (String, script_js::CheckedLoad) {
+    let origin = script_js::native_fixture(body);
+    let prepared = script_js::prepare_raw_origin_for_test("live-start.ts", &origin, &[])
+        .expect("native live-start fixture prepares");
+    (prepared.js, prepared.checked)
+}
 
 fn prepared_thiever() -> Observation {
     let mut prepared = Observation {
@@ -50,10 +57,11 @@ fn catalog_start_waits_without_arming_or_failing_current_session_witness() {
         catalog: Some(watch.clone()),
         ..Default::default()
     };
+    let (js, checked) = prepared_native("export function tick() {}");
     let mut pending = vec![PendingCatalogStart::load(
         "catalogtest",
-        "export function tick() {}".into(),
-        script_js::LoadShape::NativeTick,
+        js,
+        checked,
         None,
         vec![],
         vec![],
@@ -136,10 +144,11 @@ fn unknown_loadout_refusal_holds_and_retries() {
     };
     let mut bag = Map::new();
     bag.insert("loadout".into(), Value::String("missing".into()));
+    let (js, checked) = prepared_native("export function tick() {}");
     let mut pending = vec![PendingCatalogStart::load(
         "catalogtest",
-        "export function tick() {}".into(),
-        script_js::LoadShape::NativeTick,
+        js,
+        checked,
         Some(bag),
         vec![],
         vec![api::loadout::Loadout::new("First")],
@@ -171,10 +180,11 @@ fn empty_loadout_store_fails_the_start_fast() {
     };
     let mut bag = Map::new();
     bag.insert("loadout".into(), Value::String("missing".into()));
+    let (js, checked) = prepared_native("export function tick() {}");
     let mut pending = vec![PendingCatalogStart::load(
         "catalogtest",
-        "export function tick() {}".into(),
-        script_js::LoadShape::NativeTick,
+        js,
+        checked,
         Some(bag),
         vec![],
         vec![],
@@ -211,10 +221,12 @@ fn js_setup_failure_settles_as_a_failed_pump() {
         catalog: Some(watch.clone()),
         ..Default::default()
     };
+    let (js, checked) =
+        prepared_native("throw new Error('zz-setup-proof');\nexport function tick() {}");
     let mut pending = vec![PendingCatalogStart::load(
         "catalogtest",
-        "throw new Error('zz-setup-proof');\nexport function tick() {}".into(),
-        script_js::LoadShape::NativeTick,
+        js,
+        checked,
         None,
         vec![],
         vec![],
@@ -255,10 +267,12 @@ fn js_setup_failure_consumed_by_frontend_still_fails_catalog_start() {
         catalog: Some(watch.clone()),
         ..Default::default()
     };
+    let (js, checked) =
+        prepared_native("throw new Error('zz-consumed-setup-proof');\nexport function tick() {}");
     let mut pending = vec![PendingCatalogStart::load(
         "catalogtest",
-        "throw new Error('zz-consumed-setup-proof');\nexport function tick() {}".into(),
-        script_js::LoadShape::NativeTick,
+        js,
+        checked,
         None,
         vec![],
         vec![],

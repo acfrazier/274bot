@@ -1,7 +1,17 @@
-import type { NativeApi } from '../host-js/index.d.ts';
+import type { NativeApi, ScriptManifest } from '../host-js/index.d.ts';
 
 /** Read-only pack targets over caller numbers. Not a clue machine. */
-export const apiVersion = 2;
+export const manifest = {
+    apiVersion: 2,
+    name: 'CluePackPlan',
+    version: '1',
+    author: '274bot',
+    description: 'Logs the clue pack plan for fixed caller numbers. It takes no game action.',
+    category: 'Examples',
+    tags: ['clue'],
+    settings: {},
+    capabilities: [],
+} as const satisfies ScriptManifest;
 
 export function tick(api: NativeApi): void {
     const plan = api.clue.packPlan({

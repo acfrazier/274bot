@@ -1,7 +1,18 @@
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
+import type { ScriptManifest } from '../host-js/index.d.ts';
 
 /** Qualification-only NativeTick example; not a catalog card. */
-export const apiVersion = 2;
+export const manifest = {
+    apiVersion: 2,
+    name: 'RouteInspectBrimhaven',
+    version: '1',
+    author: '274bot',
+    description: 'Inspects Brimhaven routes and reads back each settled inspection.',
+    category: 'Examples',
+    tags: ['walk', 'route'],
+    settings: {},
+    capabilities: [],
+} as const satisfies ScriptManifest;
 
 const FIELD = { x: 2698, z: 3206, level: 0 };
 const PIER = { x: 2683, z: 3272, level: 0 };

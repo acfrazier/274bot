@@ -53,9 +53,8 @@ fn startup_non_yielding_module_has_bounded_join() {
     if std::env::var_os(CHILD).is_some() {
         let baseline = live_runtime_count();
         for attempt in 1..=3 {
-            let isolate =
-                LoadIsolate::spawn("while (true) {}".into(), LoadShape::NativeTick, vec![])
-                    .unwrap();
+            let origin = crate::native_fixture("export function tick() {} while (true) {}");
+            let isolate = LoadIsolate::spawn(origin, LoadShape::NativeTick, vec![]).unwrap();
             let started = Instant::now();
             isolate.join();
             assert!(
@@ -94,15 +93,19 @@ fn validate_non_yielding_module_is_bounded() {
     const CHILD: &str = "SCRIPT_VALIDATE_CHILD";
     if std::env::var_os(CHILD).is_some() {
         let baseline = live_runtime_count();
+        let origin = crate::native_fixture("export function tick() {} while (true) {}");
+        let prepared = crate::prepare_raw_origin_for_test("runaway.ts", &origin, &[])
+            .expect("native runaway fixture prepares");
         for attempt in 1..=3 {
             let started = Instant::now();
             let card = crate::library::store::PreparedCard {
                 card: crate::library::store::JsCard {
                     name: "runaway".into(),
                     path: "runaway.ts".into(),
-                    shape: LoadShape::NativeTick,
-                    origin: "while (true) {}".into(),
-                    js: "while (true) {}".into(),
+                    checked: prepared.checked,
+                    manifest: None,
+                    origin: origin.clone(),
+                    js: prepared.js.clone(),
                     kind: script::card::ScriptKind::NativeTick,
                     source: script::card::ScriptSource::File,
                     sha256: String::new(),
@@ -111,7 +114,6 @@ fn validate_non_yielding_module_is_bounded() {
                     tags: Vec::new(),
                     settings_schema: Vec::new(),
                     unloadable: None,
-                    api_family: crate::library::shape::ApiFamily::Unversioned,
                 },
                 siblings: Vec::new(),
                 fingerprint: String::new(),
@@ -165,12 +167,13 @@ fn pause_interrupts_a_newly_started_runaway_tick() {
     const CHILD: &str = "SCRIPT_PAUSE_CHILD";
     if std::env::var_os(CHILD).is_some() {
         let iso = LoadIsolate::spawn(
-            "export function tick(api) {
-                globalThis.__runs = (globalThis.__runs || 0) + 1;
-                globalThis.__lastTick = api.tick;
-                if (api.tick === 1) while (true) {}
-            }"
-            .into(),
+            crate::native_fixture(
+                "export function tick(api) {
+                    globalThis.__runs = (globalThis.__runs || 0) + 1;
+                    globalThis.__lastTick = api.tick;
+                    if (api.tick === 1) while (true) {}
+                }",
+            ),
             LoadShape::NativeTick,
             vec![],
         )
@@ -237,7 +240,7 @@ fn paint_generation_allocator_separates_reset_and_replacement() {
     const CHILD: &str = "SCRIPT_PAINT_GENERATION_CHILD";
     if std::env::var_os(CHILD).is_some() {
         let old = LoadIsolate::spawn(
-            "export function tick() {}".into(),
+            crate::native_fixture("export function tick() {}"),
             LoadShape::NativeTick,
             vec![],
         )
@@ -250,7 +253,7 @@ fn paint_generation_allocator_separates_reset_and_replacement() {
             .paint_generation
             .load(std::sync::atomic::Ordering::Acquire);
         let replacement = LoadIsolate::spawn(
-            "export function tick() {}".into(),
+            crate::native_fixture("export function tick() {}"),
             LoadShape::NativeTick,
             vec![],
         )
@@ -277,7 +280,9 @@ fn paint_generation_allocator_separates_reset_and_replacement() {
 #[test]
 fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
     let iso = LoadIsolate::spawn(
-        "export function tick(api) { globalThis.n = (globalThis.n || 0) + 1; }".into(),
+        crate::native_fixture(
+            "export function tick(api) { globalThis.n = (globalThis.n || 0) + 1; }",
+        ),
         LoadShape::NativeTick,
         vec![],
     )
@@ -830,7 +835,8 @@ fn queue_length(iso: &LoadIsolate) -> Option<i64> {
 #[test]
 fn native_tick_shape_builds_and_stages_no_native_events() {
     let iso = LoadIsolate::spawn(
-        r#"
+        crate::native_fixture(
+            r#"
 let staged = null;
 Object.defineProperty(globalThis, '__rs2b0t_native_event_batch', {
     configurable: true,
@@ -841,8 +847,8 @@ Object.defineProperty(globalThis, '__rs2b0t_native_event_batch', {
     },
 });
 export function tick(api) { globalThis.__ticks = (globalThis.__ticks || 0) + 1; }
-"#
-        .into(),
+"#,
+        ),
         LoadShape::NativeTick,
         vec![],
     )
@@ -1054,7 +1060,7 @@ fn begin_client_frame_reuses_one_dispatch_handle() {
 fn spawn_returns_before_setup_and_poll_ready_becomes_ready() {
     let t0 = Instant::now();
     let iso = LoadIsolate::spawn(
-        "export function tick(api) {}".into(),
+        crate::native_fixture("export function tick(api) {}"),
         LoadShape::NativeTick,
         vec![],
     )
@@ -1072,7 +1078,7 @@ fn spawn_returns_before_setup_and_poll_ready_becomes_ready() {
 #[test]
 fn poll_ready_surfaces_a_wire_failure() {
     let iso = LoadIsolate::spawn(
-        "not valid javascript!!!!".into(),
+        crate::native_fixture("throw new Error('wire failure'); export function tick() {}"),
         LoadShape::NativeTick,
         vec![],
     )
@@ -1132,11 +1138,11 @@ fn machine_tick(iso: &LoadIsolate, n: u64) {
 
 #[test]
 fn unbound_v2_guarded_queue_delivers_held_request() {
-    let source = r#"export const apiVersion = 2;
-export function tick(api) {
+    let source = r#"export function tick(api) {
   api.request({ op: 'held', name: 'Bones', action: 'Bury' });
 }"#;
-    let iso = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso =
+        LoadIsolate::spawn(crate::native_fixture(source), LoadShape::NativeTick, vec![]).unwrap();
     wait_ready(&iso);
     let snapshot = crate::wire::tests::empty_input(1);
     iso.post_snapshot(crate::wire::encode_snapshot_with_native(
@@ -2384,15 +2390,15 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
     };
 
     let iso = LoadIsolate::spawn(
-        r#"export const apiVersion = 2;
-           export async function tick(api) {
+        crate::native_fixture(
+            r#"export async function tick(api) {
              if (globalThis.__started) return;
              globalThis.__started = true;
              const begin = api.questJournalBegin({ name: "Cook's Assistant" });
              globalThis.__begin = begin;
              if (begin.ok) globalThis.__out = await api.questJournalRun(begin.value);
-           }"#
-        .into(),
+           }"#,
+        ),
         LoadShape::NativeTick,
         vec![],
     )
@@ -2468,15 +2474,16 @@ fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
 fn journal_slot(source: &str) -> script::SlotScript {
     let mut slot = script::SlotScript::new();
     slot.bind_incarnation(1);
-    let (shape, family) = crate::resolve_api_family(source).expect("an API v2 card");
+    let origin = crate::native_fixture(source);
+    let prepared = crate::prepare_raw_origin_for_test("journal.ts", &origin, &[])
+        .expect("journal fixture prepares");
     slot.bind_surface_factory(std::sync::Arc::new(crate::surface::JsSurfaceFactory));
     slot.start_surface(script::surface::SurfaceStart {
         card: std::sync::Arc::new(crate::surface::JsStartCard {
             card_name: "test".into(),
-            source: source.into(),
-            shape,
+            source: prepared.js.into(),
+            checked: prepared.checked,
             siblings: std::sync::Arc::from(Vec::<(String, String)>::new()),
-            family: Some(family),
         }),
         settings_bag: None,
         game_data: None,
@@ -2585,8 +2592,7 @@ fn journal_out(slot: &mut script::SlotScript) -> String {
         .to_owned()
 }
 
-const AWAITED_JOURNAL_READ: &str = r#"export const apiVersion = 2;
-export async function tick(api) {
+const AWAITED_JOURNAL_READ: &str = r#"export async function tick(api) {
   if (globalThis.__started) return;
   globalThis.__started = true;
   const begin = api.questJournalBegin({ name: "Cook's Assistant" });
@@ -2674,7 +2680,6 @@ fn production_queue_drops_only_the_journal_close_of_an_expired_hold() {
 
     let mut slot = journal_slot(
         r#"import { Modals } from '../../api/ui/widgets/Modals.js';
-export const apiVersion = 2;
 export function tick(api) {
   if (!globalThis.__started) {
     globalThis.__started = true;
@@ -2855,7 +2860,6 @@ fn v2_execution_seat_start_waits_for_live_ack_and_repeats_terminal_watermark() {
     }
 
     let source = r#"
-export const apiVersion = 2;
 let started = false;
 globalThis.__questSettles = 0;
 globalThis.__questResult = null;
@@ -2873,9 +2877,13 @@ export function tick(api) {
         run: 28,
         session: 0,
     });
-    let isolate =
-        LoadIsolate::spawn_with_execution(source.into(), LoadShape::NativeTick, vec![], execution)
-            .unwrap();
+    let isolate = LoadIsolate::spawn_with_execution(
+        crate::native_fixture(source),
+        LoadShape::NativeTick,
+        vec![],
+        execution,
+    )
+    .unwrap();
     wait_ready(&isolate);
 
     let mut buffer = crate::wire::IsolateBuf::new();
@@ -3090,7 +3098,6 @@ fn execution_owned_gather_promise_waits_for_typed_terminal_after_seat_done() {
     use script::native::{seat::SeatTerminal, NativePhase};
 
     let source = r#"
-export const apiVersion = 2;
 let started = false;
 globalThis.__gatherSettles = 0;
 globalThis.__gatherResult = null;
@@ -3112,9 +3119,13 @@ export function tick(api) {
         run: 29,
         session: 0,
     });
-    let isolate =
-        LoadIsolate::spawn_with_execution(source.into(), LoadShape::NativeTick, vec![], execution)
-            .unwrap();
+    let isolate = LoadIsolate::spawn_with_execution(
+        crate::native_fixture(source),
+        LoadShape::NativeTick,
+        vec![],
+        execution,
+    )
+    .unwrap();
     wait_ready(&isolate);
     let mut buffer = crate::wire::IsolateBuf::new();
     let empty: [script::native::seat::SeatEntry; 0] = [];
@@ -3231,7 +3242,6 @@ fn execution_owned_v8_caps_rows_and_reserves_controls() {
     let source = r#"
 import { Execution } from '../../api/execution/Execution.js';
 import { RunManager } from '../../runtime/RunManager.js';
-export const apiVersion = 2;
 export function tick() {
   for (let i = 0; i < 300; i++) Execution.noteProgress();
   globalThis.__rs2b0t_host.interact.push({ op: 'abort-walk', request_id: 123 });
@@ -3243,9 +3253,13 @@ export function tick() {
         run: 29,
         session: 0,
     });
-    let isolate =
-        LoadIsolate::spawn_with_execution(source.into(), LoadShape::NativeTick, vec![], execution)
-            .unwrap();
+    let isolate = LoadIsolate::spawn_with_execution(
+        crate::native_fixture(source),
+        LoadShape::NativeTick,
+        vec![],
+        execution,
+    )
+    .unwrap();
     wait_ready(&isolate);
 
     let empty: [script::native::seat::SeatEntry; 0] = [];
@@ -3315,7 +3329,6 @@ fn execution_owned_reset_restates_parked_waits_on_the_seat_lane() {
 
     let source = r#"
 import { Execution } from '../../api/execution/Execution.js';
-export const apiVersion = 2;
 let waiting = false;
 export function tick() {
   if (waiting) return;
@@ -3328,9 +3341,13 @@ export function tick() {
         run: 30,
         session: 0,
     });
-    let isolate =
-        LoadIsolate::spawn_with_execution(source.into(), LoadShape::NativeTick, vec![], execution)
-            .unwrap();
+    let isolate = LoadIsolate::spawn_with_execution(
+        crate::native_fixture(source),
+        LoadShape::NativeTick,
+        vec![],
+        execution,
+    )
+    .unwrap();
     wait_ready(&isolate);
 
     let empty: [script::native::seat::SeatEntry; 0] = [];
@@ -3394,7 +3411,7 @@ fn execution_owned_recovery_anchor_bypasses_seat_on_host_lane() {
         session: 0,
     });
     let isolate = LoadIsolate::spawn_with_execution(
-        "export const apiVersion = 2; export function tick() {}".into(),
+        crate::native_fixture("export function tick() {}"),
         LoadShape::NativeTick,
         vec![],
         execution,
@@ -3445,7 +3462,7 @@ fn execution_owned_inspect_ack_uses_the_seat_lane() {
         session: 0,
     });
     let isolate = LoadIsolate::spawn_with_execution(
-        "export const apiVersion = 2; export function tick() {}".into(),
+        crate::native_fixture("export function tick() {}"),
         LoadShape::NativeTick,
         vec![],
         execution,
@@ -3507,11 +3524,14 @@ globalThis.__frames = (n) => {{
 export function tick() {{}}
 "#
     );
+    let origin = crate::native_fixture(&source);
+    let prepared = crate::prepare_raw_origin_for_test("paint.js", &origin, &[])
+        .expect("paint runtime fixture prepares");
     crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         wire_runtime(
             runtime,
-            &source,
-            LoadShape::NativeTick,
+            &prepared.js,
+            prepared.checked,
             &[],
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -3561,11 +3581,13 @@ globalThis.__repeatRuntimeHandles = (count) => {
 };
 export default class RuntimeShapeProbe extends LoopingBot {}
 "#;
+    let prepared = crate::prepare_raw_origin_for_test("runtime.js", source, &[])
+        .expect("compat runtime fixture prepares");
     crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         wire_runtime(
             runtime,
-            source,
-            LoadShape::CompatClass,
+            &prepared.js,
+            prepared.checked,
             &[],
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),

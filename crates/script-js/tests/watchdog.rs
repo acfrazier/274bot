@@ -40,16 +40,19 @@ fn test_surface_start(
     siblings: Vec<(String, String)>,
     settings_bag: Option<Arc<script::native::SettingsBag>>,
 ) -> script::surface::SurfaceStart {
-    let source = source.into();
-    let family = script_js::resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
+    let origin: Arc<str> = source.into();
+    let prepared = script_js::prepare_raw_origin_for_test("bot.js", &origin, &siblings)
+        .expect("prepare watchdog test origin");
+    assert_eq!(
+        prepared.checked.shape(),
+        shape,
+        "watchdog test origin shape"
+    );
     let card: Arc<dyn script::surface::SurfaceCard> = Arc::new(script_js::surface::JsStartCard {
         card_name: "watchdog test".into(),
-        source,
-        shape,
+        source: Arc::<str>::from(prepared.js),
+        checked: prepared.checked,
         siblings: Arc::from(siblings),
-        family,
     });
     script::surface::SurfaceStart {
         card,
@@ -528,7 +531,7 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
     let after = slot.surface_start().unwrap();
     let after_card = js_start_card(after);
     assert_eq!(&*after_card.source, &*before_card.source);
-    assert_eq!(after_card.shape, before_card.shape);
+    assert_eq!(after_card.checked, before_card.checked);
     assert_eq!(&*after_card.siblings, &*before_card.siblings);
     assert_eq!(after.settings_bag, before.settings_bag);
     assert!(slot.watchdog().last_recovery().is_some());

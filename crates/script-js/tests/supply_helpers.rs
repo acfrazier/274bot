@@ -99,8 +99,13 @@ fn post_inv(iso: &LoadIsolate, tick: u64, inv: &[ItemRowInput<'_>]) {
 
 fn probe_v2(src: &str, revision: ClientRevision) -> serde_json::Value {
     let data = api::game_data::for_revision(revision).expect("load supply-helper test data");
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .expect("spawn NativeTick supply-helper isolate");
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .expect("spawn NativeTick supply-helper isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let value = iso
@@ -444,7 +449,6 @@ fn v2_food_and_runes_contracts() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_v2(
             r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     foodCount: api.foodCount({ items: [], foodName: 'Shark' }),
@@ -494,7 +498,6 @@ fn v2_escape_runes_seven_ids_and_errors() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let value = probe_v2(
             r#"
-export const apiVersion = 2;
 export function tick(api) {
   const ids = ['varrock','lumbridge','falador','camelot','ardougne','watchtower','trollheim'];
   const rows = Object.fromEntries(ids.map((id) => [id, api.escapeRunesFor({ id })]));
@@ -541,16 +544,16 @@ export function tick(api) {
 #[test]
 fn v2_missing_selected_data_without_cache() {
     let iso = LoadIsolate::spawn(
-        r#"
-export const apiVersion = 2;
+        script_js::native_fixture(
+            r#"
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     food: api.foodCount({ items: [], foodName: 'Shark' }),
     escape: api.escapeRunesFor({ id: 'varrock' }),
   });
 }
-"#
-        .into(),
+"#,
+        ),
         LoadShape::NativeTick,
         vec![],
     )
@@ -577,7 +580,6 @@ fn new_supply_v2_is_not_a_rustyscript_json_callback() {
     }
     let value = probe_v2(
         r#"
-export const apiVersion = 2;
         export function tick(api) {
   const typed = globalThis.__rs2b0t_supply_v2('foodCount', { items: [], foodName: 'Shark' });
   let jsonStyle = null;
@@ -658,8 +660,8 @@ fn v2_snapshot_inv_and_invalid_optional_types() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).unwrap();
         let iso = LoadIsolate::spawn_with_game_data(
-            r#"
-export const apiVersion = 2;
+            script_js::native_fixture(
+                r#"
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     fromInv: api.foodCount({ items: api.snapshot.inv, foodName: 'Shark' }),
@@ -671,8 +673,8 @@ export function tick(api) {
     runesMissingWielded: api.runesPerCast({ spellName: 'Wind Strike' }),
   });
 }
-"#
-            .into(),
+"#,
+            ),
             LoadShape::NativeTick,
             vec![],
             data,
@@ -704,15 +706,22 @@ export function tick(api) {
 }
 
 #[test]
-fn example_supply_helpers_v2_ts_runs_all_five_on_snapshot() {
+fn v2_supply_helpers_run_all_five_on_snapshot() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("supply_helpers_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
-    let js = script_js::transpile_ts(&src).expect("transpile supply_helpers_v2.ts");
+    let js = script_js::native_fixture(
+        r#"
+export function tick(api) {
+  const sharkSlots = api.foodCount({ items: api.snapshot.inv, foodName: 'Shark' });
+  const breadHeal = api.foodHealAmount({ foodName: 'Bread' });
+  const keep = api.combatKeepNames({ food: 'Lobster', style: 'mage', spell: 'Wind Strike' });
+  const runes = api.runesPerCast({ spellName: 'Wind Strike', wielded: ['Staff of air'] });
+  const escape = api.escapeRunesFor({ id: 'varrock' });
+  api.log(JSON.stringify({ sharkSlots, breadHeal, keep, runes, escape }));
+}
+"#,
+    );
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).unwrap();
         let iso =
@@ -733,13 +742,13 @@ fn example_supply_helpers_v2_ts_runs_all_five_on_snapshot() {
         assert_eq!(
             err.as_str().unwrap_or(""),
             "",
-            "example lastError: {err:?} logs={logs:?}"
+            "fixture lastError: {err:?} logs={logs:?}"
         );
         let last = logs
             .iter()
             .rev()
             .find(|line| line.contains("sharkSlots"))
-            .unwrap_or_else(|| panic!("example logged helper results; logs={logs:?}"));
+            .unwrap_or_else(|| panic!("fixture logged helper results; logs={logs:?}"));
         let row: serde_json::Value = serde_json::from_str(last).unwrap();
         assert_eq!(row["sharkSlots"]["ok"], true, "{row:?}");
         assert_eq!(row["sharkSlots"]["value"], 2, "{row:?}");

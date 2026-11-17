@@ -1731,7 +1731,7 @@ fn scenario_start_script_waits_for_copy_confirmation() {
         let mut pending = vec![PendingCatalogStart::load(
             "bob",
             card.js.clone(),
-            card.shape,
+            card.checked,
             Some(bag.clone()),
             Vec::new(),
             if loadouts {
@@ -2142,7 +2142,9 @@ fn an_assignment_is_saved_only_once_its_start_is_ready() {
     let good = f.card("good.ts", LOOPING);
     let bad = f.card(
         "bad.ts",
-        "export const apiVersion = 2;\nthrow new Error('setup-fails');\nexport function tick(api) {}\n",
+        &script_js::native_fixture(
+            "throw new Error('setup-fails');\nexport function tick(api) {}\n",
+        ),
     );
     let sel = |card: &script_js::JsCard| {
         ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()))
@@ -2354,7 +2356,9 @@ fn a_ready_start_keeps_the_start_all_report_shown() {
     std::fs::write(f.dir.join("gate.ts"), "export const fail = true;").unwrap();
     let card = f.card(
         "retry.ts",
-        "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('first-load');\nexport function tick(api) {}\n",
+        &script_js::native_fixture(
+            "import { fail } from './gate.js';\nif (fail) throw new Error('first-load');\nexport function tick(api) {}\n",
+        ),
     );
     f.assign("alice", &card);
     f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
@@ -2384,7 +2388,9 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
         std::fs::write(f.dir.join("gate.ts"), "export const fail = true;").unwrap();
         let card = f.card(
             "retry.ts",
-            "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('first-load');\nexport function tick(api) {}\n",
+            &script_js::native_fixture(
+            "import { fail } from './gate.js';\nif (fail) throw new Error('first-load');\nexport function tick(api) {}\n",
+        ),
         );
         f.assign("alice", &card);
         f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
@@ -2516,7 +2522,9 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
     let good = f.card("good.ts", LOOPING);
     let bad = f.card(
         "bad.ts",
-        "export const apiVersion = 2;\nthrow new Error('setup-fails');\nexport function tick(api) {}\n",
+        &script_js::native_fixture(
+            "throw new Error('setup-fails');\nexport function tick(api) {}\n",
+        ),
     );
     let sel = |card: &script_js::JsCard| {
         ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()))
@@ -6729,7 +6737,9 @@ fn start_all_twice_keeps_every_outcome_of_the_first_click() {
     let good = f.card("loop.ts", LOOPING);
     let bad = f.card(
         "bad.ts",
-        "export const apiVersion = 2;\nthrow new Error('setup-fails');\nexport function tick(api) {}\n",
+        &script_js::native_fixture(
+            "throw new Error('setup-fails');\nexport function tick(api) {}\n",
+        ),
     );
     let vanish = f.card("vanish.ts", LOOPING);
     for name in [&names[0], &names[1], &names[2], &names[5]] {

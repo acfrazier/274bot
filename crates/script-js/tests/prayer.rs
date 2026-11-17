@@ -116,8 +116,13 @@ fn spawn_v1(src: &str, game_data: std::sync::Arc<api::game_data::SelectedGameDat
 }
 
 fn spawn_v2(src: &str, game_data: std::sync::Arc<api::game_data::SelectedGameData>) -> LoadIsolate {
-    LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::NativeTick, vec![], game_data)
-        .expect("spawn native prayer isolate")
+    LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        game_data,
+    )
+    .expect("spawn native prayer isolate")
 }
 
 fn if_button(id: i32) -> InteractReq {
@@ -459,7 +464,6 @@ export default class T extends LoopingBot {
 }
 
 const V2_QUERY: &str = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = {
     points: api.prayerPoints(),
@@ -521,7 +525,6 @@ fn v2_queries_are_helper_result_and_if_button_stays_private() {
 #[test]
 fn v2_invalid_args_do_not_click_or_throw() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   globalThis.__set = await api.prayerSet({ name: 'Protect from Melee' });
   globalThis.__known = api.prayerKnown({ name: 1 });
@@ -551,7 +554,6 @@ export async function tick(api) {
 #[test]
 fn v2_set_unknown_and_unavailable_are_errors_without_click() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   globalThis.__unknown = await api.prayerSet({ name: 'Nope', on: true });
   globalThis.__unavail = await api.prayerSet({ name: 'Protect from Melee', on: true });
@@ -578,7 +580,6 @@ export async function tick(api) {
 #[test]
 fn v2_set_clicks_then_observed_varp() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   globalThis.__set = await api.prayerSet({ name: 'Protect from Melee', on: true });
 }
@@ -616,7 +617,6 @@ export async function tick(api) {
 #[test]
 fn v2_set_timeout_is_error() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   globalThis.__set = await api.prayerSet({ name: 'Protect from Melee', on: true });
 }
@@ -644,7 +644,6 @@ export async function tick(api) {
 #[test]
 fn v2_clear_continues_after_timeout_with_counts() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   globalThis.__clear = await api.prayerClear();
 }
@@ -698,7 +697,6 @@ export async function tick(api) {
 #[test]
 fn v2_reset_does_not_cross_settle_a_stale_promise() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   const set = await api.prayerSet({ name: 'Protect from Melee', on: true });
   if (!globalThis.__first) globalThis.__first = set;
@@ -745,13 +743,16 @@ fn published_example_queries_sets_clears_and_stops() {
         .join("examples")
         .join("prayer_v2.ts");
     let card = library.load(&path).unwrap();
-    assert_eq!(card.shape, LoadShape::NativeTick);
-    assert_eq!(card.api_family, ApiFamily::V2);
+    let shape = card.shape();
+    assert_eq!(shape, LoadShape::NativeTick);
+    assert_eq!(card.api_family(), ApiFamily::V2);
     assert!(card.unloadable.is_none(), "{:?}", card.unloadable);
     if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
-    let iso = LoadIsolate::spawn_with_game_data(card.js, card.shape, vec![], data()).unwrap();
+    // Spawn takes the raw origin; the manifest export is not in compiled JS.
+    let origin = script_js::transpile_ts(&card.origin).expect("transpile prayer_v2.ts");
+    let iso = LoadIsolate::spawn_with_game_data(origin, shape, vec![], data()).unwrap();
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
         index: 97,
@@ -787,19 +788,52 @@ fn published_example_queries_sets_clears_and_stops() {
     iso.join();
 }
 
+/// Compat adapter that imports the frozen Prayer shim path and keeps v1
+/// boolean/void results (the former `prayer_v1.ts` qualification example).
+const V1_ADAPTER: &str = r#"
+import { Prayer } from '../../api/prayer/Prayer.js';
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+
+const STOP_OK = 'prayer v1 qualification complete';
+const MELEE = 'Protect from Melee';
+
+export default class PrayerV1Qualification extends LoopingBot {
+    async loop() {
+        if (globalThis.__prayer_v1_done) {
+            return;
+        }
+        const points = Prayer.points();
+        const max = Prayer.max();
+        const known = Prayer.known(MELEE);
+        const avail = Prayer.available(MELEE);
+        const active = Prayer.active(MELEE);
+        this.log(
+            `prayer v1 query points=${points} max=${max} known=${known} avail=${avail} active=${active}`,
+        );
+        const unknown = await Prayer.set('Nope', true);
+        if (unknown) {
+            throw new Error('unknown Prayer.set must be false');
+        }
+        const set = await Prayer.set(MELEE, true);
+        if (!set) {
+            throw new Error('Prayer.set Protect from Melee returned false');
+        }
+        await Prayer.clear();
+        if (Prayer.active(MELEE)) {
+            throw new Error('Protect from Melee still active after clear');
+        }
+        globalThis.__prayer_v1_done = true;
+        ScriptRunner.stop(STOP_OK);
+    }
+}
+"#;
+
 #[test]
-fn published_v1_adapter_imports_prayer_and_stops() {
-    let dir = std::env::temp_dir().join(format!("274bot-prayer-v1-example-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut library = JsLibrary::with_cache(dir.join("cards.json"), dir.join("cache"));
-    let path = script_js::live_example_path("prayer_v1.ts").expect("File allowlist");
-    let card = library.load(&path).unwrap();
-    assert_eq!(card.shape, LoadShape::CompatClass);
-    assert!(card.unloadable.is_none(), "{:?}", card.unloadable);
+fn v1_adapter_imports_prayer_and_stops() {
     if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
-    let iso = LoadIsolate::spawn_with_game_data(card.js, card.shape, vec![], data()).unwrap();
+    let iso = spawn_v1(V1_ADAPTER, data());
     let stats = [prayer_stat(43, 43)];
     let varps = [VarpInput {
         index: 97,
@@ -835,7 +869,6 @@ fn published_v1_adapter_imports_prayer_and_stops() {
 #[test]
 fn v2_overlap_set_and_clear_busy_settles_without_mutating_first() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   if (globalThis.__started) return;
   globalThis.__started = true;
@@ -896,7 +929,6 @@ export async function tick(api) {
 #[test]
 fn v2_second_set_is_busy_and_original_completes() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   if (globalThis.__started) return;
   globalThis.__started = true;
@@ -947,7 +979,6 @@ export async function tick(api) {
 #[test]
 fn v2_sync_tick_fire_and_forget_set_progresses_without_new_admission() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   if (globalThis.__started) return;
   globalThis.__started = true;
@@ -997,7 +1028,6 @@ export function tick(api) {
 #[test]
 fn v2_pause_and_hold_do_not_progress_admitted_set() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   if (globalThis.__done) return;
   globalThis.__set = await api.prayerSet({ name: 'Protect from Melee', on: true });
@@ -1079,7 +1109,6 @@ fn reserved_only_varps() -> [VarpInput; 3] {
 #[test]
 fn truncated_posted_varps_do_not_retain_on_or_fabricate_off() {
     let query = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   globalThis.__active = api.prayerActive({ name: 'Protect from Melee' }).value;
   globalThis.__n = (globalThis.__n || 0) + 1;
@@ -1126,7 +1155,6 @@ export async function tick(api) {
     iso.join();
 
     let off_src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   if (!globalThis.__started) {
     globalThis.__off = await api.prayerSet({ name: 'Protect from Melee', on: false });

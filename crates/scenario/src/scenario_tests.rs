@@ -10586,125 +10586,122 @@ fn bone_burier_requires_banking_between_burial_cycles() {
 }
 
 #[test]
-fn bone_burier_v2_scenarios_are_exact_file_cards_not_catalog() {
-    for (name, file) in [
-        ("bone_burier_v2_ts", "bone_burier_v2.ts"),
-        ("bone_burier_v2_js", "bone_burier_v2.js"),
-    ] {
-        let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
-        assert_eq!(s.name, name);
-        assert_eq!(s.settings.start_script, None);
-        assert_eq!(s.settings.start_file, Some(file));
-        assert_eq!(
-            s.settings.wait_script_stop,
-            Some("confirmed loaded current-generation bank exhaustion")
-        );
-        assert_eq!(s.settings.terminal_shot, Some(name));
-        assert_eq!(s.settings.deadline, BONE_BURIER_V2_DEADLINE);
-        assert_eq!(s.settings.fixture_prereqs, Some(BONE_BURIER_V2_PREREQS));
-        assert!(!s
-            .settings
-            .fixture_prereqs
-            .unwrap()
-            .iter()
-            .any(|p| matches!(p, Proof::BankItem { .. } | Proof::BankClosed)));
-        let start = s
-            .steps
-            .iter()
-            .position(|step| matches!(step.kind, StepKind::StartScript))
-            .unwrap();
-        assert!(matches!(s.steps[start - 1].kind, StepKind::Relog));
-        assert_eq!(
-            s.steps[start - 1].wait.arm,
-            Proof::SideTabAvailable { index: 3 }
-        );
-        assert_eq!(
-            s.steps[start - 2].wait.arm,
-            Proof::ArrivedNear {
-                x: BONE_BURIER_V2_BANK.x,
-                z: BONE_BURIER_V2_BANK.z,
-                level: BONE_BURIER_V2_BANK.level,
-                radius: 8,
-            }
-        );
-        let arms: Vec<_> = s.steps[start + 1..]
-            .iter()
-            .map(|step| step.wait.arm)
-            .collect();
-        assert_eq!(
-            arms,
-            vec![
-                Proof::StatXpGain { id: 5, min: 22 },
-                Proof::ItemAtMost {
-                    name: "Bones",
-                    count: 0
-                },
-                Proof::BankItem {
-                    name: "Bones",
-                    count: 28
-                },
-                Proof::Item {
-                    name: "Bones",
-                    count: 28
-                },
-                Proof::BankItemAtMost {
-                    name: "Bones",
-                    count: 0
-                },
-                Proof::BankClosed,
-                Proof::FreshStatXpGain { id: 5, min: 1 },
-                Proof::ItemAtMost {
-                    name: "Bones",
-                    count: 0
-                },
-                Proof::BankItemAtMost {
-                    name: "Bones",
-                    count: 0
-                },
-            ]
-        );
-        let later = arms
-            .iter()
-            .rposition(|arm| {
-                matches!(
-                    arm,
-                    Proof::BankItemAtMost {
-                        name: "Bones",
-                        count: 0
-                    }
-                )
-            })
-            .unwrap();
-        let first_zero = arms
-            .iter()
-            .position(|arm| {
-                matches!(
-                    arm,
-                    Proof::BankItemAtMost {
-                        name: "Bones",
-                        count: 0
-                    }
-                )
-            })
-            .unwrap();
-        assert!(
-            first_zero < later,
-            "the post-withdraw zero row cannot satisfy the later exhaustion observation"
-        );
-        assert!(matches!(
-            arms[later - 1],
+fn bone_burier_v2_scenario_is_an_exact_file_card_not_catalog() {
+    let name = "bone_burier_v2_ts";
+    let file = "bone_burier_v2.ts";
+    let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+    assert_eq!(s.name, name);
+    assert_eq!(s.settings.start_script, None);
+    assert_eq!(s.settings.start_file, Some(file));
+    assert_eq!(
+        s.settings.wait_script_stop,
+        Some("confirmed loaded current-generation bank exhaustion")
+    );
+    assert_eq!(s.settings.terminal_shot, Some(name));
+    assert_eq!(s.settings.deadline, BONE_BURIER_V2_DEADLINE);
+    assert_eq!(s.settings.fixture_prereqs, Some(BONE_BURIER_V2_PREREQS));
+    assert!(!s
+        .settings
+        .fixture_prereqs
+        .unwrap()
+        .iter()
+        .any(|p| matches!(p, Proof::BankItem { .. } | Proof::BankClosed)));
+    let start = s
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(matches!(s.steps[start - 1].kind, StepKind::Relog));
+    assert_eq!(
+        s.steps[start - 1].wait.arm,
+        Proof::SideTabAvailable { index: 3 }
+    );
+    assert_eq!(
+        s.steps[start - 2].wait.arm,
+        Proof::ArrivedNear {
+            x: BONE_BURIER_V2_BANK.x,
+            z: BONE_BURIER_V2_BANK.z,
+            level: BONE_BURIER_V2_BANK.level,
+            radius: 8,
+        }
+    );
+    let arms: Vec<_> = s.steps[start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    assert_eq!(
+        arms,
+        vec![
+            Proof::StatXpGain { id: 5, min: 22 },
             Proof::ItemAtMost {
                 name: "Bones",
                 count: 0
-            }
-        ));
-        assert!(matches!(
-            arms[later - 2],
-            Proof::FreshStatXpGain { id: 5, min: 1 }
-        ));
-        assert_eq!(s.proof, arms[later]);
-        assert!(names().contains(&name));
-    }
+            },
+            Proof::BankItem {
+                name: "Bones",
+                count: 28
+            },
+            Proof::Item {
+                name: "Bones",
+                count: 28
+            },
+            Proof::BankItemAtMost {
+                name: "Bones",
+                count: 0
+            },
+            Proof::BankClosed,
+            Proof::FreshStatXpGain { id: 5, min: 1 },
+            Proof::ItemAtMost {
+                name: "Bones",
+                count: 0
+            },
+            Proof::BankItemAtMost {
+                name: "Bones",
+                count: 0
+            },
+        ]
+    );
+    let later = arms
+        .iter()
+        .rposition(|arm| {
+            matches!(
+                arm,
+                Proof::BankItemAtMost {
+                    name: "Bones",
+                    count: 0
+                }
+            )
+        })
+        .unwrap();
+    let first_zero = arms
+        .iter()
+        .position(|arm| {
+            matches!(
+                arm,
+                Proof::BankItemAtMost {
+                    name: "Bones",
+                    count: 0
+                }
+            )
+        })
+        .unwrap();
+    assert!(
+        first_zero < later,
+        "the post-withdraw zero row cannot satisfy the later exhaustion observation"
+    );
+    assert!(matches!(
+        arms[later - 1],
+        Proof::ItemAtMost {
+            name: "Bones",
+            count: 0
+        }
+    ));
+    assert!(matches!(
+        arms[later - 2],
+        Proof::FreshStatXpGain { id: 5, min: 1 }
+    ));
+    assert_eq!(s.proof, arms[later]);
+    assert!(names().contains(&name));
     let v1 = get("bone_burier").unwrap();
     assert_eq!(v1.settings.start_script, Some("BoneBurier"));
     assert_eq!(v1.settings.start_file, None);
