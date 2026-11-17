@@ -7453,6 +7453,26 @@ fn nav_core_edit_writes_once_and_preserves_other_members() {
     assert_eq!(receipt.version(), audits[0].version());
 }
 
+/// Bind `session` to a store refused at open (an over-size legacy
+/// `panel-ui.json` under a scratch root named for `label`), as a panel
+/// started on a refused store is. Returns the scratch root, the legacy
+/// file and its bytes.
+fn bind_refused_store(
+    session: &mut crate::session::Session,
+    label: &str,
+) -> (crate::test_support::TestDir, std::path::PathBuf, Vec<u8>) {
+    let dir = crate::test_support::TestDir::new(label);
+    let legacy = dir.join("panel-ui.json");
+    let oversize = vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1];
+    crate::test_support::write_private_fixture(&legacy, &oversize).unwrap();
+    let service = crate::test_support::scratch_service(&dir);
+    frontend_core::UiPreferences::of_service_for_test(&service)
+        .reload()
+        .expect_err("an over-size legacy file refuses the preferences");
+    session.bind_refused_preferences_for_test(service);
+    (dir, legacy, oversize)
+}
+
 /// A panel started on refused preferences: a Nav config change that cannot
 /// be saved shows the saved value again once its save failed, for a walk
 /// grant, the manual-walk pause, the special-areas overlay and a panel-only
@@ -7462,15 +7482,7 @@ fn nav_core_edit_writes_once_and_preserves_other_members() {
 fn nav_edit_under_refused_preferences_shows_the_saved_values_again() {
     let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-refused");
     let mut session = crate::session::Session::new();
-    let dir = crate::test_support::TestDir::new("panel-nav-refused");
-    let legacy = dir.join("panel-ui.json");
-    let oversize = vec![b' '; host_play::local_state::MAX_PREFERENCES_BYTES as usize + 1];
-    crate::test_support::write_private_fixture(&legacy, &oversize).unwrap();
-    let service = crate::test_support::scratch_service(&dir);
-    frontend_core::UiPreferences::of_service_for_test(&service)
-        .reload()
-        .expect_err("an over-size legacy file refuses the preferences");
-    session.bind_refused_preferences_for_test(service);
+    let (_dir, legacy, oversize) = bind_refused_store(&mut session, "panel-nav-refused");
     let saved = session.ui.nav.clone();
     assert!(!saved.allow_teleports, "a refused store grants nothing");
 
@@ -7498,6 +7510,71 @@ fn nav_edit_under_refused_preferences_shows_the_saved_values_again() {
     );
     assert_eq!(shown.show_special_areas, saved.show_special_areas);
     assert_eq!(shown.hop_labels, saved.hop_labels);
+    assert_eq!(
+        std::fs::read(&legacy).unwrap(),
+        oversize,
+        "nothing is saved over the refused file"
+    );
+}
+
+/// A panel started on refused preferences: the strip heading order, the
+/// Browse category order and a panel colour, changed through the functions
+/// the drops and the colour editor call, show the saved value again once
+/// their saves failed at once, with the reason at the setting.
+#[test]
+fn order_and_colour_edits_under_refused_preferences_show_the_saved_values_again() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-orders-refused");
+    let mut session = crate::session::Session::new();
+    let mut present: Vec<String> = Vec::new();
+    for card in session.scripts.browse_cards() {
+        let category = crate::script_picker::display_category(card.category()).to_owned();
+        if !present.contains(&category) {
+            present.push(category);
+        }
+    }
+    assert!(present.len() > 1, "the registry has several categories");
+    let (_dir, legacy, oversize) = bind_refused_store(&mut session, "panel-orders-refused");
+    let saved_sections = session.ui.section_order.clone();
+    let saved_categories = session.ui.script_category_order.clone();
+    let saved_chrome = session.ui.chrome.clone();
+
+    // Each value is checked right after its own edit: a later failure
+    // rebases the whole panel view, which would hide an earlier stale one.
+    let settle = |session: &mut crate::session::Session, path: &[&str]| {
+        for _ in 0..3 {
+            session.pump_status();
+            session.poll_panel_preferences();
+        }
+        assert!(
+            !session.preferences_pending(),
+            "{path:?}: the refused save has ended"
+        );
+        assert!(
+            session.panel_member_error(path).is_some(),
+            "{path:?}: the reason shows at the setting"
+        );
+    };
+
+    super::reorder_heading(&mut session, "log", "status");
+    settle(&mut session, &["section_order"]);
+    assert_eq!(session.ui.section_order, saved_sections);
+
+    let last = present.last().expect("several categories").clone();
+    super::reorder_category(&mut session, &last, &present[0]);
+    settle(&mut session, &["script_category_order"]);
+    assert_eq!(session.ui.script_category_order, saved_categories);
+
+    let mut chrome = saved_chrome.clone();
+    chrome.accent = if chrome.accent == "#123456" {
+        "#654321".into()
+    } else {
+        "#123456".into()
+    };
+    super::commit_chrome(&mut session, chrome);
+    settle(&mut session, &["chrome", "accent"]);
+    assert_eq!(session.ui.chrome, saved_chrome);
+    assert_eq!(session.ui.section_order, saved_sections);
+    assert_eq!(session.ui.script_category_order, saved_categories);
     assert_eq!(
         std::fs::read(&legacy).unwrap(),
         oversize,
@@ -8505,11 +8582,11 @@ fn failed_category_drop(
     assert!(present.len() > 1, "the registry has several categories");
     let lock = crate::test_support::hold_preferences_lock(&session.preferences);
     preference_frame(ctx, session, &browse_and_global);
-    // The drop: what `category_chip_dnd` does on delivery.
-    let mut order = present;
-    order.reverse();
-    let _ = session.persist_panel_serializable(&["script_category_order"], &order);
-    session.ui.script_category_order = order.clone();
+    // The drop: the last chip onto the first, as `category_chip_dnd` does on
+    // delivery.
+    let last = present.last().expect("several categories").clone();
+    super::reorder_category(session, &last, &present[0]);
+    let order = session.ui.script_category_order.clone();
     assert!(session.preferences_pending(), "the drop is saving");
     // The writer's lock wait ends and every held write fails busy.
     let deadline = Instant::now() + Duration::from_secs(60);

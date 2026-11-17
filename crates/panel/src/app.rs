@@ -2226,14 +2226,21 @@ fn heading_dnd(ui: &Ui, session: &mut Session, id: &str) {
         {
             if p.delivery {
                 if let Some(from) = heading_from_key(p.data) {
-                    let mut order = resolve_heading_order(&session.ui.section_order);
-                    move_heading(&mut order, &from, id);
-                    let _ = session.persist_panel_serializable(&["section_order"], &order);
-                    session.ui.section_order = order;
+                    reorder_heading(session, &from, id);
                 }
             }
         }
     }
+}
+
+/// Move heading `from` onto `onto` in the strip order. The view takes the
+/// new order before its save is submitted, so a save that fails at once
+/// (a refused store) puts the saved order back with its reason.
+fn reorder_heading(session: &mut Session, from: &str, onto: &str) {
+    let mut order = resolve_heading_order(&session.ui.section_order);
+    move_heading(&mut order, from, onto);
+    session.ui.section_order = order.clone();
+    let _ = session.persist_panel_serializable(&["section_order"], &order);
 }
 
 fn kv_row(ui: &Ui, key: &str, value: &str) {
@@ -2997,17 +3004,23 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
         {
             if p.delivery {
                 if let Some(from) = category_from_key(p.data) {
-                    let cards: Vec<_> = session.scripts.browse_cards().collect();
-                    let present = card_categories(&cards);
-                    let mut order =
-                        resolve_category_order(&session.ui.script_category_order, &present);
-                    move_category(&mut order, &from, cat);
-                    let _ = session.persist_panel_serializable(&["script_category_order"], &order);
-                    session.ui.script_category_order = order;
+                    reorder_category(session, &from, cat);
                 }
             }
         }
     }
+}
+
+/// Move script category `from` onto `onto` in the Browse order. The view
+/// takes the new order before its save is submitted, so a save that fails
+/// at once (a refused store) puts the saved order back with its reason.
+fn reorder_category(session: &mut Session, from: &str, onto: &str) {
+    let cards: Vec<_> = session.scripts.browse_cards().collect();
+    let present = card_categories(&cards);
+    let mut order = resolve_category_order(&session.ui.script_category_order, &present);
+    move_category(&mut order, from, onto);
+    session.ui.script_category_order = order.clone();
+    let _ = session.persist_panel_serializable(&["script_category_order"], &order);
 }
 
 fn browse_script_card(
@@ -5416,32 +5429,38 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
     changed |= chrome_color_field(ui, "error", &mut chrome.error);
     changed |= chrome_color_field(ui, "green", &mut chrome.green);
     if changed {
-        macro_rules! persist_chrome_member {
-            ($field:ident) => {
-                if session.ui.chrome.$field != chrome.$field {
-                    let _ = session.persist_panel_serializable(
-                        &["chrome", stringify!($field)],
-                        &chrome.$field,
-                    );
-                }
-            };
-        }
-        persist_chrome_member!(accent);
-        persist_chrome_member!(accent_hover);
-        persist_chrome_member!(bg);
-        persist_chrome_member!(bg_deep);
-        persist_chrome_member!(text);
-        persist_chrome_member!(text_dim);
-        persist_chrome_member!(frame);
-        persist_chrome_member!(hover_fill);
-        persist_chrome_member!(active_fill);
-        persist_chrome_member!(border);
-        persist_chrome_member!(warn);
-        persist_chrome_member!(error);
-        persist_chrome_member!(green);
-        session.ui.chrome = chrome;
+        commit_chrome(session, chrome);
     }
     panel_member_feedback_line(ui, session, &["chrome"]);
+}
+
+/// Commit edited panel colours: each changed colour is its own member save.
+/// The view takes the colours before the saves are submitted, so a save that
+/// fails at once (a refused store) puts the saved colour back with its
+/// reason.
+fn commit_chrome(session: &mut Session, chrome: crate::theme::ChromeColors) {
+    let before = std::mem::replace(&mut session.ui.chrome, chrome.clone());
+    macro_rules! persist_chrome_member {
+        ($field:ident) => {
+            if before.$field != chrome.$field {
+                let _ = session
+                    .persist_panel_serializable(&["chrome", stringify!($field)], &chrome.$field);
+            }
+        };
+    }
+    persist_chrome_member!(accent);
+    persist_chrome_member!(accent_hover);
+    persist_chrome_member!(bg);
+    persist_chrome_member!(bg_deep);
+    persist_chrome_member!(text);
+    persist_chrome_member!(text_dim);
+    persist_chrome_member!(frame);
+    persist_chrome_member!(hover_fill);
+    persist_chrome_member!(active_fill);
+    persist_chrome_member!(border);
+    persist_chrome_member!(warn);
+    persist_chrome_member!(error);
+    persist_chrome_member!(green);
 }
 
 fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
