@@ -1742,6 +1742,35 @@ fn perform_budget_fails_when_the_arm_never_fires() {
     assert_eq!(ev.predicate, "stat(16)>=999");
     assert!(ev.message.is_some());
 }
+/// The first snapshot can contain login `PLAYER_INFO` generations from before
+/// the step dispatch. Those generations must not spend the step's wait budget.
+#[test]
+fn pre_send_player_info_generations_do_not_spend_step_budget() {
+    let mut c = seeded_client();
+    for _ in 0..2 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+    }
+    let mut scenario = stat_scenario(999, 3);
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(|client, snapshot| {
+            assert_eq!(snapshot.tick(), 3);
+            client.runenergy = 99;
+            true
+        }),
+    };
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+
+    assert_eq!(c.gens.player_info, 3);
+    runner.tick(&mut c);
+
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, total: 1 },
+        "the first snapshot's PLAYER_INFO generations predate the step send"
+    );
+    assert_eq!(runner.total_ticks(), 3);
+}
 
 #[test]
 fn poll_sustain_sends_the_cheat_when_energy_is_at_or_below_the_line() {
@@ -1837,6 +1866,8 @@ fn world_speed_resets_after_failed_run() {
     runner.tick(&mut client);
     assert!(contains_outgoing_ascii(&client, "speed 300"));
     assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
     runner.tick(&mut client);
     assert!(contains_outgoing_ascii(&client, "speed 600"));
 
@@ -1884,6 +1915,7 @@ fn world_speed_opt_out_skips_restore_after_failure() {
 
     runner.tick(&mut client);
     assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    client.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut client);
 
     assert!(
@@ -2786,6 +2818,8 @@ fn terminal_shot_fires_the_sink_on_pass_and_fail() {
     }));
     let mut c = seeded_client();
     fail.tick(&mut c);
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    fail.tick(&mut c);
     assert!(matches!(fail.status(), RunnerStatus::Failed(_)));
     assert_eq!(
         fail_events.lock().unwrap().as_slice(),
@@ -2832,13 +2866,18 @@ fn deadline_fails_a_stuck_run() {
 fn a_step_failure_read_after_the_deadline_is_not_a_deadline_failure() {
     let mut runner = ScenarioRunner::new(stat_scenario(999, 1));
     runner.set_scene_settle(Duration::ZERO);
-    runner.set_deadline(Duration::ZERO);
+    runner.set_deadline(Duration::from_secs(1));
     let mut c = seeded_client();
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    c.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut c);
     let RunnerStatus::Failed(msg) = runner.status() else {
         panic!("expected Failed, got {:?}", runner.status());
     };
     assert!(msg.contains("not seen within 1 game tick"), "msg: {msg}");
+    // The stored cause remains a step failure when read past the deadline.
+    runner.set_deadline(Duration::ZERO);
     assert!(runner.started.elapsed() > runner.deadline());
     assert!(
         !runner.deadline_exceeded(),
@@ -6751,6 +6790,36 @@ fn auto_fighter_bank_floor_guard_counts_game_ticks_and_fails_at_content_cap() {
     assert_eq!(guard.ticks_waited, 202);
     assert_eq!(guard.items_seen.len(), 1);
     assert!(!runner.script_started);
+}
+
+#[test]
+fn ground_guard_budget_starts_at_first_dispatch_after_scene_settle() {
+    let (mut runner, mut c) = auto_fighter_floor_guard();
+    runner.scenario.steps[0].wait.budget_ticks = 3;
+    runner.set_scene_settle(Duration::from_secs(10));
+    runner.snapshot.seed_ground_items(vec![guard_ground_item(
+        526,
+        1,
+        WorldTile {
+            x: 2661,
+            z: 3306,
+            level: 0,
+        },
+    )]);
+
+    runner.tick(&mut c);
+    for _ in 0..3 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+    }
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+
+    assert!(matches!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, .. }
+    ));
+    assert_eq!(runner.ground_guard.as_ref().unwrap().ticks_waited, 0);
 }
 
 #[test]

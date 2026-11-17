@@ -12134,6 +12134,7 @@ fn step_budget_counts_game_ticks_not_dirty_snapshots() {
         settings: ScenarioSettings::default(),
     };
     let mut client = native_seed_client();
+    // The seeded PLAYER_INFO is part of the initial snapshot, before dispatch.
     client.bump_gens(ServerProt::PLAYER_INFO);
     let mut runner = ScenarioRunner::with_world(scenario, None);
     runner.set_scene_settle(Duration::ZERO);
@@ -12164,6 +12165,11 @@ fn step_budget_counts_game_ticks_not_dirty_snapshots() {
     client.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut client);
     assert_eq!(runner.total_ticks(), 3);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    // The unchanged three-tick budget expires only after three post-send ticks.
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.total_ticks(), 4);
     match runner.status() {
         RunnerStatus::Failed(msg) => {
             assert!(msg.contains("not seen within 3 game ticks"), "msg: {msg}");

@@ -413,14 +413,19 @@ pub struct ScenarioRunner {
     phase: Phase,
     step: usize,
     step_sent: bool,
+    /// True after the runner's first dispatch for the current step. Repeated
+    /// steps keep `step_sent` false, so this latch starts their wait budget
+    /// exactly once.
+    step_wait_started: bool,
     /// Observed game tick (`snapshot.tick()`, one per `PLAYER_INFO`) at
     /// which the current `Repeat` step last sent. `None` until the step
     /// sends; reset at every step boundary so a new `Repeat` step can
     /// send at once. Client cycles and dirty snapshots never update it.
     repeat_sent_game_tick: Option<u32>,
-    /// Last `snapshot.tick()` this runner observed. The difference on
-    /// the next poll is the number of observed game ticks (one per
-    /// `PLAYER_INFO`) to credit to the step budget and run total.
+    /// Last `snapshot.tick()` this runner observed. The difference on the
+    /// next poll is the number of observed game ticks (one per
+    /// `PLAYER_INFO`) to credit to the run total. The step budget excludes
+    /// the delta on the poll that first dispatches the step.
     /// Client cycles and dirty snapshots do not advance it.
     last_observed_game_tick: u32,
     /// Observed game ticks waited on the current step's arm (one per
@@ -644,6 +649,7 @@ impl ScenarioRunner {
             phase: Phase::Seeding,
             step: 0,
             step_sent: false,
+            step_wait_started: false,
             repeat_sent_game_tick: None,
             last_observed_game_tick: 0,
             game_ticks_waited: 0,
@@ -1237,12 +1243,11 @@ impl ScenarioRunner {
             self.finish_unavailable(reason);
             return;
         }
-        // Observed game ticks since the last poll: `snapshot.tick()`
-        // advances once per `PLAYER_INFO` (the server's world cycle),
-        // never on a client cycle or a dirty snapshot alone. Step
-        // budgets and the run total credit this delta in the run block
-        // below; polls that return before it (cleaning, scene settle)
-        // do not count toward a step budget.
+        // `snapshot.tick()` advances once per `PLAYER_INFO` (the server's
+        // world cycle), never on a client cycle or a dirty snapshot alone.
+        // The run total credits every delta in the run block below. The step
+        // budget excludes the delta on the poll that first dispatches it.
+        // Polls that return before the run block do not count toward a step.
         let observed_game_tick = self.snapshot.tick();
         let game_tick_delta = observed_game_tick.wrapping_sub(self.last_observed_game_tick);
         self.last_observed_game_tick = observed_game_tick;
@@ -1299,6 +1304,7 @@ impl ScenarioRunner {
             self.begin_step(client.gens.session);
         }
         if matches!(self.phase, Phase::Running) {
+            let mut step_wait_started_this_poll = false;
             // Scene-settle gate: never start a step until the scene has
             // held `scene_state == 2` for `scene_settle`. A cheat tele's
             // rebuild drops the scene to 1 and a send before it re-settles
@@ -1381,6 +1387,20 @@ impl ScenarioRunner {
                     ));
                     return;
                 }
+                if !self.step_wait_started {
+                    self.step_wait_started = true;
+                    step_wait_started_this_poll = true;
+                    self.game_ticks_waited = 0;
+                    if matches!(
+                        self.current_step().wait.arm,
+                        Proof::GroundItemIdsAbsentNear { .. }
+                    ) {
+                        if let Some(guard) = self.ground_guard.as_mut() {
+                            guard.start_tick = observed_game_tick;
+                            guard.ticks_waited = 0;
+                        }
+                    }
+                }
                 if repeat {
                     self.repeat_sent_game_tick = Some(self.snapshot.tick());
                 }
@@ -1400,10 +1420,11 @@ impl ScenarioRunner {
                     self.game_ticks_waited = 0;
                 }
             }
-            // Budgets count observed game ticks only. Route polling above
-            // and the proof checks below still run on every poll; a burst
-            // of dirty snapshots inside one game tick does not use budget.
-            self.game_ticks_waited = self.game_ticks_waited.saturating_add(game_tick_delta);
+            // The dispatch poll's delta predates the dispatch. Later polls
+            // count only observed game ticks since the step started.
+            if !step_wait_started_this_poll {
+                self.game_ticks_waited = self.game_ticks_waited.saturating_add(game_tick_delta);
+            }
             self.total_game_ticks = self.total_game_ticks.saturating_add(game_tick_delta);
             if dirty {
                 if let Some(window) = self.protect_window.as_mut() {
@@ -1710,6 +1731,7 @@ impl ScenarioRunner {
 
     fn begin_step(&mut self, session: u64) {
         self.step_sent = false;
+        self.step_wait_started = false;
         self.repeat_sent_game_tick = None;
         self.relog_logout_sent = false;
         self.relog_session = None;
