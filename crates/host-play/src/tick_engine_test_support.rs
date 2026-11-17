@@ -257,47 +257,6 @@ struct ActiveDispatch {
     transport: Option<TransportMutation>,
 }
 
-/// A real, newly received Mining roll with no start-act or success line.
-/// A prior native start Act proves Mining is already running. A fresh
-/// non-null instruction excludes success/Idle (mining.rs2:109-111,183-192).
-pub fn fresh_mining_roll(
-    trace: &TickEngineTrace,
-    pending: Option<&FrameObservation>,
-    tick: u32,
-    sequence: i32,
-) -> bool {
-    let frames = trace.frames.iter().chain(pending);
-    let mut earlier = frames.clone().rev();
-    let Some(frame) = earlier.find(|frame| frame.game_tick == tick && frame.tick_edge) else {
-        return false;
-    };
-    let Some(animation) = frame.animation else {
-        return false;
-    };
-    // Dispatch can follow unchanged wake polls in this same PLAYER_INFO window.
-    // The fresh edge instruction stays valid only while its serial is retained.
-    frames
-        .clone()
-        .next_back()
-        .is_some_and(|latest| latest.game_tick == tick && latest.animation == Some(animation))
-        && animation.sequence == sequence
-        && earlier
-            .find_map(|frame| frame.animation)
-            .is_none_or(|previous| previous.serial != animation.serial)
-        && frames.clone().flat_map(|frame| &frame.chat).any(|line| {
-            line.first_attributable_tick() < u64::from(tick)
-                && line.text.contains("You swing your pick at the rock.")
-        })
-        && !frames.flat_map(|frame| &frame.chat).any(|line| {
-            let observed = u64::from(line.game_tick);
-            let first = line.first_attributable_tick();
-            first <= u64::from(tick)
-                && observed + 1 >= u64::from(tick)
-                && (line.text.contains("You swing your pick at the rock.")
-                    || line.text.contains("You manage to mine some"))
-        })
-}
-
 struct HookState {
     trace: TickEngineTrace,
     pending_frame: Option<FrameObservation>,
