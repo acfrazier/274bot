@@ -136,8 +136,8 @@ pub fn passing_runner_for_test(
     Runner::from_scenario_runner(runner)
 }
 
-/// Build a real one-step runner that reaches FAIL when the stat proof times
-/// out after one tick.
+/// Build a real one-step runner that reaches FAIL after one post-dispatch game
+/// tick when its stat proof never holds.
 pub fn failing_runner_for_test(name: &'static str, terminal_shot: Option<&'static str>) -> Runner {
     use scenario::{
         Proof, Scenario as AdapterScenario, ScenarioSettings, Seed, Step, StepKind, Wait,

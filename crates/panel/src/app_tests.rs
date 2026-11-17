@@ -23,7 +23,7 @@ use crate::theme::{
     applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
 };
 use crate::window::RedrawMode;
-use client::io::Packet;
+use client::io::{Packet, ServerProt};
 use dear_imgui_rs::{BackendFlags, ConfigFlags, Id, WindowFlags};
 use frontend_core::scripts::{CardSource, ScriptChoice, ScriptRunState};
 use frontend_core::test_support::live::tick_scenario_runner_for_test;
@@ -381,6 +381,8 @@ fn failed_live_script() -> (crate::session::Session, LiveScript, String) {
     let mut runner =
         frontend_core::test_support::live::failing_runner_for_test("live_failure_exit", None);
     let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(ServerProt::PLAYER_INFO);
     tick_scenario_runner_for_test(&mut runner, &mut client);
 
     let mut session = crate::session::Session::new();
@@ -3058,9 +3060,11 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
     assert!(error.contains("soak checkpoint") && error.contains("synthetic"));
     assert!(failed_soak.failed.is_some());
 
-    // FAIL: a never-satisfiable arm within a 1-tick budget.
+    // FAIL: a never-satisfiable arm after one post-dispatch game tick.
     let mut runner = frontend_core::test_support::live::failing_runner_for_test("f", None);
     let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(ServerProt::PLAYER_INFO);
     tick_scenario_runner_for_test(&mut runner, &mut client);
     s.core.live_runner().install(runner);
     assert_eq!(
@@ -3097,6 +3101,8 @@ fn live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes() {
     let mut runner =
         frontend_core::test_support::live::failing_runner_for_test("f", Some("t-fail"));
     let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(ServerProt::PLAYER_INFO);
     tick_scenario_runner_for_test(&mut runner, &mut client);
     s.core.live_runner().install(runner);
     assert_eq!(
