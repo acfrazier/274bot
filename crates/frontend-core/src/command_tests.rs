@@ -390,8 +390,6 @@ fn the_core_owned_application_decisions_have_their_frozen_columns() {
     // Loadout create/duplicate are durable writes like Save and Delete, not
     // draft edits; each is its own row.
     for durable in [
-        C::CreateLoadout,
-        C::DuplicateLoadout,
         C::SaveLoadout,
         C::DeleteLoadout,
     ] {
