@@ -5526,6 +5526,36 @@ mod tests {
     use std::time::Instant;
 
     #[test]
+    fn map_service_separates_377_artifact_roots_and_requests() {
+        let root = temp_root("revision-377-identities");
+        let mut keys = std::collections::BTreeSet::new();
+        let mut paths = std::collections::BTreeSet::new();
+        for revision in [274, 289, 377] {
+            let descriptor = MapProfileDescriptor::new(revision, Digest([1; 32]), Digest([2; 32]))
+                .unwrap()
+                .with_input(PreparedMapInput::with_snapshot(
+                    revision,
+                    root.path().join("jag"),
+                    root.path().join("snapshot"),
+                ))
+                .unwrap();
+            for kind in [ArtifactKind::Catalogue, ArtifactKind::Images] {
+                assert!(keys.insert(cache_root_key(revision, kind)));
+                let request = bake_request(&root, descriptor.clone(), kind);
+                assert!(paths.insert(Arc::clone(&request.partial_dir)));
+                assert_eq!(request.client_input().unwrap().revision, revision);
+                match request.identity() {
+                    ArtifactIdentity::Image(identity) => assert_eq!(identity.revision, revision),
+                    ArtifactIdentity::Catalogue(identity) => {
+                        assert_eq!(identity.revision, revision)
+                    }
+                }
+            }
+        }
+        assert!(MapProfileDescriptor::new(378, Digest([1; 32]), Digest([2; 32])).is_err());
+    }
+
+    #[test]
     fn map_ticket_reference_preserves_identity_and_revision() {
         use api::identity::{ProcessIncarnation, RequestIdMinter};
         use std::num::NonZeroU64;

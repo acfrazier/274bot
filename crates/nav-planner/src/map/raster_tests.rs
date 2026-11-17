@@ -1,4 +1,5 @@
 use super::*;
+use crate::map::client_cache::{load_floor_definitions, load_raster_locs};
 use crate::map::identity::Digest;
 use crate::map::producer::{ClientMapInput, ProducerStep};
 use api::identity::{Cancellation, Deadline};
@@ -444,6 +445,52 @@ impl RasterSnapshot {
         std::fs::create_dir_all(&path).unwrap();
         path
     }
+}
+
+#[test]
+fn revision_377_image_cursor_decodes_config_and_publishes_revision_bound_tiles() {
+    let snapshot = RasterSnapshot::new();
+    let loc = [14, 2, 15, 3, 77, 255, 255, 255, 255, 0, 255, 255, 0];
+    let mut data = vec![0, 1];
+    data.extend_from_slice(&loc);
+    let mut index = vec![0, 1];
+    index.extend_from_slice(&(loc.len() as u16).to_be_bytes());
+    std::fs::write(
+        snapshot.0.join("config"),
+        synthetic_jag(&[
+            ("loc.dat", &data),
+            ("loc.idx", &index),
+            ("flo.dat", &[0, 1, 1, 255, 0, 0, 0]),
+        ]),
+    )
+    .unwrap();
+    let input = ClientMapInput::new(377, &snapshot.0, &snapshot.0).unwrap();
+    let output = snapshot.output("revision-377");
+    let ImageBakeOutcome::Complete(report) = bake_images_into(input, &output, |_| true).unwrap()
+    else {
+        panic!("uninterrupted image bake paused")
+    };
+    assert_eq!(report.manifest.identity.revision, 377);
+    assert_eq!(report.metrics.plan.map_squares, 2);
+    assert_eq!(report.metrics.plan.base_tiles, 2);
+    assert_eq!(report.manifest.tiles.as_slice().len(), 3);
+    let disk = ImageManifest::decode(&report.manifest.encode().unwrap()).unwrap();
+    assert_eq!(disk, report.manifest);
+    let base = disk
+        .tiles
+        .as_slice()
+        .iter()
+        .find(|tile| tile.key.lod == 0)
+        .unwrap();
+    let png = std::fs::read(output.join(base.key.relative_path().unwrap())).unwrap();
+    base.verify_png(&png).unwrap();
+    let mut pixels = Vec::new();
+    decode_png_into(&png, &mut pixels).unwrap();
+    assert!(pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .any(|pixel| pixel[3] == 255 && pixel[0] > pixel[1]));
 }
 
 impl Drop for RasterSnapshot {

@@ -3,12 +3,13 @@
 //! child tiles and never construct a dense plane or client `World`.
 
 use super::cache::{ArtifactIdentity, BakeStage, Checkpoint, CompletedUnit, PartialEntry, UnitKey};
+use super::cache_revision::{load_floor_definitions, load_raster_locs};
 use super::client_cache::{
-    average_texture, depack_mapscene, depack_texture, load_config, load_floor_definitions,
-    load_raster_locs, read_jag, CacheReader, CacheReaderCursor, Definitions, FloorDefinition,
-    GroundCell, LandSquare, RasterAssets, RasterLocDefinition, MAPSCENE_COUNT,
-    MAX_JAG_ARCHIVE_RETAINED_BYTES, MAX_JAG_BYTES, MAX_JAG_INDEX_TRACKED_BYTES,
-    MAX_JAG_MEMBER_PEAK_BYTES, MAX_JAG_UNPACKED_BYTES, MAX_MAP_INDEX_ROWS, TEXTURE_COUNT,
+    average_texture, depack_mapscene, depack_texture, load_config, read_jag, CacheReader,
+    CacheReaderCursor, Definitions, FloorDefinition, GroundCell, LandSquare, RasterAssets,
+    RasterLocDefinition, MAPSCENE_COUNT, MAX_JAG_ARCHIVE_RETAINED_BYTES, MAX_JAG_BYTES,
+    MAX_JAG_INDEX_TRACKED_BYTES, MAX_JAG_MEMBER_PEAK_BYTES, MAX_JAG_UNPACKED_BYTES,
+    MAX_MAP_INDEX_ROWS, TEXTURE_COUNT,
 };
 use super::formats::{
     ColorFormat, ImageManifest, PayloadReceipt, PlaneBounds, TileReceipt, MAX_IMAGE_BYTES,
@@ -635,7 +636,7 @@ impl RasterPlanCursor {
                     .config
                     .as_ref()
                     .ok_or(MapError::Invalid("missing location config JAG"))?;
-                self.definitions.locs = load_raster_locs(jag)?;
+                self.definitions.locs = load_raster_locs(self.input.revision(), jag)?;
                 self.config = None;
                 self.phase = RasterPlanPhase::OpenFloorConfig;
                 Ok(RasterPlanAction::Unit)
@@ -650,7 +651,7 @@ impl RasterPlanCursor {
                     .config
                     .as_ref()
                     .ok_or(MapError::Invalid("missing floor config JAG"))?;
-                self.definitions.floors = load_floor_definitions(jag)?;
+                self.definitions.floors = load_floor_definitions(self.input.revision(), jag)?;
                 self.config = None;
                 self.phase = RasterPlanPhase::OpenMapsceneArchive { id: 0 };
                 Ok(RasterPlanAction::Unit)

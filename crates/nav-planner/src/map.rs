@@ -5,6 +5,7 @@
 //! at disk boundaries. Image identity is independent of nav/service facts.
 
 pub mod cache;
+mod cache_revision;
 mod catalogue;
 mod client_cache;
 pub mod formats;
@@ -205,10 +206,7 @@ pub(crate) fn version(format: &'static str, actual: u16, expected: u16) -> Resul
 }
 
 pub(crate) fn revision(revision: u16) -> Result<(), MapError> {
-    if !matches!(revision, 274 | 289) {
-        return Err(MapError::Invalid("revision"));
-    }
-    Ok(())
+    cache_revision::validate(revision)
 }
 
 #[cfg(test)]
