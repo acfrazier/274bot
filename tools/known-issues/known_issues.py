@@ -91,12 +91,10 @@ def newer_than(names, later, earlier):
 def load_ledger(path, order):
     """Read and validate the ledger; return items in file order.
 
-    ``order`` is the CHANGELOG release order (oldest first, from
-    :func:`changelog_releases`). ``first`` and ``listed`` must name a known
-    release or the next patch release. ``fixed``, ``closed`` and
-    ``earlier.until`` may also name the next minor release. ``closed`` requires
-    a ``closed_reason`` from :data:`CLOSED_REASONS`. An item cannot have both
-    ``fixed`` and ``closed``. Unknown fields are rejected.
+    ``first``, ``listed``, ``fixed``, ``closed`` and ``earlier.until`` must name
+    a known release, the next patch, or the next minor release. ``closed``
+    requires a ``closed_reason`` from :data:`CLOSED_REASONS`. An item cannot
+    have both ``fixed`` and ``closed``. Unknown fields are rejected.
     """
     import tomllib
 
@@ -105,14 +103,7 @@ def load_ledger(path, order):
     raw = data.get("item", [])
     if not isinstance(raw, list):
         raise ValueError(f"{path}: expected a list of [[item]] tables")
-    names = list(order)
-    following = next_release(names) if names else None
-    if following is not None and following not in names:
-        names.append(following)
-    reference_names = list(names)
-    for release in next_releases(order):
-        if release not in reference_names:
-            reference_names.append(release)
+    names = accepted_release_names(order)
     items = []
     seen = set()
     required = ("id", "kind", "area", "text", "first", "target",
@@ -140,7 +131,8 @@ def load_ledger(path, order):
         if first not in names:
             raise ValueError(
                 f"{path}: item {entry['id']!r} names an unknown "
-                f"'first' release {first!r}")
+                f"'first' release {first!r}; it must be known, next patch, "
+                "or next minor")
         if entry["target"] != "none":
             version_key(entry["target"])
         fixed = None
@@ -150,12 +142,12 @@ def load_ledger(path, order):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} has an empty 'fixed' release")
             version_key(fixed)
-            if fixed not in reference_names:
+            if fixed not in names:
                 raise ValueError(
                     f"{path}: item {entry['id']!r} names an unknown "
                     f"'fixed' release {fixed!r}; it must be known, next "
                     "patch, or next minor")
-            if not newer_than(reference_names, fixed, first):
+            if not newer_than(names, fixed, first):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'fixed' release {fixed!r} "
                     f"is not later than 'first' {first!r}")
@@ -169,12 +161,13 @@ def load_ledger(path, order):
             if listed not in names:
                 raise ValueError(
                     f"{path}: item {entry['id']!r} names an unknown "
-                    f"'listed' release {listed!r}")
+                    f"'listed' release {listed!r}; it must be known, next "
+                    "patch, or next minor")
             if newer_than(names, first, listed):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'listed' release {listed!r} "
                     f"is earlier than 'first' {first!r}")
-            if fixed is not None and not newer_than(reference_names, fixed, listed):
+            if fixed is not None and not newer_than(names, fixed, listed):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'listed' release {listed!r} "
                     f"is not earlier than 'fixed' {fixed!r}")
@@ -192,16 +185,16 @@ def load_ledger(path, order):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} has an empty 'closed' release")
             version_key(closed)
-            if closed not in reference_names:
+            if closed not in names:
                 raise ValueError(
                     f"{path}: item {entry['id']!r} names an unknown "
                     f"'closed' release {closed!r}; it must be known, next "
                     "patch, or next minor")
-            if not newer_than(reference_names, closed, first):
+            if not newer_than(names, closed, first):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'closed' release {closed!r} "
                     f"is not later than 'first' {first!r}")
-            if not newer_than(reference_names, closed, listed):
+            if not newer_than(names, closed, listed):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'closed' release {closed!r} "
                     f"is not later than 'listed' {listed!r}")
@@ -222,16 +215,17 @@ def load_ledger(path, order):
                     f"without exactly 'until' and a non-empty 'text': {wording!r}")
             until = str(wording["until"]).strip()
             version_key(until)
-            if until not in reference_names:
+            if until not in names:
                 raise ValueError(
                     f"{path}: item {entry['id']!r} names an unknown "
-                    f"'earlier' until release {until!r}")
-            if not newer_than(reference_names, until, listed):
+                    f"'earlier' until release {until!r}; it must be known, "
+                    "next patch, or next minor")
+            if not newer_than(names, until, listed):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'earlier' until release "
                     f"{until!r} is not later than 'listed' {listed!r}")
             earlier.append((until, " ".join(str(wording["text"]).split())))
-        earlier.sort(key=lambda wording: reference_names.index(wording[0]))
+        earlier.sort(key=lambda wording: names.index(wording[0]))
         if len({until for until, _ in earlier}) != len(earlier):
             raise ValueError(
                 f"{path}: item {entry['id']!r} has two 'earlier' wordings "
@@ -305,31 +299,20 @@ def next_releases(order):
     return next_release(order), next_minor_release(order)
 
 
-def with_release(order, release):
-    """Order plus ``release``; a release newer than every heading goes last."""
+def accepted_release_names(order):
+    """Known releases plus the next patch and next minor candidates."""
     names = list(order)
-    if release not in names:
-        names.append(release)
+    for release in next_releases(order):
+        if release not in names:
+            names.append(release)
     return names
 
 
-def extended_order(order, release, items=()):
-    """Release order plus the next release (when needed) plus ``release``.
-
-    The next release sorts right after the newest heading and before any
-    unknown queried release, so a ``listed`` or ``fixed`` release (a known
-    release or the next one) always has a defined position next to the
-    queried release."""
-    names = list(order)
-    following = next_release(order) if order else None
-    if (following is not None and following not in names
-            and (release == following
-                 or any(following in (item.get("listed"), item.get("fixed"))
-                        for item in items))):
-        names.append(following)
-    for extra in [item.get("fixed") for item in items] + [release]:
-        if extra is not None and extra not in names:
-            names.append(extra)
+def extended_order(order, release):
+    """Release order plus both next-release candidates and a query release."""
+    names = accepted_release_names(order)
+    if release not in names:
+        names.append(release)
     return names
 
 
@@ -339,10 +322,10 @@ def applies(item, release, order):
     Open means `listed` (default `first`) is not newer than `release`, and
     neither `fixed` nor `closed` has reached `release`. Closed items stay in
     the ledger for historical checks; render and check skip them after closure."""
-    if item["first"] not in order and item["first"] != next_release(order):
+    if item["first"] not in accepted_release_names(order):
         raise ValueError(
             f"ledger item {item['id']!r} names an unknown release {item['first']!r}")
-    names = extended_order(order, release, (item,))
+    names = extended_order(order, release)
     if names.index(item["listed"]) > names.index(release):
         return False
     closed = item.get("closed")
@@ -355,7 +338,7 @@ def applies(item, release, order):
 def carried_releases(first, release, order):
     """Releases that carry the item into ``release``: ``first`` up to (not
     including) ``release``."""
-    names = extended_order(order, release, ({"listed": first},))
+    names = extended_order(order, release)
     if first not in names:
         raise ValueError(f"unknown release {first!r}")
     return names[names.index(first):names.index(release)]
@@ -368,7 +351,7 @@ def carried_sentence(first, release, order):
         return ""
     if len(carried) == 1:
         return f"{carried[0]} has the same problem."
-    names = with_release(order, release)
+    names = extended_order(order, release)
     positions = [names.index(name) for name in carried]
     if positions == list(range(positions[0], positions[0] + len(positions))):
         return f"{carried[0]} to {carried[-1]} have the same problem."
