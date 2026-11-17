@@ -77,6 +77,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Developer tools
 
+- Navigation staging preserves generated payloads when source and resource
+  directories resolve to the same location.
 - The seat model also checks who owns a random event, the host Guardian or the
   running script. Run `seat-model --ownership` for its profiles; the new
   `c6-ownership-fight` profile covers a saved Fight and its native child. The

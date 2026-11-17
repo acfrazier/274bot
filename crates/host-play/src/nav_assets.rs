@@ -31,6 +31,17 @@ pub fn local_asset_root(workspace_root: &Path) -> PathBuf {
     workspace_root.join("target/local-data")
 }
 
+/// Stage a payload without changing a source that is already at its destination.
+pub fn stage_payload(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let source_path = source.canonicalize()?;
+    match destination.canonicalize() {
+        Ok(destination_path) if destination_path == source_path => return Ok(()),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    std::fs::copy(source, destination).map(|_| ())
+}
+
 /// Resource root for staged navigation payloads: `BOT_NAV_RESOURCE_DIR` when
 /// set, otherwise the Cargo profile directory containing ordinary binaries.
 pub fn resource_root_for_build(
@@ -77,8 +88,77 @@ pub fn resource_root_for_build(
 
 #[cfg(test)]
 mod tests {
-    use super::{artifact_layout, local_asset_root, ArtifactLayout};
+    use super::{artifact_layout, local_asset_root, stage_payload, ArtifactLayout};
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    struct TempRoot(PathBuf);
+
+    impl TempRoot {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "274bot-nav-stage-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("temporary staging fixture root");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn staging_copies_new_and_existing_destinations() {
+        let root = TempRoot::new();
+        let source = root.0.join("source");
+        let destination = root.0.join("destination");
+        std::fs::write(&source, b"navigation payload").unwrap();
+        for _ in 0..2 {
+            stage_payload(&source, &destination).unwrap();
+            assert_eq!(std::fs::read(&source).unwrap(), b"navigation payload");
+            assert_eq!(std::fs::read(&destination).unwrap(), b"navigation payload");
+            std::fs::write(&destination, b"old").unwrap();
+        }
+    }
+
+    #[test]
+    fn staging_same_path_preserves_payload() {
+        let root = TempRoot::new();
+        let source = root.0.join("payload");
+        std::fs::write(&source, b"navigation payload").unwrap();
+        stage_payload(&source, &source).unwrap();
+        assert_eq!(std::fs::read(&source).unwrap(), b"navigation payload");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_aliased_roots_preserves_all_five_payloads() {
+        let root = TempRoot::new();
+        let source_root = root.0.join("source");
+        let resource_root = root.0.join("resources");
+        let payloads = root.0.join("payloads");
+        let relative = Path::new("nav/289");
+        std::fs::create_dir_all(&payloads).unwrap();
+        for staging_root in [&source_root, &resource_root] {
+            std::fs::create_dir_all(staging_root.join("nav")).unwrap();
+            std::os::unix::fs::symlink(&payloads, staging_root.join(relative)).unwrap();
+        }
+        for extension in ["navpack", "navflags", "navreach", "navcanlight", "navpois"] {
+            let name = format!("274bot.{extension}");
+            let source = source_root.join(relative).join(&name);
+            let destination = resource_root.join(relative).join(&name);
+            std::fs::write(&source, name.as_bytes()).unwrap();
+            stage_payload(&source, &destination).unwrap();
+            assert_eq!(std::fs::read(source).unwrap(), name.as_bytes());
+        }
+    }
 
     #[test]
     fn layout_and_local_source_root_are_revision_keyed() {
