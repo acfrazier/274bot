@@ -92,11 +92,11 @@ def load_ledger(path, order):
     """Read and validate the ledger; return items in file order.
 
     ``order`` is the CHANGELOG release order (oldest first, from
-    :func:`changelog_releases`). ``listed`` (default ``first``) and ``fixed``
-    releases must name a known release or the next release, except ``fixed``
-    may also match the item's target. ``closed`` can name any later release
-    and requires a ``closed_reason`` from :data:`CLOSED_REASONS`. An item
-    cannot be both fixed and closed. Unknown fields are rejected.
+    :func:`changelog_releases`). ``first`` and ``listed`` must name a known
+    release or the next patch release. ``fixed``, ``closed`` and
+    ``earlier.until`` may also name the next minor release. ``closed`` requires
+    a ``closed_reason`` from :data:`CLOSED_REASONS`. An item cannot have both
+    ``fixed`` and ``closed``. Unknown fields are rejected.
     """
     import tomllib
 
@@ -109,6 +109,10 @@ def load_ledger(path, order):
     following = next_release(names) if names else None
     if following is not None and following not in names:
         names.append(following)
+    reference_names = list(names)
+    for release in next_releases(order):
+        if release not in reference_names:
+            reference_names.append(release)
     items = []
     seen = set()
     required = ("id", "kind", "area", "text", "first", "target",
@@ -146,12 +150,12 @@ def load_ledger(path, order):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} has an empty 'fixed' release")
             version_key(fixed)
-            if fixed not in names and fixed != str(entry["target"]):
+            if fixed not in reference_names:
                 raise ValueError(
                     f"{path}: item {entry['id']!r} names an unknown "
-                    f"'fixed' release {fixed!r}; it must be known, next, or "
-                    "the item's target")
-            if not newer_than(names, fixed, first):
+                    f"'fixed' release {fixed!r}; it must be known, next "
+                    "patch, or next minor")
+            if not newer_than(reference_names, fixed, first):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'fixed' release {fixed!r} "
                     f"is not later than 'first' {first!r}")
@@ -170,7 +174,7 @@ def load_ledger(path, order):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'listed' release {listed!r} "
                     f"is earlier than 'first' {first!r}")
-            if fixed is not None and not newer_than(names, fixed, listed):
+            if fixed is not None and not newer_than(reference_names, fixed, listed):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'listed' release {listed!r} "
                     f"is not earlier than 'fixed' {fixed!r}")
@@ -188,11 +192,16 @@ def load_ledger(path, order):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} has an empty 'closed' release")
             version_key(closed)
-            if not newer_than(names, closed, first):
+            if closed not in reference_names:
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} names an unknown "
+                    f"'closed' release {closed!r}; it must be known, next "
+                    "patch, or next minor")
+            if not newer_than(reference_names, closed, first):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'closed' release {closed!r} "
                     f"is not later than 'first' {first!r}")
-            if not newer_than(names, closed, listed):
+            if not newer_than(reference_names, closed, listed):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'closed' release {closed!r} "
                     f"is not later than 'listed' {listed!r}")
@@ -213,16 +222,16 @@ def load_ledger(path, order):
                     f"without exactly 'until' and a non-empty 'text': {wording!r}")
             until = str(wording["until"]).strip()
             version_key(until)
-            if until not in names:
+            if until not in reference_names:
                 raise ValueError(
                     f"{path}: item {entry['id']!r} names an unknown "
                     f"'earlier' until release {until!r}")
-            if not newer_than(names, until, listed):
+            if not newer_than(reference_names, until, listed):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'earlier' until release "
                     f"{until!r} is not later than 'listed' {listed!r}")
             earlier.append((until, " ".join(str(wording["text"]).split())))
-        earlier.sort(key=lambda wording: names.index(wording[0]))
+        earlier.sort(key=lambda wording: reference_names.index(wording[0]))
         if len({until for until, _ in earlier}) != len(earlier):
             raise ValueError(
                 f"{path}: item {entry['id']!r} has two 'earlier' wordings "
@@ -271,6 +280,29 @@ def next_release(order):
         raise ValueError(f"cannot name the release after {newest!r}")
     chunks[-1] = f"{int(match.group(1)) + 1}{match.group(2)}"
     return ".".join(chunks)
+
+
+def next_minor_release(order):
+    """Name the next minor release after the newest CHANGELOG heading."""
+    if not order:
+        raise ValueError("CHANGELOG has no release headings")
+    newest = str(order[-1])
+    chunks = newest.split(".")
+    if len(chunks) < 2:
+        raise ValueError(f"cannot name the next minor after {newest!r}")
+    major = re.fullmatch(r"(\d+)(.*)", chunks[0])
+    minor = re.fullmatch(r"(\d+)(.*)", chunks[1])
+    if major is None or minor is None:
+        raise ValueError(f"cannot name the next minor after {newest!r}")
+    return (f"{major.group(1)}{major.group(2)}."
+            f"{int(minor.group(1)) + 1}{minor.group(2)}.0")
+
+
+def next_releases(order):
+    """The next patch and next minor releases after the newest heading."""
+    if not order:
+        return ()
+    return next_release(order), next_minor_release(order)
 
 
 def with_release(order, release):

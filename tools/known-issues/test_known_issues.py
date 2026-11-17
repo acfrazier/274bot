@@ -306,7 +306,15 @@ class FixedTest(Fixture):
         self.assertFalse(
             known_issues.applies(by_id["beta-crash"], "1.1.1", self.order))
 
-    def test_fixed_release_can_match_the_item_target(self):
+    def test_next_minor_release_fixed_loads(self):
+        text = FIXED_LEDGER.replace('fixed = "1.1.0"', 'fixed = "1.2.0"')
+        self.ledger.write_text(text, encoding="utf-8")
+        items = known_issues.load_ledger(self.ledger, self.order)
+        item = next(item for item in items if item["id"] == "beta-crash")
+        self.assertTrue(known_issues.applies(item, "1.1.0", self.order))
+        self.assertFalse(known_issues.applies(item, "1.2.0", self.order))
+
+    def test_fixed_release_can_match_the_next_minor_target(self):
         text = FIXED_LEDGER.replace(
             'target = "1.1.0"', 'target = "1.2.0"').replace(
                 'fixed = "1.1.0"', 'fixed = "1.2.0"')
@@ -372,6 +380,15 @@ class ClosedTest(Fixture):
         self.assertIn("documented behavior", before)
         self.assertEqual(after, "")
 
+    def test_closed_accepts_next_patch_and_minor(self):
+        for release in ("1.1.1", "1.2.0"):
+            with self.subTest(release=release):
+                text = CLOSED_LEDGER.replace(
+                    'closed = "1.2.0"', f'closed = "{release}"')
+                self.ledger.write_text(text, encoding="utf-8")
+                items = known_issues.load_ledger(self.ledger, self.order)
+                self.assertEqual(items[0]["closed"], release)
+
     def test_closed_item_keeps_published_check(self):
         self.write_section("1.1.0", self.render("1.1.0"))
         self.assertEqual(self.check("1.1.0"), [])
@@ -390,6 +407,31 @@ class ClosedTest(Fixture):
         )
         for text in invalid_ledgers:
             with self.subTest(text=text):
+                self.ledger.write_text(text, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    known_issues.load_ledger(self.ledger, self.order)
+
+
+class SkippedReleaseTest(Fixture):
+    def test_skip_is_rejected_for_fixed_closed_and_earlier_until(self):
+        self.order = ["0.2.6", "0.2.7", "0.2.8", "0.2.9", "0.2.9.1"]
+        earlier_base = CLOSED_LEDGER.replace(
+            'first = "1.0.0"', 'first = "0.2.6"')
+        skipped_earlier = (
+            earlier_base.replace('closed = "1.2.0"', 'closed = "0.3.0"')
+            + '\n[[item.earlier]]\nuntil = "0.4.0"\ntext = "Old wording."\n')
+        cases = {
+            "fixed": FIXED_LEDGER.replace(
+                'first = "1.0.0"', 'first = "0.2.6"').replace(
+                    'first = "1.0.1"', 'first = "0.2.6"').replace(
+                        'target = "1.1.0"', 'target = "0.4.0"').replace(
+                            'fixed = "1.1.0"', 'fixed = "0.4.0"'),
+            "closed": earlier_base.replace(
+                'closed = "1.2.0"', 'closed = "0.4.0"'),
+            "earlier.until": skipped_earlier,
+        }
+        for field, text in cases.items():
+            with self.subTest(field=field):
                 self.ledger.write_text(text, encoding="utf-8")
                 with self.assertRaises(ValueError):
                     known_issues.load_ledger(self.ledger, self.order)
@@ -591,6 +633,13 @@ class ListedTest(unittest.TestCase):
         proc = self.cli("check", "--release", "0.2.4")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
+    def test_earlier_wording_until_accepts_next_minor(self):
+        text = (
+            LAMP_ITEM
+            + '\n[[item.earlier]]\nuntil = "0.3.0"\ntext = "Old wording."\n')
+        item = self.load_text(text)[0]
+        self.assertEqual(item["earlier"], [("0.3.0", "Old wording.")])
+
     def test_earlier_wording_until_not_after_listed_rejected(self):
         with self.assertRaisesRegex(ValueError, "until release '0.2.0' is not later"):
             self.load_text(LAMP_ITEM + '\n[[item.earlier]]\nuntil = "0.2.0"\ntext = "Old."\n')
@@ -692,6 +741,11 @@ class NextReleaseTest(unittest.TestCase):
     def test_longer_chain(self):
         self.assertEqual(
             known_issues.next_release(["1.0.0", "1.0.1", "1.1.0"]), "1.1.1")
+
+    def test_next_releases_after_0_2_9_1(self):
+        self.assertEqual(
+            known_issues.next_releases(["0.2.9.1"]),
+            ("0.2.9.2", "0.3.0"))
 
     def test_changelog_releases_skips_bracketed_unreleased(self):
         with tempfile.TemporaryDirectory() as directory:
