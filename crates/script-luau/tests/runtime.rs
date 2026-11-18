@@ -807,3 +807,130 @@ fn real_slot_progress_family_completion_survives_page_clear_before_resume() {
         "the typed family page, not the bare seat end, must be copied before its source clears"
     );
 }
+
+// Ignored lab cell: these calls run through the production Luau factory,
+// installed prelude, single-step hook, allocator limit and tick dispatch.
+// Preparing inputs on the first tick keeps input construction out of the
+// measured tick without charging the 50 ms load budget for the fixture.
+#[cfg(target_os = "linux")]
+const C8_REF_HEAD: &str = r#"
+local function get(t, k) return t[k] end
+local rep, find, match, gsub = get(string, "rep"), get(string, "find"), get(string, "match"), get(string, "gsub")
+local split, lower, format, char = get(string, "split"), get(string, "lower"), get(string, "format"), get(string, "char")
+local concat, sort, unpack, create = get(table, "concat"), get(table, "sort"), get(table, "unpack"), get(table, "create")
+local move, tfind = get(table, "move"), get(table, "find")
+local ulen, uchar = get(utf8, "len"), get(utf8, "char")
+local tonum = get(_G, "tonumber")
+"#;
+
+#[cfg(target_os = "linux")]
+fn c8_ref_source(body: &str) -> String {
+    format!(
+        "{C8_REF_HEAD}\nlocal fn\nreturn {{ tick = function(api)\n\
+         if fn == nil then\nfn = (function()\n{body}\nend)()\napi.log('ready')\n\
+         else\nlocal ok, value = pcall(fn)\n\
+         api.log(ok and 'ok' or 'error:' .. tostring(value))\nend\nend }}"
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn c8_ref_start(body: &str) -> Box<dyn SurfaceRun> {
+    let mut run = spawn(&c8_ref_source(body)).expect("C8 product run starts");
+    assert_eq!(
+        dispatch(&mut *run, SurfaceWake::Tick { held: false }, 1),
+        LentOutcome::Accepted
+    );
+    assert_eq!(
+        run.drain_logs(),
+        ["ready"],
+        "fixture prepared on first tick"
+    );
+    run
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[rustfmt::skip]
+#[ignore = "REF-only measured product-path cap cell; prints per-row timing, not a CI timing gate"]
+fn c8_product_cap_timing_on_reference_guest() {
+    // The worst-content native fixtures from LD1 r7, at the product guard's
+    // accepted boundary. The allocator-limited 8 MiB concat result is omitted:
+    // it can fail for heap size although its N_c guard admits the input.
+    let caps = [
+        ("find-plain-256K-1024", r#"local s = rep("a", 262144) local p = rep("a", 1023) .. "b" return function() return find(s, p, 1, true) end"#),
+        ("find-plain-32K-8K", r#"local s = rep("a", 32768) local p = rep("a", 8191) .. "b" return function() return find(s, p, 1, true) end"#),
+        ("find-implicit-256K-16", r#"local s = rep("a", 262144) local p = rep("a", 15) .. "b" return function() return find(s, p) end"#),
+        ("split-256K-1024", r#"local s = rep("a", 262144) local p = rep("a", 1023) .. "b" return function() return #split(s, p) end"#),
+        ("split-allsep-256K", r#"local s = rep(",", 262144) return function() return #split(s, ",") end"#),
+        ("split-emptysep-256K", r#"local s = rep("a", 262144) return function() return #split(s, "") end"#),
+        ("pat-bracket-262144-16", r#"local s = rep("z", 262144) local p = "^[" .. rep("a", 10) .. "z]*X" assert(#p == 16) return function() return find(s, p) end"#),
+        ("pat-bracket-65536-64", r#"local s = rep("z", 65536) local p = "^[" .. rep("a", 58) .. "z]*X" assert(#p == 64) return function() return find(s, p) end"#),
+        ("pat-bracket-16384-256", r#"local s = rep("z", 16384) local p = "^[" .. rep("a", 250) .. "z]*X" assert(#p == 256) return function() return find(s, p) end"#),
+        ("pat-dot-256K", r#"local s = rep("z", 262144) local p = "^.*X" return function() return find(s, p) end"#),
+        ("pat-class-256K", r#"local s = rep("z", 262144) local p = "^%a*X" return function() return find(s, p) end"#),
+        ("pat-balance-256K", r#"local s = rep("(", 262144) local p = "^%b()" return function() return find(s, p) end"#),
+        ("pat-items-256", r#"local s = rep("a", 262144) local p = "^" .. rep("a", 254) .. "b" return function() return match(s, p) end"#),
+        ("gsub-repl-4096", r#"local s = rep("x", 64) local r = rep("%1", 2048) return function() local _, n = gsub(s, "(y*)", r) return n end"#),
+        ("format-d-1024", r#"local fmt = rep("%d", 512) local t = create(512, 9007199254740992) return function() return #format(fmt, unpack(t)) end"#),
+        ("format-f99-1020", r#"local fmt = rep("%.99f", 204) local t = create(204, -1e308) return function() return #format(fmt, unpack(t)) end"#),
+        ("format-q-256K-quote", r#"local s = rep("\"", 262144) return function() return #format("%q", s) end"#),
+        ("format-q-256K-nul", r#"local s = rep("\0", 262144) return function() return #format("%q", s) end"#),
+        ("char-7999", r#"local t = create(7999, 65) return function() return #char(unpack(t)) end"#),
+        ("utf8char-7999", r#"local t = create(7999, 1114111) return function() return #uchar(unpack(t)) end"#),
+        ("concat-16384-floats", r#"local t = create(16384, 0) for i = 1, 16384 do t[i] = i + 0.1 end return function() return #concat(t) end"#),
+        ("concat-16384-ints", r#"local t = create(16384, 0) for i = 1, 16384 do t[i] = i end return function() return #concat(t) end"#),
+        ("concat-16384-str-sep", r#"local t = create(16384, "xxxxxxxxxxxxxx") return function() return #concat(t, ",") end"#),
+        ("move-empty-range-65536", r#"local a, b = {}, {} return function() move(a, 1, 65536, 2, b) end"#),
+        ("move-hash-65536", r#"local a = {} for i = 1, 65536 do a[i + 1048576] = i end return function() local b = {} move(a, 1048577, 1048576 + 65536, 2, b) end"#),
+        ("move-dense-65536", r#"local a, b = create(65536, 1), create(65536, 0) return function() move(a, 1, 65536, 1, b) end"#),
+        ("sort-wrapped-comparator", r#"local t = create(256, 1) return function() sort(t, function(a, b) return a < b end) end"#),
+        ("find-luau-loop-table", r#"local e, v = {}, {} local mt = { __eq = function() return false end } setmetatable(e, mt) setmetatable(v, mt) local t = create(4096, e) return function() return tfind(t, v) end"#),
+        ("tonumber-decimal-12M", r#"local s = rep("0", 12582912) return function() return tonum(s) end"#),
+        ("tonumber-hex-12M", r#"local s = rep("f", 12582912) return function() return tonum(s, 16) end"#),
+        ("utf8len-12M", r#"local s = rep("\244\143\191\191", 3145728) return function() return ulen(s) end"#),
+        ("lower-6M", r#"local s = rep("A", 6291456) return function() return #lower(s) end"#),
+        ("rep-12M", r#"local s = rep("a", 1048576) return function() return #rep(s, 12) end"#),
+    ];
+    for (name, body) in caps {
+        let mut run = c8_ref_start(body);
+        let mut timings = [0.0; 7];
+        for (sample, ms) in timings.iter_mut().enumerate() {
+            let tick = sample as u64 + 2;
+            let start = std::time::Instant::now();
+            let outcome = dispatch(&mut *run, SurfaceWake::Tick { held: false }, tick);
+            *ms = start.elapsed().as_secs_f64() * 1_000.0;
+            assert_eq!(outcome, LentOutcome::Accepted, "{name}: dispatch {tick}");
+            assert_eq!(run.drain_logs(), ["ok"], "{name}: at cap {tick}");
+        }
+        timings.sort_by(f64::total_cmp);
+        println!("C8_REF_CAP {name} min_ms={:.4} median_ms={:.4} max_ms={:.4} target_ms=10", timings[0], timings[3], timings[6]);
+    }
+
+    // Every numeric C8 control has a refusal beyond its boundary. N_v is
+    // different: Luau's 7,999-argument VM limit rejects before that guard.
+    let over = [
+        ("find-subject-N_s-plus-1", r#"local s = rep("a", 262145) return function() return find(s, "a", 1, true) end"#, "N_s"),
+        ("find-pattern-N_p-plus-1", r#"local p = rep("a", 257) return function() return find("a", p) end"#, "N_p"),
+        ("find-work-W_p-plus-1", r#"local s = rep("a", 262144) local p = rep("a", 17) return function() return find(s, p) end"#, "W_p"),
+        ("find-work-W_n-plus-1", r#"local s = rep("a", 262144) local p = rep("a", 1025) return function() return find(s, p, 1, true) end"#, "W_n"),
+        ("split-work-W_n-plus-1", r#"local s = rep("a", 262144) local p = rep("a", 1025) return function() return split(s, p) end"#, "W_n"),
+        ("gsub-replacement-N_r-plus-1", r#"local r = rep("x", 4097) return function() return gsub("x", "x", r) end"#, "N_r"),
+        ("format-N_f-plus-1", r#"local fmt = rep("x", 1025) return function() return format(fmt) end"#, "N_f"),
+        ("format-N_a-plus-1", r#"local s = rep("a", 262145) return function() return format("%s", s) end"#, "N_a"),
+        ("concat-N_c-plus-1", r#"local t = create(16385, "x") return function() return concat(t) end"#, "N_c"),
+        ("move-N_m-plus-1", r#"local a, b = {}, {} return function() return move(a, 1, 65537, 2, b) end"#, "N_m"),
+    ];
+    for (name, body, cap) in over {
+        let mut run = c8_ref_start(body);
+        assert_eq!(
+            dispatch(&mut *run, SurfaceWake::Tick { held: false }, 2),
+            LentOutcome::Accepted,
+            "{name}: refused dispatch"
+        );
+        let logs = run.drain_logs();
+        assert_eq!(logs.len(), 1, "{name}: one refusal");
+        assert!(logs[0].starts_with("error:"), "{name}: {logs:?}");
+        assert!(logs[0].contains(cap), "{name}: {logs:?}");
+        println!("C8_REF_OVER {name} refused={cap}");
+    }
+}
