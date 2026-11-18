@@ -1488,6 +1488,20 @@ impl Play {
             .unwrap_or(0)
     }
 
+    /// Observe wait lifecycle rows that the real slot drained from its
+    /// surface client in an ignored live cell.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn script_surface_wait_drained_for_test(&self, name: &str) -> (usize, usize) {
+        script_slot(&self.scripts, name)
+            .and_then(|slot| {
+                slot.lock()
+                    .ok()
+                    .map(|slot| slot.surface_wait_drained_for_test())
+            })
+            .unwrap_or((0, 0))
+    }
+
     /// Resolve `name`'s non-blocking isolate Start/Stop. The slot thread
     /// does this every observe; a slot that is offline or queued for login
     /// has no observe, so the UI pumps it (see [`Self::pump_script_lifecycles`]).

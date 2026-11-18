@@ -501,6 +501,10 @@ pub struct SlotScript {
     /// Watchdog facts already filtered and dispatched by the owner seat,
     /// consumed by the host's lifecycle drain rather than the game driver.
     seat_lifecycle: Vec<crate::interact::InteractReq>,
+    /// Test-only evidence that the host actually drained the surface client's
+    /// wait lifecycle rows, not merely observed a final watchdog state.
+    #[cfg(feature = "test-hooks")]
+    surface_wait_drained_for_test: (usize, usize),
     /// Channels that already received the held-post refusal status in the
     /// current hold. Cleared when the folded batch is consumed after resume.
     held_channel_refusals: Vec<u64>,
@@ -651,6 +655,8 @@ impl SlotScript {
             held_walk_terminals: Vec::new(),
 
             seat_lifecycle: Vec::new(),
+            #[cfg(feature = "test-hooks")]
+            surface_wait_drained_for_test: (0, 0),
 
             held_channel_refusals: Vec::new(),
             api: None,
@@ -1171,6 +1177,14 @@ impl SlotScript {
     #[doc(hidden)]
     pub fn watchdog_wait_inflight_for_test(&self) -> u32 {
         self.watchdog.wait_inflight()
+    }
+
+    /// WaitEnqueued and WaitSettled rows drained from the active surface since
+    /// slot creation. These are not gameplay requests or packet ticks.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn surface_wait_drained_for_test(&self) -> (usize, usize) {
+        self.surface_wait_drained_for_test
     }
 
     /// Install a slot-owned typed progress page for cross-crate borrowed
@@ -3974,6 +3988,18 @@ impl SlotScript {
             .surface
             .as_ref()
             .map_or_else(Vec::new, |surface| surface.drain_lifecycle());
+        #[cfg(feature = "test-hooks")]
+        for fact in &facts {
+            match fact {
+                crate::interact::InteractReq::WaitEnqueued => {
+                    self.surface_wait_drained_for_test.0 += 1;
+                }
+                crate::interact::InteractReq::WaitSettled => {
+                    self.surface_wait_drained_for_test.1 += 1;
+                }
+                _ => {}
+            }
+        }
         facts.append(&mut self.seat_lifecycle);
         facts
     }

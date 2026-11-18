@@ -1178,6 +1178,12 @@ fn luau_lifecycle_cell() {
             && logs.iter().any(|line| line.contains("luau-next-tick"))
             && play.script_wait_inflight_for_test(&account) == 0
     });
+    let (wait_enqueued_drained, wait_settled_drained) =
+        play.script_surface_wait_drained_for_test(&account);
+    assert!(
+        wait_enqueued_drained > 0 && wait_settled_drained > 0,
+        "surface/client.rs wait lifecycle did not drain through the slot: enqueued={wait_enqueued_drained}, settled={wait_settled_drained}"
+    );
     play.script_stop(&account);
     wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
         take_logs(play, &account, &mut logs);
@@ -1218,7 +1224,9 @@ fn luau_lifecycle_cell() {
     save(
         "luau-lifecycle-receipt.json",
         &json!({"cell":"luau_lifecycle","account":account,"logs":logs,"self_logs":self_logs,
-                "paused_game_ticks":3,"wait_inflight_observed":wait_inflight_observed,"receipt":receipt}),
+                "paused_game_ticks":3,"wait_inflight_observed":wait_inflight_observed,
+                "wait_enqueued_drained":wait_enqueued_drained,
+                "wait_settled_drained":wait_settled_drained,"receipt":receipt}),
     );
 }
 
