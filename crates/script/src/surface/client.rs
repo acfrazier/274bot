@@ -11,10 +11,15 @@ use crate::interact::InteractReq;
 use crate::native::request::NativeKind;
 use crate::native::seat::{SeatResult, SeatTerminal};
 use crate::native::seat_rows::{
-    DecodedSeatBatch, HeldWaitFacts, QueuedSeatBatch, SeatCancelDecoded, SeatStartArgs,
-    SeatStartInput, MAX_SEAT_CANCELS, MAX_SEAT_GAMEPLAY_ROWS, MAX_SEAT_STARTS,
+    DecodedSeatBatch, HeldWaitFacts, QueuedSeatBatch, SeatCancelDecoded, SeatInteractDecoded,
+    SeatStartArgs, SeatStartInput, MAX_SEAT_CANCELS, MAX_SEAT_GAMEPLAY_ROWS, MAX_SEAT_STARTS,
 };
-use crate::native::snapshot_source::NativeFactsInput;
+use crate::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput};
+use crate::native::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
+use crate::native::WalkCancelReason;
+use api::query::{ArrivalProbe, SceneReachOptions};
+use api::snapshot::WorldTile;
+use std::num::NonZeroU64;
 use api::identity::{ExecutionId, RequestId};
 use api::script_contract::{AbortReason, CallbackCancelReason};
 use std::collections::VecDeque;
@@ -32,13 +37,15 @@ pub enum ClientError {
     RowsFull,
     #[error("the isolate request namespace is exhausted")]
     IdExhausted,
+    #[error("only walk and walk-near requests can start a walk wait")]
+    NotWalk,
 }
 
 /// One awaited operation; only one tick coroutine exists in a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Awaited {
     Seat { id: RequestId, kind: NativeKind },
-    Walk { id: RequestId, after_seq: u64 },
+    Walk { id: RequestId },
     NextTick,
 }
 
@@ -56,6 +63,8 @@ pub struct WalkCompletion {
     pub radius: i32,
     pub blocked: bool,
     pub no_path: bool,
+    pub allow_teleports: bool,
+    pub cancel_reason: WalkCancelReason,
 }
 
 /// A completion copied while its borrowed snapshot page is still alive.
@@ -77,17 +86,25 @@ struct StoredCompletion {
 }
 
 /// Bounded adapter state for one running non-JS surface.
-#[derive(Debug)]
 pub struct SeatClient {
     execution: ExecutionId,
-    published_terminal_seq: u64,
-    next_id: u64,
     consumed_terminal_seq: u64,
-    observed_walk_outcome_seq: u64,
+    /// The slot fences drained batches with this work epoch, not the seat run key.
+    work_generation: u64,
+    acknowledged_terminal_seq: u64,
+    sent_terminal_seq: u64,
+    next_id: u64,
     awaiting: Option<Awaited>,
     stored: Option<StoredCompletion>,
+    reconnect_held: bool,
+    walk: WalkSlot,
+    walk_generation: u64,
+    walk_intent_baseline: u64,
+    manual_takeover_seq: u64,
+    walk_request: Option<InteractReq>,
     starts: Vec<SeatStartInput>,
     cancels: Vec<SeatCancelDecoded>,
+    reqs: Vec<SeatInteractDecoded>,
     lifecycle: Vec<InteractReq>,
     restored: VecDeque<QueuedSeatBatch>,
 }
@@ -95,15 +112,24 @@ pub struct SeatClient {
 impl SeatClient {
     pub fn new(execution: ExecutionId) -> Self {
         Self {
+            work_generation: execution.generation().get(),
             execution,
             next_id: RequestId::ISOLATE_FIRST,
             consumed_terminal_seq: 0,
+            acknowledged_terminal_seq: 0,
+            sent_terminal_seq: 0,
             observed_walk_outcome_seq: 0,
             awaiting: None,
             stored: None,
-            published_terminal_seq: 0,
+            reconnect_held: false,
+            walk: WalkSlot::new(),
+            walk_generation: 0,
+            walk_intent_baseline: 0,
+            manual_takeover_seq: 0,
+            walk_request: None,
             starts: Vec::new(),
             cancels: Vec::new(),
+            reqs: Vec::new(),
             lifecycle: Vec::new(),
             restored: VecDeque::new(),
         }
@@ -114,32 +140,66 @@ impl SeatClient {
     }
 
     pub fn align_execution(&mut self, execution: ExecutionId) {
-        if self.execution != execution {
-            self.reset(Some(execution));
+        if self.execution == execution {
+            return;
+        }
+        self.execution = execution;
+        for start in &mut self.starts {
+            start.run = execution.run().run;
+            start.session = execution.run().session;
+        }
+        for batch in &mut self.restored {
+            batch.generation = self.work_generation;
+            for start in &mut batch.batch.starts {
+                start.run = execution.run().run;
+                start.session = execution.run().session;
+            }
         }
     }
 
-    /// A session boundary terminates the old wait locally, without publishing
-    /// a Reset terminal on the seat wire. The returned generation is the one
-    /// the slot uses to fence any batches already drained.
+    /// A session reset discards unacknowledged gameplay rows and aborts only
+    /// an unresolved wait. An already-copied completion belongs to the script,
+    /// even while Pause or a host hold delays its coroutine.
     pub fn reset(&mut self, execution: Option<ExecutionId>) -> u64 {
-        if self.awaiting.is_some() {
+        self.clear_session_work(execution);
+        if self.awaiting.is_some() && self.stored.is_none() {
             self.stored = Some(StoredCompletion {
                 value: SeatCompletion::Aborted(AbortReason::Reset),
                 terminal_seq: 0,
             });
         }
-        self.published_terminal_seq = 0;
+        self.work_generation
+    }
+
+    /// Reconnect parks the script's wait until the next full game tick,
+    /// rather than settling it during the disconnected interval.
+    pub fn reconnect(&mut self, execution: Option<ExecutionId>) -> u64 {
+        self.clear_session_work(execution);
+        self.reconnect_held = true;
+        self.work_generation
+    }
+
+    fn clear_session_work(&mut self, execution: Option<ExecutionId>) {
+        // Design 4.4 item 1: a reset mints a fresh work generation as JS
+        // does, independent of the ExecutionId's stable initial generation.
+        // The slot uses this value to refuse drained batches from the old work.
+        self.work_generation = self.work_generation.wrapping_add(1).max(1);
         self.starts.clear();
         self.cancels.clear();
+        self.reqs.clear();
         self.lifecycle.clear();
         self.restored.clear();
         self.consumed_terminal_seq = 0;
+        self.acknowledged_terminal_seq = 0;
+        self.sent_terminal_seq = 0;
         self.observed_walk_outcome_seq = 0;
+        self.walk.reset();
+        self.walk_generation = 0;
+        self.walk_request = None;
+        self.reconnect_held = false;
         if let Some(execution) = execution {
             self.execution = execution;
         }
-        self.execution.generation().get()
     }
 
     pub fn awaiting(&self) -> Option<Awaited> {
@@ -166,7 +226,7 @@ impl SeatClient {
         if self.pending_starts() >= MAX_SEAT_STARTS {
             return Err(ClientError::StartsFull);
         }
-        if self.lifecycle.len() >= MAX_SEAT_GAMEPLAY_ROWS {
+        if self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS {
             return Err(ClientError::RowsFull);
         }
         let id = self.mint()?;
@@ -184,28 +244,110 @@ impl SeatClient {
         Ok(id)
     }
 
-    /// A walk is an already-typed interaction queued by a binding. Remember
-    /// only its identity and the sequence preceding its dispatch.
-    pub fn await_walk(&mut self, id: RequestId) -> Result<(), ClientError> {
+    /// Queue a walk with its current session's route generation and the
+    /// game input at the request's start. The request and its wait share one
+    /// minted token; the slot remains the only authority that admits it.
+    pub fn queue_walk(
+        &mut self,
+        mut request: InteractReq,
+        expected_generation: u64,
+        input: &SnapshotInput<'_>,
+    ) -> Result<RequestId, ClientError> {
         if self.awaiting.is_some() {
             return Err(ClientError::AlreadyWaiting);
         }
-        if self.lifecycle.len() >= MAX_SEAT_GAMEPLAY_ROWS {
+        if self.pending_rows() + 2 > MAX_SEAT_GAMEPLAY_ROWS {
             return Err(ClientError::RowsFull);
         }
-        self.awaiting = Some(Awaited::Walk {
-            id,
-            after_seq: self.observed_walk_outcome_seq,
+        let key = match &request {
+            InteractReq::Walk {
+                x, z, level, allow_teleports, ..
+            } => WalkKey {
+                tile: WorldTile { x: *x, z: *z, level: *level },
+                radius: 0,
+                allow_teleports: Some(*allow_teleports),
+            },
+            InteractReq::WalkNear {
+                x, z, level, radius, allow_teleports, ..
+            } => WalkKey {
+                tile: WorldTile { x: *x, z: *z, level: *level },
+                radius: *radius,
+                allow_teleports: Some(*allow_teleports),
+            },
+            _ => return Err(ClientError::NotWalk),
+        };
+        let id = self.mint()?;
+        match &mut request {
+            InteractReq::Walk { request_id, .. }
+            | InteractReq::WalkNear { request_id, .. } => *request_id = id.get(),
+            _ => unreachable!("request was checked as Walk or WalkNear"),
+        }
+        self.walk.begin(
+            NonZeroU64::new(id.get()).expect("RequestId is nonzero"),
+            key,
+            HostOutcome { seq: self.observed_walk_outcome_seq, ..HostOutcome::empty() },
+        );
+        self.walk_generation = expected_generation;
+        self.walk_intent_baseline = input.user_move_intent_seq;
+        self.walk_request = Some(request.clone());
+        self.awaiting = Some(Awaited::Walk { id });
+        self.reqs.push(SeatInteractDecoded {
+            lineage: None,
+            mirror_owner: None,
+            request,
         });
         self.lifecycle.push(InteractReq::WaitEnqueued);
+        Ok(id)
+    }
+
+    /// Abort only the walk whose token this client owns. A later walk cannot
+    /// be cut by a stale cancellation.
+    pub fn abort_walk(&mut self, id: RequestId) -> Result<(), ClientError> {
+        if !self.walk.owns(id.get()) {
+            return Err(ClientError::NotWalk);
+        }
+        if self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS {
+            return Err(ClientError::RowsFull);
+        }
+        self.reqs.push(SeatInteractDecoded {
+            lineage: None,
+            mirror_owner: None,
+            request: InteractReq::AbortWalk { request_id: id.get() },
+        });
         Ok(())
+    }
+
+    pub fn rearm_host_discarded_walk(&mut self, token: u64) -> bool {
+        if !self.walk.owns(token)
+            || self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS
+        {
+            return false;
+        }
+        let Some(request) = self.walk_request.clone() else {
+            return false;
+        };
+        self.reqs.push(SeatInteractDecoded {
+            lineage: None,
+            mirror_owner: None,
+            request,
+        });
+        true
+    }
+
+    pub fn live_walking_operation(&self) -> bool {
+        self.awaiting
+            .is_some_and(|wait| matches!(wait, Awaited::Walk { id } if self.walk.pending(id.get())))
+    }
+
+    pub fn note_manual_walk_takeover(&mut self, sequence: u64) {
+        self.manual_takeover_seq = self.manual_takeover_seq.max(sequence);
     }
 
     pub fn await_next_tick(&mut self) -> Result<(), ClientError> {
         if self.awaiting.is_some() {
             return Err(ClientError::AlreadyWaiting);
         }
-        if self.lifecycle.len() >= MAX_SEAT_GAMEPLAY_ROWS {
+        if self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS {
             return Err(ClientError::RowsFull);
         }
         self.awaiting = Some(Awaited::NextTick);
@@ -220,14 +362,13 @@ impl SeatClient {
         of: RequestId,
         reason: CallbackCancelReason,
     ) -> Result<(), ClientError> {
-        if self.cancels.len()
-            + self
-                .restored
-                .iter()
-                .map(|batch| batch.batch.cancels.len())
-                .sum::<usize>()
-            >= MAX_SEAT_CANCELS
-        {
+        if let Some(existing) = self.cancels.iter_mut().find(|cancel| cancel.of == of) {
+            if reason == CallbackCancelReason::ParentAborted {
+                existing.reason = reason;
+            }
+            return Ok(());
+        }
+        if self.cancels.len() >= MAX_SEAT_CANCELS {
             return Err(ClientError::CancelsFull);
         }
         self.cancels.push(SeatCancelDecoded { of, reason });
@@ -240,15 +381,48 @@ impl SeatClient {
     /// `release_floor` excludes results already seen before this SeatPage.
     pub fn accept_delivery(
         &mut self,
+        input: &SnapshotInput<'_>,
         native: NativeFactsInput<'_>,
         release_floor: u64,
         tick: bool,
     ) {
-        if self.stored.is_some() {
-            return;
+        if let Some(page) = native.seat_page {
+            let live = page.live();
+            let results = page.results();
+            self.starts.retain(|start| {
+                !live.iter().any(|row| row.id == start.id)
+                    && !results.iter().any(|row| row.id == start.id)
+            });
+            self.cancels
+                .retain(|cancel| !results.iter().any(|row| row.id == cancel.of));
+            if self.sent_terminal_seq > self.acknowledged_terminal_seq
+                && !results.iter().any(|row| row.seq <= self.sent_terminal_seq)
+            {
+                self.acknowledged_terminal_seq = self.sent_terminal_seq;
+            }
+            for row in results {
+                self.consumed_terminal_seq = self.consumed_terminal_seq.max(row.seq);
+            }
         }
         if native.walk_outcome_seq > self.observed_walk_outcome_seq {
             self.observed_walk_outcome_seq = native.walk_outcome_seq;
+        }
+        if self.reconnect_held {
+            if !tick {
+                return;
+            }
+            self.reconnect_held = false;
+            if matches!(self.awaiting, Some(Awaited::Seat { .. } | Awaited::Walk { .. }))
+                && self.stored.is_none()
+            {
+                self.stored = Some(StoredCompletion {
+                    value: SeatCompletion::Aborted(AbortReason::Reset),
+                    terminal_seq: 0,
+                });
+            }
+        }
+        if self.stored.is_some() {
+            return;
         }
         match self.awaiting {
             Some(Awaited::NextTick) if tick => {
@@ -257,32 +431,47 @@ impl SeatClient {
                     terminal_seq: 0,
                 });
             }
-            Some(Awaited::Walk { id, after_seq })
-                if native.walk_outcome_seq > after_seq
-                    && native.walk_outcome_request_id == id.get() =>
-            {
-                self.stored = Some(StoredCompletion {
-                    value: SeatCompletion::Walk(WalkCompletion {
-                        id,
-                        generation: native.walk_outcome_generation,
-                        sequence: native.walk_outcome_seq,
-                        failed: native.walk_outcome_failed,
-                        x: native.walk_outcome_x,
-                        z: native.walk_outcome_z,
-                        level: native.walk_outcome_level,
-                        radius: native.walk_outcome_radius,
-                        blocked: native.walk_outcome_blocked,
-                        no_path: native.walk_outcome_no_path,
-                    }),
-                    terminal_seq: 0,
-                });
+            Some(Awaited::Walk { id }) => {
+                let observation = WalkObservation {
+                    input,
+                    native,
+                    token: id,
+                    generation: self.walk_generation,
+                    intent_baseline: self.walk_intent_baseline,
+                    manual_takeover_seq: self.manual_takeover_seq,
+                };
+                let outcome = observation.outcome();
+                self.walk.observe_outcome(outcome);
+                if self.walk.poll(id.get(), &observation) {
+                    let key = self.walk.request().expect("pending Walk owns its key").1;
+                    let matched = outcome.seq != 0 && outcome.request_id == id.get();
+                    self.stored = Some(StoredCompletion {
+                        value: SeatCompletion::Walk(WalkCompletion {
+                            id,
+                            generation: self.walk_generation,
+                            sequence: if matched { outcome.seq } else { 0 },
+                            failed: !self.walk.value(id.get()),
+                            x: key.tile.x,
+                            z: key.tile.z,
+                            level: key.tile.level,
+                            radius: key.radius,
+                            blocked: self.walk.blocked(id.get()),
+                            no_path: self.walk.no_path(id.get()),
+                            allow_teleports: key.allow_teleports.unwrap_or(false),
+                            cancel_reason: if observation.cancelled() {
+                                WalkCancelReason::UserInput
+                            } else {
+                                WalkCancelReason::None
+                            },
+                        }),
+                        terminal_seq: 0,
+                    });
+                }
             }
             Some(Awaited::Seat { id, kind }) => {
                 let Some(page) = native.seat_page else { return };
                 let Some(result) = page.results().iter().find(|result| {
-                    result.id == id
-                        && result.seq > self.consumed_terminal_seq
-                        && result.seq > release_floor
+                    result.id == id && result.seq > release_floor
                 }) else {
                     return;
                 };
@@ -334,67 +523,210 @@ impl SeatClient {
 
     /// A completion is consumed only when the coroutine actually resumes.
     pub fn take_completion(&mut self) -> Option<SeatCompletion> {
-        if self.lifecycle.len() >= MAX_SEAT_GAMEPLAY_ROWS {
+        if self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS {
             return None;
         }
         let stored = self.stored.take()?;
         self.awaiting.take()?;
+        if matches!(stored.value, SeatCompletion::Walk(_) | SeatCompletion::Aborted(_)) {
+            self.walk.reset();
+            self.walk_request = None;
+        }
         self.consumed_terminal_seq = self.consumed_terminal_seq.max(stored.terminal_seq);
         self.lifecycle.push(InteractReq::WaitSettled);
         Some(stored.value)
     }
 
     pub fn loop_settled(&mut self) -> Result<(), ClientError> {
-        if self.lifecycle.len() >= MAX_SEAT_GAMEPLAY_ROWS {
+        if self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS {
             return Err(ClientError::RowsFull);
         }
         self.lifecycle.push(InteractReq::LoopSettled);
         Ok(())
     }
 
+    /// Lifecycle rows travel with seat batches, so guardian holds fold them
+    /// under the same bound as JS. No second delivery path is permitted.
     pub fn drain_lifecycle(&mut self) -> Vec<InteractReq> {
-        std::mem::take(&mut self.lifecycle)
+        Vec::new()
     }
 
     pub fn pending_starts(&self) -> usize {
         self.starts.len()
+    }
+    fn pending_rows(&self) -> usize {
+        self.lifecycle.len()
+            + self.reqs.len()
             + self
                 .restored
                 .iter()
-                .map(|batch| batch.batch.starts.len())
+                .map(|batch| batch.batch.reqs.len() + usize::from(batch.held_waits.stamped))
                 .sum::<usize>()
     }
+
 
     pub fn drain_seat_batches(&mut self) -> Vec<QueuedSeatBatch> {
         let mut batches: Vec<_> = self.restored.drain(..).collect();
         if !self.starts.is_empty()
             || !self.cancels.is_empty()
-            || self.consumed_terminal_seq > self.published_terminal_seq
+            || !self.lifecycle.is_empty()
+            || !self.reqs.is_empty()
+            || self.consumed_terminal_seq > self.acknowledged_terminal_seq
         {
+            let mut reqs = std::mem::take(&mut self.reqs);
+            reqs.extend(
+                std::mem::take(&mut self.lifecycle)
+                    .into_iter()
+                    .map(|request| SeatInteractDecoded {
+                        lineage: None,
+                        mirror_owner: None,
+                        request,
+                    }),
+            );
             batches.push(QueuedSeatBatch {
-                generation: self.execution.generation().get(),
+                generation: self.work_generation,
                 observed_walk_outcome_seq: self.observed_walk_outcome_seq,
                 batch: DecodedSeatBatch {
                     consumed_terminal_seq: self.consumed_terminal_seq,
-                    starts: std::mem::take(&mut self.starts),
+                    starts: self.starts.clone(),
                     decisions: Vec::new(),
-                    cancels: std::mem::take(&mut self.cancels),
+                    cancels: self.cancels.clone(),
                     mirror_revokes: Vec::new(),
-                    reqs: Vec::new(),
+                    reqs,
                 },
                 machine_events: Vec::new(),
                 held_waits: HeldWaitFacts::default(),
                 held_fold: false,
             });
+            self.sent_terminal_seq = self.consumed_terminal_seq;
         }
-        self.published_terminal_seq = self.consumed_terminal_seq;
         batches
     }
 
-    /// Preserve the original order when the slot cannot admit a batch yet.
+    /// Keep only one-shot gameplay rows when the slot restores a batch:
+    /// pending controls and the terminal watermark remain with this client
+    /// and are sent again until a seat page acknowledges them.
     pub fn restore_seat_batches(&mut self, batches: Vec<QueuedSeatBatch>) {
-        for batch in batches.into_iter().rev() {
-            self.restored.push_front(batch);
+        for mut batch in batches.into_iter().rev() {
+            batch.batch.starts.clear();
+            batch.batch.cancels.clear();
+            batch.batch.consumed_terminal_seq = 0;
+            if !batch.batch.reqs.is_empty() || batch.held_waits.rows() != 0 {
+                self.restored.push_front(batch);
+            }
         }
+    }
+}
+
+/// A borrowed view of the same flood ranks the JS adapter reads. No snapshot
+/// arrays are copied into the synchronous Luau run.
+struct BorrowedReach<'a>(ReachViewInput<'a>);
+
+impl BorrowedReach<'_> {
+    fn index(&self, tile: WorldTile) -> Option<usize> {
+        let view = self.0;
+        if !view.available || view.width <= 0 || view.height <= 0 || tile.level != view.level {
+            return None;
+        }
+        let x = tile.x.checked_sub(view.base_x)?;
+        let z = tile.z.checked_sub(view.base_z)?;
+        (x >= 0 && z >= 0 && x < view.width && z < view.height)
+            .then(|| (x as usize).checked_mul(view.height as usize)?.checked_add(z as usize))
+            .flatten()
+    }
+
+    fn bit(&self, words: &[u32], tile: WorldTile) -> bool {
+        self.index(tile)
+            .and_then(|index| words.get(index / 32).map(|word| word & (1 << (index % 32)) != 0))
+            .unwrap_or(false)
+    }
+}
+
+impl ArrivalProbe for BorrowedReach<'_> {
+    fn can_reach_from(
+        &self,
+        origin: WorldTile,
+        destination: WorldTile,
+        options: &SceneReachOptions,
+    ) -> bool {
+        if self.index(origin).and_then(|index| self.0.exact_rank.get(index)) != Some(&0) {
+            return false;
+        }
+        let Some(index) = self.index(destination) else {
+            return false;
+        };
+        let (bits, ranks) = if options.adjacent_ok {
+            (self.0.reachable_adj, self.0.adjacent_rank)
+        } else {
+            (self.0.reachable, self.0.exact_rank)
+        };
+        bits.get(index / 32)
+            .is_some_and(|word| word & (1 << (index % 32)) != 0)
+            && ranks
+                .get(index)
+                .is_some_and(|rank| *rank != u16::MAX && u32::from(*rank) <= options.max_steps.unwrap_or(400))
+    }
+
+    fn walkable(&self, tile: WorldTile) -> bool {
+        self.bit(self.0.walkable, tile)
+    }
+
+    fn probeable(&self, tile: WorldTile) -> bool {
+        self.index(tile).is_some()
+    }
+}
+
+struct WalkObservation<'a, 's, 'n> {
+    input: &'a SnapshotInput<'s>,
+    native: NativeFactsInput<'n>,
+    token: RequestId,
+    generation: u64,
+    intent_baseline: u64,
+    manual_takeover_seq: u64,
+}
+
+impl Observation for WalkObservation<'_, '_, '_> {
+    fn outcome(&self) -> HostOutcome {
+        let native = self.native;
+        if native.walk_outcome_generation != self.generation {
+            return HostOutcome::empty();
+        }
+        HostOutcome {
+            seq: native.walk_outcome_seq,
+            generation: native.walk_outcome_generation,
+            request_id: native.walk_outcome_request_id,
+            failed: native.walk_outcome_failed,
+            blocked: native.walk_outcome_blocked,
+            no_path: native.walk_outcome_no_path,
+            key: WalkKey {
+                tile: WorldTile {
+                    x: native.walk_outcome_x,
+                    z: native.walk_outcome_z,
+                    level: native.walk_outcome_level,
+                },
+                radius: native.walk_outcome_radius,
+                allow_teleports: Some(native.walk_outcome_allow_teleports),
+            },
+        }
+    }
+
+    fn cancelled(&self) -> bool {
+        self.input.user_move_intent_seq > self.intent_baseline
+            || self.manual_takeover_seq > self.intent_baseline
+            || (self.native.walk_outcome_request_id == self.token.get()
+                && self.native.walk_outcome_generation == self.generation
+                && self.input.walk_outcome_cancel_reason == WalkCancelReason::UserInput)
+    }
+
+    fn arrived(&self, key: WalkKey) -> bool {
+        self.input.here.is_some_and(|here| {
+            let me = WorldTile { x: here.x, z: here.z, level: here.level };
+            let reach = BorrowedReach(self.input.reach);
+            api::query::is_arrived(me, key.tile, key.radius, || &reach)
+        })
+    }
+
+    fn moving(&self) -> Option<bool> {
+        self.native.local_player_moving
     }
 }
