@@ -22,7 +22,6 @@ import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-DEFAULT_VM_TOOL = "/Users/acfrazier/experiments/274bot/.superpowers/release-0.1.9/tools/headed/mac_vm.py"
 DEFAULT_SOURCE_REPO = "https://github.com/acfrazier/274bot"
 DEFAULT_BASE = "274bot-mac-base"
 GUEST_SHARE = "/Volumes/My Shared Files/sess"
@@ -704,7 +703,7 @@ class Settings:
         "NIGHTLY_MAC_RUNNER", "NIGHTLY_MAC_ROOT", "NIGHTLY_MAC_RUNS",
         "NIGHTLY_MAC_CATALOG", "NIGHTLY_MAC_ENGINE_A", "NIGHTLY_MAC_ENGINE_Q",
         "NIGHTLY_MAC_QUIET_LOCK", "NIGHTLY_MAC_ISOHOME", "NIGHTLY_MAC_PYTHON",
-        "NIGHTLY_MAC_VM_TOOL",
+        "NIGHTLY_MAC_VM_TOOL", "NIGHTLY_MAC_DISK_ROOT",
     )
 
     def __init__(self, values: Dict[str, str]):
@@ -737,7 +736,7 @@ class Settings:
         self.status = Path(values.get(
             "NIGHTLY_MAC_STATUS", str(self.runs / ".mac-nightly-running")
         )).expanduser()
-        self.disk_root = Path(values.get("NIGHTLY_MAC_DISK_ROOT", "/Volumes/dev-scratch")).expanduser()
+        self.disk_root = Path(values["NIGHTLY_MAC_DISK_ROOT"]).expanduser()
         jobs = [job.strip() for job in values.get("NIGHTLY_MAC_JOBS", "main,quest").split(",")]
         if (not jobs or any(not job for job in jobs) or len(set(jobs)) != len(jobs)
                 or any(job not in ("main", "quest") for job in jobs)):

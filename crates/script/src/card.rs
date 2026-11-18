@@ -108,8 +108,7 @@ pub fn is_revision_fact_option_ident(ident: &str) -> bool {
 
 /// W1c `equipment_names` families backing a frozen settings `options` /
 /// `optionsFrom` ident. `RANGED_WEAPONS` and `ROCK_CRAB_RANGED_WEAPONS` mirror
-/// `.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0/src/bot/api/combat/ranged.ts`
-/// (`[...BOWS, ...DARTS]`). `AXES` and `DROP_DB` stay outside W1c.
+/// `rs2b0t-00d39a17e0/src/bot/api/combat/ranged.ts` (`[...BOWS, ...DARTS]`).
 pub fn w1c_equipment_option_families(ident: &str) -> Option<&'static [&'static str]> {
     Some(match ident {
         "STAFFS" => &["staffs"],

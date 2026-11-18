@@ -182,15 +182,16 @@ def needs_catalog_root(cells: list[live_map.Cell]) -> bool:
 def ensure_catalog_root(cells: list[live_map.Cell], catalog_root: str | None) -> str | None:
     if not needs_catalog_root(cells):
         return catalog_root
+    catalog_root = catalog_root or os.environ.get("CATALOG_ROOT")
     if not catalog_root:
         names = ", ".join(cell.name for cell in cells if "CATALOG_ROOT" in cell.command)
         raise live_map.MapError(
             f"run-cells: refusing cells [{names}]: a selected cell uses ${{CATALOG_ROOT}}. "
-            "Pass --catalog-root <path> with the local rs2b0t checkout root."
+            "Pass --catalog-root <path> or set CATALOG_ROOT in local lab.env."
         )
     if not Path(catalog_root).is_dir():
         raise live_map.MapError(
-            f"run-cells: --catalog-root is not a directory: {catalog_root}"
+            f"run-cells: catalog root is not a directory: {catalog_root}"
         )
     return catalog_root
 
@@ -202,15 +203,16 @@ def needs_panel_cache(cells: list[live_map.Cell]) -> bool:
 def ensure_unpack_source(cells: list[live_map.Cell], unpack_source: str | None) -> str | None:
     if not needs_panel_cache(cells):
         return unpack_source
+    unpack_source = unpack_source or os.environ.get("NAV_SNAPSHOT_ROOT_289")
     if not unpack_source:
         names = ", ".join(cell.name for cell in cells if "PANEL_LIVE_HOME" in cell.command)
         raise live_map.MapError(
             f"run-cells: refusing cells [{names}]: a selected cell stages panel-home/.274bot/unpack-289. "
-            "Pass --unpack-source <path> with the revision decoded unpack directory."
+            "Pass --unpack-source <path> or set NAV_SNAPSHOT_ROOT_289 in local lab.env."
         )
     if not Path(unpack_source).is_dir():
         raise live_map.MapError(
-            f"run-cells: --unpack-source is not a directory: {unpack_source}"
+            f"run-cells: unpack source is not a directory: {unpack_source}"
         )
     return unpack_source
 
@@ -316,56 +318,25 @@ def _local_data_nav(repo: Path, revision: str, name: str) -> str | None:
 
 
 def host_defaults(repo: Path) -> dict[str, str]:
-    home = str(Path.home())
     # The nav pack is the repository's own build output. The stored v17 and v18
     # reference packs are refused by the current reader.
     defaults: dict[str, str] = {}
-    isohome = _first_existing(
-        [
-            os.environ.get("ISOHOME"),
-            "/home/acfrazier/experiments/274bot/.superpowers/bin/isohome",
-            "/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome",
-            f"{home}/experiments/274bot/.superpowers/bin/isohome",
-        ],
-        want_file=True,
-    )
+    isohome = _first_existing([os.environ.get("ISOHOME")], want_file=True)
     if isohome:
         defaults["ISOHOME"] = isohome
-    engine_a = _first_existing(
-        [
-            os.environ.get("ENGINE_A_DIR"),
-            "/home/acfrazier/experiments/lostcity-289/engine",
-            "/Users/acfrazier/experiments/lostcity-289/engine",
-            "/srv/dev/experiments/lostcity-289/engine",
-        ],
-        want_file=False,
-    )
+    engine_a = _first_existing([os.environ.get("ENGINE_A_DIR")], want_file=False)
     if engine_a:
         defaults["ENGINE_A_DIR"] = engine_a
-    engine_q = _first_existing(
-        [
-            os.environ.get("ENGINE_Q_DIR"),
-            "/home/acfrazier/experiments/lostcity-289-q/engine",
-            "/Users/acfrazier/experiments/lostcity-289-q/engine",
-        ],
-        want_file=False,
-    )
+    engine_q = _first_existing([os.environ.get("ENGINE_Q_DIR")], want_file=False)
     if engine_q:
         defaults["ENGINE_Q_DIR"] = engine_q
-    engine_b = _first_existing(
-        [os.environ.get("ENGINE_B_DIR")],
-        want_file=False,
-    )
+    engine_b = _first_existing([os.environ.get("ENGINE_B_DIR")], want_file=False)
     if engine_b:
         defaults["ENGINE_B_DIR"] = engine_b
     elif engine_a:
         defaults["ENGINE_B_DIR"] = engine_a
     snapshot = _first_existing(
-        [
-            os.environ.get("NAV_SNAPSHOT_ROOT_289"),
-            "/home/acfrazier/.274bot/unpack-289",
-            "/Users/acfrazier/.274bot/unpack-289",
-        ],
+        [os.environ.get("NAV_SNAPSHOT_ROOT_289")],
         want_file=False,
     )
     if snapshot:
@@ -388,6 +359,45 @@ def host_defaults(repo: Path) -> dict[str, str]:
         if key in os.environ and key not in defaults:
             defaults[key] = os.environ[key]
     return defaults
+
+def require_isohome(cells: list[live_map.Cell]) -> None:
+    if not any("${ISOHOME:?" in cell.command for cell in cells):
+        return
+    value = os.environ.get("ISOHOME")
+    if not value:
+        raise live_map.MapError(
+            "ISOHOME is required by the selected live cells; set it in your local lab.env"
+        )
+    isohome = Path(value)
+    if not isohome.is_absolute() or not isohome.is_file() or not os.access(isohome, os.X_OK):
+        raise live_map.MapError(
+            f"ISOHOME must name an absolute executable isohome wrapper: {isohome}"
+        )
+
+
+def require_configured_paths(cells: list[live_map.Cell]) -> None:
+    required_directories = (
+        "ENGINE_A_DIR",
+        "ENGINE_Q_DIR",
+        "ENGINE_B_DIR",
+        "NAV_SNAPSHOT_ROOT_289",
+    )
+    for name in required_directories:
+        if not any(
+            f"${{{name}:?" in cell.command for cell in cells
+        ):
+            continue
+        value = os.environ.get(name)
+        if name == "ENGINE_B_DIR" and not value:
+            value = os.environ.get("ENGINE_A_DIR")
+        if not value:
+            raise live_map.MapError(
+                f"{name} is required by the selected live cells; set it in your local lab.env"
+            )
+        if not Path(value).is_dir():
+            raise live_map.MapError(
+                f"{name} must name an existing directory: {value}"
+            )
 
 
 def cell_names(config: dict) -> dict[str, live_map.Cell]:
@@ -748,6 +758,9 @@ def main(argv: list[str] | None = None) -> int:
         catalog_root = ensure_catalog_root(cells, args.catalog_root)
         unpack_source = ensure_unpack_source(cells, args.unpack_source)
         partner_prefix = ensure_partner_prefix(cells, args.partner_prefix, args.prefix)
+        require_isohome(cells)
+        require_configured_paths(cells)
+
         evidence_root.mkdir(parents=True, exist_ok=True)
         defaults = host_defaults(repo)
         results = run_all(
@@ -1161,8 +1174,9 @@ class RunCellsTests(unittest.TestCase):
     def test_catalog_root_is_required_for_catalog_cells(self) -> None:
         cells = [live_map.Cell("nav.route-search-live", "LIVE=1 RS2B0T=${CATALOG_ROOT:?} cargo test", "")]
         self.assertTrue(needs_catalog_root(cells))
-        with self.assertRaises(live_map.MapError) as context:
-            ensure_catalog_root(cells, None)
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(live_map.MapError) as context:
+                ensure_catalog_root(cells, None)
         self.assertIn("--catalog-root", str(context.exception))
         self.assertIn("nav.route-search-live", str(context.exception))
         clean = [live_map.Cell("plain", "LIVE=1 ${ISOHOME:?} cargo test", "")]
@@ -1173,6 +1187,22 @@ class RunCellsTests(unittest.TestCase):
         cells = [live_map.Cell("nav.route-search-live", "LIVE=1 ${CATALOG_ROOT:?} cargo test", "")]
         with self.assertRaises(live_map.MapError):
             ensure_catalog_root(cells, "/no/such/catalog-root-r2")
+
+    def test_catalog_root_uses_environment_when_flag_is_absent(self) -> None:
+        import tempfile
+
+        cells = [
+            live_map.Cell(
+                "nav.route-search-live",
+                "LIVE=1 ${CATALOG_ROOT:?} cargo test",
+                "",
+            )
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            with unittest.mock.patch.dict(
+                os.environ, {"CATALOG_ROOT": temporary}, clear=True
+            ):
+                self.assertEqual(ensure_catalog_root(cells, None), temporary)
 
     def test_partner_prefix_is_required_for_two_account_cells(self) -> None:
         pair = [
@@ -1239,6 +1269,58 @@ class RunCellsTests(unittest.TestCase):
             self.assertEqual(defaults["NAV_FLAGS_289"], str(nav / "289" / "274bot.navflags"))
             self.assertNotIn("NAV_PACK_274", defaults)
 
+    def test_host_path_defaults_use_only_configured_paths(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            isohome = repo / "isohome"
+            isohome.write_text("", encoding="utf-8")
+            engine_a = repo / "engine-a"
+            engine_a.mkdir()
+            engine_q = repo / "engine-q"
+            engine_q.mkdir()
+            snapshot = repo / "snapshot"
+            snapshot.mkdir()
+            with unittest.mock.patch.dict(os.environ, {}, clear=True):
+                defaults = host_defaults(repo)
+            for key in (
+                "ISOHOME",
+                "ENGINE_A_DIR",
+                "ENGINE_Q_DIR",
+                "ENGINE_B_DIR",
+                "NAV_SNAPSHOT_ROOT_289",
+            ):
+                self.assertNotIn(key, defaults)
+
+            configured = {
+                "ISOHOME": str(isohome),
+                "ENGINE_A_DIR": str(engine_a),
+                "ENGINE_Q_DIR": str(engine_q),
+                "NAV_SNAPSHOT_ROOT_289": str(snapshot),
+            }
+            with unittest.mock.patch.dict(os.environ, configured, clear=True):
+                defaults = host_defaults(repo)
+            self.assertEqual(defaults["ISOHOME"], str(isohome))
+            self.assertEqual(defaults["ENGINE_A_DIR"], str(engine_a))
+            self.assertEqual(defaults["ENGINE_Q_DIR"], str(engine_q))
+            self.assertEqual(defaults["ENGINE_B_DIR"], str(engine_a))
+            self.assertEqual(defaults["NAV_SNAPSHOT_ROOT_289"], str(snapshot))
+
+    def test_selected_live_cells_require_isohome_before_running(self) -> None:
+        cells = [live_map.Cell("live", "LIVE=1 ${ISOHOME:?} cargo test", "")]
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(live_map.MapError, "ISOHOME.*lab.env"):
+                require_isohome(cells)
+
+    def test_selected_cells_require_configured_engine_paths(self) -> None:
+        cells = [
+            live_map.Cell("engine", "LIVE=1 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} cargo test", "")
+        ]
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(live_map.MapError, "ENGINE_Q_DIR.*lab.env"):
+                require_configured_paths(cells)
+
     def test_catalog_root_reaches_cell_env(self) -> None:
         import tempfile
         with tempfile.TemporaryDirectory() as temp:
@@ -1283,8 +1365,9 @@ class RunCellsTests(unittest.TestCase):
     def test_unpack_source_is_required_for_panel_cells(self) -> None:
         cells = [live_map.Cell("panel.state-gap-stop-live", "LIVE=1 ISOHOME_DIR=${PANEL_LIVE_HOME:?} cargo test", "")]
         self.assertTrue(needs_panel_cache(cells))
-        with self.assertRaises(live_map.MapError) as context:
-            ensure_unpack_source(cells, None)
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(live_map.MapError) as context:
+                ensure_unpack_source(cells, None)
         self.assertIn("--unpack-source", str(context.exception))
         self.assertIn("panel.state-gap-stop-live", str(context.exception))
         clean = [live_map.Cell("plain", "LIVE=1 ${ISOHOME:?} cargo test", "")]
@@ -1295,6 +1378,22 @@ class RunCellsTests(unittest.TestCase):
         cells = [live_map.Cell("panel.state-gap-stop-live", "ISOHOME_DIR=${PANEL_LIVE_HOME:?} cargo test", "")]
         with self.assertRaises(live_map.MapError):
             ensure_unpack_source(cells, "/no/such/unpack-source-r2")
+
+    def test_unpack_source_uses_nav_snapshot_environment(self) -> None:
+        import tempfile
+
+        cells = [
+            live_map.Cell(
+                "panel.state-gap-stop-live",
+                "LIVE=1 ISOHOME_DIR=${PANEL_LIVE_HOME:?} cargo test",
+                "",
+            )
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            with unittest.mock.patch.dict(
+                os.environ, {"NAV_SNAPSHOT_ROOT_289": temporary}, clear=True
+            ):
+                self.assertEqual(ensure_unpack_source(cells, None), temporary)
 
     def test_stage_copies_files_without_symlink(self) -> None:
         import tempfile
