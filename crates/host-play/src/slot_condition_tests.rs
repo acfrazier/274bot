@@ -178,10 +178,14 @@ fn chat_pair(snapshot: &mut GameSnapshot, older: (i32, &str), newer: (i32, &str)
 }
 
 fn poisoned_owner_with_fruit() -> (SlotCondition, GameSnapshot) {
+    poisoned_owner_with_fruit_at(1)
+}
+
+fn poisoned_owner_with_fruit_at(tick: u32) -> (SlotCondition, GameSnapshot) {
     let mut owner = owner();
-    let mut snapshot = frame(1);
+    let mut snapshot = frame(tick);
     inventory(&mut snapshot, 1, &[464]);
-    hit(&mut snapshot, 2, 6, 1);
+    hit(&mut snapshot, 2, 6, tick as i32);
     owner.observe_frame(&snapshot, &drain(true, true), false);
     assert!(matches!(
         owner.current().unwrap().poison,
@@ -241,6 +245,82 @@ fn reconnect_hides_fact_until_first_complete_frame() {
         PoisonState::Unknown { since: 1 }
     );
     assert_eq!(owner.last_tick, 1);
+}
+
+#[test]
+fn reconnect_rebases_poison_reserve_until_next_poison_tick() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut owner, _) = poisoned_owner_with_fruit_at(65_000);
+    let PoisonState::Poisoned {
+        per_tick,
+        hit_since_mark,
+        ..
+    } = owner.current().expect("complete live condition").poison
+    else {
+        panic!("poisoned fixture");
+    };
+    let rebased = PoisonState::Poisoned {
+        per_tick,
+        last_mark: 1,
+        hit_since_mark,
+    };
+    let reserve = remaining(rebased, api::condition::Exposure::None, 1, 11).total;
+
+    owner.session_ended();
+    owner.session_started(
+        1,
+        0,
+        Some((script::combat::guard::shared_tables().unwrap(), 11)),
+    );
+    assert!(owner.current().is_none());
+    owner.observe_frame(&frame(1), &drain(false, true), false);
+    assert_eq!(owner.current().unwrap().poison, rebased);
+    assert_eq!(
+        remaining(
+            owner.current().unwrap().poison,
+            api::condition::Exposure::None,
+            1,
+            11
+        )
+        .total,
+        reserve
+    );
+
+    let mut ordinary_hit = frame(2);
+    hit(&mut ordinary_hit, 0, 2, 2);
+    owner.observe_frame(&ordinary_hit, &drain(true, true), false);
+    assert!(matches!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            last_mark: 1,
+            hit_since_mark: true,
+            ..
+        }
+    ));
+    assert!(
+        remaining(
+            owner.current().unwrap().poison,
+            api::condition::Exposure::None,
+            2,
+            11
+        )
+        .total
+            > reserve
+    );
+
+    let mut snapshot = frame(31);
+    hit(&mut snapshot, 2, 4, 3);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert!(matches!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 4,
+            last_mark: 31,
+            ..
+        }
+    ));
 }
 
 #[test]

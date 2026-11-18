@@ -602,6 +602,7 @@ text = """When the bot reconnects while it is poisoned, it does not know it is
   that tick."""
 first = "0.2.7"
 listed = "0.2.9"
+fixed = "0.3.0"
 target = "0.3.0"
 severity = "medium"
 owner = "T2 survival"
