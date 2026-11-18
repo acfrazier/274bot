@@ -1,6 +1,5 @@
-//! The host binds the surfaces that its build contains. No surface holds a run
-//! before a Start, so a slot that the host builds has no Luau runtime, and it
-//! refuses a Luau card as it refuses a card of a surface that its build lacks.
+//! A new slot has no Luau runtime before Start. It rejects a foreign Luau
+//! card, whether this build has a Luau factory or not.
 
 use super::*;
 use script::surface::{SurfaceCard, SurfaceError, SurfaceFamily, SurfaceKind, SurfaceStart};
@@ -39,11 +38,14 @@ fn a_new_slot_holds_no_luau_run_and_refuses_a_luau_card() {
         loadouts: Arc::default(),
         wilderness_rules: script::surface::no_wilderness(),
     };
+    let expected = if cfg!(feature = "luau") {
+        SurfaceError::ForeignCard(SurfaceKind::Luau)
+    } else {
+        SurfaceError::NoFactory(SurfaceKind::Luau)
+    };
     assert_eq!(
         slot.start_surface(start),
-        Err(StartLoadError::Surface(SurfaceError::NoFactory(
-            SurfaceKind::Luau
-        )))
+        Err(StartLoadError::Surface(expected))
     );
     assert!(!slot.surface_active());
     assert_eq!(slot.state(), script::RunState::Idle);

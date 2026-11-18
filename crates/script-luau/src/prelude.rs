@@ -63,7 +63,8 @@ local function number_guard(fn, label, positions, all_arguments, max_arguments)
             end
         else
             for i = 1, #positions do
-                if native_type(native_select(positions[i], ...)) == "string" then
+                local position = positions[i]
+                if position <= count and native_type(native_select(position, ...)) == "string" then
                     native_error(bad_string, 2)
                 end
             end

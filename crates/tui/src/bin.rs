@@ -3587,6 +3587,8 @@ impl TuiSession {
 
     /// Submit the opt-in setting only after its one-time notice has been
     /// saved, then project both durable values back into the popup.
+    /// Read through the retained preferences handle: building a fresh
+    /// `OperatorSession::preferences` handle each frame allocates.
     fn project_luau_runtime(&mut self, app: &mut TuiApp) {
         use frontend_core::{OperatorNotice, Setting, SettingStatus};
 
@@ -3598,7 +3600,8 @@ impl TuiSession {
             )
         {
             app.luau_runtime_enable_after_ack = false;
-            if self.core.luau_runtime_notice_acknowledged() == Some(true) {
+            if frontend_core::luau_runtime_notice_acknowledged(&self.preferences).ok() == Some(true)
+            {
                 app.luau_runtime_request = Some(true);
             }
         }
@@ -3619,9 +3622,7 @@ impl TuiSession {
                     &[],
                     LIVE_REFUSAL,
                 );
-                app.error = Some(format!(
-                    "{ERROR_PREFIX} {LIVE_REFUSAL}"
-                ));
+                app.error = Some(format!("{ERROR_PREFIX} {LIVE_REFUSAL}"));
             } else if let Err(error) = self.submit_raw_with(
                 app,
                 OperatorCommand::SetLuauRuntime(on),
@@ -3631,11 +3632,10 @@ impl TuiSession {
             }
             self.project_setting_feedback(app);
         }
-        app.luau_runtime_enabled = self.core.luau_runtime_enabled().unwrap_or(false);
-        app.luau_runtime_notice_acknowledged = self
-            .core
-            .luau_runtime_notice_acknowledged()
-            .unwrap_or(false);
+        app.luau_runtime_enabled =
+            frontend_core::luau_runtime_enabled(&self.preferences).unwrap_or(false);
+        app.luau_runtime_notice_acknowledged =
+            frontend_core::luau_runtime_notice_acknowledged(&self.preferences).unwrap_or(false);
     }
 
     /// Submit the shared manual-walk pause preference

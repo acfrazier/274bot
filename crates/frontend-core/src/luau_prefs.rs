@@ -27,9 +27,7 @@ const LUAU_RUNTIME_KEY: &str = "experimental_luau_runtime";
 pub(crate) const LUAU_RUNTIME_NOTICE_ACK_KEY: &str = "experimental_luau_runtime_notice_ack";
 
 /// The durable runtime switch. An absent or malformed member is off.
-pub(crate) fn luau_runtime_enabled(
-    preferences: &UiPreferences,
-) -> Result<bool, PreferenceError> {
+pub fn luau_runtime_enabled(preferences: &UiPreferences) -> Result<bool, PreferenceError> {
     Ok(preferences
         .document()?
         .get(LUAU_RUNTIME_KEY)
@@ -38,7 +36,7 @@ pub(crate) fn luau_runtime_enabled(
 }
 
 /// Whether the one-time first-enable notice has been durably acknowledged.
-pub(crate) fn luau_runtime_notice_acknowledged(
+pub fn luau_runtime_notice_acknowledged(
     preferences: &UiPreferences,
 ) -> Result<bool, PreferenceError> {
     Ok(preferences

@@ -3545,7 +3545,7 @@ fn op_at_obj(ops: &[Option<String>; 5], option: i32) -> String {
     op_at(ops.as_slice(), option)
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 pub(super) fn terminal_to_input<'a>(
     term: &'a InspectTerminal,
     hops: &'a [script::native::snapshot_source::InspectHopInput<'a>],
@@ -3569,7 +3569,7 @@ pub(super) fn terminal_to_input<'a>(
     }
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 pub(super) fn hop_inputs(
     hops: &InspectHops,
 ) -> Vec<script::native::snapshot_source::InspectHopInput<'_>> {

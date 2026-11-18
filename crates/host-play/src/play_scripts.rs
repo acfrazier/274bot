@@ -1475,6 +1475,19 @@ impl Play {
         })
     }
 
+    /// Observe the actual slot watchdog's wait rows in live conformance cells.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn script_wait_inflight_for_test(&self, name: &str) -> u32 {
+        script_slot(&self.scripts, name)
+            .and_then(|slot| {
+                slot.lock()
+                    .ok()
+                    .map(|slot| slot.watchdog_wait_inflight_for_test())
+            })
+            .unwrap_or(0)
+    }
+
     /// Resolve `name`'s non-blocking isolate Start/Stop. The slot thread
     /// does this every observe; a slot that is offline or queued for login
     /// has no observe, so the UI pumps it (see [`Self::pump_script_lifecycles`]).

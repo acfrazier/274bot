@@ -1166,6 +1166,23 @@ impl SlotScript {
         self.seat.as_deref()
     }
 
+    /// Count real queued wait lifecycle rows after the seat batch has drained.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn watchdog_wait_inflight_for_test(&self) -> u32 {
+        self.watchdog.wait_inflight()
+    }
+
+    /// Install a slot-owned typed progress page for cross-crate borrowed
+    /// completion tests without changing the production binding path.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn set_progress_page_for_test(&mut self, page: Option<crate::api_progress::ProgressPage>) {
+        self.api
+            .get_or_insert_with(Box::<api_seat::ApiSeat>::default)
+            .progress_page = page;
+    }
+
     /// Return the number of interactions waiting for host delivery.
     #[cfg(feature = "test-hooks")]
     pub fn seat_interact_delivery_len(&self) -> usize {
@@ -1536,7 +1553,8 @@ impl SlotScript {
             Ok(completion) => {
                 self.pending_logs.extend(completion.logs);
                 if let Some(failure) = completion.hook_failure {
-                    let diagnostic = format!("onStop failed ({}): {}", failure.code, failure.message);
+                    let diagnostic =
+                        format!("onStop failed ({}): {}", failure.code, failure.message);
                     self.pending_logs.push(diagnostic.clone());
                     self.last_error = Some(match self.last_error.take() {
                         Some(reason) => format!("{reason}\n{diagnostic}"),
@@ -2282,7 +2300,9 @@ impl SlotScript {
 
     /// The host uses the same surface selector at every dispatch site.
     pub fn surface_input_delivery(&self) -> InputDelivery {
-        self.surface.as_ref().map_or(InputDelivery::Posted, |surface| surface.input_delivery())
+        self.surface
+            .as_ref()
+            .map_or(InputDelivery::Posted, |surface| surface.input_delivery())
     }
 
     /// Complete borrowed host facts with the slot's owned family and seat
@@ -2315,10 +2335,12 @@ impl SlotScript {
         }; api::script_contract::MAX_RESULTS];
         let mut result_values_len = bank.map_or(0, |bank| bank.result_values(&mut result_values));
         if let (Some(api), Some(seat)) = (api, seat) {
-            result_values_len += api.result_values(seat.results(), &mut result_values[result_values_len..]);
+            result_values_len +=
+                api.result_values(seat.results(), &mut result_values[result_values_len..]);
         }
         if let (Some(shop), Some(seat)) = (shop, seat) {
-            result_values_len += shop.result_values(seat.results(), &mut result_values[result_values_len..]);
+            result_values_len +=
+                shop.result_values(seat.results(), &mut result_values[result_values_len..]);
         }
         if let (Some(seat), Some(details)) = (seat, details.as_ref()) {
             native.seat_page = Some(
@@ -4359,7 +4381,10 @@ impl SlotScript {
                 self.dispatch_lent(SurfaceWake::Evidence, ctx, input, native)
             } else if self.surface_input_delivery() == InputDelivery::Posted {
                 let identity = self.runtime_context.native_input().lock().identity();
-                self.surface.as_ref().expect("surface checked above").on_snapshot_change_at(ctx.tick, identity);
+                self.surface
+                    .as_ref()
+                    .expect("surface checked above")
+                    .on_snapshot_change_at(ctx.tick, identity);
                 LentOutcome::Accepted
             } else {
                 LentOutcome::Refused
@@ -4539,10 +4564,13 @@ impl SlotScript {
             let outcome = if let Some((input, native)) = lent {
                 self.dispatch_lent(SurfaceWake::Tick { held }, ctx, input, native)
             } else if self.surface_input_delivery() == InputDelivery::Posted {
-                self.surface.as_ref().expect("surface checked above").on_game_tick_at(
-                    ctx.tick,
-                    self.runtime_context.native_input().lock().identity(),
-                );
+                self.surface
+                    .as_ref()
+                    .expect("surface checked above")
+                    .on_game_tick_at(
+                        ctx.tick,
+                        self.runtime_context.native_input().lock().identity(),
+                    );
                 LentOutcome::Accepted
             } else {
                 LentOutcome::Refused

@@ -674,8 +674,14 @@ fn reconnect_settles_a_next_tick_wait_on_the_first_full_tick() {
     assert_eq!(client.take_completion(), Some(SeatCompletion::NextTick));
     let batch = client.drain_seat_batches().pop().unwrap();
     assert_eq!(batch.batch.reqs.len(), 2);
-    assert!(matches!(&batch.batch.reqs[0].request, InteractReq::WaitEnqueued));
-    assert!(matches!(&batch.batch.reqs[1].request, InteractReq::WaitSettled));
+    assert!(matches!(
+        &batch.batch.reqs[0].request,
+        InteractReq::WaitEnqueued
+    ));
+    assert!(matches!(
+        &batch.batch.reqs[1].request,
+        InteractReq::WaitSettled
+    ));
 }
 
 #[test]

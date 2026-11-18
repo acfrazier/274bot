@@ -401,14 +401,16 @@ fn lent_slot_dispatches_original_borrow_and_honors_pause_gate() {
         slot.on_game_tick_lent(&mut ctx, false, &input, NativeFactsInput::default()),
         LentOutcome::Accepted
     );
-    assert!(run.operations().contains(&StubSurfaceOperation::DispatchLent {
-        wake: SurfaceWake::Tick { held: false },
-        held: false,
-        tick: 87,
-        input_identity: identity,
-        authority_identity,
-        has_progress: false,
-    }));
+    assert!(run
+        .operations()
+        .contains(&StubSurfaceOperation::DispatchLent {
+            wake: SurfaceWake::Tick { held: false },
+            held: false,
+            tick: 87,
+            input_identity: identity,
+            authority_identity,
+            has_progress: false,
+        }));
     run.take_operations();
     slot.pause();
     assert_eq!(

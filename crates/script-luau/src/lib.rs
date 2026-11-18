@@ -5,7 +5,17 @@
 //! no thread and no process-wide state: a VM exists only inside a run, and a
 //! run exists only after the spawn of an admitted Start of a Luau card.
 //! `tests/startup_state.rs` keeps it so.
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+
+mod prelude;
+mod runtime;
+#[expect(
+    unsafe_code,
+    reason = "the Luau single-step FFI is isolated in this module"
+)]
+mod single_step;
+
+pub use runtime::{LuauStartCard, LuauSurfaceFactory, LuauSurfaceRun};
 
 // A run is a `Box<dyn SurfaceRun>`, and `SurfaceRun: Send`, so the VM handle
 // must be `Send`. `mlua` gives `Lua: Send` only with its `send` feature, which

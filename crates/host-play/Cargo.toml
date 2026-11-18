@@ -47,6 +47,9 @@ bzip2 = "0.6.1"
 native-tls = "0.2.18"
 script = { path = "../script", features = ["test-hooks"] }
 script-js = { path = "../script-js", features = ["test-hooks"] }
+# Test-only SurfaceRun hooks must match script's dev feature even when
+# host-play/test-support is not selected. Product Luau remains optional.
+script-luau = { path = "../script-luau", features = ["test-hooks"] }
 scenario = { path = "../scenario" }
 # The checked model of the auto-run hold; the conformance test drives the
 # product with its traces (`src/script_hold_conformance_tests.rs`).

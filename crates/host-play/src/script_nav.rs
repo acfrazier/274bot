@@ -8265,7 +8265,7 @@ impl NavBot {
         self.walk_live_refusal_id == 0 || request_id == self.walk_live_refusal_id
     }
 
-    #[cfg(any(test, feature = "js"))]
+    #[cfg(any(test, feature = "js", feature = "luau"))]
     /// A snapshot carrying outcome `posted_seq` reached the isolate. The
     /// live refusal guard is released only when that was the latest
     /// published outcome; a newer one stays guarded until it is posted.

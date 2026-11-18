@@ -434,9 +434,9 @@ impl<'a> SettingsPane<'a> {
                 }
                 None => SettingsKey::Consumed,
             },
-            19 => self
-                .luau_runtime
-                .map_or(SettingsKey::Consumed, |enabled| SettingsKey::LuauRuntime(!enabled)),
+            19 => self.luau_runtime.map_or(SettingsKey::Consumed, |enabled| {
+                SettingsKey::LuauRuntime(!enabled)
+            }),
             _ => SettingsKey::Consumed,
         }
     }
@@ -1374,8 +1374,7 @@ mod tests {
             ..Default::default()
         };
         let text = render_lines(
-            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
-                .luau_runtime(false),
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state).luau_runtime(false),
             120,
             40,
         );

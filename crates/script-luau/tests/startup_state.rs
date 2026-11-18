@@ -1,11 +1,8 @@
-//! No Luau state exists before a run.
+//! No Luau state exists before an admitted run.
 //!
-//! A VM is created only by the spawn of an admitted Start of a Luau card, so no
-//! source of this crate may hold state or run code before that Start. The scan
-//! refuses a mutable or interior-mutable `static`, a `thread_local!`, an
-//! attribute that runs code before `main`, any use of `std::thread`, and a VM
-//! constructor. The slice that adds the run lifecycle adds the one constructor,
-//! and then narrows the last rule to the file of the factory's spawn.
+//! A VM is created only by the runtime module during `spawn`. This scan
+//! forbids process-wide mutable state, startup attributes, and threads; the one
+//! constructor is allowed only in `runtime.rs`.
 
 use std::path::{Path, PathBuf};
 use syn::visit::Visit;
@@ -40,6 +37,7 @@ const VM_CONSTRUCTORS: &[&str] = &[
 #[derive(Default)]
 struct Scan {
     violations: Vec<String>,
+    vm_constructors: Vec<String>,
 }
 
 /// Collects the identifiers of every path segment inside one type.
@@ -71,6 +69,20 @@ fn use_tree_idents(tree: &syn::UseTree, out: &mut Vec<String>) {
 }
 
 impl<'ast> Visit<'ast> for Scan {
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        // Test-only fixtures may create their own VMs; the production startup
+        // rule applies to the compiled runtime, not to test bodies.
+        if item.attrs.iter().any(|attribute| {
+            attribute.path().is_ident("cfg")
+                && attribute
+                    .parse_args::<syn::Ident>()
+                    .is_ok_and(|name| name == "test")
+        }) {
+            return;
+        }
+        syn::visit::visit_item_mod(self, item);
+    }
+
     fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
         let name = &item.ident;
         if matches!(item.mutability, syn::StaticMutability::Mut(_)) {
@@ -111,17 +123,24 @@ impl<'ast> Visit<'ast> for Scan {
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
         let mut idents = Vec::new();
         use_tree_idents(&item.tree, &mut idents);
-        if idents.iter().any(|ident| ident == "thread") {
+        if idents.first().is_some_and(|first| first == "std")
+            && idents.iter().any(|ident| ident == "thread")
+        {
             self.violations.push("use of `std::thread`".to_owned());
         }
         syn::visit::visit_item_use(self, item);
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
-        if path
-            .segments
-            .iter()
-            .any(|segment| segment.ident == "thread")
+        if path.segments.len() > 1
+            && path.segments.first().is_some_and(|first| {
+                first.ident == "thread"
+                    || (first.ident == "std"
+                        && path
+                            .segments
+                            .iter()
+                            .any(|segment| segment.ident == "thread"))
+            })
         {
             self.violations.push("path through `thread`".to_owned());
         }
@@ -138,8 +157,7 @@ impl<'ast> Visit<'ast> for Scan {
                 .collect();
             if let [.., owner, function] = segments.as_slice() {
                 if owner == "Lua" && VM_CONSTRUCTORS.contains(&function.as_str()) {
-                    self.violations
-                        .push(format!("VM constructor `Lua::{function}`"));
+                    self.vm_constructors.push(format!("Lua::{function}"));
                 }
             }
         }
@@ -147,11 +165,11 @@ impl<'ast> Visit<'ast> for Scan {
     }
 }
 
-fn scan_source(source: &str) -> Vec<String> {
+fn scan_source(source: &str) -> Scan {
     let file = syn::parse_file(source).expect("the source parses");
     let mut scan = Scan::default();
     scan.visit_file(&file);
-    scan.violations
+    scan
 }
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -166,18 +184,36 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn crate_sources_hold_no_state_before_a_run() {
+fn vm_constructor_is_limited_to_run_module() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     rust_files(&root, &mut files);
     assert!(files.iter().any(|file| file.ends_with("lib.rs")));
+    assert!(files.iter().any(|file| file.ends_with("runtime.rs")));
     for file in files {
         let source = std::fs::read_to_string(&file).expect("the source reads");
-        let violations = scan_source(&source);
+        let scan = scan_source(&source);
+        let is_runtime = file.ends_with("runtime.rs");
+        if is_runtime {
+            assert_eq!(
+                scan.vm_constructors.as_slice(),
+                ["Lua::new_with"],
+                "{} must own the single VM constructor",
+                file.display()
+            );
+        } else {
+            assert!(
+                scan.vm_constructors.is_empty(),
+                "{} must not construct a VM: {:?}",
+                file.display(),
+                scan.vm_constructors
+            );
+        }
         assert!(
-            violations.is_empty(),
-            "{} holds state before a run: {violations:?}",
-            file.display()
+            scan.violations.is_empty(),
+            "{} holds startup state: {:?}",
+            file.display(),
+            scan.violations
         );
     }
 }
@@ -186,7 +222,7 @@ fn crate_sources_hold_no_state_before_a_run() {
 /// sample that breaks it, and the allowed forms must not.
 #[test]
 fn scan_flags_each_source_of_startup_state() {
-    let violations = scan_source(
+    let scan = scan_source(
         r#"
         use std::thread;
         static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -210,25 +246,39 @@ fn scan_flags_each_source_of_startup_state() {
         "attribute `ctor` runs before main",
         "attribute `link_section` runs before main",
         "attribute `used` runs before main",
-        "VM constructor `Lua::new`",
         "use of `std::thread`",
         "path through `thread`",
     ] {
         assert!(
-            violations.iter().any(|found| found == expected),
-            "{expected} not flagged: {violations:?}"
+            scan.violations.iter().any(|found| found == expected),
+            "{expected} not flagged: {:?}",
+            scan.violations
         );
     }
+    assert_eq!(scan.vm_constructors.len(), 1);
+    assert_eq!(scan.vm_constructors[0], "Lua::new");
 }
 
 #[test]
 fn scan_allows_immutable_tables_and_constants() {
-    let violations = scan_source(
+    let scan = scan_source(
         r#"
         static NAMES: [&str; 2] = ["tick", "onStop"];
+        use mlua::thread::ThreadStatus;
+        fn status() -> mlua::thread::ThreadStatus { ThreadStatus::Resumable }
         const LIMIT: usize = 16;
         fn pure(lua: &mlua::Lua) -> usize { LIMIT + NAMES.len() + lua.used_memory() }
+        #[cfg(test)]
+        mod tests {
+            static mut TEST_ONLY: u8 = 0;
+            fn setup() { let _ = mlua::Lua::new(); }
+        }
         "#,
     );
-    assert!(violations.is_empty(), "{violations:?}");
+    assert!(scan.violations.is_empty(), "{:?}", scan.violations);
+    assert!(
+        scan.vm_constructors.is_empty(),
+        "{:?}",
+        scan.vm_constructors
+    );
 }

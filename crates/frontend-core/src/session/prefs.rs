@@ -1064,10 +1064,9 @@ impl<Io> OperatorSession<Io> {
                 }
             }
             Notice::LuauRuntime => {
-                match self.write_preference(
-                    crate::luau_prefs::LUAU_RUNTIME_NOTICE_ACK_KEY,
-                    true.into(),
-                ) {
+                match self
+                    .write_preference(crate::luau_prefs::LUAU_RUNTIME_NOTICE_ACK_KEY, true.into())
+                {
                     Ok(write) => self.after_write(
                         request,
                         setting,

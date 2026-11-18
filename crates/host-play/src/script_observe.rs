@@ -16,9 +16,9 @@ use host::{ScriptRunPolicy, SlotInput};
 use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 use script::slot::SeatWalkTerminal;
-use script::{ScriptCtx, SlotScript};
 #[cfg(any(feature = "js", feature = "luau"))]
 use script::surface::{InputDelivery, LentOutcome, SurfaceWake};
+use script::{ScriptCtx, SlotScript};
 
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
@@ -242,6 +242,7 @@ fn note_seat_page(
 }
 #[cfg(any(feature = "js", feature = "luau"))]
 enum SurfacePageDelivery<'ctx, 'script> {
+    #[cfg(feature = "js")]
     Posted { wake_waits: bool },
     Lent {
         wake: SurfaceWake,
@@ -1049,8 +1050,7 @@ where
             #[cfg(all(feature = "luau", not(feature = "js")))]
             let npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]> = None;
             #[cfg(any(feature = "js", feature = "luau"))]
-            let post_page = |slot: &mut SlotScript,
-                             delivery: SurfacePageDelivery<'_, '_>| {
+            let post_page = |slot: &mut SlotScript, delivery: SurfacePageDelivery<'_, '_>| {
                 let (
                     teleports_enabled,
                     walk_seq,
@@ -1194,47 +1194,33 @@ where
                     packed.stamp,
                     Some(guardian_active_event.unwrap_or("")),
                     |input, native| {
-                        post_script_snapshot(slot, navs, name, walk_seq, |slot| {
-                            match delivery {
-                                SurfacePageDelivery::Posted { wake_waits } => {
-                                    #[cfg(feature = "js")]
-                                    {
-                                        if wake_waits {
-                                            slot.post_snapshot_wake(
-                                                input,
-                                                native,
-                                                force_banks,
-                                                inv.is_none() && input.inv_size == 0,
-                                            )
-                                        } else {
-                                            slot.post_snapshot_delta(input, native, force_banks)
-                                        }
-                                    }
-                                    #[cfg(not(feature = "js"))]
-                                    {
-                                        let _ = wake_waits;
-                                        false
-                                    }
+                        post_script_snapshot(slot, navs, name, walk_seq, |slot| match delivery {
+                            #[cfg(feature = "js")]
+                            SurfacePageDelivery::Posted { wake_waits } => {
+                                if wake_waits {
+                                    slot.post_snapshot_wake(
+                                        input,
+                                        native,
+                                        force_banks,
+                                        inv.is_none() && input.inv_size == 0,
+                                    )
+                                } else {
+                                    slot.post_snapshot_delta(input, native, force_banks)
                                 }
-                                SurfacePageDelivery::Lent { wake, ctx } => {
-                                    let outcome = match wake {
-                                        SurfaceWake::Tick { held } => {
-                                            slot.on_game_tick_lent(ctx, held, input, native)
-                                        }
-                                        SurfaceWake::Evidence => {
-                                            slot.on_snapshot_change_lent(ctx, input, native)
-                                        }
-                                        SurfaceWake::SeatPage { release_floor } => {
-                                            slot.on_seat_page_lent(
-                                                ctx,
-                                                release_floor,
-                                                input,
-                                                native,
-                                            )
-                                        }
-                                    };
-                                    matches!(outcome, LentOutcome::Accepted)
-                                }
+                            }
+                            SurfacePageDelivery::Lent { wake, ctx } => {
+                                let outcome = match wake {
+                                    SurfaceWake::Tick { held } => {
+                                        slot.on_game_tick_lent(ctx, held, input, native)
+                                    }
+                                    SurfaceWake::Evidence => {
+                                        slot.on_snapshot_change_lent(ctx, input, native)
+                                    }
+                                    SurfaceWake::SeatPage { release_floor } => {
+                                        slot.on_seat_page_lent(ctx, release_floor, input, native)
+                                    }
+                                };
+                                matches!(outcome, LentOutcome::Accepted)
                             }
                         })
                     },
@@ -1404,10 +1390,7 @@ where
                         #[cfg(any(feature = "js", feature = "luau"))]
                         {
                             if slot.surface_active()
-                                && matches!(
-                                    slot.surface_input_delivery(),
-                                    InputDelivery::Lent
-                                )
+                                && matches!(slot.surface_input_delivery(), InputDelivery::Lent)
                             {
                                 let _accepted = post_page(
                                     &mut slot,
@@ -1427,10 +1410,7 @@ where
                         #[cfg(any(feature = "js", feature = "luau"))]
                         {
                             if slot.surface_active()
-                                && matches!(
-                                    slot.surface_input_delivery(),
-                                    InputDelivery::Lent
-                                )
+                                && matches!(slot.surface_input_delivery(), InputDelivery::Lent)
                             {
                                 let _accepted = post_page(
                                     &mut slot,
@@ -1450,10 +1430,7 @@ where
                         #[cfg(any(feature = "js", feature = "luau"))]
                         {
                             if slot.surface_active()
-                                && matches!(
-                                    slot.surface_input_delivery(),
-                                    InputDelivery::Lent
-                                )
+                                && matches!(slot.surface_input_delivery(), InputDelivery::Lent)
                             {
                                 if slot.on_seat_answer(&mut ctx) {
                                     let carried = slot.seat_answer_seq();
@@ -1469,10 +1446,7 @@ where
                                         },
                                     );
                                     if accepted {
-                                        slot.mark_seat_answer_dispatched(
-                                            carried,
-                                            carried_terminal,
-                                        );
+                                        slot.mark_seat_answer_dispatched(carried, carried_terminal);
                                     }
                                     note_seat_page(
                                         &mut slot,
@@ -1491,17 +1465,13 @@ where
                                     let carried = slot.seat_answer_seq();
                                     let carried_terminal = slot.seat_result_seq();
                                     let floor = slot.seat_terminal_dispatched();
-                                    let page_accepted =
-                                        post_page(
-                                            &mut slot,
-                                            SurfacePageDelivery::Posted { wake_waits: true },
-                                        );
+                                    let page_accepted = post_page(
+                                        &mut slot,
+                                        SurfacePageDelivery::Posted { wake_waits: true },
+                                    );
                                     let dispatch_accepted = slot.on_seat_page_at(tick, floor);
                                     if page_accepted && dispatch_accepted {
-                                        slot.mark_seat_answer_dispatched(
-                                            carried,
-                                            carried_terminal,
-                                        );
+                                        slot.mark_seat_answer_dispatched(carried, carried_terminal);
                                     }
                                     note_seat_page(
                                         &mut slot,

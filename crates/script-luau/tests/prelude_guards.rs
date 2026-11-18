@@ -93,6 +93,10 @@ fn prelude_wraps_status_callbacks_waits_and_protected_calls() -> mlua::Result<()
 
         print("logged")
         assert(string.format("%%:%*:%q:%02d", "raw", "quoted", 7) == "%:raw:\"quoted\":07")
+        -- Luau treats `%*` as one conversion, so the following `s` is literal.
+        assert(string.format("%*s", "raw", string.rep("x", 262145)) == "raws")
+        local precision_star_ok = pcall(string.format, "%.*s", 1, "raw")
+        assert(not precision_star_ok)
         "#,
     )
     .exec()?;
@@ -215,7 +219,10 @@ fn prelude_fails_closed_on_non_text_format_errors() -> mlua::Result<()> {
         "format",
         lua.create_function(|lua, format: String| {
             if format == "text-error" {
-                Ok((false, Value::String(lua.create_string("validator rejection")?)))
+                Ok((
+                    false,
+                    Value::String(lua.create_string("validator rejection")?),
+                ))
             } else {
                 Ok((false, Value::Integer(42)))
             }

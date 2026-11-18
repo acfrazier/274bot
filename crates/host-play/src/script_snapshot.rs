@@ -80,7 +80,7 @@ pub(crate) fn script_snapshot_fb(
 
 /// Note-mode landing id for an unnoted obj (`ObjNames` reverse cert), else
 /// the snapshot def's raw `certlink`.
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn posted_cert(
     obj_names: Option<&api::obj_names::ObjNames>,
     def: &api::obj_names::ItemDefView,
@@ -92,7 +92,7 @@ fn posted_cert(
         .unwrap_or(def.certificate_link)
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn posted_cert_id(obj_names: Option<&api::obj_names::ObjNames>, id: i32) -> i32 {
     obj_names
         .and_then(|n| n.item(id))
@@ -105,7 +105,7 @@ fn posted_cert_id(obj_names: Option<&api::obj_names::ObjNames>, id: i32) -> i32 
 /// action hole posts as an empty label, so a compat `InvButton` op index
 /// names the slot the native row does. Trailing holes name no op and are
 /// left off.
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn positional_ops(item: &api::snapshot::ItemView) -> Vec<String> {
     let len = item
         .actions

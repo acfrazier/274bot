@@ -1146,14 +1146,25 @@ fn luau_lifecycle_cell() {
         take_logs(play, &account, &mut logs);
         play.script_state(&account) == script::RunState::Running
             && logs.iter().any(|line| line.contains("luau-first"))
+            && play.script_wait_inflight_for_test(&account) > 0
     });
+    let wait_inflight_observed = play.script_wait_inflight_for_test(&account);
+    assert!(
+        wait_inflight_observed > 0,
+        "WaitEnqueued did not reach the slot watchdog"
+    );
     play.script_pause(&account);
     wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
         play.script_state(&account) == script::RunState::Paused
     });
     let paused_at = fixture.lock().unwrap().observed_tick;
     wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
-        fixture.lock().unwrap().observed_tick.wrapping_sub(paused_at) >= 3
+        fixture
+            .lock()
+            .unwrap()
+            .observed_tick
+            .wrapping_sub(paused_at)
+            >= 3
     });
     take_logs(&play, &account, &mut logs);
     assert!(
@@ -1165,6 +1176,7 @@ fn luau_lifecycle_cell() {
         take_logs(play, &account, &mut logs);
         logs.iter().any(|line| line.contains("luau-resumed"))
             && logs.iter().any(|line| line.contains("luau-next-tick"))
+            && play.script_wait_inflight_for_test(&account) == 0
     });
     play.script_stop(&account);
     wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
@@ -1184,7 +1196,9 @@ fn luau_lifecycle_cell() {
                 .is_some_and(|receipt| receipt.state == script::slot::ScriptTerminalState::Stopped)
     });
     take_logs(&play, &account, &mut self_logs);
-    let receipt = play.script_lifecycle_receipt(&account).expect("self-stop receipt");
+    let receipt = play
+        .script_lifecycle_receipt(&account)
+        .expect("self-stop receipt");
     assert_eq!(receipt.reason, "live done");
     assert_eq!(
         self_logs
@@ -1195,14 +1209,16 @@ fn luau_lifecycle_cell() {
         "self-stop runs the hook once: {self_logs:?}"
     );
     assert!(
-        !self_logs.iter().any(|line| line.contains("luau-after-stop")),
+        !self_logs
+            .iter()
+            .any(|line| line.contains("luau-after-stop")),
         "api.stop must end the tick: {self_logs:?}"
     );
     no_drops(&account);
     save(
         "luau-lifecycle-receipt.json",
         &json!({"cell":"luau_lifecycle","account":account,"logs":logs,"self_logs":self_logs,
-                "paused_game_ticks":3,"receipt":receipt}),
+                "paused_game_ticks":3,"wait_inflight_observed":wait_inflight_observed,"receipt":receipt}),
     );
 }
 

@@ -305,9 +305,31 @@ impl SeatClient {
     /// minted token; the slot remains the only authority that admits it.
     pub fn queue_walk(
         &mut self,
-        mut request: InteractReq,
+        request: InteractReq,
         expected_generation: u64,
         input: &SnapshotInput<'_>,
+    ) -> Result<RequestId, ClientError> {
+        self.queue_walk_with_baseline(request, expected_generation, input.user_move_intent_seq)
+    }
+
+    /// Test-only entry that preserves the dispatch's real movement-intent
+    /// baseline without manufacturing a snapshot outside the borrowed frame.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn queue_walk_with_baseline_for_test(
+        &mut self,
+        request: InteractReq,
+        expected_generation: u64,
+        user_move_intent_seq: u64,
+    ) -> Result<RequestId, ClientError> {
+        self.queue_walk_with_baseline(request, expected_generation, user_move_intent_seq)
+    }
+
+    fn queue_walk_with_baseline(
+        &mut self,
+        mut request: InteractReq,
+        expected_generation: u64,
+        user_move_intent_seq: u64,
     ) -> Result<RequestId, ClientError> {
         if self.awaiting.is_some() {
             return Err(ClientError::AlreadyWaiting);
@@ -365,7 +387,7 @@ impl SeatClient {
             },
         );
         self.walk_generation = expected_generation;
-        self.walk_intent_baseline = input.user_move_intent_seq;
+        self.walk_intent_baseline = user_move_intent_seq;
         self.walk_request = Some(request.clone());
         self.awaiting = Some(Awaited::Walk { id });
         self.reqs.push(SeatInteractDecoded {
