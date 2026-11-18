@@ -253,7 +253,8 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
             lines.extend(
                 done_rx
                     .recv_timeout(Duration::from_secs(10))
-                    .expect("surface isolate stop completes"),
+                    .expect("surface isolate stop completes")
+                    .logs,
             );
             for line in lines {
                 if throw_shaped(&line) {

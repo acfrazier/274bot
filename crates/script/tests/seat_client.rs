@@ -157,6 +157,27 @@ fn admitted_walk_outcome(
 }
 
 #[test]
+fn queued_batch_count_does_not_drain_or_repartition_rows() {
+    let mut client = client();
+    assert_eq!(client.queued_batch_count(), 0);
+    client.await_next_tick().unwrap();
+    assert_eq!(client.queued_batch_count(), 1);
+    assert_eq!(client.queued_batch_count(), 1);
+
+    let first = client.drain_seat_batches();
+    assert_eq!(first.len(), 1);
+    let row_count = first[0].batch.reqs.len();
+    assert_eq!(client.queued_batch_count(), 0);
+
+    client.restore_seat_batches(first);
+    assert_eq!(client.queued_batch_count(), 1);
+    let restored = client.drain_seat_batches();
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].batch.reqs.len(), row_count);
+    assert_eq!(client.queued_batch_count(), 0);
+}
+
+#[test]
 fn stamped_start_and_exact_terminal_are_consumed_once() {
     let mut client = client();
     let id = client
@@ -866,9 +887,14 @@ fn restored_held_wait_rows_count_toward_the_gameplay_bound() {
     assert_eq!(batch.rows(), MAX_SEAT_GAMEPLAY_ROWS);
 
     let mut client = client();
+    assert_eq!(client.held_fold_len(), 0);
     client.restore_seat_batches(vec![batch]);
+    assert_eq!(client.held_fold_len(), 1);
+    assert_eq!(client.held_fold_len(), 1);
     assert_eq!(client.await_next_tick(), Err(ClientError::RowsFull));
     assert_eq!(client.awaiting(), None);
+    assert_eq!(client.drain_seat_batches().len(), 1);
+    assert_eq!(client.held_fold_len(), 0);
 }
 
 #[test]

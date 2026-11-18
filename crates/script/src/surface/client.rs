@@ -674,6 +674,24 @@ impl SeatClient {
     pub fn pending_starts(&self) -> usize {
         self.starts.len()
     }
+    /// Count the batches a drain would return without consuming or repartitioning them.
+    pub fn queued_batch_count(&self) -> usize {
+        self.restored.len() + usize::from(self.has_new_batch())
+    }
+
+    /// Count restored guardian-fold batches without draining them.
+    pub fn held_fold_len(&self) -> usize {
+        self.restored.iter().filter(|batch| batch.held_fold).count()
+    }
+
+    fn has_new_batch(&self) -> bool {
+        !self.starts.is_empty()
+            || !self.cancels.is_empty()
+            || !self.lifecycle.is_empty()
+            || !self.reqs.is_empty()
+            || self.consumed_terminal_seq > self.acknowledged_terminal_seq
+    }
+
     fn pending_rows(&self) -> usize {
         self.lifecycle
             .len()
@@ -688,12 +706,7 @@ impl SeatClient {
 
     pub fn drain_seat_batches(&mut self) -> Vec<QueuedSeatBatch> {
         let mut batches: Vec<_> = self.restored.drain(..).collect();
-        if !self.starts.is_empty()
-            || !self.cancels.is_empty()
-            || !self.lifecycle.is_empty()
-            || !self.reqs.is_empty()
-            || self.consumed_terminal_seq > self.acknowledged_terminal_seq
-        {
+        if self.has_new_batch() {
             let mut reqs = std::mem::take(&mut self.reqs);
             reqs.extend(
                 std::mem::take(&mut self.lifecycle)

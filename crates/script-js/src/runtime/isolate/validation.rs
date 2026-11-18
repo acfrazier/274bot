@@ -446,7 +446,7 @@ mod tests {
         assert!(retiring_pending(&mut retiring));
         assert!(retiring.is_some());
 
-        joined.send(Vec::new()).unwrap();
+        joined.send(StopCompletion::default()).unwrap();
         assert!(!retiring_pending(&mut retiring));
         assert!(retiring.is_none());
 

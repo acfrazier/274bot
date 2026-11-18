@@ -14,7 +14,7 @@ use script::paint::ScriptPaint;
 use script::surface::{
     PostedSnapshotFacts, RouteInspectIdentities, ScriptRuntimeContext, ScriptStopReceipt,
     StopCompletion, SurfaceCard, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind,
-    SurfaceRun, SurfaceStart, TickOutcome,
+    SurfaceReady, SurfaceRun, SurfaceStart, TickOutcome,
 };
 use std::any::Any;
 use std::sync::{mpsc::Sender, Arc};
