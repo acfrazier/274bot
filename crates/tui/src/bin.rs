@@ -3554,6 +3554,90 @@ impl TuiSession {
         }
     }
 
+    /// Save the Luau runtime only after the first-enable notice is durable.
+    fn enable_luau_runtime(&mut self, app: &mut TuiApp) {
+        const LIVE_REFUSAL: &str = "settings are not saved in a --live run";
+        if !self.persist_ui {
+            app.error = Some(format!(
+                "settings: {}: {LIVE_REFUSAL}",
+                frontend_core::LUAU_RUNTIME_LABEL
+            ));
+            return;
+        }
+        self.core
+            .stage_notice(frontend_core::OperatorNotice::LuauRuntime);
+        match self.submit_raw_with(
+            app,
+            OperatorCommand::AcknowledgeNotice,
+            Targets::Application,
+        ) {
+            Ok(_) => {
+                app.luau_runtime_enable_after_ack = true;
+                self.project_setting_feedback(app);
+            }
+            Err(error) => {
+                app.error = Some(format!(
+                    "settings: {}: {error}",
+                    frontend_core::LUAU_RUNTIME_LABEL
+                ));
+                self.project_setting_feedback(app);
+            }
+        }
+    }
+
+    /// Submit the opt-in setting only after its one-time notice has been
+    /// saved, then project both durable values back into the popup.
+    fn project_luau_runtime(&mut self, app: &mut TuiApp) {
+        use frontend_core::{OperatorNotice, Setting, SettingStatus};
+
+        if app.luau_runtime_enable_after_ack
+            && !matches!(
+                self.core
+                    .setting_status(Setting::Notice(OperatorNotice::LuauRuntime)),
+                SettingStatus::Pending
+            )
+        {
+            app.luau_runtime_enable_after_ack = false;
+            if self.core.luau_runtime_notice_acknowledged() == Some(true) {
+                app.luau_runtime_request = Some(true);
+            }
+        }
+
+        if let Some(on) = app.luau_runtime_request.take() {
+            const LIVE_REFUSAL: &str = "settings are not saved in a --live run";
+            const ERROR_PREFIX: &str = "settings: Use experimental Luau script runtime:";
+            if app
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with(ERROR_PREFIX))
+            {
+                app.error = None;
+            }
+            if !self.persist_ui {
+                self.core.refuse_unsubmitted(
+                    OperatorCommand::SetLuauRuntime(on),
+                    &[],
+                    LIVE_REFUSAL,
+                );
+                app.error = Some(format!(
+                    "{ERROR_PREFIX} {LIVE_REFUSAL}"
+                ));
+            } else if let Err(error) = self.submit_raw_with(
+                app,
+                OperatorCommand::SetLuauRuntime(on),
+                Targets::Application,
+            ) {
+                app.error = Some(format!("{ERROR_PREFIX} {error}"));
+            }
+            self.project_setting_feedback(app);
+        }
+        app.luau_runtime_enabled = self.core.luau_runtime_enabled().unwrap_or(false);
+        app.luau_runtime_notice_acknowledged = self
+            .core
+            .luau_runtime_notice_acknowledged()
+            .unwrap_or(false);
+    }
+
     /// Submit the shared manual-walk pause preference
     /// (`SetNavPreference`): the core applies it to the current and future
     /// slots once it is saved. A refused save shows its reason and the
@@ -3754,7 +3838,7 @@ impl TuiSession {
     /// which drafts are still the operator's own change.
     fn project_setting_feedback(&mut self, app: &mut TuiApp) {
         use frontend_core::{NavPreference as N, Setting as S, SettingStatus};
-        const SHOWN: [frontend_core::Setting; 13] = [
+        const SHOWN: [frontend_core::Setting; 15] = [
             S::Nav(N::AllowTeleports),
             S::Nav(N::AllowWilderness),
             S::Nav(N::AllowBankFetch),
@@ -3768,6 +3852,8 @@ impl TuiSession {
             S::QuesterPaths,
             S::Notice(frontend_core::OperatorNotice::BackgroundBots),
             S::SessionLog,
+            S::LuauRuntime,
+            S::Notice(frontend_core::OperatorNotice::LuauRuntime),
         ];
         for setting in SHOWN {
             app.show_setting_status(setting, self.core.setting_status(setting));
@@ -3836,6 +3922,7 @@ impl TuiSession {
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_pvp_start_fights(app);
+        self.project_luau_runtime(app);
         self.project_quester_paths(app);
         // The benchmark's focus follows its run: select the member it
         // moved to.
@@ -5656,6 +5743,8 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             }
         }
         AppAction::AckBackground => session.ack_background_bots(app),
+        AppAction::EnableLuauRuntime => session.enable_luau_runtime(app),
+        AppAction::SetLuauRuntime(on) => app.luau_runtime_request = Some(on),
         AppAction::SettingsDraftEdited(edit) => {
             match edit {
                 crate::settings::SettingsEdit::RandomEvents(value) => {

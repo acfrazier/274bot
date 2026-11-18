@@ -65,7 +65,8 @@ pub struct SettingsState {
     /// 5=teleports, 6=wilderness, 7=bank fetch, 8=danger zones,
     /// 9=prerequisite dialogue, 10=quest start, 11=manual-walk pause,
     /// 12=map bake, 13=memory, 14=folder gate, 15=paths folder, 16=reload
-    /// paths, 17=cure poison, 18=start fights with players.
+    /// paths, 17=cure poison, 18=start fights with players,
+    /// 19=experimental Luau runtime.
     pub row: usize,
     /// Selected per-event policy row.
     pub random_event_index: usize,
@@ -76,7 +77,7 @@ pub struct SettingsState {
     /// A process-owned shared-preferences save has not settled yet.
     pub preferences_pending: bool,
     /// Hit targets from the last drawn viewport, including wrapped rows.
-    pub row_areas: [Rect; 19],
+    pub row_areas: [Rect; 20],
     /// The row whose own lines [`Self::detail_scroll`] scrolls.
     pub detail_row: usize,
     /// Lines of the selected setting scrolled out above the viewport when
@@ -140,6 +141,8 @@ pub enum SettingsKey {
     PauseScriptOnManualWalkAbort,
     /// The global PvP setting changed; the value is what the row now shows.
     PvpStartFights(bool),
+    /// The global experimental Luau runtime row was activated.
+    LuauRuntime(bool),
     /// The Quester folder settings changed and need shared persistence.
     QuesterPathsChanged,
     /// Reload the shared Path registry without starting a Path.
@@ -166,6 +169,7 @@ pub struct SettingsPane<'a> {
     pub state: &'a mut SettingsState,
     pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
     pub pvp_start_fights: Option<&'a mut frontend_core::PvpSettingView>,
+    pub luau_runtime: Option<bool>,
     pub script_scope_notice_ack: Option<&'a mut bool>,
     pub quester_paths: Option<&'a mut QuesterPathsView>,
     pub quester_paths_notice: Option<&'a str>,
@@ -202,6 +206,7 @@ impl<'a> SettingsPane<'a> {
             preferences_refused: None,
             pause_script_on_manual_walk_abort: None,
             pvp_start_fights: None,
+            luau_runtime: None,
             script_scope_notice_ack: None,
             quester_paths: None,
             quester_paths_notice: None,
@@ -224,6 +229,12 @@ impl<'a> SettingsPane<'a> {
     /// Bind the global "Start fights with players" setting to its row.
     pub fn pvp_start_fights(mut self, value: &'a mut frontend_core::PvpSettingView) -> Self {
         self.pvp_start_fights = Some(value);
+        self
+    }
+
+    /// Bind the saved experimental Luau runtime value.
+    pub fn luau_runtime(mut self, value: bool) -> Self {
+        self.luau_runtime = Some(value);
         self
     }
 
@@ -271,7 +282,7 @@ impl<'a> SettingsPane<'a> {
                 {
                     self.state.detail_scroll += 1;
                 } else {
-                    self.state.row = (self.state.row + 1).min(18);
+                    self.state.row = (self.state.row + 1).min(19);
                     self.reset_detail();
                 }
                 SettingsKey::Consumed
@@ -423,6 +434,9 @@ impl<'a> SettingsPane<'a> {
                 }
                 None => SettingsKey::Consumed,
             },
+            19 => self
+                .luau_runtime
+                .map_or(SettingsKey::Consumed, |enabled| SettingsKey::LuauRuntime(!enabled)),
             _ => SettingsKey::Consumed,
         }
     }
@@ -540,7 +554,7 @@ impl Widget for SettingsPane<'_> {
             .as_deref()
             .is_some_and(|ack| !*ack);
         let danger_level = self.nav.danger_level();
-        let selected_row = self.state.row.min(18);
+        let selected_row = self.state.row.min(19);
         let path_folder = self
             .quester_paths
             .as_deref()
@@ -646,11 +660,17 @@ impl Widget for SettingsPane<'_> {
                     .as_deref()
                     .is_some_and(frontend_core::PvpSettingView::shown)
             ),
+            format!(
+                "{}{}: {}",
+                marker(19),
+                frontend_core::LUAU_RUNTIME_LABEL,
+                self.luau_runtime.unwrap_or(false)
+            ),
         ];
         // What follows each row while its setting is pending or failed:
         // pieces borrowed from the retained feedback and drawn after the
         // row's own text, so a frame copies none of it.
-        let row_feedback: [Feedback<'_>; 19] = std::array::from_fn(|index| {
+        let row_feedback: [Feedback<'_>; 20] = std::array::from_fn(|index| {
             row_settings(index)
                 .iter()
                 .find_map(|setting| feedback_parts(self.feedback, *setting))
@@ -667,7 +687,7 @@ impl Widget for SettingsPane<'_> {
         let heading_style = Style::default().add_modifier(Modifier::BOLD);
         // Lead-ins sit above their first row. A lead-in adds to its row's block
         // height, but the row keeps its own index, hit target, and scroll slot.
-        let headers: [Option<(&str, Style)>; 19] = [
+        let headers: [Option<(&str, Style)>; 20] = [
             None,
             None,
             None,
@@ -687,10 +707,11 @@ impl Widget for SettingsPane<'_> {
             None,
             Some(("Survival and supplies", heading_style)),
             Some((combat_note.as_str(), note_style)),
+            Some((frontend_core::LUAU_RUNTIME_NOTE, note_style)),
         ];
         let width = area.width.min(100);
         let columns = usize::from(width - 2);
-        let row_heights: [u16; 19] = std::array::from_fn(|index| {
+        let row_heights: [u16; 20] = std::array::from_fn(|index| {
             wrapped_rows_parts(
                 [
                     rows[index].as_str(),
@@ -702,7 +723,7 @@ impl Widget for SettingsPane<'_> {
         });
         let header_heights =
             headers.map(|header| header.map_or(0, |(text, _)| wrapped_rows(text, columns)));
-        let block_heights: [u16; 19] =
+        let block_heights: [u16; 20] =
             std::array::from_fn(|index| header_heights[index] + row_heights[index]);
         let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
@@ -1027,6 +1048,10 @@ fn row_settings(row: usize) -> &'static [Setting] {
         12 => &[Setting::MapBake],
         14 | 15 => &[Setting::QuesterPaths],
         18 => &[Setting::PvpStartFights],
+        19 => &[
+            Setting::LuauRuntime,
+            Setting::Notice(frontend_core::OperatorNotice::LuauRuntime),
+        ],
         _ => &[],
     }
 }
@@ -1336,6 +1361,34 @@ mod tests {
         );
         println!("--- settings popup 120x40, row 18 selected, on ---\n{text}");
         assert!(text.contains("> Start fights with players: true"), "{text}");
+    }
+
+    #[test]
+    fn luau_runtime_row_shows_approved_copy_and_returns_the_requested_value() {
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState {
+            open: true,
+            row: 19,
+            ..Default::default()
+        };
+        let text = render_lines(
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+                .luau_runtime(false),
+            120,
+            40,
+        );
+        assert!(
+            text.contains("> Use experimental Luau script runtime: false"),
+            "{text}"
+        );
+        assert!(text.contains(frontend_core::LUAU_RUNTIME_NOTE), "{text}");
+
+        let result = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+            .luau_runtime(false)
+            .on_key(key(KeyCode::Enter));
+        assert_eq!(result, SettingsKey::LuauRuntime(true));
     }
 
     /// Without a setting view (a `--live` run) the row does nothing.

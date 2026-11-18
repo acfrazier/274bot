@@ -362,6 +362,10 @@ pub enum AppAction {
     ScriptLoad(std::path::PathBuf),
     /// Persist the background-bots notice ("Got it, don't show again").
     AckBackground,
+    /// Confirm the first-enable warning and persist its Luau notice acknowledgement.
+    EnableLuauRuntime,
+    /// Set the shared experimental Luau runtime after any required confirmation.
+    SetLuauRuntime(bool),
     /// Commit a changed TUI settings draft to the shared form-save model.
     SettingsDraftEdited(SettingsEdit),
     /// One step of the rs2b0t profile import; the binary owns the flow.
@@ -626,6 +630,13 @@ pub struct TuiApp {
     pub pvp_start_fights: frontend_core::PvpSettingView,
     /// The popup set the row; the session submits this value (`SetPvpStartFights`).
     pub pvp_start_fights_request: Option<bool>,
+    /// Durable experimental Luau runtime preference and its first-enable notice.
+    pub luau_runtime_enabled: bool,
+    pub luau_runtime_notice_acknowledged: bool,
+    /// A setting request that the binary submits through the core.
+    pub luau_runtime_request: Option<bool>,
+    /// The notice acknowledgement is pending; enable only after it is durable.
+    pub luau_runtime_enable_after_ack: bool,
     shared_preferences: Option<frontend_core::UiPreferences>,
     /// Which saved settings have a write the core still holds pending
     /// (copied from the core each pump): their drafts stay the operator's.
@@ -793,6 +804,10 @@ impl TuiApp {
             pause_script_on_manual_walk_abort_dirty: false,
             pvp_start_fights: frontend_core::PvpSettingView::default(),
             pvp_start_fights_request: None,
+            luau_runtime_enabled: false,
+            luau_runtime_notice_acknowledged: false,
+            luau_runtime_request: None,
+            luau_runtime_enable_after_ack: false,
             shared_preferences: None,
             pending: PendingSettings::default(),
             setting_feedback: Vec::new(),

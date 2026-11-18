@@ -44,6 +44,7 @@ pub(crate) enum PrefRow {
     Danger(DangerLevel),
     SessionLog(bool),
     PvpStartFights(bool),
+    LuauRuntime(bool),
     MapBake(MapBakeChoice),
     QuesterPaths,
     ReloadQuesterPaths,
@@ -59,6 +60,7 @@ impl PrefRow {
             Self::Danger(level) => OperatorCommand::SetDangerLevel(level),
             Self::SessionLog(on) => OperatorCommand::SetSessionLog(on),
             Self::PvpStartFights(on) => OperatorCommand::SetPvpStartFights(on),
+            Self::LuauRuntime(on) => OperatorCommand::SetLuauRuntime(on),
             Self::MapBake(choice) => OperatorCommand::SetMapBakeChoice(choice),
             Self::QuesterPaths => OperatorCommand::SetQuesterPaths,
             Self::ReloadQuesterPaths => OperatorCommand::ReloadQuesterPaths,
@@ -79,6 +81,8 @@ pub enum Notice {
     RenderAllWarning,
     /// The Quester Paths status line: dismiss it.
     QuesterPaths,
+    /// The experimental Luau runtime's first-enable warning.
+    LuauRuntime,
 }
 
 /// Maximum saved-setting transitions kept for a watching front end. If a
@@ -563,6 +567,23 @@ impl<Io> OperatorSession<Io> {
         let preferences = self.preferences()?;
         crate::pvp_prefs::pvp_start_fights(&preferences).ok()
     }
+    /// The saved experimental Luau runtime setting; absent is off.
+    pub fn luau_runtime_enabled(&self) -> Option<bool> {
+        let preferences = self.preferences()?;
+        crate::luau_prefs::luau_runtime_enabled(&preferences).ok()
+    }
+
+    /// Whether the first-enable warning has been durably acknowledged.
+    pub fn luau_runtime_notice_acknowledged(&self) -> Option<bool> {
+        let preferences = self.preferences()?;
+        crate::luau_prefs::luau_runtime_notice_acknowledged(&preferences).ok()
+    }
+
+    /// Refusal to run a saved Luau selection while its runtime is off or
+    /// its preference has not been read.
+    pub fn luau_start_refusal(&self) -> Option<&'static str> {
+        crate::luau_prefs::luau_start_refusal(self.luau_runtime_enabled())
+    }
 
     /// The saved map-bake choice; `None` without a bound preferences
     /// document.
@@ -628,6 +649,7 @@ impl<Io> OperatorSession<Io> {
             PrefRow::Danger(level) => self.set_danger_level(request, level),
             PrefRow::SessionLog(on) => self.set_session_log(request, on),
             PrefRow::PvpStartFights(on) => self.set_pvp_start_fights(request, on),
+            PrefRow::LuauRuntime(on) => self.set_luau_runtime(request, on),
             PrefRow::MapBake(choice) => self.set_map_bake_choice(request, choice),
             PrefRow::QuesterPaths => self.set_quester_paths(request, surface),
             PrefRow::ReloadQuesterPaths => self.reload_quester_paths(request, surface),
@@ -862,6 +884,24 @@ impl<Io> OperatorSession<Io> {
             Err(error) => self.refused(setting, not_accepted("start fights with players", &error)),
         }
     }
+    fn set_luau_runtime(&mut self, request: RequestId, on: bool) -> Applied {
+        let setting = Setting::LuauRuntime;
+        let Some(preferences) = self.preferences() else {
+            return self.refused(setting, no_store());
+        };
+        match crate::luau_prefs::write_luau_runtime(&preferences, on) {
+            Ok(write) => self.after_write(
+                request,
+                setting,
+                write,
+                crate::luau_prefs::LUAU_RUNTIME_LABEL,
+            ),
+            Err(error) => self.refused(
+                setting,
+                not_accepted(crate::luau_prefs::LUAU_RUNTIME_LABEL, &error),
+            ),
+        }
+    }
 
     /// The bake gate (a lent model) takes the choice from the durable
     /// snapshot; the command's terminal reports the save.
@@ -1001,6 +1041,20 @@ impl<Io> OperatorSession<Io> {
                     Ok(write) => {
                         self.after_write(request, setting, write, RENDER_ALL_WARNING_ACK_KEY)
                     }
+                    Err(applied) => self.refused(setting, applied),
+                }
+            }
+            Notice::LuauRuntime => {
+                match self.write_preference(
+                    crate::luau_prefs::LUAU_RUNTIME_NOTICE_ACK_KEY,
+                    true.into(),
+                ) {
+                    Ok(write) => self.after_write(
+                        request,
+                        setting,
+                        write,
+                        crate::luau_prefs::LUAU_RUNTIME_NOTICE_ACK_KEY,
+                    ),
                     Err(applied) => self.refused(setting, applied),
                 }
             }
