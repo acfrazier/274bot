@@ -111,6 +111,8 @@ struct Fixture {
     ready: bool,
     started: bool,
     start_tile: Option<WorldTile>,
+    /// Seed combat stats when the fixture needs combat-level routing.
+    seed_combat_stats: bool,
     walk_arrival: Option<WorldTile>,
     advance: bool,
     advance_phase: u8,
@@ -397,7 +399,7 @@ fn fixture_frame(
                     cheat(client, "setvar rjquest 30")?;
                 } else {
                     cheat(client, "setstat woodcutting 1")?;
-                    if state.start_tile.is_some() {
+                    if state.seed_combat_stats {
                         // Keep combat below White Wolf Mountain's level-50
                         // route cutoff while retaining high HP and defence.
                         cheat(client, "setstat attack 1")?;
@@ -492,8 +494,8 @@ fn fixture_frame(
                     && wielded
                     && empty
                     && level_one
-                    && seeded_combat
-                    && seeded_hitpoints
+                    && (!state.seed_combat_stats || seeded_combat)
+                    && (!state.seed_combat_stats || seeded_hitpoints)
                     && here
                     && cook_red
                 {
@@ -522,12 +524,21 @@ fn evidence() -> PathBuf {
     PathBuf::from(std::env::var_os("BOT_EVIDENCE_DIR").expect("BOT_EVIDENCE_DIR"))
 }
 fn start_fixture(journal: bool) -> (Play, String, Arc<Mutex<Fixture>>) {
-    start_fixture_at(journal, None)
+    start_fixture_with_options(journal, None, false)
 }
 
 fn start_fixture_at(
     journal: bool,
     start_tile: Option<WorldTile>,
+) -> (Play, String, Arc<Mutex<Fixture>>) {
+    let seed_combat_stats = start_tile.is_some();
+    start_fixture_with_options(journal, start_tile, seed_combat_stats)
+}
+
+fn start_fixture_with_options(
+    journal: bool,
+    start_tile: Option<WorldTile>,
+    seed_combat_stats: bool,
 ) -> (Play, String, Arc<Mutex<Fixture>>) {
     script_js::install_cards().expect("install canonical Sherlock card for live API fixtures");
     api::hostlog::set_debug(true);
@@ -589,6 +600,7 @@ fn start_fixture_at(
     let account = entries[0].0.clone();
     let state = Arc::new(Mutex::new(Fixture {
         start_tile,
+        seed_combat_stats,
         ..Fixture::default()
     }));
     let frame_state = Arc::clone(&state);
@@ -695,7 +707,7 @@ const GATHER_LOG_TARGET: i64 = 56;
 const GATHER_DROP_TARGET: i64 = 54;
 
 fn gather_cell() {
-    let (play, account, fixture) = start_fixture(false);
+    let (play, account, fixture) = start_fixture_with_options(false, None, true);
     fixture.lock().unwrap().started = true;
     let source = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../script-js/examples/gather_quest_v2.js"),
