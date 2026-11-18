@@ -608,6 +608,16 @@ pub struct SlotScript {
     recovery_hints: Arc<RecoveryHintsCell>,
 }
 
+/// Borrowed sources used to assemble one seat page for a lent surface wake.
+struct SlotPageSources<'a> {
+    seat: Option<&'a GameplaySeat<SeatEffect>>,
+    api: Option<&'a api_seat::ApiSeat>,
+    bank: Option<&'a bank_seat::BankSeat>,
+    shop: Option<&'a shop_seat::ShopSeat>,
+    compiled: Option<&'a CompiledRun>,
+    seat_compiled_owner: Option<RequestId>,
+}
+
 impl Default for SlotScript {
     fn default() -> Self {
         Self::new()
@@ -2278,15 +2288,18 @@ impl SlotScript {
     /// Complete borrowed host facts with the slot's owned family and seat
     /// pages, then deliver while the local page arrays are still alive.
     fn with_native_page<T>(
-        seat: Option<&GameplaySeat<SeatEffect>>,
-        api: Option<&api_seat::ApiSeat>,
-        bank: Option<&bank_seat::BankSeat>,
-        shop: Option<&shop_seat::ShopSeat>,
-        compiled: Option<&CompiledRun>,
-        seat_compiled_owner: Option<RequestId>,
+        sources: SlotPageSources<'_>,
         native: crate::native::snapshot_source::NativeFactsInput<'_>,
         deliver: impl FnOnce(crate::native::snapshot_source::NativeFactsInput<'_>) -> T,
     ) -> T {
+        let SlotPageSources {
+            seat,
+            api,
+            bank,
+            shop,
+            compiled,
+            seat_compiled_owner,
+        } = sources;
         // Reborrow the copied facts at this call's scope, which also owns
         // the seat detail and result arrays appended below.
         let mut native = crate::native::snapshot_source::NativeFactsInput { ..native };
@@ -2341,12 +2354,14 @@ impl SlotScript {
         }
         let identity = self.runtime_context.native_input().lock().identity();
         let outcome = Self::with_native_page(
-            self.seat.as_deref(),
-            self.api.as_deref(),
-            self.bank.as_deref(),
-            self.shop.as_deref(),
-            self.compiled.as_deref(),
-            self.seat_compiled_owner,
+            SlotPageSources {
+                seat: self.seat.as_deref(),
+                api: self.api.as_deref(),
+                bank: self.bank.as_deref(),
+                shop: self.shop.as_deref(),
+                compiled: self.compiled.as_deref(),
+                seat_compiled_owner: self.seat_compiled_owner,
+            },
             native,
             |native| surface.dispatch_lent(wake, ctx.tick, identity, input, native),
         );
@@ -2368,12 +2383,14 @@ impl SlotScript {
             return false;
         };
         Self::with_native_page(
-            self.seat.as_deref(),
-            self.api.as_deref(),
-            self.bank.as_deref(),
-            self.shop.as_deref(),
-            self.compiled.as_deref(),
-            self.seat_compiled_owner,
+            SlotPageSources {
+                seat: self.seat.as_deref(),
+                api: self.api.as_deref(),
+                bank: self.bank.as_deref(),
+                shop: self.shop.as_deref(),
+                compiled: self.compiled.as_deref(),
+                seat_compiled_owner: self.seat_compiled_owner,
+            },
             native,
             |native| surface.post_snapshot_delta(input, native, force_banks),
         )
@@ -2391,12 +2408,14 @@ impl SlotScript {
             return false;
         };
         Self::with_native_page(
-            self.seat.as_deref(),
-            self.api.as_deref(),
-            self.bank.as_deref(),
-            self.shop.as_deref(),
-            self.compiled.as_deref(),
-            self.seat_compiled_owner,
+            SlotPageSources {
+                seat: self.seat.as_deref(),
+                api: self.api.as_deref(),
+                bank: self.bank.as_deref(),
+                shop: self.shop.as_deref(),
+                compiled: self.compiled.as_deref(),
+                seat_compiled_owner: self.seat_compiled_owner,
+            },
             native,
             |native| surface.post_snapshot_wake(input, native, force_banks, preserve_inv),
         )
