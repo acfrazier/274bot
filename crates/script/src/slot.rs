@@ -501,8 +501,8 @@ pub struct SlotScript {
     /// Watchdog facts already filtered and dispatched by the owner seat,
     /// consumed by the host's lifecycle drain rather than the game driver.
     seat_lifecycle: Vec<crate::interact::InteractReq>,
-    /// Test-only evidence that the host actually drained the surface client's
-    /// wait lifecycle rows, not merely observed a final watchdog state.
+    /// Test-only evidence of surface wait rows dispatched through the seat
+    /// and drained by the host, not merely the final watchdog state.
     #[cfg(feature = "test-hooks")]
     surface_wait_drained_for_test: (usize, usize),
     /// Channels that already received the held-post refusal status in the
@@ -1179,8 +1179,8 @@ impl SlotScript {
         self.watchdog.wait_inflight()
     }
 
-    /// WaitEnqueued and WaitSettled rows drained from the active surface since
-    /// slot creation. These are not gameplay requests or packet ticks.
+    /// WaitEnqueued and WaitSettled rows drained by the host since slot
+    /// creation, including the surface client's admitted seat batches.
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn surface_wait_drained_for_test(&self) -> (usize, usize) {
@@ -3988,6 +3988,10 @@ impl SlotScript {
             .surface
             .as_ref()
             .map_or_else(Vec::new, |surface| surface.drain_lifecycle());
+        // Production surface clients carry lifecycle facts in their seat
+        // batches. Those rows reach this drain through dispatch_seat_rows,
+        // rather than the surface's separate (empty) drain_lifecycle.
+        facts.append(&mut self.seat_lifecycle);
         #[cfg(feature = "test-hooks")]
         for fact in &facts {
             match fact {
@@ -4000,7 +4004,6 @@ impl SlotScript {
                 _ => {}
             }
         }
-        facts.append(&mut self.seat_lifecycle);
         facts
     }
 
