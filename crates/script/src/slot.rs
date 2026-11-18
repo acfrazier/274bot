@@ -501,8 +501,8 @@ pub struct SlotScript {
     /// Watchdog facts already filtered and dispatched by the owner seat,
     /// consumed by the host's lifecycle drain rather than the game driver.
     seat_lifecycle: Vec<crate::interact::InteractReq>,
-    /// Test-only evidence of surface wait rows dispatched through the seat
-    /// and drained by the host, not merely the final watchdog state.
+    /// Test-only Luau wait rows accepted from the surface client's seat
+    /// batches and drained by the host, not merely watchdog state.
     #[cfg(feature = "test-hooks")]
     surface_wait_drained_for_test: (usize, usize),
     /// Channels that already received the held-post refusal status in the
@@ -1179,8 +1179,8 @@ impl SlotScript {
         self.watchdog.wait_inflight()
     }
 
-    /// WaitEnqueued and WaitSettled rows drained by the host since slot
-    /// creation, including the surface client's admitted seat batches.
+    /// Luau WaitEnqueued and WaitSettled seat rows drained by the host since
+    /// slot creation. Other surface families and direct rows are not counted.
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn surface_wait_drained_for_test(&self) -> (usize, usize) {
@@ -3991,19 +3991,21 @@ impl SlotScript {
         // Production surface clients carry lifecycle facts in their seat
         // batches. Those rows reach this drain through dispatch_seat_rows,
         // rather than the surface's separate (empty) drain_lifecycle.
-        facts.append(&mut self.seat_lifecycle);
         #[cfg(feature = "test-hooks")]
-        for fact in &facts {
-            match fact {
-                crate::interact::InteractReq::WaitEnqueued => {
-                    self.surface_wait_drained_for_test.0 += 1;
+        if self.surface_family() == Some(SurfaceFamily::LuauV2) {
+            for fact in &self.seat_lifecycle {
+                match fact {
+                    crate::interact::InteractReq::WaitEnqueued => {
+                        self.surface_wait_drained_for_test.0 += 1;
+                    }
+                    crate::interact::InteractReq::WaitSettled => {
+                        self.surface_wait_drained_for_test.1 += 1;
+                    }
+                    _ => {}
                 }
-                crate::interact::InteractReq::WaitSettled => {
-                    self.surface_wait_drained_for_test.1 += 1;
-                }
-                _ => {}
             }
         }
+        facts.append(&mut self.seat_lifecycle);
         facts
     }
 

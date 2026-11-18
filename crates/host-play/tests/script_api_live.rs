@@ -1226,7 +1226,9 @@ fn luau_lifecycle_cell() {
         &json!({"cell":"luau_lifecycle","account":account,"logs":logs,"self_logs":self_logs,
                 "paused_game_ticks":3,"wait_inflight_observed":wait_inflight_observed,
                 "wait_enqueued_drained":wait_enqueued_drained,
-                "wait_settled_drained":wait_settled_drained,"receipt":receipt}),
+                "wait_settled_drained":wait_settled_drained,
+                "wait_lifecycle_path":"Luau SeatClient lifecycle -> seat batch -> SlotScript.seat_lifecycle -> drain_lifecycle",
+                "receipt":receipt}),
     );
 }
 
