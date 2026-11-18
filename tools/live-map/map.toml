@@ -1590,6 +1590,14 @@ cells = [
   "host.luau-lifecycle|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,luau --test script_api_live -- --ignored --exact luau_lifecycle --nocapture --test-threads=1",
 ]
 
+# The shared preference supplies Luau admission to both frontends; exercise its
+# saved switch, notice acknowledgement and fail-closed start checks.
+[[cover]]
+globs = ["crates/frontend-core/src/luau_prefs.rs"]
+cells = [
+  "frontend-core.luau-preference-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib luau_prefs::tests::",
+]
+
 # Compatibility-family imports and the host runtime wiring they cross. The
 # three Engine L cells exercise the selected real surfaces; the load cells
 # check the shared runtime/import path.
