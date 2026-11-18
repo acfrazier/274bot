@@ -148,6 +148,20 @@ fn load_requires_a_tick_entry() {
 }
 
 #[test]
+fn round_two_tick_lookup_does_not_call_finite_index_metamethod() {
+    assert!(spawn(
+        r#"
+        return setmetatable({}, {
+            __index = function()
+                return function() end
+            end,
+        })
+        "#,
+    )
+    .is_err());
+}
+
+#[test]
 fn tick_wait_resumes_only_on_an_unheld_game_tick() {
     let mut run = spawn(
         r#"
@@ -240,6 +254,61 @@ fn host_binding_errors_are_catchable_without_escaping_the_vm() {
         vec![TickOutcome::Success {
             tick: 1,
             generation: 1,
+        }]
+    );
+}
+
+#[test]
+fn round_two_unyieldable_callback_does_not_arm_a_wait() {
+    let mut run = spawn(
+        r#"
+        local count = 0
+        return { tick = function(api)
+            count = count + 1
+            if count == 1 then
+                local ok, message = pcall(function()
+                    string.gsub("a", "a", function() api.wait() end)
+                end)
+                assert(not ok and string.find(message, "yield", 1, true))
+                api.log("callback refused")
+            elseif count == 2 then
+                api.wait()
+                api.log("wait resumed")
+            end
+        end }
+        "#,
+    )
+    .expect("valid Luau run");
+    assert_eq!(
+        dispatch(&mut *run, SurfaceWake::Tick { held: false }, 1),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["callback refused"]);
+    assert_eq!(
+        run.drain_tick_outcomes(),
+        [TickOutcome::Success {
+            tick: 1,
+            generation: 1
+        }]
+    );
+    assert_eq!(
+        dispatch(&mut *run, SurfaceWake::Tick { held: false }, 2),
+        LentOutcome::Accepted
+    );
+    assert!(
+        run.drain_tick_outcomes().is_empty(),
+        "second tick must yield"
+    );
+    assert_eq!(
+        dispatch(&mut *run, SurfaceWake::Tick { held: false }, 3),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["wait resumed"]);
+    assert_eq!(
+        run.drain_tick_outcomes(),
+        [TickOutcome::Success {
+            tick: 3,
+            generation: 1
         }]
     );
 }

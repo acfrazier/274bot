@@ -291,7 +291,7 @@ impl LuauSurfaceFactory {
             }
         };
         let tick_function = entries
-            .get::<Function>("tick")
+            .raw_get::<Function>("tick")
             .map_err(|error| spawn_error("luau-load", &error))?;
         let on_paint = optional_entry(&entries, "onPaint")?;
         let on_stop = optional_entry(&entries, "onStop")?;

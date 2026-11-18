@@ -1,13 +1,16 @@
 use mlua::{ffi, Error, Lua};
 
 unsafe extern "C-unwind" fn step(state: *mut ffi::lua_State, _debug: *mut ffi::lua_Debug) {
-    // SAFETY: Luau calls this hook with its currently executing, live state. Its
-    // callback table belongs to that state. `install` writes this static hook
-    // under mlua's lock before any coroutine exists; the VM-owned interrupt
-    // outlives every entry. The callback's `-1` argument selects its guarded
-    // non-GC path. No Rust value with a destructor crosses the C-unwind call or
-    // `lua_error`. If the interrupt slot is absent, this hook raises before the
-    // next script instruction can take effect.
+    // SAFETY: `enable` installs this hook on the main state before any
+    // coroutine exists. `exec_raw` and each `Thread::resume` hold mlua's
+    // reentrant state lock. A resume holds that lock for the full entry, so
+    // another thread cannot change the callback table while this hook reads
+    // it. The VM-owned watchdog interrupt outlives every entry. The `-1`
+    // argument selects mlua's non-GC path. Its `used_memory` check re-enters
+    // the same lock on this thread. The callback returns `Continue`, never
+    // `Yield`. No Rust value with a destructor crosses this C-unwind callback
+    // or `lua_error`. If the interrupt is absent, this hook errors before the
+    // next Luau instruction.
     unsafe {
         let callbacks = ffi::lua_callbacks(state);
         if let Some(interrupt) = (*callbacks).interrupt {

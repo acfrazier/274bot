@@ -3,6 +3,7 @@ local native_type = type
 local native_error = error
 local native_pcall = pcall
 local native_yield = coroutine.yield
+local native_isyieldable = coroutine.isyieldable
 local native_tonumber = tonumber
 local native_select = select
 local native_tostring = tostring
@@ -242,6 +243,9 @@ return function(host)
             native_error("Luau prelude binding leaf must be a function", 0)
         end
         return function(...)
+            if wait_for_resume and not native_isyieldable() then
+                native_error("waiting binding cannot yield from this callback", 2)
+            end
             return finish_binding(wait_for_resume, fn(...))
         end
     end
