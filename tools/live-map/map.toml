@@ -108,6 +108,7 @@ globs = [
   "crates/nav-planner/src/**",
   "crates/nav-executor/src/**",
   "crates/script/src/**",
+  "crates/script-luau/src/**",
   "crates/script-js/src/**",
   "crates/script-js/examples/guardian_claim_toggle.js",
   "crates/script-js/examples/combat_showcase_v2.ts",
@@ -310,9 +311,8 @@ globs = [
   "crates/nav-bake/Cargo.toml",
   "crates/nav-bake/src/pack/sidecars.rs",
   "crates/nav-bake/src/services.rs",
-  # The Luau surface crate has no VM, thread or state until its run lifecycle
-  # lands. That slice moves crates/script-luau/src/** to [live] with its cells.
-  "crates/script-luau/src/lib.rs",
+  # Luau's L2b run now dispatches against real game snapshots; its source
+  # belongs to [live] and the lifecycle cell below reaches it.
 ]
 
 exceptions = [
@@ -1489,6 +1489,24 @@ cells = [
   "scenario.auto-fighter-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_auto_fighter|--locked -p scenario --lib runner::tests::auto_fighter_bank_clean_floor_allows_start_and_records_zero_wait",
   "scenario.chicken-killer-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_chicken_killer|--locked -p scenario --lib gold_scripts_start_the_catalog_after_the_last_seed_wait",
   "host.api-combat-native-lines|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line --nocapture --test-threads=1",
+]
+
+# A real R289 Luau run crosses Play Start, the slot's lent tick,
+# pause/resume, Stop, and physical VM retirement. The slot and seat client
+# mappings are shared by the Luau and JS runs.
+[[cover]]
+globs = [
+  "crates/script-luau/src/**",
+  "crates/script/src/surface/client.rs",
+  "crates/script/src/slot.rs",
+  "crates/script/src/surface.rs",
+  "crates/host-play/src/script_observe.rs",
+  "crates/host-play/src/script_runtime.rs",
+  "crates/host-play/src/script_snapshot.rs",
+  "crates/host-play/src/play_scripts.rs",
+]
+cells = [
+  "host.luau-lifecycle|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,luau --test script_api_live -- --ignored --exact luau_lifecycle --nocapture --test-threads=1",
 ]
 
 # Compatibility-family imports and the host runtime wiring they cross. The

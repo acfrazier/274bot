@@ -109,6 +109,7 @@ struct Fixture {
     phase: u8,
     error: Option<String>,
     ready: bool,
+    observed_tick: u32,
     started: bool,
     start_tile: Option<WorldTile>,
     walk_arrival: Option<WorldTile>,
@@ -248,6 +249,7 @@ fn fixture_frame(
     }
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(client);
+    state.observed_tick = snapshot.tick();
     if state.start_tile.is_some() {
         if let Some((x, z, level)) = snapshot.tile() {
             let tile = WorldTile { x, z, level };
@@ -1038,6 +1040,110 @@ fn runtime_restart_cell() {
     runtime_cell(true);
 }
 
+#[cfg(feature = "luau")]
+const LUAU_WAIT_SOURCE: &str = r#"
+local did_wait = false
+return {
+    tick = function(api)
+        if not did_wait then
+            did_wait = true
+            api.log("luau-first")
+            api.wait()
+            api.log("luau-resumed")
+        else
+            api.log("luau-next-tick")
+        end
+    end,
+    onStop = function(reason)
+        api.log("luau-hook:" .. reason)
+    end,
+}
+"#;
+
+#[cfg(feature = "luau")]
+const LUAU_SELF_STOP_SOURCE: &str = r#"
+return {
+    tick = function(api)
+        api.log("luau-self-first")
+        api.stop("live done")
+        api.log("luau-after-stop")
+    end,
+    onStop = function(reason)
+        api.log("luau-hook:" .. reason)
+    end,
+}
+"#;
+
+#[cfg(feature = "luau")]
+fn luau_lifecycle_cell() {
+    let (play, account, fixture) = start_fixture(false);
+    play.script_start_luau(&account, LUAU_WAIT_SOURCE.into(), None)
+        .expect("start real Luau run");
+    let mut logs = Vec::new();
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+        take_logs(play, &account, &mut logs);
+        play.script_state(&account) == script::RunState::Running
+            && logs.iter().any(|line| line.contains("luau-first"))
+    });
+    play.script_pause(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+        play.script_state(&account) == script::RunState::Paused
+    });
+    let paused_at = fixture.lock().unwrap().observed_tick;
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        fixture.lock().unwrap().observed_tick.wrapping_sub(paused_at) >= 3
+    });
+    take_logs(&play, &account, &mut logs);
+    assert!(
+        !logs.iter().any(|line| line.contains("luau-resumed")),
+        "paused run resumed its waiting tick: {logs:?}"
+    );
+    play.script_resume(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+        take_logs(play, &account, &mut logs);
+        logs.iter().any(|line| line.contains("luau-resumed"))
+            && logs.iter().any(|line| line.contains("luau-next-tick"))
+    });
+    play.script_stop(&account);
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+        take_logs(play, &account, &mut logs);
+        play.script_state(&account) == script::RunState::Idle
+            && logs.iter().any(|line| line.contains("luau-hook:stopped"))
+    });
+
+    play.script_start_luau(&account, LUAU_SELF_STOP_SOURCE.into(), None)
+        .expect("start second real Luau run");
+    let mut self_logs = Vec::new();
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {
+        take_logs(play, &account, &mut self_logs);
+        play.script_state(&account) == script::RunState::Idle
+            && play
+                .script_lifecycle_receipt(&account)
+                .is_some_and(|receipt| receipt.state == script::slot::ScriptTerminalState::Stopped)
+    });
+    take_logs(&play, &account, &mut self_logs);
+    let receipt = play.script_lifecycle_receipt(&account).expect("self-stop receipt");
+    assert_eq!(receipt.reason, "live done");
+    assert_eq!(
+        self_logs
+            .iter()
+            .filter(|line| line.contains("luau-hook:live done"))
+            .count(),
+        1,
+        "self-stop runs the hook once: {self_logs:?}"
+    );
+    assert!(
+        !self_logs.iter().any(|line| line.contains("luau-after-stop")),
+        "api.stop must end the tick: {self_logs:?}"
+    );
+    no_drops(&account);
+    save(
+        "luau-lifecycle-receipt.json",
+        &json!({"cell":"luau_lifecycle","account":account,"logs":logs,"self_logs":self_logs,
+                "paused_game_ticks":3,"receipt":receipt}),
+    );
+}
+
 const RUNTIME_COMPAT_SOURCE: &str = r#"
 import { LoopingBot } from '../../api/bot/Bot.js';
 import { BotHost } from '../../runtime/BotHost.js';
@@ -1476,6 +1582,7 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
             | "script_api_start_during_catalogue_refresh"
             | "owner_lifecycle"
             | "script_api_compat_journal_twice"
+            | "luau_lifecycle"
     ) {
         receipt["driver"] =
             json!({"trace":trace,"accepted_requests":requests,"packet_ticks":packets});
@@ -1515,6 +1622,17 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         "PASS {cell}: receipt={} trace={}",
         path.display(),
         trace.display()
+    );
+}
+
+#[cfg(feature = "luau")]
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache and Engine A"]
+fn luau_lifecycle() {
+    run_captured(
+        "luau_lifecycle",
+        "luau-lifecycle-receipt.json",
+        luau_lifecycle_cell,
     );
 }
 
