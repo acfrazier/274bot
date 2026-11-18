@@ -823,7 +823,9 @@ mod tests {
     use crate::gatherer::oneop::OneOpKind;
     use crate::quester::families::tests::{local_player, with_tick};
     use crate::survival::CurePoison;
-    use api::condition::{BotCondition, CureDoses, FoodSummary, PoisonState, SessionMark};
+    use api::condition::{
+        BotCondition, CureDoses, FoodSummary, PoisonEvent, PoisonMemory, PoisonState, SessionMark,
+    };
     use api::obj_names::ItemDefView;
     use api::snapshot::{
         GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
@@ -944,6 +946,33 @@ mod tests {
     /// The Gatherer's default eat floor for 99 Hitpoints
     /// (`gatherer/runner.rs` `survival_eat_floor`: half the base, rounded up).
     const GATHERER_FLOOR: i32 = 50;
+
+    #[test]
+    fn quiet_hazard_recovery_resumes_after_poison_expires() {
+        let poison = PoisonMemory::from_state(PoisonState::Poisoned {
+            per_tick: 1,
+            last_mark: 20,
+            hit_since_mark: false,
+        });
+        let step = SurvivalStep::default();
+        let snapshot = snapshot(Vec::new());
+        let poisoned = poison.transition(PoisonEvent::Tick { tick: 169 }).state;
+        let mut before_ledger = None;
+        let blocked = with_tick(&snapshot, &mut before_ledger, 169, |tick| {
+            tick.cx.condition = Some(condition(5, poisoned));
+            step.quiet_hazard_recovery(&tick.cx)
+        });
+        assert!(!blocked);
+
+        let cleared = poison.transition(PoisonEvent::Tick { tick: 170 }).state;
+        assert_eq!(cleared, PoisonState::Clear);
+        let mut after_ledger = None;
+        let resumed = with_tick(&snapshot, &mut after_ledger, 170, |tick| {
+            tick.cx.condition = Some(condition(5, cleared));
+            step.quiet_hazard_recovery(&tick.cx)
+        });
+        assert!(resumed);
+    }
 
     #[test]
     fn survival_step_parks_on_need_not_on_cure_reason() {

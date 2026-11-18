@@ -1961,3 +1961,79 @@ fn warmed_tick_frame_allocations_gate_r289() {
 fn warmed_tick_frame_allocations_gate_r377() {
     warmed_tick_frame_allocations_gate(client::io::ClientRevision::R377);
 }
+
+#[test]
+fn poison_expiry_waits_for_open_modal_timer_access() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut owner, _) = poisoned_owner_with_fruit();
+
+    let mut modal = frame(1000);
+    modal.seed_chat_modal(1, Vec::new());
+    owner.observe_frame(&modal, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 1001,
+            hit_since_mark: false,
+        }
+    );
+
+    let mut modal = frame(1010);
+    modal.seed_chat_modal(1, Vec::new());
+    owner.observe_frame(&modal, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 1011,
+            hit_since_mark: false,
+        }
+    );
+
+    owner.observe_frame(&frame(1011), &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 1011,
+            hit_since_mark: false,
+        }
+    );
+}
+
+#[test]
+fn ordinary_hit_in_reopened_modal_counts_before_poison_timer_pause() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (mut owner, _) = poisoned_owner_with_fruit();
+
+    let mut modal = frame(2);
+    modal.seed_chat_modal(1, Vec::new());
+    owner.observe_frame(&modal, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 3,
+            hit_since_mark: false,
+        }
+    );
+
+    owner.observe_frame(&frame(3), &drain(false, true), false);
+    let mut reopened_modal = frame(4);
+    reopened_modal.seed_chat_modal(1, Vec::new());
+    hit(&mut reopened_modal, 0, 2, 2);
+    owner.observe_frame(&reopened_modal, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 5,
+            hit_since_mark: true,
+        }
+    );
+}
