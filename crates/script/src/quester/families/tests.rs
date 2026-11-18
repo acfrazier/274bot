@@ -360,36 +360,49 @@ fn with_tick_output_reach<R>(
 ) -> R {
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     with_tick_output_reach_selected(
-        snapshot,
-        reach,
-        world_members,
+        TickReachInputs {
+            snapshot,
+            reach,
+            world_members,
+            next_snapshot,
+            collision,
+            selected: Some(selected),
+        },
         ledger,
         tick,
         output,
         bank,
         shop_keepers,
-        next_snapshot,
-        collision,
-        Some(selected),
         f,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn with_tick_output_reach_selected<R>(
-    snapshot: &GameSnapshot,
-    reach: Option<&api::query::ReachQueryView>,
+struct TickReachInputs<'snapshot, 'reach, 'next_snapshot, 'collision> {
+    snapshot: &'snapshot GameSnapshot,
+    reach: Option<&'reach api::query::ReachQueryView>,
     world_members: Truth,
+    next_snapshot: &'next_snapshot GameSnapshot,
+    collision: Option<nav_planner::contract::CollisionView<'collision>>,
+    selected: Option<Arc<api::game_data::SelectedGameData>>,
+}
+
+fn with_tick_output_reach_selected<R>(
+    inputs: TickReachInputs<'_, '_, '_, '_>,
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
     output: &mut dyn NativeOutput,
     bank: Option<&api::bank_memory::BankMemory>,
     shop_keepers: Option<&Arc<api::service_pick::ShopKeeperFacts>>,
-    next_snapshot: &GameSnapshot,
-    collision: Option<nav_planner::contract::CollisionView<'_>>,
-    selected: Option<Arc<api::game_data::SelectedGameData>>,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
 ) -> R {
+    let TickReachInputs {
+        snapshot,
+        reach,
+        world_members,
+        next_snapshot,
+        collision,
+        selected,
+    } = inputs;
     let evidence = api::quest_progress::EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -477,15 +490,17 @@ pub(crate) fn with_tick_without_selected_game_data<R>(
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
     with_tick_output_reach_selected(
-        snapshot,
-        None,
-        Truth::Unknown,
+        TickReachInputs {
+            snapshot,
+            reach: None,
+            world_members: Truth::Unknown,
+            next_snapshot: snapshot,
+            collision: None,
+            selected: None,
+        },
         ledger,
         tick,
         &mut Output,
-        None,
-        None,
-        snapshot,
         None,
         None,
         |native, _, _| f(native),
