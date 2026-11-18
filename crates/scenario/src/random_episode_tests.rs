@@ -361,9 +361,11 @@ fn fight_receipt_records_host_outcome_stall_and_actual_combat_counts() {
                 frame.fight_outcome = Some(FightOutcome::Pending);
                 frame.no_progress_ticks = Some(1_001);
             }
+            12 => {
+                frame.no_progress_ticks = Some(42);
+            }
             13 => {
                 frame.fight_outcome = Some(FightOutcome::Killed);
-                frame.no_progress_ticks = Some(42);
             }
             _ => {}
         }

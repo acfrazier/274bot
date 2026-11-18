@@ -185,8 +185,8 @@ impl Guardian {
     }
 
     /// One fresh tick of the fight, before detection: lifecycle revocations,
-    /// the sent escape walk and the child's outcome fold into the active
-    /// event. A repeated frame poll folds nothing twice.
+    /// the sent escape walk and the child's outcome fold into the active event.
+    /// A repeated frame poll folds nothing twice. The return is this tick's sample.
     pub(super) fn fight_fold(
         &mut self,
         snap: &GameSnapshot,
@@ -194,24 +194,22 @@ impl Guardian {
         settings: &ProfileSettings,
         context: &GuardianLiveContext<'_>,
         fresh: bool,
-    ) {
+    ) -> Option<FightOutcome> {
         if !fresh {
-            return;
+            return None;
         }
         let Some(token) = self
             .evade_run_in_flight()
             .and_then(|run| run.response.token().or(run.escape))
         else {
             self.fight_close_orphan(port);
-            return;
+            return None;
         };
-        let Some(run) = self.evade_run_in_flight().copied() else {
-            return;
-        };
+        let run = self.evade_run_in_flight().copied()?;
         let Some(source) = port.as_deref_mut() else {
             // No claim source means no child: nothing serves the fight.
             self.fight_to_flee(None, None, ResponseReason::Cancelled);
-            return;
+            return None;
         };
         let name = self
             .evade
@@ -233,15 +231,8 @@ impl Guardian {
             // The slot no longer holds the child: its session or run ended.
             self.fight_to_flee(None, None, ResponseReason::Cancelled);
             self.fight_open = None;
-            return;
+            return None;
         };
-        #[cfg(feature = "live-probe")]
-        {
-            self.last_fight_outcome = Some(read.outcome);
-            if let Some(state) = self.evade.as_ref() {
-                self.last_no_progress_ticks = Some(state.no_progress_ticks);
-            }
-        }
         if let Some(sent) = sent {
             if let Some(run) = self.evade_run_in_flight_mut() {
                 // Only the flee bookkeeping returns; the response stays.
@@ -332,6 +323,7 @@ impl Guardian {
         if self.fight_token().is_none() {
             self.fight_open = None;
         }
+        Some(read.outcome)
     }
 
     /// Close a child no Evade run holds any more: another family replaced the

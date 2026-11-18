@@ -442,6 +442,8 @@ pub struct RandomEventEpisode {
     fight_outcome: Option<FightOutcome>,
     /// Greatest host-reported Guardian no-progress count during the episode.
     max_no_progress_ticks: Option<u16>,
+    /// Latest host sample, retained until a later hold-release frame.
+    latest_no_progress_ticks: Option<u16>,
     /// Host-reported no-progress count when the Guardian first released hold.
     no_progress_ticks_at_hold_release: Option<u16>,
     npc_seen: Option<u32>,
@@ -499,6 +501,7 @@ impl RandomEventEpisode {
             last_attacker_health: None,
             fight_outcome: None,
             max_no_progress_ticks: None,
+            latest_no_progress_ticks: None,
             no_progress_ticks_at_hold_release: None,
             npc_seen: None,
             absent_ticks: 0,
@@ -654,6 +657,7 @@ impl RandomEventEpisode {
             self.fight_outcome = Some(outcome);
         }
         if let Some(ticks) = frame.no_progress_ticks {
+            self.latest_no_progress_ticks = Some(ticks);
             self.max_no_progress_ticks = Some(
                 self.max_no_progress_ticks
                     .map_or(ticks, |current| current.max(ticks)),
@@ -704,7 +708,8 @@ impl RandomEventEpisode {
                 let tick = frame.tick;
                 self.note(frame, "hold_fall", json!(tick));
                 if matches!(self.cell.oracle, Oracle::Fight { .. }) {
-                    self.no_progress_ticks_at_hold_release = frame.no_progress_ticks;
+                    self.no_progress_ticks_at_hold_release =
+                        frame.no_progress_ticks.or(self.latest_no_progress_ticks);
                 }
             }
         }
