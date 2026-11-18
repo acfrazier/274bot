@@ -1207,28 +1207,32 @@ fn q8_real_slot_sample(
 }
 
 #[cfg(feature = "test-hooks")]
-fn q8_max_p99(values: &mut [Duration]) -> (f64, f64) {
+fn q8_quantiles(values: &mut [Duration]) -> (f64, f64, f64) {
     values.sort_unstable();
+    let p50 = (values.len() * 50).div_ceil(100) - 1;
     let p99 = (values.len() * 99).div_ceil(100) - 1;
     (
-        values[values.len() - 1].as_secs_f64() * 1_000.0,
+        values[p50].as_secs_f64() * 1_000.0,
         values[p99].as_secs_f64() * 1_000.0,
+        values[values.len() - 1].as_secs_f64() * 1_000.0,
     )
 }
 
 #[cfg(feature = "test-hooks")]
 #[test]
-#[ignore = "REF-only real SlotScript control latency lab cell; 1,000 real-clock samples per class and configuration"]
+#[ignore = "REF-only real SlotScript control latency lab cell; 1,000 reference/native-gap and 100 near-S samples per configuration"]
 fn q8_real_slot_stop_all_on_reference_guest() {
-    let samples = std::env::var("LUAU_Q8_SAMPLES")
-        .map_or(1000, |value| value.parse::<usize>().expect("sample count"));
-    assert!((1..=1000).contains(&samples), "bounded Q8 sample count");
+    let sample_override = std::env::var("LUAU_Q8_SAMPLES")
+        .ok()
+        .map(|value| value.parse::<usize>().expect("sample count"));
     let mut seed = 0x274b_0a11_0301_u64;
-    for (class, source, phase_us, dispatch_ceiling) in [
-        ("reference-shape", Q8_REFERENCE, 1000, 1024),
-        ("legal-loop", Q8_LEGAL_LOOP, 590_000, 16),
-        ("native-gap", Q8_NATIVE_GAP, 10_000, 128),
+    for (class, source, phase_us, dispatch_ceiling, default_samples) in [
+        ("reference-shape", Q8_REFERENCE, 1000, 1024, 1000),
+        ("legal-loop", Q8_LEGAL_LOOP, 590_000, 16, 100),
+        ("native-gap", Q8_NATIVE_GAP, 10_000, 128, 1000),
     ] {
+        let samples = sample_override.unwrap_or(default_samples);
+        assert!((1..=1000).contains(&samples), "bounded Q8 sample count");
         for (roles, pause) in [(1, false), (10, false), (1, true)] {
             let mut rows = Vec::with_capacity(samples);
             for _ in 0..samples {
@@ -1245,29 +1249,38 @@ fn q8_real_slot_stop_all_on_reference_guest() {
             let mut waits: Vec<_> = rows.iter().map(|row| row.lock_wait).collect();
             let mut works: Vec<_> = rows.iter().map(|row| row.stop_work_upper).collect();
             let mut wholes: Vec<_> = rows.iter().map(|row| row.whole).collect();
-            let (w1_max, w1_p99) = q8_max_p99(&mut waits);
-            let (w24_max, w24_p99) = q8_max_p99(&mut works);
-            let (whole_max, whole_p99) = q8_max_p99(&mut wholes);
+            let (w1_p50, w1_p99, w1_max) = q8_quantiles(&mut waits);
+            let (w24_p50, w24_p99, w24_max) = q8_quantiles(&mut works);
+            let (whole_p50, whole_p99, whole_max) = q8_quantiles(&mut wholes);
             let tick_failures: usize = rows.iter().map(|row| row.tick_failures).sum();
             let hook_failures: usize = rows.iter().map(|row| row.hook_failures).sum();
             let missing_stop_logs: usize = rows.iter().map(|row| row.missing_stop_logs).sum();
             let ceiling_hits: usize = rows.iter().map(|row| row.dispatch_ceiling_hits).sum();
             let action = if pause { "pause" } else { "stop" };
             println!(
-                "Q8_REF class={class} roles={roles} action={action} samples={samples} heap_bytes={} w1_max_ms={w1_max:.4} w1_p99_ms={w1_p99:.4} w2_plus_w4_upper_max_ms={w24_max:.4} w2_plus_w4_upper_p99_ms={w24_p99:.4} whole_max_ms={whole_max:.4} whole_p99_ms={whole_p99:.4} tick_failures={tick_failures} hook_failures={hook_failures} missing_stop_logs={missing_stop_logs} dispatch_ceiling_hits={ceiling_hits}",
+                "Q8_REF class={class} roles={roles} action={action} samples={samples} heap_bytes={} w1_p50_ms={w1_p50:.4} w1_p99_ms={w1_p99:.4} w1_max_ms={w1_max:.4} w2_plus_w4_upper_p50_ms={w24_p50:.4} w2_plus_w4_upper_p99_ms={w24_p99:.4} w2_plus_w4_upper_max_ms={w24_max:.4} whole_p50_ms={whole_p50:.4} whole_p99_ms={whole_p99:.4} whole_max_ms={whole_max:.4} tick_failures={tick_failures} hook_failures={hook_failures} missing_stop_logs={missing_stop_logs} dispatch_ceiling_hits={ceiling_hits}",
                 rows[0].heap_bytes
             );
             if class == "reference-shape" {
                 assert_eq!(tick_failures, 0, "reference ticks must not trip");
                 assert_eq!(hook_failures, 0, "reference hook must not trip");
                 assert_eq!(missing_stop_logs, 0, "reference onStop logs once");
-                let limit_ms = if roles == 10 { 200.0 } else { 20.0 };
                 if !pause {
+                    let limit_ms = if roles == 10 { 200.0 } else { 20.0 };
                     println!(
-                        "Q8_REF_BOUND class=reference-shape roles={roles} target_ms={limit_ms} max_within_target={}",
+                        "Q8_REF_BOUND class=reference-shape roles={roles} target_ms={limit_ms} p99_within_target={} max_within_target={}",
+                        whole_p99 <= limit_ms,
                         whole_max <= limit_ms
                     );
                 }
+            }
+            if class == "legal-loop" && !pause {
+                let limit_ms = if roles == 10 { 10_000.0 } else { 1_000.0 };
+                println!(
+                    "Q8_REF_BOUND class=legal-loop roles={roles} target_ms={limit_ms} p99_within_target={} max_within_target={}",
+                    whole_p99 <= limit_ms,
+                    whole_max <= limit_ms
+                );
             }
         }
     }
