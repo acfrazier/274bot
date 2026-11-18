@@ -235,6 +235,13 @@ impl Guardian {
             self.fight_open = None;
             return;
         };
+        #[cfg(feature = "live-probe")]
+        {
+            self.last_fight_outcome = Some(read.outcome);
+            if let Some(state) = self.evade.as_ref() {
+                self.last_no_progress_ticks = Some(state.no_progress_ticks);
+            }
+        }
         if let Some(sent) = sent {
             if let Some(run) = self.evade_run_in_flight_mut() {
                 // Only the flee bookkeeping returns; the response stays.

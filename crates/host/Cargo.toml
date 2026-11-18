@@ -26,6 +26,8 @@ journal-paint-proof = ["dep:parking_lot"]
 # per-service delay receipts). Enabled from dev-dependencies, never
 # production builds.
 test-support = ["api/test-support"]
+# Test-only Guardian Fight facts for live scenario receipts.
+live-probe = []
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

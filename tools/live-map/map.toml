@@ -1451,13 +1451,23 @@ cells = [
 globs = [
   "crates/api/src/lifecycle.rs",
   "crates/api/src/random.rs",
+  "crates/frontend-core/Cargo.toml",
+  "crates/frontend-core/src/frames.rs",
   "crates/frontend-core/src/live/mod.rs",
+  "crates/host-play/Cargo.toml",
+  "crates/host-play/src/lib_tests.rs",
   "crates/host-play/src/play_fight.rs",
   "crates/host-play/src/play_login.rs",
   "crates/host-play/src/play_slots.rs",
+  "crates/host-play/src/script_native_walk_tests.rs",
   "crates/host-play/src/script_observe.rs",
   "crates/host-play/src/script_walk.rs",
+  "crates/host/Cargo.toml",
+  "crates/host/src/random/guardian.rs",
   "crates/host/src/random/guardian/fight.rs",
+  "crates/scenario/src/random_episode.rs",
+  "crates/scenario/src/random_episode_tests.rs",
+  "crates/scenario/src/runner.rs",
   "crates/script/src/combat/escape.rs",
   "crates/script/src/combat/guardian.rs",
   "crates/script/src/combat/guard.rs",
@@ -1466,10 +1476,11 @@ globs = [
   "crates/script/src/combat/select.rs",
   "crates/script/src/slot.rs",
   "crates/script/src/slot/compiled.rs",
+  "crates/tui/Cargo.toml",
   "crates/tui/src/bin.rs",
 ]
 cells = [
-  "scenario.guardian-fight-river-troll|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_guardian_fight_river_troll|--locked -p scenario --features api/test-support --lib scenarios::guardian_events::tests::",
+  "scenario.guardian-fight-river-troll|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --features live-probe --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_guardian_fight_river_troll|--locked -p scenario --features api/test-support --lib scenarios::guardian_events::tests::",
   "scenario.guardian-fight-swarm-flee|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_guardian_fight_swarm_flee|--locked -p scenario --features api/test-support --lib scenarios::guardian_events::tests::",
 ]
 

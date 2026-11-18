@@ -120,6 +120,12 @@ pub struct RandomStatus {
     /// The fight the Guardian waits on, for the slot's dispatch gate: only
     /// gameplay carrying this token may pass the Guardian hold.
     pub fight: Option<FightToken>,
+    /// Last observed outcome from the fixture's Guardian Fight child.
+    #[cfg(feature = "live-probe")]
+    pub fight_outcome: Option<FightOutcome>,
+    /// Current or last retained no-progress count from the hostile actor track.
+    #[cfg(feature = "live-probe")]
+    pub no_progress_ticks: Option<u16>,
 }
 
 impl Default for RandomStatus {
@@ -135,6 +141,10 @@ impl Default for RandomStatus {
             cooldown: false,
             response: None,
             fight: None,
+            #[cfg(feature = "live-probe")]
+            fight_outcome: None,
+            #[cfg(feature = "live-probe")]
+            no_progress_ticks: None,
         }
     }
 }
@@ -639,6 +649,12 @@ pub struct Guardian {
     /// revokes it and spends that actor's Fight, so no child outlives the run
     /// and none restarts for the same actor.
     fight_open: Option<(usize, Option<usize>)>,
+    /// Fixture-only latched Fight outcome, retained after the child releases.
+    #[cfg(feature = "live-probe")]
+    last_fight_outcome: Option<FightOutcome>,
+    /// Fixture-only last no-progress sample, retained after the actor track ends.
+    #[cfg(feature = "live-probe")]
+    last_no_progress_ticks: Option<u16>,
 }
 
 impl Default for Guardian {
@@ -679,6 +695,10 @@ impl Guardian {
             fight_spent: None,
             episode_fight: false,
             fight_open: None,
+            #[cfg(feature = "live-probe")]
+            last_fight_outcome: None,
+            #[cfg(feature = "live-probe")]
+            last_no_progress_ticks: None,
         }
     }
 
@@ -1407,6 +1427,14 @@ impl Guardian {
             cooldown,
             response: self.derive_response(ev.as_ref(), settings.random_events),
             fight: self.fight_token(),
+            #[cfg(feature = "live-probe")]
+            fight_outcome: self.last_fight_outcome,
+            #[cfg(feature = "live-probe")]
+            no_progress_ticks: self
+                .evade
+                .as_ref()
+                .map(|state| state.no_progress_ticks)
+                .or(self.last_no_progress_ticks),
         }
     }
 
@@ -1577,6 +1605,10 @@ impl Guardian {
                         state.no_progress_ticks = 0;
                     }
                 }
+                #[cfg(feature = "live-probe")]
+                {
+                    self.last_no_progress_ticks = Some(state.no_progress_ticks);
+                }
                 // An outward route advances 1-2 tiles per tick
                 // (PathingEntity.ts:135-152). Allow every fallback ring one
                 // fresh try plus two movement observations, but never count
@@ -1679,6 +1711,11 @@ impl Guardian {
             if let Some(event) = ev.as_mut() {
                 event.ours = false;
             }
+        }
+        #[cfg(feature = "live-probe")]
+        {
+            self.last_fight_outcome = None;
+            self.last_no_progress_ticks = Some(0);
         }
         self.evade = Some(state);
     }

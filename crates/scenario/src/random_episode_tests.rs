@@ -59,6 +59,8 @@ fn frame(tick: u32, x: i32, z: i32, hold: bool) -> Frame {
         tick,
         ready: true,
         tile: Some((x, z, 0)),
+        fight_outcome: None,
+        no_progress_ticks: None,
         hold,
         hp: Some(10),
         skill_xp: Some(1000),
@@ -338,12 +340,42 @@ fn a_fight_that_kills_the_actor_and_resumes_passes() {
     let mut ep = armed(TROLL_FIGHT);
     assert_eq!(run(&mut ep, fight_pass_frames()), Verdict::Pass);
     let receipt = ep.receipt();
-    assert!(receipt["fought"].is_number() && receipt["damage_dealt"].is_number());
+    assert!(
+        receipt["fight_started_tick"].is_number()
+            && receipt["first_damage_observed_tick"].is_number()
+    );
     assert!(
         receipt["escape"].is_null(),
         "a fight that ends in a kill never escaped"
     );
     assert!(receipt["hold_rise"].is_number() && receipt["hold_fall"].is_number());
+}
+
+#[test]
+fn fight_receipt_records_host_outcome_stall_and_actual_combat_counts() {
+    let mut ep = armed(TROLL_FIGHT);
+    let mut frames = fight_pass_frames();
+    for frame in &mut frames {
+        match frame.tick {
+            4 => {
+                frame.fight_outcome = Some(FightOutcome::Pending);
+                frame.no_progress_ticks = Some(1_001);
+            }
+            13 => {
+                frame.fight_outcome = Some(FightOutcome::Killed);
+                frame.no_progress_ticks = Some(42);
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(run(&mut ep, frames), Verdict::Pass);
+    let receipt = ep.receipt();
+    assert_eq!(receipt["fight_outcome"], "Killed");
+    assert_eq!(receipt["guardian_no_progress_ticks_max"], 1_001);
+    assert_eq!(receipt["guardian_no_progress_ticks_at_hold_release"], 42);
+    assert_eq!(receipt["fight_target_ticks"], 6);
+    assert_eq!(receipt["damage_event_count"], 1);
+    assert_eq!(receipt["damage_hitpoints"], 6);
 }
 
 #[test]
@@ -386,7 +418,10 @@ fn a_hand_over_to_flee_after_the_fight_passes() {
     frames.push(resumed);
     assert_eq!(run(&mut ep, frames), Verdict::Pass);
     let receipt = ep.receipt();
-    assert!(receipt["fought"].is_number() && receipt["damage_dealt"].is_number());
+    assert!(
+        receipt["fight_started_tick"].is_number()
+            && receipt["first_damage_observed_tick"].is_number()
+    );
     assert!(
         receipt["escape"].is_object(),
         "the hand over left the chase range"

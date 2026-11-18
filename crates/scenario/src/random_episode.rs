@@ -20,7 +20,7 @@
 //! unit-tested in both directions without a client.
 
 use api::obj_names::ObjNames;
-use api::random::{trapped_area, RandomKind};
+use api::random::{trapped_area, FightOutcome, RandomKind};
 use api::snapshot::{ActorKind, GameSnapshot};
 use serde_json::{json, Value};
 
@@ -234,6 +234,8 @@ pub(crate) struct Frame {
     pub ready: bool,
     pub tile: Option<(i32, i32, i32)>,
     pub hold: bool,
+    pub fight_outcome: Option<FightOutcome>,
+    pub no_progress_ticks: Option<u16>,
     pub hp: Option<i32>,
     pub skill_xp: Option<i32>,
     pub strength_xp: Option<i32>,
@@ -258,6 +260,8 @@ impl Frame {
         cell: &RandomEventCell,
         hold: bool,
         names: Option<&ObjNames>,
+        fight_outcome: Option<FightOutcome>,
+        no_progress_ticks: Option<u16>,
     ) -> Self {
         let stat = |id: i32| snap.stats().iter().find(|s| s.index == id);
         let self_slot = snap.self_slot();
@@ -329,6 +333,8 @@ impl Frame {
             tick: snap.tick(),
             ready: snap.ingame() && snap.scene_state() == 2,
             tile: snap.tile(),
+            fight_outcome,
+            no_progress_ticks,
             hold,
             hp: stat(HITPOINTS_STAT).map(|s| s.effective),
             skill_xp: stat(cell.skill).map(|s| s.xp),
@@ -422,11 +428,22 @@ pub struct RandomEventEpisode {
     returned: Option<u32>,
     retargeted: bool,
     targeted_ticks: u32,
-    /// Fight: the first tick the player targeted the exact event actor.
-    fought: Option<u32>,
-    /// Fight: the first tick the player's Hitpoints XP rose above the baseline.
-    damage: Option<u32>,
-    // NPC presence (evade / dialog / pick).
+    /// Fight: first game tick the local player targeted the exact event actor.
+    fight_started_tick: Option<u32>,
+    /// Fight: first game tick the event actor's health fell below its total.
+    first_damage_tick: Option<u32>,
+    /// Fresh game ticks spent with the exact event actor targeted.
+    fight_target_ticks: u32,
+    /// Observed damage hits and hitpoints removed from the exact event actor.
+    damage_event_count: u32,
+    damage_hitpoints: u32,
+    last_attacker_health: Option<i32>,
+    /// Latest host-reported terminal/pending outcome, latched for the receipt.
+    fight_outcome: Option<FightOutcome>,
+    /// Greatest host-reported Guardian no-progress count during the episode.
+    max_no_progress_ticks: Option<u16>,
+    /// Host-reported no-progress count when the Guardian first released hold.
+    no_progress_ticks_at_hold_release: Option<u16>,
     npc_seen: Option<u32>,
     absent_ticks: u32,
     npc_gone: Option<u32>,
@@ -474,8 +491,15 @@ impl RandomEventEpisode {
             returned: None,
             retargeted: false,
             targeted_ticks: 0,
-            fought: None,
-            damage: None,
+            fight_started_tick: None,
+            first_damage_tick: None,
+            fight_target_ticks: 0,
+            damage_event_count: 0,
+            damage_hitpoints: 0,
+            last_attacker_health: None,
+            fight_outcome: None,
+            max_no_progress_ticks: None,
+            no_progress_ticks_at_hold_release: None,
             npc_seen: None,
             absent_ticks: 0,
             npc_gone: None,
@@ -626,6 +650,15 @@ impl RandomEventEpisode {
             }
             return Verdict::Pending;
         }
+        if let Some(outcome) = frame.fight_outcome {
+            self.fight_outcome = Some(outcome);
+        }
+        if let Some(ticks) = frame.no_progress_ticks {
+            self.max_no_progress_ticks = Some(
+                self.max_no_progress_ticks
+                    .map_or(ticks, |current| current.max(ticks)),
+            );
+        }
         let fresh = self
             .last
             .as_ref()
@@ -670,6 +703,9 @@ impl RandomEventEpisode {
                 self.hold_fall = Some(frame.tick);
                 let tick = frame.tick;
                 self.note(frame, "hold_fall", json!(tick));
+                if matches!(self.cell.oracle, Oracle::Fight { .. }) {
+                    self.no_progress_ticks_at_hold_release = frame.no_progress_ticks;
+                }
             }
         }
         if fresh && frame.hold {
@@ -1074,27 +1110,46 @@ impl RandomEventEpisode {
                  targeting the bot (first targeted at game tick {first})"
             )));
         }
-        if self.fought.is_none()
-            && frame
-                .local_target
-                .as_deref()
-                .is_some_and(|name| name.eq_ignore_ascii_case(npc))
-        {
-            self.fought = Some(frame.tick);
+        let target_is_actor = frame
+            .local_target
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case(npc));
+        if self.fight_started_tick.is_none() && target_is_actor {
+            self.fight_started_tick = Some(frame.tick);
             self.note(frame, "fighting", json!(frame.local_target));
         }
-        // Damage is the actor's health bar falling below its total: an event
-        // actor's XP multiplier can round the Hitpoints XP of every hit to
-        // zero (`combat_xp_multiplier`, `combat.rs2:88-117`), so XP is no
-        // proof that damage lands.
+        if target_is_actor && fresh {
+            self.fight_target_ticks = self.fight_target_ticks.saturating_add(1);
+        }
+        // The event actor's health bar proves damage even when its XP
+        // multiplier rounds Hitpoints XP to zero (`combat.rs2:88-117`).
         let health = frame
             .npcs
             .iter()
             .find(|n| n.index == attacker.index)
             .map(|n| n.health);
-        if self.damage.is_none() && health.is_some_and(|(now, total)| total > 0 && now < total) {
-            self.damage = Some(frame.tick);
-            self.note(frame, "damage_dealt", json!({"health": health}));
+        if self.first_damage_tick.is_none()
+            && health.is_some_and(|(now, total)| total > 0 && now >= 0 && now < total)
+        {
+            self.first_damage_tick = Some(frame.tick);
+            self.note(frame, "first_damage_observed", json!({"health": health}));
+        }
+        if target_is_actor && fresh {
+            if let Some((now, total)) = health.filter(|(now, total)| *total > 0 && *now >= 0) {
+                if let Some(previous) = self.last_attacker_health {
+                    if now < previous {
+                        let hitpoints = (previous - now) as u32;
+                        self.damage_event_count = self.damage_event_count.saturating_add(1);
+                        self.damage_hitpoints = self.damage_hitpoints.saturating_add(hitpoints);
+                        self.note(
+                            frame,
+                            "damage",
+                            json!({"hitpoints": hitpoints, "health": [now, total]}),
+                        );
+                    }
+                }
+                self.last_attacker_health = Some(now);
+            }
         }
         let present = frame.npcs.iter().any(|n| n.index == attacker.index);
         let targeting = frame
@@ -1117,12 +1172,13 @@ impl RandomEventEpisode {
                 // The hand over to Flee is a bound the product has, but only
                 // after the fight: an escape with no attack and no damage is
                 // the Flee the Guardian had before it could fight.
-                if self.fought.is_none() || self.damage.is_none() {
+                if self.fight_started_tick.is_none() || self.first_damage_tick.is_none() {
                     return Some(Verdict::Fail(format!(
                         "the Guardian fled from {npc} at game tick {} ({distance} tiles from its \
                          start {:?}, maxrange {maxrange}) before it fought it: a saved Fight \
-                         attacks the exact actor first (fought {:?}, damage {:?})",
-                        frame.tick, attacker.start, self.fought, self.damage
+                         targets the exact actor and observes damage first (fight tick {:?}, \
+                         first damage tick {:?})",
+                        frame.tick, attacker.start, self.fight_started_tick, self.first_damage_tick
                     )));
                 }
             }
@@ -1138,17 +1194,17 @@ impl RandomEventEpisode {
         if present && self.npc_gone.is_none() && self.escape.is_none() && !budget {
             return Some(Verdict::Fail(format!(
                 "the Guardian released the hold at game tick {} while {npc} still stood: the fight \
-                 did not run to an end the product bounds (fought {:?}, damage {:?})",
-                frame.tick, self.fought, self.damage
+                 did not run to an end the product bounds (fight tick {:?}, first damage tick {:?})",
+                frame.tick, self.fight_started_tick, self.first_damage_tick
             )));
         }
         let ended = self.npc_gone.is_some() || budget || (self.escape.is_some() && !targeting);
         if ended {
-            if self.fought.is_none() || self.damage.is_none() {
+            if self.fight_started_tick.is_none() || self.first_damage_tick.is_none() {
                 return Some(Verdict::Fail(format!(
                     "{npc} is gone and the hold is released, but the bot never fought it \
-                     (fought {:?}, damage {:?})",
-                    self.fought, self.damage
+                     (fight tick {:?}, first damage tick {:?})",
+                    self.fight_started_tick, self.first_damage_tick
                 )));
             }
             self.resolve_when(frame, true);
@@ -1341,8 +1397,14 @@ impl RandomEventEpisode {
             "attacker": self.attacker.map(|a| json!({"index": a.index, "type": a.type_id, "start": [a.start.0, a.start.1], "maxrange": a.maxrange})),
             "first_target": self.first_target,
             "targeted_ticks": self.targeted_ticks,
-            "fought": self.fought,
-            "damage_dealt": self.damage,
+            "fight_started_tick": self.fight_started_tick,
+            "first_damage_observed_tick": self.first_damage_tick,
+            "fight_target_ticks": self.fight_target_ticks,
+            "damage_event_count": self.damage_event_count,
+            "damage_hitpoints": self.damage_hitpoints,
+            "fight_outcome": self.fight_outcome.map(|outcome| format!("{outcome:?}")),
+            "guardian_no_progress_ticks_max": self.max_no_progress_ticks,
+            "guardian_no_progress_ticks_at_hold_release": self.no_progress_ticks_at_hold_release,
             "max_distance": self.max_distance,
             "escape": self.escape.map(|(tick, distance)| json!({"tick": tick, "distance": distance})),
             "returned_inside_range": self.returned,

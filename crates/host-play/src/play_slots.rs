@@ -196,6 +196,10 @@ pub(crate) fn script_evidence_dirty(dirty: host::DirtyFamilies) -> bool {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SlotFrameInput {
     pub hold: bool,
+    #[cfg(feature = "live-probe")]
+    pub guardian_fight_outcome: Option<api::random::FightOutcome>,
+    #[cfg(feature = "live-probe")]
+    pub guardian_no_progress_ticks: Option<u16>,
     /// Native/script or escape ownership freezes ordinary frontend movement.
     pub host_move_owned: bool,
     pub manual_move_intent: Option<host::ManualMoveIntent>,
@@ -252,7 +256,9 @@ pub(super) fn take_slot_frame_input(
     name: &str,
     wire_queues: &Mutex<HashMap<String, VecDeque<WireCmd>>>,
     hold: bool,
+    random_status: &RandomStatus,
 ) -> (SlotFrameInput, VecDeque<WireCmd>) {
+    let _ = random_status;
     let wires = wire_queues
         .lock()
         .unwrap()
@@ -261,6 +267,10 @@ pub(super) fn take_slot_frame_input(
         .unwrap_or_default();
     let frame = SlotFrameInput {
         hold,
+        #[cfg(feature = "live-probe")]
+        guardian_fight_outcome: random_status.fight_outcome,
+        #[cfg(feature = "live-probe")]
+        guardian_no_progress_ticks: random_status.no_progress_ticks,
         host_move_owned: false,
         manual_move_intent: input.take_manual_move_intent(),
         manual_steps: wires
@@ -1901,7 +1911,7 @@ fn spawn_slot_thread(
                             // dispatch; this is the shared takeover ordering seam.
                             // Keep these commands for their normal late send/hold gate.
                             let (mut frame_input, wires) =
-                                take_slot_frame_input(&slot_input, name, &slot_wires, hold);
+                                take_slot_frame_input(&slot_input, name, &slot_wires, hold, status);
                             take_manual_walk_ownership(
                                 &slot_scripts,
                                 &slot_navs,

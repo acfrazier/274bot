@@ -5371,7 +5371,9 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
             level: 0,
         }]),
     )]));
-    let (frame, human) = crate::play_slots::take_slot_frame_input(&input, "alice", &queues, false);
+    let random_status = crate::RandomStatus::default();
+    let (frame, human) =
+        crate::play_slots::take_slot_frame_input(&input, "alice", &queues, false, &random_status);
     assert_eq!(frame.manual_move_count(), 1);
     assert_eq!(human.len(), 1, "the human step is preserved");
     assert!(crate::script_runtime::take_manual_walk_ownership(
