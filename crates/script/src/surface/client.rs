@@ -17,12 +17,12 @@ use crate::native::seat_rows::{
 use crate::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput};
 use crate::native::walk_wait::{HostOutcome, Observation, WalkKey, WalkSlot};
 use crate::native::WalkCancelReason;
-use api::query::{ArrivalProbe, SceneReachOptions};
-use api::snapshot::WorldTile;
-use std::num::NonZeroU64;
 use api::identity::{ExecutionId, RequestId};
+use api::query::{ArrivalProbe, SceneReachOptions};
 use api::script_contract::{AbortReason, CallbackCancelReason};
+use api::snapshot::WorldTile;
 use std::collections::VecDeque;
+use std::num::NonZeroU64;
 
 /// An error returned before the client queues any part of a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -93,10 +93,13 @@ pub struct SeatClient {
     work_generation: u64,
     acknowledged_terminal_seq: u64,
     sent_terminal_seq: u64,
+    observed_walk_outcome_seq: u64,
     next_id: u64,
     awaiting: Option<Awaited>,
     stored: Option<StoredCompletion>,
+    awaited_start: Option<SeatStartInput>,
     reconnect_held: bool,
+    rearm_walk_on_tick: bool,
     walk: WalkSlot,
     walk_generation: u64,
     walk_intent_baseline: u64,
@@ -121,7 +124,9 @@ impl SeatClient {
             observed_walk_outcome_seq: 0,
             awaiting: None,
             stored: None,
+            awaited_start: None,
             reconnect_held: false,
+            rearm_walk_on_tick: false,
             walk: WalkSlot::new(),
             walk_generation: 0,
             walk_intent_baseline: 0,
@@ -148,6 +153,10 @@ impl SeatClient {
             start.run = execution.run().run;
             start.session = execution.run().session;
         }
+        if let Some(start) = &mut self.awaited_start {
+            start.run = execution.run().run;
+            start.session = execution.run().session;
+        }
         for batch in &mut self.restored {
             batch.generation = self.work_generation;
             for start in &mut batch.batch.starts {
@@ -171,10 +180,48 @@ impl SeatClient {
         self.work_generation
     }
 
-    /// Reconnect parks the script's wait until the next full game tick,
-    /// rather than settling it during the disconnected interval.
+    /// An unexpected disconnect holds the pending wait and its intent, but
+    /// never carries the old session's outbound gameplay rows into the new one.
+    /// The first new tick re-arms an awaited start under its current run key.
     pub fn reconnect(&mut self, execution: Option<ExecutionId>) -> u64 {
+        let retained_start = self
+            .stored
+            .is_none()
+            .then(|| self.awaited_start.take())
+            .flatten();
+        let pending_walk = match (self.awaiting, self.stored.is_none()) {
+            (Some(Awaited::Walk { id }), true) => Some(id),
+            _ => None,
+        };
+        let unsent_walk = pending_walk.is_some_and(|id| {
+            self.reqs
+                .iter()
+                .chain(
+                    self.restored
+                        .iter()
+                        .flat_map(|batch| batch.batch.reqs.iter()),
+                )
+                .any(|row| {
+                    matches!(&row.request,
+                    InteractReq::Walk { request_id, .. } | InteractReq::WalkNear { request_id, .. }
+                    if *request_id == id.get())
+                })
+        });
+        let retained_walk =
+            pending_walk.map(|_| std::mem::replace(&mut self.walk, WalkSlot::new()));
+        let retained_walk_request = self.walk_request.take();
         self.clear_session_work(execution);
+        self.awaited_start = retained_start;
+        if let Some(start) = &mut self.awaited_start {
+            let run = self.execution.run();
+            start.run = run.run;
+            start.session = run.session;
+        }
+        if let Some(walk) = retained_walk {
+            self.walk = walk;
+            self.walk_request = retained_walk_request;
+            self.rearm_walk_on_tick = unsent_walk;
+        }
         self.reconnect_held = true;
         self.work_generation
     }
@@ -186,16 +233,23 @@ impl SeatClient {
         self.work_generation = self.work_generation.wrapping_add(1).max(1);
         self.starts.clear();
         self.cancels.clear();
+        self.awaited_start = None;
         self.reqs.clear();
         self.lifecycle.clear();
         self.restored.clear();
         self.consumed_terminal_seq = 0;
         self.acknowledged_terminal_seq = 0;
         self.sent_terminal_seq = 0;
+        // A copied completion stays with the script, but its old session's
+        // terminal sequence must never acknowledge a result in the new seat.
+        if let Some(stored) = &mut self.stored {
+            stored.terminal_seq = 0;
+        }
         self.observed_walk_outcome_seq = 0;
         self.walk.reset();
         self.walk_generation = 0;
         self.walk_request = None;
+        self.rearm_walk_on_tick = false;
         self.reconnect_held = false;
         if let Some(execution) = execution {
             self.execution = execution;
@@ -231,14 +285,16 @@ impl SeatClient {
         }
         let id = self.mint()?;
         let run = self.execution.run();
-        self.starts.push(SeatStartInput {
+        let start = SeatStartInput {
             id,
             parent,
             run: run.run,
             session: run.session,
             kind,
             args,
-        });
+        };
+        self.awaited_start = Some(start.clone());
+        self.starts.push(start);
         self.awaiting = Some(Awaited::Seat { id, kind });
         self.lifecycle.push(InteractReq::WaitEnqueued);
         Ok(id)
@@ -256,21 +312,38 @@ impl SeatClient {
         if self.awaiting.is_some() {
             return Err(ClientError::AlreadyWaiting);
         }
-        if self.pending_rows() + 2 > MAX_SEAT_GAMEPLAY_ROWS {
+        if self.pending_rows() > MAX_SEAT_GAMEPLAY_ROWS.saturating_sub(2) {
             return Err(ClientError::RowsFull);
         }
         let key = match &request {
             InteractReq::Walk {
-                x, z, level, allow_teleports, ..
+                x,
+                z,
+                level,
+                allow_teleports,
+                ..
             } => WalkKey {
-                tile: WorldTile { x: *x, z: *z, level: *level },
+                tile: WorldTile {
+                    x: *x,
+                    z: *z,
+                    level: *level,
+                },
                 radius: 0,
                 allow_teleports: Some(*allow_teleports),
             },
             InteractReq::WalkNear {
-                x, z, level, radius, allow_teleports, ..
+                x,
+                z,
+                level,
+                radius,
+                allow_teleports,
+                ..
             } => WalkKey {
-                tile: WorldTile { x: *x, z: *z, level: *level },
+                tile: WorldTile {
+                    x: *x,
+                    z: *z,
+                    level: *level,
+                },
                 radius: *radius,
                 allow_teleports: Some(*allow_teleports),
             },
@@ -278,14 +351,18 @@ impl SeatClient {
         };
         let id = self.mint()?;
         match &mut request {
-            InteractReq::Walk { request_id, .. }
-            | InteractReq::WalkNear { request_id, .. } => *request_id = id.get(),
+            InteractReq::Walk { request_id, .. } | InteractReq::WalkNear { request_id, .. } => {
+                *request_id = id.get()
+            }
             _ => unreachable!("request was checked as Walk or WalkNear"),
         }
         self.walk.begin(
             NonZeroU64::new(id.get()).expect("RequestId is nonzero"),
             key,
-            HostOutcome { seq: self.observed_walk_outcome_seq, ..HostOutcome::empty() },
+            HostOutcome {
+                seq: self.observed_walk_outcome_seq,
+                ..HostOutcome::empty()
+            },
         );
         self.walk_generation = expected_generation;
         self.walk_intent_baseline = input.user_move_intent_seq;
@@ -312,16 +389,20 @@ impl SeatClient {
         self.reqs.push(SeatInteractDecoded {
             lineage: None,
             mirror_owner: None,
-            request: InteractReq::AbortWalk { request_id: id.get() },
+            request: InteractReq::AbortWalk {
+                request_id: id.get(),
+            },
         });
         Ok(())
     }
 
     pub fn rearm_host_discarded_walk(&mut self, token: u64) -> bool {
-        if !self.walk.owns(token)
-            || self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS
-        {
+        if !self.walk.owns(token) || self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS {
             return false;
+        }
+        if self.reconnect_held {
+            self.rearm_walk_on_tick = self.walk_request.is_some();
+            return self.rearm_walk_on_tick;
         }
         let Some(request) = self.walk_request.clone() else {
             return false;
@@ -386,6 +467,9 @@ impl SeatClient {
         release_floor: u64,
         tick: bool,
     ) {
+        if self.reconnect_held && !tick {
+            return;
+        }
         if let Some(page) = native.seat_page {
             let live = page.live();
             let results = page.results();
@@ -408,17 +492,42 @@ impl SeatClient {
             self.observed_walk_outcome_seq = native.walk_outcome_seq;
         }
         if self.reconnect_held {
-            if !tick {
-                return;
-            }
             self.reconnect_held = false;
-            if matches!(self.awaiting, Some(Awaited::Seat { .. } | Awaited::Walk { .. }))
-                && self.stored.is_none()
-            {
-                self.stored = Some(StoredCompletion {
-                    value: SeatCompletion::Aborted(AbortReason::Reset),
-                    terminal_seq: 0,
-                });
+            if self.stored.is_none() {
+                match self.awaiting {
+                    Some(Awaited::Seat { .. }) => {
+                        if let Some(start) = &self.awaited_start {
+                            self.starts.push(start.clone());
+                        }
+                        self.lifecycle.push(InteractReq::WaitEnqueued);
+                    }
+                    Some(Awaited::Walk { .. }) => {
+                        if let Some((token, key)) = self.walk.request() {
+                            self.walk.begin(
+                                NonZeroU64::new(token).expect("pending Walk has nonzero token"),
+                                key,
+                                HostOutcome {
+                                    seq: native.walk_outcome_seq,
+                                    ..HostOutcome::empty()
+                                },
+                            );
+                        }
+                        self.walk_generation = native.walk_outcome_generation;
+                        self.walk_intent_baseline = input.user_move_intent_seq;
+                        if self.rearm_walk_on_tick && self.reqs.is_empty() {
+                            if let Some(request) = &self.walk_request {
+                                self.reqs.push(SeatInteractDecoded {
+                                    lineage: None,
+                                    mirror_owner: None,
+                                    request: request.clone(),
+                                });
+                            }
+                        }
+                        self.rearm_walk_on_tick = false;
+                        self.lifecycle.push(InteractReq::WaitEnqueued);
+                    }
+                    _ => {}
+                }
             }
         }
         if self.stored.is_some() {
@@ -470,9 +579,11 @@ impl SeatClient {
             }
             Some(Awaited::Seat { id, kind }) => {
                 let Some(page) = native.seat_page else { return };
-                let Some(result) = page.results().iter().find(|result| {
-                    result.id == id && result.seq > release_floor
-                }) else {
+                let Some(result) = page
+                    .results()
+                    .iter()
+                    .find(|result| result.id == id && result.seq > release_floor)
+                else {
                     return;
                 };
                 let value = match (kind, result.outcome) {
@@ -528,7 +639,12 @@ impl SeatClient {
         }
         let stored = self.stored.take()?;
         self.awaiting.take()?;
-        if matches!(stored.value, SeatCompletion::Walk(_) | SeatCompletion::Aborted(_)) {
+        self.awaited_start = None;
+        self.rearm_walk_on_tick = false;
+        if matches!(
+            stored.value,
+            SeatCompletion::Walk(_) | SeatCompletion::Aborted(_)
+        ) {
             self.walk.reset();
             self.walk_request = None;
         }
@@ -555,15 +671,16 @@ impl SeatClient {
         self.starts.len()
     }
     fn pending_rows(&self) -> usize {
-        self.lifecycle.len()
-            + self.reqs.len()
-            + self
-                .restored
-                .iter()
-                .map(|batch| batch.batch.reqs.len() + usize::from(batch.held_waits.stamped))
-                .sum::<usize>()
+        self.lifecycle
+            .len()
+            .saturating_add(self.reqs.len())
+            .saturating_add(
+                self.restored
+                    .iter()
+                    .map(QueuedSeatBatch::rows)
+                    .fold(0, usize::saturating_add),
+            )
     }
-
 
     pub fn drain_seat_batches(&mut self) -> Vec<QueuedSeatBatch> {
         let mut batches: Vec<_> = self.restored.drain(..).collect();
@@ -631,13 +748,21 @@ impl BorrowedReach<'_> {
         let x = tile.x.checked_sub(view.base_x)?;
         let z = tile.z.checked_sub(view.base_z)?;
         (x >= 0 && z >= 0 && x < view.width && z < view.height)
-            .then(|| (x as usize).checked_mul(view.height as usize)?.checked_add(z as usize))
+            .then(|| {
+                (x as usize)
+                    .checked_mul(view.height as usize)?
+                    .checked_add(z as usize)
+            })
             .flatten()
     }
 
     fn bit(&self, words: &[u32], tile: WorldTile) -> bool {
         self.index(tile)
-            .and_then(|index| words.get(index / 32).map(|word| word & (1 << (index % 32)) != 0))
+            .and_then(|index| {
+                words
+                    .get(index / 32)
+                    .map(|word| word & (1 << (index % 32)) != 0)
+            })
             .unwrap_or(false)
     }
 }
@@ -649,7 +774,11 @@ impl ArrivalProbe for BorrowedReach<'_> {
         destination: WorldTile,
         options: &SceneReachOptions,
     ) -> bool {
-        if self.index(origin).and_then(|index| self.0.exact_rank.get(index)) != Some(&0) {
+        if self
+            .index(origin)
+            .and_then(|index| self.0.exact_rank.get(index))
+            != Some(&0)
+        {
             return false;
         }
         let Some(index) = self.index(destination) else {
@@ -662,9 +791,9 @@ impl ArrivalProbe for BorrowedReach<'_> {
         };
         bits.get(index / 32)
             .is_some_and(|word| word & (1 << (index % 32)) != 0)
-            && ranks
-                .get(index)
-                .is_some_and(|rank| *rank != u16::MAX && u32::from(*rank) <= options.max_steps.unwrap_or(400))
+            && ranks.get(index).is_some_and(|rank| {
+                *rank != u16::MAX && u32::from(*rank) <= options.max_steps.unwrap_or(400)
+            })
     }
 
     fn walkable(&self, tile: WorldTile) -> bool {
@@ -720,7 +849,11 @@ impl Observation for WalkObservation<'_, '_, '_> {
 
     fn arrived(&self, key: WalkKey) -> bool {
         self.input.here.is_some_and(|here| {
-            let me = WorldTile { x: here.x, z: here.z, level: here.level };
+            let me = WorldTile {
+                x: here.x,
+                z: here.z,
+                level: here.level,
+            };
             let reach = BorrowedReach(self.input.reach);
             api::query::is_arrived(me, key.tile, key.radius, || &reach)
         })
