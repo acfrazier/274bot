@@ -821,7 +821,9 @@ mod tests {
     use super::*;
     use crate::combat::tables::PotionKind;
     use crate::gatherer::oneop::OneOpKind;
-    use crate::quester::families::tests::{local_player, with_tick};
+    use crate::quester::families::tests::{
+        local_player, with_tick, with_tick_without_selected_game_data,
+    };
     use crate::survival::CurePoison;
     use api::condition::{
         BotCondition, CureDoses, FoodSummary, PoisonEvent, PoisonMemory, PoisonState, SessionMark,
@@ -958,19 +960,21 @@ mod tests {
         let snapshot = snapshot(Vec::new());
         let poisoned = poison.transition(PoisonEvent::Tick { tick: 169 }).state;
         let mut before_ledger = None;
-        let blocked = with_tick(&snapshot, &mut before_ledger, 169, |tick| {
-            tick.cx.condition = Some(condition(5, poisoned));
-            step.quiet_hazard_recovery(&tick.cx)
-        });
+        let blocked =
+            with_tick_without_selected_game_data(&snapshot, &mut before_ledger, 169, |tick| {
+                tick.cx.condition = Some(condition(5, poisoned));
+                step.quiet_hazard_recovery(&tick.cx)
+            });
         assert!(!blocked);
 
         let cleared = poison.transition(PoisonEvent::Tick { tick: 170 }).state;
         assert_eq!(cleared, PoisonState::Clear);
         let mut after_ledger = None;
-        let resumed = with_tick(&snapshot, &mut after_ledger, 170, |tick| {
-            tick.cx.condition = Some(condition(5, cleared));
-            step.quiet_hazard_recovery(&tick.cx)
-        });
+        let resumed =
+            with_tick_without_selected_game_data(&snapshot, &mut after_ledger, 170, |tick| {
+                tick.cx.condition = Some(condition(5, cleared));
+                step.quiet_hazard_recovery(&tick.cx)
+            });
         assert!(resumed);
     }
 

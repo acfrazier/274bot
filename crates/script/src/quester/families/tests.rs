@@ -358,7 +358,51 @@ fn with_tick_output_reach<R>(
     collision: Option<nav_planner::contract::CollisionView<'_>>,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
 ) -> R {
-    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    with_tick_output_reach_selected(
+        TickReachInputs {
+            snapshot,
+            reach,
+            world_members,
+            next_snapshot,
+            collision,
+            selected: Some(selected),
+        },
+        ledger,
+        tick,
+        output,
+        bank,
+        shop_keepers,
+        f,
+    )
+}
+
+struct TickReachInputs<'snapshot, 'reach, 'next_snapshot, 'collision> {
+    snapshot: &'snapshot GameSnapshot,
+    reach: Option<&'reach api::query::ReachQueryView>,
+    world_members: Truth,
+    next_snapshot: &'next_snapshot GameSnapshot,
+    collision: Option<nav_planner::contract::CollisionView<'collision>>,
+    selected: Option<Arc<api::game_data::SelectedGameData>>,
+}
+
+fn with_tick_output_reach_selected<R>(
+    inputs: TickReachInputs<'_, '_, '_, '_>,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    output: &mut dyn NativeOutput,
+    bank: Option<&api::bank_memory::BankMemory>,
+    shop_keepers: Option<&Arc<api::service_pick::ShopKeeperFacts>>,
+    f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
+) -> R {
+    let TickReachInputs {
+        snapshot,
+        reach,
+        world_members,
+        next_snapshot,
+        collision,
+        selected,
+    } = inputs;
     let evidence = api::quest_progress::EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -419,7 +463,7 @@ fn with_tick_output_reach<R>(
                 walk_danger: Some(&crate::native::AllowWalkDanger),
                 wilderness: None,
                 pvp_globals: None,
-                selected: Some(&data),
+                selected: selected.as_deref(),
                 reach: None,
                 reach_flood: None,
                 bank_memory: bank,
@@ -437,6 +481,30 @@ fn with_tick_output_reach<R>(
         .with_world_members(world_members)
         .with_bank_memory(bank);
     f(&mut native, next_snapshot, next_view)
+}
+/// Build a tick without selected game data for tests that use only posted facts.
+pub(crate) fn with_tick_without_selected_game_data<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach_selected(
+        TickReachInputs {
+            snapshot,
+            reach: None,
+            world_members: Truth::Unknown,
+            next_snapshot: snapshot,
+            collision: None,
+            selected: None,
+        },
+        ledger,
+        tick,
+        &mut Output,
+        None,
+        None,
+        |native, _, _| f(native),
+    )
 }
 /// One observed tick on a budget that outlives the call, so a guardian hold
 /// the test starts and ends on it ([`ledger::TickBudget::hold_begin`],

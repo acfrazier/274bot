@@ -8103,6 +8103,43 @@ fn screen_words(app: &mut TuiApp, w: u16, h: u16) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+/// Text inside a titled popup. Other panes remain visible outside its cleared rectangle.
+fn popup_unspaced(buffer: &ratatui::buffer::Buffer, title: &str) -> Option<String> {
+    let area = buffer.area;
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            if buffer[(x, y)].symbol() != "┌" {
+                continue;
+            }
+            let Some(right) = (x.saturating_add(1)..area.right())
+                .find(|&column| buffer[(column, y)].symbol() == "┐")
+            else {
+                continue;
+            };
+            let title_row: String = (x.saturating_add(1)..right)
+                .map(|column| buffer[(column, y)].symbol())
+                .collect();
+            if !title_row.contains(title) {
+                continue;
+            }
+            let Some(bottom) = (y.saturating_add(1)..area.bottom()).find(|&row| {
+                buffer[(x, row)].symbol() == "└" && buffer[(right, row)].symbol() == "┘"
+            }) else {
+                continue;
+            };
+            let popup = ratatui::layout::Rect::new(x, y, right - x + 1, bottom - y + 1);
+            let mut text = String::new();
+            for row in popup.y.saturating_add(1)..popup.bottom().saturating_sub(1) {
+                for column in popup.x.saturating_add(1)..popup.right().saturating_sub(1) {
+                    text.push_str(buffer[(column, row)].symbol());
+                }
+                text.push('\n');
+            }
+            return Some(unspaced(&text));
+        }
+    }
+    None
+}
 
 /// The screen's text with every space gone, and the same for a needle: the
 /// settings popup wraps by columns, in the middle of a word, so wrapped text
@@ -11077,15 +11114,12 @@ fn a_refused_preferences_store_shows_on_the_message_line_with_the_library_refusa
         1,
         "one log record for the refusal, however many pumps saw it"
     );
-    // The message line is one line and cuts the text; the settings popup
-    // shows the whole refusal (path, cause, remedy) under its rows while it
-    // stands (T5.3-S4 headed check D-3).
+    // The message line is one line and cuts the text; the settings
+    // popup shows the whole refusal while it stands. Inspect only its
+    // contents so visible Fleet text cannot join a wrapped word.
     app.settings_state.open = true;
-    // The popup wraps at its width, inside words too: compare without spaces.
-    let letters: String = screen_words(&mut app, 120, 40)
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
+    let rendered = screen(&mut app, 120, 40);
+    let letters = popup_unspaced(&rendered, crate::settings::TITLE).expect("settings popup bounds");
     for needle in [
         crate::settings::PREFERENCES_NOT_LOADED,
         "writable by other users",
@@ -11144,13 +11178,12 @@ fn a_bad_legacy_preferences_source_shows_its_refusal_on_the_message_line() {
         case.assert_refusal(&shown, &source);
         assert_eq!(session.core.preference_error(), Some(shown.as_str()));
         // The message line is one line and cuts the text; the settings
-        // popup shows the whole refusal while it stands. It wraps at its
-        // width, inside words too: compare without spaces.
+        // popup shows the whole refusal while it stands. Inspect only its
+        // contents so visible Fleet text cannot join a wrapped word.
         app.settings_state.open = true;
-        let letters: String = screen_words(&mut app, 120, 40)
-            .chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
+        let rendered = screen(&mut app, 120, 40);
+        let letters = popup_unspaced(&rendered, crate::settings::TITLE)
+            .unwrap_or_else(|| panic!("{}: settings popup bounds", case.label()));
         for needle in [
             crate::settings::PREFERENCES_NOT_LOADED,
             case.cause(),
