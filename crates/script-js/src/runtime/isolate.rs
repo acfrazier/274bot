@@ -26,6 +26,7 @@ use super::snapshot::{
 };
 use crate::library::shape::LoadShape;
 use rustyscript::{json_args, Runtime, RuntimeOptions};
+use script::surface::StopCompletion;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -2137,11 +2138,11 @@ impl LoadIsolate {
 
     /// Transfer Stop and actual join custody to the one process supervisor.
     /// The slot receives a receipt only after join or credited quarantine.
-    pub fn join_detached(self, done: Sender<Vec<String>>) {
+    pub fn join_detached(self, done: Sender<StopCompletion>) {
         self.retire(true, false, done);
     }
 
-    fn retire(self, invoke_hook: bool, validation: bool, done: Sender<Vec<String>>) {
+    fn retire(self, invoke_hook: bool, validation: bool, done: Sender<StopCompletion>) {
         self.revoke_compat_journal();
         self.send(IsolateCmd::Stop { invoke_hook });
         teardown::begin_stop(&self.teardown, self.terminate.get());
@@ -2160,6 +2161,7 @@ impl LoadIsolate {
         let (tx, rx) = mpsc::channel();
         self.retire(true, false, tx);
         rx.recv_timeout(SETUP_TIMEOUT + JOIN_TIMEOUT + Duration::from_secs(1))
+            .map(|completion| completion.logs)
             .unwrap_or_else(|_| vec!["JS isolate still retiring under process supervision".into()])
     }
 

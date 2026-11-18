@@ -12,7 +12,7 @@ use script::native::SettingsBag;
 use script::paint::ScriptPaint;
 use script::surface::{
     PostedSnapshotFacts, RouteInspectIdentities, ScriptRuntimeContext, ScriptStopReceipt,
-    SurfaceCard, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady,
+    StopCompletion, SurfaceCard, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind,
     SurfaceRun, SurfaceStart, TickOutcome,
 };
 use std::any::Any;
@@ -252,7 +252,7 @@ impl SurfaceRun for JsSurfaceRun {
         self.isolate.loc_projection_wanted()
     }
 
-    fn stop(self: Box<Self>, done: Sender<Vec<String>>) {
+    fn stop(self: Box<Self>, done: Sender<StopCompletion>) {
         let Self {
             isolate,
             ipc,

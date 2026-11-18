@@ -3200,7 +3200,8 @@ export default class T extends LoopingBot {
     logs.extend(
         done_rx
             .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("ScriptRunner.stop join exceeded the generous hang guard"),
+            .expect("ScriptRunner.stop join exceeded the generous hang guard")
+            .logs,
     );
     assert!(
         logs.iter().any(|l| l.contains("script requested stop")),

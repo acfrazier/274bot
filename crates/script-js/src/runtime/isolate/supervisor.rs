@@ -3,6 +3,7 @@
 
 use super::teardown::{run_deadline, DeadlineKind, ExecutionInterrupt, Teardown};
 use super::{LoadIsolate, LoadIsolateError, JOIN_TIMEOUT};
+use script::surface::StopCompletion;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, LazyLock, Mutex};
@@ -23,7 +24,7 @@ struct Deadline {
 /// the conformance tests use a thread double.
 struct Retirement<I> {
     isolate: I,
-    done: Sender<Vec<String>>,
+    done: Sender<StopCompletion>,
     deadline: Instant,
     awaiting_setup: bool,
     validation: bool,
@@ -31,7 +32,7 @@ struct Retirement<I> {
 
 struct Quarantined {
     handle: JoinHandle<()>,
-    validation_done: Option<(Sender<Vec<String>>, Vec<String>)>,
+    validation_done: Option<(Sender<StopCompletion>, Vec<String>)>,
 }
 
 struct Registry<I = LoadIsolate> {
@@ -133,7 +134,7 @@ struct Pass<I> {
     retiring: Vec<Retirement<I>>,
     keep: Vec<Retirement<I>>,
     credited: Vec<Quarantined>,
-    receipts: Vec<(Sender<Vec<String>>, Vec<String>)>,
+    receipts: Vec<(Sender<StopCompletion>, Vec<String>)>,
     quarantine_room: usize,
 }
 
@@ -215,7 +216,10 @@ impl<I: Retiree> Pass<I> {
     /// reflect it. Never send while holding the process registry.
     fn send_receipts(&mut self) {
         for (done, lines) in self.receipts.drain(..) {
-            let _ = done.send(lines);
+            let _ = done.send(StopCompletion {
+                logs: lines,
+                hook_failure: None,
+            });
         }
     }
 }
@@ -277,7 +281,10 @@ impl<I> Registry<I> {
                 let row = self.quarantined.swap_remove(i);
                 let _ = row.handle.join();
                 if let Some((done, lines)) = row.validation_done {
-                    let _ = done.send(lines);
+                    let _ = done.send(StopCompletion {
+                        logs: lines,
+                        hook_failure: None,
+                    });
                 }
             } else {
                 i += 1;
@@ -503,7 +510,12 @@ impl Supervisor {
         }
     }
 
-    pub(super) fn retire(&self, isolate: LoadIsolate, done: Sender<Vec<String>>, validation: bool) {
+    pub(super) fn retire(
+        &self,
+        isolate: LoadIsolate,
+        done: Sender<StopCompletion>,
+        validation: bool,
+    ) {
         // Setup retains its original 10-second deadline, followed by the
         // 2-second join allowance. A ready isolate needs only join.
         let setup = isolate
@@ -641,7 +653,7 @@ mod tests {
             std::thread::yield_now();
         }
         registry.reap();
-        assert_eq!(receipt.recv().unwrap(), vec!["joined validator"]);
+        assert_eq!(receipt.recv().unwrap().logs, vec!["joined validator"]);
         assert_eq!(registry.status().quarantined_validation, 0);
     }
 

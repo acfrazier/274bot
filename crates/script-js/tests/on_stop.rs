@@ -266,7 +266,8 @@ fn delayed_hook_entry_keeps_deadline_interrupt() {
     iso.join_detached(done_tx);
     let logs = done_rx
         .recv_timeout(Duration::from_secs(5))
-        .expect("delayed onStop join exceeded the generous hang guard");
+        .expect("delayed onStop join exceeded the generous hang guard")
+        .logs;
     let elapsed = t0.elapsed();
     assert!(
         elapsed < Duration::from_secs(2),
@@ -376,6 +377,7 @@ fn credited_transfer_refusal_and_actual_join_reopen_admission() {
                     if let Ok(lines) = rx.try_recv() {
                         assert!(
                             lines
+                                .logs
                                 .iter()
                                 .any(|line| line.contains("quarantined after join deadline")),
                             "{lines:?}"

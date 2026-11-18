@@ -419,7 +419,8 @@ export default class T extends LoopingBot {
     iso.join_detached(done_tx);
     let logs = done_rx
         .recv_timeout(std::time::Duration::from_secs(5))
-        .expect("walkTo stop join exceeded the generous hang guard");
+        .expect("walkTo stop join exceeded the generous hang guard")
+        .logs;
     assert!(
         logs.iter().any(|l| l.contains("script requested stop")),
         "ScriptRunner.stop must log while walkTo is parked: {logs:?}"

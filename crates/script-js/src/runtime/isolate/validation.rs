@@ -3,6 +3,7 @@
 
 use super::{LoadIsolate, LoadIsolateError, LoadShape, Ready, JOIN_TIMEOUT, VALIDATION_TIMEOUT};
 use crate::library::store::PreparedCard;
+use script::surface::StopCompletion;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
@@ -206,7 +207,7 @@ pub(super) fn validate_batch(
 
 fn run(rx: Receiver<Job>) {
     // Validation admission stays occupied through a credited quarantine.
-    let mut retiring: Option<Receiver<Vec<String>>> = None;
+    let mut retiring: Option<Receiver<StopCompletion>> = None;
     for job in rx {
         if job.cancelled.load(Ordering::Acquire) {
             continue;
@@ -253,7 +254,7 @@ fn run(rx: Receiver<Job>) {
     }
 }
 
-fn retiring_pending(retiring: &mut Option<Receiver<Vec<String>>>) -> bool {
+fn retiring_pending(retiring: &mut Option<Receiver<StopCompletion>>) -> bool {
     match retiring.as_ref().map(|done| done.try_recv()) {
         Some(Ok(_)) => {
             *retiring = None;
@@ -285,7 +286,7 @@ fn validate_one(
     siblings: Vec<(String, String)>,
     game_data: Arc<api::game_data::SelectedGameData>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
-    retiring: &mut Option<Receiver<Vec<String>>>,
+    retiring: &mut Option<Receiver<StopCompletion>>,
 ) -> Result<(), String> {
     let isolate = LoadIsolate::spawn_inner(
         js,

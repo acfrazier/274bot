@@ -1118,7 +1118,8 @@ fn join_detached_returns_immediately_and_delivers_onstop_logs() {
     );
     let logs = rx
         .recv_timeout(Duration::from_secs(5))
-        .expect("reaper logs");
+        .expect("reaper logs")
+        .logs;
     assert!(
         logs.iter().any(|l| l.contains("stopped-ok")),
         "onStop log missing: {logs:?}"

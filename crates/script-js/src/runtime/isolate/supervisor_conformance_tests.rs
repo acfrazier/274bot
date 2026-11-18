@@ -18,6 +18,7 @@ use super::*;
 use js_teardown_model::retire as model;
 use js_teardown_model::{explore_retire, retire_profile, Limits, Machine};
 use model::{Action, Custody, Mutation, Receipt, Thread};
+use script::surface::StopCompletion;
 use std::collections::BTreeSet;
 
 /// One model time unit.
@@ -64,7 +65,7 @@ struct Ctl {
     validation: bool,
     release: Option<mpsc::Sender<()>>,
     retirement: Option<Retirement<Double>>,
-    receipts: mpsc::Receiver<Vec<String>>,
+    receipts: mpsc::Receiver<StopCompletion>,
     sent: u8,
 }
 
