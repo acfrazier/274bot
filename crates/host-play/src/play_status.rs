@@ -208,31 +208,25 @@ impl Clone for SlotStatus {
         self.script_paint.clone_from(&source.script_paint);
         self.condition = source.condition;
         self.survival = source.survival;
-        // Every field is named, so a field added to the status cannot be left
-        // out of the copy a poll makes.
-        let RandomStatus {
-            kind,
-            name,
-            ours,
-            handling,
-            hold,
-            toggle,
-            claim,
-            cooldown,
-            response,
-            fight,
-        } = &source.random;
+        // Keep the copy field-by-field to reuse String buffers; the equality
+        // test below also checks that a newly added field is not left behind.
+        let source_random = &source.random;
         let random = &mut self.random;
-        random.kind.clone_from(kind);
-        random.name.clone_from(name);
-        random.ours = *ours;
-        random.handling = *handling;
-        random.hold = *hold;
-        random.toggle = *toggle;
-        random.claim.clone_from(claim);
-        random.cooldown = *cooldown;
-        random.response = *response;
-        random.fight = *fight;
+        random.kind.clone_from(&source_random.kind);
+        random.name.clone_from(&source_random.name);
+        random.ours = source_random.ours;
+        random.handling = source_random.handling;
+        random.hold = source_random.hold;
+        random.toggle = source_random.toggle;
+        random.claim.clone_from(&source_random.claim);
+        random.cooldown = source_random.cooldown;
+        random.response = source_random.response;
+        random.fight = source_random.fight;
+        #[cfg(feature = "live-probe")]
+        {
+            random.fight_outcome = source_random.fight_outcome;
+            random.no_progress_ticks = source_random.no_progress_ticks;
+        }
     }
 }
 
@@ -784,6 +778,10 @@ mod tests {
                 session: 3,
                 serial: 4,
             }),
+            #[cfg(feature = "live-probe")]
+            fight_outcome: Some(api::random::FightOutcome::Pending),
+            #[cfg(feature = "live-probe")]
+            no_progress_ticks: Some(7),
         };
         // A row retained from an earlier poll, with another answer.
         let mut copy = SlotStatus {

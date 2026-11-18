@@ -335,12 +335,32 @@ pub(super) fn wait_mutual_visibility(
              tiles); visible={visible:?}, names={names:?}, rows={:?}, tiles={:?}, drives={:?}",
             states
                 .iter()
-                .map(|state| &state.players)
+                .map(|state| {
+                    state
+                        .players
+                        .iter()
+                        .map(|row| &row.name)
+                        .collect::<Vec<_>>()
+                })
                 .collect::<Vec<_>>(),
             states.iter().map(|state| state.tile).collect::<Vec<_>>(),
             drives
                 .iter()
-                .map(|drive| drive.lock().expect("duel drive lock").clone())
+                .map(|drive| {
+                    let drive = drive.lock().expect("duel drive lock");
+                    (
+                        drive.last_challenge,
+                        drive.challenges,
+                        drive.accept1_at,
+                        drive.accept2_at,
+                        drive.saw_select,
+                        drive.saw_confirm,
+                        drive.saw_pen,
+                        drive.fight_seen,
+                        drive.approach_tick,
+                        drive.refusals.clone(),
+                    )
+                })
                 .collect::<Vec<_>>(),
         );
         thread::sleep(Duration::from_millis(50));
@@ -368,7 +388,10 @@ fn approach_pen_center(
     let Some((min_x, max_x, min_z, max_z)) = crate::paired_core::fight_pen(Some(own)) else {
         return;
     };
-    let partner_visible = snapshot.players().iter().any(|row| row.name == partner);
+    let partner_visible = snapshot
+        .players()
+        .iter()
+        .any(|row| row.actor.name.as_deref() == Some(partner));
     if partner_visible {
         return;
     }

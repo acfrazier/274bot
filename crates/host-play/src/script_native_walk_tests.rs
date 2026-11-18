@@ -4992,6 +4992,10 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
 fn manual_frame(hold: bool) -> crate::SlotFrameInput {
     crate::SlotFrameInput {
         hold,
+        #[cfg(feature = "live-probe")]
+        guardian_fight_outcome: None,
+        #[cfg(feature = "live-probe")]
+        guardian_no_progress_ticks: None,
         host_move_owned: false,
         manual_move_intent: Some(crate::ManualMoveIntent::Minimap),
         manual_steps: 0,
