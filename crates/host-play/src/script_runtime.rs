@@ -27,7 +27,7 @@ mod script_nav;
 pub(crate) use script_nav::pump_route_work;
 #[cfg(all(test, feature = "js"))]
 pub(super) use script_nav::CarriedWalk;
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 pub(super) use script_nav::PostedWalkOutcome;
 #[cfg(all(test, feature = "js"))]
 pub(super) use script_nav::RouteDemand;
@@ -92,7 +92,7 @@ use script_walk::{recovery_walk_idle, resumed_walk};
 mod script_snapshot;
 use script_snapshot::pack_cached_reach;
 pub(super) use script_snapshot::slot_arrival_reach;
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 pub(super) use script_snapshot::with_script_snapshot_input_shorts;
 #[cfg(all(test, feature = "js"))]
 pub(super) use script_snapshot::{script_snapshot_fb, with_script_snapshot_input};
@@ -174,6 +174,8 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
             slot.bind_incarnation(incarnation);
             #[cfg(feature = "js")]
             bind_js_surface_factory(&mut slot);
+            #[cfg(feature = "luau")]
+            bind_luau_surface_factory(&mut slot);
             Arc::new(Mutex::new(slot))
         })
         .clone()
@@ -189,6 +191,17 @@ fn shared_js_surface_factory() -> Arc<script_js::surface::JsSurfaceFactory> {
 #[cfg(feature = "js")]
 fn bind_js_surface_factory(slot: &mut SlotScript) {
     slot.bind_surface_factory(shared_js_surface_factory());
+}
+#[cfg(feature = "luau")]
+fn shared_luau_surface_factory() -> Arc<script_luau::LuauSurfaceFactory> {
+    static FACTORY: std::sync::LazyLock<Arc<script_luau::LuauSurfaceFactory>> =
+        std::sync::LazyLock::new(|| Arc::new(script_luau::LuauSurfaceFactory));
+    Arc::clone(&FACTORY)
+}
+
+#[cfg(feature = "luau")]
+fn bind_luau_surface_factory(slot: &mut SlotScript) {
+    slot.bind_surface_factory(shared_luau_surface_factory());
 }
 
 #[cfg(feature = "js")]
@@ -246,6 +259,25 @@ pub(super) fn js_surface_start_with_wilderness_rules(
         named_banks,
         loadouts,
         wilderness_rules,
+    }
+}
+
+#[cfg(feature = "luau")]
+pub(super) fn luau_surface_start(
+    source: String,
+    settings_bag: Option<Arc<script::native::SettingsBag>>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+) -> script::surface::SurfaceStart {
+    let card: Arc<dyn script::surface::SurfaceCard> =
+        Arc::new(script_luau::LuauStartCard::new("Load", source));
+    script::surface::SurfaceStart {
+        card,
+        settings_bag,
+        game_data,
+        named_banks,
+        wilderness_rules: script::surface::no_wilderness(),
+        loadouts: Arc::from([]),
     }
 }
 

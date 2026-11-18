@@ -3,9 +3,9 @@ use std::sync::Arc;
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav_planner::world::NavWorld;
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use super::route_inspect;
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use super::PostedWalkOutcome;
 use super::{script_slot, ScriptWall};
 /// The FlatBuffer snapshot blob posted into a Load isolate each
@@ -120,7 +120,7 @@ fn positional_ops(item: &api::snapshot::ItemView) -> Vec<String> {
 pub(super) struct PackedReach {
     pub(super) view: Arc<api::query::ReachQueryView>,
     pub(super) flood: Option<Arc<api::query::ReachFlood>>,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub(super) stamp: u64,
 }
 
@@ -135,7 +135,7 @@ pub(super) fn pack_cached_reach(
         return PackedReach {
             view: Arc::new(api::query::ReachQueryView::unavailable()),
             flood: None,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             stamp: 0,
         };
     };
@@ -157,13 +157,13 @@ pub(super) fn pack_cached_reach(
         here_tile,
         canlight_plane,
     );
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     let stamp = key.stamp();
     if cache.contains(&key) {
         return PackedReach {
             view: cache.view_arc(),
             flood: cache.flood_arc(),
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             stamp,
         };
     }
@@ -178,7 +178,7 @@ pub(super) fn pack_cached_reach(
     PackedReach {
         view: cache.pack(key, s.scene(), flood.clone(), canlight_plane),
         flood,
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         stamp,
     }
 }
@@ -266,7 +266,7 @@ pub(crate) fn with_script_snapshot_input<R>(
     )
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// The same pack with the walk outcome's navigator-named gate shorts: the live
 /// observe path takes this entry point, and [`with_script_snapshot_input`] is
 /// this one with none. The rows are a borrow of THIS frame and are handed to `f`

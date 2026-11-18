@@ -188,6 +188,11 @@ pub(crate) enum StartRequest<'a> {
         siblings: Vec<(String, String)>,
         loadouts: Option<&'a [api::loadout::Loadout]>,
     },
+    #[cfg(feature = "luau")]
+    Luau {
+        source: String,
+        bag: Option<script::native::SettingsBag>,
+    },
     Compiled {
         id: script::CompiledId,
         bag: serde_json::Map<String, serde_json::Value>,
@@ -375,6 +380,8 @@ impl ScriptStartHandle {
         let slot = match &request {
             #[cfg(feature = "js")]
             StartRequest::Load { .. } => script_slot_or_insert(&self.scripts, name),
+            #[cfg(feature = "luau")]
+            StartRequest::Luau { .. } => script_slot_or_insert(&self.scripts, name),
             StartRequest::Compiled { .. } | StartRequest::WalkHandover { .. } => {
                 script_slot(&self.scripts, name)
                     .ok_or_else(|| Refused(format!("no slot: {name}")))?
@@ -495,6 +502,15 @@ impl ScriptStartHandle {
                     Err(error) => Err(Refused(error)),
                 }
             }
+            #[cfg(feature = "luau")]
+            StartRequest::Luau { source, bag } => slot
+                .start_surface_with_settings(script_runtime::luau_surface_start(
+                    source,
+                    bag.map(Arc::new),
+                    self.game_data.clone(),
+                    Arc::clone(&self.named_banks),
+                ))
+                .map_err(|error| Refused(error.to_string())),
         };
         if result.is_ok() {
             invalidate_bank_pick(&self.navs, name);
@@ -1190,6 +1206,43 @@ impl Play {
             || Ok(()),
         )?;
         self.wake(name);
+        Ok(())
+    }
+
+    #[cfg(feature = "luau")]
+    /// Start a Luau bot on `account`'s slot, spawning the VM only after Start.
+    pub fn script_start_luau(
+        &self,
+        account: &str,
+        source: String,
+        settings: Option<script::native::SettingsBag>,
+    ) -> Result<(), String> {
+        self.script_start_luau_typed(account, source, settings)
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(feature = "luau")]
+    /// Initial Luau start result with operational refusals separate.
+    pub fn script_start_luau_typed(
+        &self,
+        account: &str,
+        source: String,
+        settings: Option<script::native::SettingsBag>,
+    ) -> Result<(), script::StartLoadError> {
+        if !self.slot_active(account) {
+            return Err(script::StartLoadError::Refused(format!(
+                "no slot: {account}"
+            )));
+        }
+        self.script_start_handle().dispatch_start(
+            account,
+            || StartRequest::Luau {
+                source,
+                bag: settings,
+            },
+            || Ok(()),
+        )?;
+        self.wake(account);
         Ok(())
     }
 

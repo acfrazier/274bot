@@ -4769,7 +4769,7 @@ fn harvest_route_terminal(
         (_, RouteReservation::Full) => unreachable!("full owner results keep the terminal"),
     }
 }
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// Host-published walk outcome copied onto the isolate snapshot.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PostedWalkOutcome {

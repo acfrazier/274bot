@@ -17,6 +17,8 @@ use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 use script::slot::SeatWalkTerminal;
 use script::{ScriptCtx, SlotScript};
+#[cfg(any(feature = "js", feature = "luau"))]
+use script::surface::{InputDelivery, LentOutcome, SurfaceWake};
 
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
@@ -24,7 +26,7 @@ use super::{
     recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
     take_carried_walk, BankDepositDispatch, InteractContext, NavBot, ScriptWall,
 };
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use super::{with_script_snapshot_input_shorts, PostedWalkOutcome};
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
@@ -211,7 +213,7 @@ pub(crate) fn observe_wake(
 /// Count one seat answer dispatch and write its receipt line: the observed
 /// tick, the seat counters the page carried, how the surface answered, and
 /// the counts of accepted, refused-page and refused-dispatch attempts so far.
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn note_seat_page(
     slot: &mut SlotScript,
     name: &str,
@@ -238,12 +240,19 @@ fn note_seat_page(
         );
     }
 }
+#[cfg(any(feature = "js", feature = "luau"))]
+enum SurfacePageDelivery<'ctx, 'script> {
+    Posted { wake_waits: bool },
+    Lent {
+        wake: SurfaceWake,
+        ctx: &'ctx mut ScriptCtx<'script>,
+    },
+}
 
-#[cfg(feature = "js")]
-/// Post the slot's snapshot. Only a post the isolate accepted counts as the
-/// isolate having seen the walk outcome it carries (`walk_seq`), so only
-/// then is the live refusal guard released. A refused post leaves the guard
-/// in place, and the isolate refuses the paired tick.
+#[cfg(any(feature = "js", feature = "luau"))]
+/// Wrap one posted or lent snapshot delivery. Only an accepted delivery counts
+/// as the run having seen the walk outcome it carries (`walk_seq`), so only
+/// then does the host release the live refusal guard.
 pub(crate) fn post_script_snapshot(
     slot: &mut SlotScript,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
@@ -1037,8 +1046,11 @@ where
             // loop/pump freeze, without being treated as that external freeze.
             // `recovery_hold` is read above: the watchdog hold is part of the wake gate.
             let isolate_hold = hold || recovery_hold || prayer_cleanup_hold;
-            #[cfg(feature = "js")]
-            let post_page = |slot: &mut SlotScript, wake_waits: bool| -> bool {
+            #[cfg(all(feature = "luau", not(feature = "js")))]
+            let npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]> = None;
+            #[cfg(any(feature = "js", feature = "luau"))]
+            let post_page = |slot: &mut SlotScript,
+                             delivery: SurfacePageDelivery<'_, '_>| {
                 let (
                     teleports_enabled,
                     walk_seq,
@@ -1063,6 +1075,10 @@ where
                     let mut all = navs.lock().unwrap();
                     match all.get_mut(name) {
                         Some(b) => {
+                            #[cfg(feature = "js")]
+                            let inspect_posted = b.inspect.posted();
+                            #[cfg(not(feature = "js"))]
+                            let inspect_posted = route_inspect::PostedInspect::default();
                             let posted = (
                                 b.allow_teleports,
                                 b.walk_outcome_seq,
@@ -1081,7 +1097,7 @@ where
                                 b.walk_outcome_cancel_reason,
                                 b.user_move_intent_seq,
                                 b.walk_missing_carry.clone(),
-                                b.inspect.posted(),
+                                inspect_posted,
                                 bank_selection,
                             );
                             // The live refusal guard is released only once
@@ -1179,29 +1195,93 @@ where
                     Some(guardian_active_event.unwrap_or("")),
                     |input, native| {
                         post_script_snapshot(slot, navs, name, walk_seq, |slot| {
-                            if wake_waits {
-                                slot.post_snapshot_wake(
-                                    input,
-                                    native,
-                                    force_banks,
-                                    inv.is_none() && input.inv_size == 0,
-                                )
-                            } else {
-                                slot.post_snapshot_delta(input, native, force_banks)
+                            match delivery {
+                                SurfacePageDelivery::Posted { wake_waits } => {
+                                    #[cfg(feature = "js")]
+                                    {
+                                        if wake_waits {
+                                            slot.post_snapshot_wake(
+                                                input,
+                                                native,
+                                                force_banks,
+                                                inv.is_none() && input.inv_size == 0,
+                                            )
+                                        } else {
+                                            slot.post_snapshot_delta(input, native, force_banks)
+                                        }
+                                    }
+                                    #[cfg(not(feature = "js"))]
+                                    {
+                                        let _ = wake_waits;
+                                        false
+                                    }
+                                }
+                                SurfacePageDelivery::Lent { wake, ctx } => {
+                                    let outcome = match wake {
+                                        SurfaceWake::Tick { held } => {
+                                            slot.on_game_tick_lent(ctx, held, input, native)
+                                        }
+                                        SurfaceWake::Evidence => {
+                                            slot.on_snapshot_change_lent(ctx, input, native)
+                                        }
+                                        SurfaceWake::SeatPage { release_floor } => {
+                                            slot.on_seat_page_lent(
+                                                ctx,
+                                                release_floor,
+                                                input,
+                                                native,
+                                            )
+                                        }
+                                    };
+                                    matches!(outcome, LentOutcome::Accepted)
+                                }
                             }
                         })
                     },
                 );
-                slot.store_last_world_id(world_id);
+                #[cfg(feature = "js")]
+                if matches!(slot.surface_input_delivery(), InputDelivery::Posted) {
+                    slot.store_last_world_id(world_id);
+                }
                 accepted
             };
             // A seat answer posts its page after its poll, below.
             #[cfg(feature = "js")]
-            if wake != ObserveWake::SeatAnswer && slot.surface_active() {
-                post_page(&mut slot, wake_waits);
+            if wake != ObserveWake::SeatAnswer
+                && slot.surface_active()
+                && matches!(slot.surface_input_delivery(), InputDelivery::Posted)
+            {
+                post_page(&mut slot, SurfacePageDelivery::Posted { wake_waits });
             }
             if isolate_hold {
-                if !guardian_hold {
+                #[cfg(any(feature = "js", feature = "luau"))]
+                if slot.surface_active()
+                    && matches!(slot.surface_input_delivery(), InputDelivery::Lent)
+                {
+                    let mut ctx = ScriptCtx {
+                        driver,
+                        tick,
+                        here,
+                        walk: None,
+                        walk_with: None,
+                        inv,
+                        snapshot: snapshot.read(),
+                        obj_names,
+                        compiled: script::CompiledTick {
+                            hold: isolate_hold,
+                            ..Default::default()
+                        },
+                    };
+                    let _accepted = post_page(
+                        &mut slot,
+                        SurfacePageDelivery::Lent {
+                            wake: SurfaceWake::Tick { held: isolate_hold },
+                            ctx: &mut ctx,
+                        },
+                    );
+                    wrote = true;
+                }
+                if !guardian_hold && !slot.surface_active() {
                     slot.seat_held_tick();
                 }
                 // Isolate: tick for onPaint only (hold gate inside V8 via
@@ -1210,7 +1290,9 @@ where
                 // but script walk arms are not provided. Compiled: skip on
                 // guardian hold.
                 #[cfg(feature = "js")]
-                if slot.surface_active() {
+                if slot.surface_active()
+                    && matches!(slot.surface_input_delivery(), InputDelivery::Posted)
+                {
                     slot.on_game_tick(&mut ScriptCtx {
                         driver,
                         tick,
@@ -1318,31 +1400,123 @@ where
                     slot.align_seat_session(gate.ready());
                 }
                 match wake {
-                    ObserveWake::Tick => slot.on_game_tick(&mut ctx),
-                    ObserveWake::Evidence => slot.on_snapshot_change(&mut ctx),
-                    ObserveWake::SeatAnswer => {
-                        // Poll only the answered consumers, then publish what
-                        // the poll produced as one page and one seat dispatch.
-                        #[cfg(feature = "js")]
-                        if slot.on_seat_answer(&mut ctx) {
-                            let carried = slot.seat_answer_seq();
-                            let carried_terminal = slot.seat_result_seq();
-                            let floor = slot.seat_terminal_dispatched();
-                            let page_accepted = post_page(&mut slot, true);
-                            let dispatch_accepted = slot.on_seat_page_at(tick, floor);
-                            if page_accepted && dispatch_accepted {
-                                slot.mark_seat_answer_dispatched(carried, carried_terminal);
+                    ObserveWake::Tick => {
+                        #[cfg(any(feature = "js", feature = "luau"))]
+                        {
+                            if slot.surface_active()
+                                && matches!(
+                                    slot.surface_input_delivery(),
+                                    InputDelivery::Lent
+                                )
+                            {
+                                let _accepted = post_page(
+                                    &mut slot,
+                                    SurfacePageDelivery::Lent {
+                                        wake: SurfaceWake::Tick { held: isolate_hold },
+                                        ctx: &mut ctx,
+                                    },
+                                );
+                            } else {
+                                slot.on_game_tick(&mut ctx);
                             }
-                            note_seat_page(
-                                &mut slot,
-                                name,
-                                tick,
-                                (carried, carried_terminal, floor),
-                                (page_accepted, dispatch_accepted),
-                            );
-                            wrote = true;
                         }
-                        #[cfg(not(feature = "js"))]
+                        #[cfg(not(any(feature = "js", feature = "luau")))]
+                        slot.on_game_tick(&mut ctx);
+                    }
+                    ObserveWake::Evidence => {
+                        #[cfg(any(feature = "js", feature = "luau"))]
+                        {
+                            if slot.surface_active()
+                                && matches!(
+                                    slot.surface_input_delivery(),
+                                    InputDelivery::Lent
+                                )
+                            {
+                                let _accepted = post_page(
+                                    &mut slot,
+                                    SurfacePageDelivery::Lent {
+                                        wake: SurfaceWake::Evidence,
+                                        ctx: &mut ctx,
+                                    },
+                                );
+                            } else {
+                                slot.on_snapshot_change(&mut ctx);
+                            }
+                        }
+                        #[cfg(not(any(feature = "js", feature = "luau")))]
+                        slot.on_snapshot_change(&mut ctx);
+                    }
+                    ObserveWake::SeatAnswer => {
+                        #[cfg(any(feature = "js", feature = "luau"))]
+                        {
+                            if slot.surface_active()
+                                && matches!(
+                                    slot.surface_input_delivery(),
+                                    InputDelivery::Lent
+                                )
+                            {
+                                if slot.on_seat_answer(&mut ctx) {
+                                    let carried = slot.seat_answer_seq();
+                                    let carried_terminal = slot.seat_result_seq();
+                                    let floor = slot.seat_terminal_dispatched();
+                                    let accepted = post_page(
+                                        &mut slot,
+                                        SurfacePageDelivery::Lent {
+                                            wake: SurfaceWake::SeatPage {
+                                                release_floor: floor,
+                                            },
+                                            ctx: &mut ctx,
+                                        },
+                                    );
+                                    if accepted {
+                                        slot.mark_seat_answer_dispatched(
+                                            carried,
+                                            carried_terminal,
+                                        );
+                                    }
+                                    note_seat_page(
+                                        &mut slot,
+                                        name,
+                                        tick,
+                                        (carried, carried_terminal, floor),
+                                        (accepted, accepted),
+                                    );
+                                    wrote = true;
+                                }
+                            } else {
+                                // Poll only the answered consumers, then publish what
+                                // the poll produced as one page and one seat dispatch.
+                                #[cfg(feature = "js")]
+                                if slot.on_seat_answer(&mut ctx) {
+                                    let carried = slot.seat_answer_seq();
+                                    let carried_terminal = slot.seat_result_seq();
+                                    let floor = slot.seat_terminal_dispatched();
+                                    let page_accepted =
+                                        post_page(
+                                            &mut slot,
+                                            SurfacePageDelivery::Posted { wake_waits: true },
+                                        );
+                                    let dispatch_accepted = slot.on_seat_page_at(tick, floor);
+                                    if page_accepted && dispatch_accepted {
+                                        slot.mark_seat_answer_dispatched(
+                                            carried,
+                                            carried_terminal,
+                                        );
+                                    }
+                                    note_seat_page(
+                                        &mut slot,
+                                        name,
+                                        tick,
+                                        (carried, carried_terminal, floor),
+                                        (page_accepted, dispatch_accepted),
+                                    );
+                                    wrote = true;
+                                }
+                                #[cfg(not(feature = "js"))]
+                                let _ = &mut ctx;
+                            }
+                        }
+                        #[cfg(not(any(feature = "js", feature = "luau")))]
                         let _ = &mut ctx;
                     }
                     ObserveWake::None => {}

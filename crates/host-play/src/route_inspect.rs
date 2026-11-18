@@ -2206,7 +2206,7 @@ impl InspectNav {
         Some(revision)
     }
 }
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 #[derive(Clone, Default)]
 pub(crate) struct PostedInspect {
     pub(super) latest: Option<InspectTerminal>,
