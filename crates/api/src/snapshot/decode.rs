@@ -1,5 +1,76 @@
 use super::*;
 
+/// Sample one armed actor without copying text or rebuilding actor families.
+/// `None`, logout, an unloaded scene, and an absent published slot yield no view.
+pub fn actor_observation(
+    client: &Client,
+    actor: Option<ActorSelector>,
+) -> Option<ActorObservationView<'_>> {
+    let actor = actor?;
+    if !client.ingame || client.scene_state != 2 {
+        return None;
+    }
+    let (index, entity, name, npc_type) = match actor {
+        ActorSelector::LocalPlayer => {
+            let player = client.local_player.as_ref()?;
+            (
+                usize::try_from(client.self_slot).ok()?,
+                &player.entity,
+                player.name.as_deref(),
+                None,
+            )
+        }
+        ActorSelector::Player(index) => {
+            if !client
+                .player_ids
+                .get(..usize::try_from(client.player_count).ok()?)?
+                .iter()
+                .any(|&id| usize::try_from(id).ok() == Some(index))
+            {
+                return None;
+            }
+            let player = client.players.get(index)?.as_deref()?;
+            (index, &player.entity, player.name.as_deref(), None)
+        }
+        ActorSelector::Npc(index) => {
+            if !client
+                .npc_ids
+                .get(..usize::try_from(client.npc_count).ok()?)?
+                .iter()
+                .any(|&id| usize::try_from(id).ok() == Some(index))
+            {
+                return None;
+            }
+            let npc = client.npc.get(index)?.as_deref()?;
+            let name = npc
+                .r#type
+                .and_then(|id| npc_377::menu_form(client, id))
+                .map(|definition| definition.name.as_str());
+            (index, &npc.entity, name, npc.r#type)
+        }
+    };
+    let base = (client.map_build_base_x, client.map_build_base_z);
+    Some(ActorObservationView {
+        actor,
+        index,
+        session: client.gens.session,
+        source_cycle: client.loop_cycle,
+        name,
+        npc_type,
+        tile: entity_world_tile(entity, base, client.minusedlevel),
+        network: entity_network_tile(entity, base, client.minusedlevel),
+        animation: entity.primary_anim,
+        animation_frame: entity.primary_anim_frame,
+        pose_animation: entity.secondary_anim,
+        chat_style: ActorChatStyle {
+            colour: entity.chat_colour,
+            effect: entity.chat_effect,
+        },
+        overhead_text: entity.chat_message.as_deref(),
+        remaining_cycles: entity.chat_timer,
+    })
+}
+
 #[path = "npc_377.rs"]
 mod npc_377;
 use client::client::MiniMenuAction;
@@ -167,11 +238,7 @@ impl NpcView {
         let cache = &client.cache;
         let placed = npc.r#type.and_then(|id| cache.npcs.get(id));
         let is_377 = client.revision() == client::io::ClientRevision::R377;
-        let form = if is_377 {
-            npc.r#type.and_then(|id| npc_377::menu_form(client, id))
-        } else {
-            placed
-        };
+        let form = npc.r#type.and_then(|id| npc_377::menu_form(client, id));
         let (name, actions) = match form {
             Some(form) => (Some(form.name.clone()), form.op.clone()),
             None => (None, Vec::new()),

@@ -5,8 +5,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
+### Revision 377 login
+
+- Revision 377 login failures show clearer messages. An outdated-client
+  refusal asks you to reload the page instead of suggesting a login-key problem.
+
 ### Scenario observations
 
+- `ObserveActor` records a selected actor's native pose, public-chat style and
+  overhead-text transitions, bound to its slot, session and client cycle.
+  `ActorChatStyle`, `OverheadText` and `OverheadTextLifetime` require an
+  appearance witnessed during their own observation. Already-visible text
+  is recorded separately and cannot satisfy a later observation. A later
+  active-text transition, text change or timer restart establishes freshness.
+  Lifetime proof also requires a decreasing timer and natural expiry.
+  Replacement, missing actors and session changes cannot count as expiry.
+  Unarmed and unchanged armed polls allocate nothing. Existing cached actor
+  names, positions and animations keep their previous behavior. Selected
+  NPC names use the same resolved current form as cached NPC views.
 - Scenario runners can extract cache-defined varbits with a no-send step.
   Snapshot availability is explicitly Unknown because rows lack per-index
   receive receipts; `VarbitEquals` requires a matching observed-varp witness.
@@ -58,9 +74,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   does not carry over; every other 0.2.9 saved format still loads.
 - Direct navigation-pack builds now require `--engine` with the engine checkout
   for the selected game revision. The local-data builder supplies it automatically.
+- Native JavaScript and TypeScript scripts without a manifest no longer load,
+  including scripts with only `apiVersion = 2` and `tick`, or just `tick`.
+  Load shows `manifest-required` with the source line and the fix. Fix: add
+  `export const manifest = { apiVersion: 2, name: 'My script', version: '1', author: 'Your name', description: 'What it does', category: 'Examples', tags: [], settings: {}, capabilities: [] };`,
+  move any `SETTINGS` into `manifest.settings`, and remove separate
+  `apiVersion` and `SETTINGS` exports. In `manifest.settings`, write `help`
+  instead of `description`, `string[]` instead of `list`, and remove `step`,
+  `csvToggle` and `color`. rs2b0t `defineBot` and default-export class
+  scripts are unchanged and need no manifest.
 
 ### Developer tools
 
+- Navigation staging preserves generated payloads when source and resource
+  directories resolve to the same location.
 - The seat model also checks who owns a random event, the host Guardian or the
   running script. Run `seat-model --ownership` for its profiles; the new
   `c6-ownership-fight` profile covers a saved Fight and its native child. The
@@ -154,6 +181,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   field, is still the unreadable file: its bytes are kept in a
   `.corrupt-` copy and default preferences start, whatever fields it
   also names.
+- Bank-hint JSON files that name a field twice in one object are refused,
+  not read with the last value. The refusal names the file, field and
+  object, and tells you to edit the file to remove the duplicate. The file
+  stays unchanged. The service will not use the hint or write an empty hint
+  until you fix the file.
 - Preferences now live in a SQLite database, `.274bot/state/state.sqlite3`
   (with its `-wal` and `-shm` files), instead of `panel-ui.json`. The first
   start of this version imports the whole `panel-ui.json`, members it does not
@@ -273,6 +305,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
     test server, once on a new Tutorial Island account and once on a mainland
     account. That was a start-and-run check, not a full training session.
 
+- A native script's manifest supplies its description, category, tags and
+  settings. The picker shows them for a loaded file. The card keeps the
+  file name as its name, so its saved settings and assignments still apply.
+- Native modules without a default export treat a `manifest` export as host
+  metadata, and every script file reserves the `hostCapabilities` export. An
+  invalid declaration refuses Load with its line and a reason. A JavaScript
+  file with a syntax error now reports it at Load instead of at Start.
+- Eight native example scripts and the compat boat-fare script replace the
+  larger collection of API probe examples. Automated tests now cover each
+  member of the script API.
+- A native script can read `api.snapshot.bank_selection`, the latest
+  select-only bank result. It was declared but always read as `undefined`.
+
 - Starting a built-in script (a Gatherer, for example) while a random-event
   guardian was handling an event on the same bot, such as a maze or a
   trapped box, could stop the bot's script thread with a panic. The script now
@@ -300,6 +345,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   the server divides its XP-tenths by ten before publishing the stat update.
 - The 377 quantity fixture completes the mainland hop and clean relog before
   it seeds materials, so fresh accounts publish inventory updates.
+
+### Survival
+
+- After a super antipoison, the bot now counts 570 game ticks of poison immunity instead of 120.
+- Reconnecting while poisoned retains the known poison reserve until the next
+  poison mark, so survival can still act on a held cure or food.
+
+- Poison risk no longer expires while an observed main or chat modal blocks
+  normal timers. Once the modal closes, a hit still keeps risk active until a
+  new poison mark.
+
+### Fixed during development
+
+#### Survival
+
+- An ordinary hit observed while a main or chat modal is open keeps poison
+  risk active through the pause until the next poison mark.
 
 ## [0.2.9.1] — 2026-11-14 — Beta 2 patch
 
@@ -844,6 +906,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   after three windows in a row with a refusal and no hit landing on the target
   (about 24 ticks), the fight ends with `single-way-blocked` instead of
   repeating the click without end.
+- Combat gives a held antipoison a chance to settle before applying the
+  poison-raised no-food stopline. A cure that removes the poison can keep a
+  fight active when food is disabled.
+- Combat preparation waits for a missing desired weapon to appear in the next
+  equipment packet before reporting `prep-failed:weapon`.
 
 ### Survival
 

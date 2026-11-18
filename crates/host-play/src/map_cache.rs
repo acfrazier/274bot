@@ -7775,6 +7775,7 @@ mod tests {
     #[test]
     fn different_key_stress_child() {
         let Ok(index) = std::env::var(STRESS_CHILD_ENV) else {
+            eprintln!("SKIP different_key_stress_child: child-only test entrypoint");
             return;
         };
         let index: u8 = index.parse().unwrap();
@@ -7975,6 +7976,7 @@ mod tests {
     #[test]
     fn catalogue_only_child() {
         let Some(path) = std::env::var_os(TUI_CHILD_ENV) else {
+            eprintln!("SKIP catalogue_only_child: child-only test entrypoint");
             return;
         };
         let root = MapCacheRoot::from_existing_root(path);
@@ -8150,6 +8152,7 @@ mod tests {
     #[test]
     fn publish_lock_child() {
         let Ok(path) = std::env::var(LOCK_CHILD_ENV) else {
+            eprintln!("SKIP publish_lock_child: child-only test entrypoint");
             return;
         };
         let lock_path = PathBuf::from(path);

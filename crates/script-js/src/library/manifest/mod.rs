@@ -13,6 +13,7 @@ use crate::library::ast::strip_bom;
 use crate::library::shape::LoadShape;
 use deno_ast::swc::common::Span;
 use deno_ast::{MediaType, ParseParams, ParsedSource, StartSourcePos};
+pub(crate) use exports::ModuleSources;
 use exports::{DirectConst, ExportSupplier, ModuleGraph, ModuleNode};
 use literal::{parse_literal, LiteralValue, SpannedValue};
 use script::manifest::{DeclaredHostCapabilities, HostCapability, ManifestText, ScriptManifest};
@@ -54,7 +55,16 @@ pub enum ScriptAnalysis {
 /// TypeScript media for `.ts` files. One leading BOM is removed from each parser
 /// view, while every returned span addresses the original BOM-preserving bytes.
 pub fn analyze(path: &Path, source: &str) -> Result<ScriptAnalysis, ExtractionError> {
-    let graph = ModuleGraph::new(path, source)?;
+    analyze_with_sources(path, source, ModuleSources::Disk)
+}
+
+/// [`analyze`] with an explicit sibling source set.
+pub(crate) fn analyze_with_sources(
+    path: &Path,
+    source: &str,
+    sources: ModuleSources,
+) -> Result<ScriptAnalysis, ExtractionError> {
+    let graph = ModuleGraph::with_sources(path, source, sources)?;
     if graph.has_runtime_default() {
         let Some(shape) = graph.compat_shape() else {
             reject_non_compat_host_capabilities(&graph)?;
@@ -79,6 +89,12 @@ pub fn analyze(path: &Path, source: &str) -> Result<ScriptAnalysis, ExtractionEr
             capabilities,
             erased_spans,
         });
+    }
+    // A compat card with an unresolved import keeps its classification above
+    // (its card is listed as unloadable). A native entry needs its whole
+    // graph: an unresolved module could supply a reserved declaration.
+    if let Some(error) = graph.unresolved() {
+        return Err(error.clone().into());
     }
     let manifest_suppliers = graph.suppliers("manifest");
     let has_manifest_declaration = !manifest_suppliers.is_empty();
@@ -664,8 +680,10 @@ fn source_range(span: Span, parsed_text: &str, source_offset: usize) -> Range<us
     start..end.max(start)
 }
 
-#[cfg(test)]
-fn erase_declarations(source: &str, spans: &[Range<usize>]) -> String {
+/// Replace each compile-time declaration statement with `;` and spaces.
+/// Line terminators (CR, LF, U+2028, U+2029) and the byte length survive, so
+/// the statement boundary and every other byte of the origin stay the same.
+pub(crate) fn erase_declarations(source: &str, spans: &[Range<usize>]) -> String {
     let mut bytes = source.as_bytes().to_vec();
     for span in spans {
         let start = span.start.min(bytes.len());

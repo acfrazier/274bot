@@ -2018,6 +2018,12 @@ class TemporaryCargoEnvironmentTests(unittest.TestCase):
 
 
 class MacQuietLockTests(unittest.TestCase):
+    def test_base_env_passes_nightly_quiet_lock(self):
+        lock = "/tmp/MAC-QUIET.lock"
+        with mock.patch.dict(rn.os.environ, {"NIGHTLY_QUIET_LOCK": lock}):
+            env = rn.base_env()
+        self.assertEqual(env["NIGHTLY_QUIET_LOCK"], lock)
+
     def test_lock_at_cell_boundary_records_unavailable_and_does_not_start_cell(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

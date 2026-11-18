@@ -22,7 +22,8 @@ pub struct PendingCatalogStart {
     #[cfg(feature = "js")]
     pub js: String,
     #[cfg(feature = "js")]
-    pub shape: script_js::LoadShape,
+    /// The checked identity of `js`; `None` only for a compiled card.
+    pub checked: Option<script_js::CheckedLoad>,
     pub bag: Option<Map<String, Value>>,
     #[cfg(feature = "js")]
     pub siblings: Vec<(String, String)>,
@@ -48,7 +49,7 @@ impl PendingCatalogStart {
     pub fn load(
         slot: impl Into<String>,
         js: String,
-        shape: script_js::LoadShape,
+        checked: script_js::CheckedLoad,
         bag: Option<Map<String, Value>>,
         siblings: Vec<(String, String)>,
         loadouts: Vec<api::loadout::Loadout>,
@@ -56,7 +57,7 @@ impl PendingCatalogStart {
         Self {
             slot: slot.into(),
             js,
-            shape,
+            checked: Some(checked),
             bag,
             siblings,
             loadouts,
@@ -87,7 +88,7 @@ impl PendingCatalogStart {
             #[cfg(feature = "js")]
             js: String::new(),
             #[cfg(feature = "js")]
-            shape: script_js::LoadShape::Reject,
+            checked: None,
             bag: Some(bag),
             #[cfg(feature = "js")]
             siblings: Vec::new(),
@@ -158,7 +159,7 @@ pub fn card_siblings(
             kind: card.kind,
             source: card.source,
             shape: None,
-            api_family: Some(card.api_family.as_str().into()),
+            api_family: Some(card.api_family().as_str().into()),
         },
     )
 }
@@ -202,7 +203,7 @@ pub fn fleet_catalog_starts(
             Ok(PendingCatalogStart::load(
                 names[member.slot].clone(),
                 card.js,
-                card.shape,
+                card.checked,
                 Some(bag),
                 siblings,
                 loadouts.to_vec(),
@@ -237,7 +238,9 @@ fn start_stashed_catalog_card(
         } else {
             StartRequest::Load {
                 source: card.js.clone(),
-                shape: card.shape,
+                checked: card
+                    .checked
+                    .expect("a loaded-JS pending Start always carries its checked identity"),
                 bag: card.bag.clone(),
                 siblings: card.siblings.clone(),
                 loadouts: (!card.loadouts.is_empty()).then_some(card.loadouts.as_slice()),
@@ -502,7 +505,7 @@ pub fn pair_starts(
     names: &[String],
     case: PairCase,
     js: String,
-    shape: script_js::LoadShape,
+    checked: script_js::CheckedLoad,
     schema: &[script::SettingDef],
     siblings: Vec<(String, String)>,
     watch: &PairWatch,
@@ -517,12 +520,12 @@ pub fn pair_starts(
         PendingCatalogStart::load(
             a.clone(),
             js.clone(),
-            shape,
+            checked,
             Some(a_bag),
             siblings.clone(),
             Vec::new(),
         ),
-        PendingCatalogStart::load(b.clone(), js, shape, Some(b_bag), siblings, Vec::new()),
+        PendingCatalogStart::load(b.clone(), js, checked, Some(b_bag), siblings, Vec::new()),
     ])
 }
 

@@ -388,14 +388,10 @@ fn local_family_reads_real_content() {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
-    play.script_start_load(
-        account,
-        source,
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .expect("start real family Load probe");
+    let prepared = script_js::prepare_raw_origin_for_test("family-compat.js", &source, &[])
+        .expect("compatibility family fixture prepares");
+    play.script_start_load(account, prepared.js, prepared.checked, None, vec![])
+        .expect("start real family Load probe");
     let deadline = Instant::now() + Duration::from_secs(90);
     let mut logs = Vec::new();
     let observed = loop {

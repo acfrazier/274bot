@@ -175,9 +175,8 @@ fn solid_near(world: &NavWorld, around: WorldTile) -> WorldTile {
 /// The Load script of the solid-radius cell: one isolate `walk-near` with
 /// BankBudget on, then it only keeps the slot's script running.
 fn solid_walk_script(target: WorldTile) -> String {
-    format!(
-        r#"export const apiVersion = 2;
-export function tick(api) {{
+    let body = format!(
+        r#"export function tick(api) {{
   if (globalThis.__sent) return;
   if (api.snapshot.ingame !== true || api.snapshot.here == null) return;
   globalThis.__sent = true;
@@ -196,13 +195,13 @@ export function tick(api) {{
         x = target.x,
         z = target.z,
         level = target.level,
-    )
+    );
+    script_js::native_fixture(&body)
 }
 #[cfg(feature = "js")]
 fn hero_guild_walk_script(target: WorldTile) -> String {
-    format!(
-        r#"export const apiVersion = 2;
-export function tick(api) {{
+    let body = format!(
+        r#"export function tick(api) {{
   if (globalThis.__sent) return;
   if (api.snapshot.ingame !== true || api.snapshot.here == null) return;
   globalThis.__sent = true;
@@ -221,7 +220,8 @@ export function tick(api) {{
         x = target.x,
         z = target.z,
         level = target.level,
-    )
+    );
+    script_js::native_fixture(&body)
 }
 
 #[cfg(feature = "js")]
@@ -1275,6 +1275,9 @@ fn run_cell(variant: Variant) {
                             Variant::HeroGuildPostBank => hero_guild_walk_script(goal),
                             _ => unreachable!("only script-walk variants enter this arm"),
                         };
+                        let prepared =
+                            script_js::prepare_raw_origin_for_test("bank-fetch.ts", &script, &[])
+                                .expect("native bank-fetch script prepares");
                         let previous = script_walk(&play, &account, &world);
                         script_outcome_after = previous.outcome_seq;
                         {
@@ -1285,8 +1288,8 @@ fn run_cell(variant: Variant) {
                         }
                         match play.script_start_load(
                             &account,
-                            script,
-                            script_js::LoadShape::NativeTick,
+                            prepared.js,
+                            prepared.checked,
                             None,
                             vec![],
                         ) {

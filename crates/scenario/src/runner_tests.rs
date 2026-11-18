@@ -1033,59 +1033,6 @@ fn wait_script_stop_is_none_unless_the_scenario_sets_it() {
     );
 }
 
-fn jail_watch_waits_for_key(name: &str, key: i32, other_key: i32) {
-    let mut scenario = crate::get(name).unwrap();
-    let start = scenario
-        .steps
-        .iter()
-        .position(|step| matches!(step.kind, StepKind::StartScript))
-        .unwrap();
-    scenario.steps.drain(..start);
-    scenario.seed.mainland = false;
-    scenario.settings.require_mainland_base = false;
-    let mut runner = ScenarioRunner::new(scenario);
-    runner.set_scene_settle(Duration::ZERO);
-    let mut c = seeded_client();
-    set_world_tile(
-        &mut c,
-        WorldTile {
-            x: 2884,
-            z: 9798,
-            level: 0,
-        },
-    );
-    set_inv(&mut c, &[]);
-    for _ in 0..80 {
-        c.bump_gens(ServerProt::PLAYER_INFO);
-        runner.tick(&mut c);
-        assert!(
-            matches!(runner.status(), RunnerStatus::Running { .. }),
-            "{name}: the dungeon walk must not start the clean-stop grace"
-        );
-    }
-    for stacks in [&[(other_key, 1)][..], &[(key, 0)][..]] {
-        set_inv(&mut c, stacks);
-        runner.tick(&mut c);
-        assert!(
-            matches!(runner.status(), RunnerStatus::Running { .. }),
-            "{name}: the wrong key or an empty stack is not completion"
-        );
-    }
-    set_inv(&mut c, &[(key, 1)]);
-    advance_game_ticks_until_done(&mut runner, &mut c);
-    assert_eq!(runner.status(), RunnerStatus::Passed, "{name}");
-}
-
-#[test]
-fn acquire_key_watch_waits_for_the_jail_key() {
-    jail_watch_waits_for_key("acquire_key_v2_ts", 1591, 1590);
-}
-
-#[test]
-fn cell_watch_waits_for_the_dusty_key_not_the_seeded_jail_key() {
-    jail_watch_waits_for_key("cell_v2_ts", 1590, 1591);
-}
-
 /// The catalog scenario from its StartScript step on, over a synthetic
 /// client standing on the mainland landing the seed releases on.
 fn from_start(name: &str) -> (ScenarioRunner, Client) {
@@ -1130,37 +1077,28 @@ fn landing_offset(dx: i32) -> WorldTile {
 }
 
 #[test]
-fn walking_cards_wait_for_their_own_walk_off_the_landing() {
-    // (scenario, a walk still short of the card's outcome, its outcome)
-    for (name, short, outcome) in [
-        ("hold_spot_v2_ts", 1, 2),
-        ("retreat_spot_v2_ts", 1, 6),
-        ("walk_spot_v2_ts", 12, 13),
-        ("enter_lair_v2_ts", 6, 9),
-        ("leave_lair_v2_ts", 2, 3),
-    ] {
-        let (mut runner, mut c) = from_start(name);
-        assert_running_for_game_ticks(
-            &mut runner,
-            &mut c,
-            40,
-            &format!("{name}: the seeded landing is not the card's walk"),
-        );
-        assert!(
-            !runner.wants_script_paint(),
-            "{name}: a card without a receipt watch never reads paint"
-        );
-        set_world_tile(&mut c, landing_offset(short));
-        assert_running_for_game_ticks(
-            &mut runner,
-            &mut c,
-            4,
-            &format!("{name}: {short} tiles is short of the card's destination"),
-        );
-        set_world_tile(&mut c, landing_offset(outcome));
-        advance_game_ticks_until_done(&mut runner, &mut c);
-        assert_eq!(runner.status(), RunnerStatus::Passed, "{name}");
-    }
+fn walk_spot_waits_for_its_own_walk_off_the_landing() {
+    let (mut runner, mut c) = from_start("walk_spot_v2_ts");
+    assert_running_for_game_ticks(
+        &mut runner,
+        &mut c,
+        40,
+        "the seeded landing is not the card's walk",
+    );
+    assert!(
+        !runner.wants_script_paint(),
+        "walk spot has no receipt watch"
+    );
+    set_world_tile(&mut c, landing_offset(12));
+    assert_running_for_game_ticks(
+        &mut runner,
+        &mut c,
+        4,
+        "twelve tiles is short of the card's destination",
+    );
+    set_world_tile(&mut c, landing_offset(13));
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
 #[test]
@@ -1192,69 +1130,38 @@ fn bank_card_waits_for_its_walk_to_the_falador_bank() {
 }
 
 #[test]
-fn prayer_cards_wait_for_protect_from_melee_on() {
+fn prayer_v2_waits_for_protect_from_melee_on() {
     use client::config::{Cache, VarpType};
-    for name in ["prayer_v1_ts", "prayer_v2_ts"] {
-        let (mut runner, mut c) = from_start(name);
-        // The seed's state: prayer 43, every transmitted overlay varp off.
-        c.cache = Arc::new(Cache {
-            varps: (0..98).map(|_| VarpType::default()).collect(),
-            ..Default::default()
-        });
-        c.var = vec![0; 98];
-        c.stat_effective_level[5] = 43;
-        c.stat_base_level[5] = 43;
-        c.bump_gens(ServerProt::VARP_SYNC);
-        c.bump_gens(ServerProt::UPDATE_STAT);
-        assert_running_for_game_ticks(
-            &mut runner,
-            &mut c,
-            40,
-            &format!("{name}: seeded prayer 43 with every overlay off"),
-        );
-        c.var[96] = 1;
-        c.bump_gens(ServerProt::VARP_SYNC);
-        assert_running_for_game_ticks(
-            &mut runner,
-            &mut c,
-            4,
-            &format!("{name}: Protect from Missiles is not the card's prayer"),
-        );
-        c.var[96] = 0;
-        c.var[97] = 1;
-        c.bump_gens(ServerProt::VARP_SYNC);
-        advance_game_ticks_until_done(&mut runner, &mut c);
-        assert_eq!(runner.status(), RunnerStatus::Passed, "{name}");
-    }
-}
-
-#[test]
-fn observing_cards_pass_only_on_their_own_painted_receipt() {
-    for (name, prefix) in [
-        ("line_of_sight_v2_ts", "los-receipt:"),
-        ("actor_observation_v2_ts", "actor-receipt:"),
-        ("fight_field_v2_ts", "fight-field-receipt:"),
-    ] {
-        let (mut runner, mut c) = from_start(name);
-        let receipt = format!("{prefix}{{\"ok\":true}}");
-        // Paint published before StartScript belongs to no card of this run.
-        runner.observe_script_paint([receipt.as_str()]);
-        assert_running_for_game_ticks(&mut runner, &mut c, 1, &format!("{name}: StartScript"));
-        assert!(runner.wants_script_paint(), "{name}");
-        runner.observe_script_paint(["watching", "result pending"]);
-        assert_running_for_game_ticks(
-            &mut runner,
-            &mut c,
-            40,
-            &format!("{name}: a card that has not painted its receipt"),
-        );
-        runner.observe_script_paint(["line of sight v2", receipt.as_str()]);
-        assert!(!runner.wants_script_paint(), "{name}: latched");
-        advance_game_ticks_until_done(&mut runner, &mut c);
-        assert_eq!(runner.status(), RunnerStatus::Passed, "{name}");
-        let evidence = runner.evidence().expect("evidence");
-        assert_eq!(evidence.receipt.as_deref(), Some(receipt.as_str()));
-    }
+    let (mut runner, mut c) = from_start("prayer_v2_ts");
+    // The seed's state: prayer 43, every transmitted overlay varp off.
+    c.cache = Arc::new(Cache {
+        varps: (0..98).map(|_| VarpType::default()).collect(),
+        ..Default::default()
+    });
+    c.var = vec![0; 98];
+    c.stat_effective_level[5] = 43;
+    c.stat_base_level[5] = 43;
+    c.bump_gens(ServerProt::VARP_SYNC);
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    assert_running_for_game_ticks(
+        &mut runner,
+        &mut c,
+        40,
+        "seeded prayer 43 with every overlay off",
+    );
+    c.var[96] = 1;
+    c.bump_gens(ServerProt::VARP_SYNC);
+    assert_running_for_game_ticks(
+        &mut runner,
+        &mut c,
+        4,
+        "Protect from Missiles is not the card's prayer",
+    );
+    c.var[96] = 0;
+    c.var[97] = 1;
+    c.bump_gens(ServerProt::VARP_SYNC);
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
 /// The selected cache's items: every named item by its real id, and the
@@ -1491,21 +1398,7 @@ fn clean_stop_scenarios_are_not_satisfied_by_their_own_seed() {
         }
     }
     assert!(vacuous.is_empty(), "{vacuous:#?}");
-    for name in [
-        "line_of_sight_v2_ts",
-        "actor_observation_v2_ts",
-        "fight_field_v2_ts",
-        "hold_spot_v2_ts",
-        "retreat_spot_v2_ts",
-        "walk_spot_v2_ts",
-        "enter_lair_v2_ts",
-        "leave_lair_v2_ts",
-        "bank_v2_ts",
-        "prayer_v1_ts",
-        "prayer_v2_ts",
-        "acquire_key_v2_ts",
-        "cell_v2_ts",
-    ] {
+    for name in ["walk_spot_v2_ts", "bank_v2_ts", "prayer_v2_ts"] {
         assert!(checked.contains(&name), "{name} lost its clean-stop wait");
     }
 }
@@ -1742,6 +1635,35 @@ fn perform_budget_fails_when_the_arm_never_fires() {
     assert_eq!(ev.predicate, "stat(16)>=999");
     assert!(ev.message.is_some());
 }
+/// The first snapshot can contain login `PLAYER_INFO` generations from before
+/// the step dispatch. Those generations must not spend the step's wait budget.
+#[test]
+fn pre_send_player_info_generations_do_not_spend_step_budget() {
+    let mut c = seeded_client();
+    for _ in 0..2 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+    }
+    let mut scenario = stat_scenario(999, 3);
+    scenario.steps[0].kind = StepKind::Perform {
+        send: Box::new(|client, snapshot| {
+            assert_eq!(snapshot.tick(), 3);
+            client.runenergy = 99;
+            true
+        }),
+    };
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+
+    assert_eq!(c.gens.player_info, 3);
+    runner.tick(&mut c);
+
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, total: 1 },
+        "the first snapshot's PLAYER_INFO generations predate the step send"
+    );
+    assert_eq!(runner.total_ticks(), 3);
+}
 
 #[test]
 fn poll_sustain_sends_the_cheat_when_energy_is_at_or_below_the_line() {
@@ -1837,6 +1759,8 @@ fn world_speed_resets_after_failed_run() {
     runner.tick(&mut client);
     assert!(contains_outgoing_ascii(&client, "speed 300"));
     assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
     runner.tick(&mut client);
     assert!(contains_outgoing_ascii(&client, "speed 600"));
 
@@ -1884,6 +1808,7 @@ fn world_speed_opt_out_skips_restore_after_failure() {
 
     runner.tick(&mut client);
     assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
+    client.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut client);
 
     assert!(
@@ -2786,6 +2711,8 @@ fn terminal_shot_fires_the_sink_on_pass_and_fail() {
     }));
     let mut c = seeded_client();
     fail.tick(&mut c);
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    fail.tick(&mut c);
     assert!(matches!(fail.status(), RunnerStatus::Failed(_)));
     assert_eq!(
         fail_events.lock().unwrap().as_slice(),
@@ -2832,13 +2759,18 @@ fn deadline_fails_a_stuck_run() {
 fn a_step_failure_read_after_the_deadline_is_not_a_deadline_failure() {
     let mut runner = ScenarioRunner::new(stat_scenario(999, 1));
     runner.set_scene_settle(Duration::ZERO);
-    runner.set_deadline(Duration::ZERO);
+    runner.set_deadline(Duration::from_secs(1));
     let mut c = seeded_client();
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    c.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut c);
     let RunnerStatus::Failed(msg) = runner.status() else {
         panic!("expected Failed, got {:?}", runner.status());
     };
     assert!(msg.contains("not seen within 1 game tick"), "msg: {msg}");
+    // The stored cause remains a step failure when read past the deadline.
+    runner.set_deadline(Duration::ZERO);
     assert!(runner.started.elapsed() > runner.deadline());
     assert!(
         !runner.deadline_exceeded(),
@@ -3313,6 +3245,47 @@ fn record_measured_pass(runner: &mut ScenarioRunner, after_cleanup: bool) {
     } else {
         runner.record_pass();
     }
+}
+
+#[test]
+fn combat_invalid_precedes_actor_overflow_in_the_same_poll() {
+    let probe = GateProbe::new(false);
+    let (mut runner, mut client) = measured_pass_gate_runner(&probe);
+    let actor = api::snapshot::ActorSelector::LocalPlayer;
+    runner.scenario.steps[2].kind = StepKind::ObserveActor { actor };
+    client.self_slot = 0;
+    let mut observer = crate::actor::ActorObserver::default();
+    let mut overflowed = false;
+    for cycle in 0..1100 {
+        client.loop_cycle += 1;
+        let player = client.local_player.as_mut().unwrap();
+        player.chat_message = Some(if cycle % 2 == 0 { "One" } else { "Two" }.into());
+        player.chat_timer = 100;
+        if crate::actor::ActorObserver::observe(Some(&mut observer), &client, Some(actor)).is_err()
+        {
+            overflowed = true;
+            break;
+        }
+    }
+    assert!(overflowed);
+    runner.actor_observer = Some(Box::new(observer));
+    assert_eq!(
+        runner.combat_observer.as_ref().unwrap().invalid_reason(),
+        None
+    );
+    client.stat_effective_level[3] = 8;
+    client.bump_gens(ServerProt::UPDATE_STAT);
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    let receipt = runner.evidence().unwrap();
+    assert_eq!(receipt.outcome, "INVALID");
+    assert_eq!(receipt.exit_code(), 1);
+    assert!(receipt.actors.as_ref().unwrap().overflowed);
+    assert_eq!(
+        receipt.interference.as_ref().unwrap().invalid_reason,
+        Some("hitpoints-decreased")
+    );
+    assert_eq!(receipt.message.as_deref(), Some("hitpoints-decreased"));
 }
 
 #[test]
@@ -6710,6 +6683,36 @@ fn auto_fighter_bank_floor_guard_counts_game_ticks_and_fails_at_content_cap() {
     assert_eq!(guard.ticks_waited, 202);
     assert_eq!(guard.items_seen.len(), 1);
     assert!(!runner.script_started);
+}
+
+#[test]
+fn ground_guard_budget_starts_at_first_dispatch_after_scene_settle() {
+    let (mut runner, mut c) = auto_fighter_floor_guard();
+    runner.scenario.steps[0].wait.budget_ticks = 3;
+    runner.set_scene_settle(Duration::from_secs(10));
+    runner.snapshot.seed_ground_items(vec![guard_ground_item(
+        526,
+        1,
+        WorldTile {
+            x: 2661,
+            z: 3306,
+            level: 0,
+        },
+    )]);
+
+    runner.tick(&mut c);
+    for _ in 0..3 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+    }
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+
+    assert!(matches!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, .. }
+    ));
+    assert_eq!(runner.ground_guard.as_ref().unwrap().ticks_waited, 0);
 }
 
 #[test]

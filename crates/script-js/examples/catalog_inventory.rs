@@ -90,7 +90,7 @@ fn run() -> Result<(), String> {
                 "source_sha256": card.sha256,
                 "category": card.category,
                 "tags": card.tags,
-                "shape": format!("{:?}", card.shape),
+                "shape": format!("{:?}", card.shape()),
                 "settings": card.settings_schema.iter().map(setting_json).collect::<Vec<_>>(),
                 "import_specifiers": scan_import_specifiers(&card.origin),
                 "imported_api_members": imported_api_members,

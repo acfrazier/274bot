@@ -30,7 +30,6 @@ use script_js::{LoadIsolate, LoadShape};
 pub mod common;
 
 const BASE_SCRIPT: &str = r#"
-export const apiVersion = 2;
 export function tick(api) { globalThis.__api = api; }
 "#;
 
@@ -152,8 +151,12 @@ fn main() {
     // Must run before V8 exists in this process.
     v8::V8::set_flags_from_string("--allow-natives-syntax");
     script_js::bootstrap_v8_platform().expect("process-main V8 bootstrap");
-    let iso = LoadIsolate::spawn(BASE_SCRIPT.into(), LoadShape::NativeTick, vec![])
-        .expect("spawn combat-summary isolate");
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(BASE_SCRIPT),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .expect("spawn combat-summary isolate");
     let mut tick = 1;
     post(&iso, tick, None, None, None);
 

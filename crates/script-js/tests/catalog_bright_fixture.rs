@@ -171,13 +171,6 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
             ..*row
         })
         .collect();
-    let mut snap = common::ingame_snapshot();
-    snap.stats = &loading;
-    snap.varps = &[];
-    let loading_bytes = script_js::wire::encode_snapshot(&snap);
-    snap.stats = &common::FRESH_STATS;
-    let loaded_bytes = script_js::wire::encode_snapshot(&snap);
-
     for name in &names {
         if let Err(e) = lib.ensure_js(ScriptSource::Catalog, name) {
             hits.insert(format!("{name}: transpile {e}"));
@@ -194,7 +187,7 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
             CacheMeta {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
-                shape: Some(format!("{:?}", card.shape)),
+                shape: Some(format!("{:?}", card.shape())),
                 api_family: None,
             },
         ) {
@@ -205,32 +198,68 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
             }
         };
         let bag = script::merge_bag(&card.settings_schema, &serde_json::Map::new(), None);
-        for (scene, bytes) in [("pre-stats", &loading_bytes), ("loaded", &loaded_bytes)] {
-            let iso = match LoadIsolate::spawn_with_content(
-                card.js.clone(),
-                card.shape,
-                siblings.clone(),
-                Some(Arc::clone(&selected)),
-                Arc::new(api::named_banks::NamedBankFacts::empty()),
+        let settings_bag = (!bag.is_empty()).then(|| Arc::new(bag));
+        let start = script::surface::SurfaceStart {
+            card: Arc::new(script_js::surface::JsStartCard {
+                card_name: Arc::from(card.name.as_str()),
+                source: Arc::from(card.js.as_str()),
+                checked: card.checked,
+                siblings: Arc::from(siblings),
+            }),
+            settings_bag,
+            game_data: Some(Arc::clone(&selected)),
+            named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+            wilderness_rules: script::surface::no_wilderness(),
+            loadouts: Arc::<[api::loadout::Loadout]>::from([]),
+        };
+        let factory = script_js::surface::JsSurfaceFactory;
+        let execution = api::identity::ExecutionId::first(api::selected::RunKey {
+            slot: 0,
+            run: 1,
+            session: 0,
+        });
+        for (scene, stats) in [
+            ("pre-stats", loading.as_slice()),
+            ("loaded", &common::FRESH_STATS[..]),
+        ] {
+            let mut snap = common::ingame_snapshot();
+            snap.stats = stats;
+            snap.varps = &[];
+            let mut run = match script::surface::SurfaceFactory::spawn(
+                &factory,
+                &start,
+                execution,
+                Arc::new(script::native::recovery_hints::RecoveryHintsCell::new()),
             ) {
-                Ok(iso) => iso,
-                Err(e) => {
-                    hits.insert(format!("{name}: load {e}"));
+                Ok(run) => run,
+                Err(error) => {
+                    hits.insert(format!("{name} ({scene}): spawn {error}"));
                     break;
                 }
             };
-            if !bag.is_empty() {
-                iso.post_settings_bag(&bag);
+            if !run.post_snapshot_delta(
+                &snap,
+                script::native::snapshot_source::NativeFactsInput::default(),
+                false,
+            ) {
+                hits.insert(format!("{name} ({scene}): snapshot post refused"));
+            } else {
+                run.on_game_tick_at(1, 1);
+                let _ = run.probe("true");
             }
-            iso.post_snapshot(bytes.clone());
-            iso.on_game_tick(1);
-            let _ = iso.probe("true");
-            for line in iso.drain_logs() {
+            let mut lines = run.drain_logs();
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            run.stop(done_tx);
+            lines.extend(
+                done_rx
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("surface isolate stop completes"),
+            );
+            for line in lines {
                 if throw_shaped(&line) {
                     hits.insert(format!("{name} ({scene}): {line}"));
                 }
             }
-            iso.join();
         }
     }
     assert!(
@@ -260,14 +289,14 @@ fn synthetic_bright_catalog_module_graph_loads_at_probe_barrier() {
             CacheMeta {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
-                shape: Some(format!("{:?}", card.shape)),
+                shape: Some(format!("{:?}", card.shape())),
                 api_family: None,
             },
         )
         .expect("siblings");
         let iso = LoadIsolate::spawn_with_content(
-            card.js.clone(),
-            card.shape,
+            card.origin.clone(),
+            card.shape(),
             siblings,
             None,
             Arc::new(api::named_banks::NamedBankFacts::empty()),
@@ -371,7 +400,7 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
             CacheMeta {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
-                shape: Some(format!("{:?}", card.shape)),
+                shape: Some(format!("{:?}", card.shape())),
                 api_family: None,
             },
         ) {
@@ -398,8 +427,8 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         }
         let settings = script::merge_bag(&card.settings_schema, &settings_input, None);
         let isolate = match LoadIsolate::spawn_with_content(
-            card.js.clone(),
-            card.shape,
+            card.origin.clone(),
+            card.shape(),
             siblings,
             Some(Arc::clone(&content)),
             Arc::clone(&named_banks),
@@ -452,7 +481,7 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
             CacheMeta {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::Catalog,
-                shape: Some(format!("{:?}", card.shape)),
+                shape: Some(format!("{:?}", card.shape())),
                 api_family: None,
             },
         )

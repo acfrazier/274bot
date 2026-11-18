@@ -1,14 +1,12 @@
-//! JS API v2 core: syntax-aware version routing, NativeApi runtime, and
-//! fail-closed request / snapshot behaviour.
+//! JS API v2 core: NativeApi runtime and fail-closed request / snapshot
+//! behaviour. Every native fixture carries a manifest (`native_fixture`).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use script::interact::InteractReq;
-use script::{ScriptSource, SlotScript, WatchdogAction};
-use script_js::{
-    parse_declared_api_version, resolve_api_family, ApiFamily, JsLibrary, LoadIsolate, LoadShape,
-};
+use script::{SlotScript, WatchdogAction};
+use script_js::{native_fixture, LoadIsolate, LoadShape, NativeFixture};
 use {
     script::native::snapshot_source::{
         CollisionViewInput, NativeFactsInput, QuestStatusInput, SceneEntityInput,
@@ -22,48 +20,25 @@ mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
 
-fn temp_dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-script-native-api-v2-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).expect("create native API v2 test scratch directory");
-    dir
-}
-
-fn scratch(name: &str) -> std::path::PathBuf {
-    let dir = temp_dir().join(name);
-    std::fs::create_dir_all(&dir).expect("create native API v2 fixture directory");
-    dir
-}
-
-fn write_file(dir: &std::path::Path, name: &str, source: &str) -> std::path::PathBuf {
-    let path = dir.join(name);
-    std::fs::write(&path, source).expect("write native API v2 fixture file");
-    path
-}
-
-fn test_library(dir: &std::path::Path) -> JsLibrary {
-    JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
-}
-
 fn start_js_surface(
     slot: &mut SlotScript,
     source: &str,
     shape: LoadShape,
 ) -> Result<(), script::slot::StartLoadError> {
-    let source = Arc::<str>::from(source);
-    let family = script_js::resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
+    let prepared = script_js::prepare_raw_origin_for_test("bot.js", source, &[])
+        .expect("prepare native api v2 test origin");
+    assert_eq!(
+        prepared.checked.shape(),
+        shape,
+        "native api v2 origin shape"
+    );
     slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
     slot.start_surface(script::surface::SurfaceStart {
         card: Arc::new(script_js::surface::JsStartCard {
             card_name: "native api v2 test".into(),
-            source,
-            shape,
+            source: Arc::<str>::from(prepared.js),
+            checked: prepared.checked,
             siblings: Arc::<[(String, String)]>::from([]),
-            family,
         }),
         settings_bag: None,
         game_data: None,
@@ -156,159 +131,8 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 }
 
 #[test]
-fn numeric_2_0_equals_2_and_type_annotation_is_accepted() {
-    assert_eq!(
-        parse_declared_api_version("export const apiVersion = 2; export function tick() {}")
-            .unwrap(),
-        Some(2)
-    );
-    assert_eq!(
-        parse_declared_api_version("export const apiVersion = 2.0; export function tick() {}")
-            .unwrap(),
-        Some(2)
-    );
-    assert_eq!(
-        parse_declared_api_version(
-            "export const apiVersion: number = 2; export function tick(api) {}"
-        )
-        .unwrap(),
-        Some(2)
-    );
-    assert_eq!(
-        parse_declared_api_version(
-            "export const apiVersion = 2 as const; export function tick(api) {}"
-        )
-        .unwrap(),
-        Some(2)
-    );
-}
-
-#[test]
-fn comments_and_strings_are_not_declarations() {
-    assert_eq!(
-        parse_declared_api_version("// export const apiVersion = 2\nexport function tick() {}")
-            .unwrap(),
-        None
-    );
-    assert_eq!(
-        parse_declared_api_version(
-            "const s = \"export const apiVersion = 2\"; export function tick() {}"
-        )
-        .unwrap(),
-        None
-    );
-    assert_eq!(
-        parse_declared_api_version("const apiVersion = 2; export function tick() {}").unwrap(),
-        None
-    );
-}
-
-#[test]
-fn malformed_and_unsupported_versions() {
-    assert!(parse_declared_api_version(
-        "export const apiVersion = \"2\"; export function tick() {}"
-    )
-    .unwrap_err()
-    .code()
-    .contains("malformed"));
-    assert!(
-        parse_declared_api_version("export let apiVersion = 2; export function tick() {}")
-            .unwrap_err()
-            .code()
-            .contains("malformed")
-    );
-    assert!(
-        parse_declared_api_version("export const apiVersion = 3; export function tick() {}")
-            .unwrap_err()
-            .code()
-            .contains("unsupported")
-    );
-}
-
-#[test]
-fn resolve_family_precedence() {
-    let (shape, family) =
-        resolve_api_family("export const apiVersion = 2; export function tick() {}").unwrap();
-    assert_eq!(shape, LoadShape::NativeTick);
-    assert_eq!(family, ApiFamily::V2);
-
-    let (shape, family) = resolve_api_family("export function tick() {}").unwrap();
-    assert_eq!(shape, LoadShape::NativeTick);
-    assert_eq!(family, ApiFamily::Unversioned);
-
-    let err = resolve_api_family(
-        "export const apiVersion = 2;\nexport default class X extends LoopingBot {}",
-    )
-    .unwrap_err();
-    assert!(err.contains("api-version-conflict"));
-
-    let err =
-        resolve_api_family("export const apiVersion = 1; export function tick() {}").unwrap_err();
-    assert!(err.contains("api-version-conflict"));
-
-    let err = resolve_api_family("export const apiVersion = 2; const x = 1;").unwrap_err();
-    assert!(err.contains("api-version-missing-tick"));
-
-    let (shape, family) =
-        resolve_api_family("export const apiVersion = 1;\ndefineBot({ loop() {} });").unwrap();
-    assert_eq!(shape, LoadShape::CompatDefineBot);
-    assert_eq!(family, ApiFamily::V1);
-}
-
-#[test]
-fn library_rejects_named_version_errors_and_keeps_unversioned() {
-    let dir = scratch("lib_version");
-    let mut lib = test_library(&dir);
-    let bad = write_file(
-        &dir,
-        "bad.js",
-        "export const apiVersion = 2;\nexport default class X extends LoopingBot {}",
-    );
-    let err = lib.load(&bad).unwrap_err();
-    assert!(err.contains("api-version-conflict"), "{err}");
-
-    let ok = write_file(&dir, "ok.js", "export function tick(api) { api.tick }");
-    let card = lib.load(&ok).unwrap();
-    assert_eq!(card.api_family, ApiFamily::Unversioned);
-    assert_eq!(card.shape, LoadShape::NativeTick);
-}
-
-#[test]
-fn v2_card_provenance_is_not_identity() {
-    let dir = scratch("v2_ident");
-    let mut lib = test_library(&dir);
-    let path = write_file(
-        &dir,
-        "burier.js",
-        "export const apiVersion = 2;\nexport function tick(api) {}",
-    );
-    let card = lib.load(&path).unwrap();
-    assert_eq!(card.api_family, ApiFamily::V2);
-    let unversioned_path = write_file(&dir, "other.js", "export function tick(api) {}");
-    let other = lib.load(&unversioned_path).unwrap();
-    assert_ne!(card.identity_key(), other.identity_key());
-    assert_eq!(card.source, ScriptSource::File);
-}
-
-#[test]
-fn unversioned_native_still_proxy_only() {
-    let src = "export function tick(api) {\n  try { api.snapshot; globalThis.__rs_ok = true; }\n  catch (e) { globalThis.__rs_err = String(e); }\n}";
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    iso.on_game_tick(1);
-    let err = iso.probe("globalThis.__rs_err").unwrap();
-    assert!(
-        err.as_str()
-            .unwrap_or("")
-            .contains("not impl: api.snapshot"),
-        "{err}"
-    );
-    iso.join();
-}
-
-#[test]
 fn v2_runtime_exposes_native_api_not_host() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__rs_family = globalThis.__rs_api_family;
   globalThis.__rs_ingame = api.snapshot.ingame;
@@ -320,7 +144,7 @@ export function tick(api) {
   catch (e) { globalThis.__rs_npc = String(e); }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     assert_eq!(iso.probe("globalThis.__rs_family").unwrap(), 2);
@@ -346,7 +170,6 @@ export function tick(api) {
 #[test]
 fn v2_structured_paint_is_forwarded_and_survives_hold() {
     let src = r##"
-export const apiVersion = 2;
 export function tick(api) {
   api.paint.begin({ accent: "#123456" })
     .title("Native v2")
@@ -354,7 +177,7 @@ export function tick(api) {
     .end();
 }
 "##;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let _ = iso.probe("true");
@@ -380,12 +203,11 @@ export function tick(api) {
 #[test]
 fn v2_sync_tick_emits_scheduler_settlement_without_pending_promise() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
     assert_eq!(
@@ -398,18 +220,15 @@ export function tick(api) {
 
 #[test]
 fn v2_settlement_feeds_existing_watchdog_scheduler_clock() {
-    let source = r#"
-export const apiVersion = 2;
-export function tick() {}
-"#;
-    let producer = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let source = native_fixture("export function tick() {}\n");
+    let producer = LoadIsolate::spawn(source.clone(), LoadShape::NativeTick, vec![]).unwrap();
     producer.on_game_tick(1);
     let _ = producer.probe("true");
     let lifecycle = producer.drain_lifecycle();
     assert_eq!(lifecycle, vec![InteractReq::LoopSettled]);
 
     let mut slot = SlotScript::new();
-    start_js_surface(&mut slot, source, LoadShape::NativeTick).unwrap();
+    start_js_surface(&mut slot, &source, LoadShape::NativeTick).unwrap();
     let t = Instant::now();
     slot.note_game_packet_tick(t);
     assert_eq!(
@@ -448,7 +267,6 @@ export function tick() {}
 #[test]
 fn v2_snapshot_is_read_only_and_next_merge_works() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   try { api.snapshot.ingame = false; globalThis.__rs_set = 'ok'; }
   catch (e) { globalThis.__rs_set = 'threw'; }
@@ -458,7 +276,7 @@ export function tick(api) {
   globalThis.__rs_gen = api.snapshot.bank_generation;
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     assert_eq!(iso.probe("globalThis.__rs_set").unwrap(), "threw");
@@ -475,7 +293,6 @@ export function tick(api) {
 #[test]
 fn v2_async_tick_does_not_reenter() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
   if (globalThis.__rs_n === 1) {
@@ -484,7 +301,7 @@ export async function tick(api) {
   globalThis.__rs_done = (globalThis.__rs_done || 0) + 1;
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     iso.on_game_tick(2);
     iso.on_game_tick(3);
@@ -519,7 +336,6 @@ export async function tick(api) {
 #[test]
 fn v2_promise_settled_during_hold_forwards_only_scheduler_progress() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   await new Promise((resolve) => {
     const host = globalThis.__rs2b0t_host;
@@ -536,7 +352,7 @@ export async function tick(api) {
   api.request({ op: 'held', name: 'Bones', action: 'Bury' });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), true);
@@ -571,15 +387,14 @@ export async function tick(api) {
 fn v2_failed_ticks_do_not_emit_scheduler_settlement() {
     for source in [
         r#"
-export const apiVersion = 2;
 export function tick() { throw new Error("sync failure"); }
 "#,
         r#"
-export const apiVersion = 2;
 export async function tick() { throw new Error("async failure"); }
 "#,
     ] {
-        let iso = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+        let iso =
+            LoadIsolate::spawn(native_fixture(source), LoadShape::NativeTick, vec![]).unwrap();
         iso.on_game_tick(1);
         let _ = iso.probe("true");
         assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
@@ -594,7 +409,6 @@ export async function tick() { throw new Error("async failure"); }
 #[test]
 fn v2_old_generation_promise_settlement_is_not_reowned() {
     let src = r#"
-export const apiVersion = 2;
 export function tick() {
   globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
   if (globalThis.__rs_n === 1) {
@@ -603,7 +417,7 @@ export function tick() {
   throw new Error("new generation failure");
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), true);
     assert!(iso.drain_lifecycle().is_empty());
@@ -624,13 +438,14 @@ export function tick() {
 #[test]
 fn v2_settings_and_stop() {
     let src = r#"
-export const apiVersion = 2;
-export const SETTINGS = { boneName: { type: 'string', default: 'Bones' } };
 export function tick(api) {
   globalThis.__rs_bone = api.settings.str('boneName', 'Bones');
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let source = NativeFixture::new("settings-stop")
+        .settings("{ boneName: { type: 'string', default: 'Bones' } }")
+        .source(src);
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, vec![]).unwrap();
     let mut bag = serde_json::Map::new();
     bag.insert("boneName".into(), serde_json::json!("Dragon bones"));
     iso.post_settings_bag(&bag);
@@ -642,12 +457,11 @@ export function tick(api) {
 #[test]
 fn v2_reset_session_drops_queued_request() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   api.request({ op: 'walk-nearest-bank' });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("true");
     let before = iso.drain_interacts();
@@ -668,12 +482,11 @@ export function tick(api) {
 #[test]
 fn v2_pause_does_not_run_tick() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("true");
     assert_eq!(iso.drain_lifecycle(), vec![InteractReq::LoopSettled]);
@@ -694,7 +507,6 @@ export function tick(api) {
 #[test]
 fn v2_generic_walk_forwards_find_options_and_request_id() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   api.request({ op: 'walk', x: 1, z: 2, level: 1 });
   api.request({
@@ -726,7 +538,7 @@ export function tick(api) {
   api.request({ op: 'walk-nearest-bank' });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("true");
     let drained = iso.drain_interacts();
@@ -812,7 +624,6 @@ fn v2_deposit_requests_the_bank_side_name_over_the_public_path() {
     // pre-resolves it and never rewrites the request. `loc` / `obj` / `npc`
     // stay unpublished: the clue machine's own steps do not publish them.
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   api.request({ op: 'deposit', name: 'Bones' });
   const refused = {};
@@ -827,7 +638,7 @@ export function tick(api) {
   globalThis.__probe = refused;
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -858,7 +669,6 @@ export function tick(api) {
 fn v2_inspect_route_uses_isolate_token_and_rejects_invented_ids() {
     use script::interact::InspectAvoidWire;
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const token = api.inspectBegin({
     from: { x: 2763, z: 3233, level: 0 },
@@ -886,7 +696,7 @@ export function tick(api) {
   globalThis.__zero = api.inspectSettled(0);
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("true");
     let token: u64 = iso
@@ -953,7 +763,6 @@ export function tick(api) {
 #[test]
 fn v2_prayer_methods_are_named_helper_results_not_a_namespace() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   globalThis.__probe = {
     points: api.prayerPoints(),
@@ -971,7 +780,8 @@ export async function tick(api) {
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+        LoadIsolate::spawn_with_game_data(native_fixture(src), LoadShape::NativeTick, vec![], data)
+            .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let _ = iso.probe("true");
@@ -997,7 +807,6 @@ export async function tick(api) {
 #[test]
 fn v2_loadout_potion_methods_are_named_helper_results_not_a_namespace() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const loadout = { worn: { righthand: 'Rune scimitar' }, carry: [{ item: 'Lobster', qty: 2 }] };
   globalThis.__probe = {
@@ -1018,7 +827,8 @@ export function tick(api) {
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+        LoadIsolate::spawn_with_game_data(native_fixture(src), LoadShape::NativeTick, vec![], data)
+            .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -1046,9 +856,9 @@ const HUNT_SITE: &str = "const site = {
 
 fn run_hunt_card(body: &str, ticks: u64) -> LoadIsolate {
     let src = format!(
-        "export const apiVersion = 2;\n{HUNT_SITE}\nlet started = false;\nexport async function tick(api) {{\n  if (started) return;\n  started = true;\n  globalThis.__statuses = [];\n  const status = (m) => globalThis.__statuses.push(m);\n{body}\n}}\n"
+        "{HUNT_SITE}\nlet started = false;\nexport async function tick(api) {{\n  if (started) return;\n  started = true;\n  globalThis.__statuses = [];\n  const status = (m) => globalThis.__statuses.push(m);\n{body}\n}}\n"
     );
-    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![])
+    let iso = LoadIsolate::spawn(native_fixture(&src), LoadShape::NativeTick, vec![])
         .expect("spawn native-tick hunt card isolate");
     for tick in 1..=ticks {
         post_base(&iso, tick);
@@ -1104,7 +914,6 @@ fn v2_fight_run_settles_once_and_rejects_with_a_hook_throw() {
 fn v2_hunt_protection_failure_rejects_await_without_a_log_hook() {
     let src = format!(
         r#"
-export const apiVersion = 2;
 {HUNT_SITE}
 let started = false;
 export async function tick(api) {{
@@ -1125,7 +934,7 @@ export async function tick(api) {{
     );
     // No selected content is configured, but the protect observation pages
     // are present: failure must reach the await, even without an optional log.
-    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(&src), LoadShape::NativeTick, vec![]).unwrap();
     let mut input = common::ingame_snapshot();
     let native = NativeFactsInput {
         projectiles: Some(&[]),
@@ -1241,7 +1050,6 @@ fn v2_retreat_settles_without_a_tile_and_walkspot_walks_the_world() {
 #[test]
 fn v2_gather_catalog_helpers_are_named_sync_results() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const methods = api.gatherMethods({ skill: 'woodcutting' });
   const resource = api.gatherResource({ name: 'limestone' });
@@ -1281,7 +1089,8 @@ export function tick(api) {
         .unwrap()
         .expect("prepare the real gathering family before probing its sync helpers");
     let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+        LoadIsolate::spawn_with_game_data(native_fixture(src), LoadShape::NativeTick, vec![], data)
+            .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -1320,7 +1129,6 @@ export function tick(api) {
 #[test]
 fn v2_quest_facts_are_named_sync_helper_results_not_request_ops() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const row = api.questIdentity({ id: 'death' });
   let requested = null;
@@ -1341,7 +1149,8 @@ export function tick(api) {
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+        LoadIsolate::spawn_with_game_data(native_fixture(src), LoadShape::NativeTick, vec![], data)
+            .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -1368,7 +1177,6 @@ export function tick(api) {
 #[test]
 fn v2_clue_row_and_run_are_named_methods_not_request_ops() {
     let src = r#"
-export const apiVersion = 2;
 export async function tick(api) {
   const row = api.clue.row({ id: 3554 });
   const begin = api.clue.begin();
@@ -1402,7 +1210,8 @@ export async function tick(api) {
     }
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+        LoadIsolate::spawn_with_game_data(native_fixture(src), LoadShape::NativeTick, vec![], data)
+            .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -1411,7 +1220,6 @@ export async function tick(api) {
     assert_eq!(probe["alias"], "trail_clue_hard_sextant028", "{probe:?}");
     assert_eq!(probe["access"], "constrained", "{probe:?}");
     assert!(probe["rows"].is_null(), "{probe:?}");
-    assert_eq!(probe["rowType"], "function", "{probe:?}");
     assert_eq!(
         probe["keys"],
         serde_json::json!([
@@ -1450,7 +1258,6 @@ fn v2_scene_projections_fail_closed_when_collision_is_unavailable() {
     // collision, so unavailable collision wins over that empty array: this is
     // snapshot-unavailable, not { rows: [] } and not a positive loc witness.
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const locs = api.sceneLocs({ ids: [2092, -1], limit: 64 });
   const npcs = api.sceneNpcs({ types: [-1], actions: ['Attack'], limit: 8 });
@@ -1472,7 +1279,7 @@ export function tick(api) {
   };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -1501,12 +1308,20 @@ export function tick(api) {
 }
 
 #[test]
-fn example_scene_observe_v2_is_read_only_and_fails_closed() {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("scene_observe_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
-    let js = script_js::transpile_ts(&src).expect("transpile scene_observe_v2.ts");
+fn v2_scene_observe_without_a_page_is_read_only_and_fails_closed() {
+    // Both calls are historical copies of the posted page. No scene is posted
+    // here, so both fail closed. -1 is the posted absent NPC type: a legal
+    // caller integer that matches only a posted -1 row.
+    let js = native_fixture(
+        r#"
+export function tick(api) {
+  const locs = api.sceneLocs({ ids: [2092], limit: 8 });
+  api.log(JSON.stringify(locs));
+  const npcs = api.sceneNpcs({ types: [-1], actions: ['Attack'], limit: 8 });
+  api.log(JSON.stringify(npcs));
+}
+"#,
+    );
     let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
@@ -1516,7 +1331,7 @@ fn example_scene_observe_v2_is_read_only_and_fails_closed() {
     let logs = iso.drain_logs();
     let interacts = iso.drain_interacts();
     iso.join();
-    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    assert_eq!(err.as_str().unwrap_or(""), "", "fixture lastError: {err:?}");
     let failed: Vec<serde_json::Value> = logs
         .iter()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
@@ -1530,24 +1345,24 @@ fn example_scene_observe_v2_is_read_only_and_fails_closed() {
     }
     assert!(
         interacts.is_empty(),
-        "scene example must not push interact: {interacts:?}"
+        "scene fixture must not push interact: {interacts:?}"
     );
 }
 
 #[test]
 fn v2_quest_status_fails_closed_without_a_page_and_on_a_null_tab() {
-    // Arm 1: the example with no posted page. Nothing is posted to this
-    // isolate, so the copy has no snapshot object to read: a legal name is
-    // snapshot-unavailable. That is not quest-tab-unbound, not a miss, and it
-    // is not a colour or status witness.
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("quest_status_v2.ts");
-    let example = std::fs::read_to_string(&path).expect("example source");
-    assert!(!example.contains("request("));
-    assert!(!example.contains("h.interact"));
-    assert_eq!(example.matches("api.questStatus").count(), 1);
-    let js = script_js::transpile_ts(&example).expect("transpile quest_status_v2.ts");
+    // Arm 1: a read-only questStatus caller with no posted page. Nothing is
+    // posted to this isolate, so the copy has no snapshot object to read: a
+    // legal name is snapshot-unavailable. That is not quest-tab-unbound, not a
+    // miss, and it is not a colour or status witness.
+    let js = native_fixture(
+        r#"
+export function tick(api) {
+  const row = api.questStatus({ name: 'Death Plateau' });
+  api.log(JSON.stringify(row));
+}
+"#,
+    );
     let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let err = iso
@@ -1556,7 +1371,7 @@ fn v2_quest_status_fails_closed_without_a_page_and_on_a_null_tab() {
     let logs = iso.drain_logs();
     let interacts = iso.drain_interacts();
     iso.join();
-    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    assert_eq!(err.as_str().unwrap_or(""), "", "fixture lastError: {err:?}");
     let failed: Vec<serde_json::Value> = logs
         .iter()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
@@ -1567,14 +1382,13 @@ fn v2_quest_status_fails_closed_without_a_page_and_on_a_null_tab() {
     assert!(failed[0].get("value").is_none(), "{:?}", failed[0]);
     assert!(
         interacts.is_empty(),
-        "quest status example must not push interact: {interacts:?}"
+        "quest status fixture must not push interact: {interacts:?}"
     );
 
     // Arm 2: post_base encodes a null quest tab on a posted page whose tick is
     // bound. A legal name is quest-tab-unbound, not snapshot-unavailable and
     // not not-on-tab: the null check runs before the tick and before the scan.
     let source = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const row = api.questStatus({ name: 'Death Plateau' });
   let requested = null;
@@ -1592,7 +1406,7 @@ export function tick(api) {
   };
 }
 "#;
-    let iso = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(source), LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -1767,7 +1581,6 @@ fn post_with_native(iso: &LoadIsolate, tick: u64, facts: &NativeFactsInput<'_>) 
 #[test]
 fn v2_scene_locs_filter_posted_order_and_truncate() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const hit = api.sceneLocs({ ids: [2092], limit: 2 });
   const miss = api.sceneLocs({ ids: [1], limit: 8, region: { min_x: 0, min_z: 0, max_x: 1, max_z: 1, level: 0 } });
@@ -1775,7 +1588,7 @@ export function tick(api) {
   globalThis.__probe = { hit, miss, bad };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     let mine = ["Mine".to_string()];
     let prospect = ["Prospect".to_string()];
     let locs = [
@@ -1886,14 +1699,13 @@ export function tick(api) {
 #[test]
 fn v2_scene_npcs_require_actions_and_keep_posted_order() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const hit = api.sceneNpcs({ types: [-1], actions: ['Attack'], limit: 8 });
   const omitted = api.sceneNpcs({ types: [-1], limit: 8 });
   globalThis.__probe = { hit, omitted };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     let talk = ["Talk-to".to_string()];
     let attack = ["Attack".to_string()];
     let both = ["Attack".to_string(), "Talk-to".to_string()];
@@ -1999,7 +1811,6 @@ export function tick(api) {
 #[test]
 fn v2_quest_status_maps_folded_name_and_keeps_first_legal_row() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const hit = api.questStatus({ name: 'Death Plateau' });
   const id = api.questStatus({ name: 'Death Plateau', id: 'death_plateau' });
@@ -2007,7 +1818,7 @@ export function tick(api) {
   globalThis.__probe = { hit, id, miss };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     let rows = [
         QuestStatusInput {
             name: "skip",
@@ -2046,7 +1857,6 @@ export function tick(api) {
 #[test]
 fn v2_snapshot_nested_reads_reuse_the_same_proxy() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const a = api.snapshot.inv;
   const b = api.snapshot.inv;
@@ -2055,7 +1865,7 @@ export function tick(api) {
   globalThis.__probe = { invSame: a === b, npcsSame: c === d };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -2067,7 +1877,6 @@ export function tick(api) {
 #[test]
 fn v2_scene_and_quest_args_match_number_is_integer_and_typeof() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const wideId = api.sceneLocs({ ids: [2147483648], limit: 1 });
   const wideRegion = api.sceneLocs({
@@ -2090,7 +1899,7 @@ export function tick(api) {
   };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(native_fixture(src), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
     iso.join();

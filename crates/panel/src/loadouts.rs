@@ -918,7 +918,6 @@ mod tests {
         let current = session.loadouts.draft().unwrap().carry[0].qty;
         let next = apply_qty_text(&session.loadouts_qty_bufs[0], current);
         assert_eq!(next, 8);
-        assert_eq!(session.loadouts_qty_bufs[0], "");
         session.loadouts_qty_bufs[0] = "12".into();
         let next = apply_qty_text(&session.loadouts_qty_bufs[0], current);
         assert_eq!(next, 12);

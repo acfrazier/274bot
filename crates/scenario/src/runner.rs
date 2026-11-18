@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use api::interact::{cheat, logout, Interactions, SendResult};
 use api::obj_names::ObjNames;
+use api::random::FightOutcome;
 use api::snapshot::{varbit_value, VarbitObservation, VarbitUnavailable};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
@@ -413,14 +414,19 @@ pub struct ScenarioRunner {
     phase: Phase,
     step: usize,
     step_sent: bool,
+    /// True after the runner's first dispatch for the current step. Repeated
+    /// steps keep `step_sent` false, so this latch starts their wait budget
+    /// exactly once.
+    step_wait_started: bool,
     /// Observed game tick (`snapshot.tick()`, one per `PLAYER_INFO`) at
     /// which the current `Repeat` step last sent. `None` until the step
     /// sends; reset at every step boundary so a new `Repeat` step can
     /// send at once. Client cycles and dirty snapshots never update it.
     repeat_sent_game_tick: Option<u32>,
-    /// Last `snapshot.tick()` this runner observed. The difference on
-    /// the next poll is the number of observed game ticks (one per
-    /// `PLAYER_INFO`) to credit to the step budget and run total.
+    /// Last `snapshot.tick()` this runner observed. The difference on the
+    /// next poll is the number of observed game ticks (one per
+    /// `PLAYER_INFO`) to credit to the run total. The step budget excludes
+    /// the delta on the poll that first dispatches the step.
     /// Client cycles and dirty snapshots do not advance it.
     last_observed_game_tick: u32,
     /// Observed game ticks waited on the current step's arm (one per
@@ -516,6 +522,9 @@ pub struct ScenarioRunner {
     /// Random-event Guardian episode, armed by an
     /// [`StepKind::ObserveRandomEvent`] step and kept for the terminal receipt.
     random_event: Option<RandomEventEpisode>,
+    /// Host-fed Guardian Fight facts for the current random-event receipt.
+    guardian_fight_outcome: Option<FightOutcome>,
+    guardian_no_progress_ticks: Option<u16>,
     /// Host-fed Sherlock protect-window oracle, armed when the scenario names it.
     protect_window: Option<ProtectWindowObservation>,
     /// Newest chat sequence at StartScript when the scenario sets
@@ -552,6 +561,8 @@ pub struct ScenarioRunner {
     /// Allocated only for scenarios that explicitly request measured windows.
     combat_observer: Option<Box<CombatObserver>>,
     key_run: Option<Box<crate::keys::KeyRun>>,
+    /// No actor sampling or retained records without a named ObserveActor step.
+    actor_observer: Option<Box<crate::actor::ActorObserver>>,
 }
 
 impl ScenarioRunner {
@@ -602,6 +613,16 @@ impl ScenarioRunner {
         self.tick_speed_endpoint = Some((host.to_owned(), port));
     }
 
+    /// Feed fixture-only Guardian Fight facts into the next live scenario frame.
+    pub fn set_random_event_diagnostics(
+        &mut self,
+        fight_outcome: Option<FightOutcome>,
+        no_progress_ticks: Option<u16>,
+    ) {
+        self.guardian_fight_outcome = fight_outcome;
+        self.guardian_no_progress_ticks = no_progress_ticks;
+    }
+
     fn with_data(scenario: Scenario, nav_world: Option<Arc<NavWorld>>) -> Self {
         // Settings fields are Copy, so read them out before `scenario`
         // moves into the runner below.
@@ -642,6 +663,7 @@ impl ScenarioRunner {
             phase: Phase::Seeding,
             step: 0,
             step_sent: false,
+            step_wait_started: false,
             repeat_sent_game_tick: None,
             last_observed_game_tick: 0,
             game_ticks_waited: 0,
@@ -679,6 +701,8 @@ impl ScenarioRunner {
             loot_trips: None,
             combat_bank_returns: None,
             random_event: None,
+            guardian_fight_outcome: None,
+            guardian_no_progress_ticks: None,
             protect_window: None,
             death_chat_baseline: None,
             script_started: false,
@@ -692,6 +716,7 @@ impl ScenarioRunner {
             run_receipt: Some(Box::default()),
             combat_observer,
             key_run,
+            actor_observer: None,
         };
         if let Some(message) = invalid_observation {
             runner.record_fail(&message);
@@ -1206,6 +1231,9 @@ impl ScenarioRunner {
         self.delta_baselines
             .retain(|baseline| baseline.session == client.gens.session);
         let dirty = self.snapshot.rebuild(client);
+        let actor = self.armed_actor();
+        let actor_result =
+            crate::actor::ActorObserver::observe(self.actor_observer.as_deref_mut(), client, actor);
         CombatObserver::observe(
             self.combat_observer.as_deref_mut(),
             &self.snapshot,
@@ -1227,12 +1255,15 @@ impl ScenarioRunner {
                 return;
             }
         }
-        // Observed game ticks since the last poll: `snapshot.tick()`
-        // advances once per `PLAYER_INFO` (the server's world cycle),
-        // never on a client cycle or a dirty snapshot alone. Step
-        // budgets and the run total credit this delta in the run block
-        // below; polls that return before it (cleaning, scene settle)
-        // do not count toward a step budget.
+        if let Err(reason) = actor_result {
+            self.finish_unavailable(reason);
+            return;
+        }
+        // `snapshot.tick()` advances once per `PLAYER_INFO` (the server's
+        // world cycle), never on a client cycle or a dirty snapshot alone.
+        // The run total credits every delta in the run block below. The step
+        // budget excludes the delta on the poll that first dispatches it.
+        // Polls that return before the run block do not count toward a step.
         let observed_game_tick = self.snapshot.tick();
         let game_tick_delta = observed_game_tick.wrapping_sub(self.last_observed_game_tick);
         self.last_observed_game_tick = observed_game_tick;
@@ -1289,6 +1320,7 @@ impl ScenarioRunner {
             self.begin_step(client.gens.session);
         }
         if matches!(self.phase, Phase::Running) {
+            let mut step_wait_started_this_poll = false;
             // Scene-settle gate: never start a step until the scene has
             // held `scene_state == 2` for `scene_settle`. A cheat tele's
             // rebuild drops the scene to 1 and a send before it re-settles
@@ -1371,6 +1403,20 @@ impl ScenarioRunner {
                     ));
                     return;
                 }
+                if !self.step_wait_started {
+                    self.step_wait_started = true;
+                    step_wait_started_this_poll = true;
+                    self.game_ticks_waited = 0;
+                    if matches!(
+                        self.current_step().wait.arm,
+                        Proof::GroundItemIdsAbsentNear { .. }
+                    ) {
+                        if let Some(guard) = self.ground_guard.as_mut() {
+                            guard.start_tick = observed_game_tick;
+                            guard.ticks_waited = 0;
+                        }
+                    }
+                }
                 if repeat {
                     self.repeat_sent_game_tick = Some(self.snapshot.tick());
                 }
@@ -1390,10 +1436,11 @@ impl ScenarioRunner {
                     self.game_ticks_waited = 0;
                 }
             }
-            // Budgets count observed game ticks only. Route polling above
-            // and the proof checks below still run on every poll; a burst
-            // of dirty snapshots inside one game tick does not use budget.
-            self.game_ticks_waited = self.game_ticks_waited.saturating_add(game_tick_delta);
+            // The dispatch poll's delta predates the dispatch. Later polls
+            // count only observed game ticks since the step started.
+            if !step_wait_started_this_poll {
+                self.game_ticks_waited = self.game_ticks_waited.saturating_add(game_tick_delta);
+            }
             self.total_game_ticks = self.total_game_ticks.saturating_add(game_tick_delta);
             if dirty {
                 if let Some(window) = self.protect_window.as_mut() {
@@ -1700,6 +1747,7 @@ impl ScenarioRunner {
 
     fn begin_step(&mut self, session: u64) {
         self.step_sent = false;
+        self.step_wait_started = false;
         self.repeat_sent_game_tick = None;
         self.relog_logout_sent = false;
         self.relog_session = None;
@@ -1837,6 +1885,12 @@ impl ScenarioRunner {
                 .key_run
                 .as_ref()
                 .is_some_and(|run| run.camera_delta(&self.snapshot)),
+            Proof::ActorChatStyle { .. }
+            | Proof::OverheadText { .. }
+            | Proof::OverheadTextLifetime { .. } => self
+                .actor_observer
+                .as_ref()
+                .is_some_and(|observer| observer.holds(proof)),
             Proof::ScriptIdle => self.script_idle,
             Proof::All(proofs) => proofs.iter().all(|proof| self.holds(*proof)),
             Proof::ScriptReceipt { prefix } => self
@@ -1889,6 +1943,18 @@ impl ScenarioRunner {
                 self.fresh_xp_baseline,
                 Some(&self.delta_baselines),
             ),
+        }
+    }
+
+    fn armed_actor(&self) -> Option<api::snapshot::ActorSelector> {
+        let step = match self.phase {
+            Phase::Running => self.scenario.steps.get(self.step),
+            Phase::Proving => self.scenario.steps.last(),
+            _ => None,
+        }?;
+        match step.kind {
+            StepKind::ObserveActor { actor } => Some(actor),
+            _ => None,
         }
     }
 
@@ -2627,6 +2693,15 @@ impl ScenarioRunner {
                     Ok("no-send")
                 }
             }
+            StepKind::ObserveActor { actor } => {
+                let observer = self.actor_observer.get_or_insert_with(Box::default);
+                // Every dispatched step owns a new baseline, including consecutive selectors.
+                crate::actor::ActorObserver::observe(Some(observer), client, None)
+                    .map_err(str::to_owned)?;
+                crate::actor::ActorObserver::observe(Some(observer), client, Some(*actor))
+                    .map_err(str::to_owned)?;
+                Ok("no-send")
+            }
             StepKind::Shot { .. }
             | StepKind::StartScript
             | StepKind::StopScript
@@ -2934,6 +3009,8 @@ impl ScenarioRunner {
             episode.cell(),
             hold,
             self.obj_names.as_deref(),
+            self.guardian_fight_outcome,
+            self.guardian_no_progress_ticks,
         );
         let command = episode.next_send(&frame);
         if let Some(command) = command {
@@ -3158,6 +3235,10 @@ impl ScenarioRunner {
             .combat_observer
             .take()
             .map(|observer| Box::new((*observer).into_evidence()));
+        evidence.actors = self
+            .actor_observer
+            .take()
+            .map(|observer| Box::new((*observer).into_evidence()));
         self.receipt_event(
             "TERMINAL",
             "predicate",
@@ -3250,6 +3331,10 @@ impl ScenarioRunner {
             .combat_observer
             .take()
             .map(|observer| Box::new((*observer).into_evidence()));
+        evidence.actors = self
+            .actor_observer
+            .take()
+            .map(|observer| Box::new((*observer).into_evidence()));
         self.receipt_event(
             "TERMINAL",
             "predicate",
@@ -3267,10 +3352,22 @@ impl ScenarioRunner {
     }
 }
 
+fn actor_proof_selector(proof: Proof) -> Option<api::snapshot::ActorSelector> {
+    match proof {
+        Proof::ActorChatStyle { actor, .. }
+        | Proof::OverheadText { actor, .. }
+        | Proof::OverheadTextLifetime { actor, .. } => Some(actor),
+        _ => None,
+    }
+}
+
 fn client_observation(proof: Proof) -> Option<&'static str> {
     match proof {
         Proof::MenuHasEntry { .. } => Some("MenuHasEntry"),
         Proof::VarbitEquals { .. } => Some("VarbitEquals"),
+        Proof::ActorChatStyle { .. } => Some("ActorChatStyle"),
+        Proof::OverheadText { .. } => Some("OverheadText"),
+        Proof::OverheadTextLifetime { .. } => Some("OverheadTextLifetime"),
         Proof::All(proofs) => proofs.iter().find_map(|proof| client_observation(*proof)),
         _ => None,
     }
@@ -3345,6 +3442,13 @@ fn client_observation_refusal(scenario: &Scenario) -> Option<String> {
             Proof::VarbitEquals { id, .. } if !matches!(step.kind, StepKind::ObserveVarbit { id: observer_id } if observer_id == id) => {
                 Some("VarbitEquals requires an ObserveVarbit step with the same id")
             }
+            Proof::ActorChatStyle { actor, .. }
+            | Proof::OverheadText { actor, .. }
+            | Proof::OverheadTextLifetime { actor, .. }
+                if !matches!(step.kind, StepKind::ObserveActor { actor: observed } if observed == actor) =>
+            {
+                Some("actor proof requires an ObserveActor step with the same actor")
+            }
             _ => None,
         };
         if let Some(requirement) = required_observer {
@@ -3362,6 +3466,16 @@ fn client_observation_refusal(scenario: &Scenario) -> Option<String> {
                     step.name
                 ));
             }
+        }
+    }
+    if let Some(actor) = actor_proof_selector(scenario.proof) {
+        if !matches!(scenario.steps.last().map(|step| &step.kind),
+            Some(StepKind::ObserveActor { actor: observed }) if *observed == actor)
+        {
+            return Some(
+                "terminal actor proof requires a final ObserveActor step with the same actor"
+                    .into(),
+            );
         }
     }
     if let Some(observer) = nested_client_observation(scenario.proof) {

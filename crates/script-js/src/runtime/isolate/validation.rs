@@ -1,7 +1,7 @@
 //! One process validation coordinator. Its bounded queue and single seat
 //! prevent a refresh from starting an isolate per card or per window.
 
-use super::{LoadIsolate, LoadIsolateError, LoadShape, Ready, JOIN_TIMEOUT, VALIDATION_TIMEOUT};
+use super::{LoadIsolate, LoadIsolateError, Ready, JOIN_TIMEOUT, VALIDATION_TIMEOUT};
 use crate::library::store::PreparedCard;
 use script::surface::StopCompletion;
 use std::cell::RefCell;
@@ -234,7 +234,7 @@ fn run(rx: Receiver<Job>) {
                 validate_one(
                     card.card.js.clone(),
                     std::sync::Arc::from(card.card.name.as_str()),
-                    card.card.shape,
+                    card.card.checked,
                     card.siblings.clone(),
                     Arc::clone(&game_data),
                     Arc::clone(&named_banks),
@@ -282,7 +282,7 @@ fn refuse(job: Job, reason: &str) {
 fn validate_one(
     js: String,
     card_name: std::sync::Arc<str>,
-    shape: LoadShape,
+    checked: crate::library::prepare::CheckedLoad,
     siblings: Vec<(String, String)>,
     game_data: Arc<api::game_data::SelectedGameData>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
@@ -291,7 +291,7 @@ fn validate_one(
     let isolate = LoadIsolate::spawn_inner(
         js,
         card_name,
-        shape,
+        checked,
         siblings,
         Some(game_data),
         named_banks,

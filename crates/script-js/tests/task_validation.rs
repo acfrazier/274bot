@@ -7,18 +7,20 @@ fn start_js_surface(
     source: &str,
     shape: LoadShape,
 ) -> Result<(), script::slot::StartLoadError> {
-    let source = Arc::<str>::from(source);
-    let family = script_js::resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
+    let prepared = script_js::prepare_raw_origin_for_test("bot.js", source, &[])
+        .expect("prepare task validation test origin");
+    assert_eq!(
+        prepared.checked.shape(),
+        shape,
+        "task validation origin shape"
+    );
     slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
     slot.start_surface(script::surface::SurfaceStart {
         card: Arc::new(script_js::surface::JsStartCard {
             card_name: "task validation test".into(),
-            source,
-            shape,
+            source: Arc::<str>::from(prepared.js),
+            checked: prepared.checked,
             siblings: Arc::<[(String, String)]>::from([]),
-            family,
         }),
         settings_bag: None,
         game_data: None,

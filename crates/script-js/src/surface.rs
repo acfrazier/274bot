@@ -1,6 +1,7 @@
 //! JavaScript cards and the run that carries their isolate and wire state.
 
-use crate::library::shape::{ApiFamily, LoadShape};
+use crate::library::prepare::CheckedLoad;
+use crate::library::shape::ApiFamily;
 use crate::runtime::isolate::{GameplayFactory, LoadIsolate, Ready};
 use crate::wire::{IsolateBuf, SnapshotFingerprint};
 use api::identity::ExecutionId;
@@ -19,14 +20,15 @@ use std::any::Any;
 use std::sync::{mpsc::Sender, Arc};
 use std::time::Instant;
 
-/// Frozen JavaScript inputs retained by the slot across run restarts.
+/// Frozen JavaScript inputs retained by the slot across run restarts: the
+/// execution source and its checked identity from preparation. Recreation
+/// reuses this identity and never reads it from execution JavaScript.
 #[derive(Debug)]
 pub struct JsStartCard {
     pub card_name: Arc<str>,
     pub source: Arc<str>,
-    pub shape: LoadShape,
+    pub checked: CheckedLoad,
     pub siblings: Arc<[(String, String)]>,
-    pub family: Option<ApiFamily>,
 }
 
 impl SurfaceCard for JsStartCard {
@@ -35,11 +37,10 @@ impl SurfaceCard for JsStartCard {
     }
 
     fn family(&self) -> Option<SurfaceFamily> {
-        match self.family {
-            Some(ApiFamily::V1) => Some(SurfaceFamily::JsV1),
-            Some(ApiFamily::V2) => Some(SurfaceFamily::JsV2),
-            Some(ApiFamily::Unversioned) | None => None,
-        }
+        Some(match self.checked.family() {
+            ApiFamily::V1 => SurfaceFamily::JsV1,
+            ApiFamily::V2 => SurfaceFamily::JsV2,
+        })
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -67,7 +68,7 @@ impl JsSurfaceFactory {
         let isolate = GameplayFactory::spawn_with_content_and_state(
             card.source.to_string(),
             card.card_name.clone(),
-            card.shape,
+            card.checked,
             card.siblings.iter().cloned().collect(),
             start.game_data.clone(),
             Arc::clone(&start.named_banks),
@@ -500,13 +501,14 @@ impl SurfaceRun for JsSurfaceRun {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::library::shape::LoadShape;
     use crate::wire::{InspectHopFp, RouteInspectFp, RouteInspectTerminalFp};
     use script::native::snapshot_source::BankSelectionInput;
     use std::time::Duration;
 
     fn run(source: &str) -> JsSurfaceRun {
         let isolate = GameplayFactory::spawn_with_content(
-            source.into(),
+            crate::native_fixture(source),
             LoadShape::NativeTick,
             Vec::new(),
             None,

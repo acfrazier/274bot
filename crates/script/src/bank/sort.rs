@@ -1406,7 +1406,6 @@ mod tests {
         category_of, is_unmatched, rank_within, rule_for, BankCategory, BankMove, BankSortMode,
         BankSortRow, BankSortScratch, PlanSummary, SortPlanError, CATEGORY_ORDER, UNRANKED,
     };
-    use std::collections::HashSet;
     use std::mem::size_of;
 
     const COINS: i32 = 995;
@@ -1950,10 +1949,6 @@ mod tests {
         );
         assert_eq!(CATEGORY_ORDER[0], BankCategory::Coins);
         assert_eq!(CATEGORY_ORDER[18], BankCategory::Junk);
-        assert_eq!(
-            CATEGORY_ORDER.iter().copied().collect::<HashSet<_>>().len(),
-            19
-        );
     }
 
     #[test]

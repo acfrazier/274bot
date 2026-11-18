@@ -603,6 +603,17 @@ class FakeVM:
 
 
 class NightlyOrchestrationTests(unittest.TestCase):
+    def test_settings_require_the_scratch_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            values = {
+                name: str(root / name)
+                for name in nightly.Settings.REQUIRED
+                if name != "NIGHTLY_MAC_DISK_ROOT"
+            }
+            with self.assertRaisesRegex(nightly.NightlyError, "NIGHTLY_MAC_DISK_ROOT"):
+                nightly.Settings(values)
+
     def make_settings(self, root: Path, overrides=None):
         runner = root / "runner"
         (runner / "tools/nightly").mkdir(parents=True)
@@ -838,8 +849,10 @@ class NightlyOrchestrationTests(unittest.TestCase):
             with self.subTest("deployment runner uses a stable path"):
                 readme = (HERE / "README.md").read_text(encoding="utf-8")
                 self.assertIn(
-                    "NIGHTLY_MAC_RUNNER=$HOME/.local/lib/274bot-nightly/runner", readme
+                    ': "${NIGHTLY_MAC_RUNNER:?set NIGHTLY_MAC_RUNNER in local lab.env}"',
+                    readme,
                 )
+                self.assertIn("NIGHTLY_MAC_RUNNER=$NIGHTLY_MAC_RUNNER", readme)
                 self.assertNotIn("worktrees/nightly-tart", readme)
 
             with self.subTest("quiet lock prevents guest start"):
@@ -1006,7 +1019,7 @@ class NightlyRefreshDocumentationTests(unittest.TestCase):
         self.assertIn('cd "$HOME/experiments/274bot"', section)
         self.assertIn("git status --short --branch", section)
         self.assertIn("git log -1 --oneline --decorate", section)
-        lock_check = "if test -e /Volumes/dev-scratch/274bot-nightly/.mac-nightly.lock; then"
+        lock_check = 'if test -e "$NIGHTLY_MAC_ROOT/.mac-nightly.lock"; then'
         self.assertLess(section.index(lock_check), section.index("rsync -a --delete"))
         self.assertIn("After each runner refresh, repeat step 3", section)
         for name in (

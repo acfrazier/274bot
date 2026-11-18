@@ -23,7 +23,7 @@ use crate::theme::{
     applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
 };
 use crate::window::RedrawMode;
-use client::io::Packet;
+use client::io::{Packet, ServerProt};
 use dear_imgui_rs::{BackendFlags, ConfigFlags, Id, WindowFlags};
 use frontend_core::scripts::{CardSource, ScriptChoice, ScriptRunState};
 use frontend_core::test_support::live::tick_scenario_runner_for_test;
@@ -381,6 +381,8 @@ fn failed_live_script() -> (crate::session::Session, LiveScript, String) {
     let mut runner =
         frontend_core::test_support::live::failing_runner_for_test("live_failure_exit", None);
     let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(ServerProt::PLAYER_INFO);
     tick_scenario_runner_for_test(&mut runner, &mut client);
 
     let mut session = crate::session::Session::new();
@@ -2268,10 +2270,6 @@ fn parse_live_args_script_walk_accepted() {
         Ok(RunMode::Live("script_nav_paint_path".into()))
     );
     assert_eq!(
-        parse_live_args(["--live", "script_bone_burier_v2_js"], None),
-        Ok(RunMode::Live("script_bone_burier_v2_js".into()))
-    );
-    assert_eq!(
         parse_live_args(["--live", "script_bone_burier_v2_ts"], None),
         Ok(RunMode::Live("script_bone_burier_v2_ts".into()))
     );
@@ -2329,8 +2327,6 @@ fn parse_args_run_prepared_requires_script_live() {
     assert!(parse_args(["--prepare-fixture", "nope"], None).is_err());
     let ts = parse_args(["--prepare-fixture", "bone_burier_v2_ts"], None).unwrap();
     assert_eq!(ts.mode, RunMode::PrepareFixture("bone_burier_v2_ts".into()));
-    let js = parse_args(["--prepare-fixture", "bone_burier_v2_js"], None).unwrap();
-    assert_eq!(js.mode, RunMode::PrepareFixture("bone_burier_v2_js".into()));
     assert_eq!(
         frontend_core::test_support::live::scenario("bone_burier_v2_ts")
             .unwrap()
@@ -3058,9 +3054,11 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
     assert!(error.contains("soak checkpoint") && error.contains("synthetic"));
     assert!(failed_soak.failed.is_some());
 
-    // FAIL: a never-satisfiable arm within a 1-tick budget.
+    // FAIL: a never-satisfiable arm after one post-dispatch game tick.
     let mut runner = frontend_core::test_support::live::failing_runner_for_test("f", None);
     let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(ServerProt::PLAYER_INFO);
     tick_scenario_runner_for_test(&mut runner, &mut client);
     s.core.live_runner().install(runner);
     assert_eq!(
@@ -3097,6 +3095,8 @@ fn live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes() {
     let mut runner =
         frontend_core::test_support::live::failing_runner_for_test("f", Some("t-fail"));
     let mut client = script_client();
+    tick_scenario_runner_for_test(&mut runner, &mut client);
+    client.bump_gens(ServerProt::PLAYER_INFO);
     tick_scenario_runner_for_test(&mut runner, &mut client);
     s.core.live_runner().install(runner);
     assert_eq!(
@@ -4431,10 +4431,6 @@ fn guardian_policy_combo_offers_two_choices_and_applies_both() {
     guardian_policy_frame(&mut ctx, &mut policy, None);
     guardian_policy_frame(&mut ctx, &mut policy, None);
     let opened = drawn.0.take();
-    assert!(
-        !opened.is_empty(),
-        "the policy control draws its preview and its options"
-    );
     assert!(
         opened.matches("Fight").count() == 2,
         "the saved preview plus exactly one Fight option:\n{opened}"

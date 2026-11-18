@@ -128,15 +128,7 @@ pub enum CoreCase {
     BrimhavenMossInspectV1,
     RouteInspectBrimhavenV2,
     PrayerV2,
-    PrayerV1,
-    LineOfSightV2,
-    ActorObservationV2,
-    FightFieldV2,
-    HoldSpotV2,
-    RetreatSpotV2,
     WalkSpotV2,
-    EnterLairV2,
-    LeaveLairV2,
     AcquireKeyV2,
     CellV2,
     BankV2,
@@ -271,15 +263,7 @@ impl CoreCase {
             "brimhaven_moss_inspect_v1" => Ok(Self::BrimhavenMossInspectV1),
             "route_inspect_brimhaven_v2_ts" => Ok(Self::RouteInspectBrimhavenV2),
             "prayer_v2_ts" => Ok(Self::PrayerV2),
-            "prayer_v1_ts" => Ok(Self::PrayerV1),
-            "line_of_sight_v2_ts" => Ok(Self::LineOfSightV2),
-            "actor_observation_v2_ts" => Ok(Self::ActorObservationV2),
-            "fight_field_v2_ts" => Ok(Self::FightFieldV2),
-            "hold_spot_v2_ts" => Ok(Self::HoldSpotV2),
-            "retreat_spot_v2_ts" => Ok(Self::RetreatSpotV2),
             "walk_spot_v2_ts" => Ok(Self::WalkSpotV2),
-            "enter_lair_v2_ts" => Ok(Self::EnterLairV2),
-            "leave_lair_v2_ts" => Ok(Self::LeaveLairV2),
             "acquire_key_v2_ts" => Ok(Self::AcquireKeyV2),
             "cell_v2_ts" => Ok(Self::CellV2),
             "bank_v2_ts" => Ok(Self::BankV2),
@@ -417,15 +401,7 @@ impl CoreCase {
             Self::BrimhavenMossInspectV1 => "brimhaven_moss_inspect_v1",
             Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2_ts",
             Self::PrayerV2 => "prayer_v2_ts",
-            Self::PrayerV1 => "prayer_v1_ts",
-            Self::LineOfSightV2 => "line_of_sight_v2_ts",
-            Self::ActorObservationV2 => "actor_observation_v2_ts",
-            Self::FightFieldV2 => "fight_field_v2_ts",
-            Self::HoldSpotV2 => "hold_spot_v2_ts",
-            Self::RetreatSpotV2 => "retreat_spot_v2_ts",
             Self::WalkSpotV2 => "walk_spot_v2_ts",
-            Self::EnterLairV2 => "enter_lair_v2_ts",
-            Self::LeaveLairV2 => "leave_lair_v2_ts",
             Self::AcquireKeyV2 => "acquire_key_v2_ts",
             Self::CellV2 => "cell_v2_ts",
             Self::BankV2 => "bank_v2_ts",
@@ -532,15 +508,7 @@ impl CoreCase {
             Self::BrimhavenMossInspectV1 => "BrimhavenMossGiants",
             Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2",
             Self::PrayerV2 => "prayer_v2",
-            Self::PrayerV1 => "prayer_v1",
-            Self::LineOfSightV2 => "line_of_sight_v2",
-            Self::ActorObservationV2 => "actor_observation_v2",
-            Self::FightFieldV2 => "fight_field_v2",
-            Self::HoldSpotV2 => "hold_spot_v2",
-            Self::RetreatSpotV2 => "retreat_spot_v2",
             Self::WalkSpotV2 => "walk_spot_v2",
-            Self::EnterLairV2 => "enter_lair_v2",
-            Self::LeaveLairV2 => "leave_lair_v2",
             Self::AcquireKeyV2 => "acquire_key_v2",
             Self::CellV2 => "cell_v2",
             Self::BankV2 => "bank_v2",
@@ -555,30 +523,14 @@ impl CoreCase {
     }
 
     pub fn copies_prayer_varps(self) -> bool {
-        matches!(self, Self::PrayerV2 | Self::PrayerV1)
-    }
-
-    pub fn copies_line_of_sight(self) -> bool {
-        matches!(self, Self::LineOfSightV2)
-    }
-
-    pub fn copies_actor_observation(self) -> bool {
-        matches!(self, Self::ActorObservationV2)
-    }
-
-    pub fn copies_fight_field(self) -> bool {
-        matches!(self, Self::FightFieldV2)
+        matches!(self, Self::PrayerV2)
     }
 
     /// The v2 hunt File cell this case witnesses, if any. Callers attach
     /// paint and the slot's act ledger only then.
     pub fn hunt_cell(self) -> Option<HuntCell> {
         Some(match self {
-            Self::HoldSpotV2 => HuntCell::Hold,
-            Self::RetreatSpotV2 => HuntCell::Retreat,
             Self::WalkSpotV2 => HuntCell::WalkSpot,
-            Self::EnterLairV2 => HuntCell::Enter,
-            Self::LeaveLairV2 => HuntCell::Leave,
             Self::AcquireKeyV2 => HuntCell::Key,
             Self::CellV2 => HuntCell::Cell,
             Self::BankV2 => HuntCell::Bank,
@@ -589,28 +541,6 @@ impl CoreCase {
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::PrayerV2 => Some(PRAYER_V2_STOP),
-            Self::PrayerV1 => Some(PRAYER_V1_STOP),
-            _ => None,
-        }
-    }
-
-    pub fn los_stop_reason(self) -> Option<&'static str> {
-        match self {
-            Self::LineOfSightV2 => Some(LOS_V2_STOP),
-            _ => None,
-        }
-    }
-
-    pub fn actor_stop_reason(self) -> Option<&'static str> {
-        match self {
-            Self::ActorObservationV2 => Some(ACTOR_OBSERVATION_V2_STOP),
-            _ => None,
-        }
-    }
-
-    pub fn fight_field_stop_reason(self) -> Option<&'static str> {
-        match self {
-            Self::FightFieldV2 => Some(FIGHT_FIELD_V2_STOP),
             _ => None,
         }
     }

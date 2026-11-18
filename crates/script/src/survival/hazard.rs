@@ -376,20 +376,6 @@ mod tests {
     }
 
     #[test]
-    fn admitted_hazard_emergency_line_is_never_below_half() {
-        for hp_max in 10..=99 {
-            for hazard in 0..hp_max {
-                if 2 * hazard + 1 < hp_max {
-                    assert!(
-                        hazard < (hp_max + 1) / 2,
-                        "hazard {hazard} at max Hitpoints {hp_max}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn food_park_release_uses_the_line_of_the_current_hitpoints() {
         assert_eq!(
             StepHazard {

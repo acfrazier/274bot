@@ -127,7 +127,6 @@ import { Banking } from '../../api/bank/Banking.js';
 import { Execution } from '../../api/execution/Execution.js';
 import { Traversal } from '../../api/walking/Traversal.js';
 
-export const apiVersion = 2;
 const site = { boxes: [{ minX: 3220, maxX: 3224, minZ: 3220, maxZ: 3224, level: 0 }] };
 const contextValue = new Deno.core.AsyncVariable();
 const target = { x: 3300, z: 3300, level: 0 };
@@ -188,7 +187,11 @@ export function tick(api) {
     });
 }
 "#;
-    let iso = spawn_owned_ready(src.to_string(), LoadShape::NativeTick, vec![]);
+    let iso = spawn_owned_ready(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    );
     let mut snapshot = ready_snapshot();
     snapshot.bank_open = true;
     snapshot.bank_loaded = true;
@@ -338,7 +341,6 @@ fn case_08_17_native_root_tick_listener_delay_until_and_import_stay_rooted() {
     let src = r#"
 import { BotHost } from '../../runtime/BotHost.js';
 import { Execution } from '../../api/execution/Execution.js';
-export const apiVersion = 2;
 let started = false;
 globalThis.__listenerRan = false;
 globalThis.__delayTickRan = false;
@@ -377,7 +379,11 @@ export function tick(api) {
     });
 }
 "#;
-    let iso = spawn_owned_ready(src.to_string(), LoadShape::NativeTick, vec![]);
+    let iso = spawn_owned_ready(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    );
     let mut snapshot = ready_snapshot();
     snapshot.bank_open = true;
     snapshot.bank_loaded = true;
@@ -468,7 +474,6 @@ fn case_18_async_variable_scope_and_foreign_replacement_are_observed_once() {
 import { bankRoutine } from '../../api/combat/hunting/combat.js';
 import { Banking } from '../../api/bank/Banking.js';
 import { Execution } from '../../api/execution/Execution.js';
-export const apiVersion = 2;
 const site = { boxes: [{ minX: 3220, maxX: 3224, minZ: 3220, maxZ: 3224, level: 0 }] };
 const value = new Deno.core.AsyncVariable();
 let started = false;
@@ -509,7 +514,11 @@ export function tick(api) {
     });
 }
 "#;
-    let iso = spawn_owned_ready(src.to_string(), LoadShape::NativeTick, vec![]);
+    let iso = spawn_owned_ready(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    );
     let mut snapshot = ready_snapshot();
     snapshot.bank_open = true;
     snapshot.bank_loaded = true;
@@ -628,7 +637,6 @@ fn case_19_hook_microtask_keeps_local_mirror_while_loop_microtask_is_root() {
     let src = r#"
 import { bankRoutine } from '../../api/combat/hunting/combat.js';
 import { Execution } from '../../api/execution/Execution.js';
-export const apiVersion = 2;
 const site = { boxes: [{ minX: 3220, maxX: 3224, minZ: 3220, maxZ: 3224, level: 0 }] };
 let started = false;
 globalThis.__loopMicrotask = false;
@@ -652,7 +660,11 @@ export function tick(api) {
     });
 }
 "#;
-    let iso = spawn_owned_ready(src.to_string(), LoadShape::NativeTick, vec![]);
+    let iso = spawn_owned_ready(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    );
     let mut snapshot = ready_snapshot();
     post_test_tick(&iso, &mut snapshot, 1);
     let batches = iso.drain_seat_batches();
@@ -688,7 +700,6 @@ export function tick(api) {
 fn case_22_bank_nearest_child_promise_survives_fight_completion_until_cancel() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
-export const apiVersion = 2;
 const site = {
     key: 't',
     target: 'Goblin',
@@ -732,7 +743,11 @@ export function tick(api) {
     });
 }
 "#;
-    let iso = spawn_owned_ready(src.to_string(), LoadShape::NativeTick, vec![]);
+    let iso = spawn_owned_ready(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    );
     let mut snapshot = ready_snapshot();
     let mut batches = Vec::new();
     post_test_tick(&iso, &mut snapshot, 1);
@@ -851,7 +866,6 @@ export function tick(api) {
 fn case_26_bank_nearest_reachable_and_progress_refusal_settle_inside_leave() {
     let src = r#"
 import { bankRoutine } from '../../api/combat/hunting/combat.js';
-export const apiVersion = 2;
 const site = { boxes: [{ minX: 3220, maxX: 3224, minZ: 3220, maxZ: 3224, level: 0 }] };
 let started = false;
 globalThis.__leaveDone = false;
@@ -875,7 +889,11 @@ export function tick(api) {
     root.then(() => { globalThis.__rootDone = true; });
 }
 "#;
-    let iso = spawn_owned_ready(src.to_string(), LoadShape::NativeTick, vec![]);
+    let iso = spawn_owned_ready(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    );
     let mut snapshot = ready_snapshot();
     let mut batches = Vec::new();
     post_test_tick(&iso, &mut snapshot, 1);
@@ -1207,7 +1225,11 @@ export function tick() {
     Reach.npcDialog(options);
 }
 "#;
-    let iso = spawn_owned_ready(src.to_string(), LoadShape::NativeTick, vec![]);
+    let iso = spawn_owned_ready(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    );
     let mut snapshot = ready_snapshot();
     let mut batches = Vec::new();
     let mut started_at = None;

@@ -56,7 +56,7 @@ fn main() {
     for (relative, kind) in payloads {
         let source = source_root.join(relative);
         let destination = resource_root.join(relative);
-        std::fs::copy(&source, &destination).unwrap_or_else(|error| {
+        nav_assets::stage_payload(&source, &destination).unwrap_or_else(|error| {
             fail(&format!(
                 "stage local navigation {kind} {} to {}: {error}",
                 source.display(),

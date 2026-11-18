@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from unittest.mock import patch
 from dataclasses import dataclass
@@ -184,14 +184,23 @@ def _cell_registry(config: dict[str, Any]) -> dict[str, Cell]:
 
 
 def verify_cells(config: dict[str, Any]) -> int:
-    isohome = Path(
-        os.environ.get(
-            "ISOHOME",
-            "/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome",
+    isohome_value = os.environ.get("ISOHOME")
+    if not isohome_value:
+        print(
+            "live-map: set ISOHOME in your local lab.env to the absolute isohome executable",
+            file=sys.stderr,
         )
-    )
-    if not isohome.is_absolute() or not isohome.is_file():
-        print(f"live-map: ISOHOME must name the absolute isohome executable: {isohome}", file=sys.stderr)
+        return 2
+    isohome = Path(isohome_value)
+    if (
+        not isohome.is_absolute()
+        or not isohome.is_file()
+        or not os.access(isohome, os.X_OK)
+    ):
+        print(
+            f"live-map: ISOHOME must name the absolute executable isohome wrapper: {isohome}",
+            file=sys.stderr,
+        )
         return 2
     failures = 0
     cells = _cell_registry(config)
@@ -285,6 +294,17 @@ def matches_any(path: str, globs: list[str]) -> bool:
     return any(matches(path, pattern) for pattern in globs)
 
 
+def _is_exact_test_source_cover(path: str, config: dict[str, Any]) -> bool:
+    return any(
+        pattern.endswith(".rs")
+        and "/tests/" in f"/{pattern}"
+        and not any(character in pattern for character in "*?[]")
+        and matches(path, pattern)
+        for row in config["cover"]
+        for pattern in row["globs"]
+    )
+
+
 def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
     unique_paths = sorted(set(paths))
     live_globs = config["live"]["globs"]
@@ -294,11 +314,17 @@ def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
     not_live: list[str] = []
     unclassified: list[str] = []
     for path in unique_paths:
-        excluded = matches_any(path, excluded_globs) and not matches_any(path, live_exceptions)
+        covered = any(matches_any(path, row["globs"]) for row in config["cover"])
+        exact_test_source = _is_exact_test_source_cover(path, config)
+        excluded = matches_any(path, excluded_globs) and not matches_any(
+            path, live_exceptions
+        )
         is_live = matches_any(path, live_globs)
-        if excluded:
+        if exact_test_source:
+            live_paths.append(path)
+        elif excluded:
             not_live.append(path)
-        elif is_live:
+        elif covered or is_live:
             live_paths.append(path)
         else:
             unclassified.append(path)
@@ -488,20 +514,79 @@ class LiveMapTests(unittest.TestCase):
         self.assertEqual(plan.unclassified, ())
         self.assertEqual(plan.not_live, ("crates/nav/src/router_tests.rs", "tools/check.py"))
 
-    def test_explicit_live_test_exception_overrides_not_live_glob(self) -> None:
-        path = "crates/host-play/tests/survivable_admission_live.rs"
+    def test_exact_test_source_cover_overrides_not_live_glob(self) -> None:
+        path = "crates/host-play/tests/revision_377_live/menu.rs"
         config = validate_map(
             {
-                "live": {"globs": [path]},
-                "not_live": {"globs": ["**/tests/**"], "exceptions": [path]},
-                "cover": [{"globs": [path], "cells": ["host.admission|cargo test --locked -p host-play --test survivable_admission_live real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp"]}],
+                "live": {"globs": ["src/**"]},
+                "not_live": {"globs": ["**/tests/**"]},
+                "cover": [
+                    {
+                        "globs": [path],
+                        "cells": [
+                            "host.menu-377-trade-duel-loc-live|cargo test --locked -p host-play --test revision_377_live -- --ignored --exact menu::trade_duel_loc_menu_377"
+                        ],
+                    }
+                ],
             }
         )
         plan = make_plan([path], config)
-        self.assertEqual([cell.name for cell in plan.cells], ["host.admission"])
+        self.assertEqual(
+            [cell.name for cell in plan.cells],
+            ["host.menu-377-trade-duel-loc-live"],
+        )
         self.assertEqual(plan.not_live, ())
         self.assertEqual(plan.uncovered, ())
+        self.assertEqual(plan.unclassified, ())
 
+    def test_wildcard_covers_and_non_test_exact_covers_stay_not_live(self) -> None:
+        config = load_map()
+        for path in (
+            "crates/script/src/quester/inventory_tests.rs",
+            "Cargo.lock",
+        ):
+            with self.subTest(path=path):
+                plan = make_plan([path], config)
+                self.assertEqual(plan.cells, ())
+                self.assertEqual(plan.uncovered, ())
+                self.assertEqual(plan.unclassified, ())
+                self.assertEqual(plan.not_live, (path,))
+
+    def test_diff_of_live_test_sources_selects_their_cells(self) -> None:
+        config = load_map()
+        with tempfile.TemporaryDirectory(prefix="live-map-test-sources-") as temp:
+            repo = Path(temp)
+            _git(repo, "init", "--quiet")
+            _git(repo, "config", "user.name", "Live Map Test")
+            _git(repo, "config", "user.email", "live-map-test@example.invalid")
+            (repo / "README.md").write_text("base\n", encoding="utf-8")
+            _git(repo, "add", "README.md")
+            _git(repo, "commit", "--quiet", "-m", "base")
+            _git(repo, "branch", "baseline")
+            changed = [
+                "crates/host-play/tests/revision_377_live/menu.rs",
+                "crates/host-play/tests/quester_path_live.rs",
+                "crates/host-play/tests/revision_377_live/cook.rs",
+                "crates/host-play/tests/revision_377_live/quantity.rs",
+                "crates/host-play/tests/revision_377_live/varbit.rs",
+            ]
+            for relative in changed:
+                target = repo / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("changed\n", encoding="utf-8")
+            _git(repo, "add", *changed)
+            _git(repo, "commit", "--quiet", "-m", "change test sources")
+            paths = diff_paths("baseline..HEAD", repo)
+            plan = make_plan(paths, config)
+        selected = {cell.name for cell in plan.cells}
+        self.assertIn("host.menu-377-trade-duel-loc-live", selected)
+        self.assertIn("host.quester-path-engine-q", selected)
+        self.assertIn("host.receipt-377-cook-raster-live", selected)
+        self.assertIn("host.quantity-377-make-x-live", selected)
+        self.assertIn("host.varbit-377-known-missing-live", selected)
+        self.assertEqual(plan.not_live, ())
+        self.assertEqual(plan.uncovered, ())
+        self.assertEqual(plan.unclassified, ())
     def test_commands_deduplicate_by_command(self) -> None:
         config = validate_map(
             {
@@ -566,6 +651,13 @@ class LiveMapTests(unittest.TestCase):
         with self.assertRaises(MapError):
             validate_map(raw)
 
+    def test_verify_cells_requires_configured_isohome(self) -> None:
+        output = StringIO()
+        with patch.dict(os.environ, {}, clear=True), redirect_stderr(output):
+            self.assertEqual(verify_cells(self.config), 2)
+        self.assertIn("ISOHOME", output.getvalue())
+        self.assertIn("lab.env", output.getvalue())
+
     def test_verify_cells_rejects_an_empty_test_list(self) -> None:
         config = validate_map(
             {
@@ -615,6 +707,56 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual([cell.name for cell in plan.cells], ["nav.routes"])
             self.assertEqual(plan.uncovered, ())
             self.assertEqual(plan.unclassified, ("mystery/file.rs",))
+
+    def test_shared_protocol_paths_select_headless_without_377_live_cells(self) -> None:
+        config = load_map()
+        for path in (
+            "vendor/fr-client-rust/crates/client/src/client/client.rs",
+            "vendor/fr-client-rust/crates/client/src/io/client_stream.rs",
+            "vendor/fr-client-rust/crates/client/src/io/packet.rs",
+        ):
+            with self.subTest(path=path):
+                plan = make_plan([path], config)
+                self.assertEqual(
+                    {cell.name for cell in plan.cells if "377" in cell.name},
+                    {"client.protocol-377-wire-headless"},
+                )
+                self.assertEqual(plan.uncovered, ())
+                self.assertEqual(plan.unclassified, ())
+
+    def test_ondemand_path_selects_377_live_receipt(self) -> None:
+        config = load_map()
+        plan = make_plan(
+            ["vendor/fr-client-rust/crates/client/src/io/ondemand.rs"], config
+        )
+        self.assertEqual(
+            {cell.name for cell in plan.cells if "377" in cell.name},
+            {"client.protocol-377-wire-headless", "host.receipt-377-client-live"},
+        )
+        self.assertEqual(plan.uncovered, ())
+        self.assertEqual(plan.unclassified, ())
+
+    def test_377_protocol_paths_select_both_live_cells(self) -> None:
+        config = load_map()
+        required = {"host.receipt-377-client-live", "host.menu-377-hans-live"}
+        for path in (
+            "vendor/fr-client-rust/crates/client/src/client/outbound_377.rs",
+            "vendor/fr-client-rust/crates/client/src/io/client_prot_377.rs",
+        ):
+            with self.subTest(path=path):
+                plan = make_plan([path], config)
+                self.assertTrue(required.issubset({cell.name for cell in plan.cells}))
+                self.assertEqual(plan.uncovered, ())
+                self.assertEqual(plan.unclassified, ())
+
+    def test_377_outbound_login_path_selects_headless_wire_fixture(self) -> None:
+        config = load_map()
+        plan = make_plan(
+            ["vendor/fr-client-rust/crates/client/src/client/outbound_377.rs"], config
+        )
+        self.assertIn("client.protocol-377-wire-headless", {cell.name for cell in plan.cells})
+        self.assertEqual(plan.uncovered, ())
+        self.assertEqual(plan.unclassified, ())
 
     def test_diff_expands_real_submodule_paths_and_requires_missing_commit_fetch(self) -> None:
         raw_evidence = os.environ.get("LIVE_MAP_TEST_TMPDIR")
@@ -685,6 +827,7 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(
                 {cell.name for cell in login_plan.cells},
                 {
+                    "client.protocol-377-wire-headless",
                     "host.scriptless-idle-held",
                     "host.transport-dead-server",
                     "host.transport-relog",
@@ -733,6 +876,7 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(
                 {cell.name for cell in moved_plan.cells},
                 {
+                    "client.protocol-377-wire-headless",
                     "host.scriptless-idle-held",
                     "host.transport-dead-server",
                     "host.transport-relog",

@@ -324,7 +324,7 @@ fn a_slot_frame_publishes_then_hooks_then_ticks_live_then_follows_the_walk_once_
             stepped.push("walk");
             false
         },
-        live: move |_: &mut Client, _: &str, _: bool| ticked.push("live"),
+        live: move |_: &mut Client, _: &str, _: SlotFrameInput| ticked.push("live"),
     };
     let frame = per_frame(super::slot_frame(
         Arc::clone(&shared),

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use script_js::JsLibrary;
+use script_js::{CacheRole, JsLibrary};
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
 fn temp_dir() -> PathBuf {
@@ -38,8 +38,8 @@ fn write_file(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-fn object_mtime(cache: &JsCache, sha: &str) -> std::time::SystemTime {
-    std::fs::metadata(cache.object_path(sha))
+fn object_mtime(cache: &JsCache, origin: &Path, sha: &str) -> std::time::SystemTime {
+    std::fs::metadata(cache.object_path(CacheRole::Entry, origin, sha))
         .expect("cached object exists")
         .modified()
         .expect("mtime")
@@ -53,9 +53,11 @@ fn first_import_writes_cache_object() {
     let origin = write_file(&dir, "bot.ts", CLASS_TS);
 
     let cached = cache
-        .get_or_transpile(
+        .get_or_compile(
+            CacheRole::Entry,
             &origin,
-            CLASS_TS.as_bytes(),
+            CLASS_TS,
+            CLASS_TS,
             CacheMeta {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::File,
@@ -65,7 +67,27 @@ fn first_import_writes_cache_object() {
         )
         .expect("first import caches");
     assert!(!cached.sha256.is_empty());
-    assert!(cache.object_path(&cached.sha256).is_file());
+    let entry_object = cache.object_path(CacheRole::Entry, &origin, &cached.sha256);
+    assert!(entry_object.is_file());
+    let sibling = cache
+        .get_or_compile(
+            CacheRole::Sibling,
+            &origin,
+            CLASS_TS,
+            CLASS_TS,
+            CacheMeta {
+                kind: ScriptKind::Compat,
+                source: ScriptSource::File,
+                shape: None,
+                api_family: None,
+            },
+        )
+        .expect("same bytes compile as sibling");
+    let sibling_object = cache.object_path(CacheRole::Sibling, &origin, &sibling.sha256);
+    assert!(
+        sibling_object.is_file() && entry_object != sibling_object,
+        "entry and sibling objects for the same origin bytes use separate files"
+    );
     assert!(
         cached.js.contains("extends LoopingBot"),
         "transpiled JS returned: {}",
@@ -87,11 +109,11 @@ fn second_same_bytes_hits_cache_without_rewriting_object() {
         api_family: None,
     };
     let first = cache
-        .get_or_transpile(&origin, CLASS_TS.as_bytes(), meta.clone())
+        .get_or_compile(CacheRole::Entry, &origin, CLASS_TS, CLASS_TS, meta.clone())
         .unwrap();
     // Backdate the object file instead of sleeping: a hit must leave the
     // mtime exactly where we put it, on any filesystem granularity.
-    let object = cache.object_path(&first.sha256);
+    let object = cache.object_path(CacheRole::Entry, &origin, &first.sha256);
     let backdated = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
     std::fs::File::options()
         .write(true)
@@ -99,15 +121,15 @@ fn second_same_bytes_hits_cache_without_rewriting_object() {
         .expect("open cached object")
         .set_modified(backdated)
         .expect("backdate cached object");
-    let mtime = object_mtime(&cache, &first.sha256);
+    let mtime = object_mtime(&cache, &origin, &first.sha256);
 
     let second = cache
-        .get_or_transpile(&origin, CLASS_TS.as_bytes(), meta)
+        .get_or_compile(CacheRole::Entry, &origin, CLASS_TS, CLASS_TS, meta)
         .unwrap();
     assert_eq!(first.sha256, second.sha256);
     assert_eq!(first.js, second.js);
     assert_eq!(
-        object_mtime(&cache, &second.sha256),
+        object_mtime(&cache, &origin, &second.sha256),
         mtime,
         "cache hit must not rewrite the object file"
     );
@@ -217,8 +239,8 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         sidecar.display()
     );
 
-    // Plain JS origin is hashed in cache, not copied beside the file.
-    let js_path = write_file(&dir, "tickbot.js", NATIVE_TICK);
+    let native_entry = script_js::native_fixture(NATIVE_TICK);
+    let js_path = write_file(&dir, "tickbot.js", &native_entry);
     lib.load(&js_path).expect("load plain js");
     assert!(
         !dir.join("tickbot.transpiled.js").exists(),
@@ -232,9 +254,11 @@ fn js_origin_is_hashed_not_transpiled() {
     let cache = JsCache::new(dir.join("js-cache"));
     let path = write_file(&dir, "bot.js", NATIVE_TICK);
     let cached = cache
-        .get_or_transpile(
+        .get_or_compile(
+            CacheRole::Entry,
             &path,
-            NATIVE_TICK.as_bytes(),
+            NATIVE_TICK,
+            NATIVE_TICK,
             CacheMeta {
                 kind: ScriptKind::NativeTick,
                 source: ScriptSource::File,
@@ -245,7 +269,6 @@ fn js_origin_is_hashed_not_transpiled() {
         .expect("js origin caches verbatim");
     assert_eq!(cached.js, NATIVE_TICK);
 }
-
 #[cfg(unix)]
 #[test]
 fn cache_dirs_are_private_on_unix() {
@@ -255,10 +278,12 @@ fn cache_dirs_are_private_on_unix() {
     let cache_root = dir.join("js-cache");
     let cache = JsCache::new(cache_root.clone());
     let origin = write_file(&dir, "bot.ts", CLASS_TS);
-    cache
-        .get_or_transpile(
+    let cached = cache
+        .get_or_compile(
+            CacheRole::Entry,
             &origin,
-            CLASS_TS.as_bytes(),
+            CLASS_TS,
+            CLASS_TS,
             CacheMeta {
                 kind: ScriptKind::Compat,
                 source: ScriptSource::File,
@@ -273,10 +298,15 @@ fn cache_dirs_are_private_on_unix() {
         .permissions()
         .mode()
         & 0o777;
-    let objects_mode = std::fs::metadata(cache_root.join("objects"))
-        .expect("objects dir")
-        .permissions()
-        .mode()
+    let objects_mode = std::fs::metadata(
+        cache
+            .object_path(CacheRole::Entry, &origin, &cached.sha256)
+            .parent()
+            .expect("objects directory"),
+    )
+    .expect("objects dir")
+    .permissions()
+    .mode()
         & 0o777;
     assert_eq!(root_mode, 0o700, "js-cache root must be owner-only");
     assert_eq!(objects_mode, 0o700, "objects/ must be owner-only");
@@ -289,9 +319,11 @@ fn manifest_records_script_kind_source_and_media() {
     let cache = JsCache::new(cache_root.clone());
     let origin = write_file(&dir, "tickbot.js", NATIVE_TICK);
     cache
-        .get_or_transpile(
+        .get_or_compile(
+            CacheRole::Entry,
             &origin,
-            NATIVE_TICK.as_bytes(),
+            NATIVE_TICK,
+            NATIVE_TICK,
             CacheMeta {
                 kind: ScriptKind::NativeTick,
                 source: ScriptSource::File,
@@ -301,7 +333,8 @@ fn manifest_records_script_kind_source_and_media() {
         )
         .expect("cache miss writes manifest");
 
-    let raw = std::fs::read_to_string(cache_root.join("manifest.json")).expect("manifest");
+    let raw = std::fs::read_to_string(cache_root.join("host-compile-v1/js/entry/manifest.json"))
+        .expect("manifest");
     let manifest: serde_json::Value = serde_json::from_str(&raw).expect("manifest json");
     let entry = manifest["objects"]
         .as_object()
@@ -430,10 +463,10 @@ fn catalog_register_does_not_transpile_until_ensure_js() {
         !bone.sha256.is_empty(),
         "origin SHA is known without transpile"
     );
-    assert!(
-        !lib.cache().object_path(&bone.sha256).is_file(),
-        "no cache object until ensure_js"
-    );
+    assert!(!lib
+        .cache()
+        .object_path(CacheRole::Entry, &bone.path, &bone.sha256)
+        .is_file(),);
     assert_eq!(lib.cards_needing_transpile().len(), 2);
 
     lib.ensure_js(ScriptSource::Catalog, "BoneBurier")
@@ -445,7 +478,10 @@ fn catalog_register_does_not_transpile_until_ensure_js() {
         !bone.js.is_empty(),
         "ensure_js writes cached JS for that card"
     );
-    assert!(lib.cache().object_path(&bone.sha256).is_file());
+    assert!(lib
+        .cache()
+        .object_path(CacheRole::Entry, &bone.path, &bone.sha256)
+        .is_file());
 
     let shop = lib
         .get(ScriptSource::Catalog, "ShopRunner")
@@ -454,7 +490,10 @@ fn catalog_register_does_not_transpile_until_ensure_js() {
         shop.js.is_empty(),
         "warming one card must not transpile the rest of the catalog"
     );
-    assert!(!lib.cache().object_path(&shop.sha256).is_file());
+    assert!(!lib
+        .cache()
+        .object_path(CacheRole::Entry, &shop.path, &shop.sha256)
+        .is_file());
     assert_eq!(lib.cards_needing_transpile().len(), 1);
 }
 
@@ -462,11 +501,19 @@ fn catalog_register_does_not_transpile_until_ensure_js() {
 fn load_populates_kind_source_and_sha_on_card() {
     let dir = scratch("card_fields");
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    let path = write_file(&dir, "tickbot.js", NATIVE_TICK);
+    let native_entry = script_js::native_fixture(NATIVE_TICK);
+    let path = write_file(&dir, "tickbot.js", &native_entry);
     let card = lib.load(&path).expect("load");
     assert_eq!(card.kind, ScriptKind::NativeTick);
     assert_eq!(card.source, ScriptSource::File);
     assert!(!card.sha256.is_empty());
-    assert_eq!(card.js, NATIVE_TICK);
-    assert_eq!(card.origin, NATIVE_TICK);
+    assert!(
+        !card.js.contains("manifest"),
+        "manifest metadata is erased from execution JavaScript"
+    );
+    assert!(
+        card.js.contains(NATIVE_TICK),
+        "execution JavaScript retains the tick body"
+    );
+    assert_eq!(card.origin, native_entry);
 }

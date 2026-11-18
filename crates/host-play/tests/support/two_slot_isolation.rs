@@ -481,7 +481,7 @@ pub struct CardLedger {
 
 pub struct PreparedCard {
     pub js: String,
-    pub shape: script_js::LoadShape,
+    pub checked: script_js::CheckedLoad,
     pub siblings: Vec<(String, String)>,
     pub schema: Vec<script::SettingDef>,
     pub identity: Value,
@@ -645,7 +645,7 @@ pub fn prepare_alcher(root: &Path, temp: &Path, row: &CardLedger) -> Result<Prep
             kind: card.kind,
             source: card.source,
             shape: None,
-            api_family: Some(card.api_family.as_str().into()),
+            api_family: Some(card.api_family().as_str().into()),
         },
     )?;
     let sibling_hashes = siblings
@@ -666,7 +666,7 @@ pub fn prepare_alcher(root: &Path, temp: &Path, row: &CardLedger) -> Result<Prep
             "siblings": sibling_hashes,
         }),
         js: card.js,
-        shape: card.shape,
+        checked: card.checked,
         siblings,
         schema: card.settings_schema,
     })

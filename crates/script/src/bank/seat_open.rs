@@ -3061,7 +3061,6 @@ mod tests {
 
         let mut log = LogCall::default();
         let name = "n".repeat(300);
-        assert_eq!(name.len(), 300);
         log.queue(format!("no usable '{name}' in the scene"), true);
         let line = log
             .line

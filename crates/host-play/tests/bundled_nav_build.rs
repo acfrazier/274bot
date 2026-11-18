@@ -94,7 +94,10 @@ fn staged_bundle_uses_revision_layout_and_ordinary_decoders() {
         (flags_width, flags_height),
         (world.collision.width, world.collision.height)
     );
-    assert_eq!(flags.len(), flags_width * flags_height);
+    assert_eq!(
+        flags.len(),
+        nav_planner::collision::LEVELS * flags_width * flags_height
+    );
 
     let reach = nav_planner::pack::decode_reach_sidecar(
         &std::fs::read(&reach_path).expect("staged navreach"),

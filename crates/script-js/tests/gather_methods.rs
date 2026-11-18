@@ -89,8 +89,13 @@ fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
     let data = api::game_data::for_revision(revision)
         .expect("load selected game data for gathering-method tests");
     // Real selected data is guarded at each calling test.
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .expect("spawn gathering-method native isolate");
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .expect("spawn gathering-method native isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let value = iso
@@ -141,7 +146,6 @@ fn v2_methods_are_sync_helper_results_with_locked_errors() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const omitted = api.gatherMethods();
   const iron = api.gatherResource({ name: 'Iron' });
@@ -196,7 +200,6 @@ export function tick(api) {
 #[test]
 fn v2_invalid_args_before_missing_slot_and_missing_family() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     nullArg: api.gatherMethods(null),
@@ -210,7 +213,12 @@ export function tick(api) {
   });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let empty: serde_json::Value =
@@ -232,7 +240,7 @@ export function tick(api) {
     }
 
     let iso = LoadIsolate::spawn_with_game_data(
-        src.into(),
+        script_js::native_fixture(src),
         LoadShape::NativeTick,
         vec![],
         data_without_family(),
@@ -264,24 +272,17 @@ export function tick(api) {
 }
 
 #[test]
-fn v2_install_is_typed_not_a_json_op_or_interact() {
+fn v2_resource_lookup_is_typed_and_does_not_interact() {
     if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
     let value = probe(
         r#"
-export const apiVersion = 2;
 export function tick(api) {
-  const before = (api.snapshot && 0) || 0;
   const row = api.gatherResource({ name: 'iron' });
-  let requested = null;
-  try { api.request({ op: 'gatherMethods' }); requested = 'ok'; }
-  catch (e) { requested = String(e && (e.message || e)); }
   globalThis.__probe = JSON.stringify({
     rowOk: row.ok === true,
     interact: globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.interact,
-    requested,
-    before,
   });
 }
 "#,
@@ -295,13 +296,6 @@ export function tick(api) {
                 .is_some_and(|rows| rows.is_empty()),
         "{value:?}"
     );
-    assert!(
-        value["requested"]
-            .as_str()
-            .unwrap_or("")
-            .contains("not impl"),
-        "{value:?}"
-    );
 }
 
 #[test]
@@ -311,7 +305,6 @@ fn v2_placements_absence_is_family_unavailable_not_empty_rows() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const box = { min_x: 2355, min_z: 3412, max_x: 2356, max_z: 3425, level: 0 };
   globalThis.__probe = JSON.stringify({
@@ -322,7 +315,7 @@ export function tick(api) {
 "#;
     // Gathering is absent while unrelated bootstrap families remain valid.
     let iso = LoadIsolate::spawn_with_game_data(
-        src.into(),
+        script_js::native_fixture(src),
         LoadShape::NativeTick,
         vec![],
         data_without_family(),
@@ -345,7 +338,6 @@ export function tick(api) {
 #[test]
 fn v2_placements_args_are_validated_before_game_data_lookup() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const box = { min_x: 1, min_z: 1, max_x: 2, max_z: 2, level: 0 };
   globalThis.__probe = JSON.stringify({
@@ -372,7 +364,12 @@ export function tick(api) {
   });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let value: serde_json::Value =
@@ -425,7 +422,6 @@ fn v2_placements_are_sync_helper_results_with_locked_errors() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const box = { min_x: 2355, min_z: 3412, max_x: 2356, max_z: 3425, level: 0 };
   const wide = { min_x: 0, min_z: 0, max_x: 99999, max_z: 99999, level: 0 };
@@ -501,7 +497,6 @@ fn v2_placements_bridge_gates_its_own_args() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const bridge = (input) => globalThis.__rs2b0t_gather_methods_v2('gatherPlacements', input);
   const box = { min_x: 2355, min_z: 3412, max_x: 2356, max_z: 3425, level: 0 };
@@ -549,20 +544,26 @@ export function tick(api) {
 }
 
 #[test]
-fn example_gather_methods_v2_is_one_read_only_fact_call() {
+fn native_gather_methods_fixture_is_one_read_only_fact_call() {
     if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("gather_methods_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
+    let src = r#"
+export function tick(api) {
+  api.log(JSON.stringify(api.gatherMethods()));
+}
+"#;
     assert!(!src.contains("request("));
     assert!(!src.contains("h.interact"));
     assert_eq!(src.matches("api.gather").count(), 1);
-    let js = script_js::transpile_ts(&src).expect("transpile gather_methods_v2.ts");
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(js, LoadShape::NativeTick, vec![], data).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let err = iso
@@ -570,12 +571,12 @@ fn example_gather_methods_v2_is_one_read_only_fact_call() {
         .unwrap();
     let logs = iso.drain_logs();
     iso.join();
-    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    assert_eq!(err.as_str().unwrap_or(""), "", "fixture lastError: {err:?}");
     let last = logs
         .iter()
         .rev()
         .find(|line| line.contains("\"rows\""))
-        .unwrap_or_else(|| panic!("example logged a fact call; logs={logs:?}"));
+        .unwrap_or_else(|| panic!("fixture logged a fact call; logs={logs:?}"));
     let row: serde_json::Value = serde_json::from_str(last).unwrap();
     assert_eq!(row["ok"], true, "{row:?}");
     assert!(row["value"]["rows"]
@@ -584,24 +585,31 @@ fn example_gather_methods_v2_is_one_read_only_fact_call() {
 }
 
 #[test]
-fn example_gather_placements_v2_is_one_read_only_fact_call() {
+fn native_gather_placements_fixture_is_one_read_only_fact_call() {
     if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("gather_placements_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
+    let src = r#"
+export function tick(api) {
+  const placements = api.gatherPlacements({
+    resource: 'oak',
+    region: { min_x: 2355, min_z: 3412, max_x: 2356, max_z: 3425, level: 0 },
+    limit: 64,
+  });
+  api.log(JSON.stringify(placements));
+}
+"#;
     assert!(!src.contains("request("));
     assert!(!src.contains("h.interact"));
     assert_eq!(src.matches("api.gatherPlacements").count(), 1);
-    assert!(
-        !path.with_extension("js").exists(),
-        "the example is a .ts read; no compiled sibling"
-    );
-    let js = script_js::transpile_ts(&src).expect("transpile gather_placements_v2.ts");
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(js, LoadShape::NativeTick, vec![], data).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let err = iso
@@ -609,12 +617,12 @@ fn example_gather_placements_v2_is_one_read_only_fact_call() {
         .unwrap();
     let logs = iso.drain_logs();
     iso.join();
-    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    assert_eq!(err.as_str().unwrap_or(""), "", "fixture lastError: {err:?}");
     let last = logs
         .iter()
         .rev()
         .find(|line| line.contains("\"resource_ids\""))
-        .unwrap_or_else(|| panic!("example logged a placements call; logs={logs:?}"));
+        .unwrap_or_else(|| panic!("fixture logged a placements call; logs={logs:?}"));
     let row: serde_json::Value = serde_json::from_str(last).unwrap();
     assert_eq!(row["ok"], true, "{row:?}");
     assert_eq!(

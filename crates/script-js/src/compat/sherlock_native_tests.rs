@@ -1125,6 +1125,29 @@ fn allocation_counts_by_tick_class() {
         report.count_total,
         report.bytes_current
     );
+    // Ceilings are the isolated measurement plus 25% headroom (the
+    // `MarketIndex` pattern). Counts are per thread (`allocation_counter`)
+    // and do not depend on pointer width. Entry and report each marshal one
+    // page `Value` (entry also builds the Combat request); measured 144 and
+    // 139.
+    let entry_limit = 144 + 144 / 4;
+    let report_limit = 139 + 139 / 4;
+    assert!(
+        entry.count_total <= entry_limit,
+        "entry tick allocations exceeded {entry_limit}: {entry:?}"
+    );
+    assert!(
+        report.count_total <= report_limit,
+        "report tick allocations exceeded {report_limit}: {report:?}"
+    );
+    // A steady delegated tick marshals no page and only polls Combat
+    // (measured 2). Any page marshalled there costs about as much as the
+    // report tick, so a tenth of it is far above the steady cost and far
+    // below one page.
+    assert!(
+        steady.count_total * 10 < report.count_total,
+        "a steady delegated tick must not marshal a page: steady={steady:?} report={report:?}"
+    );
 }
 
 #[test]

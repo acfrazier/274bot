@@ -795,7 +795,6 @@ mod tests {
     fn hits_before_bite_counts_attacks_inside_the_bite_delay() {
         // The bite delay is two ticks: attacks `rate` ticks apart put at most
         // ceil(2 / rate) of them in the window.
-        assert_eq!(BITE_DELAY, 2);
         assert_eq!(hits_before_bite(0), 2);
         assert_eq!(hits_before_bite(1), 2);
         assert_eq!(hits_before_bite(2), 1);

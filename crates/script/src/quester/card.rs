@@ -729,7 +729,6 @@ mod tests {
             ["partner_account", "gang", "crest_gauntlets"]
         );
         let paths = released_setting_paths();
-        assert!(!paths.is_empty());
         for id in ["druid", "fluffs", "junglepotion", "seaslug", "totem"] {
             assert!(
                 paths
@@ -940,7 +939,6 @@ mod walk_permission_settings_tests {
 
     #[test]
     fn walk_permission_settings_keep_teleports_and_legacy_danger_data() {
-        assert_eq!(CARD.schema_version, 3);
         let ids = ["allow_teleports", "allow_wilderness"];
         for id in ids {
             let definition = settings_schema()

@@ -1405,16 +1405,15 @@ fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
         });
     }
     for name in ["vs-alice", "vs-bob"] {
-        s.play()
-            .unwrap()
-            .script_start_load(
-                name,
-                "export function tick(api) {}".into(),
-                script_js::LoadShape::NativeTick,
-                None,
-                vec![],
-            )
-            .unwrap();
+        crate::test_support::scripts::play_start_load(
+            &s,
+            name,
+            script_js::native_fixture("export function tick(api) {}"),
+            crate::scripts::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .unwrap();
     }
     let deadline = Instant::now() + Duration::from_secs(60);
     for name in ["vs-alice", "vs-bob"] {

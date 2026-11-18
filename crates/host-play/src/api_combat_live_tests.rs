@@ -349,7 +349,7 @@ fn probe(play: &Play, name: &str, expression: &str) -> serde_json::Value {
 /// the settled outcome.
 fn consumer(request: &str) -> String {
     format!(
-        r#"export const apiVersion = 2;
+        r#"
 export function tick(api) {{
   const page = api.snapshot.combat;
   const label = page ? `${{page.phase}}:${{page.status ? page.status.stage : '-'}}` : 'idle';
@@ -363,6 +363,12 @@ export function tick(api) {{
   }}
 }}"#
     )
+}
+
+fn prepared_native(body: &str) -> script_js::PreparedTestOrigin {
+    let origin = script_js::native_fixture(body);
+    script_js::prepare_raw_origin_for_test("combat.ts", &origin, &[])
+        .expect("native combat fixture prepares")
 }
 
 struct Cell {
@@ -455,14 +461,10 @@ impl Cell {
         request: &str,
     ) -> (serde_json::Value, serde_json::Value, Observed, Observed) {
         let before = self.observed.lock().expect("observed lock").clone();
+        let source = consumer(request);
+        let prepared = prepared_native(&source);
         self.play
-            .script_start_load(
-                &self.account,
-                consumer(request),
-                script_js::LoadShape::NativeTick,
-                None,
-                vec![],
-            )
+            .script_start_load(&self.account, prepared.js, prepared.checked, None, vec![])
             .expect("start the api.combat Load consumer");
         let deadline = Instant::now() + FIGHT_DEADLINE;
         wait_until("Load Running", deadline, || {
@@ -496,14 +498,10 @@ impl Cell {
         Observed,
         Observed,
     ) {
+        let source = consumer(request);
+        let prepared = prepared_native(&source);
         self.play
-            .script_start_load(
-                &self.account,
-                consumer(request),
-                script_js::LoadShape::NativeTick,
-                None,
-                vec![],
-            )
+            .script_start_load(&self.account, prepared.js, prepared.checked, None, vec![])
             .expect("start the api.combat Load consumer");
         let deadline = Instant::now() + FIGHT_DEADLINE;
         wait_until("Load Running", deadline, || {
@@ -1114,14 +1112,10 @@ fn live_api_combat_showcase_script_runs_every_phase() {
                 && varp(snapshot, THICK_SKIN_VARP) == 1
         },
     );
+    let prepared = script_js::prepare_raw_origin_for_test("combat-showcase.js", &source, &[])
+        .expect("manifest-bearing combat showcase prepares");
     cell.play
-        .script_start_load(
-            &cell.account,
-            source,
-            script_js::LoadShape::NativeTick,
-            None,
-            vec![],
-        )
+        .script_start_load(&cell.account, prepared.js, prepared.checked, None, vec![])
         .expect("start the showcase");
     let deadline = Instant::now() + Duration::from_secs(600);
     let finished = loop {
@@ -1547,7 +1541,7 @@ fn stops_for_no_food(danger: Option<i32>, hp: i32, hp_max: i32, food: bool) -> b
 }
 
 /// One Load script, several fights. The test arms `__request` and reads `__outcome`.
-const PHASED_CONSUMER: &str = r#"export const apiVersion = 2;
+const PHASED_CONSUMER: &str = r#"
 export function tick(api) {
   const page = api.snapshot.combat;
   const label = page ? `${page.phase}:${page.status ? page.status.stage : '-'}` : 'idle';
@@ -1628,14 +1622,9 @@ fn live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line() {
                     .any(|item| item.def.id == SHRIMP_ID)
         },
     );
+    let prepared = prepared_native(PHASED_CONSUMER);
     cell.play
-        .script_start_load(
-            &cell.account,
-            PHASED_CONSUMER.to_string(),
-            script_js::LoadShape::NativeTick,
-            None,
-            vec![],
-        )
+        .script_start_load(&cell.account, prepared.js, prepared.checked, None, vec![])
         .expect("start the phased combat consumer");
     let deadline = Instant::now() + FIGHT_DEADLINE;
     wait_until("phased consumer running", deadline, || {

@@ -69,6 +69,44 @@ fn allowlisted_categories_reach_the_sink_and_traces_never_do() {
 }
 
 #[test]
+#[cfg(feature = "test-support")]
+fn nav_trace_requires_a_sink_specific_test_opt_in() {
+    struct TraceCapture {
+        enabled: bool,
+        lines: Mutex<Vec<String>>,
+    }
+    impl Sink for TraceCapture {
+        fn record(&self, record: &Record<'_>) {
+            self.lines.lock().unwrap().push(record.message.to_owned());
+        }
+
+        fn test_nav_trace_enabled(&self) -> bool {
+            self.enabled
+        }
+    }
+    for enabled in [false, true] {
+        let capture = TraceCapture {
+            enabled,
+            lines: Mutex::new(Vec::new()),
+        };
+        for category in [Category::NavTrace, Category::InteractTrace] {
+            if let Some(sink) = routed_sink(&capture, category) {
+                sink.record(&Record {
+                    slot: Some("alice"),
+                    tick: Some(7),
+                    source: category.source(),
+                    level: Level::Debug,
+                    message: category.tag(),
+                });
+            }
+        }
+        let expected: &[&str] = if enabled { &["nav-trace"] } else { &[] };
+        assert_eq!(*capture.lines.lock().unwrap(), expected);
+    }
+    assert!(!Category::NavTrace.slot_log());
+}
+
+#[test]
 fn a_bound_slot_thread_stamps_slot_tick_and_source() {
     install();
     std::thread::spawn(|| {

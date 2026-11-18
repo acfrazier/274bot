@@ -500,14 +500,10 @@ fn compat_v1_shop_buy_by_id_engine_l() {
     let (_isolated, play, account, fixture) = start_shop_fixture();
     let mut logs = Vec::new();
 
-    play.script_start_load(
-        &account,
-        SHOP_SOURCE.to_owned(),
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .expect("start Shop compatibility Load script");
+    let prepared = script_js::prepare_raw_origin_for_test("shop-trade.js", SHOP_SOURCE, &[])
+        .expect("compatibility shop fixture prepares");
+    play.script_start_load(&account, prepared.js, prepared.checked, None, vec![])
+        .expect("start Shop compatibility Load script");
     wait_for_log(
         &play,
         &account,

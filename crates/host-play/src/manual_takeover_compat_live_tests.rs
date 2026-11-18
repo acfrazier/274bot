@@ -173,7 +173,7 @@ struct DecisionFacts {
 #[derive(Debug, Clone)]
 struct CatalogStart {
     source: String,
-    shape: script_js::LoadShape,
+    checked: script_js::CheckedLoad,
     settings_bag: Option<Map<String, Value>>,
     siblings: Vec<(String, String)>,
     loadouts: Vec<api::loadout::Loadout>,
@@ -390,7 +390,7 @@ impl LiveState {
                 handle.start_load_with_loadouts(
                     &self.account,
                     self.catalog.source.clone(),
-                    self.catalog.shape,
+                    self.catalog.checked,
                     self.catalog.settings_bag.clone(),
                     self.catalog.siblings.clone(),
                     &self.catalog.loadouts,
@@ -469,10 +469,6 @@ fn canonical_file(name: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
-fn root_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
 fn find_json_object<'a>(
     value: &'a Value,
     predicate: &impl Fn(&Map<String, Value>) -> bool,
@@ -494,6 +490,35 @@ fn find_json_object<'a>(
     }
 }
 
+fn frozen_catalog_path(catalogs_root: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
+    let catalogs_root = catalogs_root
+        .filter(|value| !value.is_empty())
+        .ok_or("RS2B0T_CATALOGS_ROOT must name the directory containing frozen rs2b0t checkouts")?;
+    let mut root = PathBuf::from(catalogs_root);
+    root.push("rs2b0t-");
+    root.as_mut_os_string().push(CATALOG_COMMIT);
+    Ok(root)
+}
+
+#[test]
+fn takeover_catalog_uses_the_frozen_catalogs_directory() {
+    let root = frozen_catalog_path(Some(std::ffi::OsStr::new("/fixture/frozen")))
+        .expect("the explicit frozen catalogs directory is valid");
+    assert_eq!(
+        root,
+        Path::new("/fixture/frozen/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a")
+    );
+}
+
+#[test]
+fn takeover_catalog_requires_the_frozen_catalogs_variable() {
+    for root in [None, Some(std::ffi::OsStr::new(""))] {
+        let error = frozen_catalog_path(root)
+            .expect_err("missing or empty frozen catalogs configuration must fail");
+        assert!(error.contains("RS2B0T_CATALOGS_ROOT"), "{error}");
+    }
+}
+
 fn frozen_catalog() -> Result<FrozenCatalog, String> {
     let matrix: Value = serde_json::from_str(include_str!(
         "../tests/fixtures/catalog-support-matrix.json"
@@ -503,10 +528,6 @@ fn frozen_catalog() -> Result<FrozenCatalog, String> {
         object.get("commit").and_then(Value::as_str) == Some(CATALOG_COMMIT)
     })
     .ok_or_else(|| format!("support matrix has no catalog commit {CATALOG_COMMIT}"))?;
-    let read_only_path = catalog
-        .get("read_only_path")
-        .and_then(Value::as_str)
-        .ok_or("frozen catalog has no read_only_path")?;
     let registry_path = catalog
         .get("registry_path")
         .and_then(Value::as_str)
@@ -533,13 +554,11 @@ fn frozen_catalog() -> Result<FrozenCatalog, String> {
         .and_then(Value::as_str)
         .ok_or("Thiever matrix row has no source_sha256")?
         .to_owned();
-    let repository = std::fs::canonicalize(root_path()).map_err(|error| error.to_string())?;
-    let selected_root = std::env::var_os("RS2B0T")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| repository.join(read_only_path));
+    let catalogs_root = std::env::var_os("RS2B0T_CATALOGS_ROOT");
+    let selected_root = frozen_catalog_path(catalogs_root.as_deref())?;
     let root = std::fs::canonicalize(&selected_root).map_err(|error| {
         format!(
-            "resolve frozen catalog root {}: {error}",
+            "resolve frozen catalog root {}; set RS2B0T_CATALOGS_ROOT: {error}",
             selected_root.display()
         )
     })?;
@@ -619,7 +638,7 @@ fn catalog_start(
             kind: card.kind,
             source: card.source,
             shape: None,
-            api_family: Some(card.api_family.as_str().into()),
+            api_family: Some(card.api_family().as_str().into()),
         },
     )?;
     let loadouts = scenario
@@ -636,7 +655,7 @@ fn catalog_start(
         .collect();
     Ok(CatalogStart {
         source: card.js,
-        shape: card.shape,
+        checked: card.checked,
         settings_bag: Some(settings_bag),
         siblings,
         loadouts,

@@ -15,16 +15,16 @@ const CRATE_TILE: (i32, i32, i32) = (3380, 3268, 0);
 // Outside the fighting rings, inside the selected Duel Arena challenge zone.
 const START_TILES: [(i32, i32, i32); 2] = [(3383, 3269, 0), (3383, 3270, 0)];
 
-struct Peer {
-    name: String,
-    client: Client,
-    snapshot: GameSnapshot,
+pub(super) struct Peer {
+    pub(super) name: String,
+    pub(super) client: Client,
+    pub(super) snapshot: GameSnapshot,
     pump: Pump,
-    renderer: Renderer,
+    pub(super) renderer: Renderer,
 }
 
 impl Peer {
-    fn new(bound: &Bound377, name: String, offset: i32) -> Result<Self, String> {
+    pub(super) fn new(bound: &Bound377, name: String, offset: i32) -> Result<Self, String> {
         let mut client = bound.template.prepare_client(fresh_uid(offset), false)?;
         client.set_draw(false);
         client.maininit();
@@ -44,7 +44,7 @@ impl Peer {
         })
     }
 
-    fn login(&mut self) -> Result<(), String> {
+    pub(super) fn login(&mut self) -> Result<(), String> {
         if interact::login(
             &mut self.client,
             &self.name,
@@ -60,7 +60,7 @@ impl Peer {
         }
     }
 
-    fn tick(&mut self) {
+    pub(super) fn tick(&mut self) {
         self.client.mainloop();
         host::publish_snapshot(
             &mut self.snapshot,
@@ -75,7 +75,7 @@ impl Peer {
         self.client.set_draw(false);
     }
 
-    fn state(&self) -> Value {
+    pub(super) fn state(&self) -> Value {
         json!({
             "account":self.name,
             "tile":self.snapshot.tile(),
@@ -96,7 +96,7 @@ impl Peer {
         })
     }
 
-    fn player_slot(&self, name: &str) -> Option<usize> {
+    pub(super) fn player_slot(&self, name: &str) -> Option<usize> {
         let userhash = JString::to_userhash(name);
         self.client.players.iter().position(|player| {
             player
@@ -164,9 +164,17 @@ impl Peer {
         if !self.client.is_menu_open {
             return Err("right click did not open the real menu".into());
         }
-        let index = (0..self.client.menu_num_entries as usize)
-            .find(|&index| self.client.menu_option[index].starts_with(label))
-            .ok_or_else(|| format!("open player menu lost {label}"))?;
+        let index = player_option_row(
+            self.client.menu_option[..self.client.menu_num_entries as usize]
+                .iter()
+                .map(String::as_str),
+            name,
+            label,
+        )
+        .map_err(|reason| {
+            json!({"failure_class":"fixture","reason":reason,"player":name,"operation":label})
+                .to_string()
+        })?;
         let row = raw_row(&self.client, index);
         let (origin_x, origin_y) = match self.client.menu_area {
             0 => (4, 4),
@@ -248,11 +256,52 @@ impl Peer {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+enum PlayerMenuFixture {
+    ExpectedPlayerOptionMissing,
+}
+
+fn player_option_row<'a>(
+    rows: impl IntoIterator<Item = &'a str>,
+    name: &str,
+    label: &str,
+) -> Result<usize, PlayerMenuFixture> {
+    let expected = JString::to_screen_name(name);
+    rows.into_iter()
+        .position(|row| {
+            row.strip_prefix(label)
+                .and_then(|suffix| suffix.strip_prefix(" @whi@"))
+                .and_then(|suffix| suffix.split_once("@yel@"))
+                .is_some_and(|(actual, _)| actual == expected)
+        })
+        .ok_or(PlayerMenuFixture::ExpectedPlayerOptionMissing)
+}
+
+#[test]
+fn recorded_player_menu_selects_the_exact_partner_not_a_leftover() {
+    // Recorded client row format, with account names anonymized.
+    let rows = [
+        "Trade with @whi@Earlier 0@yel@ (level-3)",
+        "Trade with @whi@Partner 0@yel@ (level-3)",
+        "Challenge @whi@Partner 0@yel@ (level-3)",
+    ];
+    assert_eq!(player_option_row(rows, "partner_0", "Trade with"), Ok(1));
+    assert_eq!(player_option_row(rows, "partner_0", "Challenge"), Ok(2));
+    assert_eq!(
+        player_option_row(rows, "partner", "Trade with"),
+        Err(PlayerMenuFixture::ExpectedPlayerOptionMissing)
+    );
+    assert_eq!(
+        player_option_row(rows, "missing_0", "Trade with"),
+        Err(PlayerMenuFixture::ExpectedPlayerOptionMissing)
+    );
+}
+
 fn raw_row(client: &Client, index: usize) -> Value {
     json!({"index":index,"action":client.menu_action[index],"params":[client.menu_param_a[index],client.menu_param_b[index],client.menu_param_c[index]],"option":client.menu_option[index]})
 }
 
-fn wait_pair(
+pub(super) fn wait_pair(
     peers: &mut [Peer; 2],
     phase: &str,
     mut ready: impl FnMut(&mut [Peer; 2]) -> bool,

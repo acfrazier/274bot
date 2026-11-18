@@ -415,6 +415,7 @@ text = """After a super antipoison the bot counts only the ordinary immunity
   is planned for a later release."""
 first = "0.2.7"
 target = "0.3.0"
+fixed = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -555,6 +556,7 @@ text = """The game does not say when a poison has ended. A paused script whose
   past that or gets a cure."""
 first = "0.2.9"
 target = "0.3.0"
+fixed = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -601,6 +603,7 @@ text = """When the bot reconnects while it is poisoned, it does not know it is
   that tick."""
 first = "0.2.7"
 listed = "0.2.9"
+fixed = "0.3.0"
 target = "0.3.0"
 severity = "medium"
 owner = "T2 survival"
@@ -616,6 +619,7 @@ text = """In a fight with no food left, a poisoned bot that holds an antipoison 
 first = "0.2.7"
 listed = "0.2.9"
 target = "0.3.0"
+fixed = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 
@@ -1000,6 +1004,7 @@ text = """A combat step can end at its start with `prep-failed:weapon` even thou
 first = "0.2.0"
 listed = "0.2.9"
 target = "0.3.0"
+fixed = "0.3.0"
 severity = "low"
 owner = "combat (PvP slices)"
 

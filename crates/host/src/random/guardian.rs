@@ -120,6 +120,12 @@ pub struct RandomStatus {
     /// The fight the Guardian waits on, for the slot's dispatch gate: only
     /// gameplay carrying this token may pass the Guardian hold.
     pub fight: Option<FightToken>,
+    /// Fight child outcome observed on this tick.
+    #[cfg(feature = "live-probe")]
+    pub fight_outcome: Option<FightOutcome>,
+    /// Current no-progress count from the hostile actor track.
+    #[cfg(feature = "live-probe")]
+    pub no_progress_ticks: Option<u16>,
 }
 
 impl Default for RandomStatus {
@@ -135,6 +141,10 @@ impl Default for RandomStatus {
             cooldown: false,
             response: None,
             fight: None,
+            #[cfg(feature = "live-probe")]
+            fight_outcome: None,
+            #[cfg(feature = "live-probe")]
+            no_progress_ticks: None,
         }
     }
 }
@@ -1033,7 +1043,10 @@ impl Guardian {
             self.observe_evade_starts(snap, active);
         }
         let mut port = knock;
-        self.fight_fold(snap, &mut port, settings, context, fresh && active);
+        #[cfg(feature = "live-probe")]
+        let fight_outcome = self.fight_fold(snap, &mut port, settings, context, fresh && active);
+        #[cfg(not(feature = "live-probe"))]
+        let _ = self.fight_fold(snap, &mut port, settings, context, fresh && active);
         let mut ev = detect_ignoring_plants(
             snap,
             now_ms,
@@ -1407,6 +1420,10 @@ impl Guardian {
             cooldown,
             response: self.derive_response(ev.as_ref(), settings.random_events),
             fight: self.fight_token(),
+            #[cfg(feature = "live-probe")]
+            fight_outcome,
+            #[cfg(feature = "live-probe")]
+            no_progress_ticks: self.evade.as_ref().map(|state| state.no_progress_ticks),
         }
     }
 

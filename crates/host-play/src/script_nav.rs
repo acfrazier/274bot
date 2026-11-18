@@ -9526,7 +9526,6 @@ mod diagnostic_tests {
         let baseline_charge =
             without_bank.input_bytes + without_bank.scratch_bytes + without_bank.result_bytes;
         let bank_bytes = (ROUTE_WORK_LIMIT_BYTES - baseline_charge) / 2;
-        assert!(bank_bytes > 0);
         request.bank = Vec::with_capacity(bank_bytes / std::mem::size_of::<(i32, i32)>());
         let (captured_bank, _) =
             RouteSubmission::prepare(&request, &state, &lease, request.bank.capacity(), 0, 32)

@@ -159,16 +159,47 @@ fn safe_catalog_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     Ok(root.join(relative))
 }
 
-fn frozen_catalog_roots(repo: &Path) -> Option<[PathBuf; 2]> {
-    let root_for = |commit: &str| {
-        let root = repo.join(format!(".superpowers/inputs/rs2b0t-{commit}"));
-        api::test_support::local_asset_path(
-            "",
-            &root.to_string_lossy(),
-            "frozen rs2b0t catalog checkout",
-        )
+fn frozen_catalog_root(commit: &str) -> Option<PathBuf> {
+    let catalogs_root = match std::env::var_os("RS2B0T_CATALOGS_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        Some(root) => root,
+        None if std::env::var_os("GITHUB_ACTIONS").as_deref()
+            == Some(std::ffi::OsStr::new("true")) =>
+        {
+            eprintln!(
+                "Skipping frozen catalog tests: set RS2B0T_CATALOGS_ROOT (GITHUB_ACTIONS=true)"
+            );
+            return None;
+        }
+        None => panic!(
+            "RS2B0T_CATALOGS_ROOT must name a directory containing the frozen rs2b0t checkouts"
+        ),
     };
-    Some([root_for(CATALOG_COMMIT_A)?, root_for(CATALOG_COMMIT_B)?])
+    let root = catalogs_root.join(format!("rs2b0t-{commit}"));
+    if root.is_dir() {
+        return Some(root);
+    }
+    if std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true")) {
+        eprintln!(
+            "Skipping frozen catalog tests: required checkout is missing at {} (GITHUB_ACTIONS=true)",
+            root.display()
+        );
+        None
+    } else {
+        panic!(
+            "required frozen rs2b0t checkout is missing at {}; set RS2B0T_CATALOGS_ROOT",
+            root.display()
+        )
+    }
+}
+
+fn frozen_catalog_roots() -> Option<[PathBuf; 2]> {
+    Some([
+        frozen_catalog_root(CATALOG_COMMIT_A)?,
+        frozen_catalog_root(CATALOG_COMMIT_B)?,
+    ])
 }
 
 fn hash_file(path: &Path) -> Result<String, String> {
@@ -231,7 +262,7 @@ fn witness<'a>(
 #[derive(Clone)]
 struct PendingStart {
     js: String,
-    shape: script_js::LoadShape,
+    checked: script_js::CheckedLoad,
     settings: Option<Map<String, Value>>,
     siblings: Vec<(String, String)>,
 }
@@ -362,7 +393,7 @@ impl LiveState {
             match handle.start_load(
                 &self.account,
                 pending.js.clone(),
-                pending.shape,
+                pending.checked,
                 pending.settings.clone(),
                 pending.siblings.clone(),
             ) {
@@ -559,7 +590,7 @@ fn prepare_catalog_card(
             kind: card.kind,
             source: card.source,
             shape: None,
-            api_family: Some(card.api_family.as_str().into()),
+            api_family: Some(card.api_family().as_str().into()),
         },
     )?;
     let sibling_hashes = siblings
@@ -582,7 +613,7 @@ fn prepare_catalog_card(
     Ok((
         PendingStart {
             js: card.js,
-            shape: card.shape,
+            checked: card.checked,
             settings: (!settings.is_empty()).then_some(settings),
             siblings,
         },
@@ -1132,15 +1163,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
+    #[ignore = "live: needs caller-provided frozen rs2b0t checkouts from RS2B0T_CATALOGS_ROOT"]
     fn checked_in_frozen_core_sources_match_both_catalog_ledgers() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let Some(_roots) = frozen_catalog_roots(&repo) else {
+        let Some(_roots) = frozen_catalog_roots() else {
             return;
         };
         let matrix = support_matrix().unwrap();
         for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
-            let root = repo.join(format!(".superpowers/inputs/rs2b0t-{commit}"));
+            let root = frozen_catalog_root(commit).expect("frozen catalog roots checked");
             let catalog = catalog_ledger(&matrix, commit).unwrap();
             verify_registry_identity(&root, catalog).unwrap();
             for case in [
@@ -3015,16 +3045,14 @@ export default class NativeStop extends LoopingBot {{
         );
         let mut slot = script::SlotScript::new();
         slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
-        let family = script_js::resolve_api_family(&source)
-            .ok()
-            .map(|(_, family)| family);
+        let prepared = script_js::prepare_raw_origin_for_test("bot.js", &source, &[])
+            .expect("compatibility stop fixture prepares");
         slot.start_surface(script::surface::SurfaceStart {
             card: Arc::new(script_js::surface::JsStartCard {
                 card_name: "NativeStop".into(),
-                source: source.into(),
-                shape: script_js::LoadShape::CompatClass,
+                source: prepared.js.into(),
+                checked: prepared.checked,
                 siblings: Arc::from([]),
-                family,
             }),
             settings_bag: None,
             game_data: None,
@@ -11750,10 +11778,9 @@ export default class NativeStop extends LoopingBot {{
     /// SETTINGS schema (or read via settings.* accessors). Matrix rows are not
     /// required for these four cells; matrix refresh is root-owned.
     #[test]
-    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
+    #[ignore = "live: needs caller-provided frozen rs2b0t checkouts from RS2B0T_CATALOGS_ROOT"]
     fn camp_and_fight_option_injects_match_frozen_card_schemas() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let Some(_roots) = frozen_catalog_roots(&repo) else {
+        let Some(_roots) = frozen_catalog_roots() else {
             return;
         };
         for (name, card, path_tail) in [
@@ -11784,8 +11811,8 @@ export default class NativeStop extends LoopingBot {{
             let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject)
                 .unwrap_or_else(|| panic!("{name} injects no settings"));
             for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
-                let path = repo
-                    .join(format!(".superpowers/inputs/rs2b0t-{commit}"))
+                let path = frozen_catalog_root(commit)
+                    .expect("frozen catalog roots checked")
                     .join(path_tail);
                 let source = std::fs::read_to_string(&path)
                     .unwrap_or_else(|error| panic!("{name}: read {}: {error}", path.display()));
@@ -11815,10 +11842,9 @@ export default class NativeStop extends LoopingBot {{
     /// `bankStrategy` and `solveClues`, which both frozen sources do declare).
     /// Matrix rows are used for the value checks they do carry.
     #[test]
-    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
+    #[ignore = "live: needs caller-provided frozen rs2b0t checkouts from RS2B0T_CATALOGS_ROOT"]
     fn option_branch_injects_match_both_frozen_card_schemas() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let Some(_roots) = frozen_catalog_roots(&repo) else {
+        let Some(_roots) = frozen_catalog_roots() else {
             return;
         };
         let matrix = support_matrix().unwrap();
@@ -11834,7 +11860,7 @@ export default class NativeStop extends LoopingBot {{
             let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject)
                 .unwrap_or_else(|| panic!("{name} injects no settings"));
             for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
-                let root = repo.join(format!(".superpowers/inputs/rs2b0t-{commit}"));
+                let root = frozen_catalog_root(commit).expect("frozen catalog roots checked");
                 let catalog = catalog_ledger(&matrix, commit).unwrap();
                 verify_registry_identity(&root, catalog).unwrap();
                 for revision in [274_u16, 289_u16] {
@@ -13039,10 +13065,9 @@ export default class NativeStop extends LoopingBot {{
     /// Bank-cell inject keys and values must be declared by their own frozen
     /// card (schema key or `settings.*` accessor).
     #[test]
-    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
+    #[ignore = "live: needs caller-provided frozen rs2b0t checkouts from RS2B0T_CATALOGS_ROOT"]
     fn bank_cell_injects_match_frozen_card_schemas() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let Some(_roots) = frozen_catalog_roots(&repo) else {
+        let Some(_roots) = frozen_catalog_roots() else {
             return;
         };
         for (name, card, path_tail) in [
@@ -13098,8 +13123,8 @@ export default class NativeStop extends LoopingBot {{
             let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject)
                 .unwrap_or_else(|| panic!("{name} injects no settings"));
             for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
-                let path = repo
-                    .join(format!(".superpowers/inputs/rs2b0t-{commit}"))
+                let path = frozen_catalog_root(commit)
+                    .expect("frozen catalog roots checked")
                     .join(path_tail);
                 let source = std::fs::read_to_string(&path)
                     .unwrap_or_else(|error| panic!("{name}: read {}: {error}", path.display()));
@@ -14565,10 +14590,9 @@ export default class NativeStop extends LoopingBot {{
     }
 
     #[test]
-    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
+    #[ignore = "live: needs caller-provided frozen rs2b0t checkouts from RS2B0T_CATALOGS_ROOT"]
     fn noncombat_core_injects_match_frozen_card_schemas() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let Some(_roots) = frozen_catalog_roots(&repo) else {
+        let Some(_roots) = frozen_catalog_roots() else {
             return;
         };
         for (name, card, path_tail) in [
@@ -14660,8 +14684,8 @@ export default class NativeStop extends LoopingBot {{
             let inject = scenario::settings_inject_map(scenario.settings.script_settings_inject)
                 .unwrap_or_default();
             for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
-                let path = repo
-                    .join(format!(".superpowers/inputs/rs2b0t-{commit}"))
+                let path = frozen_catalog_root(commit)
+                    .expect("frozen catalog roots checked")
                     .join(path_tail);
                 let source = std::fs::read_to_string(&path)
                     .unwrap_or_else(|error| panic!("{name}: read {}: {error}", path.display()));
@@ -14683,20 +14707,11 @@ export default class NativeStop extends LoopingBot {{
     /// against the 964 source only — never asserted into 100ad/8e7 — and the
     /// two cells must inject the opposite `useTeleport` branch.
     #[test]
-    #[ignore = "live: needs a real rs2b0t checkout under .superpowers/inputs"]
+    #[ignore = "live: needs caller-provided frozen rs2b0t checkouts from RS2B0T_CATALOGS_ROOT"]
     fn climbing_boots_injects_match_the_frozen_reference_card_schema() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        if api::test_support::local_asset_path(
-            "",
-            &repo
-                .join(format!(".superpowers/inputs/rs2b0t-{REFERENCE_COMMIT_964}"))
-                .to_string_lossy(),
-            "frozen 964 rs2b0t catalog checkout",
-        )
-        .is_none()
-        {
+        let Some(root) = frozen_catalog_root(REFERENCE_COMMIT_964) else {
             return;
-        }
+        };
         for (name, use_teleport) in [("climbing_boots", false), ("climbing_boots_teleport", true)] {
             let case = CoreCase::parse(name).expect("noncombat case registered");
             assert_eq!(case.card_name(), "ClimbingBoots");
@@ -14706,9 +14721,7 @@ export default class NativeStop extends LoopingBot {{
                 .unwrap_or_default();
             assert_eq!(inject.get("useTeleport"), Some(&json!(use_teleport)));
             assert_eq!(inject.get("runeStock"), Some(&json!(1.0)));
-            let path = repo
-                .join(format!(".superpowers/inputs/rs2b0t-{REFERENCE_COMMIT_964}"))
-                .join("src/bot/scripts/ClimbingBoots/ClimbingBoots.ts");
+            let path = root.join("src/bot/scripts/ClimbingBoots/ClimbingBoots.ts");
             let source = std::fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("{name}: read {}: {error}", path.display()));
             let declared = declared_source_settings(&source);

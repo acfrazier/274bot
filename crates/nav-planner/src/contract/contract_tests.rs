@@ -528,7 +528,6 @@ fn route_view_keeps_exact_half_tick_cost_and_borrowed_legs() {
     let view = crate::producer::route_view(&lease, &route).unwrap();
     assert_eq!(view.destination(), from);
     assert_eq!(view.ticks(), 0.5);
-    assert_ne!(view.ticks(), view.ticks().trunc());
     assert_eq!(view.leg_count(), 2);
     let walk = view.leg(0).unwrap().walk_tiles().unwrap();
     assert_eq!(walk, &[from, to]);
@@ -544,8 +543,6 @@ fn route_view_keeps_exact_half_tick_cost_and_borrowed_legs() {
     assert_eq!(hop.returned(), &[(995, 1)]);
     assert_eq!(hop.worn_any(), &[772]);
     assert_eq!(hop.worn_all(), &[1, 2]);
-    assert_ne!(hop.held(), hop.consumed());
-    assert_ne!(hop.worn_any(), hop.worn_all());
     assert!(hop.has_quest_gate());
     assert_eq!(view.leg(2).unwrap_err(), ContractError::NoSuchLeg);
     let debug = format!("{hop:?}");

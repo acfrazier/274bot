@@ -150,8 +150,8 @@ fn bank_v2_selection_publishes_the_typed_seat_result() {
         ),
     ]));
     let mut slot = bank_slot::BankSlot::new(
-        r#"
-export const apiVersion = 2;
+        script_js::native_fixture(
+            r#"
 let started = false;
 export function tick(api) {
     if (started) return;
@@ -167,7 +167,8 @@ export function tick(api) {
     api.bankNearestReachable({ from: { x: 3222, z: 3218, level: 0 } })
         .then((result) => { globalThis.bankResult = result; });
 }
-"#,
+            "#,
+        ),
         LoadShape::NativeTick,
         None,
         banks,
@@ -271,8 +272,8 @@ fn bank_v2_replacement_supersedes_the_waiter_and_rejects_its_late_publication() 
         ),
     ]));
     let mut slot = bank_slot::BankSlot::new(
-        r#"
-export const apiVersion = 2;
+        script_js::native_fixture(
+            r#"
 let started = 0;
 export function tick(api) {
     if (started === 0) {
@@ -291,7 +292,8 @@ export function tick(api) {
             .then((result) => { results[index] = result; });
     }
 }
-"#,
+            "#,
+        ),
         LoadShape::NativeTick,
         None,
         banks,

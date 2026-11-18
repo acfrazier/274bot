@@ -190,6 +190,54 @@ these bounds, so fast runs are throughput/progress checks, not release timing
 qualification. Release qualification must still run at 600 ms. The same Q-only
 guard and cleanup apply to the headed `--live script_quester_path` entry.
 
+## Selected-actor observations
+
+`StepKind::ObserveActor { actor }` sends no input. A top-level actor wait
+arm and any terminal actor proof require an observer for the same selector:
+
+- `ActorChatStyle { actor, colour, effect }` checks native style codes while
+  overhead text is active.
+- `OverheadText { actor, text }` checks exact currently visible actor text,
+  not a message from the chat ring.
+- `OverheadTextLifetime { actor, text }` requires positive remaining cycles,
+  an observed decrease, then timer zero with no text. Missing actors,
+  changed identities, replacement messages and session changes reset it.
+
+Each dispatched observation starts a new freshness baseline, even for the
+same actor in consecutive steps. Text already present at the first sample
+is `present_at_arm` and cannot satisfy any actor proof. A later client
+cycle must show text becoming active, different text, or an increased
+countdown. The receipt records that freshness reason with `appeared` or
+`replaced`. A timer restart distinguishes an identical re-send. Equal or
+decreasing timers with identical text do not establish a new message.
+The client exposes no unique message ID or message-set cycle. An identical
+re-send between polls whose timer does not increase is indistinguishable
+from the existing message and cannot establish freshness.
+
+These client-only proofs cannot appear inside `All` or snapshot-only
+predicates. An unpaired proof is refused before dispatch. The optional
+`actors` receipt owns bounded `actor_sample`, `actor_style`, `overhead` and
+`unavailable` records, with actor slot, session and source client cycle.
+Countdown records reference the original message instead of copying its text.
+Overflow is `UNAVAILABLE`, never PASS. Nothing is sampled or retained without an armed
+step. Cached actor views retain their existing name, position and animation
+semantics; the selected borrowed view also reads the native per-cycle timer.
+
+The revision-377 cell `actor::public_chat_style_and_lifetime_377` uses two
+fresh owned accounts. Normal GameShell keys send styled public chat; the
+other account's server-published actor must show its style, text and expiry.
+Run it with the normal revision-377 cache/nav/endpoint variables,
+`PARITY_2A_EVIDENCE_DIR` and `PARITY_2A_SERVED_IDENTITY`. The identity variable
+names a JSON file with `host_head`, `client_pin`, `engine_head`,
+`content_head`, `served_crc_sha256`, `served_versionlist_sha256`,
+`game_port` and `http_port`, all from the selected runtime:
+
+```sh
+cargo test --release --locked -p host-play --features test-support \
+  --test revision_377_live -- --ignored --exact \
+  actor::public_chat_style_and_lifetime_377 --nocapture --test-threads=1
+```
+
 ## Evidence paths and throwaway HOME
 
 | Variable | What it holds |
@@ -253,7 +301,7 @@ scenario cells, besides the `host-play` live tests that seed a bank:
 `auto_fighter_bank`, `auto_fighter_food_override`, `auto_fighter_targets`,
 `bank_fletcher`, `bank_fletcher_cut_string`, `bank_fletcher_headless`,
 `bank_fletcher_shafts`, `bank_fletcher_string`, `bone_burier`,
-`bone_burier_v2_js`, `bone_burier_v2_ts`, `brimhaven_moss_inspect_v1`,
+`bone_burier_v2_ts`, `brimhaven_moss_inspect_v1`,
 `chaos_druid_bank`, `cook_bot`, `cook_bot_lobster`, `fire_giant_bank`,
 `fire_giant_bank_prepared`, `fire_giant_camelot_prepared`, `flax_aio_spin`,
 `flax_spinner`, `flour_collector`, `gem_cutter`, `gem_cutter_named`,
@@ -653,8 +701,9 @@ encodes H.264:
 QUESTER_PATH=cook HEADED_RECORD=1 \
   cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
 # or, interactively (no --live), under a throwaway HOME:
+: "${ISOHOME:?set ISOHOME in your local lab.env}"
 ISOHOME_INTERACTIVE=1 HEADED_RECORD=1 \
-  .superpowers/bin/isohome ./target/release/panel-play --profile local-289 --port 1
+  "$ISOHOME" ./target/release/panel-play --profile local-289 --port 1
 ```
 
 It is off by default and costs nothing when off. `HEADED_RECORD=1`
@@ -1396,17 +1445,15 @@ cargo run -p script-js --example regen_checked_in -- host-js
 ```
 
 The pinned TypeScript 5.8.3 consumer probes check the generated declarations,
-including the `gather_quest_v2.ts` sample. Its probe checks with and without
-`--strict`, emits JavaScript, and requires the checked-in
-`gather_quest_v2.js` to match that emit:
+including the `gather_quest_v2.ts` sample with and without `--strict`:
 
 ```sh
-cargo test -p script --test host_js -- --ignored tsc
+cargo test -p script-js --test host_js -- --ignored tsc
 ```
 
 ### Live cells
 
-The ignored `script_api_live` tests load the checked-in `gather_quest_v2.js`
+The ignored `script_api_live` tests load the checked-in `gather_quest_v2.ts`
 through the real Load path and exercise it against a local R289 server. The
 engine and game/cache endpoints must be reachable on `127.0.0.1:45594` and
 `127.0.0.1:2080`. Provide a matching `WORLD_ENGINE_DIR` and `WORLD_NAV_PACK`,

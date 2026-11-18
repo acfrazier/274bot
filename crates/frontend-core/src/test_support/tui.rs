@@ -38,14 +38,16 @@ pub fn play_script_state(play: &Play, name: &str) -> ScriptRunState {
 
 #[cfg(feature = "js")]
 /// Start `source` as a `shape` bot on `name`'s slot, with no settings bag
-/// and no sibling modules: the load path below the script coordinator.
+/// and no sibling modules: the load path below the script coordinator. The
+/// raw source goes through the common preparation first.
 pub fn start_script_source(
     play: &Play,
     name: &str,
     source: String,
     shape: LoadShape,
 ) -> Result<(), String> {
-    play.script_start_load(name, source, shape.to_script(), None, Vec::new())
+    let (js, checked) = super::scripts::prepared_test_start(&source, shape, &[])?;
+    play.script_start_load(name, js, checked, None, Vec::new())
 }
 
 /// The response `arm` applies to the hostile random `event`. Panics when the
@@ -97,13 +99,13 @@ pub fn remove_saved_profile<Io>(core: &mut OperatorSession<Io>, username: &str) 
 }
 
 #[cfg(feature = "js")]
-/// The API family (`unversioned`, `v1`, `v2`) the library classified the card
-/// `lookup` against; `None` when no such card is loaded.
+/// The API family (`v1`, `v2`) the library checked the card `lookup`
+/// against; `None` when no such card is loaded.
 pub fn card_api_family(scripts: &Scripts, source: CardSource, lookup: &str) -> Option<String> {
     scripts
         .library()
         .get(source.to_script(), lookup)
-        .map(|card| card.api_family.as_str().to_owned())
+        .map(|card| card.api_family().as_str().to_owned())
 }
 
 /// Ids of the process-wide Quester Path registry's rows read from the

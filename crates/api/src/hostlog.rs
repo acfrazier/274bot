@@ -195,6 +195,13 @@ pub struct Record<'a> {
 /// logging thread; it must not block on I/O.
 pub trait Sink: Send + Sync {
     fn record(&self, record: &Record<'_>);
+
+    /// Opt this test sink into NavTrace records. The sink must retain only
+    /// required records or use a capped buffer; production routing is unchanged.
+    #[cfg(feature = "test-support")]
+    fn test_nav_trace_enabled(&self) -> bool {
+        false
+    }
 }
 
 static SINK: OnceLock<&'static dyn Sink> = OnceLock::new();
@@ -203,6 +210,23 @@ static SINK: OnceLock<&'static dyn Sink> = OnceLock::new();
 /// false (one structured log per process).
 pub fn install_sink(sink: &'static dyn Sink) -> bool {
     SINK.set(sink).is_ok()
+}
+
+#[inline]
+fn routed_sink(sink: &dyn Sink, category: Category) -> Option<&dyn Sink> {
+    if category.slot_log() {
+        return Some(sink);
+    }
+    #[cfg(feature = "test-support")]
+    if category == Category::NavTrace && sink.test_nav_trace_enabled() {
+        return Some(sink);
+    }
+    None
+}
+
+#[inline]
+fn selected_sink(category: Category) -> Option<&'static dyn Sink> {
+    routed_sink(*SINK.get()?, category)
 }
 
 /// Deliver a record straight to the installed sink (front-end sources that
@@ -301,7 +325,7 @@ pub fn debug_enabled() -> bool {
 /// this before formatting, so debug-only categories are free while off.
 #[inline]
 pub fn enabled(category: Category) -> bool {
-    logged(category) || debug_enabled()
+    selected_sink(category).is_some() || debug_enabled()
 }
 
 /// Whether a line in `category` reaches the in-app log ring: a sink is
@@ -497,7 +521,7 @@ pub struct Emit<'a> {
 /// allowlisted categories to the sink.
 pub fn emit(emit: Emit<'_>, args: fmt::Arguments<'_>) {
     let debug = emit.always_stderr || debug_enabled();
-    let sink = SINK.get().filter(|_| emit.category.slot_log());
+    let sink = selected_sink(emit.category);
     if !debug && sink.is_none() {
         return;
     }

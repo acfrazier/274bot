@@ -100,7 +100,6 @@ const REGISTRY: &[Entry] = &[
         scenarios::route_inspect_brimhaven_v2_scenario,
     ),
     Entry::new("prayer_v2_ts", scenarios::prayer_v2_scenario),
-    Entry::new("prayer_v1_ts", scenarios::prayer_v1_scenario),
     Entry::new("boat_fare_v1_ts", scenarios::boat_fare_v1_scenario),
     Entry::new(
         "boat_fare_far_start_v1_ts",
@@ -110,26 +109,13 @@ const REGISTRY: &[Entry] = &[
         "boat_fare_reconnect_v1_ts",
         scenarios::boat_fare_reconnect_v1_scenario,
     ),
-    Entry::new("line_of_sight_v2_ts", scenarios::line_of_sight_v2_scenario),
-    Entry::new(
-        "actor_observation_v2_ts",
-        scenarios::actor_observation_v2_scenario,
-    ),
     Entry::new("gatherer", scenarios::gatherer_scenario),
     Entry::new("survival_need", scenarios::survival_need_scenario),
-    Entry::new("fight_field_v2_ts", scenarios::fight_field_v2_scenario),
-    Entry::new("hold_spot_v2_ts", scenarios::hold_spot_v2_scenario),
-    Entry::new("retreat_spot_v2_ts", scenarios::retreat_spot_v2_scenario),
     Entry::new("walk_spot_v2_ts", scenarios::walk_spot_v2_scenario),
-    Entry::new("enter_lair_v2_ts", scenarios::enter_lair_v2_scenario),
-    Entry::new("leave_lair_v2_ts", scenarios::leave_lair_v2_scenario),
-    Entry::new("acquire_key_v2_ts", scenarios::acquire_key_v2_scenario),
-    Entry::new("cell_v2_ts", scenarios::cell_v2_scenario),
     Entry::new("bank_v2_ts", scenarios::bank_v2_scenario),
     Entry::new("bone_burier", scenarios::bone_burier_scenario),
     Entry::new("lamp_redemption", scenarios::lamp_redemption_scenario),
     Entry::new("bone_burier_v2_ts", bone_burier_v2_ts_scenario),
-    Entry::new("bone_burier_v2_js", bone_burier_v2_js_scenario),
     Entry::new(
         "strange_plant_owned",
         scenarios::strange_plant_owned_scenario,
@@ -636,10 +622,6 @@ pub(crate) fn registered_name_refs() -> impl Iterator<Item = &'static &'static s
 
 fn bone_burier_v2_ts_scenario() -> Scenario {
     scenarios::bone_burier_v2_scenario("bone_burier_v2_ts", "bone_burier_v2.ts")
-}
-
-fn bone_burier_v2_js_scenario() -> Scenario {
-    scenarios::bone_burier_v2_scenario("bone_burier_v2_js", "bone_burier_v2.js")
 }
 
 #[cfg(test)]

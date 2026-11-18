@@ -183,7 +183,7 @@ pub(crate) enum StartRequest<'a> {
     #[cfg(feature = "js")]
     Load {
         source: String,
-        shape: script_js::LoadShape,
+        checked: script_js::CheckedLoad,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
         loadouts: Option<&'a [api::loadout::Loadout]>,
@@ -286,7 +286,7 @@ impl ScriptStartHandle {
         &self,
         name: &str,
         source: String,
-        shape: script_js::LoadShape,
+        checked: script_js::CheckedLoad,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
@@ -294,7 +294,7 @@ impl ScriptStartHandle {
             name,
             || StartRequest::Load {
                 source,
-                shape,
+                checked,
                 bag: settings_bag,
                 siblings,
                 loadouts: None,
@@ -312,7 +312,7 @@ impl ScriptStartHandle {
         &self,
         name: &str,
         source: String,
-        shape: script_js::LoadShape,
+        checked: script_js::CheckedLoad,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
         loadouts: &[api::loadout::Loadout],
@@ -321,7 +321,7 @@ impl ScriptStartHandle {
             name,
             || StartRequest::Load {
                 source,
-                shape,
+                checked,
                 bag: settings_bag,
                 siblings,
                 loadouts: Some(loadouts),
@@ -471,7 +471,7 @@ impl ScriptStartHandle {
             #[cfg(feature = "js")]
             StartRequest::Load {
                 source,
-                shape,
+                checked,
                 bag,
                 siblings,
                 loadouts,
@@ -491,7 +491,7 @@ impl ScriptStartHandle {
                 match resolved_loadouts {
                     Ok(loadouts) => slot.start_surface_with_settings(
                         script_runtime::js_surface_start_with_wilderness_rules(
-                            script_runtime::js_start_card(name, source, shape, siblings),
+                            script_runtime::js_start_card(name, source, checked, siblings),
                             bag.map(Arc::new),
                             self.game_data.clone(),
                             Arc::clone(&self.named_banks),
@@ -1173,11 +1173,11 @@ impl Play {
         &self,
         name: &str,
         source: String,
-        shape: script_js::LoadShape,
+        checked: script_js::CheckedLoad,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        self.script_start_load_typed(name, source, shape, settings_bag, siblings)
+        self.script_start_load_typed(name, source, checked, settings_bag, siblings)
             .map_err(|e| e.to_string())
     }
 
@@ -1187,7 +1187,7 @@ impl Play {
         &self,
         name: &str,
         source: String,
-        shape: script_js::LoadShape,
+        checked: script_js::CheckedLoad,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), script::StartLoadError> {
@@ -1198,7 +1198,7 @@ impl Play {
             name,
             || StartRequest::Load {
                 source,
-                shape,
+                checked,
                 bag: settings_bag,
                 siblings,
                 loadouts: None,

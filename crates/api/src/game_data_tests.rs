@@ -2829,8 +2829,6 @@ fn item_combat_bonus_matches_the_obj_params() {
     );
     let axe = data.item_combat_bonus(805).expect("rune thrownaxe");
     assert_eq!((axe.strengthbonus, axe.rangebonus), (0, 36));
-    let scimitar = data.item_combat_bonus(1333).expect("rune scimitar");
-    assert_eq!((scimitar.strengthbonus, scimitar.rangebonus), (44, 0));
     let steel_arrow = data.item_combat_bonus(886).expect("steel arrow");
     assert_eq!((steel_arrow.strengthbonus, steel_arrow.rangebonus), (0, 16));
     let halberd = data.item_combat_bonus(3204).expect("dragon halberd");

@@ -281,6 +281,60 @@ pub struct ActorTargetView {
     pub index: usize,
 }
 
+/// One explicitly selected native actor slot. A slot is not a persistent spawn ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ActorSelector {
+    /// The current session's local player.
+    LocalPlayer,
+    /// A remote player in the currently published player-ID prefix.
+    Player(usize),
+    /// An NPC in the currently published NPC-ID prefix.
+    Npc(usize),
+}
+
+/// Native public-chat colour and effect codes, without revision-specific interpretation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ActorChatStyle {
+    /// The client's decoded colour code.
+    pub colour: i32,
+    /// The client's decoded effect code.
+    pub effect: i32,
+}
+
+/// Borrowed, selected-actor facts at one client cycle, not a packet-gated cache.
+/// Text and names borrow the client. Reading this view neither sends nor allocates.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ActorObservationView<'a> {
+    /// The requested actor.
+    pub actor: ActorSelector,
+    /// The client's resolved slot index.
+    pub index: usize,
+    /// The client connection generation.
+    pub session: u64,
+    /// The client loop cycle that supplied these facts, not a server tick.
+    pub source_cycle: i32,
+    /// The current name, when available.
+    pub name: Option<&'a str>,
+    /// The NPC definition ID, absent for players.
+    pub npc_type: Option<usize>,
+    /// The rendered position.
+    pub tile: WorldTile,
+    /// The network path-head position.
+    pub network: WorldTile,
+    /// The primary sequence ID.
+    pub animation: i32,
+    /// The primary sequence frame.
+    pub animation_frame: i32,
+    /// The pose sequence ID.
+    pub pose_animation: i32,
+    /// The native chat style, which can remain after the text expires.
+    pub chat_style: ActorChatStyle,
+    /// The native overhead bubble, never a chat-ring fallback.
+    pub overhead_text: Option<&'a str>,
+    /// Remaining native client cycles. Zero means expired, not actor disappearance.
+    pub remaining_cycles: i32,
+}
+
 /// The shared actor view every entity-family view embeds (the m8aq
 /// `ActorSnapshot`): name/actions plus the entity's live pose state.
 #[derive(Debug, Clone, Serialize)]

@@ -132,11 +132,11 @@ where
     Companion:
         Fn(&mut scenario::ScenarioRunner, usize, &mut Client) -> bool + Send + Sync + 'static,
 {
-    fn run(&self, client: &mut Client, name: &str, hold: bool) {
+    fn run(&self, client: &mut Client, name: &str, frame: host_play::SlotFrameInput) {
         self.runner.frame(
             client,
             name,
-            hold,
+            frame,
             &self.tick_with_hold,
             &self.companion_tick,
         );
@@ -424,7 +424,7 @@ impl StartPlan {
         let mut starts = vec![host_play::live_start::PendingCatalogStart::load(
             names[0].clone(),
             card.js.clone(),
-            card.shape,
+            card.checked,
             bag.clone(),
             siblings.clone(),
             loadouts.clone(),
@@ -436,7 +436,7 @@ impl StartPlan {
                 starts.push(host_play::live_start::PendingCatalogStart::load(
                     names[1].clone(),
                     card.js,
-                    card.shape,
+                    card.checked,
                     Some(companion_bag),
                     siblings,
                     loadouts,
@@ -649,7 +649,7 @@ impl RunnerHandle {
                 names,
                 case,
                 card.js,
-                card.shape,
+                card.checked,
                 &card.settings_schema,
                 siblings,
                 &watch,
@@ -1259,6 +1259,9 @@ impl RunnerHandle {
     #[cfg(feature = "js")]
     /// Exercise the installed Start handle without exposing its adapter type.
     #[cfg(feature = "test-support")]
+    /// Start a native manifest-form source through the installed Start handle.
+    /// The raw source is prepared first, so a source without a manifest is
+    /// refused with `manifest-required` before any isolate exists.
     pub fn start_native_tick_for_test(
         &self,
         name: &str,
@@ -1272,13 +1275,15 @@ impl RunnerHandle {
             .start_handle
             .clone()
             .ok_or_else(|| "no live Start handle installed".to_string())?;
-        handle.start_load(
-            name,
-            source,
-            script_js::LoadShape::NativeTick,
-            settings_bag,
-            Vec::new(),
-        )
+        let (js, checked) = script_js::compile_origin(std::path::Path::new("native.js"), &source)
+            .map_err(|refusal| refusal.to_string())?;
+        if checked.shape() != script_js::LoadShape::NativeTick {
+            return Err(format!(
+                "expected a native tick source, prepared {:?}",
+                checked.shape()
+            ));
+        }
+        handle.start_load(name, js, checked, settings_bag, Vec::new())
     }
 
     /// Current scenario failure reason, if the runner failed.
@@ -1477,7 +1482,7 @@ impl RunnerHandle {
         &self,
         client: &mut C,
         name: &str,
-        hold: bool,
+        frame: host_play::SlotFrameInput,
         tick_with_hold: T,
         companion_tick: U,
     ) where
@@ -1565,7 +1570,12 @@ impl RunnerHandle {
                             runner.set_pass_gate(Some(script_failure_gate(handle, started_runs)));
                         }
                     }
-                    tick_with_hold(runner, client, hold);
+                    #[cfg(feature = "live-probe")]
+                    runner.set_random_event_diagnostics(
+                        frame.guardian_fight_outcome,
+                        frame.guardian_no_progress_ticks,
+                    );
+                    tick_with_hold(runner, client, frame.hold);
                     if runner.take_relog_login() {
                         // The Relog step logged a scriptless bot out: post the
                         // operator Login for it on the next front-end poll.

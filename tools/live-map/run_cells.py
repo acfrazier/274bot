@@ -121,12 +121,41 @@ def parse_run_args(argv: list[str] | None = None) -> argparse.Namespace:
     return build_parser().parse_args(argv)
 
 
-def is_quest_cell(cell_name: str, cell_command: str) -> bool:
+def is_quest_cell(cell_command: str) -> bool:
     return (
-        "quester" in cell_name
-        or "QUESTER_TICK_MS" in cell_command
-        or "ENGINE_Q_DIR" in cell_command
+        "ENGINE_Q_DIR" in cell_command
+        or re.search(rf"\bWORLD_GAME_PORT={DEFAULT_QUEST_GAME_PORT}\b", cell_command)
+        is not None
+        or re.search(rf"\bWORLD_HTTP_PORT={DEFAULT_QUEST_HTTP_PORT}\b", cell_command)
+        is not None
+        or re.search(rf"--port[ =]{DEFAULT_QUEST_GAME_PORT}\b", cell_command)
+        is not None
+        or re.search(rf"--http-port[ =]{DEFAULT_QUEST_HTTP_PORT}\b", cell_command)
+        is not None
     )
+
+
+def _explicit_command_port(command: str, variable: str, flag: str) -> int | None:
+    match = re.search(rf"\b{variable}=(\d+)\b", command)
+    if match is None:
+        match = re.search(rf"--{flag}[ =](\d+)\b", command)
+    return _port(match.group(1), variable) if match is not None else None
+
+
+def cell_engine_ports(
+    cell_command: str,
+    engine_game_port: int,
+    engine_http_port: int,
+    quest_game_port: int,
+    quest_http_port: int,
+) -> tuple[bool, int, int]:
+    quest = is_quest_cell(cell_command)
+    game_port = quest_game_port if quest else engine_game_port
+    http_port = quest_http_port if quest else engine_http_port
+    if quest:
+        game_port = _explicit_command_port(cell_command, "WORLD_GAME_PORT", "port") or game_port
+        http_port = _explicit_command_port(cell_command, "WORLD_HTTP_PORT", "http-port") or http_port
+    return quest, game_port, http_port
 
 
 def reject_tick_override(cell_name: str, cell_command: str) -> None:
@@ -153,15 +182,16 @@ def needs_catalog_root(cells: list[live_map.Cell]) -> bool:
 def ensure_catalog_root(cells: list[live_map.Cell], catalog_root: str | None) -> str | None:
     if not needs_catalog_root(cells):
         return catalog_root
+    catalog_root = catalog_root or os.environ.get("CATALOG_ROOT")
     if not catalog_root:
         names = ", ".join(cell.name for cell in cells if "CATALOG_ROOT" in cell.command)
         raise live_map.MapError(
             f"run-cells: refusing cells [{names}]: a selected cell uses ${{CATALOG_ROOT}}. "
-            "Pass --catalog-root <path> with the local rs2b0t checkout root."
+            "Pass --catalog-root <path> or set CATALOG_ROOT in local lab.env."
         )
     if not Path(catalog_root).is_dir():
         raise live_map.MapError(
-            f"run-cells: --catalog-root is not a directory: {catalog_root}"
+            f"run-cells: catalog root is not a directory: {catalog_root}"
         )
     return catalog_root
 
@@ -173,15 +203,16 @@ def needs_panel_cache(cells: list[live_map.Cell]) -> bool:
 def ensure_unpack_source(cells: list[live_map.Cell], unpack_source: str | None) -> str | None:
     if not needs_panel_cache(cells):
         return unpack_source
+    unpack_source = unpack_source or os.environ.get("NAV_SNAPSHOT_ROOT_289")
     if not unpack_source:
         names = ", ".join(cell.name for cell in cells if "PANEL_LIVE_HOME" in cell.command)
         raise live_map.MapError(
             f"run-cells: refusing cells [{names}]: a selected cell stages panel-home/.274bot/unpack-289. "
-            "Pass --unpack-source <path> with the revision decoded unpack directory."
+            "Pass --unpack-source <path> or set NAV_SNAPSHOT_ROOT_289 in local lab.env."
         )
     if not Path(unpack_source).is_dir():
         raise live_map.MapError(
-            f"run-cells: --unpack-source is not a directory: {unpack_source}"
+            f"run-cells: unpack source is not a directory: {unpack_source}"
         )
     return unpack_source
 
@@ -287,56 +318,25 @@ def _local_data_nav(repo: Path, revision: str, name: str) -> str | None:
 
 
 def host_defaults(repo: Path) -> dict[str, str]:
-    home = str(Path.home())
     # The nav pack is the repository's own build output. The stored v17 and v18
     # reference packs are refused by the current reader.
     defaults: dict[str, str] = {}
-    isohome = _first_existing(
-        [
-            os.environ.get("ISOHOME"),
-            "/home/acfrazier/experiments/274bot/.superpowers/bin/isohome",
-            "/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome",
-            f"{home}/experiments/274bot/.superpowers/bin/isohome",
-        ],
-        want_file=True,
-    )
+    isohome = _first_existing([os.environ.get("ISOHOME")], want_file=True)
     if isohome:
         defaults["ISOHOME"] = isohome
-    engine_a = _first_existing(
-        [
-            os.environ.get("ENGINE_A_DIR"),
-            "/home/acfrazier/experiments/lostcity-289/engine",
-            "/Users/acfrazier/experiments/lostcity-289/engine",
-            "/srv/dev/experiments/lostcity-289/engine",
-        ],
-        want_file=False,
-    )
+    engine_a = _first_existing([os.environ.get("ENGINE_A_DIR")], want_file=False)
     if engine_a:
         defaults["ENGINE_A_DIR"] = engine_a
-    engine_q = _first_existing(
-        [
-            os.environ.get("ENGINE_Q_DIR"),
-            "/home/acfrazier/experiments/lostcity-289-q/engine",
-            "/Users/acfrazier/experiments/lostcity-289-q/engine",
-        ],
-        want_file=False,
-    )
+    engine_q = _first_existing([os.environ.get("ENGINE_Q_DIR")], want_file=False)
     if engine_q:
         defaults["ENGINE_Q_DIR"] = engine_q
-    engine_b = _first_existing(
-        [os.environ.get("ENGINE_B_DIR")],
-        want_file=False,
-    )
+    engine_b = _first_existing([os.environ.get("ENGINE_B_DIR")], want_file=False)
     if engine_b:
         defaults["ENGINE_B_DIR"] = engine_b
     elif engine_a:
         defaults["ENGINE_B_DIR"] = engine_a
     snapshot = _first_existing(
-        [
-            os.environ.get("NAV_SNAPSHOT_ROOT_289"),
-            "/home/acfrazier/.274bot/unpack-289",
-            "/Users/acfrazier/.274bot/unpack-289",
-        ],
+        [os.environ.get("NAV_SNAPSHOT_ROOT_289")],
         want_file=False,
     )
     if snapshot:
@@ -359,6 +359,45 @@ def host_defaults(repo: Path) -> dict[str, str]:
         if key in os.environ and key not in defaults:
             defaults[key] = os.environ[key]
     return defaults
+
+def require_isohome(cells: list[live_map.Cell]) -> None:
+    if not any("${ISOHOME:?" in cell.command for cell in cells):
+        return
+    value = os.environ.get("ISOHOME")
+    if not value:
+        raise live_map.MapError(
+            "ISOHOME is required by the selected live cells; set it in your local lab.env"
+        )
+    isohome = Path(value)
+    if not isohome.is_absolute() or not isohome.is_file() or not os.access(isohome, os.X_OK):
+        raise live_map.MapError(
+            f"ISOHOME must name an absolute executable isohome wrapper: {isohome}"
+        )
+
+
+def require_configured_paths(cells: list[live_map.Cell]) -> None:
+    required_directories = (
+        "ENGINE_A_DIR",
+        "ENGINE_Q_DIR",
+        "ENGINE_B_DIR",
+        "NAV_SNAPSHOT_ROOT_289",
+    )
+    for name in required_directories:
+        if not any(
+            f"${{{name}:?" in cell.command for cell in cells
+        ):
+            continue
+        value = os.environ.get(name)
+        if name == "ENGINE_B_DIR" and not value:
+            value = os.environ.get("ENGINE_A_DIR")
+        if not value:
+            raise live_map.MapError(
+                f"{name} is required by the selected live cells; set it in your local lab.env"
+            )
+        if not Path(value).is_dir():
+            raise live_map.MapError(
+                f"{name} must name an existing directory: {value}"
+            )
 
 
 def cell_names(config: dict) -> dict[str, live_map.Cell]:
@@ -400,9 +439,13 @@ def build_cell_env(
     partner_prefix: str | None = None,
 ) -> tuple[dict[str, str], str]:
     reject_tick_override(cell_name, cell_command)
-    quest = is_quest_cell(cell_name, cell_command)
-    game_port = quest_game_port if quest else engine_game_port
-    http_port = quest_http_port if quest else engine_http_port
+    quest, game_port, http_port = cell_engine_ports(
+        cell_command,
+        engine_game_port,
+        engine_http_port,
+        quest_game_port,
+        quest_http_port,
+    )
     command = apply_ports(cell_command, game_port, http_port)
     env = dict(os.environ)
     env.pop("QUESTER_TICK_MS", None)
@@ -574,9 +617,6 @@ def run_all(
     results: list[RunResult] = []
     run_fn = runner or run_one_cell_by_args
     for cell in cells:
-        quest = is_quest_cell(cell.name, cell.command)
-        game_port = quest_game_port if quest else engine_game_port
-        http_port = quest_http_port if quest else engine_http_port
         cell_dir = evidence_root / cell.name
         cache_dir = cell_dir / "cache-289"
         client_dir = cell_dir / "client-unpack"
@@ -718,6 +758,9 @@ def main(argv: list[str] | None = None) -> int:
         catalog_root = ensure_catalog_root(cells, args.catalog_root)
         unpack_source = ensure_unpack_source(cells, args.unpack_source)
         partner_prefix = ensure_partner_prefix(cells, args.partner_prefix, args.prefix)
+        require_isohome(cells)
+        require_configured_paths(cells)
+
         evidence_root.mkdir(parents=True, exist_ok=True)
         defaults = host_defaults(repo)
         results = run_all(
@@ -853,6 +896,7 @@ class RunCellsTests(unittest.TestCase):
                 "QUESTER_TICK_MS": "300",
                 "QUESTER_SPEED_RESTORE": "1",
                 "BOT_LIVE_PARTNER_NAME_PREFIX": "def",
+                "NIGHTLY_QUIET_LOCK": "/tmp/MAC-QUIET.lock",
             },
         ):
             env, _ = build_cell_env(
@@ -878,14 +922,12 @@ class RunCellsTests(unittest.TestCase):
         self.assertEqual(env["WORLD_HTTP_PORT"], "3080")
         self.assertNotIn("QUESTER_TICK_MS", env)
         self.assertNotIn("QUESTER_SPEED_RESTORE", env)
+        self.assertEqual(env["NIGHTLY_QUIET_LOCK"], "/tmp/MAC-QUIET.lock")
 
-    def test_quest_cells_use_quest_ports_and_speed_restore(self) -> None:
+    def test_engine_q_marker_uses_quest_ports_without_cell_id(self) -> None:
         env, command = build_cell_env(
-            cell_name="host.quester-path-engine-q",
-            cell_command=(
-                "LIVE=1 WORLD_GAME_PORT=44694 "
-                "WORLD_HTTP_PORT=1180 ${ISOHOME:?} cargo test -- --port 44694 --http-port 1180"
-            ),
+            cell_name="host.not-a-quester-name",
+            cell_command="LIVE=1 ENGINE_Q_DIR=${ENGINE_Q_DIR:?} ${ISOHOME:?} cargo test",
             prefix="abc",
             live_evidence_dir="/e/cell/pass1/evidence",
             bot_cache_dir="/e/cell/cache-289",
@@ -903,10 +945,60 @@ class RunCellsTests(unittest.TestCase):
         self.assertEqual(env["WORLD_HTTP_PORT"], "3180")
         self.assertEqual(env["QUESTER_SPEED_RESTORE"], "0")
         self.assertNotIn("QUESTER_TICK_MS", env)
-        self.assertIn("47694", command)
-        self.assertIn("3180", command)
         self.assertNotIn("44594", command)
         self.assertNotIn("44694", command)
+
+    def test_prereq_engine_q_ports_override_runner_ports(self) -> None:
+        env, command = build_cell_env(
+            cell_name="host.prereq-phoenix-kitchen",
+            cell_command=(
+                "LIVE=1 WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 "
+                "${ISOHOME:?} cargo test -- --port 44694 --http-port 1180"
+            ),
+            prefix="abc",
+            live_evidence_dir="/e/cell/pass1/evidence",
+            bot_cache_dir="/e/cell/cache-289",
+            client_unpack_dir="/e/cell/client-unpack",
+            bot_unpack_dir="/e/cell/client-unpack",
+            panel_home="/e/cell/pass1/panel-home",
+            repo="/tmp/repo",
+            engine_game_port=47594,
+            engine_http_port=3080,
+            quest_game_port=47694,
+            quest_http_port=3180,
+            defaults={},
+        )
+        self.assertEqual(env["WORLD_GAME_PORT"], "44694")
+        self.assertEqual(env["WORLD_HTTP_PORT"], "1180")
+        self.assertIn("WORLD_GAME_PORT=44694", command)
+        self.assertIn("WORLD_HTTP_PORT=1180", command)
+        self.assertIn("--port 44694", command)
+        self.assertIn("--http-port 1180", command)
+        self.assertNotIn("47594", command)
+        self.assertNotIn("3080", command)
+        self.assertNotIn("47694", command)
+        self.assertNotIn("3180", command)
+
+    def test_quester_in_cell_name_does_not_select_engine_q(self) -> None:
+        env, _ = build_cell_env(
+            cell_name="host.quester-name-engine-a",
+            cell_command="LIVE=1 ${ISOHOME:?} cargo test",
+            prefix="abc",
+            live_evidence_dir="/e/cell/pass1/evidence",
+            bot_cache_dir="/e/cell/cache-289",
+            client_unpack_dir="/e/cell/client-unpack",
+            bot_unpack_dir="/e/cell/client-unpack",
+            panel_home="/e/cell/pass1/panel-home",
+            repo="/tmp/repo",
+            engine_game_port=47594,
+            engine_http_port=3080,
+            quest_game_port=47694,
+            quest_http_port=3180,
+            defaults={},
+        )
+        self.assertEqual(env["WORLD_GAME_PORT"], "47594")
+        self.assertEqual(env["WORLD_HTTP_PORT"], "3080")
+        self.assertNotIn("QUESTER_SPEED_RESTORE", env)
 
     def test_never_stop_loop_continues_after_failure(self) -> None:
         cells = [
@@ -1082,8 +1174,9 @@ class RunCellsTests(unittest.TestCase):
     def test_catalog_root_is_required_for_catalog_cells(self) -> None:
         cells = [live_map.Cell("nav.route-search-live", "LIVE=1 RS2B0T=${CATALOG_ROOT:?} cargo test", "")]
         self.assertTrue(needs_catalog_root(cells))
-        with self.assertRaises(live_map.MapError) as context:
-            ensure_catalog_root(cells, None)
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(live_map.MapError) as context:
+                ensure_catalog_root(cells, None)
         self.assertIn("--catalog-root", str(context.exception))
         self.assertIn("nav.route-search-live", str(context.exception))
         clean = [live_map.Cell("plain", "LIVE=1 ${ISOHOME:?} cargo test", "")]
@@ -1094,6 +1187,22 @@ class RunCellsTests(unittest.TestCase):
         cells = [live_map.Cell("nav.route-search-live", "LIVE=1 ${CATALOG_ROOT:?} cargo test", "")]
         with self.assertRaises(live_map.MapError):
             ensure_catalog_root(cells, "/no/such/catalog-root-r2")
+
+    def test_catalog_root_uses_environment_when_flag_is_absent(self) -> None:
+        import tempfile
+
+        cells = [
+            live_map.Cell(
+                "nav.route-search-live",
+                "LIVE=1 ${CATALOG_ROOT:?} cargo test",
+                "",
+            )
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            with unittest.mock.patch.dict(
+                os.environ, {"CATALOG_ROOT": temporary}, clear=True
+            ):
+                self.assertEqual(ensure_catalog_root(cells, None), temporary)
 
     def test_partner_prefix_is_required_for_two_account_cells(self) -> None:
         pair = [
@@ -1160,6 +1269,58 @@ class RunCellsTests(unittest.TestCase):
             self.assertEqual(defaults["NAV_FLAGS_289"], str(nav / "289" / "274bot.navflags"))
             self.assertNotIn("NAV_PACK_274", defaults)
 
+    def test_host_path_defaults_use_only_configured_paths(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            isohome = repo / "isohome"
+            isohome.write_text("", encoding="utf-8")
+            engine_a = repo / "engine-a"
+            engine_a.mkdir()
+            engine_q = repo / "engine-q"
+            engine_q.mkdir()
+            snapshot = repo / "snapshot"
+            snapshot.mkdir()
+            with unittest.mock.patch.dict(os.environ, {}, clear=True):
+                defaults = host_defaults(repo)
+            for key in (
+                "ISOHOME",
+                "ENGINE_A_DIR",
+                "ENGINE_Q_DIR",
+                "ENGINE_B_DIR",
+                "NAV_SNAPSHOT_ROOT_289",
+            ):
+                self.assertNotIn(key, defaults)
+
+            configured = {
+                "ISOHOME": str(isohome),
+                "ENGINE_A_DIR": str(engine_a),
+                "ENGINE_Q_DIR": str(engine_q),
+                "NAV_SNAPSHOT_ROOT_289": str(snapshot),
+            }
+            with unittest.mock.patch.dict(os.environ, configured, clear=True):
+                defaults = host_defaults(repo)
+            self.assertEqual(defaults["ISOHOME"], str(isohome))
+            self.assertEqual(defaults["ENGINE_A_DIR"], str(engine_a))
+            self.assertEqual(defaults["ENGINE_Q_DIR"], str(engine_q))
+            self.assertEqual(defaults["ENGINE_B_DIR"], str(engine_a))
+            self.assertEqual(defaults["NAV_SNAPSHOT_ROOT_289"], str(snapshot))
+
+    def test_selected_live_cells_require_isohome_before_running(self) -> None:
+        cells = [live_map.Cell("live", "LIVE=1 ${ISOHOME:?} cargo test", "")]
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(live_map.MapError, "ISOHOME.*lab.env"):
+                require_isohome(cells)
+
+    def test_selected_cells_require_configured_engine_paths(self) -> None:
+        cells = [
+            live_map.Cell("engine", "LIVE=1 WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} cargo test", "")
+        ]
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(live_map.MapError, "ENGINE_Q_DIR.*lab.env"):
+                require_configured_paths(cells)
+
     def test_catalog_root_reaches_cell_env(self) -> None:
         import tempfile
         with tempfile.TemporaryDirectory() as temp:
@@ -1204,8 +1365,9 @@ class RunCellsTests(unittest.TestCase):
     def test_unpack_source_is_required_for_panel_cells(self) -> None:
         cells = [live_map.Cell("panel.state-gap-stop-live", "LIVE=1 ISOHOME_DIR=${PANEL_LIVE_HOME:?} cargo test", "")]
         self.assertTrue(needs_panel_cache(cells))
-        with self.assertRaises(live_map.MapError) as context:
-            ensure_unpack_source(cells, None)
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(live_map.MapError) as context:
+                ensure_unpack_source(cells, None)
         self.assertIn("--unpack-source", str(context.exception))
         self.assertIn("panel.state-gap-stop-live", str(context.exception))
         clean = [live_map.Cell("plain", "LIVE=1 ${ISOHOME:?} cargo test", "")]
@@ -1216,6 +1378,22 @@ class RunCellsTests(unittest.TestCase):
         cells = [live_map.Cell("panel.state-gap-stop-live", "ISOHOME_DIR=${PANEL_LIVE_HOME:?} cargo test", "")]
         with self.assertRaises(live_map.MapError):
             ensure_unpack_source(cells, "/no/such/unpack-source-r2")
+
+    def test_unpack_source_uses_nav_snapshot_environment(self) -> None:
+        import tempfile
+
+        cells = [
+            live_map.Cell(
+                "panel.state-gap-stop-live",
+                "LIVE=1 ISOHOME_DIR=${PANEL_LIVE_HOME:?} cargo test",
+                "",
+            )
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            with unittest.mock.patch.dict(
+                os.environ, {"NAV_SNAPSHOT_ROOT_289": temporary}, clear=True
+            ):
+                self.assertEqual(ensure_unpack_source(cells, None), temporary)
 
     def test_stage_copies_files_without_symlink(self) -> None:
         import tempfile

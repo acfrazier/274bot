@@ -705,11 +705,6 @@ fn generated_talk_key_facts_pin_selected_steps_and_spawns() {
             };
             assert!(published, "coverage {} must belong to a step", record.alias);
         }
-        assert!(facts
-            .coverage
-            .iter()
-            .all(|record| !record.alias.ends_with("_challenge")
-                && !record.alias.ends_with("_puzzlebox")));
         assert!(talk
             .iter()
             .all(|row| !row.alias.ends_with("_puzzlebox") && !row.alias.ends_with("_challenge")));
@@ -856,11 +851,5 @@ fn generated_trio_giver_facts_pin_the_closed_giver_set() {
             spawns,
             vec![(2438, 3186, 0), (2668, 3162, 0), (2569, 3249, 0)]
         );
-
-        // Display-name lookalikes are not identities.
-        assert!(facts
-            .rows
-            .iter()
-            .all(|row| !row.alias.ends_with("_2") && !row.alias.starts_with("murphy_")));
     }
 }

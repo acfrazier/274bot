@@ -1,4 +1,9 @@
-import type { CombatOutcome, CombatRequest, NativeApi } from '../host-js/index.d.ts';
+import type {
+    CombatOutcome,
+    CombatRequest,
+    NativeApi,
+    ScriptManifest,
+} from '../host-js/index.d.ts';
 
 /**
  * Native combat showcase (JS API v2): what the bot's own Combat machine does
@@ -38,7 +43,17 @@ import type { CombatOutcome, CombatRequest, NativeApi } from '../host-js/index.d
  *  7. stop      — a fight stopped mid-swing with `api.combat.stop()`; the host
  *                 clears the bot's raised prayer and Thick Skin stays on
  */
-export const apiVersion = 2;
+export const manifest = {
+    apiVersion: 2,
+    name: 'CombatShowcase',
+    version: '1',
+    author: '274bot',
+    description: 'Fights Lumbridge cows in seven phases: eating, prayer, styles, ranged, magic and stop.',
+    category: 'Examples',
+    tags: ['combat', 'prayer'],
+    settings: {},
+    capabilities: [],
+} as const satisfies ScriptManifest;
 
 const COW_FIELD = { min_x: 3240, min_z: 3254, max_x: 3266, max_z: 3299, level: 0 };
 /** The whole field (earlier phases kill the nearest cows, so search wide);

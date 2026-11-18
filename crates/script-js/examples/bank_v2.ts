@@ -1,5 +1,6 @@
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
 type HuntSite = import('../host-js/index.d.ts').HuntSite;
+import type { ScriptManifest } from '../host-js/index.d.ts';
 
 /**
  * Headed File witness: one bank trip. The scenario seeds the account near
@@ -12,7 +13,17 @@ type HuntSite = import('../host-js/index.d.ts').HuntSite;
  * names the Start tile, the tile after the run, the bank, the site key and
  * the outcome; the gate checks the host's walk and tile.
  */
-export const apiVersion = 2;
+export const manifest = {
+    apiVersion: 2,
+    name: 'BankTrip',
+    version: '1',
+    author: '274bot',
+    description: 'Walks to the Falador bank, deposits the pack and closes the bank.',
+    category: 'Examples',
+    tags: ['bank', 'walk'],
+    settings: {},
+    capabilities: [],
+} as const satisfies ScriptManifest;
 
 const STOP_OK = 'bank qualification complete';
 const RECEIPT_PREFIX = 'bank-receipt:';

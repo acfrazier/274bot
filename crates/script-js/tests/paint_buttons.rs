@@ -324,11 +324,6 @@ fn button_label_toggle_is_a_real_change() {
         canvas: Vec::new(),
         ..Default::default()
     };
-    let quiet = ScriptPaint {
-        buttons: Vec::new(),
-        ..go.clone()
-    };
-    assert!(quiet.buttons.is_empty());
     assert_ne!(go, resume, "label toggle must be a real change");
 }
 

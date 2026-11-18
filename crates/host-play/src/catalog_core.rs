@@ -8,10 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use api::line_of_sight::{line_of_sight_v2, CollisionQuery};
 use api::obj_names::ObjNames;
 use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldTile};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 
 #[path = "catalog_core_ranging.rs"]
@@ -28,19 +27,14 @@ pub use ranging::{
 #[path = "catalog_core_hunt.rs"]
 mod hunt;
 pub use hunt::{
-    hunt_baseline_ready, leave_lair_box, parse_hunt_receipt_line, HuntBox, HuntCell,
-    HuntDeliveryCycle, HuntObservation, HuntOutcome, HuntReceipt, ScriptAct, ScriptActLedger,
+    hunt_baseline_ready, parse_hunt_receipt_line, HuntBox, HuntCell, HuntDeliveryCycle,
+    HuntObservation, HuntOutcome, HuntReceipt, LineOfSightTile, ScriptAct, ScriptActLedger,
     ScriptActRow, ScriptActsPublished, ACQUIRE_KEY_DEST, ACQUIRE_KEY_RADIUS,
     ACQUIRE_KEY_RECEIPT_PREFIX, ACQUIRE_KEY_V2_STOP, BANK_V2_DEST, BANK_V2_RADIUS,
     BANK_V2_RECEIPT_PREFIX, BANK_V2_STOP, CELL_V2_DOOR, CELL_V2_RADIUS, CELL_V2_RECEIPT_PREFIX,
-    CELL_V2_STOP, DUSTY_KEY_ID, ENTER_LAIR_MAX_CHEB, ENTER_LAIR_MIN_CHEB,
-    ENTER_LAIR_RECEIPT_PREFIX, ENTER_LAIR_V2_STOP, HOLD_SPOT_MAX_CHEB, HOLD_SPOT_MIN_CHEB,
-    HOLD_SPOT_RECEIPT_PREFIX, HOLD_SPOT_V2_STOP, HUNT_ACT_ROWS, HUNT_LAIR_FIXTURE, JAILER,
-    JAIL_CELL, JAIL_DOOR, JAIL_DOOR_LOC, JAIL_KEY_ID, LEAVE_LAIR_BOX_PAD, LEAVE_LAIR_MAX_CHEB,
-    LEAVE_LAIR_MIN_CHEB, LEAVE_LAIR_RADIUS, LEAVE_LAIR_RECEIPT_PREFIX, LEAVE_LAIR_V2_STOP,
-    RETREAT_SPOT_MAX_CHEB, RETREAT_SPOT_MIN_CHEB, RETREAT_SPOT_RECEIPT_PREFIX,
-    RETREAT_SPOT_V2_STOP, VELRAK, WALK_SPOT_MAX_CHEB, WALK_SPOT_MIN_CHEB, WALK_SPOT_RECEIPT_PREFIX,
-    WALK_SPOT_V2_STOP,
+    CELL_V2_STOP, DUSTY_KEY_ID, HUNT_ACT_ROWS, HUNT_LAIR_FIXTURE, JAILER, JAIL_CELL, JAIL_DOOR,
+    JAIL_DOOR_LOC, JAIL_KEY_ID, VELRAK, WALK_SPOT_MAX_CHEB, WALK_SPOT_MIN_CHEB,
+    WALK_SPOT_RECEIPT_PREFIX, WALK_SPOT_V2_STOP,
 };
 
 #[path = "catalog_ids.rs"]
@@ -61,15 +55,6 @@ pub use inspect::*;
 #[path = "catalog_prayer.rs"]
 mod prayer;
 pub use prayer::*;
-#[path = "catalog_los.rs"]
-mod los;
-pub use los::*;
-#[path = "catalog_actor.rs"]
-mod actor;
-pub use actor::*;
-#[path = "catalog_fight_field.rs"]
-mod fight_field;
-pub use fight_field::*;
 #[path = "catalog_bone.rs"]
 mod bone;
 pub use bone::*;
@@ -148,11 +133,3 @@ pub use witness::*;
 #[path = "catalog_watch.rs"]
 mod watch;
 pub use watch::*;
-
-#[cfg(test)]
-#[path = "catalog_actor_tests.rs"]
-mod actor_observation_selection_tests;
-
-#[cfg(test)]
-#[path = "catalog_fight_field_tests.rs"]
-mod fight_field_selection_tests;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use script::{slot::RunState, surface::SurfaceStart, SlotScript};
-use script_js::{resolve_api_family, surface, LoadShape};
+use script_js::{native_fixture, prepare_raw_origin_for_test, surface, LoadShape};
 
 #[test]
 #[ignore = "isolated cold construction-count probe; run explicitly"]
@@ -9,16 +9,17 @@ fn u9_normal_slot_start_does_not_construct_risk_tables() {
     assert_eq!(script::combat::risk::risk_table_build_count_for_test(), 0);
 
     let mut slot = SlotScript::new();
-    let source: Arc<str> = "export function tick() {}".into();
-    let family = resolve_api_family(&source).ok().map(|(_, family)| family);
+    let prepared =
+        prepare_raw_origin_for_test("bot.js", &native_fixture("export function tick() {}"), &[])
+            .unwrap();
+    assert_eq!(prepared.checked.shape(), LoadShape::NativeTick);
     slot.bind_surface_factory(Arc::new(surface::JsSurfaceFactory));
     slot.start_surface(SurfaceStart {
         card: Arc::new(surface::JsStartCard {
             card_name: "risk startup test".into(),
-            source,
-            shape: LoadShape::NativeTick,
+            source: Arc::<str>::from(prepared.js),
+            checked: prepared.checked,
             siblings: Arc::default(),
-            family,
         }),
         settings_bag: None,
         game_data: None,

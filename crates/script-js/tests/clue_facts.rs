@@ -530,7 +530,8 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
 
 fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
     let data = api::game_data::for_revision(revision).expect("load clue probe game data");
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+    let source = script_js::native_fixture(src);
+    let iso = LoadIsolate::spawn_with_game_data(source, LoadShape::NativeTick, vec![], data)
         .expect("spawn clue probe isolate");
     post_base(&iso, 1);
     iso.on_game_tick(1);
@@ -545,7 +546,8 @@ fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
 /// The same probe over a posted pack page instead of an empty pack.
 fn probe_page(src: &str, revision: ClientRevision, page: &[(i32, i32)]) -> serde_json::Value {
     let data = api::game_data::for_revision(revision).expect("load clue page probe game data");
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+    let source = script_js::native_fixture(src);
+    let iso = LoadIsolate::spawn_with_game_data(source, LoadShape::NativeTick, vec![], data)
         .expect("spawn clue page probe isolate");
     post_page(&iso, 1, page);
     iso.on_game_tick(1);
@@ -583,7 +585,6 @@ fn v2_clue_row_is_a_sync_helper_result() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const byId = api.clue.row({ id: 3554 });
   const byAlias = api.clue.row({ alias: '  Trail_Clue_Hard_Sextant028  ' });
@@ -668,7 +669,6 @@ fn v2_clue_row_rejects_a_converted_id() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     stringId: api.clue.row({ id: '3554' }),
@@ -736,7 +736,6 @@ fn v2_clue_held_step_is_a_sync_helper_result_over_the_posted_page() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   const step = api.clue.heldStep();
   // Zero parameters: an argument is ignored, not an inventory override.
@@ -781,7 +780,6 @@ fn v2_clue_held_step_takes_the_first_held_step_and_else_none_held() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({ step: api.clue.heldStep() });
 }
@@ -820,13 +818,17 @@ export function tick(api) {
 #[test]
 fn v2_clue_held_step_prefers_the_slot_token_then_the_family_token() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({ step: api.clue.heldStep() });
 }
 "#;
     // No selected slot: the slot token, even with a held casket.
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     post_page(&iso, 1, &[(3531, 1)]);
     iso.on_game_tick(1);
     let value: serde_json::Value =
@@ -845,7 +847,7 @@ export function tick(api) {
     // A selected slot without the trail family: the family token, before
     // none-held, even with an empty page.
     let iso = LoadIsolate::spawn_with_game_data(
-        src.into(),
+        script_js::native_fixture(src),
         LoadShape::NativeTick,
         vec![],
         data_without_trails(),
@@ -870,7 +872,6 @@ export function tick(api) {
 #[test]
 fn v2_invalid_args_before_missing_slot_and_missing_family() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
   globalThis.__probe = JSON.stringify({
     omitted: api.clue.row(),
@@ -886,7 +887,12 @@ export function tick(api) {
   });
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let empty: serde_json::Value =
@@ -908,7 +914,7 @@ export function tick(api) {
     }
 
     let iso = LoadIsolate::spawn_with_game_data(
-        src.into(),
+        script_js::native_fixture(src),
         LoadShape::NativeTick,
         vec![],
         data_without_trails(),
@@ -936,22 +942,28 @@ export function tick(api) {
 }
 
 #[test]
-fn example_clue_facts_v2_is_one_read_only_row_call() {
+fn native_clue_facts_v2_is_one_read_only_row_call() {
     if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("clue_facts_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
+    let src = r#"
+export function tick(api) {
+  api.log(JSON.stringify(api.clue.row({ alias: 'trail_clue_hard_sextant028' })));
+}
+"#;
     assert!(!src.contains("request("));
     assert!(!src.contains("h.interact"));
     assert!(!src.contains("challengeAnswer"));
     assert!(!src.contains("deposit"));
     assert_eq!(src.matches("api.clue").count(), 1);
-    let js = script_js::transpile_ts(&src).expect("transpile clue_facts_v2.ts");
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(js, LoadShape::NativeTick, vec![], data).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let err = iso
@@ -959,12 +971,12 @@ fn example_clue_facts_v2_is_one_read_only_row_call() {
         .unwrap();
     let logs = iso.drain_logs();
     iso.join();
-    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    assert_eq!(err.as_str().unwrap_or(""), "", "fixture lastError: {err:?}");
     let last = logs
         .iter()
         .rev()
         .find(|line| line.contains("\"alias\""))
-        .unwrap_or_else(|| panic!("example logged a row; logs={logs:?}"));
+        .unwrap_or_else(|| panic!("fixture logged a row; logs={logs:?}"));
     let row: serde_json::Value = serde_json::from_str(last).unwrap();
     assert_eq!(row["ok"], true, "{row:?}");
     assert_eq!(row["value"]["id"], 3554);
@@ -974,23 +986,29 @@ fn example_clue_facts_v2_is_one_read_only_row_call() {
 }
 
 #[test]
-fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
+fn native_clue_held_step_v2_is_one_read_only_held_step_call() {
     if !crate::local_game_data::local_game_data_available(274) {
         return;
     }
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("clue_held_step_v2.ts");
-    let src = std::fs::read_to_string(&path).expect("example source");
+    let src = r#"
+export function tick(api) {
+  api.log(JSON.stringify(api.clue.heldStep()));
+}
+"#;
     assert!(!src.contains("request("));
     assert!(!src.contains("h.interact"));
     assert!(!src.contains("challengeAnswer"));
     assert!(!src.contains("deposit"));
     assert_eq!(src.matches("api.clue").count(), 1);
     assert_eq!(src.matches("heldStep").count(), 1);
-    let js = script_js::transpile_ts(&src).expect("transpile clue_held_step_v2.ts");
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(js, LoadShape::NativeTick, vec![], data).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let err = iso
@@ -998,14 +1016,13 @@ fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
         .unwrap();
     let logs = iso.drain_logs();
     iso.join();
-    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    assert_eq!(err.as_str().unwrap_or(""), "", "fixture lastError: {err:?}");
     let last = logs
         .iter()
         .rev()
         .find(|line| line.contains("\"none-held\""))
-        .unwrap_or_else(|| panic!("example logged the held step; logs={logs:?}"));
+        .unwrap_or_else(|| panic!("fixture logged the held step; logs={logs:?}"));
     let step: serde_json::Value = serde_json::from_str(last).unwrap();
-    // The example injects no page: the keyframe pack holds nothing.
     assert_eq!(step["ok"], false, "{step:?}");
     assert_eq!(step["error"], "none-held", "{step:?}");
     assert!(step.get("value").is_none(), "{step:?}");
@@ -1017,7 +1034,6 @@ fn v2_clue_run_without_hooks_defaults_enabled_true_and_progresses() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -1034,8 +1050,13 @@ export async function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .unwrap();
 
     post_page(&iso, 1, &[(2677, 1)]);
     iso.on_game_tick(1);
@@ -1107,7 +1128,6 @@ fn v2_clue_run_invokes_hooks_and_maps_wait_walk_loc_and_terminal_yield() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -1137,8 +1157,13 @@ export async function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .unwrap();
     let page = [(2677, 1)];
 
     // No posted player tile: all three hooks answer in order, then the search
@@ -1274,7 +1299,6 @@ export async function tick(api) {
 }
 
 const LIVE_CLUE_RUN: &str = r#"
-export const apiVersion = 2;
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -1294,8 +1318,13 @@ export async function tick(api) {
 fn spawn_live_clue_run() -> LoadIsolate {
     let data = api::game_data::for_revision(ClientRevision::R274)
         .expect("load revision 274 live clue data");
-    LoadIsolate::spawn_with_game_data(LIVE_CLUE_RUN.into(), LoadShape::NativeTick, vec![], data)
-        .expect("spawn live clue test isolate")
+    LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(LIVE_CLUE_RUN),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .expect("spawn live clue test isolate")
 }
 
 fn live_clue_tick(
@@ -1623,7 +1652,6 @@ fn v2_clue_run_abandons_a_keeper_row_and_refuses_the_next_begin() {
         return;
     }
     let src = r#"
-export const apiVersion = 2;
 let phase = 0;
 export async function tick(api) {
   if (phase === 0) {
@@ -1646,8 +1674,13 @@ export async function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+        data,
+    )
+    .unwrap();
     let page = [(2831, 1)];
     let spawn = script::native::snapshot_source::TileInput {
         x: 3039,

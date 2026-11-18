@@ -193,7 +193,6 @@ export default class T extends LoopingBot {
 #[test]
 fn v2_reach_helpers_match_posted_view() {
     let src = r#"
-export const apiVersion = 2;
 export function tick(api) {
     const t = (x, z, level) => ({ x, z, level });
     globalThis.__probe = {
@@ -205,7 +204,12 @@ export function tick(api) {
     };
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = LoadIsolate::spawn(
+        script_js::native_fixture(src),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
     let walkable = reach_words(&[0, 32]);
     let reachable = reach_words(&[0, 32]);
     let adj = reach_words(&[0, 1, 32]);

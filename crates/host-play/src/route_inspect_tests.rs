@@ -258,11 +258,6 @@ fn fill_three_id0(navs: &Arc<Mutex<HashMap<String, NavBot>>>, world: &Arc<NavWor
 }
 
 #[test]
-fn path_attribute_module_compiles() {
-    let _ = std::any::type_name::<InspectNav>();
-}
-
-#[test]
 fn inspect_ticket_ref_round_trips_and_rejects_wrong_revision() {
     let identity = WorkService::shared()
         .expect("work service")
@@ -2516,12 +2511,8 @@ fn post_and_apply(
 #[cfg(feature = "js")]
 #[test]
 fn integrated_host_publish_bytes_isolate_ack_without_new_request() {
-    let src = r#"
-export const apiVersion = 2;
-export function tick() {}
-"#;
-    let iso = script_js::LoadIsolate::spawn(src.into(), script_js::LoadShape::NativeTick, vec![])
-        .unwrap();
+    let src = script_js::native_fixture("export function tick() {}");
+    let iso = script_js::LoadIsolate::spawn(src, script_js::LoadShape::NativeTick, vec![]).unwrap();
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
 
@@ -2807,11 +2798,7 @@ export function tick() {}
 #[cfg(feature = "js")]
 fn spawn_native_iso() -> script_js::LoadIsolate {
     script_js::LoadIsolate::spawn(
-        r#"
-export const apiVersion = 2;
-export function tick() {}
-"#
-        .into(),
+        script_js::native_fixture("export function tick() {}"),
         script_js::LoadShape::NativeTick,
         vec![],
     )
@@ -3322,7 +3309,7 @@ fn real_content_inspection_capture_bytes() {
         .lock()
         .unwrap()
         .start_load_settled(
-            "export const apiVersion = 2; export function tick() {}".to_string(),
+            script_js::native_fixture("export function tick() {}"),
             script_js::LoadShape::NativeTick,
             vec![],
         )
@@ -3938,13 +3925,6 @@ fn real_content_inspection_bank_fetch_whole_job_memory() {
                 .expect("missing-item reservation");
             let reservation = missing.reservation();
             assert_eq!(reservation.max_missing_carry_ids, 221);
-            assert_eq!(
-                reservation
-                    .max_plan_item_rows
-                    .checked_sub(reservation.max_missing_carry_ids),
-                Some(3_603),
-                "the production effective bound includes every loaded worn row",
-            );
             assert_eq!(reservation.max_plan_item_rows, 3_824);
             assert_eq!(strict_budget(&capture), nav_planner::router::NODE_BUDGET);
             assert_eq!(stand_budget(&capture), nav_planner::router::NODE_BUDGET);

@@ -56,6 +56,8 @@ mod quester;
 #[path = "revision_377_live/quester_imp.rs"]
 mod quester_imp;
 
+#[path = "revision_377_live/actor.rs"]
+mod actor;
 #[path = "revision_377_live/quester_doric.rs"]
 mod quester_doric;
 #[path = "revision_377_live/quester_journal.rs"]
@@ -132,6 +134,15 @@ fn required_path(name: &str) -> Result<PathBuf, String> {
         return Err(format!("{name} must be a non-empty absolute path"));
     }
     Ok(path)
+}
+
+// The nightly controller owns this optional path (run_nightly.py).
+fn nightly_quiet_lock_held() -> bool {
+    nightly_quiet_lock_from(|name| std::env::var_os(name))
+}
+
+fn nightly_quiet_lock_from(read: impl FnOnce(&str) -> Option<std::ffi::OsString>) -> bool {
+    read("NIGHTLY_QUIET_LOCK").is_some_and(|path| !path.is_empty() && Path::new(&path).exists())
 }
 
 fn require_live_guard() -> Result<(), String> {
@@ -571,6 +582,237 @@ fn direct_step_toward(
     Err("no collision-reachable one-tile direct step remains inside loaded Lumbridge".into())
 }
 
+fn hans_patrol_points(source: &str) -> Result<Vec<(WorldTile, u32)>, String> {
+    let section = source
+        .split_once("[hans]\n")
+        .ok_or("selected content has no [hans] NPC")?
+        .1
+        .split("\n[")
+        .next()
+        .unwrap_or_default();
+    if !section.lines().any(|line| line == "defaultmode=patrol") {
+        return Err("selected Hans does not use the expected patrol mode".into());
+    }
+    let mut route: Vec<(usize, WorldTile, u32)> = Vec::new();
+    for line in section.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let Some(ordinal) = key.strip_prefix("patrol") else {
+            continue;
+        };
+        let ordinal: usize = ordinal.parse().map_err(|_| "invalid Hans patrol ordinal")?;
+        let (coord, delay) = value
+            .split_once(',')
+            .ok_or("invalid Hans patrol waypoint")?;
+        let coords = coord
+            .split('_')
+            .map(str::parse::<i32>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "invalid Hans patrol coordinate")?;
+        let [level, mx, mz, x, z] = coords.as_slice() else {
+            return Err("invalid Hans patrol coordinate width".into());
+        };
+        let tile = WorldTile {
+            x: mx * 64 + x,
+            z: mz * 64 + z,
+            level: *level,
+        };
+        if !lumbridge(tile) {
+            return Err("Hans patrol leaves the loaded Lumbridge region".into());
+        }
+        let delay: u32 = delay.parse().map_err(|_| "invalid Hans patrol delay")?;
+        if route.iter().any(|(key, _, _)| *key == ordinal) {
+            return Err("duplicate Hans patrol ordinal".into());
+        }
+        route.push((ordinal, tile, delay));
+    }
+    if route.len() < 2
+        || (1..=route.len()).any(|ordinal| !route.iter().any(|(key, _, _)| *key == ordinal))
+    {
+        return Err("Hans patrol waypoints are missing or nonconsecutive".into());
+    }
+    Ok(route
+        .into_iter()
+        .map(|(_, tile, delay)| (tile, delay))
+        .collect())
+}
+
+// Npc::patrolMode, Npc.ts:760-765: increment before testing this threshold.
+fn hans_stuck_ticks(source: &str) -> Result<u32, String> {
+    let patrol = source
+        .split_once("private patrolMode(): void {")
+        .and_then(|(_, tail)| tail.split_once("\n    }"))
+        .map(|(body, _)| body)
+        .ok_or("selected engine has no patrol branch")?;
+    patrol
+        .split_once("this.stuckCounter >= ")
+        .and_then(|(_, tail)| tail.split_whitespace().next())
+        .ok_or("selected engine has no patrol stuck threshold")?
+        .parse()
+        .map_err(|_| "invalid patrol stuck threshold".into())
+}
+
+// Measured fixture calibration, not a period of the route: 17 November 2026,
+// engine 13108a91 and slot-9 content; r1-observation/result.json records laps
+// of 133 and 111 ticks. Each includes 31 idle ticks before a stuck teleport;
+// lap 1 also has a 23-tick partial block. Npc.ts:378-380 resets stuckCounter
+// on movement, so partial blocks can recur. Re-measure when the route or
+// engine movement behaviour changes.
+const HANS_MEASURED_MAX_LAP_TICKS: u32 = 133;
+
+fn hans_patrol_budget(stuck_ticks: u32, approach: u32) -> u32 {
+    HANS_MEASURED_MAX_LAP_TICKS + stuck_ticks + approach
+}
+
+enum HansApproachAction {
+    Dialogue,
+    Deadline,
+    Wait,
+    Retry,
+    Retarget(NpcChoice),
+}
+
+fn hans_approach_action(
+    snapshot: &GameSnapshot,
+    first_tick: u32,
+    budget_ticks: u32,
+    expired: bool,
+    requested_tick: Option<u32>,
+) -> HansApproachAction {
+    if snapshot.modals().chat != -1 && !snapshot.chat_modal_texts().is_empty() {
+        return HansApproachAction::Dialogue;
+    }
+    if !snapshot.ingame() || snapshot.tick().wrapping_sub(first_tick) >= budget_ticks || expired {
+        return HansApproachAction::Deadline;
+    }
+    if requested_tick == Some(snapshot.tick()) {
+        return HansApproachAction::Wait;
+    }
+    match nearest_talk_npc(snapshot, LUMBRIDGE_HANS_TYPE_ID) {
+        Some(current) => HansApproachAction::Retarget(current),
+        None => HansApproachAction::Retry,
+    }
+}
+
+fn talk_to_patrolling_hans(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
+    budget_ticks: u32,
+) -> Result<(), String> {
+    let first_tick = snapshot.tick();
+    let deadline = Instant::now() + Duration::from_millis(u64::from(budget_ticks) * 600);
+    let mut requested_tick = None;
+    let mut ever_observed_hans = false;
+    let mut route_status: Result<&str, String> = Ok("not requested");
+    loop {
+        let started = Instant::now();
+        let wall_expired = started >= deadline;
+        match hans_approach_action(
+            snapshot,
+            first_tick,
+            budget_ticks,
+            client.error_loading || wall_expired,
+            requested_tick,
+        ) {
+            HansApproachAction::Dialogue => {
+                record(
+                    "npc-dialogue-applied",
+                    snapshot,
+                    json!({"budget_ticks":budget_ticks}),
+                );
+                return Ok(());
+            }
+            HansApproachAction::Deadline => {
+                let hans = snapshot
+                    .npcs()
+                    .iter()
+                    .filter(|npc| npc.r#type == Some(LUMBRIDGE_HANS_TYPE_ID))
+                    .map(|npc| json!({"index":npc.index,"tile":npc.network}))
+                    .collect::<Vec<_>>();
+                let termination = if client.error_loading {
+                    "client-error"
+                } else if !snapshot.ingame() {
+                    "left-game"
+                } else if snapshot.tick().wrapping_sub(first_tick) >= budget_ticks {
+                    "game-tick-deadline"
+                } else {
+                    "wall-clock-deadline"
+                };
+                record(
+                    "npc-dialogue-deadline",
+                    snapshot,
+                    json!({
+                        "termination":termination,"first_tick":first_tick,"tick":snapshot.tick(),
+                        "budget_ticks":budget_ticks,"wall_clock_expired":wall_expired,
+                        "hans_present":!hans.is_empty(),"hans":hans,
+                        "ever_observed_hans":ever_observed_hans,
+                        "reachable_talk_target":nearest_talk_npc(snapshot,LUMBRIDGE_HANS_TYPE_ID).is_some(),
+                        "dialogue_open":snapshot.modals().chat != -1 && !snapshot.chat_modal_texts().is_empty(),
+                        "player_tile":snapshot.tile(),"route_result":route_status,
+                    }),
+                );
+                return Err(format!("Hans approach/dialogue failed: {termination}"));
+            }
+            HansApproachAction::Wait => {}
+            HansApproachAction::Retry => {
+                let present = snapshot
+                    .npcs()
+                    .iter()
+                    .any(|npc| npc.r#type == Some(LUMBRIDGE_HANS_TYPE_ID));
+                ever_observed_hans |= present;
+                record(
+                    "npc-current-tile-unavailable",
+                    snapshot,
+                    json!({
+                        "hans_present":present,"selection":"no-reachable-Talk-target",
+                        "budget_ticks":budget_ticks,"route_result":route_status,
+                    }),
+                );
+                requested_tick = Some(snapshot.tick());
+            }
+            HansApproachAction::Retarget(current) => {
+                ever_observed_hans = true;
+                route_status = if current.distance > 1 {
+                    accepted(
+                        Interactions::new(snapshot, client).walk(current.tile),
+                        "approach current Hans",
+                    )
+                    .map(|()| "walk-current-Hans")
+                } else {
+                    let npc = snapshot
+                        .npcs()
+                        .iter()
+                        .find(|npc| npc.index == current.index)
+                        .expect("selected Hans remains in the same snapshot");
+                    accepted(
+                        Interactions::new(snapshot, client)
+                            .interact(OpTarget::Npc(npc), ActionSpec::Label(TALK_ACTION.into())),
+                        "current Hans Talk-to",
+                    )
+                    .map(|()| "Talk-to-current-Hans")
+                };
+                record(
+                    "npc-current-tile-retarget",
+                    snapshot,
+                    json!({
+                        "npc_index":current.index,"npc_tile":current.tile,
+                        "distance":current.distance,"budget_ticks":budget_ticks,
+                        "route_result":route_status,
+                    }),
+                );
+                requested_tick = Some(snapshot.tick());
+            }
+        }
+        client.mainloop();
+        host::publish_snapshot(snapshot, client, pump.drain_client(client));
+        if let Some(rest) = Duration::from_millis(20).checked_sub(started.elapsed()) {
+            std::thread::sleep(rest);
+        }
+    }
+}
+
 fn run_live_interaction() -> Result<(), String> {
     let bound = load_bound_377()?;
     resource_record(&bound);
@@ -666,17 +908,24 @@ fn run_live_interaction() -> Result<(), String> {
             &snapshot,
             json!({"revision":client.revision().as_i32(), "username":username}),
         );
-        wait_for(
-            &mut client,
-            &mut snapshot,
-            &mut pump,
-            "required-Hans-type-0-absent-or-unreachable",
-            Duration::from_secs(20),
-            |state| nearest_talk_npc(state, LUMBRIDGE_HANS_TYPE_ID).is_some(),
+        let source_path = bound
+            .engine_dir
+            .parent()
+            .ok_or("engine has no content sibling")?
+            .join("content/scripts/_unpack/377/all.npc");
+        let source = fs::read_to_string(&source_path).map_err(|error| {
+            format!(
+                "read selected Hans patrol {}: {error}",
+                source_path.display()
+            )
+        })?;
+        let patrol = hans_patrol_points(&source)?;
+        let choice = nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID);
+        let target = direct_step_toward(
+            snapshot.scene(),
+            origin,
+            choice.map_or(patrol[0].0, |npc| npc.tile),
         )?;
-        let choice = nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID)
-            .ok_or("Hans (NPC type 0) is absent or unreachable in the loaded Lumbridge scene")?;
-        let target = direct_step_toward(snapshot.scene(), origin, choice.tile)?;
         if !lumbridge(target) || target.level != origin.level {
             return Err(format!(
                 "direct walk escaped the loaded Lumbridge region: {origin:?} to {target:?}"
@@ -690,9 +939,9 @@ fn run_live_interaction() -> Result<(), String> {
                 "target": target,
                 "same_loaded_region": true,
                 "navigation_router_used": false,
-                "nearby_npc_type_id": choice.type_id,
-                "nearby_npc_index": choice.index,
-                "nearby_npc_tile": choice.tile,
+                "nearby_npc_type_id": choice.map(|npc| npc.type_id),
+                "nearby_npc_index": choice.map(|npc| npc.index),
+                "nearby_npc_tile": choice.map(|npc| npc.tile),
             }),
         );
         accepted(
@@ -722,59 +971,226 @@ fn run_live_interaction() -> Result<(), String> {
             json!({"from": origin, "target": target, "same_loaded_region": true}),
         );
 
-        let current = nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID);
-        let npc = current
-            .and_then(|current| {
-                snapshot
-                    .npcs()
-                    .iter()
-                    .find(|npc| npc.index == current.index)
-            })
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "NPC type {} is no longer nearby and reachable with {TALK_ACTION}",
-                    choice.type_id
-                )
-            })?;
         if snapshot.modals().chat != -1 || !snapshot.chat_modal_texts().is_empty() {
             return Err("NPC dialogue was already open before the interaction".into());
         }
-        record(
-            "npc-talk-request",
-            &snapshot,
-            json!({
-                "npc_type_id": npc.r#type,
-                "npc_index": npc.index,
-                "npc_name": npc.name,
-                "npc_tile": npc.tile,
-                "action": TALK_ACTION,
-            }),
+        let current = nearest_talk_npc(&snapshot, LUMBRIDGE_HANS_TYPE_ID);
+        let approach = current.map_or_else(
+            || {
+                patrol
+                    .iter()
+                    .map(|(tile, _)| after.x.abs_diff(tile.x) + after.z.abs_diff(tile.z))
+                    .max()
+                    .expect("selected patrol contains at least two waypoints")
+            },
+            |npc| npc.distance,
         );
-        accepted(
-            Interactions::new(&snapshot, &mut client)
-                .interact(OpTarget::Npc(&npc), ActionSpec::Label(TALK_ACTION.into())),
-            "numeric NPC Talk-to",
-        )?;
-        wait_for(
-            &mut client,
-            &mut snapshot,
-            &mut pump,
-            "npc-dialogue-applied",
-            Duration::from_secs(30),
-            |state| state.modals().chat != -1 && !state.chat_modal_texts().is_empty(),
-        )?;
+        let engine_source_path = bound.engine_dir.join("src/engine/entity/Npc.ts");
+        let engine_source = fs::read_to_string(&engine_source_path).map_err(|error| {
+            format!("read patrol rule {}: {error}", engine_source_path.display())
+        })?;
+        let stuck_ticks = hans_stuck_ticks(&engine_source)?;
+        let budget = hans_patrol_budget(stuck_ticks, approach);
         record(
-            "npc-dialogue-applied",
+            "npc-calibrated-fixture-budget",
             &snapshot,
-            json!({"npc_type_id":choice.type_id, "npc_index":npc.index}),
+            json!({"source":source_path,"engine_rule_source":engine_source_path,
+                "measured_max_lap_ticks":HANS_MEASURED_MAX_LAP_TICKS,
+                "stuck_ticks":stuck_ticks,"approach_tiles":approach,
+                "approach_from_current_hans":current.is_some(),
+                "budget_ticks":budget,"tick_ms":600}),
         );
+        talk_to_patrolling_hans(&mut client, &mut snapshot, &mut pump, budget)?;
         Ok(())
     })();
     if client.ingame {
         client.logout();
     }
     result
+}
+
+#[test]
+fn hans_deadline_uses_the_selected_patrol_in_file_order() {
+    let route = "[hans]\ndefaultmode=patrol\n\
+patrol1=0_50_50_7_33,0\npatrol10=0_50_50_2_32,0\n\
+patrol2=0_50_50_11_30,0\npatrol3=0_50_50_19_30,0\n\
+patrol4=0_50_50_19_22,10\npatrol5=0_50_50_21_22,0\n\
+patrol6=0_50_50_21_12,0\npatrol7=0_50_50_18_9,0\n\
+patrol8=0_50_50_14_5,0\npatrol9=0_50_50_2_5,0\n[man]\n";
+    let points = hans_patrol_points(route).unwrap();
+    assert_eq!((points[1].0.x, points[1].0.z), (3202, 3232));
+    assert_eq!(
+        hans_stuck_ticks(concat!(
+            "private patrolMode(): void {\n",
+            "        if (this.stuckCounter >= 32 || changedFloor) {}\n",
+            "    }\n",
+        )),
+        Ok(32)
+    );
+    assert_eq!(hans_patrol_budget(32, 13), 178);
+    assert_eq!(hans_patrol_budget(32, 1), 166);
+    assert!(hans_stuck_ticks("").is_err());
+    assert!(hans_patrol_points("[man]\n").is_err());
+    assert!(hans_patrol_points("[hans]\ndefaultmode=wander\n").is_err());
+    assert!(hans_patrol_points("[hans]\ndefaultmode=patrol\n").is_err());
+}
+
+#[test]
+fn hans_stuck_threshold_is_scoped_to_the_patrol_branch() {
+    let reordered = concat!(
+        "private playerEscapeMode(): void {\n",
+        "        if (this.stuckCounter >= 5 && !atMaxRangeBoth) {}\n",
+        "    }\n",
+        "    private patrolMode(): void {\n",
+        "        if (this.stuckCounter >= 32 || changedFloor) {}\n",
+        "    }\n",
+    );
+    assert_eq!(hans_stuck_ticks(reordered), Ok(32));
+    let missing_patrol_threshold = concat!(
+        "private patrolMode(): void {\n",
+        "        this.updateMovement();\n",
+        "    }\n",
+        "    private playerEscapeMode(): void {\n",
+        "        if (this.stuckCounter >= 5 && !atMaxRangeBoth) {}\n",
+        "    }\n",
+    );
+    assert!(hans_stuck_ticks(missing_patrol_threshold).is_err());
+}
+
+fn hans_target_snapshot(network_x: i32) -> GameSnapshot {
+    let mut snapshot = talk_target_snapshot([(1, network_x, 58), (2, 58, 51)]);
+    snapshot.seed_ingame(2);
+    let mut hans = snapshot.npcs()[0].clone();
+    hans.r#type = Some(LUMBRIDGE_HANS_TYPE_ID);
+    snapshot.seed_npcs(vec![hans]);
+    snapshot
+}
+
+#[test]
+fn hans_absence_retries_until_its_deadline() {
+    let mut snapshot = hans_target_snapshot(51);
+    snapshot.seed_npcs(vec![]);
+    for tick in 40..44 {
+        snapshot.seed_tick(tick);
+        assert!(matches!(
+            hans_approach_action(&snapshot, 40, 4, false, None),
+            HansApproachAction::Retry
+        ));
+    }
+    snapshot.seed_tick(44);
+    assert!(matches!(
+        hans_approach_action(&snapshot, 40, 4, false, None),
+        HansApproachAction::Deadline
+    ));
+    snapshot.seed_tick(40);
+    assert!(matches!(
+        hans_approach_action(&snapshot, 40, 4, true, None),
+        HansApproachAction::Deadline
+    ));
+}
+
+#[test]
+fn hans_transient_absence_and_unreachable_tile_do_not_end_the_approach() {
+    let mut snapshot = hans_target_snapshot(49);
+    let npcs = snapshot.npcs().to_vec();
+    let scene = snapshot.scene().clone();
+    snapshot.seed_npcs(vec![]);
+    assert!(matches!(
+        hans_approach_action(&snapshot, 0, 4, false, None),
+        HansApproachAction::Retry
+    ));
+    snapshot.seed_npcs(npcs);
+    let mut blocked = scene.clone();
+    for z in 0..blocked.height {
+        blocked.collision_flags[(blocked.height + z) as usize] = client::dash3d::CollisionFlag::W_E;
+        blocked.collision_flags[(2 * blocked.height + z) as usize] =
+            client::dash3d::CollisionFlag::W_W;
+    }
+    snapshot.seed_scene(blocked);
+    snapshot.seed_tick(1);
+    assert!(matches!(
+        hans_approach_action(&snapshot, 0, 4, false, Some(0)),
+        HansApproachAction::Retry
+    ));
+    snapshot.seed_scene(scene);
+    snapshot.seed_tick(2);
+    assert!(matches!(
+        hans_approach_action(&snapshot, 0, 4, false, Some(1)),
+        HansApproachAction::Retarget(current) if current.index == 1 && current.tile.x == 49
+    ));
+    assert!(matches!(
+        hans_approach_action(&snapshot, 0, 4, false, Some(2)),
+        HansApproachAction::Wait
+    ));
+    snapshot.seed_chat_modal(1, vec!["dialogue".into()]);
+    assert!(matches!(
+        hans_approach_action(&snapshot, 0, 4, false, Some(2)),
+        HansApproachAction::Dialogue
+    ));
+}
+
+#[test]
+fn hans_present_without_dialogue_still_expires() {
+    let mut snapshot = hans_target_snapshot(51);
+    for tick in 70..74 {
+        snapshot.seed_tick(tick);
+        assert!(matches!(
+            hans_approach_action(&snapshot, 70, 4, false, None),
+            HansApproachAction::Retarget(_)
+        ));
+    }
+    snapshot.seed_tick(74);
+    assert!(matches!(
+        hans_approach_action(&snapshot, 70, 4, false, None),
+        HansApproachAction::Deadline
+    ));
+}
+
+#[test]
+fn nightly_quiet_lock_environment_probe() {
+    let expected = std::env::var_os("NIGHTLY_QUIET_LOCK")
+        .is_some_and(|path| !path.is_empty() && Path::new(&path).exists());
+    assert_eq!(nightly_quiet_lock_held(), expected);
+}
+
+#[test]
+fn nightly_quiet_lock_callsite_uses_the_configured_variable() -> Result<(), String> {
+    let home = ScratchHome::new()?;
+    let lock = home.0.join("callsite-quiet");
+    fs::create_dir(&lock).map_err(|error| error.to_string())?;
+    let result = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+        .args([
+            "--exact",
+            "nightly_quiet_lock_environment_probe",
+            "--nocapture",
+        ])
+        .env("NIGHTLY_QUIET_LOCK", &lock)
+        .env_remove("NIGHTLY_QUIET_LOCK_WRONG")
+        .output()
+        .map_err(|error| error.to_string())?;
+    assert!(
+        result.status.success(),
+        "quiet-lock call-site subprocess: {}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+fn nightly_quiet_lock_uses_the_configured_path() -> Result<(), String> {
+    let home = ScratchHome::new()?;
+    let lock = home.0.join("configured-quiet");
+    let configured = |name: &str| {
+        assert_eq!(name, "NIGHTLY_QUIET_LOCK");
+        Some(lock.as_os_str().to_owned())
+    };
+    assert!(!nightly_quiet_lock_from(|_| None));
+    assert!(!nightly_quiet_lock_from(|_| Some("".into())));
+    assert!(!nightly_quiet_lock_from(configured));
+    fs::create_dir(&lock).map_err(|error| error.to_string())?;
+    assert!(nightly_quiet_lock_from(configured));
+    Ok(())
 }
 
 fn talk_target_snapshot(rows: [(usize, i32, i32); 2]) -> GameSnapshot {

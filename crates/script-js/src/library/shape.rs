@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::library::js_cache::{CacheMeta, JsCache};
+use crate::library::js_cache::{CacheMeta, CacheRole, JsCache};
 use script::card::ScriptSource;
 
 /// Existing source bound applied to operator-loaded script bodies.
@@ -37,44 +37,19 @@ pub enum LoadShape {
     Reject,
 }
 
-/// Classify a JS source by marker scan. Compat markers win over the
-/// native `tick` export when a source carries both, and a default-export
-/// `LoopingBot`/`TaskBot`/`TreeBot` subclass (the catalog shape) also
-/// wins over the native `tick` export.
-pub fn detect_shape(source: &str) -> LoadShape {
-    if source.contains("defineBot(") || source.contains("__rs2b0tManifest") {
-        LoadShape::CompatDefineBot
-    } else if source.contains("export default class")
-        && ["LoopingBot", "TaskBot", "TreeBot"]
-            .iter()
-            .any(|base| source.contains(&format!("extends {base}")))
-    {
-        LoadShape::CompatClass
-    } else if source.contains("export function tick")
-        || source.contains("export async function tick")
-    {
-        LoadShape::NativeTick
-    } else {
-        LoadShape::Reject
-    }
-}
-
-/// Provenance for which public JS API a card was classified against.
+/// The checked public JS API of a card, fixed by static preparation.
 /// Not part of identity or the cache key.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ApiFamily {
-    /// Unversioned `export function tick` — today's Proxy (`api.tick` only).
-    Unversioned,
     /// rs2b0t compatibility load path.
     V1,
-    /// Native host authoring (`export const apiVersion = 2`).
+    /// Native host authoring: a manifest-form `tick` module.
     V2,
 }
 
 impl ApiFamily {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Unversioned => "unversioned",
             Self::V1 => "v1",
             Self::V2 => "v2",
         }
@@ -106,36 +81,13 @@ impl fmt::Display for VersionDiag {
     }
 }
 
-/// Parse an exported `const apiVersion = <numeric>` declaration.
+/// Parse a compat script's optional exported `const apiVersion = <numeric>`.
+/// Only an admitted compat shape reaches this check; native routing never
+/// reads a standalone `apiVersion`.
 ///
-/// Comments and string literals are ignored. Numeric literal `2.0` equals `2`.
-pub fn parse_declared_api_version(source: &str) -> Result<Option<u32>, VersionDiag> {
-    {
-        parse_declared_api_version_ast(source)
-    }
-}
-
-/// Combine [`detect_shape`] with [`parse_declared_api_version`].
-/// Never silently falls back from an explicit version.
-pub fn resolve_api_family(source: &str) -> Result<(LoadShape, ApiFamily), String> {
-    let shape = detect_shape(source);
-    let version = parse_declared_api_version(source).map_err(|d| d.to_string())?;
-    match (shape, version) {
-        (LoadShape::NativeTick, Some(2)) => Ok((shape, ApiFamily::V2)),
-        (LoadShape::CompatDefineBot | LoadShape::CompatClass, Some(2)) => {
-            Err("api-version-conflict: v2 with compatibility shape".into())
-        }
-        (LoadShape::NativeTick, Some(1)) => Err("api-version-conflict: v1 with native tick".into()),
-        (LoadShape::CompatDefineBot | LoadShape::CompatClass, Some(1)) => {
-            Ok((shape, ApiFamily::V1))
-        }
-        (LoadShape::Reject, Some(2)) => Err("api-version-missing-tick".into()),
-        (LoadShape::Reject, Some(1)) => Ok((shape, ApiFamily::Unversioned)),
-        (LoadShape::NativeTick, None) => Ok((shape, ApiFamily::Unversioned)),
-        (LoadShape::CompatDefineBot | LoadShape::CompatClass, None) => Ok((shape, ApiFamily::V1)),
-        (LoadShape::Reject, None) => Ok((shape, ApiFamily::Unversioned)),
-        (_, Some(other)) => Err(format!("api-version-unsupported: {other}")),
-    }
+/// Comments and string literals are ignored. Numeric literal `1.0` equals `1`.
+pub(crate) fn compat_declared_api_version(source: &str) -> Result<Option<u32>, VersionDiag> {
+    parse_declared_api_version_ast(source)
 }
 
 fn parse_declared_api_version_ast(source: &str) -> Result<Option<u32>, VersionDiag> {
@@ -310,22 +262,11 @@ pub fn live_file_fixture_stem(name: &str) -> Option<&'static str> {
 pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
     match file_name {
         "bone_burier_v2.ts"
-        | "bone_burier_v2.js"
         | "guardian_claim_toggle.js"
         | "route_inspect_brimhaven_v2.ts"
         | "prayer_v2.ts"
-        | "prayer_v1.ts"
         | "boat_fare_v1.ts"
-        | "line_of_sight_v2.ts"
-        | "actor_observation_v2.ts"
-        | "fight_field_v2.ts"
-        | "hold_spot_v2.ts"
-        | "retreat_spot_v2.ts"
         | "walk_spot_v2.ts"
-        | "enter_lair_v2.ts"
-        | "leave_lair_v2.ts"
-        | "acquire_key_v2.ts"
-        | "cell_v2.ts"
         | "bank_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
@@ -881,11 +822,15 @@ fn cached_preparation_js(
     let remaining = MAX_PREPARATION_RESULT_BYTES
         .checked_sub(current_result_bytes)
         .ok_or_else(|| "prepared JavaScript exceeds the 16 MiB result limit".to_string())?;
-    let object = cache.object_path(&JsCache::origin_sha(source.as_bytes()));
+    let object = cache.object_path(
+        CacheRole::Sibling,
+        path,
+        &JsCache::origin_sha(source.as_bytes()),
+    );
     if std::fs::metadata(&object).is_ok_and(|metadata| metadata.len() > remaining as u64) {
         return Err("cached JavaScript exceeds the 16 MiB result limit".into());
     }
-    let cached = cache.get_or_transpile(path, source.as_bytes(), meta.clone())?;
+    let cached = cache.get_or_compile(CacheRole::Sibling, path, source, source, meta.clone())?;
     if cached.js.len() > remaining {
         return Err("prepared JavaScript exceeds the 16 MiB result limit".into());
     }
@@ -1208,7 +1153,6 @@ pub(super) fn catalog_defect_reason(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use script::identity::{card_identity_id, file_identity};
 
     #[test]
     fn transpile_ts_parses_a_bom_prefixed_source() {
@@ -1295,122 +1239,25 @@ export const target = resolveDestination('Lumbridge');"#;
     }
 
     #[test]
-    fn live_example_paths_are_exact_distinct_files() {
-        let ts = live_example_path("bone_burier_v2.ts").expect("checked-in ts example");
-        let js = live_example_path("bone_burier_v2.js").expect("checked-in js example");
-        assert!(ts.ends_with("bone_burier_v2.ts"), "{}", ts.display());
-        assert!(js.ends_with("bone_burier_v2.js"), "{}", js.display());
-        assert_ne!(ts, js);
-        assert_ne!(file_identity(&ts), file_identity(&js));
-        assert_ne!(
-            card_identity_id(ScriptSource::File, &ts, "bone_burier_v2"),
-            card_identity_id(ScriptSource::File, &js, "bone_burier_v2")
-        );
+    fn live_example_paths_match_curated_file_names() {
+        for file in [
+            "bone_burier_v2.ts",
+            "guardian_claim_toggle.js",
+            "route_inspect_brimhaven_v2.ts",
+            "prayer_v2.ts",
+            "boat_fare_v1.ts",
+            "walk_spot_v2.ts",
+            "bank_v2.ts",
+        ] {
+            let path =
+                live_example_path(file).unwrap_or_else(|| panic!("missing curated example {file}"));
+            assert_eq!(path.file_name().and_then(|name| name.to_str()), Some(file));
+        }
+        assert!(live_example_path("bone_burier_v2.js").is_none());
         assert!(live_example_path("bone_burier_v2").is_none());
         assert!(live_example_path("TradeBot").is_none());
-        assert!(live_example_path("bone_burier.ts").is_none());
-    }
-
-    #[test]
-    fn prayer_qualification_examples_are_exact_file_cards() {
-        let v2 = live_example_path("prayer_v2.ts").expect("checked-in prayer v2 example");
-        let v1 = live_example_path("prayer_v1.ts").expect("checked-in prayer v1 adapter");
-        assert!(v2.ends_with("prayer_v2.ts"), "{}", v2.display());
-        assert!(v1.ends_with("prayer_v1.ts"), "{}", v1.display());
-        assert_ne!(file_identity(&v2), file_identity(&v1));
         assert!(live_example_path("prayer_v2").is_none());
-        assert!(live_example_path("prayer_v1").is_none());
         assert!(live_example_path("Prayer.ts").is_none());
-    }
-
-    #[test]
-    fn line_of_sight_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("line_of_sight_v2.ts").expect("checked-in los v2 example");
-        assert!(v2.ends_with("line_of_sight_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("line_of_sight_v2").is_none());
-        assert!(live_example_path("LineOfSight.ts").is_none());
-    }
-
-    #[test]
-    fn actor_observation_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("actor_observation_v2.ts")
-            .expect("checked-in actor observation v2 example");
-        assert!(v2.ends_with("actor_observation_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("actor_observation_v2").is_none());
-        assert!(live_example_path("ActorObservation.ts").is_none());
-    }
-
-    #[test]
-    fn fight_field_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("fight_field_v2.ts").expect("checked-in fight field v2 example");
-        assert!(v2.ends_with("fight_field_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("fight_field_v2").is_none());
-        assert!(live_example_path("FightField.ts").is_none());
-    }
-
-    #[test]
-    fn hold_spot_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("hold_spot_v2.ts").expect("checked-in hold spot v2 example");
-        assert!(v2.ends_with("hold_spot_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("hold_spot_v2").is_none());
-        assert!(live_example_path("HoldSpot.ts").is_none());
-    }
-
-    #[test]
-    fn retreat_spot_qualification_example_is_an_exact_file_card() {
-        let v2 =
-            live_example_path("retreat_spot_v2.ts").expect("checked-in retreat spot v2 example");
-        assert!(v2.ends_with("retreat_spot_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("retreat_spot_v2").is_none());
-        assert!(live_example_path("RetreatSpot.ts").is_none());
-    }
-
-    #[test]
-    fn walk_spot_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("walk_spot_v2.ts").expect("checked-in walk spot v2 example");
-        assert!(v2.ends_with("walk_spot_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("walk_spot_v2").is_none());
-        assert!(live_example_path("WalkSpot.ts").is_none());
-    }
-
-    #[test]
-    fn enter_lair_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("enter_lair_v2.ts").expect("checked-in enter lair v2 example");
-        assert!(v2.ends_with("enter_lair_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("enter_lair_v2").is_none());
-        assert!(live_example_path("EnterLair.ts").is_none());
-    }
-
-    #[test]
-    fn leave_lair_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("leave_lair_v2.ts").expect("checked-in leave lair v2 example");
-        assert!(v2.ends_with("leave_lair_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("leave_lair_v2").is_none());
-        assert!(live_example_path("LeaveLair.ts").is_none());
-    }
-
-    #[test]
-    fn acquire_key_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("acquire_key_v2.ts").expect("checked-in acquire key v2 example");
-        assert!(v2.ends_with("acquire_key_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("acquire_key_v2").is_none());
-        assert!(live_example_path("AcquireKey.ts").is_none());
-    }
-
-    #[test]
-    fn cell_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("cell_v2.ts").expect("checked-in cell v2 example");
-        assert!(v2.ends_with("cell_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("cell_v2").is_none());
-        assert!(live_example_path("Cell.ts").is_none());
-    }
-
-    #[test]
-    fn bank_qualification_example_is_an_exact_file_card() {
-        let v2 = live_example_path("bank_v2.ts").expect("checked-in bank v2 example");
-        assert!(v2.ends_with("bank_v2.ts"), "{}", v2.display());
-        assert!(live_example_path("bank_v2").is_none());
-        assert!(live_example_path("Bank.ts").is_none());
     }
 
     /// Every pinned catalog reason and its kind, plus the operator line each

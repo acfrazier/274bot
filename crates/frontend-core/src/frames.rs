@@ -401,19 +401,19 @@ pub(crate) struct ClientOps<H, P, T, S, L = NoLiveFrame> {
 pub(crate) struct NoLiveFrame;
 
 pub(crate) trait LiveClientFrame<C>: Send + Sync + 'static {
-    fn run(&self, client: &mut C, name: &str, hold: bool);
+    fn run(&self, client: &mut C, name: &str, frame: SlotFrameInput);
 }
 
 impl<C> LiveClientFrame<C> for NoLiveFrame {
-    fn run(&self, _: &mut C, _: &str, _: bool) {}
+    fn run(&self, _: &mut C, _: &str, _: SlotFrameInput) {}
 }
 
 impl<C, F> LiveClientFrame<C> for F
 where
-    F: Fn(&mut C, &str, bool) + Send + Sync + 'static,
+    F: Fn(&mut C, &str, SlotFrameInput) + Send + Sync + 'static,
 {
-    fn run(&self, client: &mut C, name: &str, hold: bool) {
-        self(client, name, hold);
+    fn run(&self, client: &mut C, name: &str, frame: SlotFrameInput) {
+        self(client, name, frame);
     }
 }
 
@@ -504,7 +504,7 @@ where
             name,
             &shared.context(name, hold, session_boundary, walk_cancelled),
         );
-        ops.live.run(client, name, hold);
+        ops.live.run(client, name, frame);
         let Some(here) = (ops.here)(client) else {
             return;
         };

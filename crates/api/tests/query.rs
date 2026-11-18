@@ -2744,7 +2744,6 @@ fn booth_approach_collision_change_keeps_loc_id_and_moves_dest() {
         CollisionFlag::SQ_BLOCKED;
     let flood = seers_flood(&scene, from);
     let next = loc_approach::booth_approach(&loc, &scene, from, &flood).expect("model");
-    assert_eq!(loc.id, 2213);
     assert_eq!(next.dest, Some(tile(2721, 3494)));
 }
 

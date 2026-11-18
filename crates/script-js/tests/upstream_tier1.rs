@@ -53,14 +53,37 @@ fn collect_test_files(root: &Path) -> Vec<PathBuf> {
 
 fn test_url(file: &str) -> String {
     let file = file.strip_suffix(".ts").unwrap_or(file);
-    format!("{TEST_MODULE_PREFIX}/{file}")
+    format!("{TEST_MODULE_PREFIX}/{file}.js")
 }
 
+/// The relative specifier that names `target` from a module in `from_dir`.
+/// Preparation resolves in-memory siblings by relative specifier only.
+fn relative_specifier(from_dir: &str, target: &str) -> String {
+    let from: Vec<&str> = from_dir
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let to: Vec<&str> = target.split('/').filter(|part| !part.is_empty()).collect();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let ups = from.len() - common;
+    let mut parts: Vec<&str> = if ups == 0 { vec!["."] } else { vec![".."; ups] };
+    parts.extend(&to[common..]);
+    parts.join("/")
+}
+
+fn module_dir(url: &str) -> &str {
+    url.rsplit_once('/').map_or("", |(dir, _)| dir)
+}
+
+const BOT_ENTRY_DIR: &str = "/rs2b0t/bot/scripts/bot";
+
 fn bot_source(test_url: &str) -> String {
+    let harness = relative_specifier(BOT_ENTRY_DIR, TEST_HARNESS_URL);
+    let test = relative_specifier(BOT_ENTRY_DIR, test_url);
     format!(
         r#"
-import {{ runTests }} from '{TEST_HARNESS_URL}';
-import '{test_url}';
+import {{ runTests }} from '{harness}';
+import '{test}';
 export default class UpstreamTier1 extends LoopingBot {{
     async loop() {{
         if (globalThis.__upstream_started) return;
@@ -132,11 +155,14 @@ fn run_upstream_source(
             return serde_json::json!({ "file": file, "stage": "transpile", "error": error })
         }
     };
-    let harness_import = format!("'{TEST_HARNESS_URL}'");
+    let url = test_url(file);
+    let harness_import = format!(
+        "'{}'",
+        relative_specifier(module_dir(&url), TEST_HARNESS_URL)
+    );
     let adapted = js
         .replace("'bun:test'", &harness_import)
         .replace("\"bun:test\"", &harness_import);
-    let url = test_url(file);
     let siblings = vec![
         (TEST_HARNESS_URL.to_string(), harness.to_string()),
         (url.clone(), adapted),
@@ -378,7 +404,6 @@ fn upstream_tier1_runs_unmodified_sources_in_load() {
             result["fail"].as_u64().unwrap_or(0),
         );
     }
-    assert_eq!(results.len(), EXPECTED_TEST_FILES);
     let actual: Vec<_> = results.iter().map(outcome_manifest_entry).collect();
     assert_eq!(
         actual.as_slice(),

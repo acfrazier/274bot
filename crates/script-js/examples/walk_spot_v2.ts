@@ -1,6 +1,7 @@
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
 type HuntHooks = import('../host-js/index.d.ts').HuntHooks;
 type HuntSite = import('../host-js/index.d.ts').HuntSite;
+import type { ScriptManifest } from '../host-js/index.d.ts';
 
 /**
  * Headed File witness: one walk to a tile Chebyshev 13–20 away, never a
@@ -11,7 +12,17 @@ type HuntSite = import('../host-js/index.d.ts').HuntSite;
  * proof: anything but `done` on dest throws. The receipt names the Start
  * tile, the tile after the run, dest and the outcome.
  */
-export const apiVersion = 2;
+export const manifest = {
+    apiVersion: 2,
+    name: 'WalkSpot',
+    version: '1',
+    author: '274bot',
+    description: 'Walks to one tile 13 to 20 tiles away and reports the tile it reached.',
+    category: 'Examples',
+    tags: ['walk'],
+    settings: {},
+    capabilities: [],
+} as const satisfies ScriptManifest;
 
 const STOP_OK = 'walk spot qualification complete';
 const RECEIPT_PREFIX = 'walk-spot-receipt:';

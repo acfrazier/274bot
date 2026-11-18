@@ -979,6 +979,101 @@ fn combat_machine_never_policy_keeps_the_cure_and_eats() {
 }
 
 #[test]
+fn combat_machine_cures_before_poison_adjusted_no_food_stopline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.npcs[0].animation = scene.melee_seq();
+    scene.npcs[0].animation_frame = 0;
+    scene.inventory.push(scene.held("4doseantipoison", 0));
+    scene.stat(3, 1, 40);
+    scene.refresh();
+
+    let evidence = EvidenceStamp {
+        run: RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+    let mut threats = ThreatSet::default();
+    threats.observe(&frame, &scene.tables, 1);
+    let danger = threats
+        .danger(&frame, &scene.tables, 1, false, false)
+        .expect("the warlord has known melee danger");
+    let base_lines = select::lines(Some(danger), 40);
+    let hp = base_lines.emergency + 1;
+    let condition = api::condition::BotCondition {
+        tick: 1,
+        session: api::condition::SessionMark::Live,
+        hp: u8::try_from(hp).unwrap(),
+        hp_max: 40,
+        hp_known: true,
+        poison: api::condition::PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        },
+        poison_window: None,
+        food: api::condition::FoodSummary::default(),
+        cures: api::condition::CureDoses {
+            antipoison: 1,
+            ..api::condition::CureDoses::default()
+        },
+    };
+    let poison_fire =
+        crate::survival::math::poison_fire(Some(&condition), &threats, &scene.tables, 1);
+    assert!(hp <= base_lines.with_poison(poison_fire).emergency);
+    scene.stat(3, hp, 40);
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.fallback = Fallback::Abort;
+    request.allow.food = false;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.phase = Phase::Fight;
+    harness.runtime.condition = Some(condition);
+    harness.runtime.poison_unknown_pulse = scene.tables.unknown_poison_pulse();
+
+    assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
+    let cure = harness.drain(None);
+    assert_len(&cure, 1);
+    assert!(
+        matches!(
+            cure.get(0),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == "Antipoison(4)" && action == "Drink"
+        ),
+        "the held cure must be admitted before the poison-adjusted no-food stopline"
+    );
+    assert_eq!(harness.machine.end, None);
+    assert_eq!(harness.machine.phase, Phase::Fight);
+
+    scene.install();
+    scene.refresh();
+    harness.runtime.condition.as_mut().unwrap().tick = 2;
+    assert!(matches!(harness.poll(&scene.snapshot, 2), Poll::Pending));
+    assert_eq!(harness.machine.end, None);
+    assert_eq!(harness.machine.phase, Phase::Fight);
+
+    scene.inventory.clear();
+    scene.refresh();
+    let condition = harness.runtime.condition.as_mut().unwrap();
+    condition.tick = 4;
+    condition.poison = api::condition::PoisonState::Clear;
+    condition.cures.antipoison = 0;
+    assert!(matches!(harness.poll(&scene.snapshot, 4), Poll::Pending));
+    harness.drain(None);
+    assert_eq!(harness.machine.end, None);
+    assert_eq!(harness.machine.phase, Phase::Fight);
+}
+
+#[test]
 fn combat_machine_drinks_antipoison_when_lethal() {
     if !api::test_support::game_data_available() {
         return;
@@ -5902,6 +5997,81 @@ fn contains_wear(batch: &DrainedBatch, wanted: &str) -> bool {
             Some(HostEffect::Interaction(InteractReq::Wear { name })) if name.as_str() == wanted
         )
     })
+}
+
+#[test]
+fn melee_prep_waits_for_split_weapon_wear_frame() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("cow");
+    let mut sword = scene.held("bronze_scimitar", 0);
+    let id = sword.def.id;
+    scene.inventory.push(sword.clone());
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.set_kit(Arc::new(CompiledKit {
+        worn: Arc::from([(3, id)]),
+        ..CompiledKit::default()
+    }));
+    let mut harness = Harness::new(&scene, request);
+
+    let first = harness.pending_batch(&scene, 1);
+    assert!(contains_wear(&first, sword.def.name.as_deref().unwrap()));
+
+    scene.inventory.clear();
+    scene.refresh();
+    assert!(
+        matches!(harness.poll(&scene.snapshot, 2), Poll::Pending),
+        "a missing weapon gets one frame for the split equipment packet"
+    );
+    let waiting = harness.drain(None);
+    assert_len(&waiting, 0);
+    assert_eq!(harness.machine.end, None);
+    assert_eq!(harness.machine.phase, Phase::Engage);
+
+    sword.container = ItemContainer::Equipment;
+    sword.slot = 3;
+    scene.equipment.push(sword);
+    scene.refresh();
+    assert!(matches!(harness.poll(&scene.snapshot, 3), Poll::Pending));
+    harness.drain(None);
+    assert_eq!(harness.machine.end, None);
+
+    let mut missing_scene = Scene::new("cow");
+    let missing_sword = missing_scene.held("bronze_scimitar", 0);
+    let missing_id = missing_sword.def.id;
+    missing_scene.inventory.push(missing_sword.clone());
+    missing_scene.refresh();
+
+    let mut missing_request = missing_scene.request();
+    missing_request.set_kit(Arc::new(CompiledKit {
+        worn: Arc::from([(3, missing_id)]),
+        ..CompiledKit::default()
+    }));
+    let mut missing_harness = Harness::new(&missing_scene, missing_request);
+
+    let missing_first = missing_harness.pending_batch(&missing_scene, 1);
+    assert!(contains_wear(
+        &missing_first,
+        missing_sword.def.name.as_deref().unwrap()
+    ));
+
+    missing_scene.inventory.clear();
+    missing_scene.refresh();
+    assert!(matches!(
+        missing_harness.poll(&missing_scene.snapshot, 2),
+        Poll::Pending
+    ));
+    assert_eq!(missing_harness.drain(None).len(), 0);
+    assert_eq!(missing_harness.machine.end, None);
+
+    let report = missing_harness.ready(&missing_scene, 3);
+    assert_eq!(
+        report.end,
+        CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Weapon))
+    );
 }
 
 #[test]

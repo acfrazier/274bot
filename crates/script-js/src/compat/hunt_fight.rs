@@ -2343,6 +2343,162 @@ fn seed_protect_observation() -> i32 {
 mod tests {
     use super::*;
 
+    fn fight_npc(index: i32, name: &str) -> FightNpc {
+        FightNpc {
+            index,
+            id: 0,
+            name: name.into(),
+            x: 0,
+            z: 0,
+            level: 0,
+            nx: 0,
+            nz: 0,
+            size: 1,
+            distance: 0,
+            health: 100,
+            in_combat: false,
+            actions: Vec::new(),
+            target_kind: 0,
+            target_index: -1,
+        }
+    }
+
+    #[test]
+    fn fight_reset_clears_target_loot_and_watch_state_without_resetting_pass() {
+        let now = Instant::now();
+        let mut runtime = FightRuntime::new(17, now);
+        runtime.mode = Mode::Pass;
+        runtime.pass = 4;
+        runtime.engaged = Some(42);
+        runtime.loot_target = Some(42);
+        runtime.engaged_health = 28;
+        runtime.last_hp = 14;
+        runtime.watched_anchor = Some(Tile {
+            x: 3,
+            z: 5,
+            level: 0,
+        });
+        runtime.unattackable_since = Some(now);
+        runtime.reissues = 2;
+        runtime.blind_since = now
+            .checked_sub(Duration::from_secs(1))
+            .expect("the test clock is more than one second old");
+        let skip_until = now + Duration::from_secs(60);
+        runtime.skip.insert(7, skip_until);
+        runtime.seen.insert(
+            7,
+            Sighting {
+                x: 12,
+                z: 14,
+                since: now,
+                at: now,
+            },
+        );
+        let old_blind_since = runtime.blind_since;
+
+        runtime.reset_task();
+
+        assert_eq!(runtime.engaged, None);
+        assert_eq!(runtime.loot_target, None);
+        assert_eq!(runtime.engaged_health, -1);
+        assert_eq!(runtime.reissues, 0);
+        assert_eq!(runtime.last_hp, -1);
+        assert_eq!(runtime.watched_anchor, None);
+        assert_eq!(runtime.unattackable_since, None);
+        assert!(runtime.blind_since > old_blind_since);
+        assert_eq!(runtime.mode, Mode::Pass);
+        assert_eq!(runtime.pass, 4);
+        assert_eq!(runtime.skip.get(&7), Some(&skip_until));
+        let sighting = runtime
+            .seen
+            .get(&7)
+            .expect("seen target survives task reset");
+        assert_eq!((sighting.x, sighting.z), (12, 14));
+        assert_eq!(sighting.since, now);
+    }
+
+    #[test]
+    fn fight_interrupt_watch_forgets_samples_but_keeps_engagement() {
+        let now = Instant::now();
+        let mut runtime = FightRuntime::new(17, now);
+        runtime.engaged = Some(42);
+        runtime.loot_target = Some(42);
+        runtime.last_hp = 18;
+        runtime.watched_anchor = Some(Tile {
+            x: 3,
+            z: 5,
+            level: 0,
+        });
+        runtime.unattackable_since = Some(now);
+        runtime.blind_since = now
+            .checked_sub(Duration::from_secs(1))
+            .expect("the test clock is more than one second old");
+        let old_blind_since = runtime.blind_since;
+        let skip_until = now + Duration::from_secs(60);
+        runtime.skip.insert(8, skip_until);
+        runtime.seen.insert(
+            8,
+            Sighting {
+                x: 20,
+                z: 22,
+                since: now,
+                at: now,
+            },
+        );
+
+        runtime.interrupt_watch();
+
+        assert_eq!(runtime.last_hp, -1);
+        assert_eq!(runtime.watched_anchor, None);
+        assert_eq!(runtime.unattackable_since, None);
+        assert!(runtime.blind_since > old_blind_since);
+        assert_eq!(runtime.engaged, Some(42));
+        assert_eq!(runtime.loot_target, Some(42));
+        assert_eq!(runtime.skip.get(&8), Some(&skip_until));
+        let sighting = runtime
+            .seen
+            .get(&8)
+            .expect("seen target survives watch interrupt");
+        assert_eq!((sighting.x, sighting.z), (20, 22));
+        assert_eq!(sighting.since, now);
+    }
+
+    #[test]
+    fn fight_blocks_loot_until_scene_and_hunt_target_are_clear() {
+        let projection = parse_projection(&json!({
+            "target": "Cow",
+            "alsoHunt": ["Calf"],
+        }));
+        let mut runtime = FightRuntime::new(17, Instant::now());
+        let mut obs = FightObservation::ready();
+        runtime.loot_target = Some(42);
+
+        obs.ingame = false;
+        assert!(blocks_loot_inner(&mut runtime, &projection, &obs));
+        assert_eq!(runtime.loot_target, Some(42));
+
+        obs.ingame = true;
+        runtime.engaged = Some(99);
+        assert!(blocks_loot_inner(&mut runtime, &projection, &obs));
+        assert_eq!(runtime.loot_target, Some(42));
+
+        runtime.engaged = None;
+        obs.npcs = vec![fight_npc(42, "Cow")];
+        assert!(blocks_loot_inner(&mut runtime, &projection, &obs));
+
+        runtime.loot_target = Some(43);
+        obs.npcs = vec![fight_npc(43, "Calf")];
+        assert!(blocks_loot_inner(&mut runtime, &projection, &obs));
+
+        runtime.loot_target = Some(44);
+        obs.npcs = vec![fight_npc(44, "Rat")];
+        assert!(!blocks_loot_inner(&mut runtime, &projection, &obs));
+        assert_eq!(runtime.loot_target, None);
+
+        obs.npcs = vec![fight_npc(42, "Cow")];
+        assert!(!blocks_loot_inner(&mut runtime, &projection, &obs));
+    }
+
     #[test]
     fn fight_consumer_emits_the_native_missiles_if_button() {
         if !api::test_support::game_data_available() {

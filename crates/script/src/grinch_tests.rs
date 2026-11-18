@@ -662,12 +662,11 @@ fn card_schema_exposes_native_defaults_all_items_and_mask_labels() {
             defaults.contains(&id),
             "item {id} is not selected by default"
         );
-        let label = items
+        items
             .option_labels
             .iter()
             .find(|label| label.contains(&id.to_string()))
             .unwrap_or_else(|| panic!("item label omits ID {id}"));
-        assert!(label.contains(&id.to_string()));
     }
     for (id, colour) in [(1053, "green"), (1055, "blue"), (1057, "red")] {
         let label = items

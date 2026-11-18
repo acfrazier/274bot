@@ -113,7 +113,7 @@ impl EscapeWitness {
 
 fn state(snapshot: &GameSnapshot) -> Value {
     json!({"tick":snapshot.tick(),"tile":snapshot.tile(),"hitpoints":hitpoints(snapshot),
-        "taking_damage":snapshot.taking_damage(),
+        "taking_damage":snapshot.taking_damage(),"hitmarks":snapshot.hitmarks(),
         "actor":snapshot.local_player().map(|local| &local.player.actor)})
 }
 
@@ -160,7 +160,7 @@ fn steps(inside: bool, escape: Arc<Mutex<EscapeWitness>>) -> Vec<Step> {
             name: "normal walk south out of the nettle NPCs' reach",
             kind: StepKind::Perform {
                 send: Box::new(move |client, snapshot| {
-                    hitpoints(snapshot) == Some(8)
+                    hitpoints(snapshot).is_some_and(|hp| hp > 0 && hp <= 8)
                         && walk_escape.lock().unwrap().send(client, snapshot)
                 }),
             },
@@ -179,7 +179,8 @@ fn steps(inside: bool, escape: Arc<Mutex<EscapeWitness>>) -> Vec<Step> {
             kind: StepKind::Await {
                 evidence: "own sting observed; escaped and quiet for four full game ticks",
                 ready: Box::new(move |snapshot| {
-                    hitpoints(snapshot) == Some(8) && escape.lock().unwrap().quiet.ready()
+                    hitpoints(snapshot).is_some_and(|hp| hp > 0 && hp <= 8)
+                        && escape.lock().unwrap().quiet.ready()
                 }),
                 summary: None,
             },
@@ -399,6 +400,16 @@ fn run_case(inside: bool, directory: &Path, mode: &str) -> Result<(), String> {
                 RunnerStatus::Passed | RunnerStatus::Failed(_)
             ) {
                 let evidence = runner.evidence().ok_or("terminal runner has no evidence")?;
+                // Keep the runner's terminal sample unchanged. Its stat packet
+                // can arrive after the fresh hitmark that already made it INVALID.
+                client.mainloop();
+                host::publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
+                let next = state(&snapshot);
+                fs::write(
+                    directory.join(format!("{mode}-next-snapshot.json")),
+                    next.to_string(),
+                )
+                .map_err(|error| error.to_string())?;
                 fs::write(
                     directory.join(format!("{mode}-runner.json")),
                     evidence.to_json(),
@@ -549,22 +560,160 @@ fn measured_windows_377() -> Result<(), String> {
         } else {
             "interference"
         };
-        if !events.iter().any(|event| {
-            event["classification"] == classification
-                && event["reason"] == "hitpoints-decreased"
-                && event["previous"]["hitpoints"] == 10
-                && event["sample"]["hitpoints"] == 8
-        }) {
-            return Err(format!(
-                "{mode}: receipt does not disclose the actual nettle disturbance"
-            ));
-        }
+        let next: Value = serde_json::from_slice(
+            &fs::read(directory.join(format!("{mode}-next-snapshot.json")))
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let observations = events
+            .iter()
+            .map(|event| nettle_disturbance(event, &next, classification))
+            .collect::<Vec<_>>();
+        let fixture = if observations.iter().any(Result::is_ok) {
+            Ok(())
+        } else if observations.contains(&Err(DisturbanceFixture::UnrelatedNpc)) {
+            Err(DisturbanceFixture::UnrelatedNpc)
+        } else {
+            Err(DisturbanceFixture::NettleNotObserved)
+        };
+        fs::write(
+            directory.join(format!("{mode}-classification.json")),
+            json!({"outcome":if fixture.is_ok() { expected } else { "INVALID" },
+                "fixture_reason":fixture.as_ref().err(),"next_snapshot":next})
+            .to_string(),
+        )
+        .map_err(|error| error.to_string())?;
+        fixture.map_err(|reason| format!("{mode}: INVALID fixture {reason:?}"))?;
         println!(
             "{}",
             json!({"cell":"interference_377","mode":mode,"outcome":expected,"exit_code":exit_code})
         );
     }
     Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+enum DisturbanceFixture {
+    UnrelatedNpc,
+    NettleNotObserved,
+}
+
+fn nettle_disturbance(
+    event: &Value,
+    next: &Value,
+    classification: &str,
+) -> Result<(), DisturbanceFixture> {
+    if event["targeting_npcs"]
+        .as_array()
+        .is_some_and(|npcs| !npcs.is_empty())
+    {
+        return Err(DisturbanceFixture::UnrelatedNpc);
+    }
+    let previous = &event["previous"];
+    let sample = &event["sample"];
+    let before = previous["hitpoints"].as_i64();
+    let after = sample["hitpoints"].as_i64();
+    let stat_damage = before.zip(after).is_some_and(|(a, b)| a - b == 2);
+    // Snapshot ticks are observer-local; hitmark loop cycles share the client clock.
+    let next_damage = sample["hitpoints"] == previous["hitpoints"]
+        && sample["tile"] == next["tile"]
+        && sample["hitmarks"]["loop_cycle"]
+            .as_i64()
+            .zip(next["hitmarks"]["loop_cycle"].as_i64())
+            .is_some_and(|(a, b)| b == a + 1)
+        && before
+            .zip(next["hitpoints"].as_i64())
+            .is_some_and(|(a, b)| a - b == 2);
+    let fresh_sting = sample["hitmarks"]["marks"].as_array().is_some_and(|marks| {
+        marks.iter().any(|mark| {
+            mark["value"] == 2
+                && mark["cycle"]
+                    .as_i64()
+                    .zip(previous["hitmark_cycle"].as_i64())
+                    .is_some_and(|(new, old)| new > old)
+                && mark["cycle"]
+                    .as_i64()
+                    .zip(sample["hitmarks"]["loop_cycle"].as_i64())
+                    .is_some_and(|(expires, cycle)| expires > cycle)
+        })
+    });
+    if event["classification"] == classification
+        && previous["session"] == sample["session"]
+        && sample["tile"] == json!(START_TILE)
+        && ((event["reason"] == "hitpoints-decreased" && stat_damage)
+            || (event["reason"] == "fresh-hitmark" && fresh_sting && next_damage))
+    {
+        Ok(())
+    } else {
+        Err(DisturbanceFixture::NettleNotObserved)
+    }
+}
+
+#[test]
+fn recorded_fresh_hitmark_can_precede_the_stat_packet() {
+    // INT-QUEUE-1117: the runner stopped at cycle 207, HP still 10.
+    let event = json!({
+        "classification":"interference","reason":"fresh-hitmark","targeting_npcs":[],
+        "previous":{"session":2,"tick":8,"hitpoints":10,"hitmark_cycle":0},
+        "sample":{"session":2,"tick":9,"tile":START_TILE,"hitpoints":10,
+            "hitmark_cycle":277,"hitmarks":{"loop_cycle":207,
+                "marks":[{"value":2,"kind":1,"cycle":277}]}}
+    });
+    // The runner and diagnostic GameSnapshots have independent tick counters.
+    let next = json!({"tick":5,"tile":START_TILE,"hitpoints":8,
+        "hitmarks":{"loop_cycle":208}});
+    assert_eq!(nettle_disturbance(&event, &next, "interference"), Ok(()));
+    let mut moved_next = next.clone();
+    moved_next["tile"] = json!([START_TILE.0 + 1, START_TILE.1, START_TILE.2]);
+    assert_eq!(
+        nettle_disturbance(&event, &moved_next, "interference"),
+        Err(DisturbanceFixture::NettleNotObserved)
+    );
+    let mut other_session = event.clone();
+    other_session["previous"]["session"] = json!(1);
+    assert_eq!(
+        nettle_disturbance(&other_session, &next, "interference"),
+        Err(DisturbanceFixture::NettleNotObserved)
+    );
+    let mut npc = event.clone();
+    npc["targeting_npcs"] = json!([4]);
+    assert_eq!(
+        nettle_disturbance(&npc, &next, "interference"),
+        Err(DisturbanceFixture::UnrelatedNpc)
+    );
+    let mut no_damage = next.clone();
+    no_damage["hitpoints"] = json!(10);
+    assert_eq!(
+        nettle_disturbance(&event, &no_damage, "interference"),
+        Err(DisturbanceFixture::NettleNotObserved)
+    );
+    let mut stat_first = event.clone();
+    stat_first["reason"] = json!("hitpoints-decreased");
+    stat_first["sample"]["hitpoints"] = json!(8);
+    assert_eq!(
+        nettle_disturbance(&stat_first, &Value::Null, "interference"),
+        Ok(())
+    );
+    let mut extra_hit = next.clone();
+    extra_hit["hitpoints"] = json!(6);
+    assert_eq!(
+        nettle_disturbance(&event, &extra_hit, "interference"),
+        Err(DisturbanceFixture::NettleNotObserved)
+    );
+    for cycle in [207, 209] {
+        let mut not_next = next.clone();
+        not_next["hitmarks"]["loop_cycle"] = json!(cycle);
+        assert_eq!(
+            nettle_disturbance(&event, &not_next, "interference"),
+            Err(DisturbanceFixture::NettleNotObserved)
+        );
+    }
+    let mut stale = event.clone();
+    stale["sample"]["hitmarks"]["marks"][0]["cycle"] = json!(0);
+    assert_eq!(
+        nettle_disturbance(&stale, &next, "interference"),
+        Err(DisturbanceFixture::NettleNotObserved)
+    );
 }
 
 #[test]

@@ -1,21 +1,13 @@
-pub(crate) mod acquire_key;
-pub(crate) mod actor_observation;
 pub(crate) mod bank;
-pub(crate) mod cell;
 pub(crate) mod client_377;
 pub(crate) mod clue;
 pub(crate) mod cook_377;
 
 pub(crate) mod boat_fare;
 pub(crate) mod combat;
-pub(crate) mod enter_lair;
-pub(crate) mod fight_field;
 pub(crate) mod gatherer;
 pub(crate) mod guardian_events;
-pub(crate) mod hold_spot;
 pub(crate) mod jive;
-pub(crate) mod leave_lair;
-pub(crate) mod line_of_sight;
 pub(crate) mod navigation;
 pub(crate) mod pair;
 pub(crate) mod prayer;
@@ -24,17 +16,13 @@ pub(crate) mod quantity;
 pub(crate) mod quester;
 pub(crate) mod ranging_guild;
 pub(crate) mod render;
-pub(crate) mod retreat_spot;
 pub(crate) mod route_inspect;
 pub(crate) mod script_basics;
 pub(crate) mod shop;
 pub(crate) mod survival_need;
 pub(crate) mod walk_spot;
 
-pub(crate) use acquire_key::acquire_key_v2_scenario;
-pub(crate) use actor_observation::actor_observation_v2_scenario;
 pub(crate) use bank::bank_v2_scenario;
-pub(crate) use cell::cell_v2_scenario;
 pub(crate) use client_377::client_377_scenario;
 pub(crate) use clue::{
     sherlock_coord_scenario, sherlock_dig_scenario, sherlock_guardian_scenario,
@@ -77,17 +65,12 @@ pub(crate) use combat::{
     moss_giant_scenario, rock_crab_bank_seeded_scenario, rock_crab_range_scenario,
     rock_crab_scenario,
 };
-pub(crate) use enter_lair::enter_lair_v2_scenario;
-pub(crate) use fight_field::fight_field_v2_scenario;
-pub(crate) use hold_spot::hold_spot_v2_scenario;
 pub(crate) use jive::{
     jive_chests_scenario, jive_crafting_scenario, jive_demons_scenario,
     jive_dragons_black_range_scenario, jive_dragons_mixed_food_restock_scenario,
     jive_dragons_potion_restock_scenario, jive_dragons_scenario, jive_enchanter_scenario,
     jive_kbd_scenario,
 };
-pub(crate) use leave_lair::leave_lair_v2_scenario;
-pub(crate) use line_of_sight::line_of_sight_v2_scenario;
 pub(crate) use navigation::{
     nav_brass_hut_scenario, nav_cart_scenario, nav_diagonal_door_scenario, nav_door_scenario,
     nav_elkoy_scenario, nav_essence_scenario, nav_mage_arena_bank_scenario,
@@ -98,7 +81,7 @@ pub(crate) use pair::{
     clue_duel_3554_scenario, duel_arena_scenario, flax_runner_scenario, jive_kq_four_scenario,
     mule_crafter_air_scenario, nature_crafter_air_scenario, script_trade_scenario,
 };
-pub(crate) use prayer::{prayer_v1_scenario, prayer_v2_scenario};
+pub(crate) use prayer::prayer_v2_scenario;
 pub(crate) use production::{
     alcher_custom_alias_scenario, alcher_custom_name_scenario, alcher_custom_scenario,
     alcher_defaults_scenario, alcher_dwarven_mine_scenario, alcher_fire_battlestaff_scenario,
@@ -141,7 +124,6 @@ pub(crate) use ranging_guild::{
     ranging_guild_round_scenario,
 };
 pub(crate) use render::render_smoke_scenario;
-pub(crate) use retreat_spot::retreat_spot_v2_scenario;
 pub(crate) use route_inspect::{
     brimhaven_moss_inspect_v1_scenario, route_inspect_brimhaven_v2_scenario,
 };

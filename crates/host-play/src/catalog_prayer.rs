@@ -1,6 +1,5 @@
 use super::*;
 pub const PRAYER_V2_STOP: &str = "prayer v2 qualification complete";
-pub const PRAYER_V1_STOP: &str = "prayer v1 qualification complete";
 
 fn protect_from_melee() -> &'static api::game_data::PrayerFact {
     super::ids::selected_catalog_game_data()

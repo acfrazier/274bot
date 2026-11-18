@@ -164,7 +164,6 @@ fn route_view_borrows_the_owner_route_under_the_world_identity() {
     assert_eq!(hop.effective_takeoff(), tile(2, 2, 0));
     assert_eq!(view.leg(2).unwrap_err(), ContractError::NoSuchLeg);
     // Route storage lives with the owner; the view is a borrow.
-    assert_eq!(route.legs.len(), 2);
 }
 
 #[test]

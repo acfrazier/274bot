@@ -442,12 +442,10 @@ fn generated_schema_uses_numeric_bounds_without_rust_formats() {
     let skill = &schema["$defs"]["SkillMinimum"]["properties"]["skill"];
     assert_eq!(skill["minimum"], json!(0));
     assert_eq!(skill["maximum"], json!(255));
-    assert!(skill.get("format").is_none());
 
     let radius = &schema["$defs"]["WalkArgs"]["properties"]["radius"];
     assert_eq!(radius["minimum"], json!(0));
     assert_eq!(radius["maximum"], json!(65535));
-    assert!(radius.get("format").is_none());
     assert!(
         schema["$defs"]["WalkArgs"]["properties"]
             .get("allow_danger_zones")

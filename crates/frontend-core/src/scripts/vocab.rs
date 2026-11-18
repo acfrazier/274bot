@@ -142,15 +142,6 @@ impl LoadShape {
             ScriptLoadShape::Reject => Self::Reject,
         }
     }
-
-    pub(crate) fn to_script(self) -> ScriptLoadShape {
-        match self {
-            Self::CompatDefineBot => ScriptLoadShape::CompatDefineBot,
-            Self::CompatClass => ScriptLoadShape::CompatClass,
-            Self::NativeTick => ScriptLoadShape::NativeTick,
-            Self::Reject => ScriptLoadShape::Reject,
-        }
-    }
 }
 
 #[cfg(feature = "js")]
@@ -500,7 +491,7 @@ impl<'a> LoadedCard<'a> {
 
     /// Its loader shape.
     pub fn shape(&self) -> LoadShape {
-        LoadShape::from_script(self.0.shape)
+        LoadShape::from_script(self.0.shape())
     }
 
     /// Its settings schema.

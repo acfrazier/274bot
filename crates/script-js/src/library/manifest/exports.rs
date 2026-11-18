@@ -22,6 +22,10 @@ use std::path::{Path, PathBuf};
 pub(super) struct ModuleGraph {
     entry: PathBuf,
     modules: HashMap<PathBuf, ModuleNode>,
+    /// The first import the graph could not resolve. Export analysis treats
+    /// that module as supplying nothing; a native entry refuses on it, while
+    /// a compat entry keeps its classification (its card stays unloadable).
+    unresolved: Option<UnresolvedModuleError>,
 }
 
 #[derive(Debug)]
@@ -38,6 +42,8 @@ pub(super) struct ModuleNode {
 enum Target {
     Local(PathBuf),
     Host,
+    /// An import that names no readable sibling.
+    Unresolved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -61,12 +67,92 @@ pub(super) struct DirectConst {
     pub binding: Option<deno_ast::swc::ast::Id>,
 }
 
+/// Where the module graph reads sibling sources.
+#[derive(Debug, Clone)]
+pub(crate) enum ModuleSources {
+    /// Siblings are origin files beside the entry on disk.
+    Disk,
+    /// Siblings are in memory, keyed by their runtime module URL
+    /// (`/rs2b0t/bot/scripts/...`). The entry path uses the same URL space.
+    /// Only the raw-origin test adapter reads in-memory siblings.
+    #[cfg(any(test, feature = "test-hooks"))]
+    Memory(Vec<(String, String)>),
+}
+
+impl ModuleSources {
+    fn entry_key(&self, path: &Path) -> PathBuf {
+        match self {
+            Self::Disk => absolute_path(path),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => path.to_path_buf(),
+        }
+    }
+
+    fn resolve(&self, base: &Path, specifier: &str) -> Option<PathBuf> {
+        match self {
+            Self::Disk => resolve_sibling_path(base, specifier).map(|path| absolute_path(&path)),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(siblings) => {
+                let url = memory_module_url(base, specifier)?;
+                siblings
+                    .iter()
+                    .any(|(sibling, _)| sibling == &url)
+                    .then(|| PathBuf::from(url))
+            }
+        }
+    }
+
+    fn read(&self, path: &Path) -> Option<String> {
+        match self {
+            Self::Disk => fs::read_to_string(path).ok(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(siblings) => siblings
+                .iter()
+                .find(|(url, _)| Path::new(url) == path)
+                .map(|(_, source)| source.clone()),
+        }
+    }
+}
+
+/// Join a relative specifier to an in-memory importer directory, as the
+/// runtime module loader does. `.ts` specifiers name their `.js` module.
+#[cfg(any(test, feature = "test-hooks"))]
+fn memory_module_url(base: &Path, specifier: &str) -> Option<String> {
+    if !(specifier.starts_with("./") || specifier.starts_with("../")) {
+        return None;
+    }
+    let mut parts: Vec<&str> = base
+        .to_str()?
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    for part in specifier.split('/') {
+        match part {
+            "." | "" => {}
+            ".." => {
+                parts.pop()?;
+            }
+            other => parts.push(other),
+        }
+    }
+    let joined = format!("/{}", parts.join("/"));
+    Some(match joined.strip_suffix(".ts") {
+        Some(stem) => format!("{stem}.js"),
+        None => joined,
+    })
+}
+
 impl ModuleGraph {
-    pub fn new(path: &Path, source: &str) -> Result<Self, ExtractionError> {
-        let entry = absolute_path(path);
+    pub fn with_sources(
+        path: &Path,
+        source: &str,
+        sources: ModuleSources,
+    ) -> Result<Self, ExtractionError> {
+        let entry = sources.entry_key(path);
         let mut modules = HashMap::new();
         let mut pending = VecDeque::new();
         let mut source_bytes = source.len();
+        let mut unresolved = None;
         modules.insert(entry.clone(), parse_node(entry.clone(), source.to_owned())?);
         pending.push_back(entry.clone());
 
@@ -79,48 +165,54 @@ impl ModuleGraph {
                     Target::Host
                 } else {
                     let base = path.parent().unwrap_or_else(|| Path::new("."));
-                    let Some(target_path) = resolve_sibling_path(base, &specifier) else {
-                        return Err(UnresolvedModuleError {
+                    let resolved = sources.resolve(base, &specifier).and_then(|target_path| {
+                        if modules.contains_key(&target_path) {
+                            return Some((target_path, None));
+                        }
+                        sources
+                            .read(&target_path)
+                            .map(|source| (target_path, Some(source)))
+                    });
+                    let Some((target_path, sibling_source)) = resolved else {
+                        unresolved.get_or_insert(UnresolvedModuleError {
                             path: importer.path.clone(),
                             span,
-                            specifier,
-                        }
-                        .into());
+                            specifier: specifier.clone(),
+                        });
+                        modules
+                            .get_mut(&path)
+                            .expect("queued module exists")
+                            .targets
+                            .insert(specifier, Target::Unresolved);
+                        continue;
                     };
-                    let target_path = absolute_path(&target_path);
-                    if modules.contains_key(&target_path) {
-                        Target::Local(target_path)
-                    } else {
-                        if modules.len().saturating_sub(1) >= MAX_PREPARATION_SIBLINGS {
-                            return Err(UnresolvedModuleError {
-                                path: importer.path.clone(),
-                                span,
-                                specifier: format!("{specifier} (sibling limit exceeded)"),
+                    match sibling_source {
+                        None => Target::Local(target_path),
+                        Some(sibling_source) => {
+                            if modules.len().saturating_sub(1) >= MAX_PREPARATION_SIBLINGS {
+                                return Err(UnresolvedModuleError {
+                                    path: importer.path.clone(),
+                                    span,
+                                    specifier: format!("{specifier} (sibling limit exceeded)"),
+                                }
+                                .into());
                             }
-                            .into());
+                            source_bytes = source_bytes.saturating_add(sibling_source.len());
+                            if source_bytes > MAX_PREPARATION_SOURCE_BYTES {
+                                return Err(UnresolvedModuleError {
+                                    path: importer.path.clone(),
+                                    span,
+                                    specifier: format!("{specifier} (source limit exceeded)"),
+                                }
+                                .into());
+                            }
+                            modules.insert(
+                                target_path.clone(),
+                                parse_node(target_path.clone(), sibling_source)?,
+                            );
+                            pending.push_back(target_path.clone());
+                            Target::Local(target_path)
                         }
-                        let sibling_source = fs::read_to_string(&target_path).map_err(|_| {
-                            UnresolvedModuleError {
-                                path: importer.path.clone(),
-                                span: span.clone(),
-                                specifier: specifier.clone(),
-                            }
-                        })?;
-                        source_bytes = source_bytes.saturating_add(sibling_source.len());
-                        if source_bytes > MAX_PREPARATION_SOURCE_BYTES {
-                            return Err(UnresolvedModuleError {
-                                path: importer.path.clone(),
-                                span,
-                                specifier: format!("{specifier} (source limit exceeded)"),
-                            }
-                            .into());
-                        }
-                        modules.insert(
-                            target_path.clone(),
-                            parse_node(target_path.clone(), sibling_source)?,
-                        );
-                        pending.push_back(target_path.clone());
-                        Target::Local(target_path)
                     }
                 };
                 modules
@@ -130,7 +222,16 @@ impl ModuleGraph {
                     .insert(specifier, target);
             }
         }
-        Ok(Self { entry, modules })
+        Ok(Self {
+            entry,
+            modules,
+            unresolved,
+        })
+    }
+
+    /// The first unresolved import, if any.
+    pub fn unresolved(&self) -> Option<&UnresolvedModuleError> {
+        self.unresolved.as_ref()
     }
 
     pub fn entry(&self) -> &ModuleNode {
@@ -500,7 +601,7 @@ impl ModuleGraph {
     fn target_origins(&self, target: &Target, name: &str) -> HashSet<Origin> {
         match target {
             Target::Local(path) => self.origins(path, name, &mut HashSet::new()),
-            Target::Host => HashSet::new(),
+            Target::Host | Target::Unresolved => HashSet::new(),
         }
     }
 
@@ -638,7 +739,7 @@ impl ModuleGraph {
     ) -> HashSet<Origin> {
         match target {
             Target::Local(path) => self.origins(path, name, visited),
-            Target::Host => HashSet::new(),
+            Target::Host | Target::Unresolved => HashSet::new(),
         }
     }
 }

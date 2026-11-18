@@ -1533,7 +1533,13 @@ fn load_browser_enter_returns_script_load() {
     let dir = std::env::temp_dir().join(format!("274bot-tui-load-browser-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let bot = dir.join("digbot.js");
-    std::fs::write(&bot, "export function tick(api) { globalThis.__rs_n = 1 }").unwrap();
+    std::fs::write(
+        &bot,
+        frontend_core::test_support::scripts::native_fixture(
+            "export function tick(api) { globalThis.__rs_n = 1 }",
+        ),
+    )
+    .unwrap();
 
     let mut app = script_app();
     app.script_load_dir = dir.clone();

@@ -149,9 +149,9 @@ live-harness = ["dep:scenario"]
 # production builds.
 test-support = ["api/test-support", "host/test-support", "script/test-hooks", "script-js?/test-hooks", "script-luau?/test-hooks", "nav-planner/test-support", "dep:scenario"]
 
-# Read-only probe for the manual-click LIVE harnesses. Enabled from frontend
-# dev-dependencies, never production builds.
-live-probe = []
+# Fixture-only Guardian Fight diagnostics and manual-click live probes.
+# Enabled by explicit live-harness commands, never production defaults.
+live-probe = ["host/live-probe"]
 
 # Windows-only headed Quester journal paint proof. The code remains gated by
 # both this feature and `cfg(windows)` so ordinary Mac/headless tests never

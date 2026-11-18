@@ -124,6 +124,13 @@ enum PendingFruit {
     CountLoss { tick: u16 },
 }
 
+#[derive(Clone, Copy)]
+enum PendingSuperDrink {
+    None,
+    Chat { observed_at: u16, origin: u16 },
+    CountLoss { tick: u16 },
+}
+
 pub(crate) struct SlotCondition {
     fact: BotCondition,
     memory: PoisonMemory,
@@ -138,6 +145,7 @@ pub(crate) struct SlotCondition {
     hit_seen: [i32; 4],
     latch: Option<PendingLatch>,
     pending_fruit: PendingFruit,
+    pending_super_drink: PendingSuperDrink,
     window: SettleWindow,
     q_unknown: u8,
     complete: bool,
@@ -145,8 +153,8 @@ pub(crate) struct SlotCondition {
 }
 
 const _: () = {
-    assert!(std::mem::size_of::<SlotCondition>() <= 160);
-    assert!(std::mem::size_of::<SlotCondition>() == 104);
+    assert!(std::mem::size_of::<SlotCondition>() <= 176);
+    assert!(std::mem::size_of::<SlotCondition>() == 112);
 };
 
 impl Default for SlotCondition {
@@ -163,6 +171,7 @@ impl Default for SlotCondition {
             hit_seen: [-1; 4],
             latch: None,
             pending_fruit: PendingFruit::None,
+            pending_super_drink: PendingSuperDrink::None,
             window: SettleWindow::default(),
             q_unknown: u8::MAX,
             complete: false,
@@ -178,15 +187,14 @@ impl SlotCondition {
         chat_sequence: i32,
         tables: Option<(Arc<CombatTables>, u8)>,
     ) {
+        let memory = self.memory;
         *self = Self::default();
         self.last_tick = tick;
         // Reconnect retains the client's ring. Ignore every pre-boundary line,
         // including lines the old snapshot had not rebuilt or consumed.
         self.chat_seen = chat_sequence;
         self.chat_visible = chat_sequence;
-        self.memory = self
-            .memory
-            .transition(PoisonEvent::Reconnect { tick: tick as u16 });
+        self.memory = memory.transition(PoisonEvent::Reconnect { tick: tick as u16 });
         self.fact.poison = self.memory.state;
         if let Some((tables, q)) = tables {
             self.tables = Some(tables);
@@ -200,6 +208,7 @@ impl SlotCondition {
         self.latch = None;
         self.pending_fruit = PendingFruit::None;
         self.previous_edge_tick = 0;
+        self.pending_super_drink = PendingSuperDrink::None;
     }
 
     pub(crate) fn current(&self) -> Option<&BotCondition> {
@@ -317,6 +326,60 @@ impl SlotCondition {
         }
     }
 
+    fn super_drink_origin(
+        &mut self,
+        chat_origin: Option<u16>,
+        count_loss: bool,
+        previous_edge_tick: u16,
+        now: u16,
+    ) -> Option<u16> {
+        let pending = match self.pending_super_drink {
+            PendingSuperDrink::Chat {
+                observed_at,
+                origin,
+            } if observed_at == previous_edge_tick || observed_at == now => {
+                Some(PendingSuperDrink::Chat {
+                    observed_at,
+                    origin,
+                })
+            }
+            PendingSuperDrink::CountLoss { tick } if tick == previous_edge_tick || tick == now => {
+                Some(PendingSuperDrink::CountLoss { tick })
+            }
+            _ => None,
+        };
+        if pending.is_none() {
+            self.pending_super_drink = PendingSuperDrink::None;
+        }
+
+        match (pending, chat_origin, count_loss) {
+            (Some(PendingSuperDrink::Chat { origin, .. }), None, true) => {
+                self.pending_super_drink = PendingSuperDrink::None;
+                Some(origin)
+            }
+            (Some(PendingSuperDrink::CountLoss { tick }), Some(_), false) => {
+                self.pending_super_drink = PendingSuperDrink::None;
+                Some(tick)
+            }
+            (_, Some(origin), true) => {
+                self.pending_super_drink = PendingSuperDrink::None;
+                Some(origin)
+            }
+            (_, Some(origin), false) => {
+                self.pending_super_drink = PendingSuperDrink::Chat {
+                    observed_at: now,
+                    origin,
+                };
+                None
+            }
+            (_, None, true) => {
+                self.pending_super_drink = PendingSuperDrink::CountLoss { tick: now };
+                None
+            }
+            _ => None,
+        }
+    }
+
     fn incomplete(&mut self, error: ConditionError) {
         self.complete = false;
         self.reset_window(WindowReset::IncompleteFact);
@@ -345,9 +408,33 @@ impl SlotCondition {
             self.session_ended();
             return;
         }
+        // Normal timers require canAccess(), which rejects main/chat modals
+        // (Player.ts:821-831,951-959). Keep poison from expiring while blocked.
         let modal_open = snapshot.modals().main != -1 || snapshot.modals().chat != -1;
         if modal_open {
             self.reset_window(WindowReset::Modal);
+            // Preserve same-drain ordinary hits before TimerPaused advances last_mark.
+            // The normal scan below still owns hit_seen and latch ordering.
+            if drain.player_info && self.tables.is_some() && snapshot.local_player().is_some() {
+                if let Some(marks) = snapshot.hitmarks() {
+                    let tick = snapshot.tick() as u16;
+                    for (slot, mark) in marks.marks.iter().enumerate() {
+                        if mark.cycle <= marks.loop_cycle || mark.cycle == self.hit_seen[slot] {
+                            continue;
+                        }
+                        if matches!(mark.kind, 0 | 1) {
+                            self.transition(PoisonEvent::Hitmark {
+                                kind: mark.kind.clamp(0, u16::MAX as i32) as u16,
+                                value: mark.value.clamp(0, u8::MAX as i32) as u8,
+                                tick,
+                            });
+                        }
+                    }
+                }
+            }
+            self.transition(PoisonEvent::TimerPaused {
+                tick: snapshot.tick() as u16,
+            });
         } else if guardian_hold {
             self.reset_window(WindowReset::GuardianHold);
         }
@@ -415,7 +502,10 @@ impl SlotCondition {
         };
         let fruit_count_loss =
             derived.is_some_and(|fact| fact.cures.strange_fruit < self.fact.cures.strange_fruit);
+        let super_antipoison_count_loss = derived
+            .is_some_and(|fact| fact.cures.super_antipoison < self.fact.cures.super_antipoison);
         let mut poison_signal = false;
+        let mut drink_origin = None;
         let mut hits = [None; 4];
         let mut hit_at_edge = false;
         if let Some(origin) = self.fruit_origin(false, fruit_count_loss, previous_edge_tick, now) {
@@ -465,9 +555,10 @@ impl SlotCondition {
                         self.transition(PoisonEvent::LatchComplete { q: self.q_unknown });
                     }
                 } else if line.text == DRINK_LINE {
-                    // anti_poison.rs2:5-19, poison.rs2:25-28: both families
-                    // prove at least ordinary immunity. Backlogs use the first tick.
+                    // anti_poison.rs2:5-19 shares one drink line across both families.
+                    // Pair it with the super-dose loss when both observations arrive.
                     let origin = tick.saturating_sub(k.max(1).saturating_sub(1)) as u16;
+                    drink_origin = Some(origin);
                     self.transition(PoisonEvent::ProvenDrink { origin });
                     self.latch = None;
                 } else if line.text == FRUIT_LINE {
@@ -484,6 +575,14 @@ impl SlotCondition {
                 .chat_lines()
                 .first()
                 .map_or(self.chat_seen, |line| line.sequence.max(self.chat_seen));
+        }
+        if let Some(origin) = self.super_drink_origin(
+            drink_origin,
+            super_antipoison_count_loss,
+            previous_edge_tick,
+            now,
+        ) {
+            self.transition(PoisonEvent::ProvenSuperDrink { origin });
         }
         if drain.player_info {
             // Kind 2 reveals the fire's value. A same-edge ordinary hit may

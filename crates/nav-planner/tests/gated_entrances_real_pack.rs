@@ -493,7 +493,6 @@ fn morytania_sites_compare_proof_unknown_and_false_gate_routes() {
     for (index, edge) in &a1_directions {
         let crossing = edge.crossing_id().unwrap();
         assert_eq!(crossing.at, a1.at);
-        assert_ne!(crossing.takeoff, crossing.at);
         assert!(world().collision.standable(crossing.takeoff));
         assert!(world()
             .graph

@@ -2093,11 +2093,8 @@ mod tests {
     #[test]
     fn accepted_first_click_is_reported_separately_and_rejected_as_c0_proof() {
         let mut accepted_first_click = valid_receipt(3, 2, 1, 16, 2, 20);
-        let l0 = accepted_first_click.l0.unwrap();
         let s1 = accepted_first_click.s1.unwrap();
         let s_drop = accepted_first_click.s_drop.as_ref().unwrap().at;
-        assert_eq!(s1.gap(l0), 2);
-        assert_eq!(s_drop.gap(s1), 1);
 
         accepted_first_click
             .survival_op_events

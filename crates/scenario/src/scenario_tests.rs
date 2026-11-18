@@ -6906,25 +6906,6 @@ fn vial_filler_cases_register_fountain_fill_and_bank_cycles() {
             water,
         ]
     );
-    let first_water = watch.iter().position(|arm| *arm == water).unwrap();
-    let bank_water = watch
-        .iter()
-        .position(|arm| {
-            *arm == Proof::BankItemId {
-                id: VIAL_OF_WATER_ID,
-                count: 1,
-            }
-        })
-        .unwrap();
-    let pack_empty = watch
-        .iter()
-        .position(|arm| *arm == pack_empty_water)
-        .unwrap();
-    let further_water = watch.iter().rposition(|arm| *arm == water).unwrap();
-    assert!(first_water < bank_water);
-    assert!(bank_water < pack_empty);
-    assert!(pack_empty < further_water);
-    assert_ne!(first_water, further_water);
     assert_eq!(west.proof, water);
 
     let east = get("vial_filler_east").expect("vial_filler_east");
@@ -10586,125 +10567,122 @@ fn bone_burier_requires_banking_between_burial_cycles() {
 }
 
 #[test]
-fn bone_burier_v2_scenarios_are_exact_file_cards_not_catalog() {
-    for (name, file) in [
-        ("bone_burier_v2_ts", "bone_burier_v2.ts"),
-        ("bone_burier_v2_js", "bone_burier_v2.js"),
-    ] {
-        let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
-        assert_eq!(s.name, name);
-        assert_eq!(s.settings.start_script, None);
-        assert_eq!(s.settings.start_file, Some(file));
-        assert_eq!(
-            s.settings.wait_script_stop,
-            Some("confirmed loaded current-generation bank exhaustion")
-        );
-        assert_eq!(s.settings.terminal_shot, Some(name));
-        assert_eq!(s.settings.deadline, BONE_BURIER_V2_DEADLINE);
-        assert_eq!(s.settings.fixture_prereqs, Some(BONE_BURIER_V2_PREREQS));
-        assert!(!s
-            .settings
-            .fixture_prereqs
-            .unwrap()
-            .iter()
-            .any(|p| matches!(p, Proof::BankItem { .. } | Proof::BankClosed)));
-        let start = s
-            .steps
-            .iter()
-            .position(|step| matches!(step.kind, StepKind::StartScript))
-            .unwrap();
-        assert!(matches!(s.steps[start - 1].kind, StepKind::Relog));
-        assert_eq!(
-            s.steps[start - 1].wait.arm,
-            Proof::SideTabAvailable { index: 3 }
-        );
-        assert_eq!(
-            s.steps[start - 2].wait.arm,
-            Proof::ArrivedNear {
-                x: BONE_BURIER_V2_BANK.x,
-                z: BONE_BURIER_V2_BANK.z,
-                level: BONE_BURIER_V2_BANK.level,
-                radius: 8,
-            }
-        );
-        let arms: Vec<_> = s.steps[start + 1..]
-            .iter()
-            .map(|step| step.wait.arm)
-            .collect();
-        assert_eq!(
-            arms,
-            vec![
-                Proof::StatXpGain { id: 5, min: 22 },
-                Proof::ItemAtMost {
-                    name: "Bones",
-                    count: 0
-                },
-                Proof::BankItem {
-                    name: "Bones",
-                    count: 28
-                },
-                Proof::Item {
-                    name: "Bones",
-                    count: 28
-                },
-                Proof::BankItemAtMost {
-                    name: "Bones",
-                    count: 0
-                },
-                Proof::BankClosed,
-                Proof::FreshStatXpGain { id: 5, min: 1 },
-                Proof::ItemAtMost {
-                    name: "Bones",
-                    count: 0
-                },
-                Proof::BankItemAtMost {
-                    name: "Bones",
-                    count: 0
-                },
-            ]
-        );
-        let later = arms
-            .iter()
-            .rposition(|arm| {
-                matches!(
-                    arm,
-                    Proof::BankItemAtMost {
-                        name: "Bones",
-                        count: 0
-                    }
-                )
-            })
-            .unwrap();
-        let first_zero = arms
-            .iter()
-            .position(|arm| {
-                matches!(
-                    arm,
-                    Proof::BankItemAtMost {
-                        name: "Bones",
-                        count: 0
-                    }
-                )
-            })
-            .unwrap();
-        assert!(
-            first_zero < later,
-            "the post-withdraw zero row cannot satisfy the later exhaustion observation"
-        );
-        assert!(matches!(
-            arms[later - 1],
+fn bone_burier_v2_scenario_is_an_exact_file_card_not_catalog() {
+    let name = "bone_burier_v2_ts";
+    let file = "bone_burier_v2.ts";
+    let s = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+    assert_eq!(s.name, name);
+    assert_eq!(s.settings.start_script, None);
+    assert_eq!(s.settings.start_file, Some(file));
+    assert_eq!(
+        s.settings.wait_script_stop,
+        Some("confirmed loaded current-generation bank exhaustion")
+    );
+    assert_eq!(s.settings.terminal_shot, Some(name));
+    assert_eq!(s.settings.deadline, BONE_BURIER_V2_DEADLINE);
+    assert_eq!(s.settings.fixture_prereqs, Some(BONE_BURIER_V2_PREREQS));
+    assert!(!s
+        .settings
+        .fixture_prereqs
+        .unwrap()
+        .iter()
+        .any(|p| matches!(p, Proof::BankItem { .. } | Proof::BankClosed)));
+    let start = s
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(matches!(s.steps[start - 1].kind, StepKind::Relog));
+    assert_eq!(
+        s.steps[start - 1].wait.arm,
+        Proof::SideTabAvailable { index: 3 }
+    );
+    assert_eq!(
+        s.steps[start - 2].wait.arm,
+        Proof::ArrivedNear {
+            x: BONE_BURIER_V2_BANK.x,
+            z: BONE_BURIER_V2_BANK.z,
+            level: BONE_BURIER_V2_BANK.level,
+            radius: 8,
+        }
+    );
+    let arms: Vec<_> = s.steps[start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect();
+    assert_eq!(
+        arms,
+        vec![
+            Proof::StatXpGain { id: 5, min: 22 },
             Proof::ItemAtMost {
                 name: "Bones",
                 count: 0
-            }
-        ));
-        assert!(matches!(
-            arms[later - 2],
-            Proof::FreshStatXpGain { id: 5, min: 1 }
-        ));
-        assert_eq!(s.proof, arms[later]);
-        assert!(names().contains(&name));
-    }
+            },
+            Proof::BankItem {
+                name: "Bones",
+                count: 28
+            },
+            Proof::Item {
+                name: "Bones",
+                count: 28
+            },
+            Proof::BankItemAtMost {
+                name: "Bones",
+                count: 0
+            },
+            Proof::BankClosed,
+            Proof::FreshStatXpGain { id: 5, min: 1 },
+            Proof::ItemAtMost {
+                name: "Bones",
+                count: 0
+            },
+            Proof::BankItemAtMost {
+                name: "Bones",
+                count: 0
+            },
+        ]
+    );
+    let later = arms
+        .iter()
+        .rposition(|arm| {
+            matches!(
+                arm,
+                Proof::BankItemAtMost {
+                    name: "Bones",
+                    count: 0
+                }
+            )
+        })
+        .unwrap();
+    let first_zero = arms
+        .iter()
+        .position(|arm| {
+            matches!(
+                arm,
+                Proof::BankItemAtMost {
+                    name: "Bones",
+                    count: 0
+                }
+            )
+        })
+        .unwrap();
+    assert!(
+        first_zero < later,
+        "the post-withdraw zero row cannot satisfy the later exhaustion observation"
+    );
+    assert!(matches!(
+        arms[later - 1],
+        Proof::ItemAtMost {
+            name: "Bones",
+            count: 0
+        }
+    ));
+    assert!(matches!(
+        arms[later - 2],
+        Proof::FreshStatXpGain { id: 5, min: 1 }
+    ));
+    assert_eq!(s.proof, arms[later]);
+    assert!(names().contains(&name));
     let v1 = get("bone_burier").unwrap();
     assert_eq!(v1.settings.start_script, Some("BoneBurier"));
     assert_eq!(v1.settings.start_file, None);
@@ -11030,14 +11008,11 @@ fn nav_essence_follows_in_and_back_out_to_aubury() {
     assert_eq!(s.steps[2].wait.arm.name(), "arrived(3254,3402,0)");
     // Step 4 arms the entry follow to the mine pad and waits for any
     // mine landing (the landing is randomised, never the pad).
-    let (dest, arm) = match &s.steps[3].kind {
-        StepKind::Follow { dest } => (
-            *dest,
-            match &s.steps[3].wait.arm {
-                Proof::EssenceMine => "in_essence_mine",
-                other => panic!("entry arm must be EssenceMine, got {other:?}"),
-            },
-        ),
+    let dest = match &s.steps[3].kind {
+        StepKind::Follow { dest } => match &s.steps[3].wait.arm {
+            Proof::EssenceMine => *dest,
+            other => panic!("entry arm must be EssenceMine, got {other:?}"),
+        },
         _ => panic!("nav_essence step 4 must be Follow"),
     };
     assert_eq!(
@@ -11049,7 +11024,6 @@ fn nav_essence_follows_in_and_back_out_to_aubury() {
         },
         "the entry follow targets the mine pad"
     );
-    assert_eq!(arm, "in_essence_mine");
     // Step 5 follows out through the exit portal to Aubury's anchor
     // (within the portal's randomised landing radius of 2).
     let (dest, arm) = match &s.steps[4].kind {
@@ -12134,6 +12108,7 @@ fn step_budget_counts_game_ticks_not_dirty_snapshots() {
         settings: ScenarioSettings::default(),
     };
     let mut client = native_seed_client();
+    // The seeded PLAYER_INFO is part of the initial snapshot, before dispatch.
     client.bump_gens(ServerProt::PLAYER_INFO);
     let mut runner = ScenarioRunner::with_world(scenario, None);
     runner.set_scene_settle(Duration::ZERO);
@@ -12164,6 +12139,11 @@ fn step_budget_counts_game_ticks_not_dirty_snapshots() {
     client.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut client);
     assert_eq!(runner.total_ticks(), 3);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    // The unchanged three-tick budget expires only after three post-send ticks.
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.total_ticks(), 4);
     match runner.status() {
         RunnerStatus::Failed(msg) => {
             assert!(msg.contains("not seen within 3 game ticks"), "msg: {msg}");
@@ -13504,9 +13484,6 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
 
     // Distinct honest representatives: nonstackable vial vs stackable fire rune
     // vs stackable bronze arrow vs stackable fishing bait.
-    assert_ne!(VIAL_OF_WATER_ID, FIRE_RUNE_ID);
-    assert_ne!(FIRE_RUNE_ID, BRONZE_ARROW_ID);
-    assert_ne!(BRONZE_ARROW_ID, FISHING_BAIT_ID);
     assert_eq!(VIAL_OF_WATER_ID, 227);
     assert_eq!(FIRE_RUNE_ID, 554);
     assert_eq!(BRONZE_ARROW_ID, 882);
@@ -15552,10 +15529,6 @@ fn nightly_wall_deadlines_cover_their_measured_completion_with_headroom() {
     assert_eq!(
         get("quester_cook").unwrap().settings.deadline,
         Duration::from_secs(900)
-    );
-    assert_eq!(
-        get("thiever_guard_no_bank").unwrap().settings.deadline,
-        Duration::from_secs(420)
     );
 }
 

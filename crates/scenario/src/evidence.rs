@@ -59,6 +59,9 @@ pub struct Evidence {
     /// Native key ownership, duration, release, and camera observations.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<crate::keys::KeyEvidence>,
+    /// Bounded selected-actor style and overhead records, only when armed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actors: Option<Box<crate::actor::ActorEvidence>>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
     /// The dispatch ledger is boxed so ordinary runner state holds no inline ring.
@@ -295,6 +298,7 @@ impl Evidence {
             seed_deposits: Vec::new(),
             interference: None,
             keys: Vec::new(),
+            actors: None,
             scene: snap.scene_state(),
             run_receipt: None,
         }

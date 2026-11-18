@@ -2,7 +2,7 @@
 //! engine harness. The packet observer delegates every callback to the live
 //! slot observer; it changes no bytes, cipher state, or authority rules.
 
-use api::interact::server_ordered::ServerOrderedDispatch;
+use api::interact::server_ordered::{ServerOrderedDispatch, ServerOrderedRequest};
 use api::snapshot::{GameSnapshot, LocView, WorldTile};
 use client::client::{client::LocalAnimationUpdate, Client};
 use client::io::PacketObserver;
@@ -75,9 +75,8 @@ pub enum DispatchMutation {
     CancelAfterPackets(usize),
     /// Gate actual encoded bytes through the installed loopback proxy.
     Transport(TransportMutation),
-    /// Hold only a dispatch from a fresh non-success Mining roll, not an
-    /// initial act or an Idle replacement after depletion.
-    HoldOnFreshMiningRoll { sequence: i32 },
+    /// Hold the next real KnifeArm dispatch through one PLAYER_INFO edge.
+    HoldNextKnifeArm,
 }
 
 /// Whether a frame was first observed on a PLAYER_INFO edge or a wake poll.
@@ -258,47 +257,6 @@ struct ActiveDispatch {
     transport: Option<TransportMutation>,
 }
 
-/// A real, newly received Mining roll with no start-act or success line.
-/// A prior native start Act proves Mining is already running. A fresh
-/// non-null instruction excludes success/Idle (mining.rs2:109-111,183-192).
-pub fn fresh_mining_roll(
-    trace: &TickEngineTrace,
-    pending: Option<&FrameObservation>,
-    tick: u32,
-    sequence: i32,
-) -> bool {
-    let frames = trace.frames.iter().chain(pending);
-    let mut earlier = frames.clone().rev();
-    let Some(frame) = earlier.find(|frame| frame.game_tick == tick && frame.tick_edge) else {
-        return false;
-    };
-    let Some(animation) = frame.animation else {
-        return false;
-    };
-    // Dispatch can follow unchanged wake polls in this same PLAYER_INFO window.
-    // The fresh edge instruction stays valid only while its serial is retained.
-    frames
-        .clone()
-        .next_back()
-        .is_some_and(|latest| latest.game_tick == tick && latest.animation == Some(animation))
-        && animation.sequence == sequence
-        && earlier
-            .find_map(|frame| frame.animation)
-            .is_none_or(|previous| previous.serial != animation.serial)
-        && frames.clone().flat_map(|frame| &frame.chat).any(|line| {
-            line.first_attributable_tick() < u64::from(tick)
-                && line.text.contains("You swing your pick at the rock.")
-        })
-        && !frames.flat_map(|frame| &frame.chat).any(|line| {
-            let observed = u64::from(line.game_tick);
-            let first = line.first_attributable_tick();
-            first <= u64::from(tick)
-                && observed + 1 >= u64::from(tick)
-                && (line.text.contains("You swing your pick at the rock.")
-                    || line.text.contains("You manage to mine some"))
-        })
-}
-
 struct HookState {
     trace: TickEngineTrace,
     pending_frame: Option<FrameObservation>,
@@ -310,7 +268,6 @@ struct HookState {
     log_id: i32,
     measurement_armed: bool,
     pending_mutations: VecDeque<DispatchMutation>,
-    fresh_roll_request: Option<u64>,
     active_dispatch: Option<ActiveDispatch>,
     transport: Option<Arc<dyn OrderedTransportController>>,
     observer_session: Option<u64>,
@@ -340,7 +297,6 @@ impl TickEngineTestHook {
                 log_id: 1511,
                 measurement_armed: false,
                 pending_mutations: VecDeque::new(),
-                fresh_roll_request: None,
                 active_dispatch: None,
                 transport: None,
                 observer_session: None,
@@ -445,14 +401,6 @@ impl TickEngineTestHook {
             .push_back(mutation);
     }
 
-    /// Request selected by the one-shot natural Mining-roll transport hook.
-    pub fn fresh_roll_request_id(&self) -> Option<u64> {
-        self.state
-            .lock()
-            .expect("tick-engine hook poisoned")
-            .fresh_roll_request
-    }
-
     /// Suppress the root of a real IF_OPENCHAT observation through `tick`.
     /// Chat lines and the underlying Client state remain untouched.
     pub fn suppress_openchat_through_tick(&self, tick: u32) {
@@ -511,7 +459,6 @@ impl TickEngineTestHook {
         let mut state = self.state.lock().expect("tick-engine hook poisoned");
         state.log_id = log_id;
         state.inventory_ids.clear();
-        state.fresh_roll_request = None;
         state.inventory_ids.extend_from_slice(inventory_ids);
         state.trace = TickEngineTrace::default();
         state.pending_frame = None;
@@ -701,6 +648,10 @@ impl TickEngineTestHook {
         envelope: &ServerOrderedEnvelope,
     ) -> DispatchGuard<'a> {
         let request_id = authority.request_id().get();
+        let is_knife_arm = matches!(
+            envelope.payload(),
+            script::surface::ServerOrderedPayload::Content(ServerOrderedRequest::KnifeArm { .. })
+        );
         let request_debug = match envelope.payload() {
             script::surface::ServerOrderedPayload::Content(request) => Some(format!("{request:?}")),
             script::surface::ServerOrderedPayload::Advanced(_) => None,
@@ -708,26 +659,13 @@ impl TickEngineTestHook {
         let mutation = {
             let mut state = self.state.lock().expect("tick-engine hook poisoned");
             state.last_game_tick = game_tick;
-            let conditional = match state.pending_mutations.front() {
-                Some(DispatchMutation::HoldOnFreshMiningRoll { sequence }) => Some(*sequence),
-                _ => None,
-            };
-            if conditional.is_some_and(|sequence| {
-                !request_debug
-                    .as_deref()
-                    .is_some_and(|request| request.contains("KnifeArm"))
-                    || !fresh_mining_roll(
-                        &state.trace,
-                        state.pending_frame.as_ref(),
-                        game_tick,
-                        sequence,
-                    )
-            }) {
+            let hold_next_knife_arm = matches!(
+                state.pending_mutations.front(),
+                Some(DispatchMutation::HoldNextKnifeArm)
+            );
+            if hold_next_knife_arm && !is_knife_arm {
                 None
             } else {
-                if conditional.is_some() {
-                    state.fresh_roll_request = Some(request_id);
-                }
                 state.pending_mutations.pop_front()
             }
         };
@@ -744,7 +682,7 @@ impl TickEngineTestHook {
             Some(DispatchMutation::Transport(mode)) => {
                 transport = Some(mode);
             }
-            Some(DispatchMutation::HoldOnFreshMiningRoll { .. }) => {
+            Some(DispatchMutation::HoldNextKnifeArm) => {
                 transport = Some(TransportMutation::HoldThroughNextEdge);
             }
             None => {}
@@ -758,9 +696,6 @@ impl TickEngineTestHook {
             let mut state = self.state.lock().expect("tick-engine hook poisoned");
             let host_frame = state.next_host_frame;
             let controller = state.transport.clone();
-            let is_knife_arm = request_debug
-                .as_deref()
-                .is_some_and(|request| request.contains("KnifeArm"));
             let active_transport = if content_request {
                 controller.as_ref().and(match transport {
                     Some(TransportMutation::JoinActiveGate) if !is_knife_arm => None,
