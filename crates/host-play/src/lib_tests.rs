@@ -9361,20 +9361,35 @@ fn manual_steps_publish_early_intent_even_while_held_without_affecting_other_slo
         ),
         ("bob".to_string(), VecDeque::from([step])),
     ]));
-    let (frame, wires) = crate::play_slots::take_slot_frame_input(&input, "alice", &queues, true);
+    #[cfg(feature = "live-probe")]
+    let random_status = crate::RandomStatus {
+        fight_outcome: Some(api::random::FightOutcome::Killed),
+        no_progress_ticks: Some(17),
+        ..crate::RandomStatus::default()
+    };
+    #[cfg(not(feature = "live-probe"))]
+    let random_status = crate::RandomStatus::default();
+    let (frame, wires) =
+        crate::play_slots::take_slot_frame_input(&input, "alice", &queues, true, &random_status);
     assert_eq!(
         frame.manual_move_count(),
         2,
         "count each gesture, not its eventual movement"
     );
     assert!(frame.hold);
+    #[cfg(feature = "live-probe")]
+    {
+        assert_eq!(frame.guardian_fight_outcome, random_status.fight_outcome);
+        assert_eq!(frame.guardian_no_progress_ticks, Some(17));
+    }
     assert_eq!(
         wires,
         VecDeque::from([WireCmd::Continue, step, WireCmd::Answer(1), step])
     );
     assert_eq!(queues.lock().unwrap()["bob"], VecDeque::from([step]));
     dispatch_wires(&mut c, &snap, wires.into(), frame.hold);
-    let (frame, _) = crate::play_slots::take_slot_frame_input(&input, "alice", &queues, false);
+    let (frame, _) =
+        crate::play_slots::take_slot_frame_input(&input, "alice", &queues, false, &random_status);
     assert_eq!(
         frame.manual_move_count(),
         0,

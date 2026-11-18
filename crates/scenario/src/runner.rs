@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use api::interact::{cheat, logout, Interactions, SendResult};
 use api::obj_names::ObjNames;
+use api::random::FightOutcome;
 use api::snapshot::{varbit_value, VarbitObservation, VarbitUnavailable};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
@@ -521,6 +522,9 @@ pub struct ScenarioRunner {
     /// Random-event Guardian episode, armed by an
     /// [`StepKind::ObserveRandomEvent`] step and kept for the terminal receipt.
     random_event: Option<RandomEventEpisode>,
+    /// Host-fed Guardian Fight facts for the current random-event receipt.
+    guardian_fight_outcome: Option<FightOutcome>,
+    guardian_no_progress_ticks: Option<u16>,
     /// Host-fed Sherlock protect-window oracle, armed when the scenario names it.
     protect_window: Option<ProtectWindowObservation>,
     /// Newest chat sequence at StartScript when the scenario sets
@@ -609,6 +613,16 @@ impl ScenarioRunner {
         self.tick_speed_endpoint = Some((host.to_owned(), port));
     }
 
+    /// Feed fixture-only Guardian Fight facts into the next live scenario frame.
+    pub fn set_random_event_diagnostics(
+        &mut self,
+        fight_outcome: Option<FightOutcome>,
+        no_progress_ticks: Option<u16>,
+    ) {
+        self.guardian_fight_outcome = fight_outcome;
+        self.guardian_no_progress_ticks = no_progress_ticks;
+    }
+
     fn with_data(scenario: Scenario, nav_world: Option<Arc<NavWorld>>) -> Self {
         // Settings fields are Copy, so read them out before `scenario`
         // moves into the runner below.
@@ -687,6 +701,8 @@ impl ScenarioRunner {
             loot_trips: None,
             combat_bank_returns: None,
             random_event: None,
+            guardian_fight_outcome: None,
+            guardian_no_progress_ticks: None,
             protect_window: None,
             death_chat_baseline: None,
             script_started: false,
@@ -2993,6 +3009,8 @@ impl ScenarioRunner {
             episode.cell(),
             hold,
             self.obj_names.as_deref(),
+            self.guardian_fight_outcome,
+            self.guardian_no_progress_ticks,
         );
         let command = episode.next_send(&frame);
         if let Some(command) = command {

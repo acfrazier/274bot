@@ -196,7 +196,7 @@ impl Rig {
         self.handle.frame(
             &mut self.client,
             slot,
-            false,
+            host_play::SlotFrameInput::default(),
             ScenarioRunner::tick_with_hold,
             ScenarioRunner::companion_tick,
         );
@@ -612,7 +612,7 @@ fn a_companions_failure_published_before_the_pass_is_recorded_cannot_pass() {
         rig.handle.frame(
             &mut rig.client,
             SLOT,
-            false,
+            host_play::SlotFrameInput::default(),
             |runner, client, hold| {
                 read_done.send(()).unwrap();
                 published_rx

@@ -132,11 +132,11 @@ where
     Companion:
         Fn(&mut scenario::ScenarioRunner, usize, &mut Client) -> bool + Send + Sync + 'static,
 {
-    fn run(&self, client: &mut Client, name: &str, hold: bool) {
+    fn run(&self, client: &mut Client, name: &str, frame: host_play::SlotFrameInput) {
         self.runner.frame(
             client,
             name,
-            hold,
+            frame,
             &self.tick_with_hold,
             &self.companion_tick,
         );
@@ -1482,7 +1482,7 @@ impl RunnerHandle {
         &self,
         client: &mut C,
         name: &str,
-        hold: bool,
+        frame: host_play::SlotFrameInput,
         tick_with_hold: T,
         companion_tick: U,
     ) where
@@ -1570,7 +1570,12 @@ impl RunnerHandle {
                             runner.set_pass_gate(Some(script_failure_gate(handle, started_runs)));
                         }
                     }
-                    tick_with_hold(runner, client, hold);
+                    #[cfg(feature = "live-probe")]
+                    runner.set_random_event_diagnostics(
+                        frame.guardian_fight_outcome,
+                        frame.guardian_no_progress_ticks,
+                    );
+                    tick_with_hold(runner, client, frame.hold);
                     if runner.take_relog_login() {
                         // The Relog step logged a scriptless bot out: post the
                         // operator Login for it on the next front-end poll.

@@ -109,6 +109,8 @@ struct Fixture {
     ready: bool,
     started: bool,
     start_tile: Option<WorldTile>,
+    /// Seed combat stats when the fixture needs combat-level routing.
+    seed_combat_stats: bool,
     walk_arrival: Option<WorldTile>,
     advance: bool,
     advance_phase: u8,
@@ -395,7 +397,7 @@ fn fixture_frame(
                     cheat(client, "setvar rjquest 30")?;
                 } else {
                     cheat(client, "setstat woodcutting 1")?;
-                    if state.start_tile.is_some() {
+                    if state.seed_combat_stats {
                         // Keep combat below White Wolf Mountain's level-50
                         // route cutoff while retaining high HP and defence.
                         cheat(client, "setstat attack 1")?;
@@ -470,6 +472,17 @@ fn fixture_frame(
                     .stats()
                     .iter()
                     .any(|stat| stat.name.eq_ignore_ascii_case("woodcutting") && stat.base == 1);
+                let combat_level = snapshot
+                    .local_player()
+                    .map(|player| player.player.combat_level);
+                let hitpoints_base = snapshot
+                    .stats()
+                    .iter()
+                    .find(|stat| stat.name.eq_ignore_ascii_case("hitpoints"))
+                    .map(|stat| stat.base);
+                let seeded_combat =
+                    combat_level.is_some_and(|level| level > GATHER_ZONE_COMBAT_CAP);
+                let seeded_hitpoints = hitpoints_base == Some(99);
                 let here = snapshot.tile() == Some((start_tile.x, start_tile.z, start_tile.level));
                 let cook_red = snapshot.quest_statuses().iter().any(|row| {
                     row.name == "Cook's Assistant" && row.status() == QuestListStatus::NotStarted
@@ -479,13 +492,21 @@ fn fixture_frame(
                     && wielded
                     && empty
                     && level_one
+                    && (!state.seed_combat_stats || seeded_combat)
+                    && (!state.seed_combat_stats || seeded_hitpoints)
                     && here
                     && cook_red
                 {
                     state.ready = true;
-                    state.initial = Some(
-                        json!({"woodcutting":1, "bronze_axe_wielded":true, "inventory_empty":true, "tile": [start_tile.x, start_tile.z, start_tile.level], "cook_colour":"notStarted"}),
-                    );
+                    state.initial = Some(json!({
+                        "woodcutting": 1,
+                        "combat_level": combat_level,
+                        "hitpoints_base": hitpoints_base,
+                        "bronze_axe_wielded": true,
+                        "inventory_empty": true,
+                        "tile": [start_tile.x, start_tile.z, start_tile.level],
+                        "cook_colour": "notStarted"
+                    }));
                 }
             }
             _ => {}
@@ -501,12 +522,21 @@ fn evidence() -> PathBuf {
     PathBuf::from(std::env::var_os("BOT_EVIDENCE_DIR").expect("BOT_EVIDENCE_DIR"))
 }
 fn start_fixture(journal: bool) -> (Play, String, Arc<Mutex<Fixture>>) {
-    start_fixture_at(journal, None)
+    start_fixture_with_options(journal, None, false)
 }
 
 fn start_fixture_at(
     journal: bool,
     start_tile: Option<WorldTile>,
+) -> (Play, String, Arc<Mutex<Fixture>>) {
+    let seed_combat_stats = start_tile.is_some();
+    start_fixture_with_options(journal, start_tile, seed_combat_stats)
+}
+
+fn start_fixture_with_options(
+    journal: bool,
+    start_tile: Option<WorldTile>,
+    seed_combat_stats: bool,
 ) -> (Play, String, Arc<Mutex<Fixture>>) {
     script_js::install_cards().expect("install canonical Sherlock card for live API fixtures");
     api::hostlog::set_debug(true);
@@ -568,6 +598,7 @@ fn start_fixture_at(
     let account = entries[0].0.clone();
     let state = Arc::new(Mutex::new(Fixture {
         start_tile,
+        seed_combat_stats,
         ..Fixture::default()
     }));
     let frame_state = Arc::clone(&state);
@@ -668,8 +699,19 @@ fn prepared_native(source: &str) -> script_js::PreparedTestOrigin {
         .expect("native script API fixture prepares")
 }
 
+/// The nearby Giant spider zone is a LevelRule zone with combat cap 4.
+const GATHER_ZONE_COMBAT_CAP: i32 = 4;
+
+/// The October 15 live pass yielded 58 logs in 1,116 game ticks. The
+/// 900-second window is 1,500 ticks: 56 yields need
+/// ceil(56 * 1,116 / 58) = 1,078 ticks and 54 drops need
+/// ceil(54 * 1,116 / 58) = 1,040 ticks, leaving 422 and 460 ticks of
+/// headroom. The sample keeps its 56-log stop target; require 54 drops.
+const GATHER_LOG_TARGET: i64 = 56;
+const GATHER_DROP_TARGET: i64 = 54;
+
 fn gather_cell() {
-    let (play, account, fixture) = start_fixture(false);
+    let (play, account, fixture) = start_fixture_with_options(false, None, true);
     fixture.lock().unwrap().started = true;
     let source = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../script-js/examples/gather_quest_v2.ts"),
@@ -677,7 +719,9 @@ fn gather_cell() {
     .expect("runnable sample");
     let prepared = script_js::prepare_raw_origin_for_test("gather_quest_v2.ts", &source, &[])
         .expect("manifest-bearing gather sample prepares");
-    play.script_start_load(&account, prepared.js, prepared.checked, None, vec![])
+    let mut settings_bag = serde_json::Map::new();
+    settings_bag.insert("logs".to_owned(), json!(GATHER_LOG_TARGET));
+    play.script_start_load(&account, prepared.js, prepared.checked, Some(settings_bag), vec![])
         .expect("Load authoritative sample");
     let mut running_seen = false;
     let mut gathering_seen = false;
@@ -746,12 +790,15 @@ fn gather_cell() {
         running_seen && gathering_seen,
         "public snapshot must progress running -> gathering"
     );
-    assert!(status_yielded >= 56 && status_dropped >= 54);
+    assert!(
+        status_yielded >= GATHER_LOG_TARGET && status_dropped >= GATHER_DROP_TARGET,
+        "measured-rate targets: yielded>={GATHER_LOG_TARGET}, dropped>={GATHER_DROP_TARGET}; observed {status_yielded}/{status_dropped}"
+    );
     assert_eq!(stopped, json!({"ok":true,"value":null}));
     assert_eq!(terminal["kind"], "done");
     assert_eq!(terminal["value"]["end"], "stopped");
-    assert!(terminal["value"]["counts"]["yielded"].as_u64().unwrap() >= 56);
-    assert!(terminal["value"]["counts"]["dropped"].as_u64().unwrap() >= 54);
+    assert!(terminal["value"]["counts"]["yielded"].as_u64().unwrap() >= GATHER_LOG_TARGET as u64);
+    assert!(terminal["value"]["counts"]["dropped"].as_u64().unwrap() >= GATHER_DROP_TARGET as u64);
     assert_eq!(progress["kind"], "done");
     assert_eq!(progress["value"]["end"], "done");
     let row = &progress["value"]["row"];
@@ -773,7 +820,27 @@ fn gather_cell() {
         terminal["value"]["counts"]["dropped"].as_u64().unwrap(),
         "every dropped log slot must be observed empty"
     );
-    let receipt = json!({"cell":"script_api_gather_and_quest", "account":account, "fixture":state.initial, "running_seen":running_seen, "gathering_seen":gathering_seen, "snapshot_phases":snapshot_phases, "status_yielded":status_yielded, "status_dropped":status_dropped, "phases":phases, "empty_slots":state.emptied, "stop":stopped, "gather_outcome":terminal, "paths":paths, "progress":progress, "after_stop":after, "lifecycle":play.script_lifecycle_receipt(&account), "competing_game_rows":0});
+    let receipt = json!({
+        "cell": "script_api_gather_and_quest",
+        "account": account,
+        "fixture": state.initial,
+        "running_seen": running_seen,
+        "gathering_seen": gathering_seen,
+        "logs_target": GATHER_LOG_TARGET,
+        "drops_target": GATHER_DROP_TARGET,
+        "snapshot_phases": snapshot_phases,
+        "status_yielded": status_yielded,
+        "status_dropped": status_dropped,
+        "phases": phases,
+        "empty_slots": state.emptied,
+        "stop": stopped,
+        "gather_outcome": terminal,
+        "paths": paths,
+        "progress": progress,
+        "after_stop": after,
+        "lifecycle": play.script_lifecycle_receipt(&account),
+        "competing_game_rows": 0,
+    });
     drop(state);
     save("script-api-gather-and-quest-receipt.json", &receipt);
 }

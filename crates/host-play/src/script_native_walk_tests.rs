@@ -4986,6 +4986,10 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
 fn manual_frame(hold: bool) -> crate::SlotFrameInput {
     crate::SlotFrameInput {
         hold,
+        #[cfg(feature = "live-probe")]
+        guardian_fight_outcome: None,
+        #[cfg(feature = "live-probe")]
+        guardian_no_progress_ticks: None,
         host_move_owned: false,
         manual_move_intent: Some(crate::ManualMoveIntent::Minimap),
         manual_steps: 0,
@@ -5368,7 +5372,9 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
             level: 0,
         }]),
     )]));
-    let (frame, human) = crate::play_slots::take_slot_frame_input(&input, "alice", &queues, false);
+    let random_status = crate::RandomStatus::default();
+    let (frame, human) =
+        crate::play_slots::take_slot_frame_input(&input, "alice", &queues, false, &random_status);
     assert_eq!(frame.manual_move_count(), 1);
     assert_eq!(human.len(), 1, "the human step is preserved");
     assert!(crate::script_runtime::take_manual_walk_ownership(

@@ -50,6 +50,8 @@ test-support = ["host-play/test-support", "host/test-support", "script-js?/test-
 # render diagnostics.
 debug-catalog = ["host-play/debug-catalog"]
 live-harness = ["host-play/live-harness", "dep:scenario"]
+# Test-only Guardian Fight facts carried into live scenario receipts.
+live-probe = ["host-play/live-probe", "host/live-probe"]
 memory-profile = ["host-play/memory-profile"]
 memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]
 render-diagnostics = ["host/render-diagnostics"]
