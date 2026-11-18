@@ -526,7 +526,8 @@ impl SeatClient {
                         self.rearm_walk_on_tick = false;
                         self.lifecycle.push(InteractReq::WaitEnqueued);
                     }
-                    _ => {}
+                    Some(Awaited::NextTick) => self.lifecycle.push(InteractReq::WaitEnqueued),
+                    None => {}
                 }
             }
         }
@@ -545,7 +546,6 @@ impl SeatClient {
                     input,
                     native,
                     token: id,
-                    generation: self.walk_generation,
                     intent_baseline: self.walk_intent_baseline,
                     manual_takeover_seq: self.manual_takeover_seq,
                 };
@@ -557,7 +557,11 @@ impl SeatClient {
                     self.stored = Some(StoredCompletion {
                         value: SeatCompletion::Walk(WalkCompletion {
                             id,
-                            generation: self.walk_generation,
+                            generation: if matched {
+                                outcome.generation
+                            } else {
+                                self.walk_generation
+                            },
                             sequence: if matched { outcome.seq } else { 0 },
                             failed: !self.walk.value(id.get()),
                             x: key.tile.x,
@@ -809,7 +813,6 @@ struct WalkObservation<'a, 's, 'n> {
     input: &'a SnapshotInput<'s>,
     native: NativeFactsInput<'n>,
     token: RequestId,
-    generation: u64,
     intent_baseline: u64,
     manual_takeover_seq: u64,
 }
@@ -817,9 +820,6 @@ struct WalkObservation<'a, 's, 'n> {
 impl Observation for WalkObservation<'_, '_, '_> {
     fn outcome(&self) -> HostOutcome {
         let native = self.native;
-        if native.walk_outcome_generation != self.generation {
-            return HostOutcome::empty();
-        }
         HostOutcome {
             seq: native.walk_outcome_seq,
             generation: native.walk_outcome_generation,
@@ -843,7 +843,6 @@ impl Observation for WalkObservation<'_, '_, '_> {
         self.input.user_move_intent_seq > self.intent_baseline
             || self.manual_takeover_seq > self.intent_baseline
             || (self.native.walk_outcome_request_id == self.token.get()
-                && self.native.walk_outcome_generation == self.generation
                 && self.input.walk_outcome_cancel_reason == WalkCancelReason::UserInput)
     }
 

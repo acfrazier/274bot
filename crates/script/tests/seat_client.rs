@@ -134,6 +134,28 @@ fn walk_request() -> InteractReq {
     }
 }
 
+fn admitted_walk_outcome(
+    id: RequestId,
+    generation: u64,
+    failed: bool,
+    moving: Option<bool>,
+) -> NativeFactsInput<'static> {
+    NativeFactsInput {
+        walk_outcome_seq: 1,
+        walk_outcome_generation: generation,
+        walk_outcome_failed: failed,
+        walk_outcome_no_path: failed,
+        walk_outcome_x: 3200,
+        walk_outcome_z: 4100,
+        walk_outcome_level: 0,
+        walk_outcome_radius: 2,
+        walk_outcome_allow_teleports: true,
+        walk_outcome_request_id: id.get(),
+        local_player_moving: moving,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn stamped_start_and_exact_terminal_are_consumed_once() {
     let mut client = client();
@@ -369,6 +391,40 @@ fn walk_completion_waits_for_a_matching_host_outcome() {
 }
 
 #[test]
+fn host_refusal_settles_after_admission_advances_route_generation() {
+    let mut client = client();
+    let input = snapshot();
+    let id = client.queue_walk(walk_request(), 71, &input).unwrap();
+    client.drain_seat_batches();
+    client.accept_delivery(&input, admitted_walk_outcome(id, 72, true, None), 0, false);
+    let Some(SeatCompletion::Walk(walk)) = client.take_completion() else {
+        panic!("host-refused walk must complete even when admission advances the generation")
+    };
+    assert_eq!((walk.id, walk.generation, walk.sequence), (id, 72, 1));
+    assert!(walk.failed);
+    assert!(walk.no_path);
+}
+
+#[test]
+fn route_end_without_arrival_settles_after_admission_advances_generation() {
+    let mut client = client();
+    let input = snapshot();
+    let id = client.queue_walk(walk_request(), 71, &input).unwrap();
+    client.drain_seat_batches();
+    client.accept_delivery(
+        &input,
+        admitted_walk_outcome(id, 72, false, Some(false)),
+        0,
+        false,
+    );
+    let Some(SeatCompletion::Walk(walk)) = client.take_completion() else {
+        panic!("ended walk without arrival must complete after its route generation advances")
+    };
+    assert_eq!((walk.id, walk.generation, walk.sequence), (id, 72, 1));
+    assert!(!walk.failed);
+}
+
+#[test]
 fn starts_and_cancels_retry_until_a_page_acknowledges_them() {
     let mut client = client();
     let id = client
@@ -595,6 +651,10 @@ fn reconnect_settles_a_next_tick_wait_on_the_first_full_tick() {
 
     client.accept_delivery(&snapshot(), NativeFactsInput::default(), 0, true);
     assert_eq!(client.take_completion(), Some(SeatCompletion::NextTick));
+    let batch = client.drain_seat_batches().pop().unwrap();
+    assert_eq!(batch.batch.reqs.len(), 2);
+    assert!(matches!(&batch.batch.reqs[0].request, InteractReq::WaitEnqueued));
+    assert!(matches!(&batch.batch.reqs[1].request, InteractReq::WaitSettled));
 }
 
 #[test]
@@ -659,6 +719,30 @@ fn reconnect_rearms_an_unsent_walk_on_the_first_full_tick() {
         (walk.id, walk.generation, walk.sequence),
         (id, new_generation, 1)
     );
+}
+
+#[test]
+fn reconnect_rearmed_walk_settles_on_admitted_generation() {
+    let mut client = client();
+    let input = snapshot();
+    let id = client.queue_walk(walk_request(), 71, &input).unwrap();
+    client.reconnect(Some(execution(24, 6)));
+    client.accept_delivery(
+        &input,
+        NativeFactsInput {
+            walk_outcome_generation: 93,
+            ..Default::default()
+        },
+        0,
+        true,
+    );
+    client.drain_seat_batches();
+    client.accept_delivery(&input, admitted_walk_outcome(id, 94, true, None), 0, false);
+    let Some(SeatCompletion::Walk(walk)) = client.take_completion() else {
+        panic!("re-armed walk must settle on its new session's admitted generation")
+    };
+    assert_eq!((walk.id, walk.generation, walk.sequence), (id, 94, 1));
+    assert!(walk.failed);
 }
 
 #[test]
