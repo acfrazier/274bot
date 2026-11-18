@@ -295,13 +295,21 @@ pub(super) struct DuelDrive {
     approach_tick: Option<u32>,
     refusals: Vec<String>,
 }
-/// Engine A's player scene rows are limited to the configured 15-tile view
-/// distance (`engine/src/network/rsbuf/build.ts:53-64`); `info.ts:67-74`
-/// applies it through `CoordGrid.withinDistanceSw` (`coord.ts:24`).
+/// Engine A's player scene rows use the configured 15-tile view distance
+/// (`engine/src/network/rsbuf/build.ts:53-64`, `info.ts:67-74`, `coord.ts:24`).
 const PLAYER_VIEW_DISTANCE_TILES: i32 = 15;
-/// A bounded convergence window, scaled from the engine's 15-tile view range.
-const MUTUAL_VISIBILITY_TIMEOUT: Duration =
-    Duration::from_secs((PLAYER_VIEW_DISTANCE_TILES as u64) * 2);
+
+/// `fight_pen` bounds (`pair_duel.rs:123-139`) are 25 by 15 tiles, so any
+/// starting tile is at most 12 tiles from the shared `pen_center`. Both
+/// accounts approach it before the visibility wait.
+/// Engine A moves one tile per walk tick (two while running;
+/// `PathingEntity.ts:135-150,220-228`) and ticks every 600 ms (`World.ts:121`).
+/// Bound the slower walk, then allow one scene-row publication tick
+/// (`World.ts:341-409`), up to 20 ms for client processing
+/// (`client.rs:744-746,13545-13553`; `game_shell.rs:1-3`) and a 50 ms observer
+/// poll. Twice the bound provides margin:
+/// `2 * (12 * 600 ms + 600 ms + 20 ms + 50 ms) = 15,740 ms`.
+const MUTUAL_VISIBILITY_TIMEOUT: Duration = Duration::from_millis(2 * (12 * 600 + 600 + 20 + 50));
 
 /// Wait until both scene snapshots contain the other account's player row.
 pub(super) fn wait_mutual_visibility(
