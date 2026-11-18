@@ -1092,6 +1092,8 @@ const CLUE_SETUP: Setup = Setup {
 const CLUE_EMPTY_SETUP: Setup = Setup {
     facts: clue_facts,
     native_facts: true,
+    game_data: revision_data,
+    requires_selected_game_data: true,
     ..PLAIN
 };
 const JOURNAL_ROWS: [QuestStatusInput<'static>; 1] = [QuestStatusInput {
@@ -2484,7 +2486,7 @@ fn helper_rows() -> Vec<Row> {
         Row {
             id: "NativeApi.clue.run",
             why: "one awaited clue run settles the stale-token refusal",
-            case: Case::Drive(drive_clue_run),
+            case: Case::GameDataDrive(drive_clue_run),
         },
         Row {
             id: "NativeApi.combat.fight",
