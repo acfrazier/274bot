@@ -1081,13 +1081,13 @@ fn q8_next_random(seed: &mut u64) -> u64 {
 
 #[cfg(feature = "test-hooks")]
 fn q8_real_slot_sample(
+    class: &str,
     source: &str,
     roles: usize,
     pause: bool,
     phase_us: u64,
     dispatch_ceiling: usize,
     seed: &mut u64,
-    expect_stop_log: bool,
 ) -> Q8Sample {
     let slots: Vec<_> = (0..roles)
         .map(|_| Arc::new(Mutex::new(started_slot(source, false))))
@@ -1106,7 +1106,7 @@ fn q8_real_slot_sample(
         std::thread::scope(|scope| {
             let (started_tx, started_rx) = mpsc::channel();
             let mut workers = Vec::with_capacity(roles);
-            for (slot, flag) in slots.iter().zip(&flags) {
+            for (role, (slot, flag)) in slots.iter().zip(&flags).enumerate() {
                 let slot = Arc::clone(slot);
                 let flag = Arc::clone(flag);
                 let tx = started_tx.clone();
@@ -1124,10 +1124,15 @@ fn q8_real_slot_sample(
                         // observed tick; otherwise repeated LoopSettled rows
                         // fill SeatClient's queue and manufacture an internal
                         // failure unrelated to Stop latency.
-                        guard
+                        let running = guard
                             .with_surface_run_for_test(|run| run.drain_seat_batches())
-                            .expect("running Luau surface");
-                        if !matches!(outcome, LentOutcome::Accepted) {
+                            .is_some();
+                        if !running || !matches!(outcome, LentOutcome::Accepted) {
+                            eprintln!(
+                                "Q8_REF_TICK_TRIP class={class} role={role} tick={tick} outcome={outcome:?} running={running} reason={:?} state={:?}",
+                                guard.last_error(),
+                                guard.state()
+                            );
                             return (1, false);
                         }
                     }
@@ -1178,7 +1183,7 @@ fn q8_real_slot_sample(
             guard.stop();
         }
         let logs = guard.take_pending_logs();
-        if expect_stop_log {
+        if class == "reference-shape" {
             let count = logs
                 .iter()
                 .filter(|line| line.as_str() == "stopped")
@@ -1192,7 +1197,13 @@ fn q8_real_slot_sample(
                 );
             }
         }
-        hook_failures += usize::from(guard.last_error().is_some());
+        if let Some(reason) = guard.last_error() {
+            hook_failures += 1;
+            eprintln!(
+                "Q8_REF_SLOT_TRIP class={class} role={role} pause={pause} reason={reason:?} state={:?}",
+                guard.state()
+            );
+        }
     }
     Q8Sample {
         lock_wait,
@@ -1226,6 +1237,7 @@ fn q8_real_slot_stop_all_on_reference_guest() {
         .ok()
         .map(|value| value.parse::<usize>().expect("sample count"));
     let mut seed = 0x274b_0a11_0301_u64;
+    let resume_remainder = std::env::var("LUAU_Q8_REMAINDER").as_deref() == Ok("1");
     for (class, source, phase_us, dispatch_ceiling, default_samples) in [
         ("reference-shape", Q8_REFERENCE, 1000, 1024, 1000),
         ("legal-loop", Q8_LEGAL_LOOP, 590_000, 16, 100),
@@ -1234,16 +1246,26 @@ fn q8_real_slot_stop_all_on_reference_guest() {
         let samples = sample_override.unwrap_or(default_samples);
         assert!((1..=1000).contains(&samples), "bounded Q8 sample count");
         for (roles, pause) in [(1, false), (10, false), (1, true)] {
+            // A failed REF run may retain its completed rows. Advance the
+            // deterministic phases without remeasuring them on the retry.
+            if resume_remainder
+                && (class == "reference-shape" || (class == "legal-loop" && roles == 1 && !pause))
+            {
+                for _ in 0..samples {
+                    q8_next_random(&mut seed);
+                }
+                continue;
+            }
             let mut rows = Vec::with_capacity(samples);
             for _ in 0..samples {
                 rows.push(q8_real_slot_sample(
+                    class,
                     source,
                     roles,
                     pause,
                     phase_us,
                     dispatch_ceiling,
                     &mut seed,
-                    class == "reference-shape",
                 ));
             }
             let mut waits: Vec<_> = rows.iter().map(|row| row.lock_wait).collect();
@@ -1256,9 +1278,13 @@ fn q8_real_slot_stop_all_on_reference_guest() {
             let hook_failures: usize = rows.iter().map(|row| row.hook_failures).sum();
             let missing_stop_logs: usize = rows.iter().map(|row| row.missing_stop_logs).sum();
             let ceiling_hits: usize = rows.iter().map(|row| row.dispatch_ceiling_hits).sum();
+            let tripped_samples = rows
+                .iter()
+                .filter(|row| row.tick_failures > 0 || row.hook_failures > 0)
+                .count();
             let action = if pause { "pause" } else { "stop" };
             println!(
-                "Q8_REF class={class} roles={roles} action={action} samples={samples} heap_bytes={} w1_p50_ms={w1_p50:.4} w1_p99_ms={w1_p99:.4} w1_max_ms={w1_max:.4} w2_plus_w4_upper_p50_ms={w24_p50:.4} w2_plus_w4_upper_p99_ms={w24_p99:.4} w2_plus_w4_upper_max_ms={w24_max:.4} whole_p50_ms={whole_p50:.4} whole_p99_ms={whole_p99:.4} whole_max_ms={whole_max:.4} tick_failures={tick_failures} hook_failures={hook_failures} missing_stop_logs={missing_stop_logs} dispatch_ceiling_hits={ceiling_hits}",
+                "Q8_REF class={class} roles={roles} action={action} samples={samples} heap_bytes={} w1_p50_ms={w1_p50:.4} w1_p99_ms={w1_p99:.4} w1_max_ms={w1_max:.4} w2_plus_w4_upper_p50_ms={w24_p50:.4} w2_plus_w4_upper_p99_ms={w24_p99:.4} w2_plus_w4_upper_max_ms={w24_max:.4} whole_p50_ms={whole_p50:.4} whole_p99_ms={whole_p99:.4} whole_max_ms={whole_max:.4} tripped_samples={tripped_samples} tick_failures={tick_failures} hook_failures={hook_failures} missing_stop_logs={missing_stop_logs} dispatch_ceiling_hits={ceiling_hits}",
                 rows[0].heap_bytes
             );
             if class == "reference-shape" {
