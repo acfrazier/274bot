@@ -56,9 +56,20 @@ local function number_guard(fn, label, positions, all_arguments, max_arguments)
             native_error(too_many, 2)
         end
         if all_arguments then
-            for i = 1, count do
-                if native_type(native_select(i, ...)) == "string" then
-                    native_error(bad_string, 2)
+            if count > 16 then
+                -- select(i, ...) copies the whole suffix on every iteration.
+                -- Materialize large varargs once instead of copying O(n^2) values.
+                local values = {...}
+                for i = 1, count do
+                    if native_type(values[i]) == "string" then
+                        native_error(bad_string, 2)
+                    end
+                end
+            else
+                for i = 1, count do
+                    if native_type(native_select(i, ...)) == "string" then
+                        native_error(bad_string, 2)
+                    end
                 end
             end
         else

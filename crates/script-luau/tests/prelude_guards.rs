@@ -205,6 +205,12 @@ fn prelude_enforces_round_seven_native_call_caps() -> mlua::Result<()> {
                 return fn(table.unpack(arguments, 1, 8001))
             end)
         end
+        local at_limit = table.create(8000, 65)
+        assert(#string.char(table.unpack(at_limit, 1, 8000)) == 8000)
+        at_limit[8000] = "65"
+        rejected("string is not allowed", function()
+            return string.char(table.unpack(at_limit, 1, 8000))
+        end)
         "#,
     )
     .exec()?;

@@ -812,7 +812,6 @@ fn real_slot_progress_family_completion_survives_page_clear_before_resume() {
 // installed prelude, single-step hook, allocator limit and tick dispatch.
 // Preparing inputs on the first tick keeps input construction out of the
 // measured tick without charging the 50 ms load budget for the fixture.
-#[cfg(target_os = "linux")]
 const C8_REF_HEAD: &str = r#"
 local function get(t, k) return t[k] end
 local rep, find, match, gsub = get(string, "rep"), get(string, "find"), get(string, "match"), get(string, "gsub")
@@ -820,10 +819,9 @@ local split, lower, format, char = get(string, "split"), get(string, "lower"), g
 local concat, sort, unpack, create = get(table, "concat"), get(table, "sort"), get(table, "unpack"), get(table, "create")
 local move, tfind = get(table, "move"), get(table, "find")
 local ulen, uchar = get(utf8, "len"), get(utf8, "char")
-local tonum = get(_G, "tonumber")
+local tonum = tonumber
 "#;
 
-#[cfg(target_os = "linux")]
 fn c8_ref_source(body: &str) -> String {
     format!(
         "{C8_REF_HEAD}\nlocal fn\nreturn {{ tick = function(api)\n\
@@ -833,7 +831,6 @@ fn c8_ref_source(body: &str) -> String {
     )
 }
 
-#[cfg(target_os = "linux")]
 fn c8_ref_start(body: &str) -> Box<dyn SurfaceRun> {
     let mut run = spawn(&c8_ref_source(body)).expect("C8 product run starts");
     assert_eq!(
@@ -848,7 +845,6 @@ fn c8_ref_start(body: &str) -> Box<dyn SurfaceRun> {
     run
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 #[rustfmt::skip]
 #[ignore = "REF-only measured product-path cap cell; prints per-row timing, not a CI timing gate"]
@@ -869,14 +865,20 @@ fn c8_product_cap_timing_on_reference_guest() {
         ("pat-dot-256K", r#"local s = rep("z", 262144) local p = "^.*X" return function() return find(s, p) end"#),
         ("pat-class-256K", r#"local s = rep("z", 262144) local p = "^%a*X" return function() return find(s, p) end"#),
         ("pat-balance-256K", r#"local s = rep("(", 262144) local p = "^%b()" return function() return find(s, p) end"#),
-        ("pat-items-256", r#"local s = rep("a", 262144) local p = "^" .. rep("a", 254) .. "b" return function() return match(s, p) end"#),
+        ("pat-items-256", r#"local s = rep("a", 16384) local p = "^" .. rep("a", 254) .. "b" return function() return match(s, p) end"#),
         ("gsub-repl-4096", r#"local s = rep("x", 64) local r = rep("%1", 2048) return function() local _, n = gsub(s, "(y*)", r) return n end"#),
         ("format-d-1024", r#"local fmt = rep("%d", 512) local t = create(512, 9007199254740992) return function() return #format(fmt, unpack(t)) end"#),
         ("format-f99-1020", r#"local fmt = rep("%.99f", 204) local t = create(204, -1e308) return function() return #format(fmt, unpack(t)) end"#),
         ("format-q-256K-quote", r#"local s = rep("\"", 262144) return function() return #format("%q", s) end"#),
         ("format-q-256K-nul", r#"local s = rep("\0", 262144) return function() return #format("%q", s) end"#),
-        ("char-7999", r#"local t = create(7999, 65) return function() return #char(unpack(t)) end"#),
-        ("utf8char-7999", r#"local t = create(7999, 1114111) return function() return #uchar(unpack(t)) end"#),
+        ("char-8000", r#"local t = create(8000, 65) return function() return #char(unpack(t)) end"#),
+        ("utf8char-8000", r#"local t = create(8000, 1114111) return function() return #uchar(unpack(t)) end"#),
+        ("math-min-8000", r#"local t = create(8000, 1) return function() return math.min(unpack(t)) end"#),
+        ("math-max-8000", r#"local t = create(8000, 1) return function() return math.max(unpack(t)) end"#),
+        ("bit32-band-8000", r#"local t = create(8000, 1) return function() return bit32.band(unpack(t)) end"#),
+        ("bit32-bor-8000", r#"local t = create(8000, 1) return function() return bit32.bor(unpack(t)) end"#),
+        ("bit32-bxor-8000", r#"local t = create(8000, 1) return function() return bit32.bxor(unpack(t)) end"#),
+        ("bit32-btest-8000", r#"local t = create(8000, 1) return function() return bit32.btest(unpack(t)) end"#),
         ("concat-16384-floats", r#"local t = create(16384, 0) for i = 1, 16384 do t[i] = i + 0.1 end return function() return #concat(t) end"#),
         ("concat-16384-ints", r#"local t = create(16384, 0) for i = 1, 16384 do t[i] = i end return function() return #concat(t) end"#),
         ("concat-16384-str-sep", r#"local t = create(16384, "xxxxxxxxxxxxxx") return function() return #concat(t, ",") end"#),
@@ -892,10 +894,12 @@ fn c8_product_cap_timing_on_reference_guest() {
         ("rep-12M", r#"local s = rep("a", 1048576) return function() return #rep(s, 12) end"#),
     ];
     for (name, body) in caps {
-        let mut run = c8_ref_start(body);
         let mut timings = [0.0; 7];
-        for (sample, ms) in timings.iter_mut().enumerate() {
-            let tick = sample as u64 + 2;
+        for ms in &mut timings {
+            // Each sample owns a new VM: large output buffers can otherwise
+            // accumulate until the independent 16 MiB heap latch trips.
+            let mut run = c8_ref_start(body);
+            let tick = 2;
             let start = std::time::Instant::now();
             let outcome = dispatch(&mut *run, SurfaceWake::Tick { held: false }, tick);
             *ms = start.elapsed().as_secs_f64() * 1_000.0;
@@ -906,8 +910,8 @@ fn c8_product_cap_timing_on_reference_guest() {
         println!("C8_REF_CAP {name} min_ms={:.4} median_ms={:.4} max_ms={:.4} target_ms=10", timings[0], timings[3], timings[6]);
     }
 
-    // Every numeric C8 control has a refusal beyond its boundary. N_v is
-    // different: Luau's 7,999-argument VM limit rejects before that guard.
+    // Numeric caps refuse the first input beyond their boundary, including
+    // the 8,001-argument case after Luau has expanded the arguments.
     let over = [
         ("find-subject-N_s-plus-1", r#"local s = rep("a", 262145) return function() return find(s, "a", 1, true) end"#, "N_s"),
         ("find-pattern-N_p-plus-1", r#"local p = rep("a", 257) return function() return find("a", p) end"#, "N_p"),
@@ -919,6 +923,7 @@ fn c8_product_cap_timing_on_reference_guest() {
         ("format-N_a-plus-1", r#"local s = rep("a", 262145) return function() return format("%s", s) end"#, "N_a"),
         ("concat-N_c-plus-1", r#"local t = create(16385, "x") return function() return concat(t) end"#, "N_c"),
         ("move-N_m-plus-1", r#"local a, b = {}, {} return function() return move(a, 1, 65537, 2, b) end"#, "N_m"),
+        ("char-N_v-plus-1", r#"local t = create(8001, 65) return function() return char(unpack(t, 1, 8001)) end"#, "N_v"),
     ];
     for (name, body, cap) in over {
         let mut run = c8_ref_start(body);
