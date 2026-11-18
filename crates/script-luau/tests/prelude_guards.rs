@@ -178,14 +178,18 @@ fn prelude_enforces_round_seven_native_call_caps() -> mlua::Result<()> {
             assert(not ok and string.find(message, cap, 1, true), message)
         end
 
-        local subject = string.rep("a", 262144)
+        local subject = string.rep("a", 254417)
         local long_subject = subject .. "a"
+        local pattern_subject = string.rep("a", 247077)
+        local over_pattern_subject = pattern_subject .. "a"
         local long_pattern = string.rep("x", 257)
-        local large_plain_needle = string.rep("x", 1025)
+        local large_plain_needle = string.rep("x", 1056)
 
+        assert(string.find(subject, "a", 1, true) == 1)
+        assert(string.find(pattern_subject, string.rep("a", 16)) == 1)
         rejected("N_s", function() string.find(long_subject, "a") end)
         rejected("N_p", function() string.match("", long_pattern) end)
-        rejected("W_p", function() string.find(subject, string.rep("x", 17)) end)
+        rejected("W_p", function() string.find(over_pattern_subject, string.rep("a", 16)) end)
         rejected("W_n", function() string.find(subject, large_plain_needle, 1, true) end)
         rejected("W_n", function() string.split(subject, large_plain_needle) end)
         rejected("N_r", function() string.gsub("", "x", string.rep("x", 4097)) end)

@@ -853,19 +853,19 @@ fn c8_product_cap_timing_on_reference_guest() {
     // accepted boundary. The allocator-limited 8 MiB concat result is omitted:
     // it can fail for heap size although its N_c guard admits the input.
     let caps = [
-        ("find-plain-256K-1024", r#"local s = rep("a", 262144) local p = rep("a", 1023) .. "b" return function() return find(s, p, 1, true) end"#),
+        ("find-plain-254417-1024", r#"local s = rep("a", 254417) local p = rep("a", 1023) .. "b" return function() return find(s, p, 1, true) end"#),
         ("find-plain-32K-8K", r#"local s = rep("a", 32768) local p = rep("a", 8191) .. "b" return function() return find(s, p, 1, true) end"#),
-        ("find-implicit-256K-16", r#"local s = rep("a", 262144) local p = rep("a", 15) .. "b" return function() return find(s, p) end"#),
-        ("split-256K-1024", r#"local s = rep("a", 262144) local p = rep("a", 1023) .. "b" return function() return #split(s, p) end"#),
-        ("split-allsep-256K", r#"local s = rep(",", 262144) return function() return #split(s, ",") end"#),
-        ("split-emptysep-256K", r#"local s = rep("a", 262144) return function() return #split(s, "") end"#),
-        ("pat-bracket-262144-16", r#"local s = rep("z", 262144) local p = "^[" .. rep("a", 10) .. "z]*X" assert(#p == 16) return function() return find(s, p) end"#),
-        ("pat-bracket-65536-64", r#"local s = rep("z", 65536) local p = "^[" .. rep("a", 58) .. "z]*X" assert(#p == 64) return function() return find(s, p) end"#),
-        ("pat-bracket-16384-256", r#"local s = rep("z", 16384) local p = "^[" .. rep("a", 250) .. "z]*X" assert(#p == 256) return function() return find(s, p) end"#),
-        ("pat-dot-256K", r#"local s = rep("z", 262144) local p = "^.*X" return function() return find(s, p) end"#),
-        ("pat-class-256K", r#"local s = rep("z", 262144) local p = "^%a*X" return function() return find(s, p) end"#),
-        ("pat-balance-256K", r#"local s = rep("(", 262144) local p = "^%b()" return function() return find(s, p) end"#),
-        ("pat-items-256", r#"local s = rep("a", 16384) local p = "^" .. rep("a", 254) .. "b" return function() return match(s, p) end"#),
+        ("find-implicit-247077-16", r#"local s = rep("a", 247077) local p = rep("a", 15) .. "b" return function() return find(s, p) end"#),
+        ("split-254417-1024", r#"local s = rep("a", 254417) local p = rep("a", 1023) .. "b" return function() return #split(s, p) end"#),
+        ("split-allsep-254417", r#"local s = rep(",", 254417) return function() return #split(s, ",") end"#),
+        ("split-emptysep-254417", r#"local s = rep("a", 254417) return function() return #split(s, "") end"#),
+        ("pat-bracket-247077-16", r#"local s = rep("z", 247077) local p = "^[" .. rep("a", 10) .. "z]*X" assert(#p == 16) return function() return find(s, p) end"#),
+        ("pat-bracket-61769-64", r#"local s = rep("z", 61769) local p = "^[" .. rep("a", 58) .. "z]*X" assert(#p == 64) return function() return find(s, p) end"#),
+        ("pat-bracket-15442-256", r#"local s = rep("z", 15442) local p = "^[" .. rep("a", 250) .. "z]*X" assert(#p == 256) return function() return find(s, p) end"#),
+        ("pat-dot-254417", r#"local s = rep("z", 254417) local p = "^.*X" return function() return find(s, p) end"#),
+        ("pat-class-254417", r#"local s = rep("z", 254417) local p = "^%a*X" return function() return find(s, p) end"#),
+        ("pat-balance-254417", r#"local s = rep("(", 254417) local p = "^%b()" return function() return find(s, p) end"#),
+        ("pat-items-256", r#"local s = rep("a", 15442) local p = "^" .. rep("a", 254) .. "b" return function() return match(s, p) end"#),
         ("gsub-repl-4096", r#"local s = rep("x", 64) local r = rep("%1", 2048) return function() local _, n = gsub(s, "(y*)", r) return n end"#),
         ("format-d-1024", r#"local fmt = rep("%d", 512) local t = create(512, 9007199254740992) return function() return #format(fmt, unpack(t)) end"#),
         ("format-f99-1020", r#"local fmt = rep("%.99f", 204) local t = create(204, -1e308) return function() return #format(fmt, unpack(t)) end"#),
@@ -913,11 +913,11 @@ fn c8_product_cap_timing_on_reference_guest() {
     // Numeric caps refuse the first input beyond their boundary, including
     // the 8,001-argument case after Luau has expanded the arguments.
     let over = [
-        ("find-subject-N_s-plus-1", r#"local s = rep("a", 262145) return function() return find(s, "a", 1, true) end"#, "N_s"),
+        ("find-subject-N_s-plus-1", r#"local s = rep("a", 254418) return function() return find(s, "a", 1, true) end"#, "N_s"),
         ("find-pattern-N_p-plus-1", r#"local p = rep("a", 257) return function() return find("a", p) end"#, "N_p"),
-        ("find-work-W_p-plus-1", r#"local s = rep("a", 262144) local p = rep("a", 17) return function() return find(s, p) end"#, "W_p"),
-        ("find-work-W_n-plus-1", r#"local s = rep("a", 262144) local p = rep("a", 1025) return function() return find(s, p, 1, true) end"#, "W_n"),
-        ("split-work-W_n-plus-1", r#"local s = rep("a", 262144) local p = rep("a", 1025) return function() return split(s, p) end"#, "W_n"),
+        ("find-work-above-W_p", r#"local s = rep("a", 247078) local p = rep("a", 16) return function() return find(s, p) end"#, "W_p"),
+        ("find-work-above-W_n", r#"local s = rep("a", 254417) local p = rep("a", 1056) return function() return find(s, p, 1, true) end"#, "W_n"),
+        ("split-work-above-W_n", r#"local s = rep("a", 254417) local p = rep("a", 1056) return function() return split(s, p) end"#, "W_n"),
         ("gsub-replacement-N_r-plus-1", r#"local r = rep("x", 4097) return function() return gsub("x", "x", r) end"#, "N_r"),
         ("format-N_f-plus-1", r#"local fmt = rep("x", 1025) return function() return format(fmt) end"#, "N_f"),
         ("format-N_a-plus-1", r#"local s = rep("a", 262145) return function() return format("%s", s) end"#, "N_a"),
@@ -937,5 +937,30 @@ fn c8_product_cap_timing_on_reference_guest() {
         assert!(logs[0].starts_with("error:"), "{name}: {logs:?}");
         assert!(logs[0].contains(cap), "{name}: {logs:?}");
         println!("C8_REF_OVER {name} refused={cap}");
+    }
+}
+
+#[test]
+#[rustfmt::skip]
+#[ignore = "REF-only proportional C8 pattern-cap recheck; prints timing, not a CI timing gate"]
+fn c8_adjusted_pattern_caps_on_reference_guest() {
+    // L2b's first REF run exceeded 10 ms for these three rows. Recheck only
+    // their reduced boundaries, each in a fresh product VM.
+    let caps = [
+        ("pat-bracket-247077-16", r#"local s = rep("z", 247077) local p = "^[" .. rep("a", 10) .. "z]*X" assert(#p == 16) return function() return find(s, p) end"#),
+        ("pat-dot-254417", r#"local s = rep("z", 254417) local p = "^.*X" return function() return find(s, p) end"#),
+        ("pat-class-254417", r#"local s = rep("z", 254417) local p = "^%a*X" return function() return find(s, p) end"#),
+    ];
+    for (name, body) in caps {
+        let mut timings = [0.0; 7];
+        for ms in &mut timings {
+            let mut run = c8_ref_start(body);
+            let start = std::time::Instant::now();
+            assert_eq!(dispatch(&mut *run, SurfaceWake::Tick { held: false }, 2), LentOutcome::Accepted, "{name}: at cap");
+            *ms = start.elapsed().as_secs_f64() * 1_000.0;
+            assert_eq!(run.drain_logs(), ["ok"], "{name}: at cap");
+        }
+        timings.sort_by(f64::total_cmp);
+        println!("C8_REF_ADJUSTED {name} min_ms={:.4} median_ms={:.4} max_ms={:.4} target_ms=10", timings[0], timings[3], timings[6]);
     }
 }

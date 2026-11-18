@@ -24,9 +24,9 @@ local native_table = table
 local native_table_sort = native_table.sort
 local native_table_find = native_table.find
 
-local N_S = 262144
+local N_S = 254417
 local N_P = 256
-local W_P = 4194304
+local W_P = 3953235
 local W_N = 268435456
 local N_R = 4096
 local N_F = 1024
@@ -113,13 +113,13 @@ local function search_refusal(name, subject, pattern, pattern_limit, work_limit)
     local subject_size = string_size(subject)
     local pattern_size = string_size(pattern)
     if subject_size > N_S then
-        return name .. ": subject exceeds N_s (262144 bytes)"
+        return name .. ": subject exceeds N_s (254417 bytes)"
     end
     if pattern_limit ~= nil and pattern_size > N_P then
         return name .. ": pattern exceeds N_p (256 bytes)"
     end
     if subject_size * pattern_size > work_limit then
-        local cap = work_limit == W_N and "W_n (268435456)" or "W_p (4194304)"
+        local cap = work_limit == W_N and "W_n (268435456)" or "W_p (3953235)"
         return name .. ": subject-by-pattern work exceeds " .. cap
     end
     return nil
