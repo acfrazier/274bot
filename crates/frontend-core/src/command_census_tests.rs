@@ -734,8 +734,6 @@ const CORE: &[(&str, Decision)] = &[
     ("session/prefs.rs::DrawPolicy::key", Excluded(FORMAT)),
     ("nav_prefs.rs::nav_preference", Excluded("reads the stored preference; SetNavPreference writes it")),
     ("pvp_prefs.rs::pvp_start_fights", Excluded("reads the stored setting; SetPvpStartFights writes it")),
-    ("luau_prefs.rs::luau_runtime_enabled", Excluded("reads the stored setting; SetLuauRuntime writes it")),
-    ("luau_prefs.rs::luau_runtime_notice_acknowledged", Excluded("reads the stored acknowledgement; AcknowledgeNotice writes it")),
     ("pvp_prefs.rs::PvpSettingView::begin", Excluded("the shown value of a click already submitted as SetPvpStartFights")),
     ("pvp_prefs.rs::PvpSettingView::refuse", Excluded("the shown value after a click that never became a command; the refusal is logged at submission")),
     ("pvp_prefs.rs::PvpSettingView::submitted", Excluded("remembers the click's request so follow can read its terminal")),

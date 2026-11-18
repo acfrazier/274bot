@@ -35,7 +35,6 @@ pub mod live;
 pub mod log;
 pub mod log_file;
 mod login_notice;
-mod luau_prefs;
 pub mod map_bake;
 pub mod map_decode;
 pub mod marked;
@@ -83,11 +82,6 @@ pub use fleet::{
 pub use fleet_plan::{FleetAction, FleetPlan, FleetResult, PlanScope, ResultCounts};
 pub use group_walk::{MarkedWalk, WalkInputs};
 pub use host_play::saved_data;
-pub use luau_prefs::{
-    luau_runtime_enabled, luau_runtime_notice_acknowledged, LUAU_RUNTIME_DISABLE_CONFIRMATION,
-    LUAU_RUNTIME_DISABLE_TITLE, LUAU_RUNTIME_FIRST_ENABLE_WARNING, LUAU_RUNTIME_LABEL,
-    LUAU_RUNTIME_NOTE, LUAU_RUNTIME_WARNING_TITLE, LUAU_START_REFUSAL,
-};
 pub use map_bake::{
     load_map_bake_choice, MapBakeChoice, MapBakeGate, MapBakePrompt, MAP_BAKE_TITLE,
     MAP_BAKE_WARNING,

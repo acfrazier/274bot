@@ -123,10 +123,6 @@ pub enum ConfirmKind {
         target_count: usize,
         summary: String,
     },
-    /// Enable the experimental Luau runtime after its one-time warning.
-    LuauRuntimeEnable,
-    /// Disable the experimental Luau runtime without deleting imports.
-    LuauRuntimeDisable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,8 +209,6 @@ impl Confirm {
             ConfirmKind::MemoryRelog(_) => "Relog now",
             ConfirmKind::FleetPlan { action, .. } => action.verb(),
             ConfirmKind::RestartSettings { .. } => "Restart script settings",
-            ConfirmKind::LuauRuntimeEnable => frontend_core::LUAU_RUNTIME_WARNING_TITLE,
-            ConfirmKind::LuauRuntimeDisable => frontend_core::LUAU_RUNTIME_DISABLE_TITLE,
         }
     }
 
@@ -248,13 +242,6 @@ impl Confirm {
             ConfirmKind::FleetPlan { prompt, .. } => {
                 prompt.split('\n').map(str::to_owned).collect()
             }
-            ConfirmKind::LuauRuntimeEnable => frontend_core::LUAU_RUNTIME_FIRST_ENABLE_WARNING
-                .split('\n')
-                .map(str::to_owned)
-                .collect(),
-            ConfirmKind::LuauRuntimeDisable => {
-                vec![frontend_core::LUAU_RUNTIME_DISABLE_CONFIRMATION.to_owned()]
-            }
         };
         if let Some(note) = self.note {
             lines.push(note.into());
@@ -269,8 +256,6 @@ impl Confirm {
             ConfirmKind::MemoryRelog(_) => "[Relog y]",
             ConfirmKind::FleetPlan { .. } => "[Run y]",
             ConfirmKind::RestartSettings { .. } => "[Restart y]",
-            ConfirmKind::LuauRuntimeEnable => "[Enable y]",
-            ConfirmKind::LuauRuntimeDisable => "[Continue y]",
         }
     }
 
@@ -523,8 +508,6 @@ impl TuiApp {
             }
             ConfirmKind::RestartSettings { .. } => (None, AppAction::ScriptRestartSettings),
             ConfirmKind::FleetPlan { action, .. } => (None, AppAction::RunFleetPlan(action)),
-            ConfirmKind::LuauRuntimeEnable => (None, AppAction::EnableLuauRuntime),
-            ConfirmKind::LuauRuntimeDisable => (None, AppAction::SetLuauRuntime(false)),
         }
     }
 

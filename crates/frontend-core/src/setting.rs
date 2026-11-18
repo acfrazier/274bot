@@ -34,8 +34,6 @@ pub enum Setting {
     SessionLog,
     /// Whether combat may start fights with players.
     PvpStartFights,
-    /// Whether the experimental Luau script runtime is enabled.
-    LuauRuntime,
     /// The remembered map-bake warning choice.
     MapBake,
     /// The Quester Paths source folder and its switch.
@@ -48,7 +46,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting identity, for bounded failure expiry reporting.
-    pub(crate) const ALL: [Self; 23] = [
+    pub(crate) const ALL: [Self; 21] = [
         Self::Draw(DrawSwitch::CaptureInput),
         Self::Draw(DrawSwitch::SidecarFullRate),
         Self::Draw(DrawSwitch::FocusedFullRate),
@@ -64,11 +62,9 @@ impl Setting {
         Self::DangerRouting,
         Self::SessionLog,
         Self::PvpStartFights,
-        Self::LuauRuntime,
         Self::MapBake,
         Self::QuesterPaths,
         Self::Notice(Notice::BackgroundBots),
-        Self::Notice(Notice::LuauRuntime),
         Self::Notice(Notice::RenderAllWarning),
         Self::Notice(Notice::QuesterPaths),
         Self::ProfileOrder,
@@ -86,13 +82,11 @@ impl Setting {
             Self::DangerRouting => "danger routing",
             Self::SessionLog => "session file setting",
             Self::PvpStartFights => "start fights with players",
-            Self::LuauRuntime => "experimental Luau script runtime",
             Self::MapBake => "map bake choice",
             Self::QuesterPaths => "Quest Paths settings",
             Self::Notice(Notice::BackgroundBots) => "background bots notice",
             Self::Notice(Notice::RenderAllWarning) => "render all warning",
             Self::Notice(Notice::QuesterPaths) => "Quest Paths notice",
-            Self::Notice(Notice::LuauRuntime) => "Luau runtime notice",
             Self::ProfileOrder => "profile order",
         }
     }

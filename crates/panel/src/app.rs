@@ -5382,18 +5382,6 @@ fn pvp_start_fights_row(ui: &Ui, session: &mut Session) {
     ui.text_wrapped(frontend_core::START_FIGHTS_NOTE);
 }
 
-/// The shared opt-in experimental runtime. The first Enable acknowledges
-/// its one-time notice before the durable setting can change.
-fn luau_runtime_row(ui: &Ui, session: &mut Session) {
-    let mut on = session.luau_runtime_shown();
-    if ui.checkbox(frontend_core::LUAU_RUNTIME_LABEL, &mut on) {
-        session.request_luau_runtime(on);
-    }
-    ui.set_item_tooltip(frontend_core::LUAU_RUNTIME_NOTE);
-    setting_feedback_line(ui, session, Setting::LuauRuntime);
-    ui.text_wrapped(frontend_core::LUAU_RUNTIME_NOTE);
-}
-
 fn global_capture_section(ui: &Ui, session: &mut Session) {
     let on = session.draw_shown(DrawSwitch::CaptureInput);
     let mut cur = on;
@@ -5563,7 +5551,6 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     global_capture_section(ui, session);
     crate::log_pane::session_log_row(ui, session);
     pvp_start_fights_row(ui, session);
-    luau_runtime_row(ui, session);
     let mut sidecar = session.draw_shown(DrawSwitch::SidecarFullRate);
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
         session.set_sidecar_50(sidecar);
@@ -6059,77 +6046,6 @@ fn background_ack_window(ui: &Ui, session: &mut Session) {
         });
     if !open {
         session.dismiss_background_ack();
-    }
-}
-
-fn luau_runtime_enable_window(ui: &Ui, session: &mut Session) {
-    if !session.luau_runtime_enable_open {
-        return;
-    }
-    let mut open = true;
-    ui.window(frontend_core::LUAU_RUNTIME_WARNING_TITLE)
-        .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
-        .size_constraints(
-            scale_size(ui, [DIALOG_W, 80.0]),
-            [scale_px(ui, DIALOG_W), scale_px(ui, 720.0)],
-        )
-        .build(|| {
-            let _wrap = ui.push_text_wrap_pos(scale_px(ui, DIALOG_W - 16.0));
-            ui.text_wrapped(frontend_core::LUAU_RUNTIME_FIRST_ENABLE_WARNING);
-            ui.spacing();
-            let avail = ui.content_region_avail()[0];
-            let (width, stack) = scaled_button_row_layout(ui, avail, 2);
-            if ui.button_with_size("Enable", [width, 0.0]) {
-                session.confirm_luau_runtime_enable();
-            }
-            if !stack {
-                gap_line(ui);
-            }
-            if ui.button_with_size("Cancel", [width, 0.0]) {
-                session.luau_runtime_enable_open = false;
-            }
-            setting_feedback_line(
-                ui,
-                session,
-                Setting::Notice(frontend_core::OperatorNotice::LuauRuntime),
-            );
-        });
-    if !open {
-        session.luau_runtime_enable_open = false;
-    }
-}
-
-fn luau_runtime_disable_window(ui: &Ui, session: &mut Session) {
-    if !session.luau_runtime_disable_open {
-        return;
-    }
-    let mut open = true;
-    ui.window(frontend_core::LUAU_RUNTIME_DISABLE_TITLE)
-        .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
-        .size_constraints(
-            scale_size(ui, [DIALOG_W, 80.0]),
-            [scale_px(ui, DIALOG_W), scale_px(ui, 720.0)],
-        )
-        .build(|| {
-            let _wrap = ui.push_text_wrap_pos(scale_px(ui, DIALOG_W - 16.0));
-            ui.text_wrapped(frontend_core::LUAU_RUNTIME_DISABLE_CONFIRMATION);
-            ui.spacing();
-            let avail = ui.content_region_avail()[0];
-            let (width, stack) = scaled_button_row_layout(ui, avail, 2);
-            if ui.button_with_size("Continue", [width, 0.0]) {
-                session.confirm_luau_runtime_disable();
-            }
-            if !stack {
-                gap_line(ui);
-            }
-            if ui.button_with_size("Cancel", [width, 0.0]) {
-                session.luau_runtime_disable_open = false;
-            }
-        });
-    if !open {
-        session.luau_runtime_disable_open = false;
     }
 }
 
@@ -8951,8 +8867,6 @@ fn ui_frame(
     crate::loadouts::window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
     background_ack_window(ui, &mut state.session);
-    luau_runtime_enable_window(ui, &mut state.session);
-    luau_runtime_disable_window(ui, &mut state.session);
     discard_unconsumed_native_capture();
     false
 }

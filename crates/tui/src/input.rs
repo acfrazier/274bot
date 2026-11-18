@@ -746,7 +746,6 @@ impl TuiApp {
         )
         .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
         .pvp_start_fights(&mut self.pvp_start_fights)
-        .luau_runtime(self.luau_runtime_enabled)
         .script_scope_notice_ack(&mut self.script_scope_notice_ack)
         .quester_paths(&mut self.quester_paths);
         pane.memory = self.settings_memory;
@@ -793,28 +792,6 @@ impl TuiApp {
                 self.pause_script_on_manual_walk_abort_dirty = true;
             }
             SettingsKey::PvpStartFights(on) => self.pvp_start_fights_request = Some(on),
-            SettingsKey::LuauRuntime(on) => {
-                let pending = |setting| {
-                    matches!(
-                        self.setting_feedback(setting),
-                        Some(crate::app::SettingFeedback::Pending)
-                    )
-                };
-                if pending(frontend_core::Setting::LuauRuntime)
-                    || pending(frontend_core::Setting::Notice(
-                        frontend_core::OperatorNotice::LuauRuntime,
-                    ))
-                {
-                    return AppAction::None;
-                }
-                if on && !self.luau_runtime_notice_acknowledged {
-                    self.confirm(ConfirmKind::LuauRuntimeEnable);
-                } else if on {
-                    return AppAction::SetLuauRuntime(true);
-                } else {
-                    self.confirm(ConfirmKind::LuauRuntimeDisable);
-                }
-            }
             SettingsKey::QuesterPathsChanged => {
                 self.quester_paths_dirty = true;
                 return AppAction::DismissPathsNotice;

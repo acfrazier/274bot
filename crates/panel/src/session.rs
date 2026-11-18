@@ -1094,7 +1094,6 @@ pub(crate) struct SettingDrafts {
     pub(crate) quester_enabled: Option<bool>,
     pub(crate) map_bake: Option<MapBakeChoice>,
     pub(crate) session_log: Option<bool>,
-    pub(crate) luau_runtime: Option<bool>,
 }
 
 enum StartupFocus {
@@ -1165,12 +1164,6 @@ pub struct Session {
     /// The global "Start fights with players" setting (`pvp.start_fights`), as
     /// the Settings window shows it; a click waits for its saved value.
     pub(crate) pvp_start_fights: frontend_core::PvpSettingView,
-    /// The experimental Luau setting's first-enable warning and durable
-    /// acknowledgement wait.
-    pub(crate) luau_runtime_enable_open: bool,
-    pub(crate) luau_runtime_enable_waiting: bool,
-    /// The disable confirmation is separate from the durable setting.
-    pub(crate) luau_runtime_disable_open: bool,
     /// The operator preferences (`panel-ui.json`) through the process
     /// local-state service this session opened: the one handle every reader
     /// and writer of the panel's preferences goes through.
@@ -1939,9 +1932,6 @@ impl Session {
             route_through_zones: false,
             walk_permissions,
             pvp_start_fights,
-            luau_runtime_enable_open: false,
-            luau_runtime_enable_waiting: false,
-            luau_runtime_disable_open: false,
             preferences,
             preferences_ready,
             startup_focus_pending: None,
@@ -2110,69 +2100,6 @@ impl Session {
             None => {}
         }
     }
-    /// The global experimental Luau runtime, with the first-enable notice
-    /// acknowledged before the setting can be turned on.
-    pub(crate) fn request_luau_runtime(&mut self, on: bool) {
-        if on {
-            if self.core.luau_runtime_notice_acknowledged() == Some(true) {
-                self.set_luau_runtime(true);
-            } else {
-                self.luau_runtime_enable_open = true;
-            }
-        } else {
-            self.luau_runtime_disable_open = true;
-        }
-    }
-
-    /// The value the settings row shows while its durable write is pending.
-    pub(crate) fn luau_runtime_shown(&self) -> bool {
-        self.setting_drafts
-            .luau_runtime
-            .unwrap_or_else(|| self.core.luau_runtime_enabled().unwrap_or(false))
-    }
-
-    /// Confirm the first-enable warning by durably acknowledging it. The
-    /// setting is enabled later, only after that acknowledgement is saved.
-    pub(crate) fn confirm_luau_runtime_enable(&mut self) {
-        self.luau_runtime_enable_open = false;
-        if self.luau_runtime_enable_waiting {
-            return;
-        }
-        self.core
-            .stage_notice(frontend_core::OperatorNotice::LuauRuntime);
-        if self
-            .submit(
-                frontend_core::OperatorCommand::AcknowledgeNotice,
-                frontend_core::Targets::Application,
-            )
-            .is_some()
-        {
-            self.luau_runtime_enable_waiting = true;
-        } else {
-            self.luau_runtime_enable_open = true;
-        }
-    }
-
-    /// The disable confirmation keeps imported Luau files untouched.
-    pub(crate) fn confirm_luau_runtime_disable(&mut self) {
-        self.luau_runtime_disable_open = false;
-        self.set_luau_runtime(false);
-    }
-
-    fn set_luau_runtime(&mut self, on: bool) {
-        use frontend_core::{OperatorCommand, Setting, SettingStatus, Targets};
-
-        self.setting_drafts.luau_runtime = Some(on);
-        let submitted = self.submit(OperatorCommand::SetLuauRuntime(on), Targets::Application);
-        if submitted.is_none()
-            || !matches!(
-                self.core.setting_status(Setting::LuauRuntime),
-                SettingStatus::Pending
-            )
-        {
-            self.setting_drafts.luau_runtime = None;
-        }
-    }
 
     /// One reconciliation of the saved operator settings: the core settles
     /// every accepted write by its request and lets every lent model follow
@@ -2219,9 +2146,6 @@ impl Session {
         }
         if !pending(core, Setting::SessionLog) {
             drafts.session_log = None;
-        }
-        if !pending(core, Setting::LuauRuntime) {
-            drafts.luau_runtime = None;
         }
         self.prune_pending_nav_members();
         if !matches!(
@@ -2291,21 +2215,6 @@ impl Session {
     /// pending or failed acknowledgement changes nothing.
     fn settle_notice_windows(&mut self) {
         use frontend_core::{OperatorNotice, Setting, SettingStatus};
-        if self.luau_runtime_enable_waiting
-            && !matches!(
-                self.core
-                    .setting_status(Setting::Notice(OperatorNotice::LuauRuntime)),
-                SettingStatus::Pending
-            )
-        {
-            self.luau_runtime_enable_waiting = false;
-            if self.core.luau_runtime_notice_acknowledged() == Some(true) {
-                self.luau_runtime_enable_open = false;
-                self.set_luau_runtime(true);
-            } else {
-                self.luau_runtime_enable_open = true;
-            }
-        }
         if self.background_ack_open
             && self.ui.background_bots_ack
             && !matches!(

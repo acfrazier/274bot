@@ -1228,6 +1228,7 @@ fn luau_lifecycle_cell() {
                 "wait_enqueued_drained":wait_enqueued_drained,
                 "wait_settled_drained":wait_settled_drained,
                 "wait_lifecycle_path":"Luau SeatClient lifecycle -> seat batch -> SlotScript.seat_lifecycle -> drain_lifecycle",
+                "host_commit":build_stamp::COMMIT,"host_dirty":build_stamp::DIRTY,
                 "receipt":receipt}),
     );
 }
