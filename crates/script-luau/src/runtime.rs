@@ -518,6 +518,22 @@ fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<Table> {
             })?,
         )?;
         test.set(
+            "realClock",
+            host_function(lua, state, |lua, values: MultiValue, state| {
+                if !values.is_empty() {
+                    return Ok((
+                        false,
+                        Value::String(
+                            lua.create_string("api.__test.realClock expects no arguments")?,
+                        ),
+                    ));
+                }
+                // Q8 must measure real elapsed time, not the virtual clock
+                // advanced by the deterministic watchdog tests.
+                Ok((true, Value::Number(state.started.elapsed().as_secs_f64())))
+            })?,
+        )?;
+        test.set(
             "awaitSeat",
             host_function(lua, state, |_, values: MultiValue, state| {
                 if !values.is_empty() {

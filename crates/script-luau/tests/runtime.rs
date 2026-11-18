@@ -1,4 +1,10 @@
+#[cfg(feature = "test-hooks")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+#[cfg(feature = "test-hooks")]
+use std::sync::{mpsc, Mutex};
+#[cfg(feature = "test-hooks")]
+use std::time::{Duration, Instant};
 
 use api::identity::ExecutionId;
 #[cfg(feature = "test-hooks")]
@@ -404,6 +410,31 @@ fn on_stop_has_a_50ms_deadline() {
         done.hook_failure.unwrap().message.as_ref(),
         "onStop did not finish within 50 ms"
     );
+}
+
+#[cfg(feature = "test-hooks")]
+#[test]
+fn real_clock_test_hook_is_monotonic_and_rejects_arguments() {
+    let mut run = spawn(
+        r#"
+        return {
+            tick = function()
+                local before = api.__test.realClock()
+                local after = api.__test.realClock()
+                assert(type(before) == "number" and after >= before)
+                local ok, message = pcall(api.__test.realClock, 1)
+                assert(not ok and string.find(message, "expects no arguments", 1, true))
+                api.log("clock")
+            end,
+        }
+        "#,
+    )
+    .expect("valid Luau run");
+    assert_eq!(
+        dispatch(&mut *run, SurfaceWake::Tick { held: false }, 1),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["clock"]);
 }
 
 #[cfg(feature = "test-hooks")]
@@ -983,4 +1014,261 @@ fn c8_bracket_final_cap_on_reference_guest() {
     }
     samples.sort_by(f64::total_cmp);
     println!("C8_REF_BRACKET_FINAL n=10 median_ms={:.4} max_ms={:.4} target_ms=10", (samples[4] + samples[5]) / 2.0, samples[9]);
+}
+
+#[cfg(feature = "test-hooks")]
+const Q8_REFERENCE: &str = r#"
+    local retained = buffer.create(262144)
+    return {
+        tick = function()
+            local n = 0
+            for i = 1, 64 do n = n + i end
+            if n < 0 then api.log(buffer.len(retained)) end
+        end,
+        onStop = function()
+            api.log("stopped")
+        end,
+    }
+"#;
+
+#[cfg(feature = "test-hooks")]
+const Q8_LEGAL_LOOP: &str = r#"
+    local retained = buffer.create(15 * 1024 * 1024)
+    local function spin(seconds)
+        local finish = api.__test.realClock() + seconds
+        local n = 0
+        while api.__test.realClock() < finish do
+            for i = 1, 512 do n = n + i end
+        end
+        if n < 0 then api.log(buffer.len(retained)) end
+    end
+    return {
+        tick = function() spin(0.590) end,
+        onStop = function() spin(0.045) end,
+    }
+"#;
+
+#[cfg(feature = "test-hooks")]
+const Q8_NATIVE_GAP: &str = r#"
+    local subject = string.rep("z", 199088)
+    local pattern = "^[" .. string.rep("a", 10) .. "z]*X"
+    return {
+        tick = function() string.find(subject, pattern) end,
+        onStop = function() string.find(subject, pattern) end,
+    }
+"#;
+
+#[cfg(feature = "test-hooks")]
+#[derive(Clone, Copy)]
+struct Q8Sample {
+    lock_wait: Duration,
+    stop_work_upper: Duration,
+    whole: Duration,
+    heap_bytes: u64,
+    tick_failures: usize,
+    hook_failures: usize,
+    missing_stop_logs: usize,
+    dispatch_ceiling_hits: usize,
+}
+
+#[cfg(feature = "test-hooks")]
+fn q8_next_random(seed: &mut u64) -> u64 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    *seed
+}
+
+#[cfg(feature = "test-hooks")]
+fn q8_real_slot_sample(
+    source: &str,
+    roles: usize,
+    pause: bool,
+    phase_us: u64,
+    dispatch_ceiling: usize,
+    seed: &mut u64,
+    expect_stop_log: bool,
+) -> Q8Sample {
+    let slots: Vec<_> = (0..roles)
+        .map(|_| Arc::new(Mutex::new(started_slot(source, false))))
+        .collect();
+    let flags: Vec<_> = (0..roles)
+        .map(|_| Arc::new(AtomicBool::new(false)))
+        .collect();
+    let heap_bytes = slots[0]
+        .lock()
+        .expect("Q8 slot mutex")
+        .memory_metrics()
+        .and_then(|metrics| metrics["used_bytes"].as_u64())
+        .expect("Luau VM used bytes");
+    let phase = Duration::from_micros(q8_next_random(seed) % phase_us);
+    let (lock_wait, stop_work_upper, whole, tick_failures, dispatch_ceiling_hits) =
+        std::thread::scope(|scope| {
+            let (started_tx, started_rx) = mpsc::channel();
+            let mut workers = Vec::with_capacity(roles);
+            for (slot, flag) in slots.iter().zip(&flags) {
+                let slot = Arc::clone(slot);
+                let flag = Arc::clone(flag);
+                let tx = started_tx.clone();
+                workers.push(scope.spawn(move || {
+                    for tick in 1..=dispatch_ceiling {
+                        let mut guard = slot.lock().expect("Q8 slot mutex");
+                        if flag.load(Ordering::Acquire) {
+                            return (0, false);
+                        }
+                        if tick == 1 {
+                            tx.send(()).expect("Q8 control still receiving starts");
+                        }
+                        let outcome = slot_tick(&mut guard, tick as u64, false);
+                        // HostPlay drains each seat batch before its next
+                        // observed tick; otherwise repeated LoopSettled rows
+                        // fill SeatClient's queue and manufacture an internal
+                        // failure unrelated to Stop latency.
+                        guard
+                            .with_surface_run_for_test(|run| run.drain_seat_batches())
+                            .expect("running Luau surface");
+                        if !matches!(outcome, LentOutcome::Accepted) {
+                            return (1, false);
+                        }
+                    }
+                    (0, true)
+                }));
+            }
+            drop(started_tx);
+            for _ in 0..roles {
+                started_rx
+                    .recv()
+                    .expect("every role entered its first tick");
+            }
+            // The control thread arrives at a deterministic random phase of
+            // real dispatch work, as in the L2p proxy. The flag prevents an
+            // unfair second dispatch after Stop is already requested.
+            std::thread::park_timeout(phase);
+            let all_start = Instant::now();
+            let mut wait = Duration::ZERO;
+            let mut work = Duration::ZERO;
+            for (slot, flag) in slots.iter().zip(&flags) {
+                flag.store(true, Ordering::Release);
+                let start = Instant::now();
+                let mut guard = slot.lock().expect("Q8 slot mutex");
+                wait += start.elapsed();
+                let after_lock = Instant::now();
+                if pause {
+                    guard.pause();
+                } else {
+                    guard.stop();
+                }
+                work += after_lock.elapsed();
+            }
+            let whole = all_start.elapsed();
+            let mut failures = 0;
+            let mut ceiling_hits = 0;
+            for worker in workers {
+                let (failed, reached_ceiling) = worker.join().expect("Q8 dispatch thread");
+                failures += failed;
+                ceiling_hits += usize::from(reached_ceiling);
+            }
+            (wait, work, whole, failures, ceiling_hits)
+        });
+    let mut hook_failures = 0;
+    let mut missing_stop_logs = 0;
+    for (role, slot) in slots.iter().enumerate() {
+        let mut guard = slot.lock().expect("Q8 slot mutex");
+        if pause {
+            guard.stop();
+        }
+        let logs = guard.take_pending_logs();
+        if expect_stop_log {
+            let count = logs
+                .iter()
+                .filter(|line| line.as_str() == "stopped")
+                .count();
+            if count != 1 {
+                missing_stop_logs += 1;
+                eprintln!(
+                    "Q8_REF_LOG_ANOMALY role={role} pause={pause} count={count} logs={logs:?} last_error={:?} state={:?}",
+                    guard.last_error(),
+                    guard.state()
+                );
+            }
+        }
+        hook_failures += usize::from(guard.last_error().is_some());
+    }
+    Q8Sample {
+        lock_wait,
+        stop_work_upper,
+        whole,
+        heap_bytes,
+        tick_failures,
+        hook_failures,
+        missing_stop_logs,
+        dispatch_ceiling_hits,
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+fn q8_max_p99(values: &mut [Duration]) -> (f64, f64) {
+    values.sort_unstable();
+    let p99 = (values.len() * 99).div_ceil(100) - 1;
+    (
+        values[values.len() - 1].as_secs_f64() * 1_000.0,
+        values[p99].as_secs_f64() * 1_000.0,
+    )
+}
+
+#[cfg(feature = "test-hooks")]
+#[test]
+#[ignore = "REF-only real SlotScript control latency lab cell; 1,000 real-clock samples per class and configuration"]
+fn q8_real_slot_stop_all_on_reference_guest() {
+    let samples = std::env::var("LUAU_Q8_SAMPLES")
+        .map_or(1000, |value| value.parse::<usize>().expect("sample count"));
+    assert!((1..=1000).contains(&samples), "bounded Q8 sample count");
+    let mut seed = 0x274b_0a11_0301_u64;
+    for (class, source, phase_us, dispatch_ceiling) in [
+        ("reference-shape", Q8_REFERENCE, 1000, 1024),
+        ("legal-loop", Q8_LEGAL_LOOP, 590_000, 16),
+        ("native-gap", Q8_NATIVE_GAP, 10_000, 128),
+    ] {
+        for (roles, pause) in [(1, false), (10, false), (1, true)] {
+            let mut rows = Vec::with_capacity(samples);
+            for _ in 0..samples {
+                rows.push(q8_real_slot_sample(
+                    source,
+                    roles,
+                    pause,
+                    phase_us,
+                    dispatch_ceiling,
+                    &mut seed,
+                    class == "reference-shape",
+                ));
+            }
+            let mut waits: Vec<_> = rows.iter().map(|row| row.lock_wait).collect();
+            let mut works: Vec<_> = rows.iter().map(|row| row.stop_work_upper).collect();
+            let mut wholes: Vec<_> = rows.iter().map(|row| row.whole).collect();
+            let (w1_max, w1_p99) = q8_max_p99(&mut waits);
+            let (w24_max, w24_p99) = q8_max_p99(&mut works);
+            let (whole_max, whole_p99) = q8_max_p99(&mut wholes);
+            let tick_failures: usize = rows.iter().map(|row| row.tick_failures).sum();
+            let hook_failures: usize = rows.iter().map(|row| row.hook_failures).sum();
+            let missing_stop_logs: usize = rows.iter().map(|row| row.missing_stop_logs).sum();
+            let ceiling_hits: usize = rows.iter().map(|row| row.dispatch_ceiling_hits).sum();
+            let action = if pause { "pause" } else { "stop" };
+            println!(
+                "Q8_REF class={class} roles={roles} action={action} samples={samples} heap_bytes={} w1_max_ms={w1_max:.4} w1_p99_ms={w1_p99:.4} w2_plus_w4_upper_max_ms={w24_max:.4} w2_plus_w4_upper_p99_ms={w24_p99:.4} whole_max_ms={whole_max:.4} whole_p99_ms={whole_p99:.4} tick_failures={tick_failures} hook_failures={hook_failures} missing_stop_logs={missing_stop_logs} dispatch_ceiling_hits={ceiling_hits}",
+                rows[0].heap_bytes
+            );
+            if class == "reference-shape" {
+                assert_eq!(tick_failures, 0, "reference ticks must not trip");
+                assert_eq!(hook_failures, 0, "reference hook must not trip");
+                assert_eq!(missing_stop_logs, 0, "reference onStop logs once");
+                let limit_ms = if roles == 10 { 200.0 } else { 20.0 };
+                if !pause {
+                    println!(
+                        "Q8_REF_BOUND class=reference-shape roles={roles} target_ms={limit_ms} max_within_target={}",
+                        whole_max <= limit_ms
+                    );
+                }
+            }
+        }
+    }
 }
