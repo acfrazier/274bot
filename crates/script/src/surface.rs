@@ -19,6 +19,10 @@ use std::{
     time::Instant,
 };
 
+/// Native-seat adapter for non-JavaScript surfaces.
+#[path = "surface/client.rs"]
+pub mod client;
+
 /// The runtime a card needs. This value selects its factory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SurfaceKind {
@@ -580,6 +584,38 @@ pub enum SurfaceError {
     ForeignCard(SurfaceKind),
 }
 
+/// Which input transport the owning surface accepts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputDelivery {
+    /// Isolate receives independently posted snapshot and wake messages.
+    Posted,
+    /// Slot lends prepared input to one synchronous call.
+    Lent,
+}
+
+/// One lent wake. A hold still copies the owed completion without resuming.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurfaceWake {
+    Tick { held: bool },
+    Evidence,
+    SeatPage { release_floor: u64 },
+}
+
+/// Whether the synchronous surface accepted and executed this delivery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LentOutcome {
+    Refused,
+    Accepted,
+    Failed(crate::native::ScriptFailure),
+}
+
+/// Stop retirement carries both logs and any bounded `onStop` failure.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StopCompletion {
+    pub logs: Vec<String>,
+    pub hook_failure: Option<String>,
+}
+
 /// A queued host-owned client frame whose isolate acknowledgement is awaited
 /// without holding the owning slot mutex.
 pub trait ClientFrameDispatch: Send + Sync {
@@ -602,6 +638,23 @@ pub struct JournalWait {
 /// One running surface. The slot owns lifecycle transitions, and `stop`
 /// transfers the run to its retirement worker.
 pub trait SurfaceRun: Send {
+    /// Select the transport explicitly; a posted surface never receives a
+    /// borrowed snapshot by accident.
+    fn input_delivery(&self) -> InputDelivery {
+        InputDelivery::Posted
+    }
+    /// Consume one prepared borrowed snapshot synchronously. Posted surfaces
+    /// refuse this call instead of acknowledging input they did not process.
+    fn dispatch_lent(
+        &mut self,
+        _wake: SurfaceWake,
+        _snap_tick: u64,
+        _input_identity: u64,
+        _input: &SnapshotInput<'_>,
+        _native: NativeFactsInput<'_>,
+    ) -> LentOutcome {
+        LentOutcome::Refused
+    }
     // setup, identity, session
     /// Return the current setup state.
     fn poll_ready(&self) -> SurfaceReady;
@@ -645,7 +698,7 @@ pub trait SurfaceRun: Send {
         false
     }
     /// Transfer this run to retirement and send its logs to `done`.
-    fn stop(self: Box<Self>, done: Sender<Vec<String>>);
+    fn stop(self: Box<Self>, done: Sender<StopCompletion>);
     /// Return whether the script has stopped.
     fn stopped(&self) -> bool;
     /// Return the script's stop receipt, if one exists.
