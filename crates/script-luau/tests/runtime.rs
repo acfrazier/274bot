@@ -23,7 +23,9 @@ use script::native::seat::{SeatResult, SeatTerminal};
 use script::native::seat_rows::SeatPageInput;
 use script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput};
 #[cfg(feature = "test-hooks")]
-use script::slot::ScriptTerminalState;
+use script::slot::{RunState, ScriptTerminalState};
+#[cfg(feature = "test-hooks")]
+use script::surface::RuntimeRunState;
 use script::surface::{
     LentOutcome, SurfaceFactory, SurfaceRun, SurfaceStart, SurfaceWake, TickOutcome,
 };
@@ -485,6 +487,61 @@ fn slot_wake(
 fn slot_tick(slot: &mut SlotScript, tick: u64, held: bool) -> LentOutcome {
     let input = empty_snapshot(tick);
     slot_wake(slot, &input, NativeFactsInput::default(), true, held)
+}
+
+#[cfg(feature = "test-hooks")]
+#[test]
+fn on_stop_watchdog_retires_real_slot_seat_and_allows_restart() {
+    let mut slot = started_slot(
+        r#"
+        return {
+            tick = function()
+                api.__test.awaitSeat()
+            end,
+            onStop = function()
+                api.__test.advance(51)
+            end,
+        }
+        "#,
+        true,
+    );
+    assert_eq!(slot_tick(&mut slot, 1, false), LentOutcome::Accepted);
+    let batches = slot
+        .with_surface_run_for_test(|run| run.drain_seat_batches())
+        .expect("Luau SeatClient still running");
+    assert_eq!(batches.len(), 1, "one queued request batch");
+    let batch = batches.into_iter().next().expect("queued batch").batch;
+    assert_eq!(batch.starts.len(), 1, "one queued seat request");
+    slot.consume_seat_batch_for_test(batch, 0, &[]);
+    assert_eq!(
+        slot.seat_for_test().expect("armed seat").live().len(),
+        1,
+        "a real request is pending before Stop"
+    );
+
+    slot.stop();
+    assert_eq!(slot.state(), RunState::Stopping);
+    assert!(!slot.surface_active());
+    assert!(slot.seat_for_test().is_none(), "Stop must retire the seat");
+    let logs = slot.take_pending_logs();
+    assert!(
+        logs.iter().any(|line| {
+            line == "onStop failed (luau-watchdog): onStop did not finish within 50 ms"
+        }),
+        "a completed Stop delivers the watchdog failure: {logs:?}"
+    );
+    assert_eq!(slot.state(), RunState::Idle, "Stop completion settled");
+    assert_eq!(slot.runtime_state_for_test(), RuntimeRunState::Stopped);
+    assert_eq!(slot.seat_batch_backlog(), 0);
+    assert_eq!(slot.seat_interact_delivery_len(), 0);
+    assert!(!slot.surface_active());
+
+    slot.start_surface(start("return {tick = function() api.log('reused') end}"))
+        .expect("same slot starts a new Luau run");
+    assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
+    slot.on_is_up(true);
+    assert_eq!(slot_tick(&mut slot, 2, false), LentOutcome::Accepted);
+    assert_eq!(slot.drain_logs(), ["reused"]);
 }
 
 #[cfg(feature = "test-hooks")]

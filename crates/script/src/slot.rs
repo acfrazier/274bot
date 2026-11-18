@@ -1184,6 +1184,13 @@ impl SlotScript {
         self.watchdog.wait_inflight()
     }
 
+    /// Read the published runtime state after a test observes Stop completion.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn runtime_state_for_test(&self) -> RuntimeRunState {
+        self.runtime_context.state()
+    }
+
     /// Luau WaitEnqueued and WaitSettled seat rows drained by the host since
     /// slot creation. Other surface families and direct rows are not counted.
     #[cfg(feature = "test-hooks")]

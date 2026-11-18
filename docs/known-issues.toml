@@ -1263,9 +1263,15 @@ owner = "Luau runtime (mlua 0.12.2)"
 id = "luau-stop-all-serial"
 kind = "known-issue"
 area = "Scripts"
-text = """Stop all scripts handles Luau runs serially. A pathological run can
-  delay the remaining stops while its bounded watchdog retirement completes;
-  Stop all is not a parallel cancellation operation."""
+text = """Stop all scripts handles Luau runs serially, not as parallel
+  cancellation. The 600 ms Tick and 50 ms onStop watchdogs use elapsed
+  monotonic wall-clock time, not thread CPU time. On a machine with few CPUs,
+  ten bots stopping together can delay an otherwise legal 590 ms Tick or
+  45 ms onStop past its deadline and cut it off. On the frozen two-vCPU
+  reference guest, 77 of 100 ten-bot near-cap Stop-all samples had a watchdog
+  trip: 29 Tick trips and 70 onStop trips, sometimes in the same sample.
+  Fourteen of 1,000 ten-bot native-gap samples had an onStop trip. Single-bot
+  near-cap and native-gap Stop samples had no trips in those runs."""
 first = "0.3.0"
 target = "none"
 severity = "low"
