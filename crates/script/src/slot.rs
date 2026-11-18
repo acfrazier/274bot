@@ -612,6 +612,11 @@ pub struct SlotScript {
     recovery_hints: Arc<RecoveryHintsCell>,
 }
 
+// Keep this layout check active in both production and test-hooks Linux builds;
+// integration tests enable test-hooks through a dev-dependency.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+const _: () = assert!(std::mem::size_of::<SlotScript>() <= 1624 + 64);
+
 /// Borrowed sources used to assemble one seat page for a lent surface wake.
 struct SlotPageSources<'a> {
     seat: Option<&'a GameplaySeat<SeatEffect>>,
