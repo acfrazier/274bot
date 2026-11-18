@@ -19,6 +19,10 @@ use std::{
     time::Instant,
 };
 
+/// Native-seat adapter for a non-JavaScript surface.
+#[path = "surface/client.rs"]
+pub mod client;
+
 /// The runtime a card needs. This value selects its factory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SurfaceKind {
