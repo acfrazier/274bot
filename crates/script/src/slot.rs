@@ -2284,9 +2284,12 @@ impl SlotScript {
         shop: Option<&shop_seat::ShopSeat>,
         compiled: Option<&CompiledRun>,
         seat_compiled_owner: Option<RequestId>,
-        mut native: crate::native::snapshot_source::NativeFactsInput<'_>,
+        native: crate::native::snapshot_source::NativeFactsInput<'_>,
         deliver: impl FnOnce(crate::native::snapshot_source::NativeFactsInput<'_>) -> T,
     ) -> T {
+        // Reborrow the copied facts at this call's scope, which also owns
+        // the seat detail and result arrays appended below.
+        let mut native = crate::native::snapshot_source::NativeFactsInput { ..native };
         native.api_gather = api.and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = api.and_then(|seat| seat.terminal.as_ref());
         native.api_combat = api.and_then(|seat| seat.combat_page.as_deref());

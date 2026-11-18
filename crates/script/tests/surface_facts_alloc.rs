@@ -348,7 +348,7 @@ impl api::interact::Driver for NoPacketDriver {
         _: i32,
         _: i32,
         _: i32,
-        _: bool,
+        _: i32,
         _: i32,
     ) -> bool {
         false
@@ -384,6 +384,7 @@ fn lent_slot_dispatches_original_borrow_and_honors_pause_gate() {
     run.set_lent_delivery(true);
     let input = empty_snapshot(87);
     let identity = (&input as *const SnapshotInput<'_>) as usize as u64;
+    let authority_identity = slot.native_input().lock().identity();
     let mut driver = NoPacketDriver;
     let mut ctx = ScriptCtx {
         driver: &mut driver,
@@ -401,10 +402,11 @@ fn lent_slot_dispatches_original_borrow_and_honors_pause_gate() {
         LentOutcome::Accepted
     );
     assert!(run.operations().contains(&StubSurfaceOperation::DispatchLent {
-        wake: SurfaceWake::Tick,
+        wake: SurfaceWake::Tick { held: false },
         held: false,
         tick: 87,
         input_identity: identity,
+        authority_identity,
         has_progress: false,
     }));
     run.take_operations();

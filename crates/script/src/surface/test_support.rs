@@ -93,6 +93,7 @@ pub enum StubSurfaceOperation {
         held: bool,
         tick: u64,
         input_identity: u64,
+        authority_identity: u64,
         has_progress: bool,
     },
     /// The slot drained stamped interactions.
@@ -416,19 +417,20 @@ impl SurfaceRun for StubSurfaceRun {
     fn dispatch_lent(
         &mut self,
         wake: super::SurfaceWake,
-        held: bool,
+        snap_tick: u64,
+        authority_identity: u64,
         input: &SnapshotInput<'_>,
-        _native: NativeFactsInput<'_>,
-        ctx: &mut super::LentContext<'_>,
+        native: NativeFactsInput<'_>,
     ) -> super::LentOutcome {
         record(
             &self.state,
             StubSurfaceOperation::DispatchLent {
                 wake,
-                held,
-                tick: input.tick,
+                held: matches!(wake, super::SurfaceWake::Tick { held: true }),
+                tick: snap_tick,
                 input_identity: input as *const SnapshotInput<'_> as usize as u64,
-                has_progress: ctx.api_progress.is_some(),
+                authority_identity,
+                has_progress: native.api_progress.is_some(),
             },
         );
         super::LentOutcome::Accepted
