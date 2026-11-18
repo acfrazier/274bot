@@ -358,7 +358,38 @@ fn with_tick_output_reach<R>(
     collision: Option<nav_planner::contract::CollisionView<'_>>,
     f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
 ) -> R {
-    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    with_tick_output_reach_selected(
+        snapshot,
+        reach,
+        world_members,
+        ledger,
+        tick,
+        output,
+        bank,
+        shop_keepers,
+        next_snapshot,
+        collision,
+        Some(selected),
+        f,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn with_tick_output_reach_selected<R>(
+    snapshot: &GameSnapshot,
+    reach: Option<&api::query::ReachQueryView>,
+    world_members: Truth,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    output: &mut dyn NativeOutput,
+    bank: Option<&api::bank_memory::BankMemory>,
+    shop_keepers: Option<&Arc<api::service_pick::ShopKeeperFacts>>,
+    next_snapshot: &GameSnapshot,
+    collision: Option<nav_planner::contract::CollisionView<'_>>,
+    selected: Option<Arc<api::game_data::SelectedGameData>>,
+    f: impl for<'a> FnOnce(&mut NativeTick<'a>, &'a GameSnapshot, SnapshotView<'a>) -> R,
+) -> R {
     let evidence = api::quest_progress::EvidenceStamp {
         run: RunKey {
             slot: 1,
@@ -419,7 +450,7 @@ fn with_tick_output_reach<R>(
                 walk_danger: Some(&crate::native::AllowWalkDanger),
                 wilderness: None,
                 pvp_globals: None,
-                selected: Some(&data),
+                selected: selected.as_deref(),
                 reach: None,
                 reach_flood: None,
                 bank_memory: bank,
@@ -437,6 +468,28 @@ fn with_tick_output_reach<R>(
         .with_world_members(world_members)
         .with_bank_memory(bank);
     f(&mut native, next_snapshot, next_view)
+}
+/// Build a tick without selected game data for tests that use only posted facts.
+pub(crate) fn with_tick_without_selected_game_data<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    with_tick_output_reach_selected(
+        snapshot,
+        None,
+        Truth::Unknown,
+        ledger,
+        tick,
+        &mut Output,
+        None,
+        None,
+        snapshot,
+        None,
+        None,
+        |native, _, _| f(native),
+    )
 }
 /// One observed tick on a budget that outlives the call, so a guardian hold
 /// the test starts and ends on it ([`ledger::TickBudget::hold_begin`],

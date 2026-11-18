@@ -8,10 +8,10 @@
 //! variant or op field without a row fails with its exact ID before any case
 //! runs; a row whose member is gone fails as stale.
 //!
-//! Every row runs through a manifest-bearing source prepared by the real
-//! origin check and the real isolate shim. Request rows compare the raw
-//! interact batches the isolate thread encoded (taken before host decoding)
-//! with authored expectations; read rows require zero interact batches.
+//! Each runnable row uses a manifest-bearing source prepared by the real
+//! origin check and isolate shim. Rows that need selected game data report an
+//! explicit hosted-CI skip when those local assets are absent; coverage still
+//! requires exactly one authored row for every public path.
 //!
 //! Design: `SCRIPT-MANIFEST-DESIGN-1022/design-final2.md` section M7.1.
 
@@ -366,6 +366,7 @@ struct Setup {
     settings: fn() -> Value,
     manifest_settings: &'static str,
     game_data: fn() -> Option<Arc<api::game_data::SelectedGameData>>,
+    requires_selected_game_data: bool,
 }
 
 const PLAIN: Setup = Setup {
@@ -375,6 +376,7 @@ const PLAIN: Setup = Setup {
     settings: || json!({}),
     manifest_settings: "{}",
     game_data: || None,
+    requires_selected_game_data: false,
 };
 
 fn revision_data() -> Option<Arc<api::game_data::SelectedGameData>> {
@@ -386,6 +388,7 @@ fn revision_data() -> Option<Arc<api::game_data::SelectedGameData>> {
 
 const CONTENT: Setup = Setup {
     game_data: revision_data,
+    requires_selected_game_data: true,
     ..PLAIN
 };
 fn hunt_snapshot(_: u64, input: &mut SnapshotInput<'static>) {
@@ -575,6 +578,8 @@ enum Case {
         body: &'static str,
         expect: Vec<InteractReq>,
     },
+    /// A driver whose observations require selected local game data.
+    GameDataDrive(fn()),
     /// A member whose observable outcome needs its own driver (paint, logs,
     /// stop, promise settlement, posted completions).
     Drive(fn()),
@@ -619,6 +624,15 @@ fn run_row(row: &Row) {
             assert_eq!(observed.requests, *expect, "{}: {}", row.id, row.why);
         }
         Case::Drive(drive) => drive(),
+        Case::GameDataDrive(drive) => drive(),
+    }
+}
+
+fn row_requires_selected_game_data(row: &Row) -> bool {
+    match &row.case {
+        Case::Read { setup, .. } | Case::Send { setup, .. } => setup.requires_selected_game_data,
+        Case::Drive(_) => false,
+        Case::GameDataDrive(_) => true,
     }
 }
 
@@ -970,6 +984,11 @@ fn prayer_snapshot(_: u64, input: &mut SnapshotInput<'static>) {
 const PRAYER_SETUP: Setup = Setup {
     snapshot: prayer_snapshot,
     game_data: revision_data,
+    requires_selected_game_data: true,
+    ..PLAIN
+};
+const PRAYER_STATS_SETUP: Setup = Setup {
+    snapshot: prayer_snapshot,
     ..PLAIN
 };
 const PRAYER_VARPS_SET_ON: [VarpInput; 1] = [VarpInput {
@@ -1019,6 +1038,7 @@ fn prayer_set_snapshot(tick: u64, input: &mut SnapshotInput<'static>) {
 const PRAYER_SET_SETUP: Setup = Setup {
     snapshot: prayer_set_snapshot,
     game_data: revision_data,
+    requires_selected_game_data: true,
     ..PLAIN
 };
 
@@ -1034,6 +1054,7 @@ fn prayer_clear_snapshot(tick: u64, input: &mut SnapshotInput<'static>) {
 const PRAYER_CLEAR_SETUP: Setup = Setup {
     snapshot: prayer_clear_snapshot,
     game_data: revision_data,
+    requires_selected_game_data: true,
     ..PLAIN
 };
 
@@ -1064,13 +1085,13 @@ const CLUE_SETUP: Setup = Setup {
     facts: clue_facts,
     native_facts: true,
     game_data: revision_data,
+    requires_selected_game_data: true,
     ..PLAIN
 };
 
 const CLUE_EMPTY_SETUP: Setup = Setup {
     facts: clue_facts,
     native_facts: true,
-    game_data: revision_data,
     ..PLAIN
 };
 const JOURNAL_ROWS: [QuestStatusInput<'static>; 1] = [QuestStatusInput {
@@ -1103,7 +1124,6 @@ const JOURNAL_SETUP: Setup = Setup {
     snapshot: journal_snapshot,
     facts: journal_facts,
     native_facts: true,
-    game_data: revision_data,
     ..PLAIN
 };
 
@@ -2445,7 +2465,7 @@ fn helper_rows() -> Vec<Row> {
         Row {
             id: "NativeApi.clue.heldStep",
             why: "held-step returns the posted first membership row and refuses an empty pack",
-            case: Case::Drive(drive_clue_held_step),
+            case: Case::GameDataDrive(drive_clue_held_step),
         },
         read_row(
             "NativeApi.clue.retry",
@@ -2576,7 +2596,7 @@ fn helper_rows() -> Vec<Row> {
         read_row(
             "NativeApi.gearOf",
             "gear follows the fixed slot order and rejects a nonstring worn value",
-            CONTENT,
+            PLAIN,
             "return [api.gearOf({loadout:{worn:{torso:'Rune chainbody',righthand:'Rune scimitar',hat:'Rune full helm',mystery:'Ignored slot'},unassigned:['old helm',''],carry:[]}}),api.gearOf({loadout:{worn:{hat:1}}})];",
             json!([{"ok":true,"value":["Rune full helm","Rune scimitar","Rune chainbody","old helm"]},{"ok":false,"error":"invalid-args"}]),
         ),
@@ -2593,12 +2613,12 @@ fn helper_rows() -> Vec<Row> {
         Row {
             id: "NativeApi.gatherMethods",
             why: "the loaded R289 woodcutting page includes the normal tree method and refuses an unknown skill",
-            case: Case::Drive(drive_gather_methods),
+            case: Case::GameDataDrive(drive_gather_methods),
         },
         read_row(
             "NativeApi.gatherPlacements",
             "a missing region is refused before catalog lookup",
-            CONTENT,
+            PLAIN,
             "return api.gatherPlacements({resource:'oak',limit:64});",
             json!({"ok":false,"error":"missing-region"}),
         ),
@@ -2663,7 +2683,7 @@ fn helper_rows() -> Vec<Row> {
         read_row(
             "NativeApi.plannedPotions",
             "empty carry uses the two declared defaults and a malformed carry is refused",
-            CONTENT,
+            PLAIN,
             "return [api.plannedPotions({carry:[]}),api.plannedPotions({carry:'bad'})];",
             json!([
                 {"ok":true,"value":[{"skill":"attack","short":"Att","flask":"Super attack(3)","doses":["Super attack(4)","Super attack(3)","Super attack(2)","Super attack(1)"],"want":1},{"skill":"strength","short":"Str","flask":"Super strength(3)","doses":["Super strength(4)","Super strength(3)","Super strength(2)","Super strength(1)"],"want":1}]},
@@ -2673,28 +2693,28 @@ fn helper_rows() -> Vec<Row> {
         read_row(
             "NativeApi.potionToSip",
             "an empty plan has no sip target and missing arrays are refused",
-            CONTENT,
+            PLAIN,
             "return [api.potionToSip({plans:[],held:[],levels:[]}),api.potionToSip({held:[],levels:[]})];",
             json!([{"ok":true,"value":null},{"ok":false,"error":"invalid-args"}]),
         ),
         read_row(
             "NativeApi.prayerPoints",
             "posted prayer level supplies current points",
-            PRAYER_SETUP,
+            PRAYER_STATS_SETUP,
             "return api.prayerPoints();",
             json!({"ok":true,"value":43}),
         ),
         read_row(
             "NativeApi.prayerMax",
             "posted prayer base level supplies the maximum",
-            PRAYER_SETUP,
+            PRAYER_STATS_SETUP,
             "return api.prayerMax();",
             json!({"ok":true,"value":43}),
         ),
         read_row(
             "NativeApi.prayerFull",
             "equal current and maximum points report full",
-            PRAYER_SETUP,
+            PRAYER_STATS_SETUP,
             "return api.prayerFull();",
             json!({"ok":true,"value":true}),
         ),
@@ -2722,12 +2742,12 @@ fn helper_rows() -> Vec<Row> {
         Row {
             id: "NativeApi.prayerSet",
             why: "unknown prayer settles the async helper refusal without a click",
-            case: Case::Drive(drive_prayer_set),
+            case: Case::GameDataDrive(drive_prayer_set),
         },
         Row {
             id: "NativeApi.prayerClear",
             why: "two posted active prayers each emit a clear click and settle inactive",
-            case: Case::Drive(drive_prayer_clear),
+            case: Case::GameDataDrive(drive_prayer_clear),
         },
         read_row(
             "NativeApi.questIdentity",
@@ -2777,7 +2797,7 @@ fn helper_rows() -> Vec<Row> {
         Row {
             id: "NativeApi.rangeLoadoutOf",
             why: "a selected dart becomes the projectile and malformed input is refused",
-            case: Case::Drive(drive_range_loadout),
+            case: Case::GameDataDrive(drive_range_loadout),
         },
         read_row(
             "NativeApi.runesPerCast",
@@ -2818,7 +2838,7 @@ fn helper_rows() -> Vec<Row> {
         read_row(
             "NativeApi.suppliesOf",
             "carried supplies retain their exact quantity and invalid quantities are refused",
-            CONTENT,
+            PLAIN,
             "return [api.suppliesOf({loadout:{carry:[{item:'Coins'},{item:'Lobster',qty:10}]}}),api.suppliesOf({loadout:{carry:[{item:'Coins',qty:0}]}})];",
             json!([{"ok":true,"value":[{"item":"Coins","qty":1},{"item":"Lobster","qty":10}]},{"ok":false,"error":"invalid-args"}]),
         ),
@@ -2832,7 +2852,7 @@ fn helper_rows() -> Vec<Row> {
         read_row(
             "NativeApi.weaponOf",
             "the worn right-hand item wins, a blank weapon uses its fallback, and a null loadout returns null",
-            CONTENT,
+            PLAIN,
             "return [api.weaponOf({loadout:{worn:{righthand:'Rune scimitar'}},fallback:null}),api.weaponOf({loadout:{worn:{righthand:'  '}},fallback:'Bronze sword'}),api.weaponOf({loadout:null}),api.weaponOf({loadout:7})];",
             json!([{"ok":true,"value":"Rune scimitar"},{"ok":true,"value":"Bronze sword"},{"ok":true,"value":null},{"ok":false,"error":"invalid-args"}]),
         ),
@@ -3101,16 +3121,27 @@ fn runtime_api_keys_match_the_declared_top_level_members() {
 }
 
 #[test]
-fn every_row_runs_through_the_real_shim() {
+fn every_row_runs_through_the_real_shim_or_reports_a_data_skip() {
     let inventory = inventory(&generated_dts());
-    let errors = coverage_errors(&inventory, &rows(), OP_FIELDS);
+    let rows = rows();
+    let errors = coverage_errors(&inventory, &rows, OP_FIELDS);
     assert!(
         errors.is_empty(),
         "conformance coverage:\n{}",
         errors.join("\n")
     );
+    let needs_selected_data = rows.iter().any(row_requires_selected_game_data);
+    let selected_data_available = !needs_selected_data || api::test_support::game_data_available();
     let mut failures = Vec::new();
-    for row in rows() {
+    for row in rows {
+        if row_requires_selected_game_data(&row) && !selected_data_available {
+            eprintln!(
+                "SKIP {}: required local game-data assets are unavailable; \
+                 GITHUB_ACTIONS=true does not download them",
+                row.id
+            );
+            continue;
+        }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_row(&row)));
         if result.is_err() {
             failures.push(row.id);
