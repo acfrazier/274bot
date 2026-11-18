@@ -721,8 +721,14 @@ fn gather_cell() {
         .expect("manifest-bearing gather sample prepares");
     let mut settings_bag = serde_json::Map::new();
     settings_bag.insert("logs".to_owned(), json!(GATHER_LOG_TARGET));
-    play.script_start_load(&account, prepared.js, prepared.checked, Some(settings_bag), vec![])
-        .expect("Load authoritative sample");
+    play.script_start_load(
+        &account,
+        prepared.js,
+        prepared.checked,
+        Some(settings_bag),
+        vec![],
+    )
+    .expect("Load authoritative sample");
     let mut running_seen = false;
     let mut gathering_seen = false;
     let mut status_yielded = 0;
