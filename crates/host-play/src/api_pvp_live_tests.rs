@@ -292,7 +292,102 @@ pub(super) struct DuelDrive {
     saw_confirm: bool,
     saw_pen: bool,
     pub(super) fight_seen: bool,
+    approach_tick: Option<u32>,
     refusals: Vec<String>,
+}
+/// Engine A's player scene rows are limited to the configured 15-tile view
+/// distance (`engine/src/network/rsbuf/build.ts:53-64`); `info.ts:67-74`
+/// applies it through `CoordGrid.withinDistanceSw` (`coord.ts:24`).
+const PLAYER_VIEW_DISTANCE_TILES: i32 = 15;
+/// A bounded convergence window, scaled from the engine's 15-tile view range.
+const MUTUAL_VISIBILITY_TIMEOUT: Duration =
+    Duration::from_secs((PLAYER_VIEW_DISTANCE_TILES as u64) * 2);
+
+/// Wait until both scene snapshots contain the other account's player row.
+pub(super) fn wait_mutual_visibility(
+    observed: &[Arc<Mutex<Observed>>; 2],
+    account_names: [&str; 2],
+    drives: &[Arc<Mutex<DuelDrive>>; 2],
+    label: &str,
+) {
+    let names = account_names.map(|name| {
+        client::util::JString::to_screen_name(name)
+            .as_str()
+            .to_owned()
+    });
+    let deadline = Instant::now() + MUTUAL_VISIBILITY_TIMEOUT;
+    loop {
+        let states = [
+            observed[0].lock().expect("observed lock").clone(),
+            observed[1].lock().expect("observed lock").clone(),
+        ];
+        let visible = [
+            states[0].players.iter().any(|row| row.name == names[1]),
+            states[1].players.iter().any(|row| row.name == names[0]),
+        ];
+        if visible.into_iter().all(|is_visible| is_visible) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label}: mutual player visibility did not settle within \
+             {MUTUAL_VISIBILITY_TIMEOUT:?} (engine view distance {PLAYER_VIEW_DISTANCE_TILES} \
+             tiles); visible={visible:?}, names={names:?}, rows={:?}, tiles={:?}, drives={:?}",
+            states
+                .iter()
+                .map(|state| &state.players)
+                .collect::<Vec<_>>(),
+            states.iter().map(|state| state.tile).collect::<Vec<_>>(),
+            drives
+                .iter()
+                .map(|drive| drive.lock().expect("duel drive lock").clone())
+                .collect::<Vec<_>>(),
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn pen_center(min_x: i32, max_x: i32, min_z: i32, max_z: i32, level: i32) -> WorldTile {
+    WorldTile {
+        x: (min_x + max_x) / 2,
+        z: (min_z + max_z) / 2,
+        level,
+    }
+}
+
+fn approach_pen_center(
+    client: &mut client::client::Client,
+    snapshot: &api::snapshot::GameSnapshot,
+    drive: &mut DuelDrive,
+    partner: &str,
+) {
+    use api::interact::{Interactions, SendResult};
+    let Some(own) = snapshot.tile() else {
+        return;
+    };
+    let Some((min_x, max_x, min_z, max_z)) = crate::paired_core::fight_pen(Some(own)) else {
+        return;
+    };
+    let partner_visible = snapshot.players().iter().any(|row| row.name == partner);
+    if partner_visible {
+        return;
+    }
+    let target = pen_center(min_x, max_x, min_z, max_z, own.2);
+    if (own.0 - target.x).abs().max((own.1 - target.z).abs()) <= 1
+        || drive
+            .approach_tick
+            .is_some_and(|last| snapshot.tick().wrapping_sub(last) < 2)
+    {
+        return;
+    }
+    drive.approach_tick = Some(snapshot.tick());
+    if let SendResult::Refused { reason, .. } =
+        Interactions::new(snapshot, client).walk_nearest(target)
+    {
+        drive
+            .refusals
+            .push(format!("approach shared pen center: {reason:?}"));
+    }
 }
 
 pub(super) fn duel_step(client: &mut client::client::Client, drive: &mut DuelDrive, partner: &str) {
@@ -314,6 +409,9 @@ pub(super) fn duel_step(client: &mut client::client::Client, drive: &mut DuelDri
             .and_then(|local| local.player.actor.overhead_text.as_deref());
         if shout == Some("FIGHT!") {
             drive.fight_seen = true;
+        }
+        if drive.fight_seen {
+            approach_pen_center(client, &snapshot, drive, partner);
         }
         return;
     }
@@ -413,6 +511,7 @@ fn duel_cell(label: &str, uids: [i32; 2], global: bool, source: &str) {
                 .all(|drive| drive.lock().expect("duel drive lock").fight_seen)
         },
     );
+    pair.wait_mutually_visible(label);
     let victim = pair.display_name(1);
     pair.load(0);
     let pvp = if global { "" } else { "pvp: true, " };
@@ -491,6 +590,15 @@ fn live_pvp_the_global_setting_starts_the_pen_fight_with_the_fight_op() {
 impl Pair {
     fn snapshot(&self, index: usize) -> Observed {
         self.observed[index].lock().expect("observed lock").clone()
+    }
+
+    fn wait_mutually_visible(&self, label: &str) {
+        wait_mutual_visibility(
+            &self.observed,
+            [&self.accounts[0], &self.accounts[1]],
+            &self.drives,
+            label,
+        );
     }
 
     /// The name account `index` shows to the other, as the other's frame sees

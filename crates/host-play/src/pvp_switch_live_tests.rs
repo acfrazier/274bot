@@ -30,7 +30,7 @@
 //!   --features live-harness,test-support,live-probe --lib \
 //!   api_combat_live_tests::pvp_switch:: -- --ignored --nocapture --test-threads=1
 //! ```
-use super::pvp::{duel_step, DuelDrive};
+use super::pvp::{duel_step, wait_mutual_visibility, DuelDrive};
 use super::*;
 use script::combat::frame::Frame;
 use script::combat::style::melee;
@@ -870,6 +870,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                 .all(|drive| drive.lock().expect("duel drive lock").fight_seen)
         },
     );
+    wait_mutual_visibility(&observed, [&holder, &fighter], &drives, "api-pvp-switch");
     // The machine's request: sword kit and bow kit, melee preferred.
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
     let tables = CombatTables::build(Arc::clone(&data)).expect("combat tables");
