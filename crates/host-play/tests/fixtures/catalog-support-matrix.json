@@ -17,7 +17,7 @@
     {
       "commit": "100adccc037d9f6898080e1cad58fcfc43364775",
       "identity": "pre-289 frozen catalog",
-      "read_only_path": ".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
+      "read_only_path": "rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
       "registry_path": "src/bot/scripts/index.ts",
       "registry_sha256": "b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2",
       "registry_declaration_count": 60,
@@ -33,7 +33,7 @@
     {
       "commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
       "identity": "289-updated frozen catalog",
-      "read_only_path": ".superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a",
+      "read_only_path": "rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a",
       "registry_path": "src/bot/scripts/index.ts",
       "registry_sha256": "b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2",
       "registry_declaration_count": 60,
@@ -80588,14 +80588,14 @@
         "helper_path": "src/bot/scripts/FlaxRunner/FlaxRunnerLogic.ts",
         "helper_sha256": "05a07311383d8ab8121b45e0dcf56a3eefef27d94d8c23565d80fec2462cc32e",
         "reason": "Both actors accept meet arrival radius 2 around (2719,3471,0), but require mutual trade distance <= 2. Runner (2718,3469,0) and spinner (2717,3473,0) are each arrived and mutually distance 4, so neither closes the gap.",
-        "audit": ".superpowers/release-0.1.9/live/pair-diag/pair-gate-diagnosis.md",
-        "upstream_issue_draft": ".superpowers/release-0.1.9/live/pair-diag/flax-upstream-issue.md",
+        "audit": "run:pair-diag/pair-gate-diagnosis.md",
+        "upstream_issue_draft": "run:pair-diag/flax-upstream-issue.md",
         "scope": "Exact frozen source pair, local revision-289 full-cycle claim. Users select their own rs2b0t-path catalog; no qualification-only patched catalog, host arrival/distance change, timeout extension or witness relaxation.",
         "upstream_fix": "Separate MEET_ARRIVE=1 for atMeet and the meet walk; leave TRADE_RANGE=2."
       },
       "proof_refs": [
-        ".superpowers/release-0.1.9/live/requalify-7bbfab323/pair/flax_runner.log:632-634",
-        ".superpowers/release-0.1.9/live/requalify-7bbfab323/reruns-pair/flax_runner.log:635-637"
+        "run:requalify-7bbfab323/pair/flax_runner.log:632-634",
+        "run:requalify-7bbfab323/reruns-pair/flax_runner.log:635-637"
       ]
     },
     {
@@ -80617,18 +80617,18 @@
         "scope": "Exact frozen catalog, revision 289, host runner, release tui-play sha256 c3a5665596fc43391399f91b7ed1e95b8b8f575f918520f0d0d880bf6231afe1, engine cc359656b4acd216ca452495874b6beba9a0ac75. Qualification runs duel-qual-1 (118.2 s) and duel-qual-2 (141.4 s) are consecutive; paired-fix-duel-8475e2bce (74.3 s) preceded them. This supersedes the unsupported-API disposition recorded for campaign 692b94858 (pair-diag/duel-validator-1). Loader availability and witness requirements are unchanged."
       },
       "proof_refs": [
-        ".superpowers/release-0.1.9/live/review-paired-fix-duel-08d7a3b93/summary.json:1-52",
-        ".superpowers/release-0.1.9/live/review-paired-fix-duel-08d7a3b93/duel_arena.log:46-61",
-        ".superpowers/release-0.1.9/live/review-paired-fix-duel-08d7a3b93/duel_arena.log:299-301",
-        ".superpowers/release-0.1.9/live/paired-fix-duel-8475e2bce/summary.json:1-52",
-        ".superpowers/release-0.1.9/live/paired-fix-duel-8475e2bce/duel_arena.log:44-71",
-        ".superpowers/release-0.1.9/live/paired-fix-duel-8475e2bce/duel_arena.log:118-160",
-        ".superpowers/release-0.1.9/live/duel-qual-1/summary.json:1-52",
-        ".superpowers/release-0.1.9/live/duel-qual-1/duel_arena.log:46-72",
-        ".superpowers/release-0.1.9/live/duel-qual-1/duel_arena.log:187-224",
-        ".superpowers/release-0.1.9/live/duel-qual-2/summary.json:1-52",
-        ".superpowers/release-0.1.9/live/duel-qual-2/duel_arena.log:46-80",
-        ".superpowers/release-0.1.9/live/duel-qual-2/duel_arena.log:242-287"
+        "run:review-paired-fix-duel-08d7a3b93/summary.json:1-52",
+        "run:review-paired-fix-duel-08d7a3b93/duel_arena.log:46-61",
+        "run:review-paired-fix-duel-08d7a3b93/duel_arena.log:299-301",
+        "run:paired-fix-duel-8475e2bce/summary.json:1-52",
+        "run:paired-fix-duel-8475e2bce/duel_arena.log:44-71",
+        "run:paired-fix-duel-8475e2bce/duel_arena.log:118-160",
+        "run:duel-qual-1/summary.json:1-52",
+        "run:duel-qual-1/duel_arena.log:46-72",
+        "run:duel-qual-1/duel_arena.log:187-224",
+        "run:duel-qual-2/summary.json:1-52",
+        "run:duel-qual-2/duel_arena.log:46-80",
+        "run:duel-qual-2/duel_arena.log:242-287"
       ]
     }
   ],

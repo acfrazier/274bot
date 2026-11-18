@@ -12,9 +12,9 @@ runs. Merlot also stores finished malbec runs in its `NIGHTLY/` mirror.
 merlot macOS user LaunchAgent (20:00 America/New_York)
   Tart clone from baked base: 8 vCPU, 24 GiB RAM, 160 GB disk
   main Engine A via helper forward (44594/1080); private Engine Q for quest
-  /Volumes/dev-scratch/274bot-evidence/NIGHTLY/<run>-mac/
-  /Volumes/dev-scratch/274bot-evidence/NIGHTLY/<run>-mac-quest/
-  FLOOR status: /Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running
+  $NIGHTLY_MAC_RUNS/<run>-mac/
+  $NIGHTLY_MAC_RUNS/<run>-mac-quest/
+  FLOOR status: $NIGHTLY_MAC_STATUS (default: $NIGHTLY_MAC_RUNS/.mac-nightly-running)
 
 malbec nightly (02:00 America/New_York)
   /srv/nightly/runs/<run>/ and /srv/nightly/runs/<run>-quest/
@@ -23,7 +23,7 @@ malbec nightly (02:00 America/New_York)
 archive host  tank/274bot-nightly/<run>/ + ZFS snapshot
        | read-only mirror to merlot
        v
-merlot /Volumes/dev-scratch/274bot-evidence/NIGHTLY/<malbec-run>/
+macOS host $NIGHTLY_MAC_RUNS/<linux-run>/
        (hourly at minute :51; finished runs only, SHA256SUMS verified)
 
 Windows BotTest nightly (23:00 America/New_York)
@@ -85,7 +85,7 @@ Jobs run sequentially and share the runner's lock and build tree:
   The controller mirrors `MAC-QUIET.lock` into the guest. The runner stops an
   active live cell at its next boundary. It records that cell as `UNAVAILABLE`
   with a `MAC-QUIET` reason. It does not start another job.
-  FLOOR can read `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`.
+  FLOOR can read `NIGHTLY_MAC_STATUS` (default: `$NIGHTLY_MAC_RUNS/.mac-nightly-running`).
 - **Windows, BotTest:** the task runs main with `lanes,panel,tui`, then quest
   with `panel,tui`, both against existing Engine B (`47594/3080`). Engine Q is
   bound to merlot's loopback and is not reachable from Windows without changing
@@ -282,14 +282,15 @@ then `dev`. Do not pass `--branch` for the calendar launch.
 Run a hand night through the granted launcher:
 
 ```sh
-test ! -e /Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock
+: "${NIGHTLY_MAC_QUIET_LOCK:?set NIGHTLY_MAC_QUIET_LOCK in local lab.env}"
+test ! -e "$NIGHTLY_MAC_QUIET_LOCK"
 NIGHTLY274_ACTION=nightly-mac \
   "$HOME/.local/libexec/274bot-nightly/nightly274-launch"
 ```
 
 The guest writes `-mac` and `-mac-quest` run folders. The controller copies
 completed folders to `NIGHTLY/` and checks each `SHA256SUMS` file. The host
-status file is `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`.
+status file is `$NIGHTLY_MAC_STATUS` (default: `$NIGHTLY_MAC_RUNS/.mac-nightly-running`).
 If `MAC-QUIET.lock` appears, the controller creates the matching guest lock.
 The runner stops an active live cell at its next boundary. The controller
 exports completed folders, then stops and deletes the clone.
@@ -310,9 +311,8 @@ starts the read-only malbec mirror immediately (after its key is installed).
 - Stop archiving: `systemctl disable --now 274bot-nightly-pull.timer` on the archive host.
 - Stop mirroring: `systemctl --user disable --now 274bot-nightly-mirror.timer` on the
   review machine.
-- macOS on merlot: `cat /Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`
-  shows the active job. Create `/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock`
-  to stop the guest at the next cell boundary and prevent the next job. The
+- macOS host: `cat "$NIGHTLY_MAC_STATUS"` shows the active job. Create
+  `"$NIGHTLY_MAC_QUIET_LOCK"` to stop the guest at the next cell boundary and prevent the next job. The
   controller copies completed run folders, then stops and deletes the clone.
   To stop it immediately, run
   `launchctl kill SIGTERM gui/$(id -u)/local.274bot-nightly-mac`.
@@ -583,14 +583,14 @@ The Mac user LaunchAgent starts at **20:00 America/New_York**. It starts one
 Tart clone from `274bot-mac-base`, runs both Mac jobs, then stops and deletes the
 clone before verifying and publishing completed run archives to `NIGHTLY/`.
 The clone uses 8 vCPU, 24 GiB RAM and a 160 GB disk. The controller protects
-a 120 GiB free-space floor on `/Volumes/dev-scratch`.
+a 120 GiB free-space floor on `NIGHTLY_MAC_DISK_ROOT`.
 `panel-play` runs in the guest's Aqua session. The user must be logged in.
 The controller checks
-`/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock` immediately before guest
+`NIGHTLY_MAC_QUIET_LOCK` immediately before guest
 start, during the start wait, before input staging, and immediately before each
 cell batch. The runner checks the guest copy
 at each cell and lane boundary. While the LaunchAgent runs,
-`/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running` contains
+`NIGHTLY_MAC_STATUS` (default: `$NIGHTLY_MAC_RUNS/.mac-nightly-running`) contains
 the PID, job, state, branch commits and Tart session ID.
 The controller records the `mac_vm.py` start process and the clone name before
 the helper starts. Teardown stops and deletes the clone after an interruption.
@@ -598,7 +598,8 @@ Bootstrap and job logs remain in the helper session's host `share/logs/`
 directory after the clone is deleted. The controller also prints the final
 log lines when a task finishes, including failures before the first run folder.
 Cell environments preserve the configured guest `ISOHOME_ROOT`; they do not
-use the host's `/Volumes/dev-scratch/isohome` default inside the guest.
+use the host's configured `ISOHOME` inside the guest; the guest uses its own
+`ISOHOME_ROOT`.
 The helper counts every running Tart VM toward Apple's two-guest limit,
 including unprefixed operator guests. It never stops or deletes those guests.
 If two guests already run, the nightly refuses to clone.
@@ -625,29 +626,44 @@ If two guests already run, the nightly refuses to clone.
    Keep a dedicated rs2b0t checkout at the catalog path, pinned to the same
    revision as the other nightlies. Do not use the operator's working copy.
    Change the pin between runs, never during a run.
+
+   Export the required path settings from your untracked local `lab.env`
+   before running this block. Each check fails before it writes the launchd
+   configuration when a required value is missing.
    ```sh
-   mkdir -p ~/.local/lib/274bot-nightly/runner/tools/nightly \
+   : "${NIGHTLY_MAC_RUNNER:?set NIGHTLY_MAC_RUNNER in local lab.env}"
+   : "${NIGHTLY_MAC_ROOT:?set NIGHTLY_MAC_ROOT in local lab.env}"
+   : "${NIGHTLY_MAC_RUNS:?set NIGHTLY_MAC_RUNS in local lab.env}"
+   : "${NIGHTLY_MAC_CATALOG:?set NIGHTLY_MAC_CATALOG in local lab.env}"
+   : "${NIGHTLY_MAC_ENGINE_A:?set NIGHTLY_MAC_ENGINE_A in local lab.env}"
+   : "${NIGHTLY_MAC_ENGINE_Q:?set NIGHTLY_MAC_ENGINE_Q in local lab.env}"
+   : "${NIGHTLY_MAC_QUIET_LOCK:?set NIGHTLY_MAC_QUIET_LOCK in local lab.env}"
+   : "${NIGHTLY_MAC_ISOHOME:?set NIGHTLY_MAC_ISOHOME in local lab.env}"
+   : "${NIGHTLY_MAC_PYTHON:?set NIGHTLY_MAC_PYTHON in local lab.env}"
+   : "${NIGHTLY_MAC_VM_TOOL:?set NIGHTLY_MAC_VM_TOOL in local lab.env}"
+   : "${NIGHTLY_MAC_DISK_ROOT:?set NIGHTLY_MAC_DISK_ROOT in local lab.env}"
+
+   mkdir -p "$NIGHTLY_MAC_RUNNER/tools/nightly" \
      ~/.config/274bot-nightly ~/.local/lib/274bot-nightly \
      ~/.local/state/274bot-nightly-mac ~/.local/state/274bot-nightly-malbec-pull \
      ~/Library/LaunchAgents
-   if test -e /Volumes/dev-scratch/274bot-nightly/.mac-nightly.lock; then
+   if test -e "$NIGHTLY_MAC_ROOT/.mac-nightly.lock"; then
      printf '%s\n' 'Mac nightly is running; do not refresh the runner' >&2
      exit 1
    fi
-   rsync -a --delete "$HOME/experiments/274bot/tools/nightly/" \
-     "$HOME/.local/lib/274bot-nightly/runner/tools/nightly/"
+   rsync -a --delete tools/nightly/ "$NIGHTLY_MAC_RUNNER/tools/nightly/"
    cat > ~/.config/274bot-nightly/mac-nightly.env <<EOF
-   NIGHTLY_MAC_RUNNER=$HOME/.local/lib/274bot-nightly/runner
-   NIGHTLY_MAC_ROOT=/Volumes/dev-scratch/274bot-nightly
-   NIGHTLY_MAC_RUNS=/Volumes/dev-scratch/274bot-evidence/NIGHTLY
-   NIGHTLY_MAC_STATUS=/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running
-   NIGHTLY_MAC_CATALOG=/Volumes/dev-scratch/274bot-nightly/rs2b0t
-   NIGHTLY_MAC_ENGINE_A=$HOME/experiments/lostcity-289
-   NIGHTLY_MAC_ENGINE_Q=$HOME/experiments/lostcity-289-q
-   NIGHTLY_MAC_QUIET_LOCK=/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock
-   NIGHTLY_MAC_ISOHOME=$HOME/experiments/274bot/.superpowers/bin/isohome
-   NIGHTLY_MAC_PYTHON=/opt/homebrew/bin/python3
-   NIGHTLY_MAC_VM_TOOL=$HOME/experiments/274bot/.superpowers/release-0.1.9/tools/headed/mac_vm.py
+   NIGHTLY_MAC_RUNNER=$NIGHTLY_MAC_RUNNER
+   NIGHTLY_MAC_ROOT=$NIGHTLY_MAC_ROOT
+   NIGHTLY_MAC_RUNS=$NIGHTLY_MAC_RUNS
+   NIGHTLY_MAC_CATALOG=$NIGHTLY_MAC_CATALOG
+   NIGHTLY_MAC_ENGINE_A=$NIGHTLY_MAC_ENGINE_A
+   NIGHTLY_MAC_ENGINE_Q=$NIGHTLY_MAC_ENGINE_Q
+   NIGHTLY_MAC_QUIET_LOCK=$NIGHTLY_MAC_QUIET_LOCK
+   NIGHTLY_MAC_ISOHOME=$NIGHTLY_MAC_ISOHOME
+   NIGHTLY_MAC_PYTHON=$NIGHTLY_MAC_PYTHON
+   NIGHTLY_MAC_VM_TOOL=$NIGHTLY_MAC_VM_TOOL
+   NIGHTLY_MAC_DISK_ROOT=$NIGHTLY_MAC_DISK_ROOT
    NIGHTLY_MAC_BASE=274bot-mac-base
    NIGHTLY_MAC_SOURCE_REPO=https://github.com/acfrazier/274bot
    NIGHTLY_MAC_MIN_FREE_GIB=120

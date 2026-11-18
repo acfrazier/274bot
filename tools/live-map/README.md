@@ -33,8 +33,8 @@ python3 -B tools/live-map/live_map.py --self-test
 Before using a map, list the tests selected by every unique cell command:
 
 ```sh
-ISOHOME=/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome \
-  python3 -B tools/live-map/live_map.py --verify-cells
+: "${ISOHOME:?set ISOHOME in your local lab.env}"
+python3 -B tools/live-map/live_map.py --verify-cells
 ```
 
 The verifier extracts a cargo-test selector and runs `cargo test ... -- --list`.
@@ -602,36 +602,42 @@ The caller must not replace the gather tile, Path, seeds file, or Engine L ports
 
 | Name | Value or owner |
 |---|---|
-| `ISOHOME` | Use the absolute wrapper path on the host. Merlot: `/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome`. Chardonnay: `/home/acfrazier/experiments/274bot/.superpowers/bin/isohome`. |
+| `ISOHOME` | Set from local `lab.env` to the absolute `isohome` executable. Selector verification and selected live cells fail before running if it is absent. |
 | `BOT_LIVE_NAME_PREFIX` | Choose a unique prefix of 1 to 4 characters for each run. The Sherlock receipt in this round uses `l2r`. See `STANDING-RULINGS.md:33` and `crates/host-play/src/play_bootstrap.rs:67-75`. |
 | `LIVE_EVIDENCE_DIR` | Use a fresh per-cell directory outside the throwaway HOME under the current task's evidence root. The no-route test creates its own timestamped subdirectory. |
-| `ENGINE_A_DIR` | Merlot: `/Users/acfrazier/experiments/lostcity-289/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289/engine`. Aubaine: `/Volumes/dev-scratch/engines/lostcity-289-l/engine` for Engine L relay cells. Keep the directory read-only. |
-| `BOT_ENGINE_DIR` | Set to the read-only local Engine L R289 client tree on chardonnay; the Engine L runner accepts it as an override (`COMBAT-PREP-ESCAPE/r3/live.sh:5`). |
-| `ENGINE_B_DIR` | For the chardonnay tunnel cell, use the local R289 client tree at `/home/acfrazier/experiments/lostcity-289/engine`. This optional client path is not the Engine B service. The service is the tunnel at `45594/2080`. |
-| `ENGINE_Q_DIR` | Use the Engine Q tree on its host. Merlot: `/Users/acfrazier/experiments/lostcity-289-q/engine`. Chardonnay: `/home/acfrazier/experiments/lostcity-289-q/engine`. |
+| `ENGINE_A_DIR` | Set from local `lab.env` to the read-only R289 Engine A client tree when selected cells need it. No host-specific default. |
+| `BOT_ENGINE_DIR` | Set to the caller-provided read-only Engine L R289 client tree when required; the Engine L runner accepts it as an override (`COMBAT-PREP-ESCAPE/r3/live.sh:5`). |
+| `ENGINE_B_DIR` | Optional caller-provided R289 client tree, not the Engine B service. When omitted, the runner reuses a configured `ENGINE_A_DIR` if available. |
+| `ENGINE_Q_DIR` | Set from local `lab.env` to the caller's Engine Q tree when selected cells need it. No host-specific default. |
 | `ENGINE_274_DIR` | The orchestrator supplies the 274 engine directory when it starts the 274 service. This value is not set in this map round. |
 | `NAV_PACK_289` | The v19 pack that `tools/local-data/build.py` writes, `target/local-data/nav/289/274bot.navpack` in the repository under test. `run_cells.py` uses it when the variable is unset. The stored v17 and v18 reference packs are refused by the current reader. Final-producer combined-pack cells use the qualified batch pack with its full hash in each receipt. See `STANDING-RULINGS.md:16`. |
 | `NAV_FLAGS_289` | The matching `target/local-data/nav/289/274bot.navflags`. `run_cells.py` uses it when the variable is unset. |
-| `WORLD_GAME_PORT` | The map fixes the no-route cell to Engine L's game port, `47594`, on chardonnay. |
-| `WORLD_HTTP_PORT` | The map fixes the no-route cell to Engine L's HTTP port, `3080`, on chardonnay. |
-| `NAV_SNAPSHOT_ROOT_289` | Use the read-only decoded snapshot that `isohome` exposes as `BOT_NAV_SNAPSHOT_ROOT`. The default paths are `/Users/acfrazier/.274bot/unpack-289` on merlot and `/home/acfrazier/.274bot/unpack-289` on chardonnay. See `AGENTS.md:149`. |
+| `WORLD_GAME_PORT` | The map fixes the no-route cell to Engine L's game port, `47594`. |
+| `WORLD_HTTP_PORT` | The map fixes the no-route cell to Engine L's HTTP port, `3080`. |
+| `NAV_SNAPSHOT_ROOT_289` | Set to the read-only decoded snapshot that `isohome` exposes as `BOT_NAV_SNAPSHOT_ROOT`; there is no home-directory fallback. See `AGENTS.md:149`. |
 | `BOT_CACHE_DIR` | Make a fresh copy of the selected engine's `data/pack/client` at `<LIVE_EVIDENCE_DIR>/cache-289`. The Quester helper copies this source into its isolated run cache. |
-| `CATALOG_ROOT` | Use the local `rs2b0t` checkout root. Merlot: `/Users/acfrazier/experiments/rs2b0t`. Chardonnay: `/home/acfrazier/experiments/rs2b0t`. Aubaine: `/Users/acfrazier/experiments/rs2b0t-fix-gnome-chop`, the catalog used by the reviewed Entrana cells. |
+| `CATALOG_ROOT` | Set to the local `rs2b0t` checkout root through `--catalog-root` or local `lab.env`; there is no host-specific default. |
+| `RS2B0T_CATALOGS_ROOT` | Parent directory containing the frozen `rs2b0t-<commit>` checkouts used by the ignored catalog-schema tests. Set from local `lab.env`; there is no repository-relative fallback. |
 | `CLIENT_UNPACK_DIR` | Use a fresh writable directory at `<LIVE_EVIDENCE_DIR>/client-unpack`. Do not use the operator's real HOME. |
-| `PANEL_LIVE_HOME` | Use a fresh throwaway HOME. Set it below `ISOHOME_ROOT`: `/Volumes/dev-scratch/isohome/panel-<prefix>` on merlot or `/srv/dev/scratch/isohome/panel-<prefix>` on chardonnay. |
+| `PANEL_LIVE_HOME` | Use a fresh throwaway HOME below the caller-configured `ISOHOME_ROOT`; do not use the operator's real HOME. |
 | `GATHERER_WC_TILE` | The map fixes `3197,3209,0`, backed by the R289 normal-tree placement `maps/m49_50.jm2:5342` (`crates/api/data/game-data/289/gathering.json:17173-17190,38398`). It is outside LocationAuto's `AUTO_NEXT_TILES` (`crates/host-play/tests/gatherer_live.rs:107`) and stump fixture (`:197-243,5791-5812`). The caller does not choose it. |
 | `QUESTER_PATH` | The map fixes `cook`, `sheep`, and `prince` for the Cook, sheep-spinning, and Prince-production cells. The caller does not choose it. |
 | `QUESTER_SEEDS` | The map points to the committed Cook, sheep-spin, and Prince-production seed files in `crates/host-play/tests/fixtures/quester-path/`. Run the command from the repository root. The caller does not supply seed data. |
 | `QUESTER_PATH_DIR` | Set to `${PWD}/crates/script/paths/289` from the composed repository root. The Zanaris Path source must be merged into the tested head. Do not substitute an unmerged external Path checkout. |
 | `NAV_PACK_274` | The matching `target/local-data/nav/274/274bot.navpack`. `run_cells.py` uses it when the variable is unset. The orchestrator supplies this path to `nav.essence-follow` when it starts the 274 service. |
 | `BOT_UNPACK_DIR` | Use a fresh writable unpack directory at `<LIVE_EVIDENCE_DIR>/client-unpack`. This can be the same path as `CLIENT_UNPACK_DIR`. |
-| `GATHERER_ENGINE_DIR` | Use the absolute read-only client tree for the 600 ms Engine L service at `47594/3080`. Aubaine: `/Volumes/dev-scratch/engines/lostcity-289-l/engine`; on chardonnay, use the local Engine L tree supplied as `BOT_ENGINE_DIR`. |
+| `GATHERER_ENGINE_DIR` | Use the caller-provided read-only client tree for the 600 ms Engine L service at `47594/3080`. |
 | `GATHERER_TICK_EVIDENCE` | Each of the five native tick cells writes to a fresh, nonexistent absolute path below its `LIVE_EVIDENCE_DIR`; the map assigns a distinct subdirectory per cell and pass. |
-| `DEPS_BATCH_025_PCM_CORPUS` | Required pinned corpus at `/Volumes/dev-scratch/274bot-evidence/DEPS-BATCH-025/impl/corpus/audio/289`. Do not substitute synthetic or alternate inputs. |
-| `DEPS_BATCH_025_PCM_FIXTURE_DIR` | Required frozen fixtures at `/Volumes/dev-scratch/274bot-evidence/DEPS-BATCH-025/impl/pcm-fixtures`. The parent runner hashes the fixture files before the version matrix. |
+| `DEPS_BATCH_025_PCM_CORPUS` | Required pinned corpus supplied by the approved parent runner. Do not substitute synthetic or alternate inputs. |
+| `DEPS_BATCH_025_PCM_FIXTURE_DIR` | Required frozen fixtures supplied by the parent runner, which hashes them before the version matrix. |
 | `DEPS_BATCH_025_PCM_CAPTURE_DIR` | Derived output `<LIVE_EVIDENCE_DIR>/midi-pcm-capture`, fresh for each cell/pass; the map sets it inline. |
 | `DEPS_BATCH_025_PCM_BASELINE_DIR` | Optional earlier capture directory. Leave unset unless an approved baseline is supplied; comparison is bit-exact and applies no tolerance or normalization. |
 
+
+The ignored frozen-catalog identity and schema checks require
+`RS2B0T_CATALOGS_ROOT` to name the parent directory containing the historical
+`rs2b0t-<commit>` checkouts. The path is caller-owned and is not inferred from
+the repository.
 Run commands from the repository root. Keep writable cache and unpack paths in
 fresh run directories. `AGENTS.md:149` requires a throwaway HOME for product
 runs and `isohome` exposes the read-only navigation snapshot.
@@ -779,8 +785,8 @@ python3 -B tools/live-map/live_map.py run --repo <lab clone> \
   --cells host.script-runtime-load,panel.state-gap-stop-live,nav.route-search-live \
   --prefix lcr --evidence /path/to/evidence --passes 1 \
   --engine-game-port 47594 --engine-http-port 3080 \
-  --catalog-root /home/acfrazier/experiments/rs2b0t \
-  --unpack-source /home/acfrazier/.274bot/unpack-289
+  --catalog-root "${CATALOG_ROOT:?set CATALOG_ROOT in your local lab.env}" \
+  --unpack-source "${NAV_SNAPSHOT_ROOT_289:?set NAV_SNAPSHOT_ROOT_289 in your local lab.env}"
 ```
 
 The runner refuses to start when the clone has uncommitted tracked changes. It runs

@@ -701,8 +701,9 @@ encodes H.264:
 QUESTER_PATH=cook HEADED_RECORD=1 \
   cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_quester_path
 # or, interactively (no --live), under a throwaway HOME:
+: "${ISOHOME:?set ISOHOME in your local lab.env}"
 ISOHOME_INTERACTIVE=1 HEADED_RECORD=1 \
-  .superpowers/bin/isohome ./target/release/panel-play --profile local-289 --port 1
+  "$ISOHOME" ./target/release/panel-play --profile local-289 --port 1
 ```
 
 It is off by default and costs nothing when off. `HEADED_RECORD=1`

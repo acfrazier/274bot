@@ -7,17 +7,24 @@
 //! pack, and the accepted read-only 1.1 cache inputs:
 //!
 //! ```sh
+//! : "${ISOHOME:?set ISOHOME in your local lab.env}"
+//! : "${GATHERER_ENGINE_DIR:?set GATHERER_ENGINE_DIR in your local lab.env}"
+//! : "${GATHERER_NAV_PACK:?set GATHERER_NAV_PACK to the accepted v18 reference pack}"
+//! : "${GATHERER_NAV_FLAGS:?set GATHERER_NAV_FLAGS to the matching flags file}"
+//! : "${GATHERER_CATALOG_ROOT:?set GATHERER_CATALOG_ROOT in your local lab.env}"
+//! : "${BOT_CACHE_DIR:?set BOT_CACHE_DIR to the accepted read-only cache input}"
+//! : "${CLIENT_UNPACK_DIR:?set CLIENT_UNPACK_DIR to a fresh client unpack directory}"
+//! : "${LIVE_EVIDENCE_DIR:?set LIVE_EVIDENCE_DIR to a fresh evidence directory}"
 //! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<unique-prefix> \
 //!   GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 \
-//!   GATHERER_ENGINE_DIR=/Users/acfrazier/experiments/lostcity-289/engine \
-//!   GATHERER_NAV_PACK=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navpack \
-//!   GATHERER_NAV_FLAGS=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v18/274bot-289-v18.navflags \
-//!   GATHERER_CATALOG_ROOT=<catalog-root> \
-//!   BOT_CACHE_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-1.1/live-cache/6dcb7c4ad1b85372 \
-//!   CLIENT_UNPACK_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-1.1/client-home/.274bot/unpack \
-//!   LIVE_EVIDENCE_DIR=/Volumes/dev-scratch/274bot-evidence/SURVIVAL-INT-123 \
-//!   /Users/acfrazier/experiments/274bot/.superpowers/bin/isohome \
-//!   cargo test -p host-play --features live-harness,test-support --lib \
+//!   GATHERER_ENGINE_DIR="$GATHERER_ENGINE_DIR" \
+//!   GATHERER_NAV_PACK="$GATHERER_NAV_PACK" \
+//!   GATHERER_NAV_FLAGS="$GATHERER_NAV_FLAGS" \
+//!   GATHERER_CATALOG_ROOT="$GATHERER_CATALOG_ROOT" \
+//!   BOT_CACHE_DIR="$BOT_CACHE_DIR" \
+//!   CLIENT_UNPACK_DIR="$CLIENT_UNPACK_DIR" \
+//!   LIVE_EVIDENCE_DIR="$LIVE_EVIDENCE_DIR" \
+//!   "$ISOHOME" cargo test -p host-play --features live-harness,test-support --lib \
 //!   survival_eat_live_tests::<cell-name> -- --ignored --nocapture --test-threads=1
 //! ```
 

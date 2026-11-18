@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from unittest.mock import patch
 from dataclasses import dataclass
@@ -184,14 +184,23 @@ def _cell_registry(config: dict[str, Any]) -> dict[str, Cell]:
 
 
 def verify_cells(config: dict[str, Any]) -> int:
-    isohome = Path(
-        os.environ.get(
-            "ISOHOME",
-            "/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome",
+    isohome_value = os.environ.get("ISOHOME")
+    if not isohome_value:
+        print(
+            "live-map: set ISOHOME in your local lab.env to the absolute isohome executable",
+            file=sys.stderr,
         )
-    )
-    if not isohome.is_absolute() or not isohome.is_file():
-        print(f"live-map: ISOHOME must name the absolute isohome executable: {isohome}", file=sys.stderr)
+        return 2
+    isohome = Path(isohome_value)
+    if (
+        not isohome.is_absolute()
+        or not isohome.is_file()
+        or not os.access(isohome, os.X_OK)
+    ):
+        print(
+            f"live-map: ISOHOME must name the absolute executable isohome wrapper: {isohome}",
+            file=sys.stderr,
+        )
         return 2
     failures = 0
     cells = _cell_registry(config)
@@ -641,6 +650,13 @@ class LiveMapTests(unittest.TestCase):
         }
         with self.assertRaises(MapError):
             validate_map(raw)
+
+    def test_verify_cells_requires_configured_isohome(self) -> None:
+        output = StringIO()
+        with patch.dict(os.environ, {}, clear=True), redirect_stderr(output):
+            self.assertEqual(verify_cells(self.config), 2)
+        self.assertIn("ISOHOME", output.getvalue())
+        self.assertIn("lab.env", output.getvalue())
 
     def test_verify_cells_rejects_an_empty_test_list(self) -> None:
         config = validate_map(
