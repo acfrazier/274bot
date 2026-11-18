@@ -180,7 +180,7 @@ fn prelude_enforces_round_seven_native_call_caps() -> mlua::Result<()> {
 
         local subject = string.rep("a", 254417)
         local long_subject = subject .. "a"
-        local pattern_subject = string.rep("a", 247077)
+        local pattern_subject = string.rep("a", 199088)
         local over_pattern_subject = pattern_subject .. "a"
         local long_pattern = string.rep("x", 257)
         local large_plain_needle = string.rep("x", 1056)
