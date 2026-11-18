@@ -1221,7 +1221,14 @@ kind = "known-issue"
 area = "Scripts"
 text = """The experimental Luau watchdog checks between VM instructions. One
   built-in native-library call cannot be interrupted while it runs; bounded
-  sort, find, format and number-conversion operations limit those calls."""
+  sort, find, format and number-conversion operations limit those calls.
+  On the frozen two-vCPU reference guest, ten bracket-pattern calls at the
+  reduced work cap took 10.2424, 9.3537, 8.3651, 7.8212, 7.9259, 7.8560,
+  7.8582, 7.8524, 7.8734 and 8.0215 ms. The median was 7.8996 ms, but
+  the first call alone exceeded the approximate 10 ms target; the other nine
+  took 7.82 to 9.35 ms. The host's one-minute load average was 1.37 before
+  and 0.89 after the measurement. [INFERENCE] A first-call cache or allocator
+  warm-up, rather than steady native-call cost, may explain the outlier."""
 first = "0.3.0"
 target = "none"
 severity = "low"
