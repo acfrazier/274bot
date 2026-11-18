@@ -9,10 +9,11 @@ use script::{
         BankSelectionInput, NativeFactsInput, ReachViewInput, SnapshotInput,
     },
     surface::{
-        test_support::StubSurfaceFactory, PostedSnapshotFacts, RouteInspectIdentities, SurfaceCard,
-        SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceStart,
+        test_support::{StubSurfaceFactory, StubSurfaceOperation},
+        LentOutcome, PostedSnapshotFacts, RouteInspectIdentities, SurfaceCard, SurfaceFamily,
+        SurfaceKind, SurfaceReady, SurfaceStart, SurfaceWake,
     },
-    RunState, SlotScript, StartOutcome, StartPoll,
+    CompiledTick, RunState, ScriptCtx, SlotScript, StartOutcome, StartPoll,
 };
 use std::{any::Any, sync::Arc, time::Instant};
 
@@ -325,6 +326,99 @@ fn session_boundaries_clear_posted_facts_without_replacing_the_run() {
             .count();
         assert_eq!(calls, 1, "one run receives one session boundary");
     }
+}
+
+struct NoPacketDriver;
+
+impl api::interact::Driver for NoPacketDriver {
+    fn set_menu(&mut self, _: i32, _: i32, _: i32, _: i32, _: i32) {}
+
+    fn do_action(&mut self, _: i32) -> bool {
+        false
+    }
+
+    fn try_move(
+        &mut self,
+        _: i32,
+        _: i32,
+        _: i32,
+        _: i32,
+        _: bool,
+        _: i32,
+        _: i32,
+        _: i32,
+        _: i32,
+        _: bool,
+        _: i32,
+    ) -> bool {
+        false
+    }
+
+    fn local_route(&self) -> Option<(i32, i32)> {
+        None
+    }
+
+    fn build_base(&self) -> (i32, i32) {
+        (0, 0)
+    }
+
+    fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
+        None
+    }
+
+    fn send_packet(&mut self, _: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+        Err(api::prot::PacketError::InvalidShape("no packet channel"))
+    }
+
+    fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
+        false
+    }
+}
+
+#[test]
+fn lent_slot_dispatches_original_borrow_and_honors_pause_gate() {
+    let factory = Arc::new(StubSurfaceFactory::new());
+    let mut slot = SlotScript::new();
+    start_slot(&mut slot, &factory);
+    let run = factory.last_run().expect("active run");
+    run.set_lent_delivery(true);
+    let input = empty_snapshot(87);
+    let identity = (&input as *const SnapshotInput<'_>) as usize as u64;
+    let mut driver = NoPacketDriver;
+    let mut ctx = ScriptCtx {
+        driver: &mut driver,
+        tick: 87,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: None,
+        obj_names: None,
+        compiled: CompiledTick::default(),
+    };
+    assert_eq!(
+        slot.on_game_tick_lent(&mut ctx, false, &input, NativeFactsInput::default()),
+        LentOutcome::Accepted
+    );
+    assert!(run.operations().contains(&StubSurfaceOperation::DispatchLent {
+        wake: SurfaceWake::Tick,
+        held: false,
+        tick: 87,
+        input_identity: identity,
+        has_progress: false,
+    }));
+    run.take_operations();
+    slot.pause();
+    assert_eq!(
+        slot.on_game_tick_lent(&mut ctx, false, &input, NativeFactsInput::default()),
+        LentOutcome::Refused
+    );
+    assert!(
+        !run.operations()
+            .iter()
+            .any(|call| matches!(call, StubSurfaceOperation::DispatchLent { .. })),
+        "paused slot cannot enter the synchronous run"
+    );
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]

@@ -29,9 +29,9 @@ use crate::ctx::ScriptCtx;
 use crate::native::recovery_hints::RecoveryHintsCell;
 use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs};
 use crate::surface::{
-    PostedSnapshotFacts, RuntimeControlRequest, RuntimeRunState, ScriptRuntimeContext,
-    SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceRun,
-    SurfaceStart,
+    InputDelivery, LentOutcome, PostedSnapshotFacts, RuntimeControlRequest, RuntimeRunState,
+    ScriptRuntimeContext, StopCompletion, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind,
+    SurfaceReady, SurfaceRun, SurfaceStart, SurfaceWake,
 };
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
@@ -456,7 +456,7 @@ pub struct InteractionWait {
     pub deadline_tick: u64,
 }
 
-/// Per-uid runner. Compiled XOR Load (a JS isolate) — never both.
+/// Per-uid runner. A compiled script or one external surface runs, never both.
 pub struct SlotScript {
     pub want_run: bool,
     state: RunState,
@@ -548,12 +548,12 @@ pub struct SlotScript {
     card_stop_owed: bool,
     /// The installed card view last observed by this slot's frame pump.
     card_registry: crate::registry::CardRegistrySnapshot,
-    /// The active surface run, created only on Start.
+    /// The active external surface run, created only on Start.
     surface: Option<Box<dyn SurfaceRun>>,
     /// True after the surface reports that setup completed.
     surface_ready: bool,
-    /// Reaper completion for a non-blocking Stop.
-    stop_rx: Option<std::sync::mpsc::Receiver<Vec<String>>>,
+    /// Stop completion; JS retires asynchronously, Luau completes on this thread.
+    stop_rx: Option<std::sync::mpsc::Receiver<StopCompletion>>,
 
     after_stop: AfterStop,
     /// An operator Load Start has not settled yet (see [`StartOutcome`]).
@@ -1413,7 +1413,7 @@ impl SlotScript {
         Ok(())
     }
 
-    fn begin_async_stop(&mut self, after: AfterStop) -> bool {
+    fn begin_surface_stop(&mut self, after: AfterStop) -> bool {
         let Some(isolate) = self.surface.take() else {
             return false;
         };
@@ -1523,8 +1523,16 @@ impl SlotScript {
             return;
         };
         match rx.try_recv() {
-            Ok(logs) => {
-                self.pending_logs.extend(logs);
+            Ok(completion) => {
+                self.pending_logs.extend(completion.logs);
+                if let Some(failure) = completion.hook_failure {
+                    let diagnostic = format!("onStop failed ({}): {}", failure.code, failure.message);
+                    self.pending_logs.push(diagnostic.clone());
+                    self.last_error = Some(match self.last_error.take() {
+                        Some(reason) => format!("{reason}\n{diagnostic}"),
+                        None => diagnostic,
+                    });
+                }
                 self.complete_stop();
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => self.stop_rx = Some(rx),
@@ -1549,7 +1557,7 @@ impl SlotScript {
             self.active_tick_error_generation = None;
             self.want_run = false;
             self.revoke_native_input();
-            if !self.begin_async_stop(AfterStop::CutLimit(error.clone())) {
+            if !self.begin_surface_stop(AfterStop::CutLimit(error.clone())) {
                 self.finish_cut_limit(error);
             }
             return;
@@ -1559,7 +1567,7 @@ impl SlotScript {
             self.last_error = Some(error.clone());
             self.want_run = false;
             self.revoke_native_input();
-            if !self.begin_async_stop(AfterStop::CutLimit(error.clone())) {
+            if !self.begin_surface_stop(AfterStop::CutLimit(error.clone())) {
                 self.finish_cut_limit(error);
             }
         }
@@ -1742,9 +1750,9 @@ impl SlotScript {
             .is_some_and(SurfaceRun::loc_projection_wanted)
     }
 
-    /// Operator Stop: start isolate teardown without blocking. The join
-    /// (onStop hook plus the 2 s cap) runs on a reaper; observe completes
-    /// it. Compiled teardown still runs on this thread.
+    /// Operator Stop. JavaScript retires asynchronously on its reaper; Luau
+    /// runs its bounded onStop hook on this caller before the receipt is read.
+    /// Compiled teardown also runs here.
     pub fn stop(&mut self) {
         if let Some(run) = self.compiled.as_ref() {
             match catch_unwind(AssertUnwindSafe(|| run.script.prayer_cleanup())) {
@@ -1854,7 +1862,7 @@ impl SlotScript {
             return;
         }
 
-        if self.begin_async_stop(AfterStop::Idle) {
+        if self.begin_surface_stop(AfterStop::Idle) {
             self.want_run = false;
             return;
         }
@@ -2262,57 +2270,41 @@ impl SlotScript {
         self.start_surface(start)
     }
 
-    /// Prepare native pages and post one typed snapshot delta.
-    pub fn post_snapshot_delta(
-        &mut self,
-        input: &crate::native::snapshot_source::SnapshotInput<'_>,
-        native: crate::native::snapshot_source::NativeFactsInput<'_>,
-        force_banks: bool,
-    ) -> bool {
-        self.sync_runtime_state();
-        let Some(surface) = self.surface.as_mut() else {
-            return false;
-        };
-        let mut native = native;
-        native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
-        native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
-        native.api_combat = self
-            .api
-            .as_ref()
-            .and_then(|seat| seat.combat_page.as_deref());
-        native.api_combat_outcome = self
-            .api
-            .as_ref()
-            .and_then(|seat| seat.combat_terminal.as_ref());
-        native.api_progress = self
-            .api
-            .as_ref()
-            .and_then(|seat| seat.progress_page.as_ref());
-        let details = self.seat.as_ref().map(|seat| {
-            seat_live_details(
-                seat,
-                self.api.as_deref(),
-                self.compiled.as_deref(),
-                self.seat_compiled_owner,
-            )
-        });
+    /// The host uses the same surface selector at every dispatch site.
+    pub fn surface_input_delivery(&self) -> InputDelivery {
+        self.surface.as_ref().map_or(InputDelivery::Posted, |surface| surface.input_delivery())
+    }
+
+    /// Complete borrowed host facts with the slot's owned family and seat
+    /// pages, then deliver while the local page arrays are still alive.
+    fn with_native_page<T>(
+        seat: Option<&GameplaySeat<SeatEffect>>,
+        api: Option<&api_seat::ApiSeat>,
+        bank: Option<&bank_seat::BankSeat>,
+        shop: Option<&shop_seat::ShopSeat>,
+        compiled: Option<&CompiledRun>,
+        seat_compiled_owner: Option<RequestId>,
+        mut native: crate::native::snapshot_source::NativeFactsInput<'_>,
+        deliver: impl FnOnce(crate::native::snapshot_source::NativeFactsInput<'_>) -> T,
+    ) -> T {
+        native.api_gather = api.and_then(|seat| seat.page.as_deref());
+        native.api_gather_outcome = api.and_then(|seat| seat.terminal.as_ref());
+        native.api_combat = api.and_then(|seat| seat.combat_page.as_deref());
+        native.api_combat_outcome = api.and_then(|seat| seat.combat_terminal.as_ref());
+        native.api_progress = api.and_then(|seat| seat.progress_page.as_ref());
+        let details = seat.map(|seat| seat_live_details(seat, api, compiled, seat_compiled_owner));
         let mut result_values = [crate::native::seat_rows::SeatResultValue {
             id: RequestId::isolate(1).expect("isolate namespace"),
             value: &[],
         }; api::script_contract::MAX_RESULTS];
-        let mut result_values_len = self
-            .bank
-            .as_ref()
-            .map_or(0, |bank| bank.result_values(&mut result_values));
-        if let (Some(api), Some(seat)) = (self.api.as_deref(), self.seat.as_ref()) {
-            result_values_len +=
-                api.result_values(seat.results(), &mut result_values[result_values_len..]);
+        let mut result_values_len = bank.map_or(0, |bank| bank.result_values(&mut result_values));
+        if let (Some(api), Some(seat)) = (api, seat) {
+            result_values_len += api.result_values(seat.results(), &mut result_values[result_values_len..]);
         }
-        if let (Some(shop), Some(seat)) = (self.shop.as_deref(), self.seat.as_ref()) {
-            result_values_len +=
-                shop.result_values(seat.results(), &mut result_values[result_values_len..]);
+        if let (Some(shop), Some(seat)) = (shop, seat) {
+            result_values_len += shop.result_values(seat.results(), &mut result_values[result_values_len..]);
         }
-        if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
+        if let (Some(seat), Some(details)) = (seat, details.as_ref()) {
             native.seat_page = Some(
                 crate::native::seat_rows::SeatPageInput::new(
                     seat.live(),
@@ -2325,7 +2317,63 @@ impl SlotScript {
                 .expect("slot-owned result value invariant"),
             );
         }
-        surface.post_snapshot_delta(input, native, force_banks)
+        deliver(native)
+    }
+
+    /// Execute a borrowed wake with the prepared slot pages. The caller owns
+    /// the one lifecycle gate and all ordinary seat work after this wake.
+    fn dispatch_lent(
+        &mut self,
+        wake: SurfaceWake,
+        ctx: &mut ScriptCtx<'_>,
+        input: &crate::native::snapshot_source::SnapshotInput<'_>,
+        native: crate::native::snapshot_source::NativeFactsInput<'_>,
+    ) -> LentOutcome {
+        self.sync_runtime_state();
+        let Some(surface) = self.surface.as_mut() else {
+            return LentOutcome::Refused;
+        };
+        if surface.input_delivery() != InputDelivery::Lent {
+            return LentOutcome::Refused;
+        }
+        let identity = self.runtime_context.native_input().lock().identity();
+        let outcome = Self::with_native_page(
+            self.seat.as_deref(),
+            self.api.as_deref(),
+            self.bank.as_deref(),
+            self.shop.as_deref(),
+            self.compiled.as_deref(),
+            self.seat_compiled_owner,
+            native,
+            |native| surface.dispatch_lent(wake, ctx.tick, identity, input, native),
+        );
+        if let LentOutcome::Failed(failure) = &outcome {
+            self.stop_blocked(failure.clone(), ctx.tick);
+        }
+        outcome
+    }
+
+    /// Prepare native pages and post one typed snapshot delta.
+    pub fn post_snapshot_delta(
+        &mut self,
+        input: &crate::native::snapshot_source::SnapshotInput<'_>,
+        native: crate::native::snapshot_source::NativeFactsInput<'_>,
+        force_banks: bool,
+    ) -> bool {
+        self.sync_runtime_state();
+        let Some(surface) = self.surface.as_mut() else {
+            return false;
+        };
+        Self::with_native_page(
+            self.seat.as_deref(),
+            self.api.as_deref(),
+            self.bank.as_deref(),
+            self.shop.as_deref(),
+            self.compiled.as_deref(),
+            self.seat_compiled_owner,
+            native,
+            |native| surface.post_snapshot_delta(input, native, force_banks),
+        )
     }
 
     /// Prepare native pages and post one typed snapshot wake.
@@ -2339,59 +2387,16 @@ impl SlotScript {
         let Some(surface) = self.surface.as_mut() else {
             return false;
         };
-        let mut native = native;
-        native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
-        native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
-        native.api_combat = self
-            .api
-            .as_ref()
-            .and_then(|seat| seat.combat_page.as_deref());
-        native.api_combat_outcome = self
-            .api
-            .as_ref()
-            .and_then(|seat| seat.combat_terminal.as_ref());
-        native.api_progress = self
-            .api
-            .as_ref()
-            .and_then(|seat| seat.progress_page.as_ref());
-        let details = self.seat.as_ref().map(|seat| {
-            seat_live_details(
-                seat,
-                self.api.as_deref(),
-                self.compiled.as_deref(),
-                self.seat_compiled_owner,
-            )
-        });
-        let mut result_values = [crate::native::seat_rows::SeatResultValue {
-            id: RequestId::isolate(1).expect("isolate namespace"),
-            value: &[],
-        }; api::script_contract::MAX_RESULTS];
-        let mut result_values_len = self
-            .bank
-            .as_ref()
-            .map_or(0, |bank| bank.result_values(&mut result_values));
-        if let (Some(api), Some(seat)) = (self.api.as_deref(), self.seat.as_ref()) {
-            result_values_len +=
-                api.result_values(seat.results(), &mut result_values[result_values_len..]);
-        }
-        if let (Some(shop), Some(seat)) = (self.shop.as_deref(), self.seat.as_ref()) {
-            result_values_len +=
-                shop.result_values(seat.results(), &mut result_values[result_values_len..]);
-        }
-        if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
-            native.seat_page = Some(
-                crate::native::seat_rows::SeatPageInput::new(
-                    seat.live(),
-                    seat.results(),
-                    &details[..seat.live().len()],
-                    seat.mirror_revokes_consumed(),
-                )
-                .expect("slot-owned seat page invariant")
-                .with_result_values(&result_values[..result_values_len])
-                .expect("slot-owned result value invariant"),
-            );
-        }
-        surface.post_snapshot_wake(input, native, force_banks, preserve_inv)
+        Self::with_native_page(
+            self.seat.as_deref(),
+            self.api.as_deref(),
+            self.bank.as_deref(),
+            self.shop.as_deref(),
+            self.compiled.as_deref(),
+            self.seat_compiled_owner,
+            native,
+            |native| surface.post_snapshot_wake(input, native, force_banks, preserve_inv),
+        )
     }
 
     /// Last accepted snapshot identities, used to detect host completions
@@ -4205,7 +4210,7 @@ impl SlotScript {
         // Frozen StallGuard: the restarted script finds `pendingRecovery`
         // (`StallGuard.ts:34–39`).
         self.recovery_hints.note_restart();
-        if self.begin_async_stop(AfterStop::Restart) {
+        if self.begin_surface_stop(AfterStop::Restart) {
             // Stamp the recovery and its cooldown at the decision, as the
             // synchronous restart did; the respawn follows the reap.
             self.watchdog.on_restart_applied(now);
@@ -4295,28 +4300,60 @@ impl SlotScript {
     /// not dispatch a JS game tick, advance real-tick waits or renew the native
     /// event budget. Held runs remain frozen.
     pub fn on_snapshot_change(&mut self, ctx: &mut ScriptCtx<'_>) {
+        let _ = self.on_snapshot_change_with_input(ctx, None);
+    }
+
+    /// A borrowed evidence wake uses the same gate and seat tail as a posted
+    /// wake; it does not dispatch a game tick.
+    pub fn on_snapshot_change_lent(
+        &mut self,
+        ctx: &mut ScriptCtx<'_>,
+        input: &crate::native::snapshot_source::SnapshotInput<'_>,
+        native: crate::native::snapshot_source::NativeFactsInput<'_>,
+    ) -> LentOutcome {
+        self.on_snapshot_change_with_input(ctx, Some((input, native)))
+    }
+
+    fn on_snapshot_change_with_input(
+        &mut self,
+        ctx: &mut ScriptCtx<'_>,
+        lent: Option<(
+            &crate::native::snapshot_source::SnapshotInput<'_>,
+            crate::native::snapshot_source::NativeFactsInput<'_>,
+        )>,
+    ) -> LentOutcome {
         self.observe_lifecycle();
         if self.state != RunState::Running || !self.want_run || ctx.compiled.hold {
             self.evidence_wait_run = None;
             self.native_runtime.clear_note_progress();
-            return;
+            return LentOutcome::Refused;
         }
-
-        if let Some(isolate) = &self.surface {
+        if self.surface.is_some() {
             if let Some(failure) = trapped_failure(ctx) {
                 self.stop_blocked(failure, ctx.tick);
-                return;
+                return LentOutcome::Refused;
             }
-            let input_identity = self.runtime_context.native_input().lock().identity();
-            isolate.on_snapshot_change_at(ctx.tick, input_identity);
+            let outcome = if let Some((input, native)) = lent {
+                self.dispatch_lent(SurfaceWake::Evidence, ctx, input, native)
+            } else if self.surface_input_delivery() == InputDelivery::Posted {
+                let identity = self.runtime_context.native_input().lock().identity();
+                self.surface.as_ref().expect("surface checked above").on_snapshot_change_at(ctx.tick, identity);
+                LentOutcome::Accepted
+            } else {
+                LentOutcome::Refused
+            };
+            if !matches!(outcome, LentOutcome::Accepted) {
+                return outcome;
+            }
             self.tick_api(ctx);
             self.tick_bank_scoped(ctx, bank_seat::BankPoll::All);
             self.tick_shop(ctx);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
-            return;
+            return outcome;
         }
         self.poll_compiled_frame(ctx);
+        LentOutcome::Refused
     }
 
     /// The `SeatAnswer` producer: an owed answer page on a seat that is not
@@ -4374,6 +4411,24 @@ impl SlotScript {
             .is_some_and(|surface| surface.on_seat_page_at(snap_tick, identity, release_floor))
     }
 
+    /// The seat answer was polled earlier in this pass. Prepare its current
+    /// page now, then dispatch it before releasing the borrowed host facts.
+    pub fn on_seat_page_lent(
+        &mut self,
+        ctx: &mut ScriptCtx<'_>,
+        release_floor: u64,
+        input: &crate::native::snapshot_source::SnapshotInput<'_>,
+        native: crate::native::snapshot_source::NativeFactsInput<'_>,
+    ) -> LentOutcome {
+        if !self.dispatch_open()
+            || ctx.compiled.hold
+            || self.seat.as_ref().is_none_or(|seat| seat.held())
+        {
+            return LentOutcome::Refused;
+        }
+        self.dispatch_lent(SurfaceWake::SeatPage { release_floor }, ctx, input, native)
+    }
+
     /// The seat's answer-page change counter, for the capture before a post.
     pub fn seat_answer_seq(&self) -> u64 {
         self.seat.as_ref().map_or(0, |seat| seat.answer_seq())
@@ -4422,41 +4477,74 @@ impl SlotScript {
     /// back whatever the tick does. A panic also marks the clue machine's
     /// abort, which the slot's next observed frame applies.
     pub fn on_game_tick(&mut self, ctx: &mut ScriptCtx<'_>) {
+        let held = ctx.compiled.hold;
+        let _ = self.on_game_tick_with_input(ctx, held, None);
+    }
+
+    /// Deliver one borrowed tick inside the host input builder, with the same
+    /// gate and seat tail as a posted tick.
+    pub fn on_game_tick_lent(
+        &mut self,
+        ctx: &mut ScriptCtx<'_>,
+        held: bool,
+        input: &crate::native::snapshot_source::SnapshotInput<'_>,
+        native: crate::native::snapshot_source::NativeFactsInput<'_>,
+    ) -> LentOutcome {
+        let held = held || ctx.compiled.hold;
+        self.on_game_tick_with_input(ctx, held, Some((input, native)))
+    }
+
+    fn on_game_tick_with_input(
+        &mut self,
+        ctx: &mut ScriptCtx<'_>,
+        held: bool,
+        lent: Option<(
+            &crate::native::snapshot_source::SnapshotInput<'_>,
+            crate::native::snapshot_source::NativeFactsInput<'_>,
+        )>,
+    ) -> LentOutcome {
         self.observe_lifecycle();
         if self.state != RunState::Running || !self.want_run {
             self.evidence_wait_run = None;
             self.native_runtime.clear_note_progress();
-            return;
+            return LentOutcome::Refused;
         }
-
         if self.surface.is_some() {
             if let Some(failure) = trapped_failure(ctx) {
                 self.stop_blocked(failure, ctx.tick);
-                return;
+                return LentOutcome::Refused;
             }
-        }
-
-        if let Some(isolate) = &self.surface {
-            isolate.on_game_tick_at(
-                ctx.tick,
-                self.runtime_context.native_input().lock().identity(),
-            );
-            if ctx.compiled.hold {
+            let outcome = if let Some((input, native)) = lent {
+                self.dispatch_lent(SurfaceWake::Tick { held }, ctx, input, native)
+            } else if self.surface_input_delivery() == InputDelivery::Posted {
+                self.surface.as_ref().expect("surface checked above").on_game_tick_at(
+                    ctx.tick,
+                    self.runtime_context.native_input().lock().identity(),
+                );
+                LentOutcome::Accepted
+            } else {
+                LentOutcome::Refused
+            };
+            if !matches!(outcome, LentOutcome::Accepted) {
+                return outcome;
+            }
+            if held {
                 self.seat_held_tick();
-                return;
+                return outcome;
             }
             self.tick_api(ctx);
             self.tick_bank_scoped(ctx, bank_seat::BankPoll::All);
             self.tick_shop(ctx);
             self.capture_native_seat_rows();
             self.settle_api_seat_terminals();
-            return;
+            return outcome;
         }
         if self.compiled.is_none() {
-            return;
+            return LentOutcome::Refused;
         }
         self.ticks += 1;
         self.poll_compiled_frame(ctx);
+        LentOutcome::Refused
     }
 
     /// Both real ticks and evidence wakes use the same compiled frame path.

@@ -1,6 +1,6 @@
 use super::{
-    PostedSnapshotFacts, ScriptStopReceipt, SurfaceError, SurfaceFactory, SurfaceKind,
-    SurfaceReady, SurfaceRun, SurfaceStart, TickOutcome,
+    PostedSnapshotFacts, ScriptStopReceipt, StopCompletion, SurfaceError, SurfaceFactory,
+    SurfaceKind, SurfaceReady, SurfaceRun, SurfaceStart, TickOutcome,
 };
 use crate::interact::{InteractReq, QueuedInteract};
 use crate::native::recovery_hints::RecoveryHintsCell;
@@ -86,6 +86,14 @@ pub enum StubSurfaceOperation {
         tick: u64,
         input_identity: u64,
         release_floor: u64,
+    },
+    /// The slot lent one bounded entry to a synchronous surface.
+    DispatchLent {
+        wake: super::SurfaceWake,
+        held: bool,
+        tick: u64,
+        input_identity: u64,
+        has_progress: bool,
     },
     /// The slot drained stamped interactions.
     DrainInteractsStamped,
@@ -318,6 +326,11 @@ impl StubSurfaceHandle {
         *lock(&self.state.retirement_logs) = lines.into_iter().collect();
     }
 
+    /// Set a typed hook failure for the next retirement completion.
+    pub fn set_retirement_hook_failure(&self, failure: crate::native::ScriptFailure) {
+        *lock(&self.state.retirement_hook_failure) = Some(failure);
+    }
+
     /// Replace the names returned by [`SurfaceRun::ignored_randoms`].
     pub fn set_ignored_randoms(&self, names: Vec<String>) {
         *lock(&self.state.ignored_randoms) = names;
@@ -333,6 +346,10 @@ impl StubSurfaceHandle {
         *lock(&self.state.memory_progress) = progress;
     }
 
+    /// Select a synchronous input mode for exercising the slot's lent gate.
+    pub fn set_lent_delivery(&self, lent: bool) {
+        self.state.lent_delivery.store(lent, Ordering::Release);
+    }
     /// Return whether the slot called `stop` on this run.
     pub fn stop_called(&self) -> bool {
         self.state.stop_called.load(Ordering::Acquire)
@@ -388,6 +405,35 @@ impl StubSurfaceRun {
 }
 
 impl SurfaceRun for StubSurfaceRun {
+    fn input_delivery(&self) -> super::InputDelivery {
+        if self.state.lent_delivery.load(Ordering::Acquire) {
+            super::InputDelivery::Lent
+        } else {
+            super::InputDelivery::Posted
+        }
+    }
+
+    fn dispatch_lent(
+        &mut self,
+        wake: super::SurfaceWake,
+        held: bool,
+        input: &SnapshotInput<'_>,
+        _native: NativeFactsInput<'_>,
+        ctx: &mut super::LentContext<'_>,
+    ) -> super::LentOutcome {
+        record(
+            &self.state,
+            StubSurfaceOperation::DispatchLent {
+                wake,
+                held,
+                tick: input.tick,
+                input_identity: input as *const SnapshotInput<'_> as usize as u64,
+                has_progress: ctx.api_progress.is_some(),
+            },
+        );
+        super::LentOutcome::Accepted
+    }
+
     fn poll_ready(&self) -> SurfaceReady {
         record(&self.state, StubSurfaceOperation::PollReady);
         lock(&self.state.readiness).clone()
@@ -443,17 +489,20 @@ impl SurfaceRun for StubSurfaceRun {
         self.state.paused.store(false, Ordering::Release);
     }
 
-    fn stop(self: Box<Self>, done: Sender<Vec<String>>) {
+    fn stop(self: Box<Self>, done: Sender<StopCompletion>) {
         record(&self.state, StubSurfaceOperation::Stop);
         self.state.stop_called.store(true, Ordering::Release);
         self.state.stopped.store(true, Ordering::Release);
-        let retirement_logs = std::mem::take(&mut *lock(&self.state.retirement_logs));
+        let completion = StopCompletion {
+            logs: std::mem::take(&mut *lock(&self.state.retirement_logs)),
+            hook_failure: lock(&self.state.retirement_hook_failure).take(),
+        };
         let mut retirement = lock(&self.state.retirement);
         if retirement.deferred {
-            retirement.pending = Some((done, retirement_logs));
+            retirement.pending = Some((done, completion));
         } else {
             drop(retirement);
-            let _ = done.send(retirement_logs);
+            let _ = done.send(completion);
         }
     }
 
@@ -833,7 +882,7 @@ impl SurfaceFactory for StubSurfaceFactory {
 #[derive(Default)]
 struct StubRetirement {
     deferred: bool,
-    pending: Option<(Sender<Vec<String>>, Vec<String>)>,
+    pending: Option<(Sender<StopCompletion>, StopCompletion)>,
 }
 
 struct StubSurfaceState {
@@ -849,6 +898,7 @@ struct StubSurfaceState {
     paused: AtomicBool,
     stopped: AtomicBool,
     stop_called: AtomicBool,
+    lent_delivery: AtomicBool,
     stop_receipt: Mutex<Option<ScriptStopReceipt>>,
     script_cut: AtomicBool,
     snapshot_delta_accepts: AtomicBool,
@@ -863,6 +913,7 @@ struct StubSurfaceState {
     tick_outcomes: Mutex<Vec<TickOutcome>>,
     logs: Mutex<Vec<String>>,
     retirement_logs: Mutex<Vec<String>>,
+    retirement_hook_failure: Mutex<Option<crate::native::ScriptFailure>>,
     retirement: Mutex<StubRetirement>,
     live_walking_operation: AtomicBool,
     manual_walk_intent_sequence: AtomicU64,
@@ -896,6 +947,7 @@ impl StubSurfaceState {
             paused: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
             stop_called: AtomicBool::new(false),
+            lent_delivery: AtomicBool::new(false),
             stop_receipt: Mutex::new(None),
             script_cut: AtomicBool::new(false),
             snapshot_delta_accepts: AtomicBool::new(true),
@@ -910,6 +962,7 @@ impl StubSurfaceState {
             tick_outcomes: Mutex::new(Vec::new()),
             logs: Mutex::new(Vec::new()),
             retirement_logs: Mutex::new(Vec::new()),
+            retirement_hook_failure: Mutex::new(None),
             retirement: Mutex::new(StubRetirement::default()),
             live_walking_operation: AtomicBool::new(false),
             manual_walk_intent_sequence: AtomicU64::new(0),

@@ -613,7 +613,7 @@ pub enum LentOutcome {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StopCompletion {
     pub logs: Vec<String>,
-    pub hook_failure: Option<String>,
+    pub hook_failure: Option<crate::native::ScriptFailure>,
 }
 
 /// A queued host-owned client frame whose isolate acknowledgement is awaited

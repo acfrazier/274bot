@@ -1209,3 +1209,52 @@ first = "0.3.0"
 target = "none"
 severity = "low"
 owner = "operator (revisit if it causes trouble)"
+
+[[item]]
+id = "luau-native-call-uninterruptible"
+kind = "known-issue"
+area = "Scripts"
+text = """The experimental Luau watchdog checks between VM instructions. One
+  built-in native-library call cannot be interrupted while it runs; bounded
+  sort, find, format and number-conversion operations limit those calls."""
+first = "0.3.0"
+target = "none"
+severity = "low"
+owner = "Luau runtime"
+
+[[item]]
+id = "luau-uncensused-native-path"
+kind = "known-issue"
+area = "Scripts"
+text = """An experimental Luau script that reaches a native path missed by the
+  watchdog census can hold its own bot's slot until that path returns. Other
+  bots continue running."""
+first = "0.3.0"
+target = "none"
+severity = "low"
+owner = "Luau runtime"
+
+[[item]]
+id = "luau-allocation-latch"
+kind = "known-issue"
+area = "Scripts"
+text = """If an experimental Luau script exhausts its memory allowance during
+  traceback or argument/result conversion, the allocation is refused, but
+  mlua 0.12.2 can surface a catchable error without latching the run's
+  out-of-memory state."""
+first = "0.3.0"
+target = "none"
+severity = "low"
+owner = "Luau runtime (mlua 0.12.2)"
+
+[[item]]
+id = "luau-stop-all-serial"
+kind = "known-issue"
+area = "Scripts"
+text = """Stop all scripts handles Luau runs serially. A pathological run can
+  delay the remaining stops while its bounded watchdog retirement completes;
+  Stop all is not a parallel cancellation operation."""
+first = "0.3.0"
+target = "none"
+severity = "low"
+owner = "Luau runtime"
