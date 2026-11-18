@@ -417,6 +417,10 @@ impl PoisonMemory {
                 } = self.state
                 {
                     // Player.ts:821-831,953 blocks normal timers while busy.
+                    // Content's largest single p_delay is 20 ticks
+                    // (minigames/game_trawler/scripts/trawler_start.rs2:43 and
+                    // minigames/game_trawler/scripts/trawler_win.rs2:49); poison.rs2:72-75 sets
+                    // a 30-tick period, leaving 10 ticks of residual margin.
                     // An overdue timer may fire immediately when access returns.
                     self.state = PoisonState::Poisoned {
                         per_tick,

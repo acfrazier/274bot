@@ -326,6 +326,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   normal timers. Once the modal closes, a hit still keeps risk active until a
   new poison mark.
 
+### Fixed during development
+
+#### Survival
+
+- An ordinary hit observed while a main or chat modal is open keeps poison
+  risk active through the pause until the next poison mark.
+
 ## [0.2.9.1] — 2026-11-14 — Beta 2 patch
 
 ### Navigation

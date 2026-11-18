@@ -349,6 +349,25 @@ impl SlotCondition {
         let modal_open = snapshot.modals().main != -1 || snapshot.modals().chat != -1;
         if modal_open {
             self.reset_window(WindowReset::Modal);
+            // Preserve same-drain ordinary hits before TimerPaused advances last_mark.
+            // The normal scan below still owns hit_seen and latch ordering.
+            if drain.player_info && self.tables.is_some() && snapshot.local_player().is_some() {
+                if let Some(marks) = snapshot.hitmarks() {
+                    let tick = snapshot.tick() as u16;
+                    for (slot, mark) in marks.marks.iter().enumerate() {
+                        if mark.cycle <= marks.loop_cycle || mark.cycle == self.hit_seen[slot] {
+                            continue;
+                        }
+                        if matches!(mark.kind, 0 | 1) {
+                            self.transition(PoisonEvent::Hitmark {
+                                kind: mark.kind.clamp(0, u16::MAX as i32) as u16,
+                                value: mark.value.clamp(0, u8::MAX as i32) as u8,
+                                tick,
+                            });
+                        }
+                    }
+                }
+            }
             self.transition(PoisonEvent::TimerPaused {
                 tick: snapshot.tick() as u16,
             });
