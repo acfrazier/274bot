@@ -261,12 +261,13 @@ impl PoisonMemory {
         match event {
             PoisonEvent::None => {}
             PoisonEvent::Reconnect { tick } => {
-                // World.ts:132-133,744-750 retains disconnected players; poison.rs2:12-18
-                // can raise active poison without another message, and npc_poison.rs2:1-10
-                // emits poison hitmarks. The retained pulse remains only a lower
-                // bound until a post-reconnect poison hitmark. Snapshot ticks
-                // reset to zero on reconnect (snapshot.rs:387,768-797;
-                // snapshot/decode.rs:343), so rebase to the new session tick.
+                // World.ts:132-133,744-750 retains disconnected players;
+                // poison.rs2:12-18 can raise active poison without a message.
+                // npc_combat_melee.rs2:29 queues that player-poison path.
+                // Keep the retained pulse only as a lower bound until a
+                // post-reconnect poison hitmark. Snapshot ticks reset to zero
+                // (snapshot.rs:387,768-797; snapshot/decode.rs:343), so rebase
+                // to the new session tick.
                 match self.state {
                     PoisonState::Poisoned {
                         per_tick,

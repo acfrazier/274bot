@@ -178,10 +178,14 @@ fn chat_pair(snapshot: &mut GameSnapshot, older: (i32, &str), newer: (i32, &str)
 }
 
 fn poisoned_owner_with_fruit() -> (SlotCondition, GameSnapshot) {
+    poisoned_owner_with_fruit_at(1)
+}
+
+fn poisoned_owner_with_fruit_at(tick: u32) -> (SlotCondition, GameSnapshot) {
     let mut owner = owner();
-    let mut snapshot = frame(1);
+    let mut snapshot = frame(tick);
     inventory(&mut snapshot, 1, &[464]);
-    hit(&mut snapshot, 2, 6, 1);
+    hit(&mut snapshot, 2, 6, tick as i32);
     owner.observe_frame(&snapshot, &drain(true, true), false);
     assert!(matches!(
         owner.current().unwrap().poison,
@@ -248,7 +252,7 @@ fn reconnect_rebases_poison_reserve_until_next_poison_tick() {
     if !api::test_support::game_data_available() {
         return;
     }
-    let (mut owner, _) = poisoned_owner_with_fruit();
+    let (mut owner, _) = poisoned_owner_with_fruit_at(65_000);
     let PoisonState::Poisoned {
         per_tick,
         hit_since_mark,
