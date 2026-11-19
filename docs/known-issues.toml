@@ -675,6 +675,21 @@ severity = "low"
 owner = "panel"
 
 [[item]]
+id = "changelog-0201-multibox-new-profile-wall"
+kind = "known-issue"
+area = "Panel"
+text = """with MultiBox on, saving a new profile that has auto-login
+  enabled logs the bot in but doesn't add it to the wall, so it runs without
+  a tile. Click the new profile in the Profiles list to bring it onto the
+  wall; nothing is lost."""
+first = "0.2.0"
+listed = "0.2.9.2"
+target = "0.3.0"
+fixed = "0.3.0"
+severity = "low"
+owner = "panel"
+
+[[item]]
 id = "boat-fare-luthas-reach-stop"
 kind = "known-issue"
 area = "Scripts"
