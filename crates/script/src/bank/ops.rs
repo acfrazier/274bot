@@ -59,20 +59,32 @@ pub enum KeepRule {
     All(i32),
     /// Preserve at least `count` copies; excess copies remain deposit candidates.
     AtLeast { id: i32, count: i32 },
+    /// Preserve at least `count` copies; a bank-full refusal skips only this
+    /// optional item, then the bank continues with other deposit candidates.
+    BestEffortAtLeast { id: i32, count: i32 },
 }
 impl KeepRule {
     pub const fn id(self) -> i32 {
         match self {
-            Self::All(id) | Self::AtLeast { id, .. } => id,
+            Self::All(id) | Self::AtLeast { id, .. } | Self::BestEffortAtLeast { id, .. } => id,
         }
     }
 
     pub const fn minimum_count(self) -> Option<i32> {
         match self {
             Self::All(_) => None,
-            Self::AtLeast { count, .. } => Some(count),
+            Self::AtLeast { count, .. } | Self::BestEffortAtLeast { count, .. } => Some(count),
         }
     }
+}
+
+/// Return the bit for a keep rule that may be skipped after a bank-full
+/// refusal. Rule lists are bounded by [`MAX_MEMO`].
+pub fn best_effort_keep_bit(keep: &[KeepRule], id: i32) -> Option<u64> {
+    let index = keep.iter().position(
+        |rule| matches!(rule, KeepRule::BestEffortAtLeast { id: keep_id, .. } if *keep_id == id),
+    )?;
+    (index < u64::BITS as usize).then(|| 1_u64 << index)
 }
 
 /// A deposit dispatch or content refusal, distinct from an observed transfer.
@@ -649,9 +661,8 @@ pub enum DepositKind {
     Required,
 }
 
-/// Which pack ids a deposit moves. Borrows the caller's rules (built once at
-/// begin, at most [`MAX_MEMO`] entries), so a poll copies nothing and a
-/// machine stores nothing extra.
+/// Which pack ids a deposit moves. The caller builds the rules once at begin,
+/// and the scanner borrows them without copying rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DepositSpec<'a> {
     pub kind: DepositKind,
@@ -661,17 +672,29 @@ pub struct DepositSpec<'a> {
     pub keep_ids: &'a [i32],
     /// When set, only these ids are candidates.
     pub only: Option<&'a [i32]>,
+    /// Optional keep-rule bits skipped after a bank-full refusal.
+    pub best_effort_skipped: u64,
 }
 
 impl DepositSpec<'_> {
     fn keep_count(&self, id: i32) -> Option<i32> {
         self.keep.iter().find_map(|rule| match *rule {
-            KeepRule::AtLeast { id: keep_id, count } if keep_id == id => Some(count),
+            KeepRule::AtLeast { id: keep_id, count }
+            | KeepRule::BestEffortAtLeast { id: keep_id, count }
+                if keep_id == id =>
+            {
+                Some(count)
+            }
             _ => None,
         })
     }
 
     fn candidate<R: BankRow>(&self, id: i32, pack: &[R]) -> bool {
+        if best_effort_keep_bit(self.keep, id)
+            .is_some_and(|bit| self.best_effort_skipped & bit != 0)
+        {
+            return false;
+        }
         let kept = match self.keep_count(id) {
             Some(count) => count_id(pack, id) <= count,
             None => {

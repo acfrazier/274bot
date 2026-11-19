@@ -642,6 +642,8 @@ pub struct BankMachine {
     /// MAX_DEPOSITS plus MAX_BANK_REOPENS plus this one
     /// recovery caps deposit sends at 35 per request.
     deposit_recovered: bool,
+    /// Optional keep rules skipped after a bank-full refusal.
+    best_effort_skipped: u64,
     /// Stop after the current transfer reaches an observed boundary.
     interrupted: bool,
 }
@@ -795,6 +797,7 @@ impl NativeMachine for BankMachine {
             reopen_pending: false,
             in_flight: None,
             deposit_recovered: false,
+            best_effort_skipped: 0,
             interrupted: false,
         })
     }
@@ -1512,7 +1515,7 @@ impl NativeMachine for BankMachine {
                                 self.same_session(cx),
                             )
                         } else {
-                            let spec = deposit_spec(&self.request.action)
+                            let spec = deposit_spec(&self.request.action, self.best_effort_skipped)
                                 .expect("deposit actions have a deposit spec");
                             ops::deposit_next(
                                 &spec,
@@ -1749,6 +1752,24 @@ impl NativeMachine for BankMachine {
                             }
                             Ok(TransferWait::Pending) => return Poll::Pending,
                             Ok(TransferWait::Retry(reason)) => {
+                                if reason == ops::DepositFailure::BankFull {
+                                    if let Some(bit) =
+                                        best_effort_bank_full_bit(&self.request.action, item_id)
+                                    {
+                                        self.best_effort_skipped |= bit;
+                                        self.deposit_log = None;
+                                        self.phase = Phase::Act;
+                                        api::host_log!(
+                                            api::hostlog::Category::BankOp,
+                                            api::hostlog::Level::Info,
+                                            "bank-deposit-skip run={:?} tick={} id={} reason=bank-full optional=1",
+                                            cx.evidence().run,
+                                            cx.evidence().tick,
+                                            item_id,
+                                        );
+                                        continue;
+                                    }
+                                }
                                 if self.deposit_recovered {
                                     return Poll::Ready(Err(ActionError::BankDeposit(reason)));
                                 }
@@ -2023,26 +2044,36 @@ fn npc_intent(access: &BankStandAccess) -> Result<npc::Intent<'_>, ActionError> 
 /// The kernel deposit spec of a deposit action, borrowed from its request:
 /// a one-row deposit must move that id, deposit-all sweeps everything not
 /// kept, and products must leave the pack.
-fn deposit_spec(action: &BankAction) -> Option<DepositSpec<'_>> {
+fn deposit_spec(action: &BankAction, best_effort_skipped: u64) -> Option<DepositSpec<'_>> {
     match action {
         BankAction::Deposit { item } => Some(DepositSpec {
             kind: DepositKind::Required,
             keep: &[],
             keep_ids: &[],
             only: Some(std::slice::from_ref(&item.id)),
+            best_effort_skipped: 0,
         }),
         BankAction::DepositAll { keep } => Some(DepositSpec {
             kind: DepositKind::UntilEmpty,
             keep: &[],
             keep_ids: keep,
             only: None,
+            best_effort_skipped: 0,
         }),
         BankAction::DepositProducts { products, keep } => Some(DepositSpec {
             kind: DepositKind::Required,
             keep,
             keep_ids: &[],
             only: Some(products),
+            best_effort_skipped,
         }),
+        _ => None,
+    }
+}
+
+fn best_effort_bank_full_bit(action: &BankAction, item_id: i32) -> Option<u64> {
+    match action {
+        BankAction::DepositProducts { keep, .. } => ops::best_effort_keep_bit(keep, item_id),
         _ => None,
     }
 }
@@ -2429,6 +2460,11 @@ impl BankMachine {
                 "content-refused",
                 api::hostlog::Level::Info,
             );
+            if reason == ops::DepositFailure::BankFull
+                && best_effort_bank_full_bit(&self.request.action, item_id).is_some()
+            {
+                return Ok(TransferWait::Retry(ops::DepositFailure::BankFull));
+            }
             return Err(ActionError::BankDeposit(reason));
         }
         if accepted == Some(false) {

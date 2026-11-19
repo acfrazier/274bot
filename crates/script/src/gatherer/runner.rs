@@ -601,7 +601,7 @@ impl Gatherer {
                 .map(crate::bank::ops::KeepRule::All),
         );
         if spare_active_tool {
-            keep_rules.push(crate::bank::ops::KeepRule::AtLeast {
+            keep_rules.push(crate::bank::ops::KeepRule::BestEffortAtLeast {
                 id: self.tool.id,
                 count: 1,
             });

@@ -398,6 +398,7 @@ impl DepositLoop {
             keep: &[],
             keep_ids: keep,
             only: None,
+            best_effort_skipped: 0,
         };
         match ops::deposit_next(&spec, side, pack, expired, true) {
             DepositScan::Click(click) => self.prepare_click(snapshot, click),

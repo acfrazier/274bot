@@ -125,6 +125,20 @@ severity = "medium"
 owner = "scripts-misc"
 
 [[item]]
+id = "changelog-0201-gatherer-keeps-duplicate-tools"
+kind = "known-issue"
+area = "Gatherer"
+text = """a bank trip keeps every copy of the tool in your inventory,
+  not just one, so a second harpoon (or axe, pickaxe or net) stays in your
+  inventory and takes a slot. Bank the extra by hand; the bot leaves it in
+  the bank."""
+first = "0.2.0.1"
+target = "0.3.0"
+fixed = "0.3.0"
+severity = "low"
+owner = "gatherer-bank-trip"
+
+[[item]]
 id = "panel-linux-dual-gpu"
 kind = "known-issue"
 area = "Panel (Linux)"
