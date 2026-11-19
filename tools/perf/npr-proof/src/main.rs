@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-#[cfg(feature = "api-observation")]
 use api::prereq_knowledge::Observation;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp};
 use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
@@ -46,7 +45,6 @@ impl ProofEvidence {
     }
 }
 
-#[cfg(feature = "api-observation")]
 impl EvidenceProvider for ProofEvidence {
     fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
         Some(Observation {
@@ -54,13 +52,6 @@ impl EvidenceProvider for ProofEvidence {
             // Explicit corpus input at the requested floor, never a live observation.
             observed: Some(required_after),
         })
-    }
-}
-
-#[cfg(not(feature = "api-observation"))]
-impl EvidenceProvider for ProofEvidence {
-    fn test_gate(&self, gate: &QuestGate, _required_after: EvidenceStamp) -> Truth {
-        self.truth(gate)
     }
 }
 
@@ -171,7 +162,6 @@ fn main() -> Result<(), String> {
     }
     let pairs = fixture()?;
     let world = NavWorld::load_pack(&pack).map_err(|error| format!("load pack: {error:?}"))?;
-    let family = world.graph.quest_family.ok_or("pack has no quest family")?;
     let mut proof_edges = [0_usize; 2];
     for edge in &world.graph.edges {
         if let Some(target) = proof_target(edge.loc_id) {
@@ -219,11 +209,8 @@ fn main() -> Result<(), String> {
             // The canonical adapter clones the raw state and attaches the same
             // provider before each search. These operations are outside its clock.
             let mut overlaid = state.clone();
-            overlaid.quest_evidence = Some(QuestEvidence::new(
-                Arc::clone(&provider),
-                family,
-                required_after,
-            ));
+            overlaid.quest_evidence =
+                Some(QuestEvidence::new(Arc::clone(&provider), required_after));
             let started = Instant::now();
             let route = find_with(
                 &world.collision,
@@ -290,11 +277,10 @@ fn main() -> Result<(), String> {
     println!(
         "{}",
         json!({
-            "schema": "274bot-npr-proof-v1",
+            "schema": "274bot-npr-proof-v2",
             "name": "npr_proof_original_full_corpus",
             "profile": "proof",
             "pack": pack,
-            "quest_family": format!("{family:?}"),
             "proof_edges_a1_a2": proof_edges,
             "proof_transport_uses_a1_a2": proof_transport_uses,
             "memory_window": memory_window,
@@ -365,8 +351,7 @@ mod tests {
         assert!(state.varps.is_empty() && state.quests.is_empty());
         assert!(state.quest_evidence.is_none());
         assert!(!state.allow_fetchable_worn);
-        // Readiness-field assertions use the current observation API shape.
-        #[cfg(feature = "api-observation")]
+        // Readiness must be absent from the frozen raw state.
         assert!(!state.inventory_ready && !state.equipment_ready);
     }
 
@@ -415,16 +400,13 @@ mod tests {
             sequence: 7,
         };
         let gate = gate("priestperil", "priestperil", 61, 61);
-        #[cfg(feature = "api-observation")]
-        {
-            let observed = ProofEvidence
-                .observe_gate(&gate, stamp)
-                .expect("explicit input");
-            assert_eq!(observed.truth, Truth::True);
-            assert_eq!(observed.observed, Some(stamp));
-        }
-        #[cfg(not(feature = "api-observation"))]
-        assert_eq!(ProofEvidence.test_gate(&gate, stamp), Truth::True);
+        let provider: Arc<dyn EvidenceProvider> = Arc::new(ProofEvidence);
+        let observed = provider.observe_gate(&gate, stamp).expect("explicit input");
+        assert_eq!(observed.truth, Truth::True);
+        assert_eq!(observed.observed, Some(stamp));
+        let evidence = QuestEvidence::new(provider, stamp);
+        assert_eq!(evidence.test(&gate), Truth::True);
+        assert_eq!(evidence.required_after(), stamp);
     }
 
     #[test]

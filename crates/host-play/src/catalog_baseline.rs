@@ -614,7 +614,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::BrimhavenMossInspectV1 => brimhaven_moss_inspect_v1_baseline_ready(baseline),
         CoreCase::RouteInspectBrimhavenV2 => route_inspect_brimhaven_v2_baseline_ready(baseline),
         CoreCase::PrayerV2 => prayer_delivery_baseline_ready(baseline),
-        CoreCase::WalkSpotV2 | CoreCase::AcquireKeyV2 | CoreCase::CellV2 | CoreCase::BankV2 => case
+        CoreCase::WalkSpotV2 | CoreCase::BankV2 => case
             .hunt_cell()
             .is_some_and(|cell| hunt_baseline_ready(cell, baseline)),
     };
@@ -970,12 +970,6 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::WalkSpotV2 => {
             "ingame && scene_state==2 && SceneView.available, host here on the published plane"
-        }
-        CoreCase::AcquireKeyV2 => {
-            "ingame && scene_state==2 && SceneView.available, host here outside the jail cell and the projected lair box, Chebyshev > 1 from the corridor (2931,9690,0), no Jail key held"
-        }
-        CoreCase::CellV2 => {
-            "ingame && scene_state==2 && SceneView.available, host here outside the jail cell and the projected lair box, Chebyshev > 1 from the jail door (2931,9690,0), no Dusty key held"
         }
         CoreCase::BankV2 => {
             "ingame && scene_state==2 && SceneView.available, host here Chebyshev > 3 from (2946,3369,0) and outside the projected lair box"

@@ -1,15 +1,14 @@
-//! Host-owned evidence for the retained v2 hunt File cells: walk spot, key,
-//! cell and bank.
+//! Host-owned evidence for the retained v2 hunt File cells: walk spot and bank.
 //!
 //! Each example is `*Begin` + one awaited `*Run` (FENCE Q2). Its paint says
 //! only what the host cannot see: how the run settled and the tiles the
 //! script chose. Everything a gate trusts beyond that is host data:
 //!
-//! - the Start baseline's host tile and inventory;
+//! - the Start baseline's host tile and bank state;
 //! - the game requests host-play dispatched for the slot, in order. The
 //!   [`ScriptActLedger`] is filled where `script_runtime` handles each
 //!   `InteractReq`; it is host data, not a new isolate wire;
-//! - the host tile and inventory when the receipt is painted.
+//! - the host tile and bank state when the receipt is painted.
 //!
 //! A script that never starts the run sends none of the family's requests
 //! and never moves, so no cell can pass on its paint alone.
@@ -37,25 +36,6 @@ pub const WALK_SPOT_RECEIPT_PREFIX: &str = "walk-spot-receipt:";
 /// Chebyshev 13–20 separates this longer walk-in from nearby actions.
 pub const WALK_SPOT_MIN_CHEB: i32 = 13;
 pub const WALK_SPOT_MAX_CHEB: i32 = 20;
-pub const ACQUIRE_KEY_V2_STOP: &str = "acquire key qualification complete";
-pub const ACQUIRE_KEY_RECEIPT_PREFIX: &str = "acquire-key-receipt:";
-/// The key family's corridor walk and pickup radius (`hunt_key.rs`).
-pub const ACQUIRE_KEY_RADIUS: i32 = 1;
-/// Frozen `supply.ts:129` `JAIL_DOOR`: the prison corridor north of Velrak's
-/// cell. The key family walks near it and the cell family walks near it
-/// before `killJailer` (`fetchFromVelrak`, `supply.ts:942-947`).
-pub const JAIL_DOOR: LineOfSightTile = LineOfSightTile {
-    x: 2931,
-    z: 9690,
-    level: 0,
-};
-pub const ACQUIRE_KEY_DEST: LineOfSightTile = JAIL_DOOR;
-pub const CELL_V2_STOP: &str = "cell qualification complete";
-pub const CELL_V2_RECEIPT_PREFIX: &str = "cell-receipt:";
-/// Frozen `fetchFromVelrak` walks near `JAIL_DOOR` at radius 1
-/// (`supply.ts:944`).
-pub const CELL_V2_DOOR: LineOfSightTile = JAIL_DOOR;
-pub const CELL_V2_RADIUS: i32 = 1;
 pub const BANK_V2_STOP: &str = "bank qualification complete";
 pub const BANK_V2_RECEIPT_PREFIX: &str = "bank-receipt:";
 /// The bank family's approach radius (`hunt_bank.rs` `APPROACH_RADIUS`).
@@ -69,28 +49,14 @@ pub const BANK_V2_DEST: LineOfSightTile = LineOfSightTile {
     z: 3369,
     level: 0,
 };
-/// Velrak's jail cell (`hunt_key.rs` / `hunt_cell.rs` `CELL`).
-pub const JAIL_CELL: HuntBox = HuntBox {
-    min_x: 2928,
-    max_x: 2934,
-    min_z: 9683,
-    max_z: 9689,
-    level: 0,
-};
-/// Projected lair box for the retained Key and Cell Start baselines.
-pub const HUNT_LAIR_FIXTURE: HuntBox = HuntBox {
+/// The fixture bounds that the bank Start baseline must avoid.
+const HUNT_LAIR_FIXTURE: HuntBox = HuntBox {
     min_x: 40,
     max_x: 60,
     min_z: 40,
     max_z: 60,
     level: 0,
 };
-pub const JAIL_KEY_ID: i32 = 1591;
-pub const DUSTY_KEY_ID: i32 = 1590;
-/// `dungeonjail`, Velrak's cell door.
-pub const JAIL_DOOR_LOC: i32 = 2631;
-pub const JAILER: &str = "Jailer";
-pub const VELRAK: &str = "Velrak the explorer";
 /// Ledger rows a slot keeps for the watch to read.
 pub const HUNT_ACT_ROWS: usize = 32;
 /// Rows one run's cycle keeps; more is a run this gate does not model.
@@ -103,8 +69,6 @@ const KBD_LOCS: [i32; 4] = [1765, 1766, 1816, 1817];
 #[serde(rename_all = "kebab-case")]
 pub enum HuntCell {
     WalkSpot,
-    Key,
-    Cell,
     Bank,
 }
 
@@ -112,8 +76,6 @@ impl HuntCell {
     pub fn stop_reason(self) -> &'static str {
         match self {
             Self::WalkSpot => WALK_SPOT_V2_STOP,
-            Self::Key => ACQUIRE_KEY_V2_STOP,
-            Self::Cell => CELL_V2_STOP,
             Self::Bank => BANK_V2_STOP,
         }
     }
@@ -121,59 +83,31 @@ impl HuntCell {
     pub fn receipt_prefix(self) -> &'static str {
         match self {
             Self::WalkSpot => WALK_SPOT_RECEIPT_PREFIX,
-            Self::Key => ACQUIRE_KEY_RECEIPT_PREFIX,
-            Self::Cell => CELL_V2_RECEIPT_PREFIX,
             Self::Bank => BANK_V2_RECEIPT_PREFIX,
         }
     }
 
-    /// Walk spot settles `null` and proves arrival by the host tile; the
-    /// item and bank runs must settle `true`.
+    /// Walk spot settles `null`; the bank run must settle `true`.
     fn settled_value(self) -> Option<bool> {
         match self {
             Self::WalkSpot => None,
-            _ => Some(true),
-        }
-    }
-
-    /// Walk spot takes no site; other retained cells name their one-shot site.
-    fn names_site(self) -> bool {
-        !matches!(self, Self::WalkSpot)
-    }
-
-    /// The inventory item whose arrival proves the run.
-    fn proof_item(self) -> Option<i32> {
-        match self {
-            Self::Key => Some(JAIL_KEY_ID),
-            Self::Cell => Some(DUSTY_KEY_ID),
-            _ => None,
-        }
-    }
-
-    /// The walk whose destination the host tile must reach while the run
-    /// is still going (key and cell end somewhere else).
-    fn latch_walk(self) -> Option<(LineOfSightTile, i32)> {
-        match self {
-            Self::Key => Some((ACQUIRE_KEY_DEST, ACQUIRE_KEY_RADIUS)),
-            Self::Cell => Some((CELL_V2_DOOR, CELL_V2_RADIUS)),
-            _ => None,
+            Self::Bank => Some(true),
         }
     }
 }
 
 /// A rectangle of tiles on one level.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct HuntBox {
-    pub min_x: i32,
-    pub max_x: i32,
-    pub min_z: i32,
-    pub max_z: i32,
-    pub level: i32,
+#[derive(Clone, Copy)]
+struct HuntBox {
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    level: i32,
 }
 
 impl HuntBox {
-    pub fn contains(self, tile: LineOfSightTile) -> bool {
+    fn contains(self, tile: LineOfSightTile) -> bool {
         tile.level == self.level
             && (self.min_x..=self.max_x).contains(&tile.x)
             && (self.min_z..=self.max_z).contains(&tile.z)
@@ -329,27 +263,14 @@ fn kbd_tile(tile: LineOfSightTile) -> bool {
     (tile.x, tile.z) == KBD_TILE
 }
 
-/// Start predicate. The run has not begun, so nothing it proves may already
-/// hold: key and cell start outside the cell, away from the door and without
-/// the key they fetch; bank starts outside its approach radius.
+/// Start predicate. The host must be in a usable scene and not already at
+/// the bank.
 pub fn hunt_baseline_ready(cell: HuntCell, baseline: &Observation) -> bool {
     let Some(from) = host_tile(baseline) else {
         return false;
     };
     let placed = match cell {
         HuntCell::WalkSpot => true,
-        HuntCell::Key => {
-            !JAIL_CELL.contains(from)
-                && !HUNT_LAIR_FIXTURE.contains(from)
-                && cheb(from, ACQUIRE_KEY_DEST) > ACQUIRE_KEY_RADIUS
-                && baseline.item_id(JAIL_KEY_ID) == 0
-        }
-        HuntCell::Cell => {
-            !JAIL_CELL.contains(from)
-                && !HUNT_LAIR_FIXTURE.contains(from)
-                && cheb(from, CELL_V2_DOOR) > CELL_V2_RADIUS
-                && baseline.item_id(DUSTY_KEY_ID) == 0
-        }
         HuntCell::Bank => {
             !HUNT_LAIR_FIXTURE.contains(from)
                 && cheb(from, BANK_V2_DEST) > BANK_V2_RADIUS
@@ -359,23 +280,18 @@ pub fn hunt_baseline_ready(cell: HuntCell, baseline: &Observation) -> bool {
     baseline.ingame && baseline.scene_state == 2 && baseline.hunt.available && placed
 }
 
-/// Post-Start witness for one hunt cell: the run's own host requests, the
-/// host tile it reached, the joined receipt, and the named stop.
+/// Post-Start witness for one hunt cell: its host requests, joined receipt,
+/// and named stop.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct HuntDeliveryCycle {
     /// Host tile of the Start baseline.
     pub from: Option<LineOfSightTile>,
     /// Ledger seq at the Start baseline; only later rows are this run's.
     pub start_seq: Option<u64>,
-    /// Host count of the cell's proof item at the Start baseline.
-    pub start_proof_items: i32,
     /// This run's host-dispatched requests, in order.
     pub acts: Vec<ScriptActRow>,
     /// Rows left the ledger before this watch read them: fail closed.
     pub acts_lost: bool,
-    /// Key and cell: the host tile reached the walk's destination after the
-    /// walk was sent.
-    pub arrived: bool,
     /// Bank: the host saw the bank open and loaded after the approach walk.
     pub bank_opened: bool,
     /// Bank: the host bank was still open when the receipt joined.
@@ -383,8 +299,6 @@ pub struct HuntDeliveryCycle {
     pub receipt: Option<HuntReceipt>,
     /// Host tile when the receipt joined.
     pub here: Option<LineOfSightTile>,
-    /// Host count of the proof item when the receipt joined.
-    pub proof_items: i32,
     pub stopped: Option<script::ScriptLifecycleReceipt>,
 }
 
@@ -393,18 +307,12 @@ impl HuntDeliveryCycle {
         let start = *self.start_seq.get_or_insert(baseline.hunt.acts.seq);
         if self.from.is_none() {
             self.from = host_tile(baseline);
-            self.start_proof_items = cell.proof_item().map_or(0, |id| baseline.item_id(id));
         }
         if self.receipt.is_some() {
             return;
         }
         self.take_acts(start, &now.hunt.acts);
         let here = host_tile(now);
-        if let (Some((dest, radius)), Some(here)) = (cell.latch_walk(), here) {
-            if self.walked_near(dest, radius).is_some() && cheb(here, dest) <= radius {
-                self.arrived = true;
-            }
-        }
         if cell == HuntCell::Bank
             && now.bank_open
             && now.bank_loaded
@@ -418,7 +326,6 @@ impl HuntDeliveryCycle {
         if now.hunt.available && here == Some(receipt.here) {
             self.receipt = Some(receipt.clone());
             self.here = here;
-            self.proof_items = cell.proof_item().map_or(0, |id| now.item_id(id));
             self.bank_open_at_receipt = now.bank_open;
         }
     }
@@ -495,7 +402,7 @@ impl HuntDeliveryCycle {
         let dest = receipt.dest;
         let settled =
             receipt.outcome.kind == "done" && receipt.outcome.value == cell.settled_value();
-        let site_ok = !cell.names_site()
+        let site_ok = cell != HuntCell::Bank
             || receipt
                 .key
                 .as_deref()
@@ -531,56 +438,6 @@ impl HuntDeliveryCycle {
                     && self.first(|act| exact_to(act, true)).is_some()
                     && self.all_walks(|act| exact_to(act, true))
                     && !self.any(|act| walk_to(act) || scene_op(act))
-            }
-            // The corridor walk, then the Jailer attack; the jail key held.
-            HuntCell::Key => {
-                let Some(walk) = self.walked_near(ACQUIRE_KEY_DEST, ACQUIRE_KEY_RADIUS) else {
-                    return false;
-                };
-                let attack = self.first(|act| {
-                    matches!(act, ScriptAct::Npc { name, action, .. }
-                        if name.eq_ignore_ascii_case(JAILER) && action.eq_ignore_ascii_case("Attack"))
-                });
-                dest == ACQUIRE_KEY_DEST
-                    && self.arrived
-                    && attack.is_some_and(|attack| attack > walk)
-                    && self.start_proof_items == 0
-                    && self.proof_items > 0
-                    && !JAIL_CELL.contains(here)
-                    && !self.any(|act| {
-                        walk_to(act)
-                            || matches!(act, ScriptAct::Walk { exact: true, .. })
-                            || matches!(act, ScriptAct::Loc { .. } | ScriptAct::UseOnLoc { .. })
-                    })
-            }
-            // Frozen `fetchFromVelrak` (`supply.ts:942-965`): walk near the
-            // jail door, unlock it with the jail key, talk to Velrak, open
-            // the door from inside; the dusty key held outside the cell.
-            HuntCell::Cell => {
-                let Some(walk) = self.walked_near(CELL_V2_DOOR, CELL_V2_RADIUS) else {
-                    return false;
-                };
-                let unlock = self.first(|act| {
-                    matches!(act, ScriptAct::UseOnLoc { item, tile }
-                        if item.eq_ignore_ascii_case("Jail key") && cheb(*tile, CELL_V2_DOOR) <= 1)
-                });
-                let talk = self.first(|act| {
-                    matches!(act, ScriptAct::Npc { name, .. } if name.eq_ignore_ascii_case(VELRAK))
-                });
-                let open = self.first(|act| {
-                    matches!(act, ScriptAct::Loc { id, action, .. }
-                        if *id == JAIL_DOOR_LOC && action.eq_ignore_ascii_case("Open"))
-                });
-                let ordered = matches!(
-                    (unlock, talk, open),
-                    (Some(unlock), Some(talk), Some(open)) if walk < unlock && unlock < talk && talk < open
-                );
-                dest == CELL_V2_DOOR
-                    && self.arrived
-                    && ordered
-                    && self.start_proof_items == 0
-                    && self.proof_items > 0
-                    && !JAIL_CELL.contains(here)
             }
             // The root walk approaches the bank. Any script-act booth approach
             // stays near it; native seat walks have their own HostEffect lane.

@@ -2606,7 +2606,8 @@ class LatencyPassTests(unittest.TestCase):
     """The pass against a fake cell runner and a real proxy subprocess."""
 
     def run_pass(self, root: Path, upstream_port: int, outcomes: dict, *,
-                 traffic: bool = True, stats_p50_override: float | None = None):
+                 traffic: bool = True, stats_p50_override: float | None = None,
+                 latency_rtts: tuple[int, ...] = (50,), traffic_rounds: int = 1):
         run_dir = root / "run"
         run_dir.mkdir(parents=True)
         binary = root / "tui-play"
@@ -2620,10 +2621,11 @@ class LatencyPassTests(unittest.TestCase):
                                       "renderer": "cpu", "started": rn.now_iso()})
             if traffic:
                 with socket.create_connection(("127.0.0.1", game_port), timeout=10) as sock:
-                    sock.sendall(bytes([14]) + b"ping")
-                    echoed = b""
-                    while len(echoed) < 5:
-                        echoed += sock.recv(5 - len(echoed))
+                    for _ in range(traffic_rounds):
+                        sock.sendall(bytes([14]) + b"ping")
+                        echoed = b""
+                        while len(echoed) < 5:
+                            echoed += sock.recv(5 - len(echoed))
             result.result, result.ticks = outcomes[cell]
             result.wall_s = round(time.monotonic() - started, 3)
             cell_dir = cell_run_dir / root_name / cell
@@ -2665,7 +2667,7 @@ class LatencyPassTests(unittest.TestCase):
         for patch in patches:
             patch.start()
         try:
-            rows, meta = rn.run_latency_pass("dev", binary, list(outcomes), [50], run_dir,
+            rows, meta = rn.run_latency_pass("dev", binary, list(outcomes), list(latency_rtts), run_dir,
                                              root / "work", base, {}, 2, zero, None, True)
         finally:
             for patch in patches:
@@ -2676,32 +2678,39 @@ class LatencyPassTests(unittest.TestCase):
         listener, echo_port, thread, stopping = _start_echo_server()
         try:
             with tempfile.TemporaryDirectory() as tmp:
+                # RTT395 leaves timer slack inside the unchanged ±10ms health band.
                 rows, meta, run_dir = self.run_pass(
                     Path(tmp), echo_port,
-                    {"walk": ("PASS", 10), "cook": ("FAIL", 4), "bank": ("FAIL", 1)})
+                    {"walk": ("PASS", 10), "cook": ("FAIL", 4), "bank": ("FAIL", 1)},
+                    latency_rtts=(395,), traffic_rounds=5)
                 by_cell = {row.cell: row for row in rows}
-                self.assertEqual(by_cell["walk"].latency_class, "pass")
+                self.assertEqual(by_cell["walk"].latency_class, "pass", by_cell["walk"].reason)
                 self.assertEqual(by_cell["cook"].latency_class, "latency-defect")
                 self.assertEqual(by_cell["bank"].latency_class, "also-fails-at-0")
                 for row in rows:
-                    cell_dir = run_dir / "cells-latency" / "rtt50" / row.cell
+                    cell_dir = run_dir / "cells-latency" / "rtt395" / row.cell
                     doc = json.loads((cell_dir / "latency.json").read_text(encoding="utf-8"))
-                    self.assertEqual(doc["band"], "rtt50")
-                    self.assertEqual(doc["configured_rtt_ms"], 50)
-                    self.assertEqual(doc["configured_one_way_ms"], 25.0)
-                    self.assertEqual(doc["account_prefix"], "nt50")
+                    self.assertEqual(doc["band"], "rtt395")
+                    self.assertEqual(doc["configured_rtt_ms"], 395)
+                    self.assertEqual(doc["configured_one_way_ms"], 197.5)
+                    self.assertEqual(doc["account_prefix"], "n395")
                     self.assertEqual(doc["latency_class"], row.latency_class)
                     self.assertIsNotNone(doc["frontend_sha256"])
                     p50 = doc["measured"]["client_to_server"]["p50_ms"]
-                    self.assertLessEqual(abs(p50 - 25.0), 10.0)
+                    self.assertLessEqual(abs(p50 - 197.5), 10.0)
                     self.assertIsNotNone(doc["login_first_response_ms"])
                     saved = json.loads((cell_dir / "result.json").read_text(encoding="utf-8"))
-                    self.assertEqual(saved["latency_band"], "rtt50")
-                    self.assertEqual(saved["latency_rtt_ms"], 50)
+                    self.assertEqual(saved["latency_band"], "rtt395")
+                    self.assertEqual(saved["latency_rtt_ms"], 395)
                     self.assertEqual(saved["latency_class"], row.latency_class)
-                stats = run_dir / "latency" / "rtt50" / "proxy-stats.jsonl"
-                self.assertGreaterEqual(len(rn.read_proxy_stats(stats)), 3)
-                self.assertEqual(meta["bands"][0]["band"], "rtt50")
+                stats = run_dir / "latency" / "rtt395" / "proxy-stats.jsonl"
+                records = rn.read_proxy_stats(stats)
+                self.assertGreaterEqual(len(records), 3)
+                self.assertGreaterEqual(sum(record["queue_delay_ms_client_to_server"]["samples"]
+                                            for record in records), 15)
+                self.assertGreaterEqual(sum(record["queue_delay_ms_server_to_client"]["samples"]
+                                            for record in records), 15)
+                self.assertEqual(meta["bands"][0]["band"], "rtt395")
                 self.assertTrue(meta["report_only"])
         finally:
             stopping.set()

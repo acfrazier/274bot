@@ -605,7 +605,7 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
-            CoreCase::WalkSpotV2 | CoreCase::AcquireKeyV2 | CoreCase::CellV2 | CoreCase::BankV2 => {
+            CoreCase::WalkSpotV2 | CoreCase::BankV2 => {
                 if let Some(cell) = self.case.hunt_cell() {
                     self.hunt_cycle
                         .observe_script_lifecycle(receipt, cell.stop_reason());
@@ -827,11 +827,10 @@ impl CoreWitness {
             CoreCase::BrimhavenMossInspectV1 => self.brimhaven_moss_inspect_cycle.qualified(),
             CoreCase::RouteInspectBrimhavenV2 => self.route_inspect_brimhaven_v2_cycle.qualified(),
             CoreCase::PrayerV2 => self.prayer_delivery_cycle.qualified(),
-            CoreCase::WalkSpotV2 | CoreCase::AcquireKeyV2 | CoreCase::CellV2 | CoreCase::BankV2 => {
-                self.case
-                    .hunt_cell()
-                    .is_some_and(|cell| self.hunt_cycle.qualified(cell))
-            }
+            CoreCase::WalkSpotV2 | CoreCase::BankV2 => self
+                .case
+                .hunt_cell()
+                .is_some_and(|cell| self.hunt_cycle.qualified(cell)),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
