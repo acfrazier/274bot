@@ -920,9 +920,14 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
-# Operator decision: normal trees have no Knife arm. Evidence:
-# content/scripts/skill_woodcutting/scripts/woodcut.rs2:5-14
-# engine/src/network/game/client/handler/OpLocUHandler.ts:76-81
+# Operator decision: normal trees deplete on their first successful log roll.
+# The normal table uses respawnrate=0; oak uses 30:
+# content/scripts/skill_woodcutting/configs/trees.dbrow:34,91
+# woodcut.rs2 sets deplete_chance=0 for respawnrate=0 and then calls
+# loc_change after random(0)=0:
+# content/scripts/skill_woodcutting/scripts/woodcut.rs2:167-188
+# RANDOM computes nextDouble*n, so random(0) is always zero:
+# engine/src/engine/script/handlers/NumberOps.ts:32-35
 closed = "0.3.0"
 closed_reason = "by-design"
 
