@@ -9,7 +9,7 @@ pub mod run;
 mod shop_run;
 pub mod vendor;
 
-use crate::bank::ops::MAX_MEMO;
+use crate::bank::ops::{KeepRule, MAX_MEMO};
 use crate::native::{ActionError, WalkOptions};
 use crate::native_bank::{BankAction, BankReceipt, Withdrawal};
 use api::bank_memory::Origin;
@@ -97,7 +97,7 @@ pub struct Need {
 pub enum DepositSpec {
     Ids {
         products: Arc<[i32]>,
-        keep: Arc<[i32]>,
+        keep: Arc<[KeepRule]>,
     },
     Capacity {
         keep: Arc<[i32]>,

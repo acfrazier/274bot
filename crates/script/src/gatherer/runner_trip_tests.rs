@@ -449,6 +449,101 @@ fn gatherer_interrupts_deposit_at_transfer_boundary() {
     assert!(!gatherer.survival_interrupting);
 }
 
+#[test]
+fn gatherer_bank_trip_deposits_only_the_spare_harpoon() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    const HARPOON: i32 = 311;
+    let fixture = BaitFixture::with_fishing_method("fishing.harpoon.tool_311.products_359_371");
+    let method = &fixture.prepared.catalog.methods()[fixture.prepared.methods[0]];
+    assert_eq!(known_rows(&method.tools)[0].item, HARPOON);
+
+    let mut gatherer = fixture.gatherer(GatherRetained::default());
+    gatherer.needs_validate = false;
+    gatherer.trip = TripStep::Deposit;
+    gatherer.tool = ToolState {
+        id: HARPOON,
+        worn: false,
+    };
+    let mut snapshot = fixture.snapshot;
+    let pack_row = |slot| api::snapshot::ItemView {
+        def: def(HARPOON, "Harpoon"),
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot,
+        count: 1,
+        actions: Vec::new(),
+        component_id: 3214,
+    };
+    let bank_row = |slot| api::snapshot::ItemView {
+        def: def(HARPOON, "Harpoon"),
+        container: ItemContainer::BankSide,
+        action_family: ItemActionFamily::Component,
+        slot,
+        count: 1,
+        actions: vec![Some("Deposit-1".into())],
+        component_id: 7,
+    };
+    snapshot.seed_locs(relog_booth_locs());
+    snapshot.seed_inventory(vec![pack_row(0), pack_row(1)], 28);
+    snapshot.seed_bank_observation(10, 1, Some(Vec::new()), vec![bank_row(0), bank_row(1)]);
+    let mut ledger = None;
+
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.cx.condition = Some(clear());
+        gatherer.tick(tick).unwrap();
+        assert!(matches!(
+            tick.cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::interact::InteractReq::InvButton {
+                    id: HARPOON,
+                    operation: 1,
+                    ..
+                }
+            ))
+        ));
+        accept_last_interaction(tick);
+    });
+
+    snapshot.seed_inventory(vec![pack_row(1)], 28);
+    snapshot.seed_bank_observation(10, 1, Some(Vec::new()), vec![bank_row(1)]);
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.cx.condition = Some(clear());
+        gatherer.tick(tick).unwrap();
+    });
+    assert_eq!(
+        snapshot
+            .inventory()
+            .iter()
+            .filter(|item| item.def.id == HARPOON)
+            .map(|item| item.count)
+            .sum::<i32>(),
+        1
+    );
+    assert!(
+        !ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|action| matches!(
+                &action.effect,
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::InvButton {
+                    id: HARPOON,
+                    ..
+                })
+            )),
+        "the bank trip does not click the retained tool"
+    );
+}
+
 const RELOG_BANK_TILE: WorldTile = WorldTile {
     x: 3245,
     z: 3423,

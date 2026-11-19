@@ -119,6 +119,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Gatherer tick cells wear the oak fixture's axe, cover fishing-spot moves
   with spare logs, and judge cycles without a chance XP requirement. Startup
   counts player-tile movement on native and replacement routes.
+- Gatherer bank trips now deposit duplicate copies of the active gathering
+  tool while retaining one; alternate gathering tools remain protected.
 
 ### Native acquisition
 
