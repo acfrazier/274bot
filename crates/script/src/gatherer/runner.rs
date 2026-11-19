@@ -583,7 +583,7 @@ impl Gatherer {
             .map(crate::bank::ops::KeepRule::All)
             .collect::<Vec<_>>();
         if crate::bank::ops::count_id(inventory, self.tool.id) > 1 {
-            keep_rules.push(crate::bank::ops::KeepRule::AtLeast {
+            keep_rules.push(crate::bank::ops::KeepRule::BestEffortAtLeast {
                 id: self.tool.id,
                 count: 1,
             });

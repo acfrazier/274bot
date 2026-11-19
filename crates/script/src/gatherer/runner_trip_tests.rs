@@ -544,6 +544,43 @@ fn gatherer_bank_trip_deposits_only_the_spare_harpoon() {
     );
 }
 
+#[test]
+fn gatherer_bank_trip_skips_full_bank_spare_harpoon_and_deposits_stackable_product() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    const HARPOON: i32 = 311;
+    const FIRE_RUNE: i32 = 554;
+    let fixture = BaitFixture::with_fishing_method("fishing.harpoon.tool_311.products_359_371");
+    let mut trip = Trip::new(fixture, TripStep::Deposit);
+    trip.tool_id = HARPOON;
+    trip.tool_name = "Harpoon";
+    trip.tool_count = 2;
+    trip.stackable_product = Some(FIRE_RUNE);
+    trip.bank_full_id = Some(HARPOON);
+    trip.gatherer.tool = ToolState {
+        id: HARPOON,
+        worn: false,
+    };
+    trip.snapshot.seed_inventory(trip.pack(), 28);
+    trip.open_page();
+
+    trip.run_until("completed bank trip", |trip| {
+        trip.gatherer.trips == 1 && trip.gatherer.trip == TripStep::Idle
+    });
+
+    assert!(trip.deposited_ids.contains(&FIRE_RUNE));
+    assert!(
+        !trip.deposited_ids.contains(&HARPOON),
+        "the full bank leaves the spare harpoon in the pack"
+    );
+    assert_eq!(
+        crate::bank::ops::count_id(trip.snapshot.inventory(), HARPOON),
+        2
+    );
+    assert_eq!(trip.gatherer.trips, 1);
+}
+
 const RELOG_BANK_TILE: WorldTile = WorldTile {
     x: 3245,
     z: 3423,
@@ -603,11 +640,17 @@ struct Trip {
     tick: u64,
     bank_session: u64,
     held_bait: i32,
-    deposited: i32,
     picks: u32,
     open_clicks: Vec<u32>,
-    bait: (i32, Arc<str>),
+    bait: Option<(i32, Arc<str>)>,
     product: i32,
+    tool_id: i32,
+    tool_name: &'static str,
+    tool_count: usize,
+    stackable_product: Option<i32>,
+    bank_full_id: Option<i32>,
+    deposited_ids: Vec<i32>,
+    chat_sequence: i32,
     /// Clicks the engine has not applied yet: they land on the next tick.
     deferred: Vec<crate::interact::InteractReq>,
     /// The open leaves the modal without its item table.
@@ -618,7 +661,12 @@ struct Trip {
 
 impl Trip {
     fn new(fixture: BaitFixture, trip: TripStep) -> Self {
-        let bait = fixture.prepared.supply.bait.clone().unwrap();
+        let bait = fixture
+            .prepared
+            .supply
+            .bait
+            .as_ref()
+            .map(|bait| (bait.id, Arc::clone(&bait.name)));
         let product = fixture.prepared.products[0];
         let mut gatherer = fixture.gatherer(GatherRetained::default());
         gatherer.needs_validate = false;
@@ -633,7 +681,7 @@ impl Trip {
             snapshot.seed_inventory(
                 vec![
                     held(307, "Fishing rod", 1, 0),
-                    held(product, "Raw fish", 1, 2),
+                    held(product, "Raw fish", 1, 1),
                 ],
                 28,
             );
@@ -645,11 +693,17 @@ impl Trip {
             tick: 0,
             bank_session: 0,
             held_bait: 0,
-            deposited: 0,
             picks: 0,
             open_clicks: vec![0],
-            bait: (bait.id, Arc::clone(&bait.name)),
+            bait,
             product,
+            tool_id: 307,
+            tool_name: "Fishing rod",
+            tool_count: 1,
+            stackable_product: None,
+            bank_full_id: None,
+            deposited_ids: Vec::new(),
+            chat_sequence: 0,
             deferred: Vec::new(),
             table_withheld: false,
             never_open: false,
@@ -664,12 +718,32 @@ impl Trip {
     }
 
     fn pack(&self) -> Vec<ItemView> {
-        let mut pack = vec![held(307, "Fishing rod", 1, 0)];
-        if self.held_bait > 0 {
-            pack.push(held(self.bait.0, &self.bait.1, self.held_bait, 1));
+        let mut pack = Vec::with_capacity(4);
+        for slot in 0..self.tool_count {
+            pack.push(held(
+                self.tool_id,
+                self.tool_name,
+                1,
+                i32::try_from(slot).unwrap(),
+            ));
         }
-        if self.deposited == 0 && self.gatherer.trip == TripStep::Deposit {
-            pack.push(held(self.product, "Raw fish", 1, 2));
+        let mut slot = i32::try_from(self.tool_count).unwrap();
+        if self.held_bait > 0 {
+            if let Some((id, name)) = &self.bait {
+                pack.push(held(*id, name, self.held_bait, slot));
+                slot += 1;
+            }
+        }
+        if self.gatherer.trip == TripStep::Deposit {
+            if !self.deposited_ids.contains(&self.product) {
+                pack.push(held(self.product, "Raw fish", 1, slot));
+                slot += 1;
+            }
+            if let Some(id) = self.stackable_product {
+                if !self.deposited_ids.contains(&id) {
+                    pack.push(held(id, "Fire rune", 3, slot));
+                }
+            }
         }
         pack
     }
@@ -680,7 +754,14 @@ impl Trip {
             .into_iter()
             .map(|mut item| {
                 item.action_family = ItemActionFamily::Component;
-                item.actions = vec![Some("Deposit-All".into())];
+                item.actions = vec![Some(
+                    if item.def.id == self.tool_id && self.tool_count > 1 {
+                        "Deposit-1"
+                    } else {
+                        "Deposit-All"
+                    }
+                    .into(),
+                )];
                 item
             })
             .collect()
@@ -700,8 +781,8 @@ impl Trip {
                 self.snapshot.seed_inventory(pack, 28);
                 self.open_page();
             }
-            crate::interact::InteractReq::InvButton { .. } => {
-                self.deposited += 1;
+            crate::interact::InteractReq::InvButton { id, .. } => {
+                self.deposited_ids.push(id);
                 let pack = self.pack();
                 self.snapshot.seed_inventory(pack, 28);
                 self.open_page();
@@ -711,7 +792,13 @@ impl Trip {
     }
 
     fn table(&self) -> Vec<ItemView> {
-        vec![bank_item(self.bait.0, &self.bait.1, 20 - self.held_bait, 0)]
+        let mut rows = self.bait.as_ref().map_or_else(Vec::new, |(id, name)| {
+            vec![bank_item(*id, name, 20 - self.held_bait, 0)]
+        });
+        if let Some(id) = self.stackable_product {
+            rows.push(bank_item(id, "Fire rune", 100, 1));
+        }
+        rows
     }
 
     /// One Gatherer tick, then the host's answers to what it queued.
@@ -733,7 +820,7 @@ impl Trip {
             !expect_running || self.gatherer.failure.is_none(),
             "{:?} at {}",
             self.gatherer.failure,
-            self.gatherer.last_event
+            self.gatherer.last_event,
         );
         let Some(mut owned) = self.ledger.take() else {
             return;
@@ -816,7 +903,7 @@ impl Trip {
                             request_id: action.request_id.get(),
                             evidence: stamp(action.run(), tick),
                             accepted: true,
-                            chat_since: 0,
+                            chat_since: self.chat_sequence,
                         },
                     );
                     match request {
@@ -825,8 +912,25 @@ impl Trip {
                             self.bank_session += 1;
                             opened = true;
                         }
-                        crate::interact::InteractReq::WithdrawX { .. }
-                        | crate::interact::InteractReq::InvButton { .. } => {
+                        crate::interact::InteractReq::WithdrawX { .. } => {
+                            self.deferred.push(request.clone());
+                        }
+                        crate::interact::InteractReq::InvButton { id, .. }
+                            if self.bank_full_id == Some(*id) =>
+                        {
+                            self.chat_sequence += 1;
+                            self.snapshot.seed_inventory(self.pack(), 28);
+                            self.snapshot
+                                .seed_chat_lines(vec![api::snapshot::ChatLineView {
+                                    type_: 0,
+                                    username: None,
+                                    text: "You don't have enough space in your bank account."
+                                        .to_owned(),
+                                    sequence: self.chat_sequence,
+                                }]);
+                            self.open_page();
+                        }
+                        crate::interact::InteractReq::InvButton { .. } => {
                             self.deferred.push(request.clone());
                         }
                         crate::interact::InteractReq::CloseModal
