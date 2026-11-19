@@ -3533,7 +3533,10 @@ class UnchangedRunTests(unittest.TestCase):
                     previous_cells=("walk", "cook_bot"), previous_cells_file=None,
                     current_cells_file=None, current_only=None, previous_result="PASS",
                     previous_build_ok=True, previous_build_ran=True, previous_done=True,
-                    runner_changed=False, current_engine_pristine=None, env=None):
+                    runner_changed=False, current_engine_pristine=None,
+                    current_engine_identity={"engine": "engine-a", "content": "content-a"},
+                    previous_engine_identity={"engine": "engine-a", "content": "content-a"},
+                    env=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
 
@@ -3564,6 +3567,8 @@ class UnchangedRunTests(unittest.TestCase):
                 mock.patch.object(rn, "FRESH_TREES", False),
                 mock.patch.object(rn, "REQUIRE_CONSOLE", False),
                 mock.patch.object(rn, "ENGINE_MODE", "local"),
+                mock.patch.object(rn, "local_engine_identity",
+                                  return_value=current_engine_identity, create=True),
                 mock.patch.object(rn, "update_tree", fake_update_tree),
                 mock.patch.object(rn, "guard_disk", lambda *_args: None),
                 mock.patch.object(rn, "check_rs2b0t_api_drift",
@@ -3598,7 +3603,8 @@ class UnchangedRunTests(unittest.TestCase):
                         wall_s=1.0, interrupted=False, quiet_lock=None,
                         build={"ok": previous_build_ok, "ran": previous_build_ran},
                         engine={"status": rn.LOCAL_ENGINE_STATUS, "mode": "local",
-                                "source": rn.engine_source()},
+                                "source": rn.engine_source(),
+                                "identity": previous_engine_identity},
                         steps={"tui": {"status": "ran: 2", "deadline_s": rn.STEP_DEADLINE_S["tui"]}},
                         cells=rows,
                     )
@@ -3653,6 +3659,10 @@ class UnchangedRunTests(unittest.TestCase):
         summary, artifacts = self.run_attempt()
 
         self.assertEqual(summary["status"], "SKIPPED-UNCHANGED")
+        self.assertEqual(
+            summary["engine"]["identity"],
+            {"engine": "engine-a", "content": "content-a"},
+        )
         self.assertEqual(summary["unchanged_from"], artifacts["previous_name"])
         self.assertEqual(summary["skipped_cells"], ["walk", "cook_bot"])
         self.assertFalse(summary["build"]["ran"])
@@ -3692,6 +3702,20 @@ class UnchangedRunTests(unittest.TestCase):
         summary, _ = self.run_attempt(current_engine_pristine=Path("different-engine"))
         self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
 
+    def test_changed_local_engine_identity_runs_again(self):
+        summary, _ = self.run_attempt(
+            current_engine_identity={"engine": "engine-b", "content": "content-a"}
+        )
+        self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
+        self.assertEqual(
+            summary["engine"]["identity"],
+            {"engine": "engine-b", "content": "content-a"},
+        )
+
+    def test_unavailable_local_engine_identity_runs_again(self):
+        summary, _ = self.run_attempt(current_engine_identity=None)
+        self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
+
     def test_staged_previous_run_root_is_searched(self):
         summary, _ = self.run_attempt(previous_external=True)
         self.assertEqual(summary["status"], "SKIPPED-UNCHANGED")
@@ -3717,6 +3741,43 @@ class UnchangedRunTests(unittest.TestCase):
     def test_rerun_override_forces_a_full_run(self):
         summary, _ = self.run_attempt(env={"NIGHTLY_RERUN_UNCHANGED": "1"})
         self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
+
+
+class LocalEngineIdentityTests(unittest.TestCase):
+    def make_git_root(self, path: Path) -> None:
+        path.mkdir(parents=True)
+        git("init", "-q", cwd=path)
+        (path / "source.txt").write_text("initial\n", encoding="utf-8")
+        git("add", ".", cwd=path)
+        git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", "initial", cwd=path)
+
+    def test_identity_tracks_tracked_and_untracked_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pristine = Path(tmp) / "engine-pristine"
+            engine = pristine / "engine"
+            content = pristine / "content"
+            self.make_git_root(engine)
+            self.make_git_root(content)
+
+            with mock.patch.object(rn, "ENGINE_PRISTINE", pristine), \
+                    mock.patch.object(rn, "ENGINE_MODE", "local"):
+                clean = rn.local_engine_identity()
+                self.assertIsNotNone(clean)
+
+                (engine / "source.txt").write_text("changed\n", encoding="utf-8")
+                tracked_dirty = rn.local_engine_identity()
+                self.assertIsNotNone(tracked_dirty)
+                self.assertEqual(clean["engine"]["head"], tracked_dirty["engine"]["head"])
+                self.assertTrue(tracked_dirty["engine"]["dirty"])
+                self.assertNotEqual(clean, tracked_dirty)
+
+                extra = content / "extra.txt"
+                extra.write_text("first\n", encoding="utf-8")
+                first_untracked = rn.local_engine_identity()
+                extra.write_text("second\n", encoding="utf-8")
+                second_untracked = rn.local_engine_identity()
+                self.assertNotEqual(first_untracked, second_untracked)
 
 
 class RunDeadlineDefaultTests(unittest.TestCase):

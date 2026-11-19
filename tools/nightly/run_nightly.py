@@ -3537,6 +3537,73 @@ def engine_source() -> str:
     return (f"{ENGINE_LABEL} (running, shared; never started or stopped), "
             f"{ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}; client data from {ENGINE_PRISTINE}")
 
+def git_worktree_identity(root: Path) -> dict[str, object] | None:
+    """Identify the committed and dirty source state of one Git-backed tree."""
+    try:
+        repo_root_text = run(
+            git_cmd("-C", str(root), "rev-parse", "--show-toplevel"), env=git_env()
+        ).stdout.strip()
+        head = run(
+            git_cmd("-C", str(root), "rev-parse", "--verify", "HEAD^{commit}"),
+            env=git_env(),
+        ).stdout.strip()
+        status = run(
+            git_cmd("-C", str(root), "status", "--porcelain=v1", "--untracked-files=all", "-z"),
+            env=git_env(),
+        ).stdout
+        patch = run(
+            git_cmd("-C", str(root), "diff", "--no-ext-diff", "--no-textconv",
+                    "--no-color", "--binary", "HEAD"),
+            env=git_env(),
+        ).stdout
+        untracked = run(
+            git_cmd("-C", str(root), "ls-files", "--others", "--exclude-standard",
+                    "-z", "--full-name"),
+            env=git_env(),
+        ).stdout
+        if not repo_root_text or not re.fullmatch(r"[0-9a-f]{40,64}", head):
+            return None
+        repo_root = Path(repo_root_text)
+        digest = hashlib.sha256()
+        digest.update(head.encode("ascii"))
+        digest.update(b"\0")
+        digest.update(status.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(patch.encode("utf-8"))
+        for name in untracked.split("\0"):
+            if not name:
+                continue
+            path = repo_root / name
+            if path.is_symlink():
+                contents = os.fsencode(os.readlink(path))
+            elif path.is_file():
+                contents = path.read_bytes()
+            else:
+                return None
+            digest.update(b"\0")
+            digest.update(os.fsencode(name))
+            digest.update(b"\0")
+            digest.update(hashlib.sha256(contents).digest())
+        return {"head": head, "dirty": bool(status), "worktree_sha256": digest.hexdigest()}
+    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
+        return None
+
+
+def local_engine_identity() -> dict[str, dict[str, object]] | None:
+    """Identify both source roots copied into a local engine instance."""
+    engine = git_worktree_identity(ENGINE_PRISTINE / "engine")
+    content = git_worktree_identity(ENGINE_PRISTINE / "content")
+    if engine is None or content is None:
+        return None
+    return {"engine": engine, "content": content}
+
+
+def engine_summary(status: str, local_identity: dict | None) -> dict:
+    summary = dict(status=status, mode=ENGINE_MODE, source=engine_source())
+    if ENGINE_MODE == "local":
+        summary["identity"] = local_identity
+    return summary
+
 def engine_source_identity(source: object) -> str | None:
     """Normalize only the guest-local root, which changes between fresh Tart clones."""
     if not isinstance(source, str):
@@ -3653,7 +3720,8 @@ def completed_run_matches(run_dir: Path, summary: dict, expected: dict, selected
 
 def find_unchanged_run(expected: dict, selected_cells: list[str], cell_steps: list[str],
                        step_deadlines: dict[str, int], lane_names: list[str] | None,
-                       latency_cells: list[str], latency_bands: list[int]) -> tuple[Path, str] | None:
+                       latency_cells: list[str], latency_bands: list[int],
+                       local_identity: dict | None) -> tuple[Path, str] | None:
     if env_flag(UNCHANGED_RUN_ENV, False):
         return None
     runner_commit = expected.get("runner_commit")
@@ -3697,6 +3765,9 @@ def find_unchanged_run(expected: dict, selected_cells: list[str], cell_steps: li
     if source_identity is None:
         log("unchanged-run engine identity unavailable; running the branch")
         return None
+    if ENGINE_MODE == "local" and local_identity is None:
+        log("unchanged-run local engine identity unavailable; running the branch")
+        return None
     for previous in candidates:
         try:
             summary = json.loads((previous / "summary.json").read_text(encoding="utf-8"))
@@ -3710,6 +3781,8 @@ def find_unchanged_run(expected: dict, selected_cells: list[str], cell_steps: li
         if (not isinstance(engine, dict) or engine.get("mode") != ENGINE_MODE
                 or engine_source_identity(engine.get("source")) != source_identity):
             continue
+        if ENGINE_MODE == "local" and engine.get("identity") != local_identity:
+            continue
         if engine_status is None:
             try:
                 engine_status = engine_check()[1] if ENGINE_MODE == "remote" else LOCAL_ENGINE_STATUS
@@ -3722,7 +3795,8 @@ def find_unchanged_run(expected: dict, selected_cells: list[str], cell_steps: li
 
 
 def write_unchanged_summary(run_dir: Path, expected: dict, selected_cells: list[str],
-                            step_deadlines: dict[str, int], previous: Path, engine_status: str,
+                            step_deadlines: dict[str, int], previous: Path,
+                            engine_status: str, local_identity: dict | None,
                             started: str, started_wall: float, tree: Path | None,
                             session: dict | None) -> Path:
     finished = now_iso()
@@ -3744,7 +3818,7 @@ def write_unchanged_summary(run_dir: Path, expected: dict, selected_cells: list[
                for name, deadline_s in step_deadlines.items()},
         build=dict(ok=True, ran=False, wall_s=0.0, error=None,
                    tui_play_sha256=None, panel_play_sha256=None),
-        engine=dict(status=engine_status, mode=ENGINE_MODE, source=engine_source()),
+        engine=engine_summary(engine_status, local_identity),
         tree=str(tree) if tree else None,
         rs2b0t_api={"status": "unavailable", "reason": "not checked for unchanged run"},
     )
@@ -3893,6 +3967,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         profile=PROFILE, parallel=parallel, cell_cap_s=CELL_CAP_S,
         cell_caps_s=CELL_CAPS_S, run_deadline_s=RUN_DEADLINE_S,
     )
+    local_identity = local_engine_identity() if ENGINE_MODE == "local" else None
     lane_names = None
     if "lanes" in STEPS:
         lane_names = [name for name, _, _ in lane_list(tree, require_generated=False)
@@ -3902,12 +3977,13 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
             expected, cells, cell_steps, step_deadlines, lane_names,
             latency_names if latency_active else [],
             bands_wanted if latency_active else [],
+            local_identity,
         )
         if previous is not None:
             previous_dir, previous_engine_status = previous
             return write_unchanged_summary(
                 run_dir, expected, cells, step_deadlines, previous_dir, previous_engine_status,
-                started, started_wall, tree, session,
+                local_identity, started, started_wall, tree, session,
             )
     cell_base = CellResult(cell="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
     lane_base = LaneResult(lane="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
@@ -4075,7 +4151,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         build=dict(ok=build_ok, ran=build_ran, wall_s=build_wall, error=build_error,
                    tui_play_sha256=sha256(binaries["tui-play"]) if binaries.get("tui-play", Path()).is_file() else None,
                    panel_play_sha256=sha256(binaries["panel-play"]) if binaries.get("panel-play", Path()).is_file() else None),
-        engine=dict(status=engine_status, mode=ENGINE_MODE, source=engine_source()),
+        engine=engine_summary(engine_status, local_identity),
         catalog_commit=catalog_commit, runner_commit=runner_commit,
         tree=str(tree) if tree else None,
     )

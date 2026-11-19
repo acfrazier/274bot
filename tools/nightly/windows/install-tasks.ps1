@@ -24,7 +24,7 @@ if ($Remove) { 'removed 274bot-nightly and 274bot-nightly-catchup'; return }
 if (-not (Test-Path -LiteralPath $Launcher)) { throw "launcher missing: $Launcher" }
 $Principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
 $Night = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 11)
+    -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 20)
 $Catch = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 # A start boundary without a UTC offset keeps 23:00 local through DST changes

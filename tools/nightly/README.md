@@ -140,9 +140,13 @@ commit and self-update result from its staged checkout because it omits `.git`.
 The guest does not attempt a second self-update.
 The guest derives its selected cells and cell-list file, engine identity and
 status, platform, and host, then checks the full summary match and completeness.
-For fresh Tart paths, the matcher ignores only the per-clone absolute source
-root; it still compares the engine label, ports, source-folder name, mode, and
-status. Old cell results are not copied. A skip is written as a new
+For local engines, the summary records the Git HEAD and dirty state for both
+the engine and content roots. It also records a digest of tracked changes and
+non-ignored untracked files. Missing or unreadable Git state disables skipping.
+For fresh engine roots, the matcher ignores only the per-clone absolute source
+root. It still compares the engine label, ports, source-folder name, mode,
+status, and local identity.
+Old cell results are not copied. A skip is written as a new
 `SKIPPED-UNCHANGED` summary and follows the normal archive flow. If the Mac
 archive or metadata cannot be read, no candidate is staged and the guest runs
 the branch.
