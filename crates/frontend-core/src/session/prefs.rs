@@ -9,7 +9,10 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
+
+#[cfg(any(test, feature = "test-support"))]
+use std::time::Duration;
 
 use api::identity::{RequestId, Settlement};
 use host_play::local_state::{QueuedUpdate, Update};
