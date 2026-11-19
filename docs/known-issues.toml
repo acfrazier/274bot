@@ -685,7 +685,6 @@ text = """with MultiBox on, saving a new profile that has auto-login
 first = "0.2.0"
 listed = "0.2.9.2"
 target = "0.3.0"
-fixed = "0.3.0"
 severity = "low"
 owner = "panel"
 

@@ -3908,7 +3908,7 @@ impl Session {
     fn apply_startup_focus(&mut self, focus: StartupFocus) {
         match focus {
             StartupFocus::Restore => self.focus_first_profile(),
-            StartupFocus::SavedProfile(name) => self.pick_profile(&name),
+            StartupFocus::SavedProfile(name) => self.select(&name),
         }
     }
 
