@@ -1451,27 +1451,8 @@ impl LiveState {
                     self.level_up_closed_tick = Some(tick);
                 }
             }
-            // The 289 Thrower Trolls hunt and attack at range 8. Open the
-            // page one tile outside that range, as the real threat enters it.
-            let thrower_at_boundary = self.snapshot.npcs().iter().any(|npc| {
-                npc.name.as_deref() == Some("Thrower Troll")
-                    && npc.distance == 9
-                    && !npc.in_combat
-            });
-            if self.level_up_seed_tick.is_none()
-                && self.started
-                && !self.arrived
-                && thrower_at_boundary
-            {
-                if !send_cheat(client, "advancestat attack 2") {
-                    combat_proof::mark_invalid(
-                        &self.account,
-                        "could not seed the Attack level-up page at the Thrower Troll range boundary",
-                    );
-                    return;
-                }
-                self.level_up_seed_tick = Some(tick);
-            }
+            // Open the level-up page only once the Thrower Troll is actually
+            // targeting this player, so a survival bite is due on both builds.
             let local_index = self
                 .snapshot
                 .local_player()
@@ -1486,6 +1467,20 @@ impl LiveState {
                         })
                 })
             });
+            if self.level_up_seed_tick.is_none()
+                && self.started
+                && !self.arrived
+                && thrower_targets_local
+            {
+                if !send_cheat(client, "advancestat attack 2") {
+                    combat_proof::mark_invalid(
+                        &self.account,
+                        "could not seed the Attack level-up page while a Thrower Troll targeted the player",
+                    );
+                    return;
+                }
+                self.level_up_seed_tick = Some(tick);
+            }
             if self.level_up_page_tick.is_some()
                 && self.level_up_closed_tick.is_none()
                 && thrower_targets_local
@@ -1882,11 +1877,12 @@ fn evaluate_level_up_eat(state: &LiveState, capture: &CombatCapture) -> W1GateDe
     }
     if page_tick <= seed_tick
         || state.level_up_attack_base_at_open != Some(2)
-        || !state
-            .level_up_hp_at_open
-            .is_some_and(|hp| hp == 1)
+        || state.level_up_hp_at_open != Some(1)
+        || state.level_up_threat_tick.is_none()
     {
-        return gate_fail("low-HP seed did not produce an observed Attack level-up page");
+        return gate_fail(
+            "low-HP level-up page did not open while a Thrower Troll targeted the player",
+        );
     }
     let Some(eat_action) = capture.actions.iter().find(|action| {
         action["kind"] == json!("guard")
