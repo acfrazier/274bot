@@ -1358,6 +1358,7 @@ struct LiveState {
     level_up_closed_tick: Option<u32>,
     level_up_attack_base_at_open: Option<i32>,
     level_up_hp_at_open: Option<i32>,
+    level_up_threat_tick: Option<u32>,
 }
 
 impl LiveState {
@@ -1450,25 +1451,46 @@ impl LiveState {
                     self.level_up_closed_tick = Some(tick);
                 }
             }
-            let left_start = self
-                .last_tile
-                .is_some_and(|tile| tile != (self.start.x, self.start.z, self.start.level));
-            if self.level_up_seed_tick.is_none() && self.started && !self.arrived && left_start {
-                if !send_cheat(client, "~stat_drain hitpoints 10 0") {
-                    combat_proof::mark_invalid(
-                        &self.account,
-                        "could not seed low Hitpoints for the level-up page",
-                    );
-                    return;
-                }
+            // The 289 Thrower Trolls hunt and attack at range 8. Open the
+            // page one tile outside that range, as the real threat enters it.
+            let thrower_at_boundary = self.snapshot.npcs().iter().any(|npc| {
+                npc.name.as_deref() == Some("Thrower Troll")
+                    && npc.distance == 9
+                    && !npc.in_combat
+            });
+            if self.level_up_seed_tick.is_none()
+                && self.started
+                && !self.arrived
+                && thrower_at_boundary
+            {
                 if !send_cheat(client, "advancestat attack 2") {
                     combat_proof::mark_invalid(
                         &self.account,
-                        "could not seed the Attack level-up page after the low-HP command",
+                        "could not seed the Attack level-up page at the Thrower Troll range boundary",
                     );
                     return;
                 }
                 self.level_up_seed_tick = Some(tick);
+            }
+            let local_index = self
+                .snapshot
+                .local_player()
+                .map(|local| local.player.index);
+            let thrower_targets_local = local_index.is_some_and(|index| {
+                self.snapshot.npcs().iter().any(|npc| {
+                    npc.name.as_deref() == Some("Thrower Troll")
+                        && npc.in_combat
+                        && npc.target.is_some_and(|target| {
+                            target.kind == api::snapshot::ActorKind::Player
+                                && target.index == index
+                        })
+                })
+            });
+            if self.level_up_page_tick.is_some()
+                && self.level_up_closed_tick.is_none()
+                && thrower_targets_local
+            {
+                self.level_up_threat_tick.get_or_insert(tick);
             }
         }
         if self.runner.on_start_script() && !self.started {
@@ -1622,6 +1644,7 @@ fn scenario_for(
     capture: Arc<Mutex<CombatCapture>>,
     start: WorldTile,
     food: Option<bool>,
+    level_up: bool,
 ) -> Scenario {
     let mut scenario =
         scenario::quester_stage("walk_guard_throwers", "Imp Catcher", "imp", 0, &[], start);
@@ -1631,8 +1654,20 @@ fn scenario_for(
         .position(|step| step.name == "stand at the quest start")
         .expect("stand step");
     // `quester_stage` relogs before the stand teleport (a fresh-account
-    // relog resets position). Keep the prayer/hitpoint seeds between them.
     let extra = if let Some(food) = food {
+        let hp_seed = if level_up {
+            cheat_step(
+                "seed HP below the thrower eat line",
+                "~stat_drain hitpoints 39 0".to_owned(),
+                Proof::Stat { id: 3, min: 1 },
+            )
+        } else {
+            cheat_step(
+                "seed HP near eat line",
+                "~stat_drain hitpoints 20 0".to_owned(),
+                Proof::Stat { id: 3, min: 20 },
+            )
+        };
         let mut steps = vec![
             cheat_step(
                 "seed Prayer 37",
@@ -1644,17 +1679,16 @@ fn scenario_for(
                 "setstat hitpoints 40".to_owned(),
                 Proof::Stat { id: 3, min: 40 },
             ),
-            cheat_step(
-                "seed HP near eat line",
-                "~stat_drain hitpoints 20 0".to_owned(),
-                Proof::Stat { id: 3, min: 20 },
-            ),
+            hp_seed,
         ];
         if food {
             steps.push(cheat_step(
                 "seed four lobsters",
                 "give lobster 4".to_owned(),
-                Proof::Stat { id: 3, min: 20 },
+                Proof::Stat {
+                    id: 3,
+                    min: if level_up { 1 } else { 20 },
+                },
             ));
         }
         steps
@@ -1839,18 +1873,18 @@ fn evaluate_level_up_eat(state: &LiveState, capture: &CombatCapture) -> W1GateDe
     if stat(0, "base") != Some(1)
         || stat(5, "base") != Some(37)
         || stat(3, "base") != Some(40)
-        || stat(3, "effective") != Some(20)
+        || stat(3, "effective") != Some(1)
         || lobsters != 4
     {
         return gate_fail(
-            "level-up test did not start at Attack 1, Prayer 37, HP20/40 and four lobsters",
+            "level-up test did not start at Attack 1, Prayer 37, HP1/40 and four lobsters",
         );
     }
     if page_tick <= seed_tick
         || state.level_up_attack_base_at_open != Some(2)
         || !state
             .level_up_hp_at_open
-            .is_some_and(|hp| (1..=10).contains(&hp))
+            .is_some_and(|hp| hp == 1)
     {
         return gate_fail("low-HP seed did not produce an observed Attack level-up page");
     }
@@ -1958,7 +1992,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         .expect("mint local W1 password");
     let capture = Arc::new(Mutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
-    let scenario = scenario_for(Arc::clone(&capture), start, food);
+    let scenario = scenario_for(Arc::clone(&capture), start, food, level_up);
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_map_members(true);
     runner.set_live_names(&names);
@@ -2004,6 +2038,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         level_up_closed_tick: None,
         level_up_attack_base_at_open: None,
         level_up_hp_at_open: None,
+        level_up_threat_tick: None,
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -2208,8 +2243,9 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
                 .level_up_closed_tick
                 .is_some_and(|closed_tick| eat_tick < closed_tick)
     });
-    let level_up_eat_heal =
-        level_up_eat_action.as_ref().and_then(|row| eat_heal(row, &snapshot.health));
+    let level_up_eat_heal = level_up_eat_action
+        .as_ref()
+        .and_then(|row| eat_heal(row, &snapshot.health));
     let attack_emitted = capture_snapshot.actions.iter().any(|action| {
         action["request"]["op"] == json!("npc") && action["request"]["action"] == json!("Attack")
     });
@@ -2242,6 +2278,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         "level_up_closed_tick": snapshot.level_up_closed_tick,
         "level_up_attack_base_at_open": snapshot.level_up_attack_base_at_open,
         "level_up_hp_at_open": snapshot.level_up_hp_at_open,
+        "level_up_threat_tick": snapshot.level_up_threat_tick,
         "level_up_eat_action": level_up_eat_action,
         "level_up_eat_tick": level_up_eat_tick,
         "level_up_eat_page_open": level_up_eat_page_open,
@@ -3102,7 +3139,7 @@ fn walk_guard_fixture_seeds_between_relog_and_stand() {
     };
     for food in [None, Some(true), Some(false)] {
         let capture = Arc::new(Mutex::new(CombatCapture::default()));
-        let scenario = scenario_for(capture, start, food);
+        let scenario = scenario_for(capture, start, food, false);
         let relog = scenario
             .steps
             .iter()

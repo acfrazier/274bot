@@ -1548,9 +1548,7 @@ pub(crate) mod tests {
         food_scene
             .snapshot
             .seed_chat_modal(100, vec!["Level-up page".into()]);
-        food_scene
-            .snapshot
-            .seed_chat_options(Vec::new(), 99);
+        food_scene.snapshot.seed_chat_options(Vec::new(), 99);
         assert_eq!(food_scene.snapshot.chat_continue_component_id(), 99);
         let mut food_guard = food_scene.begin().unwrap();
         let food_op = food_guard
@@ -1560,21 +1558,17 @@ pub(crate) mod tests {
                 CurePoison::WhenNeeded,
             )
             .expect("critical HP should choose food before the prayer potion");
-        assert!(
-            matches!(food_op, GuardOp::Eat { .. }),
-            "got {food_op:?}"
-        );
+        assert!(matches!(food_op, GuardOp::Eat { .. }), "got {food_op:?}");
 
         let mut drink_scene = Scene::new(43);
+        drink_scene.stats[3].effective = 1;
         drink_scene.stats[5].effective = 0;
         drink_scene.add_prayer_potion();
         drink_scene.launch_arrow();
         drink_scene
             .snapshot
             .seed_chat_modal(100, vec!["Level-up page".into()]);
-        drink_scene
-            .snapshot
-            .seed_chat_options(Vec::new(), 99);
+        drink_scene.snapshot.seed_chat_options(Vec::new(), 99);
         assert_eq!(drink_scene.snapshot.chat_continue_component_id(), 99);
         let mut drink_guard = drink_scene.begin().unwrap();
         let drink_op = drink_guard
