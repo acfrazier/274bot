@@ -920,8 +920,11 @@ first = "0.2.9"
 target = "none"
 severity = "low"
 owner = "gatherer-tick-manip"
+# Operator decision: normal trees have no Knife arm. Evidence:
+# content/scripts/skill_woodcutting/scripts/woodcut.rs2:5-14
+# engine/src/network/game/client/handler/OpLocUHandler.ts:76-81
 closed = "0.3.0"
-closed_reason = "not-promised"
+closed_reason = "by-design"
 
 [[item]]
 id = "tick-karambwan"
