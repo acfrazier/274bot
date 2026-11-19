@@ -80,6 +80,12 @@ const LIVE_DUEL_ARENA_EXIT: Tile = Tile {
 };
 /// Keep the former 300-game-tick exit budget at Engine A's 600 ms tick rate.
 const LIVE_DUEL_ARENA_EXIT_TIMEOUT: Duration = Duration::from_secs(180);
+/// `live_prepare_script` stores the scenario view name, without the `script_` prefix.
+const LIVE_DUEL_ARENA_SCENARIO_NAME: &str = "duel_arena";
+
+fn should_walk_duel_arena_pair_exit(live_pair_core: bool, live_name: Option<&str>) -> bool {
+    live_pair_core && live_name == Some(LIVE_DUEL_ARENA_SCENARIO_NAME)
+}
 
 #[cfg(test)]
 thread_local! {
@@ -4559,7 +4565,7 @@ impl TuiSession {
         }) {
             return Ok(());
         }
-        if self.live_pair_core && self.live_name.as_deref() == Some("script_duel_arena") {
+        if should_walk_duel_arena_pair_exit(self.live_pair_core, self.live_name.as_deref()) {
             self.walk_duel_arena_pair_to_safe_lobby(app)?;
             deadline = Instant::now() + Duration::from_secs(30);
         }
