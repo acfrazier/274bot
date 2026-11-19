@@ -151,6 +151,8 @@ Old cell results are not copied. A skip is written as a new
 archive or metadata cannot be read, no candidate is staged and the guest runs
 the branch.
 
+The Mac quest job stages its engine without `.git`, so it cannot record the local engine identity; it therefore always runs and never skips (accepted limit, 2026-11-19).
+
 Cells listed in [`skip.conf`](skip.conf) still appear as `SKIP`. Quest cells do
 not belong in that file; the job filter routes them to Engine Q.
 
