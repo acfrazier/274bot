@@ -1,6 +1,9 @@
+use std::{collections::HashMap, sync::Mutex};
+
 use crate::SlotStatus;
 
-use super::{script_slot, ScriptWall};
+use super::{script_slot, NavBot, ScriptWall};
+
 /// `name`'s slot script's latest paint frame, `None` for a slot with no
 /// script or a script that has not painted. Copied onto the status row
 /// each observe so the TUI can show paint-as-chat without a probe
@@ -12,23 +15,31 @@ pub(crate) fn script_paint_of(
     script_slot(scripts, name).and_then(|slot| slot.lock().ok().and_then(|slot| slot.paint()))
 }
 
-/// The active native script's typed survival report, or the no-run default.
+/// The active native script's typed survival report, overlaid with a current
+/// walk-guard action when the script defers survival to navigation.
 pub(crate) fn script_survival_of(
     scripts: &ScriptWall,
+    navs: &Mutex<HashMap<String, NavBot>>,
     name: &str,
 ) -> script::survival::SurvivalReport {
-    script_slot(scripts, name)
+    let current = script_slot(scripts, name)
         .and_then(|slot| slot.lock().ok().and_then(|slot| slot.native_status()))
         .map_or_else(script::survival::SurvivalReport::default, |status| {
             status.survival
-        })
+        });
+    let action = navs.lock().ok().and_then(|navs| {
+        navs.get(name)
+            .and_then(|bot| bot.walk_guard.as_ref())
+            .and_then(|guard| guard.survival_report())
+    });
+    merge_survival_action(current, action)
 }
-#[cfg(test)]
+
 fn merge_survival_action(
     current: script::survival::SurvivalReport,
-    _action: Option<script::survival::SurvivalReport>,
+    action: Option<script::survival::SurvivalReport>,
 ) -> script::survival::SurvivalReport {
-    current
+    current.with_action(action)
 }
 
 /// Copy the latest runner report unless this frame starts a new session.

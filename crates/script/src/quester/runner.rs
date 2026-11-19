@@ -1794,7 +1794,7 @@ impl Quester {
             active_settings: 1,
             pending_settings: None,
             fields: fields.into(),
-            survival: self.survival.report(),
+            survival: self.survival_report(),
             failure: (phase == NativePhase::Blocked).then(|| self.blocked_failure()),
         });
     }
@@ -1812,6 +1812,14 @@ impl Quester {
             && self
                 .current_step()
                 .is_some_and(|step| matches!(step.kind.as_ref(), "walk" | "combat"))
+    }
+
+    fn survival_report(&self) -> crate::survival::SurvivalReport {
+        self.survival.report().with_action(
+            self.step
+                .as_ref()
+                .and_then(|step| step.survival_action()),
+        )
     }
 
     fn survival_transfer_in_flight(&self) -> bool {
@@ -4895,7 +4903,7 @@ impl QueuedQuester {
                 .active
                 .as_ref()
                 .map_or_else(crate::survival::SurvivalReport::default, |active| {
-                    active.survival.report()
+                    active.survival_report()
                 }),
             failure,
         });

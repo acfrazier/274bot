@@ -526,6 +526,43 @@ fn status_card_shows_poison_survival_need() {
     );
 }
 
+#[test]
+fn status_card_shows_guard_drink_and_combat_bite_actions() {
+    let _guard = crate::test_support::imgui_context_guard();
+    use frontend_core::{
+        SurvivalCureWhy as CureWhy, SurvivalDecision as Decision, SurvivalNeed,
+        SurvivalNeedWhy as NeedWhy, SurvivalOwner as Owner, SurvivalReport,
+    };
+
+    let mut detail = frontend_core::SlotDetail::default();
+    for (decision, owner, expected) in [
+        (
+            Decision::Drinking,
+            Owner::Guard,
+            "Drinking: poisoned: would die; needs antipoison",
+        ),
+        (
+            Decision::Eating,
+            Owner::Combat,
+            "Eating: poisoned: would die; needs antipoison",
+        ),
+    ] {
+        detail.set_survival(SurvivalReport {
+            decision,
+            why: Some(CureWhy::Lethal),
+            need: Some(SurvivalNeed::Cure {
+                or_food: 0,
+                ref_heal: 12,
+                why: NeedWhy::Lethal,
+            }),
+            tried: 0,
+            owner,
+        });
+        let shown = draw_status_detail(&detail, "—", "lowmem");
+        assert!(shown.contains(expected), "{shown}");
+    }
+}
+
 /// On a 1024×768 desktop the app's client area is about 1008×580 and the
 /// docked Profiles window runs past its right edge. The last row's Edit and
 /// ✕, and the form's Save, Cancel and Close, all lie wholly on screen and in

@@ -1282,6 +1282,57 @@ fn status_row_shows_needed_under_never() {
 }
 
 #[test]
+fn status_row_shows_guard_drink_and_combat_bite_actions() {
+    use script::survival::{
+        cure::CureWhy,
+        math::{NeedWhy, SurvivalNeed},
+        Decision, Owner, SurvivalReport,
+    };
+
+    let mut status = SlotStatus::default();
+    let mut detail = SlotDetail::default();
+    let mut scratch = String::new();
+    for (decision, owner, expected) in [
+        (
+            Decision::Drinking,
+            Owner::Guard,
+            "Drinking: poisoned: would die; needs antipoison",
+        ),
+        (
+            Decision::Eating,
+            Owner::Combat,
+            "Eating: poisoned: would die; needs antipoison",
+        ),
+    ] {
+        status.survival = SurvivalReport {
+            decision,
+            why: Some(CureWhy::Lethal),
+            need: Some(SurvivalNeed::Cure {
+                or_food: 0,
+                ref_heal: 12,
+                why: NeedWhy::Lethal,
+            }),
+            tried: 0,
+            owner,
+        };
+        assert!(update_detail(
+            &mut detail,
+            Some(&status),
+            false,
+            None,
+            &mut scratch
+        ));
+        assert_eq!(
+            detail
+                .survival()
+                .expect("the action report is retained")
+                .to_string(),
+            expected
+        );
+    }
+}
+
+#[test]
 fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot() {
     use script::combat::risk::{RiskInput, RouteAssessment, UnknownWhy, Verdict};
     let assessment = Arc::new(RouteAssessment {
