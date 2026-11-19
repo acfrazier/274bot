@@ -119,6 +119,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Gatherer tick cells wear the oak fixture's axe, cover fishing-spot moves
   with spare logs, and judge cycles without a chance XP requirement. Startup
   counts player-tile movement on native and replacement routes.
+- Power mode now drops empty antipoison vials instead of carrying them.
 
 ### Native acquisition
 

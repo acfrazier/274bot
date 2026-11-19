@@ -646,6 +646,7 @@ text = """In Power mode, a Gatherer that finishes its last dose of an antipoison
   deposits it on the next bank trip."""
 first = "0.2.9"
 target = "0.3.0"
+fixed = "0.3.0"
 severity = "low"
 owner = "T2 survival"
 

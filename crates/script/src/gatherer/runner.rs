@@ -655,7 +655,7 @@ impl Gatherer {
         if self.settings().disposition.eq_ignore_ascii_case("Bank") {
             self.start_trip(TripStep::Deposit);
         } else {
-            self.start_drop(tick);
+            self.start_drop(tick, true);
         }
     }
 
@@ -1338,26 +1338,34 @@ impl Gatherer {
         }
     }
 
-    fn start_drop(&mut self, tick: &mut NativeTick<'_>) {
+    fn start_drop(&mut self, tick: &mut NativeTick<'_>, include_products: bool) {
         self.parked_cycle = None;
         let snapshot = tick.cx.snapshot();
         let Some(inventory) = snapshot.inventory() else {
             return;
         };
         let products = Arc::clone(&self.prepared.products);
+        let empty_vial = self
+            .prepared
+            .selected
+            .item_by_alias("vial_empty")
+            .map(|item| item.id);
         let mut protected = [0; super::drop::MAX_PROTECTED];
         let ids = supply::protected_ids(&self.prepared, self.tool.id);
         let protected_len = ids.as_slice().len();
         protected[..protected_len].copy_from_slice(ids.as_slice());
         let args = DropBatchArgs {
             products: Arc::clone(&products),
+            include_products,
+            empty_vial,
             protected,
             protected_len: protected_len as u8,
         };
         if !inventory.value.iter().any(|row| {
             row.count > 0
                 && row.def.name.is_some()
-                && products.contains(&row.def.id)
+                && ((include_products && products.contains(&row.def.id))
+                    || empty_vial == Some(row.def.id))
                 && !protected[..protected_len].contains(&row.def.id)
         }) {
             self.fail(
@@ -2332,6 +2340,22 @@ impl Gatherer {
         if pack_full && self.settings().disposition.eq_ignore_ascii_case("Bank") {
             self.start_dispose(tick);
             self.begin_trip(tick);
+            return;
+        }
+        let empty_vial = self
+            .prepared
+            .selected
+            .item_by_alias("vial_empty")
+            .map(|item| item.id);
+        let has_empty_vial = tick.cx.snapshot().inventory().is_some_and(|inventory| {
+            inventory
+                .value
+                .iter()
+                .any(|item| item.count > 0 && empty_vial == Some(item.def.id))
+        });
+        if !pack_full && self.settings().disposition.eq_ignore_ascii_case("Power") && has_empty_vial
+        {
+            self.start_drop(tick, false);
             return;
         }
         if self.admit_supply(&tick.cx) {
@@ -3392,8 +3416,108 @@ mod tests {
             worn: false,
         };
         let mut ledger = None;
-        with_tick(&snapshot, &mut ledger, 1, |tick| gatherer.start_drop(tick));
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.start_drop(tick, true)
+        });
         assert!(matches!(gatherer.active, Active::Drop(_)));
+    }
+    #[test]
+    fn power_mode_drops_empty_vial_when_pack_is_not_full() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
+
+        let fixture = BaitFixture::with_disposition("Power");
+        let prepared = &fixture.prepared;
+        let tool = known_rows(&prepared.catalog.methods()[prepared.methods[0]].tools)[0].item;
+        let tool_name = prepared
+            .selected
+            .item_by_id(tool)
+            .and_then(|item| item.name.as_deref())
+            .unwrap();
+        let bait = prepared.supply.bait.as_ref().unwrap();
+        let vial_id = prepared
+            .selected
+            .item_by_alias("vial_empty")
+            .expect("revision 289 defines the empty vial")
+            .id;
+        let held = |id, name: &str, slot, count| ItemView {
+            def: crate::quester::families::tests::def(id, name),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot,
+            count,
+            actions: Vec::new(),
+            component_id: 3214,
+        };
+        let mut gatherer = fixture.gatherer(GatherRetained::default());
+        let mut snapshot = fixture.snapshot;
+        snapshot.seed_inventory(
+            vec![
+                held(tool, tool_name, 0, 1),
+                held(bait.id, &bait.name, 1, 10),
+                held(vial_id, "Vial", 2, 1),
+            ],
+            28,
+        );
+        gatherer.needs_validate = false;
+        gatherer.tool = ToolState {
+            id: tool,
+            worn: false,
+        };
+        let mut ledger = None;
+
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.begin_idle(tick, false);
+            assert!(
+                matches!(gatherer.active, Active::Drop(_)),
+                "Power mode must start a vial-only drop while the pack has room"
+            );
+        });
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.condition = Some(survival_condition(
+                api::condition::PoisonState::Clear,
+                99,
+                api::condition::FoodSummary::default(),
+            ));
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|action| matches!(
+                &action.effect,
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::Held {
+                    action,
+                    ..
+                }) if action == "Drop"
+            )));
+        snapshot.seed_inventory(
+            vec![
+                held(tool, tool_name, 0, 1),
+                held(bait.id, &bait.name, 1, 10),
+            ],
+            28,
+        );
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.condition = Some(survival_condition(
+                api::condition::PoisonState::Clear,
+                99,
+                api::condition::FoodSummary::default(),
+            ));
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(
+            snapshot
+                .inventory()
+                .iter()
+                .all(|item| item.def.id != vial_id),
+            "the observed completed drop leaves no empty vial in the pack"
+        );
+        assert!(matches!(gatherer.active, Active::None));
     }
 
     #[test]
@@ -3895,6 +4019,18 @@ mod tests {
             eat_below: i32,
             banks: Arc<api::named_banks::NamedBankFacts>,
         ) -> Self {
+            Self::with_eat_below_disposition_and_banks(eat_below, "Bank", banks)
+        }
+
+        fn with_disposition(disposition: &str) -> Self {
+            Self::with_eat_below_disposition_and_banks(0, disposition, Self::test_banks())
+        }
+
+        fn with_eat_below_disposition_and_banks(
+            eat_below: i32,
+            disposition: &str,
+            banks: Arc<api::named_banks::NamedBankFacts>,
+        ) -> Self {
             use crate::quester::families::tests::{def, local_player};
             use api::bank_memory::{BankMemory, ObservedAt};
             use api::snapshot::{
@@ -3908,7 +4044,7 @@ mod tests {
                 ("skill", serde_json::json!("Fishing")),
                 ("fishingMethod", serde_json::json!("fishing.saltfish.op3")),
                 ("baitTarget", serde_json::json!(10)),
-                ("disposition", serde_json::json!("Bank")),
+                ("disposition", serde_json::json!(disposition)),
                 ("buyTools", serde_json::json!(false)),
                 ("eatBelow", serde_json::json!(eat_below)),
             ] {
