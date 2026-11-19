@@ -5396,14 +5396,12 @@ impl DuelPairObservation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DuelLoc {
     tile: api::snapshot::WorldTile,
-    typecode: i32,
     layer: api::snapshot::LocLayer,
 }
 
 impl DuelLoc {
     fn matches(self, loc: &api::snapshot::LocView) -> bool {
         loc.id == DUEL_TRAPDOOR_ID
-            && loc.typecode == self.typecode
             && loc.layer == self.layer
             && loc.tile == self.tile
             && loc
@@ -5517,6 +5515,8 @@ struct LiveDuelLogout {
     forfeit_action_sent: bool,
     confirmation_sent: bool,
     failure: Option<String>,
+    selection_trace_recorded: bool,
+    approach_trace_recorded: bool,
 }
 
 impl LiveDuelLogout {
@@ -5549,6 +5549,8 @@ impl LiveDuelLogout {
             forfeit_action_sent: false,
             confirmation_sent: false,
             failure: None,
+            selection_trace_recorded: false,
+            approach_trace_recorded: false,
         }
     }
 
@@ -5720,6 +5722,7 @@ impl LiveDuelLogout {
             self.plan_next(pair, &snapshot);
             self.snapshot = snapshot;
         }
+        self.capture_frame_trace(client);
         let Some(action) = self.pending.take() else {
             return;
         };
@@ -5759,29 +5762,18 @@ impl LiveDuelLogout {
                     self.failure = Some("stale duel forfeit action".into());
                     return;
                 }
-                let Some(loc) = self
-                    .snapshot
-                    .locs()
-                    .iter()
-                    .find(|loc| target.matches(loc) && duel_loc_has_forfeit(loc))
-                else {
-                    self.failure = Some("live Trapdoor/Forfeit target disappeared".into());
-                    return;
-                };
                 let Some(approach) = self.approach else {
                     self.failure = Some("duel trapdoor approach was not retained".into());
                     return;
                 };
-                if duel_loc_operable_from(&self.snapshot, target, actor_tile, approach)
-                    != Some(true)
-                {
-                    return;
+                match dispatch_duel_forfeit(&self.snapshot, target, actor_tile, approach, client) {
+                    Ok(Some(send)) => send,
+                    Ok(None) => return,
+                    Err(error) => {
+                        self.failure = Some(error.into());
+                        return;
+                    }
                 }
-                let mut interactions = api::interact::Interactions::new(&self.snapshot, client);
-                interactions.interact(
-                    api::interact::OpTarget::Loc(loc),
-                    api::interact::ActionSpec::Label("Forfeit".into()),
-                )
             }
             DuelAction::ConfirmYes => {
                 if self.phase != DuelLogoutPhase::AwaitPrompt
@@ -5810,6 +5802,59 @@ impl LiveDuelLogout {
                     self.phase.label()
                 ));
             }
+        }
+    }
+
+    fn capture_frame_trace(&mut self, client: &client::client::Client) {
+        let Some((x, z, level)) = self.snapshot.tile() else {
+            return;
+        };
+        let actor_tile = api::snapshot::WorldTile { x, z, level };
+        if !self.pair.both_connected()
+            || !self.pair.primary.loaded
+            || !self.pair.peer.loaded
+            || self.pair.common_pen() != Some(self.pen)
+            || !self.snapshot.ingame()
+            || self.snapshot.scene_state() != 2
+            || !self.snapshot.scene().available
+            || self.pair.primary.tile != Some(actor_tile)
+            || !self.pen.contains(actor_tile)
+        {
+            return;
+        }
+
+        if !self.selection_trace_recorded
+            && self.phase == DuelLogoutPhase::NeedApproach
+            && self.target.is_some()
+        {
+            self.selection_trace_recorded = true;
+            let trace = duel_frame_trace(
+                "selection",
+                &self.snapshot,
+                client,
+                self.pen,
+                actor_tile,
+                self.target,
+                self.approach,
+            );
+            eprintln!("LIVE_DUEL_FRAME_TRACE: {trace}");
+        }
+        if !self.approach_trace_recorded
+            && self.phase == DuelLogoutPhase::Approaching
+            && self.target.is_some()
+            && self.approach == Some(actor_tile)
+        {
+            self.approach_trace_recorded = true;
+            let trace = duel_frame_trace(
+                "first_ready_approach",
+                &self.snapshot,
+                client,
+                self.pen,
+                actor_tile,
+                self.target,
+                self.approach,
+            );
+            eprintln!("LIVE_DUEL_FRAME_TRACE: {trace}");
         }
     }
 
@@ -5907,16 +5952,181 @@ fn duel_loc_has_forfeit(loc: &api::snapshot::LocView) -> bool {
         .flatten()
         .any(|action| action.trim().eq_ignore_ascii_case("Forfeit"))
 }
+fn duel_loc_for_target(
+    snapshot: &api::snapshot::GameSnapshot,
+    target: DuelLoc,
+) -> Option<&api::snapshot::LocView> {
+    snapshot.locs().iter().find(|loc| target.matches(loc))
+}
+
+fn duel_forfeit_loc(
+    snapshot: &api::snapshot::GameSnapshot,
+    target: DuelLoc,
+) -> Option<&api::snapshot::LocView> {
+    duel_loc_for_target(snapshot, target).filter(|loc| duel_loc_has_forfeit(loc))
+}
+
+fn dispatch_duel_forfeit<'a>(
+    snapshot: &'a api::snapshot::GameSnapshot,
+    target: DuelLoc,
+    actor_tile: api::snapshot::WorldTile,
+    approach: api::snapshot::WorldTile,
+    driver: &mut dyn api::interact::Driver,
+) -> Result<Option<api::interact::SendResult<'a>>, &'static str> {
+    let Some(loc) = duel_forfeit_loc(snapshot, target) else {
+        return Err("live Trapdoor/Forfeit target disappeared");
+    };
+    if duel_loc_operable_from(snapshot, target, actor_tile, approach) != Some(true) {
+        return Ok(None);
+    }
+    let mut interactions = api::interact::Interactions::new(snapshot, driver);
+    Ok(Some(interactions.interact(
+        api::interact::OpTarget::Loc(loc),
+        api::interact::ActionSpec::Label("Forfeit".into()),
+    )))
+}
+
+fn duel_frame_trace(
+    frame: &str,
+    snapshot: &api::snapshot::GameSnapshot,
+    client: &client::client::Client,
+    pen: DuelArea,
+    actor_tile: api::snapshot::WorldTile,
+    target: Option<DuelLoc>,
+    approach: Option<api::snapshot::WorldTile>,
+) -> serde_json::Value {
+    let scene = snapshot.scene();
+    let (west_tile, _) = pen.inner_approach(true);
+    let tile_json = |tile: api::snapshot::WorldTile| serde_json::json!({"x": tile.x, "z": tile.z, "level": tile.level});
+    let west_loc_rows = snapshot
+        .locs()
+        .iter()
+        .filter(|loc| loc.tile == west_tile)
+        .map(|loc| {
+            serde_json::json!({
+                "world_tile": tile_json(loc.tile),
+                "scene_local_x": loc.tile.x - scene.base_x,
+                "scene_local_z": loc.tile.z - scene.base_z,
+                "typecode": loc.typecode,
+                "typecode_hex": format!("0x{:08x}", loc.typecode as u32),
+                "info": loc.info,
+                "id": loc.id,
+                "name": loc.name.as_deref(),
+                "operations": &loc.actions,
+                "layer": duel_trace_layer(loc.layer),
+                "shape": loc.shape,
+                "angle": loc.angle,
+                "width": loc.width,
+                "length": loc.length,
+                "footprint_width": loc.footprint_width,
+                "footprint_length": loc.footprint_length,
+                "force_approach": loc.force_approach,
+                "active": loc.active,
+            })
+        })
+        .collect::<Vec<_>>();
+    let candidate = target.and_then(|target| duel_loc_for_target(snapshot, target));
+    let can_operate_from_candidate = candidate.and_then(|loc| {
+        approach?;
+        api::query::loc_approach::can_operate_from(loc, scene, actor_tile)
+    });
+    let local_x = west_tile.x - client.map_build_base_x;
+    let local_z = west_tile.z - client.map_build_base_z;
+    let raw_client_layers = west_loc_rows.is_empty().then(|| {
+        (0..=1)
+            .map(|level| {
+                let in_scene = (0..104).contains(&local_x) && (0..104).contains(&local_z);
+                let layers = in_scene.then(|| {
+                    serde_json::json!({
+                        "wall_typecode": client.world.wall_type(level, local_x, local_z),
+                        "ground_typecode": client.world.scene_type(level, local_x, local_z),
+                        "wall_decoration_typecode": client.world.decor_type(level, local_x, local_z),
+                        "ground_decoration_typecode": client.world.gd_type(level, local_x, local_z),
+                    })
+                });
+                serde_json::json!({
+                    "level": level,
+                    "world_tile": tile_json(west_tile),
+                    "scene_local_x": local_x,
+                    "scene_local_z": local_z,
+                    "in_scene": in_scene,
+                    "layers": layers,
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    serde_json::json!({
+        "frame": frame,
+        "actor_tile": tile_json(actor_tile),
+        "tick": snapshot.tick(),
+        "scene": {
+            "state": snapshot.scene_state(),
+            "generation": snapshot.scene_generation(),
+            "client_generation": client.gens.scene,
+            "available": scene.available,
+            "base_x": scene.base_x,
+            "base_z": scene.base_z,
+            "level": scene.level,
+        },
+        "client_scene_base": {
+            "x": client.map_build_base_x,
+            "z": client.map_build_base_z,
+        },
+        "retained_target": target.map(|target| serde_json::json!({
+            "tile": tile_json(target.tile),
+            "layer": duel_trace_layer(target.layer),
+            "id": DUEL_TRAPDOOR_ID,
+            "name": "Trapdoor",
+            "operation": "Forfeit",
+        })),
+        "approach": approach.map(tile_json),
+        "approach_collision_flags": approach.and_then(|tile| duel_scene_collision_flag(scene, tile)),
+        "candidate": candidate.map(|loc| serde_json::json!({
+            "tile": tile_json(loc.tile),
+            "typecode": loc.typecode,
+            "has_forfeit": duel_loc_has_forfeit(loc),
+        })),
+        "can_operate_from_candidate": can_operate_from_candidate,
+        "west_world_tile": tile_json(west_tile),
+        "west_loc_rows": west_loc_rows,
+        "raw_client_layers": raw_client_layers,
+    })
+}
+
+fn duel_trace_layer(layer: api::snapshot::LocLayer) -> &'static str {
+    match layer {
+        api::snapshot::LocLayer::Wall => "wall",
+        api::snapshot::LocLayer::WallDecoration => "wall_decoration",
+        api::snapshot::LocLayer::Ground => "ground",
+        api::snapshot::LocLayer::GroundDecoration => "ground_decoration",
+    }
+}
+
+fn duel_scene_collision_flag(
+    scene: &api::snapshot::SceneView,
+    tile: api::snapshot::WorldTile,
+) -> Option<i32> {
+    if !scene.available || tile.level != scene.level {
+        return None;
+    }
+    let local_x = tile.x - scene.base_x;
+    let local_z = tile.z - scene.base_z;
+    if local_x < 0 || local_z < 0 || local_x >= scene.width || local_z >= scene.height {
+        return None;
+    }
+    let index = usize::try_from(local_x)
+        .ok()?
+        .checked_mul(usize::try_from(scene.height).ok()?)?
+        .checked_add(usize::try_from(local_z).ok()?)?;
+    scene.collision_flags.get(index).copied()
+}
 
 fn duel_loc_operable(
     snapshot: &api::snapshot::GameSnapshot,
     target: DuelLoc,
     from: api::snapshot::WorldTile,
 ) -> Option<bool> {
-    let loc = snapshot
-        .locs()
-        .iter()
-        .find(|loc| target.matches(loc) && duel_loc_has_forfeit(loc))?;
+    let loc = duel_forfeit_loc(snapshot, target)?;
     api::query::loc_approach::can_operate_from(loc, snapshot.scene(), from)
 }
 
@@ -5973,7 +6183,6 @@ fn select_duel_trapdoor(
         };
         let target = DuelLoc {
             tile: loc.tile,
-            typecode: loc.typecode,
             layer: loc.layer,
         };
         if best.is_none_or(|(_, _, current, current_west)| {

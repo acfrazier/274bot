@@ -5253,9 +5253,16 @@ fn real_duel_nav_world() -> Option<Arc<nav_planner::world::NavWorld>> {
     WORLD.clone()
 }
 
-fn test_duel_loc(tile: api::snapshot::WorldTile) -> api::snapshot::LocView {
+fn test_duel_loc(
+    tile: api::snapshot::WorldTile,
+    scene_base_x: i32,
+    scene_base_z: i32,
+    angle: i32,
+) -> api::snapshot::LocView {
+    let local_x = tile.x - scene_base_x;
+    let local_z = tile.z - scene_base_z;
     api::snapshot::LocView {
-        typecode: 0,
+        typecode: 0x4000_0000 + (DUEL_TRAPDOOR_ID << 14) + (local_z << 7) + local_x,
         info: 0,
         id: DUEL_TRAPDOOR_ID,
         name: Some("Trapdoor".into()),
@@ -5264,8 +5271,8 @@ fn test_duel_loc(tile: api::snapshot::WorldTile) -> api::snapshot::LocView {
         tile,
         distance: 0,
         layer: api::snapshot::LocLayer::Ground,
-        shape: 0,
-        angle: 0,
+        shape: 10,
+        angle,
         width: 1,
         length: 1,
         footprint_width: 1,
@@ -5277,6 +5284,139 @@ fn test_duel_loc(tile: api::snapshot::WorldTile) -> api::snapshot::LocView {
         map_function: -1,
         map_scene: -1,
         force_approach: 0,
+    }
+}
+
+fn duel_test_scene(
+    world: &nav_planner::world::NavWorld,
+    base_x: i32,
+    base_z: i32,
+) -> api::snapshot::SceneView {
+    let mut scene = api::snapshot::SceneView {
+        available: true,
+        base_x,
+        base_z,
+        level: 0,
+        width: 104,
+        height: 104,
+        collision_flags: vec![0; 104 * 104],
+    };
+    for local_x in 0..scene.width {
+        for local_z in 0..scene.height {
+            let x = base_x + local_x;
+            let z = base_z + local_z;
+            let flags = if world.collision.flags.is_some() {
+                world.collision.flag(x, z, 0)
+            } else {
+                // The pack retains the exact directional wall faces used by
+                // loc approach checks, even without its optional raw sidecar.
+                let collision_x = x - world.collision.origin.x;
+                let collision_z = z - world.collision.origin.z;
+                if collision_x < 0
+                    || collision_z < 0
+                    || collision_x >= world.collision.width as i32
+                    || collision_z >= world.collision.height as i32
+                {
+                    0
+                } else {
+                    let index = collision_z as usize * world.collision.width + collision_x as usize;
+                    u32::from(*world.collision.walk.get(index).unwrap_or(&0))
+                }
+            };
+            scene.collision_flags[(local_x * scene.height + local_z) as usize] = flags as i32;
+        }
+    }
+    scene
+}
+
+fn reconstructed_duel_snapshot(
+    world: &nav_planner::world::NavWorld,
+    actor_tile: api::snapshot::WorldTile,
+    scene_base: (i32, i32),
+    tick: u32,
+    locs: Vec<api::snapshot::LocView>,
+) -> (api::snapshot::GameSnapshot, std::net::TcpListener) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("duel test listener");
+    let address = listener.local_addr().expect("duel test listener address");
+    let mut client = client::client::Client::new(client::client::ClientConfig {
+        host: "127.0.0.1".into(),
+        port: address.port(),
+        cache_dir: "/tmp".into(),
+        members: true,
+        lowmem: true,
+    });
+    client.stream = Some(
+        client::io::ClientStream::connect(&address.ip().to_string(), address.port())
+            .expect("duel test stream"),
+    );
+    client.ingame = true;
+    client.scene_state = 2;
+    client.map_build_base_x = scene_base.0;
+    client.map_build_base_z = scene_base.1;
+    client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    snapshot.rebuild(&client);
+    snapshot.seed_ingame(2);
+    snapshot.seed_tick(tick);
+    snapshot.seed_tile(actor_tile);
+    snapshot.seed_scene(duel_test_scene(world, scene_base.0, scene_base.1));
+    snapshot.seed_locs(locs);
+    (snapshot, listener)
+}
+
+#[derive(Default)]
+struct DuelForfeitRecorder {
+    base: (i32, i32),
+    menus: Vec<(i32, i32, i32, i32, i32)>,
+    actions: Vec<i32>,
+}
+
+impl api::interact::Driver for DuelForfeitRecorder {
+    fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
+        self.menus.push((slot, action, a, b, c));
+    }
+
+    fn do_action(&mut self, slot: i32) -> bool {
+        self.actions.push(slot);
+        true
+    }
+
+    fn try_move(
+        &mut self,
+        _: i32,
+        _: i32,
+        _: i32,
+        _: i32,
+        _: bool,
+        _: i32,
+        _: i32,
+        _: i32,
+        _: i32,
+        _: i32,
+        _: i32,
+    ) -> bool {
+        false
+    }
+
+    fn local_route(&self) -> Option<(i32, i32)> {
+        None
+    }
+
+    fn build_base(&self) -> (i32, i32) {
+        self.base
+    }
+
+    fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
+        None
+    }
+
+    fn send_packet(&mut self, _: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+        Ok(())
+    }
+
+    fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
+        false
     }
 }
 
@@ -5302,7 +5442,10 @@ fn duel_teardown_selects_a_reachable_pen_approach_from_the_real_nav_pack() {
         .expect("the real navigation pack has an in-pen approach");
 
     let mut snapshot = api::snapshot::GameSnapshot::new();
-    snapshot.seed_locs(vec![test_duel_loc(east_tile), test_duel_loc(west_tile)]);
+    snapshot.seed_locs(vec![
+        test_duel_loc(east_tile, 3320, 3224, 3),
+        test_duel_loc(west_tile, 3320, 3224, 1),
+    ]);
     let (target, approach) =
         select_duel_trapdoor(&snapshot, world.as_ref(), pen, from).expect("reachable trapdoor");
     let expected = match (west_distance, east_distance) {
@@ -5319,57 +5462,192 @@ fn duel_teardown_selects_a_reachable_pen_approach_from_the_real_nav_pack() {
 }
 
 #[test]
-fn duel_teardown_uses_inner_approach_when_loc_reachability_is_unknown() {
+fn duel_teardown_dispatches_current_loc_after_reconstructed_scene_recenter() {
     let Some(world) = real_duel_nav_world() else {
         return;
     };
     let pen = DUEL_ARENA_PENS[2];
-    let (west_tile, approach) = pen.inner_approach(true);
+    let (west_tile, west_approach) = pen.inner_approach(true);
     let (east_tile, _) = pen.inner_approach(false);
-    let peer = api::snapshot::WorldTile {
+    // These two frames are reconstructed from the recorded pair positions
+    // and scene bases; they are not captured client snapshots.
+    let selection_actor = api::snapshot::WorldTile {
+        x: 3345,
+        z: 3245,
+        level: 0,
+    };
+    let selection_peer = api::snapshot::WorldTile {
+        x: 3345,
+        z: 3244,
+        level: 0,
+    };
+    let selection_base = (3320, 3224);
+    let (selection_snapshot, _selection_listener) = reconstructed_duel_snapshot(
+        world.as_ref(),
+        selection_actor,
+        selection_base,
+        32,
+        vec![
+            test_duel_loc(east_tile, selection_base.0, selection_base.1, 3),
+            test_duel_loc(west_tile, selection_base.0, selection_base.1, 1),
+        ],
+    );
+    assert!(selection_snapshot.attached());
+    assert!(selection_snapshot.ingame());
+    assert_eq!(selection_snapshot.tick(), 32);
+    let mut selection_pair = test_duel_pair(Some(selection_actor), Some(selection_peer));
+    selection_pair.primary.tick = Some(32);
+    selection_pair.peer.tick = Some(40);
+    let mut duel = LiveDuelLogout::new(
+        "alice".into(),
+        "bob".into(),
+        pen,
+        Arc::clone(&world),
+        selection_pair,
+    );
+    duel.plan_next(selection_pair, &selection_snapshot);
+
+    let target = duel.target.expect("selection retains the west world loc");
+    assert_eq!(target.tile, west_tile);
+    assert_eq!(target.layer, api::snapshot::LocLayer::Ground);
+    assert_eq!(duel.approach, Some(west_approach));
+    assert_eq!(duel.pending, Some(DuelAction::Walk(west_approach)));
+    assert!(duel.failure.is_none());
+    let selection_loc = duel_loc_for_target(&selection_snapshot, target)
+        .expect("selection frame has the west loc row");
+    assert_eq!((selection_loc.shape, selection_loc.angle), (10, 1));
+    assert_eq!(selection_loc.footprint_width, 1);
+    assert_eq!(selection_loc.footprint_length, 1);
+    let selection_typecode = selection_loc.typecode;
+
+    let accepted_walk = duel
+        .pending
+        .take()
+        .expect("selection schedules the approach");
+    duel.accepted(accepted_walk);
+    assert_eq!(duel.phase, DuelLogoutPhase::Approaching);
+
+    let approach_actor = west_approach;
+    let approach_peer = api::snapshot::WorldTile {
         x: 3335,
         z: 3251,
         level: 0,
     };
-    let mut snapshot = api::snapshot::GameSnapshot::new();
-    snapshot.seed_ingame(2);
-    snapshot.seed_tile(approach);
-    let mut scene = api::snapshot::SceneView::default();
-    scene.available = true;
-    scene.level = 0;
-    scene.base_x = 3330;
-    scene.base_z = 3240;
-    scene.width = 32;
-    scene.height = 32;
-    scene.collision_flags = vec![0; scene.width as usize * scene.height as usize];
-    snapshot.seed_scene(scene);
-    let west_loc = test_duel_loc(west_tile);
-    assert_eq!(
-        api::query::loc_approach::can_operate_from(&west_loc, snapshot.scene(), approach),
-        None,
-        "unsupported live-loc shape leaves the API reachability unknown"
+    let approach_base = (3280, 3200);
+    let (approach_snapshot, _approach_listener) = reconstructed_duel_snapshot(
+        world.as_ref(),
+        approach_actor,
+        approach_base,
+        40,
+        vec![
+            test_duel_loc(east_tile, approach_base.0, approach_base.1, 3),
+            test_duel_loc(west_tile, approach_base.0, approach_base.1, 1),
+        ],
     );
-    snapshot.seed_locs(vec![test_duel_loc(east_tile), west_loc]);
-
-    let pair = test_duel_pair(Some(approach), Some(peer));
-    let mut duel = LiveDuelLogout::new("alice".into(), "bob".into(), pen, Arc::clone(&world), pair);
-    duel.plan_next(pair, &snapshot);
-
-    let target = duel.target.expect("selects the live west trapdoor");
-    assert_eq!(target.tile, west_tile);
-    assert_eq!(duel.approach, Some(approach));
-    assert_eq!(duel.pending, Some(DuelAction::Forfeit(target)));
+    assert!(approach_snapshot.attached());
+    assert_eq!(approach_snapshot.tick(), 40);
+    let mut approach_pair = test_duel_pair(Some(approach_actor), Some(approach_peer));
+    approach_pair.primary.tick = Some(40);
+    approach_pair.peer.tick = Some(48);
+    let approach_loc =
+        duel_loc_for_target(&approach_snapshot, target).expect("recentered world key matches");
+    assert_eq!(approach_loc.typecode, 0x4320_d9b5);
+    assert_eq!(selection_typecode, 0x4320_cd8d);
+    assert_ne!(selection_typecode, approach_loc.typecode);
     assert_eq!(
-        duel_loc_operable_from(&snapshot, target, approach, approach),
-        Some(true)
+        api::query::loc_approach::can_operate_from(
+            approach_loc,
+            approach_snapshot.scene(),
+            approach_actor,
+        ),
+        Some(true),
+        "shape 10 and current nav-pack collision flags give a known approach result"
     );
-    assert!(duel.failure.is_none());
 
-    duel.pending = None;
-    duel.phase = DuelLogoutPhase::Approaching;
-    duel.plan_next(pair, &snapshot);
+    duel.plan_next(approach_pair, &approach_snapshot);
     assert_eq!(duel.pending, Some(DuelAction::Forfeit(target)));
     assert!(duel.failure.is_none());
+
+    let mut recorder = DuelForfeitRecorder {
+        base: approach_base,
+        ..DuelForfeitRecorder::default()
+    };
+    let result = dispatch_duel_forfeit(
+        &approach_snapshot,
+        target,
+        approach_actor,
+        west_approach,
+        &mut recorder,
+    )
+    .expect("the current frame still has the Trapdoor operation");
+    assert!(matches!(
+        result,
+        Some(api::interact::SendResult::Sent {
+            command: api::interact::WireCommand::Op {
+                operation: 1,
+                target: api::interact::OpTarget::Loc(_),
+            },
+            ..
+        })
+    ));
+    assert_eq!(recorder.actions, [0]);
+    assert_eq!(
+        recorder.menus,
+        [(
+            0,
+            client::client::MiniMenuAction::OP_LOC1,
+            approach_loc.typecode,
+            west_tile.x - approach_base.0,
+            west_tile.z - approach_base.1,
+        )],
+        "dispatch uses the current frame's packed code and local coordinates"
+    );
+
+    let mut missing_forfeit = test_duel_loc(west_tile, approach_base.0, approach_base.1, 1);
+    missing_forfeit.actions.clear();
+    let (missing_forfeit_snapshot, _missing_forfeit_listener) = reconstructed_duel_snapshot(
+        world.as_ref(),
+        approach_actor,
+        approach_base,
+        40,
+        vec![missing_forfeit],
+    );
+    let mut no_action_recorder = DuelForfeitRecorder {
+        base: approach_base,
+        ..DuelForfeitRecorder::default()
+    };
+    assert!(dispatch_duel_forfeit(
+        &missing_forfeit_snapshot,
+        target,
+        approach_actor,
+        west_approach,
+        &mut no_action_recorder,
+    )
+    .is_err());
+    assert!(no_action_recorder.menus.is_empty());
+    assert!(no_action_recorder.actions.is_empty());
+
+    let (missing_row_snapshot, _missing_row_listener) = reconstructed_duel_snapshot(
+        world.as_ref(),
+        approach_actor,
+        approach_base,
+        40,
+        Vec::new(),
+    );
+    let mut no_row_recorder = DuelForfeitRecorder {
+        base: approach_base,
+        ..DuelForfeitRecorder::default()
+    };
+    assert!(dispatch_duel_forfeit(
+        &missing_row_snapshot,
+        target,
+        approach_actor,
+        west_approach,
+        &mut no_row_recorder,
+    )
+    .is_err());
+    assert!(no_row_recorder.menus.is_empty());
+    assert!(no_row_recorder.actions.is_empty());
 }
 
 #[test]
@@ -5434,7 +5712,6 @@ fn duel_teardown_accepts_a_natural_return_during_approach() {
     duel.phase = DuelLogoutPhase::Approaching;
     duel.target = Some(DuelLoc {
         tile: trapdoor,
-        typecode: 0,
         layer: api::snapshot::LocLayer::Ground,
     });
     duel.pending = Some(DuelAction::Walk(approach));
@@ -5473,7 +5750,6 @@ fn duel_teardown_waits_for_both_return_tiles_before_logout_receipt() {
     duel.phase = DuelLogoutPhase::AwaitReturns;
     duel.target = Some(DuelLoc {
         tile: pen.inner_approach(true).0,
-        typecode: 0,
         layer: api::snapshot::LocLayer::Ground,
     });
     duel.prompt_seen = true;
