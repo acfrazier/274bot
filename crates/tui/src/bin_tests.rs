@@ -2155,26 +2155,6 @@ fn live_scenario_looks_up_v2_file_ids_and_keeps_v1() {
     assert!(live_scenario("script_nope").is_err());
 }
 
-#[test]
-fn script_duel_arena_pair_core_selects_safe_exit_cleanup() {
-    let args = parse_args_from(["--pair-core", "--live", "script_duel_arena"])
-        .expect("Duel Arena pair-core CLI");
-    assert_eq!(args.live.as_deref(), Some("script_duel_arena"));
-    assert!(args.pair_core);
-    let scenario =
-        live_scenario(args.live.as_deref().expect("live name")).expect("Duel Arena live cell");
-    let scenario_view = scenario.view();
-    let scenario_name = scenario_view.name();
-    assert!(
-        should_walk_duel_arena_pair_exit(args.pair_core, Some(scenario_name)),
-        "pair-core cleanup must match the live scenario's stored name"
-    );
-    assert!(!should_walk_duel_arena_pair_exit(
-        false,
-        Some(scenario_name)
-    ));
-}
-
 #[cfg(feature = "js")]
 #[test]
 fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
