@@ -2405,16 +2405,11 @@ impl CombatRun {
 impl StepRun for CombatRun {
     fn survival_action(&self) -> Option<crate::survival::SurvivalReport> {
         match self.action.as_ref()? {
-            Action::Combat(handle) => {
-                handle.inspect(|machine| machine.survival_report()).flatten()
-            }
+            Action::Combat(handle) => handle
+                .inspect(|machine| machine.survival_report())
+                .flatten(),
             Action::AbortHold(handle) => handle
-                .inspect(|machine| {
-                    machine
-                        .guard
-                        .as_ref()
-                        .and_then(WalkGuard::survival_report)
-                })
+                .inspect(|machine| machine.guard.as_ref().and_then(WalkGuard::survival_report))
                 .flatten(),
             _ => None,
         }

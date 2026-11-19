@@ -386,11 +386,7 @@ mod tests {
                 owner,
             });
             for (width, height) in [(120, 40), (80, 24)] {
-                let capture = render(
-                    StatusPane::new(Some(&detail), "—", "lowmem"),
-                    width,
-                    height,
-                );
+                let capture = render(StatusPane::new(Some(&detail), "—", "lowmem"), width, height);
                 assert!(capture.contains(row), "{width}x{height}: {capture:?}");
             }
         }

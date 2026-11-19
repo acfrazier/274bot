@@ -1815,11 +1815,9 @@ impl Quester {
     }
 
     fn survival_report(&self) -> crate::survival::SurvivalReport {
-        self.survival.report().with_action(
-            self.step
-                .as_ref()
-                .and_then(|step| step.survival_action()),
-        )
+        self.survival
+            .report()
+            .with_action(self.step.as_ref().and_then(|step| step.survival_action()))
     }
 
     fn survival_transfer_in_flight(&self) -> bool {
@@ -5497,6 +5495,53 @@ mod tests {
         script.last_error_kind = QuesterFailureKind::ManualMovement;
         script.emit_status(&mut output, NativePhase::Blocked);
         assert_eq!(output.0[2].phase, NativePhase::Blocked);
+    }
+
+    #[test]
+    fn status_publishes_an_admitted_combat_bite() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+
+        struct ActionStep(crate::survival::SurvivalReport);
+        impl StepRun for ActionStep {
+            fn poll(
+                &mut self,
+                _: &mut StepContext<'_, '_>,
+            ) -> Poll<Result<StepOutcome, ActionError>> {
+                Poll::Pending
+            }
+
+            fn cancel(&mut self, _: &mut crate::native::NativeActions) {}
+
+            fn survival_action(&self) -> Option<crate::survival::SurvivalReport> {
+                Some(self.0)
+            }
+        }
+
+        #[derive(Default)]
+        struct Capture(Vec<ScriptStatus>);
+        impl NativeOutput for Capture {
+            fn status(&mut self, status: ScriptStatus) {
+                self.0.push(status);
+            }
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
+            fn log(&mut self, _: api::hostlog::Level, _: &str) {}
+            fn settings_applied(&mut self, _: u64) {}
+        }
+
+        let (mut script, _) = fixture();
+        let action = crate::survival::SurvivalReport {
+            decision: crate::survival::Decision::Eating,
+            owner: crate::survival::Owner::Combat,
+            ..crate::survival::SurvivalReport::default()
+        };
+        script.step = Some(Box::new(ActionStep(action)));
+
+        let mut output = Capture::default();
+        script.emit_status(&mut output, NativePhase::Working);
+        assert_eq!(output.0.len(), 1);
+        assert_eq!(output.0[0].survival, action);
     }
 
     #[test]

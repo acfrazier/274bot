@@ -507,8 +507,7 @@ impl WalkGuard {
     }
     /// Current admitted cure or food action.
     pub fn survival_report(&self) -> Option<crate::survival::SurvivalReport> {
-        let decision = if self.schedule.pending(OpKind::Drink)
-            && self.flags & FLAG_CURE_FRUIT != 0
+        let decision = if self.schedule.pending(OpKind::Drink) && self.flags & FLAG_CURE_FRUIT != 0
         {
             crate::survival::Decision::Eating
         } else if self.schedule.pending(OpKind::Drink)
