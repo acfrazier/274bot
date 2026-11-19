@@ -1,5 +1,6 @@
 //! The same real nettle sting in transit and inside an explicitly measured window.
 use super::*;
+use host_play::evidence_writer::record_scenario_sources;
 use scenario::{
     CombatExpectation, Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step,
     StepKind, Wait,
@@ -389,6 +390,7 @@ fn run_case(inside: bool, directory: &Path, mode: &str) -> Result<(), String> {
         );
         runner.set_live_names(std::slice::from_ref(&name));
         runner.set_scene_settle(Duration::ZERO);
+        record_scenario_sources(&mut runner, Some(client.revision().as_i32()));
         loop {
             let started = Instant::now();
             client.mainloop();

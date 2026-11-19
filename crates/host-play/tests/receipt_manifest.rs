@@ -3,7 +3,9 @@ use std::time::Duration;
 use client::client::{Client, ClientConfig};
 use client::dash3d::ClientPlayer;
 use client::io::ServerProt;
-use host_play::evidence_writer::{EvidenceRequest, EvidenceWriter, PngColor};
+use host_play::evidence_writer::{
+    record_scenario_sources, EvidenceRequest, EvidenceWriter, PngColor,
+};
 use scenario::{Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait};
 use sha2::{Digest, Sha256};
 
@@ -50,6 +52,7 @@ fn terminal_manifest_accepts_durable_writer_artifact() {
     client.map_build_base_x = 3200;
     client.map_build_base_z = 3200;
     client.local_player = Some(ClientPlayer::at(20, 20));
+    record_scenario_sources(&mut runner, Some(client.revision().as_i32()));
     for _ in 0..4 {
         client.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut client);
@@ -86,4 +89,12 @@ fn terminal_manifest_accepts_durable_writer_artifact() {
         receipt["manifest"]["artifacts"],
         serde_json::json!([expected])
     );
+    let sources = &receipt["manifest"]["sources"];
+    for (name, identity) in [("host", build_stamp::HOST), ("client", build_stamp::CLIENT)] {
+        assert_eq!(
+            sources[name],
+            serde_json::to_value(identity).expect("build identity serializes"),
+            "{name} identity",
+        );
+    }
 }
