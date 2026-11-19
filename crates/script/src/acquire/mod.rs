@@ -98,6 +98,7 @@ pub enum DepositSpec {
     Ids {
         products: Arc<[i32]>,
         keep: Arc<[i32]>,
+        keep_counts: Arc<[(i32, i32)]>,
     },
     Capacity {
         keep: Arc<[i32]>,

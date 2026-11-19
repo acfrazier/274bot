@@ -633,15 +633,28 @@ pub enum DepositKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DepositSpec<'a> {
     pub kind: DepositKind,
-    /// Never deposited.
+    /// Never deposited unless `keep_counts` sets an explicit lower bound.
     pub keep: &'a [i32],
+    /// Per-id minimum inventory count to retain. Excess is deposited one at a
+    /// time so a stack cannot be swept below its requested retained count.
+    pub keep_counts: &'a [(i32, i32)],
     /// When set, only these ids are candidates.
     pub only: Option<&'a [i32]>,
 }
 
 impl DepositSpec<'_> {
-    fn candidate(&self, id: i32) -> bool {
-        !self.keep.contains(&id) && self.only.is_none_or(|only| only.contains(&id))
+    fn keep_count(&self, id: i32) -> Option<i32> {
+        self.keep_counts
+            .iter()
+            .find_map(|(keep_id, count)| (*keep_id == id).then_some(*count))
+    }
+
+    fn candidate<R: BankRow>(&self, id: i32, pack: &[R]) -> bool {
+        let kept = match self.keep_count(id) {
+            Some(count) => count_id(pack, id) <= count,
+            None => self.keep.contains(&id),
+        };
+        !kept && self.only.is_none_or(|only| only.contains(&id))
     }
 }
 
@@ -754,7 +767,7 @@ pub fn deposit_next<R: BankRow>(
     };
     let has_candidate = pack
         .iter()
-        .any(|row| row.count() > 0 && spec.candidate(row.id()));
+        .any(|row| row.count() > 0 && spec.candidate(row.id(), pack));
     if !has_candidate {
         return DepositScan::Done;
     }
@@ -765,13 +778,25 @@ pub fn deposit_next<R: BankRow>(
             DepositScan::WaitView
         };
     };
+    let mut count_op_missing = false;
     let click = side
         .iter()
-        .filter(|row| row.count() > 0 && spec.candidate(row.id()))
+        .filter(|row| row.count() > 0 && spec.candidate(row.id(), pack))
         .filter(|side_row| pack_has_current_row(pack, side_row.id(), side_row.slot()))
-        .find_map(|row| deposit_click(row, DepositRequest::Sweep));
+        .find_map(|row| {
+            let counted_keep = spec.keep_count(row.id()).is_some();
+            let request = if counted_keep {
+                DepositRequest::Label("Deposit-1")
+            } else {
+                DepositRequest::Sweep
+            };
+            let click = deposit_click(row, request);
+            count_op_missing |= counted_keep && click.is_none();
+            click
+        });
     match click {
         Some(click) => DepositScan::Click(click),
+        None if count_op_missing => DepositScan::MissingRequired,
         None if view_expired => DepositScan::ViewExpired,
         None => DepositScan::WaitView,
     }

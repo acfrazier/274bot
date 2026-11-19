@@ -576,9 +576,15 @@ impl Gatherer {
         }
         let mut keep = supply::protected_ids(&self.prepared, self.tool.id);
         keep.keep_unbankable(&self.prepared.selected, inventory);
+        let keep_counts = if crate::bank::ops::count_id(inventory, self.tool.id) > 1 {
+            Arc::from([(self.tool.id, 1)])
+        } else {
+            Arc::from([])
+        };
         DepositSpec::Ids {
             products: supply::bank_deposit_ids(&self.prepared, self.tool.id, inventory),
             keep: Arc::from(keep.as_slice()),
+            keep_counts,
         }
     }
 

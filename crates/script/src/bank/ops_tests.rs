@@ -272,6 +272,7 @@ fn p_match_identity_is_the_obj_id() {
     let keep_item = DepositSpec {
         kind: DepositKind::UntilEmpty,
         keep: &[TROUT],
+        keep_counts: &[],
         only: None,
     };
     let click = DepositClick {
@@ -301,6 +302,7 @@ fn p_match_identity_is_the_obj_id() {
     let keep_name = DepositSpec {
         kind: DepositKind::UntilEmpty,
         keep: &named,
+        keep_counts: &[],
         only: None,
     };
     assert_eq!(
@@ -321,6 +323,7 @@ fn p_match_identity_is_the_obj_id() {
     let spec = DepositSpec {
         kind: DepositKind::UntilEmpty,
         keep: &[],
+        keep_counts: &[],
         only: None,
     };
     assert!(matches!(
@@ -341,6 +344,7 @@ fn stale_side_candidate_after_first_fish_is_skipped() {
     let spec = DepositSpec {
         kind: DepositKind::Required,
         keep: &[995, 311],
+        keep_counts: &[],
         only: Some(&[swordfish, tuna][..]),
     };
     let click = DepositClick {
@@ -369,6 +373,7 @@ fn stale_last_fish_is_skipped_for_a_current_incidental_candidate() {
     let spec = DepositSpec {
         kind: DepositKind::Required,
         keep: &[995, 311],
+        keep_counts: &[],
         only: Some(&[tuna, beer][..]),
     };
     let click = DepositClick {
@@ -414,6 +419,7 @@ fn stale_side_rows_do_not_block_completion_when_only_kept_items_remain() {
     let spec = DepositSpec {
         kind: DepositKind::Required,
         keep: &[311, 995],
+        keep_counts: &[],
         only: Some(&[fish][..]),
     };
     assert_eq!(
@@ -432,11 +438,13 @@ fn p_settle_posted_empty_is_not_absent() {
     let required = DepositSpec {
         kind: DepositKind::Required,
         keep: &[],
+        keep_counts: &[],
         only: Some(&[product][..]),
     };
     let until_empty = DepositSpec {
         kind: DepositKind::UntilEmpty,
         keep: &[],
+        keep_counts: &[],
         only: None,
     };
     let holding = [held(product, 1)];

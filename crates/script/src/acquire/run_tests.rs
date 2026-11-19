@@ -1731,6 +1731,7 @@ fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
         Some(DepositSpec::Ids {
             products: Arc::from([PRODUCT]),
             keep: Arc::from([]),
+            keep_counts: Arc::from([]),
         }),
         Some(bank),
         false,
@@ -1860,6 +1861,7 @@ fn live_replan_withdraws_an_alternative_by_its_selected_name_after_deposit() {
         Some(DepositSpec::Ids {
             products: Arc::from([PRODUCT]),
             keep: Arc::from([]),
+            keep_counts: Arc::from([]),
         }),
         Some(bank),
         false,
@@ -1970,6 +1972,7 @@ fn quester_interrupts_acquire_run_at_transfer_boundary() {
         Some(DepositSpec::Ids {
             products: Arc::from([PRODUCT]),
             keep: Arc::from([]),
+            keep_counts: Arc::from([]),
         }),
         Some(bank),
         false,
