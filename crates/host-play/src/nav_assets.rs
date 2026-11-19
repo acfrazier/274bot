@@ -39,7 +39,16 @@ pub fn stage_payload(source: &Path, destination: &Path) -> std::io::Result<()> {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
         _ => {}
     }
-    std::fs::copy(source, destination).map(|_| ())
+    std::fs::copy(source, destination)?;
+    let mut permissions = std::fs::metadata(destination)?.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(permissions.mode() | 0o200);
+    }
+    #[cfg(not(unix))]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(destination, permissions)
 }
 
 /// Resource root for staged navigation payloads: `BOT_NAV_RESOURCE_DIR` when
@@ -127,6 +136,37 @@ mod tests {
             std::fs::write(&destination, b"old").unwrap();
         }
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_read_only_source_twice_keeps_destination_user_writable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = TempRoot::new();
+        let source = root.0.join("source");
+        let destination = root.0.join("destination");
+        std::fs::write(&source, b"navigation payload").unwrap();
+        let mut permissions = std::fs::metadata(&source).unwrap().permissions();
+        permissions.set_mode(0o444);
+        std::fs::set_permissions(&source, permissions).unwrap();
+
+        for _ in 0..2 {
+            stage_payload(&source, &destination).unwrap();
+            let source_mode = std::fs::metadata(&source).unwrap().permissions().mode();
+            let destination_mode = std::fs::metadata(&destination)
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(source_mode & 0o777, 0o444, "source stays read-only");
+            assert_ne!(
+                destination_mode & 0o200,
+                0,
+                "staged destination stays user-writable"
+            );
+            assert_eq!(std::fs::read(&destination).unwrap(), b"navigation payload");
+        }
+    }
+
 
     #[test]
     fn staging_same_path_preserves_payload() {
