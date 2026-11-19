@@ -1510,15 +1510,29 @@ impl LiveState {
                         })
                 })
             });
-            if self.level_up_seed_tick.is_none()
-                && self.started
-                && !self.arrived
-                && thrower_targets_local
-            {
-                if !send_cheat(client, "advancestat attack 2") {
+            if self.level_up_seed_tick.is_none() && !self.arrived && thrower_targets_local {
+                // Keep HP high through the stand teleport; lower it only once a
+                // Thrower is attacking, immediately before opening the page.
+                let hp = self
+                    .snapshot
+                    .stats()
+                    .iter()
+                    .find(|row| row.index == 3)
+                    .map_or(0, |row| row.effective);
+                if hp <= 2 {
                     combat_proof::mark_invalid(
                         &self.account,
-                        "could not seed the Attack level-up page while a Thrower Troll targeted the player",
+                        "a Thrower hit before the deterministic low-HP level-up seed",
+                    );
+                    return;
+                }
+                let drain = format!("~stat_drain hitpoints {} 0", hp - 2);
+                if !send_cheat(client, &drain)
+                    || !send_cheat(client, "advancestat attack 2")
+                {
+                    combat_proof::mark_invalid(
+                        &self.account,
+                        "could not seed low HP and the Attack level-up page while a Thrower Troll targeted the player",
                     );
                     return;
                 }
@@ -1691,21 +1705,9 @@ fn scenario_for(
         .iter()
         .position(|step| step.name == "stand at the quest start")
         .expect("stand step");
-    // `quester_stage` relogs before the stand teleport (a fresh-account
+    // Keep the level-up setup healthy through the stand teleport. The live
+    // Thrower triggers its low-HP seed only after it targets the player.
     let extra = if let Some(food) = food {
-        let hp_seed = if level_up {
-            cheat_step(
-                "seed HP below the thrower eat line",
-                "~stat_drain hitpoints 39 0".to_owned(),
-                Proof::Stat { id: 3, min: 1 },
-            )
-        } else {
-            cheat_step(
-                "seed HP near eat line",
-                "~stat_drain hitpoints 20 0".to_owned(),
-                Proof::Stat { id: 3, min: 20 },
-            )
-        };
         let mut steps = vec![
             cheat_step(
                 "seed Prayer 37",
@@ -1717,15 +1719,22 @@ fn scenario_for(
                 "setstat hitpoints 40".to_owned(),
                 Proof::Stat { id: 3, min: 40 },
             ),
-            hp_seed,
         ];
-        if food {
+        if !level_up {
             steps.push(cheat_step(
-                "seed four lobsters",
-                "give lobster 4".to_owned(),
-                Proof::Stat {
-                    id: 3,
-                    min: if level_up { 1 } else { 20 },
+                "seed HP near eat line",
+                "~stat_drain hitpoints 20 0".to_owned(),
+                Proof::Stat { id: 3, min: 20 },
+            ));
+        }
+        if food {
+            let lobster_count = if level_up { 28 } else { 4 };
+            steps.push(cheat_step(
+                "seed required lobster supply",
+                format!("give lobster {lobster_count}"),
+                Proof::Item {
+                    name: "Lobster",
+                    count: lobster_count,
                 },
             ));
         }
@@ -1911,16 +1920,16 @@ fn evaluate_level_up_eat(state: &LiveState, capture: &CombatCapture) -> W1GateDe
     if stat(0, "base") != Some(1)
         || stat(5, "base") != Some(37)
         || stat(3, "base") != Some(40)
-        || stat(3, "effective") != Some(1)
-        || lobsters != 4
+        || !stat(3, "effective").is_some_and(|hp| hp > 2 && hp <= 40)
+        || lobsters != 28
     {
         return gate_fail(
-            "level-up test did not start at Attack 1, Prayer 37, HP1/40 and four lobsters",
+            "level-up test did not reach Attack 1, Prayer 37, living HP above two and 28 lobsters",
         );
     }
     if page_tick <= seed_tick
         || state.level_up_attack_base_at_open != Some(2)
-        || state.level_up_hp_at_open != Some(1)
+        || state.level_up_hp_at_open != Some(2)
         || state.level_up_threat_tick.is_none()
     {
         return gate_fail(
@@ -2001,8 +2010,8 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         .prepare_template()
         .expect("prepare isolated local-289 template");
     let world = template.world().expect("selected navigation world");
-    // Start within the Trolls' hunt radius so the level-up page opens during the walk.
-    let (start, dest) = pick_crossing(world.as_ref(), level_up);
+    // Start outside the Throwers' hunt radius so Quester walks into the threat.
+    let (start, dest) = pick_crossing(world.as_ref(), false);
     let nav = nav_planner::producer::lease(&world).expect("selected navigation catalog");
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let quests = Arc::new(
@@ -3235,7 +3244,7 @@ fn walk_guard_fixture_seeds_between_relog_and_stand() {
                 absent("seed Prayer 37");
                 absent("seed Hitpoints 40");
                 absent("seed HP near eat line");
-                absent("seed four lobsters");
+                absent("seed required lobster supply");
             }
             Some(feed) => {
                 between("seed Prayer 37");
@@ -3243,11 +3252,44 @@ fn walk_guard_fixture_seeds_between_relog_and_stand() {
                 between("seed HP near eat line");
                 absent("seed Prayer 43");
                 if feed {
-                    between("seed four lobsters");
+                    between("seed required lobster supply");
                 } else {
-                    absent("seed four lobsters");
+                    absent("seed required lobster supply");
                 }
             }
         }
     }
+}
+
+#[test]
+fn level_up_probe_waits_for_required_lobsters_before_teleport() {
+    let start = WorldTile {
+        x: 2632,
+        z: 3266,
+        level: 0,
+    };
+    let scenario = scenario_for(
+        Arc::new(Mutex::new(CombatCapture::default())),
+        start,
+        Some(true),
+        true,
+    );
+    let supply = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "seed required lobster supply")
+        .expect("level-up probe supplies food");
+    let stand = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "stand at the quest start")
+        .expect("level-up probe has a stand teleport");
+    assert!(supply < stand);
+    assert_eq!(
+        scenario.steps[supply].wait.arm,
+        Proof::Item {
+            name: "Lobster",
+            count: 28,
+        }
+    );
 }
