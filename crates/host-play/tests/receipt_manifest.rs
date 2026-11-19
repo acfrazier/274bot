@@ -1,3 +1,9 @@
+#![cfg(any(
+    feature = "live-harness",
+    feature = "test-support",
+    feature = "memory-profile"
+))]
+
 use std::time::Duration;
 
 use client::client::{Client, ClientConfig};
