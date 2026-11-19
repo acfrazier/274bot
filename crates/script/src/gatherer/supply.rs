@@ -670,16 +670,25 @@ impl SupplyPlan {
         stats: &[StatView],
         stock: Stock<'_>,
     ) -> Result<Arc<[crate::acquire::Need]>, crate::native::ActionError> {
+        Self::build_with_optional_bank_trip_fruit(prepared, stats, stock, false)
+    }
+
+    /// Include the optional cure item in the supply phase of an open bank trip.
+    pub fn build_for_bank_trip(
+        prepared: &Prepared,
+        stats: &[StatView],
+        stock: Stock<'_>,
+    ) -> Result<Arc<[crate::acquire::Need]>, crate::native::ActionError> {
+        Self::build_with_optional_bank_trip_fruit(prepared, stats, stock, true)
+    }
+
+    fn build_with_optional_bank_trip_fruit(
+        prepared: &Prepared,
+        stats: &[StatView],
+        stock: Stock<'_>,
+        include_optional_bank_trip_fruit: bool,
+    ) -> Result<Arc<[crate::acquire::Need]>, crate::native::ActionError> {
         let tool = tool_need(prepared, stats, stock)?;
-        let missing_tool = tool.as_ref().is_some_and(|need| {
-            !stock
-                .pack
-                .is_some_and(|pack| crate::bank::ops::count_id(pack, need.item) > 0)
-                && !stock
-                    .worn
-                    .is_some_and(|worn| crate::bank::ops::count_id(worn, need.item) > 0)
-        });
-        let bank_trip = missing_tool || supplies_due(&prepared.supply, &prepared.settings, stock);
         let mut needs = Vec::with_capacity(7 + MAX_RESERVE_RUNES);
         if let Some(tool) = tool {
             needs.push(tool);
@@ -724,28 +733,34 @@ impl SupplyPlan {
                 });
             }
         }
-        if bank_trip {
+        if include_optional_bank_trip_fruit {
             if let Some(fruit) = prepared
                 .selected
                 .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
             {
-                let name = fruit
-                    .name
-                    .as_deref()
-                    .filter(|name| !name.trim().is_empty())
-                    .unwrap_or("Strange fruit");
-                needs.push(Need {
-                    item: fruit.id,
-                    name: Arc::from(name),
-                    target: 1,
-                    minimum: 0,
-                    presence: Presence::Held,
-                    kind: NeedKind::Optional,
-                    sources: SourceSet::PACK | SourceSet::BANK,
-                    alternatives: Arc::<[i32]>::from([]),
-                });
+                if stock
+                    .pack
+                    .is_some_and(|pack| crate::bank::ops::count_id(pack, fruit.id) == 0)
+                {
+                    let name = fruit
+                        .name
+                        .as_deref()
+                        .filter(|name| !name.trim().is_empty())
+                        .unwrap_or("Strange fruit");
+                    needs.push(Need {
+                        item: fruit.id,
+                        name: Arc::from(name),
+                        target: 1,
+                        minimum: 0,
+                        presence: Presence::Held,
+                        kind: NeedKind::Optional,
+                        sources: SourceSet::PACK | SourceSet::BANK,
+                        alternatives: Arc::<[i32]>::from([]),
+                    });
+                }
             }
         }
+
         if prepared.settings.reserve_casts > 0 {
             if let Some(reserve) = &prepared.supply.reserve {
                 if !can_afford_cast(reserve, stock) {
@@ -1657,7 +1672,7 @@ mod tests {
     }
 
     #[test]
-    fn need_builder_preserves_tool_bait_food_and_optional_coin_contracts() {
+    fn bank_trip_need_builder_preserves_tool_bait_food_and_optional_coin_contracts() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -1687,7 +1702,7 @@ mod tests {
         let stock = pages(&held, &[]);
         assert!(SupplyPlan::due(&prepared, &stats, stock));
 
-        let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
+        let needs = SupplyPlan::build_for_bank_trip(&prepared, &stats, stock).unwrap();
         assert_eq!(needs.len(), 5);
         let tool = tool_need(&needs);
         assert_eq!((tool.target, tool.minimum), (1, 1));
@@ -1751,6 +1766,38 @@ mod tests {
             item(food.id, &food.name, 2, ItemContainer::Inventory),
         ];
         assert!(due(&prepared, &stats, &empty_bait, &[]));
+    }
+
+    #[test]
+    fn bank_fruit_alone_does_not_request_a_bank_trip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let prepared = prepare(crate::native::SettingsBag::new());
+        let stats = stats(&prepared);
+        let (tool_id, tool_name) = known_tool(&prepared);
+        let worn = [item(tool_id, &tool_name, 1, ItemContainer::Equipment)];
+        let fruit_id = prepared
+            .selected
+            .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+            .unwrap()
+            .id;
+        let bank = memory(&[(fruit_id, 1)], Origin::Session);
+        let stock = with_bank(&[], &worn, &bank);
+
+        assert!(!SupplyPlan::due(&prepared, &stats, stock));
+        let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
+        assert!(needs.iter().all(|need| need.item != fruit_id));
+
+        let trip_needs = SupplyPlan::build_for_bank_trip(&prepared, &stats, stock).unwrap();
+        let fruit_need = trip_needs
+            .iter()
+            .find(|need| need.item == fruit_id)
+            .expect("the bank trip requests missing fruit");
+        assert_eq!((fruit_need.target, fruit_need.minimum), (1, 0));
+        assert_eq!(fruit_need.kind, NeedKind::Optional);
+        assert!(fruit_need.sources.contains(SourceSet::PACK));
+        assert!(fruit_need.sources.contains(SourceSet::BANK));
     }
 
     #[test]
@@ -2239,9 +2286,9 @@ mod tests {
 
     /// A bank trip keeps every held antipoison dose (Argon review finding 2):
     /// antipoison and super antipoison doses of any count are not deposit
-    /// products, so the next poison still finds them. Strange fruit stays an
-    /// incidental random-event item that the trip banks (the fish bank soak
-    /// oracle, `host-play/tests/gatherer_live.rs` `bank_conservation_tests`).
+    /// products, so the next poison still finds them. Strange fruit is an
+    /// optional cure supply: an existing bank trip withdraws one when absent
+    /// from the pack and the bank has one.
     #[test]
     fn tick_kit_preparation_does_not_decide_method_or_tool_applicability() {
         if !api::test_support::game_data_available() {

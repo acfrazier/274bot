@@ -92,6 +92,9 @@ const HITPOINTS_STAT: i32 = 3;
 const WILLOW_LOG_ID: i32 = 1519;
 const COPPER_ORE_ID: i32 = 436;
 const ANTIPOISON_ALIAS: &str = "1doseantipoison";
+
+// Keep this alias aligned with script::survival::cure::STRANGE_FRUIT_ALIAS.
+const STRANGE_FRUIT_ALIAS: &str = "macro_triffidfruit";
 const RUNE_AXE_ALIAS: &str = "rune_axe";
 // content/scripts/skill_firemaking/configs/firemaking.obj:164-166 defines this
 // item alias for logs cut from willow trees.
@@ -317,6 +320,7 @@ struct Witness {
     resource_id: Option<i32>,
     tool_id: Option<i32>,
     antipoison_id: i32,
+    strange_fruit_id: i32,
     stand: WorldTile,
     desert_stage_reply: Option<String>,
     desert_stage_reply_tick: Option<u32>,
@@ -349,6 +353,7 @@ struct Witness {
     /// The bank interface state observed on the frame of the resumed work.
     bank_trip_bank_closed_at_work: Option<bool>,
     bank_trip_antipoison_frames: Vec<BankTripAntipoisonFrame>,
+    bank_trip_strange_fruit_count_at_work: Option<i32>,
     poison_source_tick: Option<u32>,
     poison_seed_bank_open: Option<bool>,
     poison_seed_tool_count: Option<i32>,
@@ -447,6 +452,7 @@ fn new_witness(
         resource_id,
         tool_id: tool_alias.map(item_id),
         antipoison_id: item_id(ANTIPOISON_ALIAS),
+        strange_fruit_id: item_id(STRANGE_FRUIT_ALIAS),
         key_id,
         stand,
         desert_stage_reply: None,
@@ -478,6 +484,7 @@ fn new_witness(
         bank_trip_work_animation: None,
         bank_trip_bank_closed_at_work: None,
         bank_trip_antipoison_frames: Vec::new(),
+        bank_trip_strange_fruit_count_at_work: None,
         poison_source_tick: None,
         poison_seed_bank_open: None,
         poison_seed_tool_count: None,
@@ -716,7 +723,7 @@ fn hitpoints_step(hitpoints: i32) -> scenario::Step {
 fn bank_seed_step(alias: &'static str) -> scenario::Step {
     let command = format!("givebank {alias} 1");
     scenario::Step {
-        name: "seed the rune pickaxe in the account bank before fixture relog",
+        name: "seed an item in the account bank before fixture relog",
         kind: scenario::StepKind::Perform {
             send: Box::new(move |client, _| api::interact::cheat(client, &command).is_sent()),
         },
@@ -1179,6 +1186,8 @@ fn capture_gatherer_bank_trip(snapshot: &GameSnapshot, witness: &mut Witness) {
                 witness.bank_trip_work_animation_tick = Some(now);
                 witness.bank_trip_work_animation = Some(animation);
                 witness.bank_trip_bank_closed_at_work = Some(!bank_open);
+                witness.bank_trip_strange_fruit_count_at_work =
+                    Some(item_count(snapshot, witness.strange_fruit_id));
             }
         }
     }
@@ -1893,6 +1902,9 @@ fn check_gatherer_bank_trip_receipt(receipt: &Value) -> Result<(), String> {
             "Gatherer bank-trip facts or {deadline_ticks}-tick observed deadline failed: receipt={receipt}"
         ));
     }
+    if count("strange_fruit_at_resumed_work")? < 1 {
+        return Err("Gatherer bank trip resumed with no Strange fruit in the pack".to_owned());
+    }
     if count("inventory_at_trip_start")? != GATHERER_INVENTORY_CAPACITY {
         return Err(format!(
             "Gatherer bank trip did not start with a full {}-item pack",
@@ -1993,6 +2005,7 @@ fn gatherer_bank_trip_receipt(witness: &Witness, observed_tick: u32) -> Result<V
             .map(|frame| json!({"tick": frame.tick, "count": frame.count}))
             .collect::<Vec<_>>(),
         "antipoison_count_min_before_cure": minimum,
+        "strange_fruit_at_resumed_work": witness.bank_trip_strange_fruit_count_at_work,
         "first_work_animation_after_bank_trip_tick": work_animation_tick,
         "first_work_animation_after_bank_trip": work_animation,
         "bank_closed_at_resumed_work": witness.bank_trip_bank_closed_at_work,
@@ -2443,7 +2456,7 @@ fn live_l_cure_gatherer_keeps_dose_through_bank_trip_and_resumes() {
             (WILLOW_LOGS_ALIAS, GATHERER_STARTING_WILLOW_LOGS),
         ],
         &[("cookquest", 0)],
-        vec![],
+        vec![bank_seed_step(STRANGE_FRUIT_ALIAS)],
         Mode::Stage {
             expect: vec!["cook:0".into()],
         },
@@ -2504,6 +2517,7 @@ fn live_l_cure_gatherer_keeps_dose_through_bank_trip_and_resumes() {
     assert_eq!(trip["willow_logs_deposited"], true);
     assert_eq!(trip["willow_logs_at_deposit"], 0);
     assert!(trip["willow_logs_count_deposited"].as_i64().unwrap() > 0);
+    assert!(trip["strange_fruit_at_resumed_work"].as_i64().unwrap() >= 1);
     assert_eq!(trip["antipoison_count_min_before_cure"], 1);
     assert_eq!(
         trip["first_work_animation_after_bank_trip_tick"],
@@ -4586,6 +4600,7 @@ mod oracle_tests {
             "first_work_animation_after_bank_trip_tick": 60,
             "first_work_animation_after_bank_trip": {"sequence": 867, "serial": 12},
             "bank_closed_at_resumed_work": true,
+            "strange_fruit_at_resumed_work": 1,
             "trip_end_tick": 60,
             "cure_line_tick": 70,
             "observed_tick": 100,
@@ -4636,6 +4651,21 @@ mod oracle_tests {
         assert_eq!(
             check_gatherer_bank_trip_receipt(&receipt(json!(true))),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn gatherer_bank_trip_receipt_fails_when_bank_fruit_was_not_withdrawn() {
+        let mut receipt = bank_trip_oracle_receipt(json!([
+            {"tick": 40, "count": 1},
+            {"tick": 60, "count": 1},
+        ]));
+        receipt["strange_fruit_at_resumed_work"] = json!(0);
+        let error = check_gatherer_bank_trip_receipt(&receipt)
+            .expect_err("the seeded bank fruit must be withdrawn");
+        assert!(
+            error.contains("no Strange fruit"),
+            "unexpected receipt error: {error}"
         );
     }
 

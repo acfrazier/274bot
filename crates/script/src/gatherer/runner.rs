@@ -607,7 +607,7 @@ impl Gatherer {
             });
         }
         if let Some(fruit_id) = spare_fruit {
-            keep_rules.push(crate::bank::ops::KeepRule::AtLeast {
+            keep_rules.push(crate::bank::ops::KeepRule::BestEffortAtLeast {
                 id: fruit_id,
                 count: 1,
             });
@@ -868,7 +868,11 @@ impl Gatherer {
                     let Some(stats) = snapshot.stats() else {
                         return;
                     };
-                    match SupplyPlan::build(&self.prepared, stats.value, snapshot.stock()) {
+                    match SupplyPlan::build_for_bank_trip(
+                        &self.prepared,
+                        stats.value,
+                        snapshot.stock(),
+                    ) {
                         Ok(needs) => self.scratch.needs = Some(needs),
                         Err(error) => {
                             self.action_failure(error);
