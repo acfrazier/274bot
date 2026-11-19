@@ -1319,6 +1319,7 @@ struct PairCompanionSlot {
     /// Login, a real one-shot command. The companion hook returns it once and
     /// clears it.
     login_wanted: bool,
+    duel_arena_exit: Option<Arc<Mutex<DuelArenaPairExitWitness>>>,
 }
 
 impl PairCompanionSlot {
@@ -1339,6 +1340,7 @@ impl PairCompanionSlot {
             kq_witness: None,
             prep_barrier: None,
             tutorial_reseed: None,
+            duel_arena_exit: None,
             login_wanted: false,
         }
     }
@@ -1642,6 +1644,7 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
         }
         PairPrepStage::Idle => {}
     }
+    duel_arena_peer_exit_tick(c, &snap, slot, now);
     if slot.stage == PairPrepStage::Idle {
         if let Some(barrier) = &slot.prep_barrier {
             barrier.mark_ready(slot.profile);
@@ -1953,6 +1956,15 @@ fn pair_companion(kind: PairCompanionKind) -> Companion {
         },
     }
 }
+
+fn duel_arena_pair_companion(witness: Arc<Mutex<DuelArenaPairExitWitness>>) -> Companion {
+    let mut slot = PairCompanionSlot::new(PairCompanionKind::DuelPeer);
+    slot.duel_arena_exit = Some(witness);
+    Companion {
+        profile: 1,
+        per_frame: pair_companion_hook(slot),
+    }
+}
 fn pair_prep_companion(kind: PairCompanionKind, prep_barrier: PairPrepBarrier) -> Companion {
     Companion {
         profile: 1,
@@ -2248,6 +2260,18 @@ pub(crate) fn flax_runner_scenario() -> Scenario {
     }
 }
 
+/// Lobby tile outside every fight/obstacle rectangle enforced by
+/// `scripts/duel_arena.rs2:349-353` and listed in
+/// `configs/duelarena.dbrow:1-11`.
+const DUEL_ARENA_PEN_EXIT: WorldTile = WorldTile {
+    x: 3368,
+    z: 3275,
+    level: 0,
+};
+
+/// Per-step wait budget matching the pair scenario's 180-second deadline.
+const DUEL_ARENA_STEP_BUDGET_TICKS: u32 = 300;
+
 /// DuelArena both actors: bronze scimitar at the challenge anchor, wear it,
 /// then shared Start. Counterpart identity is native witness-owned; the
 /// trainer defaults include the helper mode's inert empty partner field.
@@ -2298,12 +2322,44 @@ pub(crate) fn duel_arena_scenario() -> Scenario {
         },
     });
     steps.push(start_catalog_step());
+    let duel_exit = Arc::new(Mutex::new(DuelArenaPairExitWitness::default()));
+    steps.push(duel_arena_pair_exit_step(
+        Arc::clone(&duel_exit),
+        DUEL_ARENA_STEP_BUDGET_TICKS,
+    ));
+    steps.push(Step {
+        name: "stop the Duel Arena card after both fighters leave the pens",
+        kind: StepKind::StopScript,
+        wait: Wait {
+            arm: Proof::ScriptIdle,
+            budget_ticks: 10,
+        },
+    });
+    steps.push(Step {
+        name: "walk the primary fighter out of the Duel Arena pen",
+        kind: StepKind::Walk {
+            dest: DUEL_ARENA_PEN_EXIT,
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: DUEL_ARENA_PEN_EXIT.x,
+                z: DUEL_ARENA_PEN_EXIT.z,
+                level: DUEL_ARENA_PEN_EXIT.level,
+                radius: 0,
+            },
+            budget_ticks: DUEL_ARENA_STEP_BUDGET_TICKS,
+        },
+    });
+    steps.push(duel_arena_peer_exit_step(
+        Arc::clone(&duel_exit),
+        DUEL_ARENA_STEP_BUDGET_TICKS,
+    ));
     Scenario {
         name: "duel_arena",
         seed: pair_fleet_seed(),
         steps,
         proof: Proof::Stat { id: 16, min: 0 },
-        companions: vec![pair_companion(PairCompanionKind::DuelPeer)],
+        companions: vec![duel_arena_pair_companion(duel_exit)],
         settings: pair_watch_settings("duel_arena", "Duel Arena Combat Trainer"),
     }
 }
@@ -2372,6 +2428,107 @@ pub fn duel_arena_completed_duel_step(budget_ticks: u32) -> Step {
             arm: Proof::Stat { id: 16, min: 0 },
             budget_ticks,
         },
+    }
+}
+
+#[derive(Default)]
+struct DuelArenaPairExitWitness {
+    primary: DuelRoundTrip,
+    peer: DuelRoundTrip,
+    primary_returned: bool,
+    peer_returned: bool,
+    peer_walk_sent: bool,
+    peer_at_exit: bool,
+}
+
+fn duel_arena_pair_exit_step(
+    witness: Arc<Mutex<DuelArenaPairExitWitness>>,
+    budget_ticks: u32,
+) -> Step {
+    let ready_witness = Arc::clone(&witness);
+    Step {
+        name: "watch both Duel Arena fighters leave their fight pens",
+        kind: StepKind::Await {
+            evidence: "duel_arena_both_fighters_returned_to_lobby",
+            ready: Box::new(move |snap| {
+                let mut witness = ready_witness.lock().expect("Duel Arena pair exit witness");
+                let primary_returned = witness.primary.observe(snap);
+                witness.primary_returned |= primary_returned;
+                witness.primary_returned && witness.peer_returned
+            }),
+            summary: None,
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks,
+        },
+    }
+}
+
+fn duel_arena_peer_exit_step(
+    witness: Arc<Mutex<DuelArenaPairExitWitness>>,
+    budget_ticks: u32,
+) -> Step {
+    let ready_witness = Arc::clone(&witness);
+    Step {
+        name: "confirm the Duel Arena peer walked out of the fight pen",
+        kind: StepKind::Await {
+            evidence: "duel_arena_peer_walked_to_safe_lobby_tile",
+            ready: Box::new(move |_| {
+                ready_witness
+                    .lock()
+                    .expect("Duel Arena pair exit witness")
+                    .peer_at_exit
+            }),
+            summary: None,
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: DUEL_ARENA_PEN_EXIT.x,
+                z: DUEL_ARENA_PEN_EXIT.z,
+                level: DUEL_ARENA_PEN_EXIT.level,
+                radius: 0,
+            },
+            budget_ticks,
+        },
+    }
+}
+
+fn duel_arena_peer_exit_tick(
+    c: &mut Client,
+    snap: &GameSnapshot,
+    slot: &mut PairCompanionSlot,
+    now: Instant,
+) {
+    let Some(witness) = slot.duel_arena_exit.clone() else {
+        return;
+    };
+    let should_walk = {
+        let mut witness = witness.lock().expect("Duel Arena pair exit witness");
+        let peer_returned = witness.peer.observe(snap);
+        witness.peer_returned |= peer_returned;
+        if !witness.peer_returned {
+            return;
+        }
+        if pair_near(snap, DUEL_ARENA_PEN_EXIT, 0) {
+            witness.peer_at_exit = true;
+            return;
+        }
+        !witness.peer_walk_sent
+    };
+    if !should_walk || !send_ok(slot, now) {
+        return;
+    }
+    let sent = matches!(
+        Interactions::new(snap, c).walk(DUEL_ARENA_PEN_EXIT),
+        SendResult::Sent { .. }
+    );
+    slot.last_action = now;
+    if sent {
+        witness
+            .lock()
+            .expect("Duel Arena pair exit witness")
+            .peer_walk_sent = true;
     }
 }
 
