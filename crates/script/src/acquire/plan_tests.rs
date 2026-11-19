@@ -248,7 +248,7 @@ fn generated_empty_request_is_satisfied_but_deposit_only_is_work() {
     let mut deposit_request = request(Vec::new());
     deposit_request.deposit = Some(DepositSpec::Ids {
         products: Arc::from([ITEM]),
-        keep: Arc::from([COINS]),
+        keep: Arc::from([crate::bank::ops::KeepRule::All(COINS)]),
     });
     let deposit_plan = planned(plan_for(&deposit_request, &counts));
     assert_eq!(deposit_plan.withdrawal_count, 0);

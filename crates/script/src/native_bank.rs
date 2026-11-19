@@ -8,7 +8,7 @@
 use crate::bank::npc;
 use crate::bank::ops::{
     self, deposit_option, CloseBaseline, CloseScan, DepositKind, DepositScan, DepositSpec,
-    NoteIntent, Progress, WithdrawGoal, MAX_DEPOSITS, MAX_MEMO,
+    KeepRule, NoteIntent, Progress, WithdrawGoal, MAX_DEPOSITS, MAX_MEMO,
 };
 use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, BankDepositTrace, NativeMachine, WalkOptions};
@@ -406,7 +406,7 @@ pub struct OpenArgs {
 
 pub struct DepositArgs {
     pub products: Arc<[i32]>,
-    pub keep: Arc<[i32]>,
+    pub keep: Arc<[KeepRule]>,
     /// The stand that opened this session; a session lost before the
     /// deposit settles is re-opened from it (`MAX_BANK_REOPENS`).
     pub access: Option<Arc<BankStandAccess>>,
@@ -451,7 +451,7 @@ pub enum BankAction {
     },
     DepositProducts {
         products: Arc<[i32]>,
-        keep: Arc<[i32]>,
+        keep: Arc<[KeepRule]>,
     },
     /// Deposit exactly `slots` safe inventory rows, preserving all `keep` ids.
     DepositCapacity {
@@ -642,6 +642,8 @@ pub struct BankMachine {
     /// MAX_DEPOSITS plus MAX_BANK_REOPENS plus this one
     /// recovery caps deposit sends at 35 per request.
     deposit_recovered: bool,
+    /// Optional keep rules skipped after a bank-full refusal.
+    best_effort_skipped: u64,
     /// Stop after the current transfer reaches an observed boundary.
     interrupted: bool,
 }
@@ -696,7 +698,7 @@ impl NativeMachine for BankMachine {
                     .snapshot()
                     .inventory()
                     .ok_or_else(|| ActionError::Unavailable(Arc::from("inventory unavailable")))?;
-                for id in keep.iter().copied() {
+                for id in keep.iter().map(|rule| rule.id()) {
                     if before.iter().any(|row: &BankCount| row.id == id) {
                         continue;
                     }
@@ -795,6 +797,7 @@ impl NativeMachine for BankMachine {
             reopen_pending: false,
             in_flight: None,
             deposit_recovered: false,
+            best_effort_skipped: 0,
             interrupted: false,
         })
     }
@@ -1512,7 +1515,7 @@ impl NativeMachine for BankMachine {
                                 self.same_session(cx),
                             )
                         } else {
-                            let spec = deposit_spec(&self.request.action)
+                            let spec = deposit_spec(&self.request.action, self.best_effort_skipped)
                                 .expect("deposit actions have a deposit spec");
                             ops::deposit_next(
                                 &spec,
@@ -1563,7 +1566,7 @@ impl NativeMachine for BankMachine {
                             }
                             DepositScan::MissingRequired => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "inventory products remain but matching bank side row is missing",
+                                    "inventory products remain without a safe matching bank-side deposit operation",
                                 ))));
                             }
                             DepositScan::Click(click) => {
@@ -1749,6 +1752,24 @@ impl NativeMachine for BankMachine {
                             }
                             Ok(TransferWait::Pending) => return Poll::Pending,
                             Ok(TransferWait::Retry(reason)) => {
+                                if reason == ops::DepositFailure::BankFull {
+                                    if let Some(bit) =
+                                        best_effort_bank_full_bit(&self.request.action, item_id)
+                                    {
+                                        self.best_effort_skipped |= bit;
+                                        self.deposit_log = None;
+                                        self.phase = Phase::Act;
+                                        api::host_log!(
+                                            api::hostlog::Category::BankOp,
+                                            api::hostlog::Level::Info,
+                                            "bank-deposit-skip run={:?} tick={} id={} reason=bank-full optional=1",
+                                            cx.evidence().run,
+                                            cx.evidence().tick,
+                                            item_id,
+                                        );
+                                        continue;
+                                    }
+                                }
                                 if self.deposit_recovered {
                                     return Poll::Ready(Err(ActionError::BankDeposit(reason)));
                                 }
@@ -2023,23 +2044,36 @@ fn npc_intent(access: &BankStandAccess) -> Result<npc::Intent<'_>, ActionError> 
 /// The kernel deposit spec of a deposit action, borrowed from its request:
 /// a one-row deposit must move that id, deposit-all sweeps everything not
 /// kept, and products must leave the pack.
-fn deposit_spec(action: &BankAction) -> Option<DepositSpec<'_>> {
+fn deposit_spec(action: &BankAction, best_effort_skipped: u64) -> Option<DepositSpec<'_>> {
     match action {
         BankAction::Deposit { item } => Some(DepositSpec {
             kind: DepositKind::Required,
             keep: &[],
+            keep_ids: &[],
             only: Some(std::slice::from_ref(&item.id)),
+            best_effort_skipped: 0,
         }),
         BankAction::DepositAll { keep } => Some(DepositSpec {
             kind: DepositKind::UntilEmpty,
-            keep,
+            keep: &[],
+            keep_ids: keep,
             only: None,
+            best_effort_skipped: 0,
         }),
         BankAction::DepositProducts { products, keep } => Some(DepositSpec {
             kind: DepositKind::Required,
             keep,
+            keep_ids: &[],
             only: Some(products),
+            best_effort_skipped,
         }),
+        _ => None,
+    }
+}
+
+fn best_effort_bank_full_bit(action: &BankAction, item_id: i32) -> Option<u64> {
+    match action {
+        BankAction::DepositProducts { keep, .. } => ops::best_effort_keep_bit(keep, item_id),
         _ => None,
     }
 }
@@ -2426,6 +2460,11 @@ impl BankMachine {
                 "content-refused",
                 api::hostlog::Level::Info,
             );
+            if reason == ops::DepositFailure::BankFull
+                && best_effort_bank_full_bit(&self.request.action, item_id).is_some()
+            {
+                return Ok(TransferWait::Retry(ops::DepositFailure::BankFull));
+            }
             return Err(ActionError::BankDeposit(reason));
         }
         if accepted == Some(false) {
@@ -2596,9 +2635,20 @@ impl BankMachine {
     fn protected_unchanged<R: ops::BankRow>(&self, inventory: Option<&[R]>) -> Option<bool> {
         let inventory = inventory?;
         Some(match &self.protected_before {
-            ProtectedCounts::Products(before) => before
-                .iter()
-                .all(|before| ops::count_id(inventory, before.id) == before.count),
+            ProtectedCounts::Products(before) => {
+                let keep = match &self.request.action {
+                    BankAction::DepositProducts { keep, .. } => keep.as_ref(),
+                    _ => &[],
+                };
+                before.iter().all(|before| {
+                    let current = ops::count_id(inventory, before.id);
+                    let minimum = keep
+                        .iter()
+                        .filter(|rule| rule.id() == before.id)
+                        .find_map(|rule| rule.minimum_count());
+                    minimum.map_or(current == before.count, |minimum| current >= minimum)
+                })
+            }
             ProtectedCounts::Capacity(before) => {
                 let BankAction::DepositCapacity {
                     keep, extra_keep, ..
@@ -5548,7 +5598,7 @@ mod tests {
         let request = bank_request(
             BankAction::DepositProducts {
                 products: Arc::from([swordfish, tuna, net, beer]),
-                keep: Arc::from([harpoon, coins]),
+                keep: Arc::from([KeepRule::All(harpoon), KeepRule::All(coins)]),
             },
             false,
         );
@@ -5626,7 +5676,7 @@ mod tests {
             bank_request(
                 BankAction::DepositProducts {
                     products: Arc::from([swordfish, tuna, net, beer]),
-                    keep: Arc::from([harpoon, coins]),
+                    keep: Arc::from([KeepRule::All(harpoon), KeepRule::All(coins)]),
                 },
                 false,
             )
@@ -5718,7 +5768,7 @@ mod tests {
             bank_request(
                 BankAction::DepositProducts {
                     products: Arc::from([swordfish, tuna, net, beer]),
-                    keep: Arc::from([harpoon, coins]),
+                    keep: Arc::from([KeepRule::All(harpoon), KeepRule::All(coins)]),
                 },
                 false,
             ),
@@ -6231,7 +6281,7 @@ mod tests {
             bank_request(
                 BankAction::DepositProducts {
                     products: Arc::from([trout]),
-                    keep: Arc::from([311]),
+                    keep: Arc::from([KeepRule::All(311)]),
                 },
                 false,
             )
@@ -7548,7 +7598,7 @@ mod tests {
             bank: None,
             action: BankAction::DepositProducts {
                 products: Arc::from([product]),
-                keep: Arc::from([tool]),
+                keep: Arc::from([KeepRule::All(tool)]),
             },
             partial_ok: false,
             access: Some(Arc::clone(access)),
@@ -8153,7 +8203,7 @@ mod tests {
             &mut ledger,
             DepositArgs {
                 products: Arc::from([shrimp]),
-                keep: Arc::from([net]),
+                keep: Arc::from([KeepRule::All(net)]),
                 access: Some(Arc::clone(&access)),
             },
         );
@@ -8232,7 +8282,7 @@ mod tests {
             &mut ledger,
             DepositArgs {
                 products: Arc::from([shrimp]),
-                keep: Arc::from([net]),
+                keep: Arc::from([KeepRule::All(net)]),
                 access: Some(Arc::clone(&access)),
             },
         );
@@ -8341,7 +8391,7 @@ mod tests {
             &mut ledger,
             DepositArgs {
                 products: Arc::from([shrimp, anchovy]),
-                keep: Arc::from([net]),
+                keep: Arc::from([KeepRule::All(net)]),
                 access: Some(Arc::clone(&access)),
             },
         );
@@ -8719,7 +8769,7 @@ mod tests {
                 &mut ledger,
                 DepositArgs {
                     products: Arc::from([PRODUCT]),
-                    keep: Arc::from([TOOL]),
+                    keep: Arc::from([KeepRule::All(TOOL)]),
                     access: None,
                 },
             );
@@ -8900,7 +8950,7 @@ mod tests {
                 &mut ledger,
                 DepositArgs {
                     products: Arc::from([PRODUCT, second]),
-                    keep: Arc::from([TOOL]),
+                    keep: Arc::from([KeepRule::All(TOOL)]),
                     access: None,
                 },
             );
@@ -9004,7 +9054,7 @@ mod tests {
                 &mut ledger,
                 DepositArgs {
                     products: Arc::from([PRODUCT]),
-                    keep: Arc::from([TOOL]),
+                    keep: Arc::from([KeepRule::All(TOOL)]),
                     access: Some(access),
                 },
             );
@@ -9106,7 +9156,7 @@ mod tests {
                 &mut ledger,
                 DepositArgs {
                     products: Arc::from([PRODUCT]),
-                    keep: Arc::from([TOOL]),
+                    keep: Arc::from([KeepRule::All(TOOL)]),
                     access: None,
                 },
             );
@@ -9167,7 +9217,7 @@ mod tests {
             &mut deposit_ledger,
             DepositArgs {
                 products: Arc::from([shrimp]),
-                keep: Arc::from([net]),
+                keep: Arc::from([KeepRule::All(net)]),
                 access: None,
             },
         );

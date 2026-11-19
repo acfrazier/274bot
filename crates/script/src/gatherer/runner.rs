@@ -576,9 +576,21 @@ impl Gatherer {
         }
         let mut keep = supply::protected_ids(&self.prepared, self.tool.id);
         keep.keep_unbankable(&self.prepared.selected, inventory);
+        let mut keep_rules = keep
+            .as_slice()
+            .iter()
+            .copied()
+            .map(crate::bank::ops::KeepRule::All)
+            .collect::<Vec<_>>();
+        if crate::bank::ops::count_id(inventory, self.tool.id) > 1 {
+            keep_rules.push(crate::bank::ops::KeepRule::BestEffortAtLeast {
+                id: self.tool.id,
+                count: 1,
+            });
+        }
         DepositSpec::Ids {
             products: supply::bank_deposit_ids(&self.prepared, self.tool.id, inventory),
-            keep: Arc::from(keep.as_slice()),
+            keep: Arc::from(keep_rules),
         }
     }
 
@@ -4019,16 +4031,36 @@ mod tests {
             eat_below: i32,
             banks: Arc<api::named_banks::NamedBankFacts>,
         ) -> Self {
-            Self::with_eat_below_disposition_and_banks(eat_below, "Bank", banks)
+            Self::with_eat_below_disposition_method_and_banks(
+                eat_below,
+                "Bank",
+                "fishing.saltfish.op3",
+                banks,
+            )
         }
 
         fn with_disposition(disposition: &str) -> Self {
-            Self::with_eat_below_disposition_and_banks(0, disposition, Self::test_banks())
+            Self::with_eat_below_disposition_method_and_banks(
+                0,
+                disposition,
+                "fishing.saltfish.op3",
+                Self::test_banks(),
+            )
         }
 
-        fn with_eat_below_disposition_and_banks(
+        pub(super) fn with_fishing_method(fishing_method: &str) -> Self {
+            Self::with_eat_below_disposition_method_and_banks(
+                0,
+                "Bank",
+                fishing_method,
+                Self::test_banks(),
+            )
+        }
+
+        fn with_eat_below_disposition_method_and_banks(
             eat_below: i32,
             disposition: &str,
+            fishing_method: &str,
             banks: Arc<api::named_banks::NamedBankFacts>,
         ) -> Self {
             use crate::quester::families::tests::{def, local_player};
@@ -4042,7 +4074,7 @@ mod tests {
             let mut bag = crate::native::SettingsBag::new();
             for (key, value) in [
                 ("skill", serde_json::json!("Fishing")),
-                ("fishingMethod", serde_json::json!("fishing.saltfish.op3")),
+                ("fishingMethod", serde_json::json!(fishing_method)),
                 ("baitTarget", serde_json::json!(10)),
                 ("disposition", serde_json::json!(disposition)),
                 ("buyTools", serde_json::json!(false)),
@@ -4084,9 +4116,10 @@ mod tests {
                 xp: 0,
                 used: true,
             }]);
+            let tool = known_rows(&prepared.catalog.methods()[prepared.methods[0]].tools)[0].item;
             snapshot.seed_inventory(
                 vec![ItemView {
-                    def: def(307, "Fishing rod"),
+                    def: def(tool, "Gathering tool"),
                     container: ItemContainer::Inventory,
                     action_family: ItemActionFamily::Held,
                     slot: 0,
@@ -4119,9 +4152,10 @@ mod tests {
                     bank_session: 1,
                 },
             );
-            let bait = prepared.supply.bait.as_ref().unwrap().id;
             let mut hint = BankMemory::default();
-            hint.load_hint(vec![(bait, 20)], 1).unwrap();
+            if let Some(bait) = prepared.supply.bait.as_ref() {
+                hint.load_hint(vec![(bait.id, 20)], 1).unwrap();
+            }
             Self {
                 config,
                 prepared,

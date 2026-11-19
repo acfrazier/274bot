@@ -120,6 +120,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   with spare logs, and judge cycles without a chance XP requirement. Startup
   counts player-tile movement on native and replacement routes.
 - Power mode now drops empty antipoison vials instead of carrying them.
+- Gatherer bank trips deposit duplicate copies of the active gathering tool
+  while retaining one; alternate tools remain protected. If a full bank refuses
+  the spare-tool deposit, the spare stays in the pack and the trip continues.
 
 ### Native acquisition
 

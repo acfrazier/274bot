@@ -464,7 +464,7 @@ impl AcquireRun {
                             if let Some(rows) = tick.cx.snapshot().inventory() {
                                 self.kept_unbankable |= rows.value.iter().any(|row| {
                                     row.count > 0
-                                        && keep.contains(&row.def.id)
+                                        && keep.iter().any(|rule| rule.id() == row.def.id)
                                         && super::unbankable_index(&selected, row).is_some()
                                 });
                             }

@@ -598,18 +598,21 @@ pub fn protected_ids(prepared: &Prepared, tool_id: i32) -> ProtectedIds {
 
 /// Return every observed positive-count inventory item ID except gathering
 /// tools, prepared supplies, held antipoison doses and content-defined
-/// unbankable items. Bankable incidental non-products are deposited too. The
-/// deposit moves only these ids (`DepositProducts` is `only: Some(products)`,
-/// `native_bank.rs` `deposit_spec`), so a held antipoison or super antipoison
-/// dose stays in the pack for the next poison.
+/// unbankable items. A duplicate copy of the selected active tool is eligible
+/// for count-bounded deposit; alternate tools remain protected.
 pub fn bank_deposit_ids(prepared: &Prepared, tool_id: i32, inventory: &[ItemView]) -> Arc<[i32]> {
     let mut protected = protected_ids(prepared, tool_id);
     protected.keep_unbankable(&prepared.selected, inventory);
+    let spare_active_tool = crate::bank::ops::count_id(inventory, tool_id) > 1;
     let tables = crate::combat::guard::shared_tables_ref();
     let mut ids = Vec::with_capacity(inventory.len());
     for item in inventory {
         let id = item.def.id;
-        if id < 0 || item.count <= 0 || protected.as_slice().contains(&id) || ids.contains(&id) {
+        if id < 0
+            || item.count <= 0
+            || ids.contains(&id)
+            || (protected.as_slice().contains(&id) && !(id == tool_id && spare_active_tool))
+        {
             continue;
         }
         if tables.is_some_and(|tables| crate::survival::cure::is_antipoison_dose(tables, id)) {
@@ -620,7 +623,7 @@ pub fn bank_deposit_ids(prepared: &Prepared, tool_id: i32, inventory: &[ItemView
                 .iter()
                 .any(|tool| tool.item == id)
         });
-        if !gathering_tool {
+        if !gathering_tool || (id == tool_id && spare_active_tool) {
             ids.push(id);
         }
     }

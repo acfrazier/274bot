@@ -271,8 +271,10 @@ fn p_match_identity_is_the_obj_id() {
     let pack = [held_at(TROUT, 3, 0), held_at(TROUT_NOTE, 12, 1)];
     let keep_item = DepositSpec {
         kind: DepositKind::UntilEmpty,
-        keep: &[TROUT],
+        keep: &[],
+        keep_ids: &[TROUT],
         only: None,
+        best_effort_skipped: 0,
     };
     let click = DepositClick {
         id: TROUT_NOTE,
@@ -300,8 +302,10 @@ fn p_match_identity_is_the_obj_id() {
     assert_eq!(named, [TROUT, TROUT_NOTE]);
     let keep_name = DepositSpec {
         kind: DepositKind::UntilEmpty,
-        keep: &named,
+        keep: &[],
+        keep_ids: &named,
         only: None,
+        best_effort_skipped: 0,
     };
     assert_eq!(
         deposit_next(&keep_name, Some(&side[..]), Some(&pack[..]), false, true),
@@ -321,7 +325,9 @@ fn p_match_identity_is_the_obj_id() {
     let spec = DepositSpec {
         kind: DepositKind::UntilEmpty,
         keep: &[],
+        keep_ids: &[],
         only: None,
+        best_effort_skipped: 0,
     };
     assert!(matches!(
         deposit_next(&spec, Some(&[nameless][..]), Some(&pack[..]), false, true),
@@ -340,8 +346,10 @@ fn stale_side_candidate_after_first_fish_is_skipped() {
     let pack = [held_at(tuna, 14, 1)];
     let spec = DepositSpec {
         kind: DepositKind::Required,
-        keep: &[995, 311],
+        keep: &[KeepRule::All(995), KeepRule::All(311)],
+        keep_ids: &[],
         only: Some(&[swordfish, tuna][..]),
+        best_effort_skipped: 0,
     };
     let click = DepositClick {
         id: tuna,
@@ -368,8 +376,10 @@ fn stale_last_fish_is_skipped_for_a_current_incidental_candidate() {
     let pack = [held_at(beer, 1, 1)];
     let spec = DepositSpec {
         kind: DepositKind::Required,
-        keep: &[995, 311],
+        keep: &[KeepRule::All(995), KeepRule::All(311)],
+        keep_ids: &[],
         only: Some(&[tuna, beer][..]),
+        best_effort_skipped: 0,
     };
     let click = DepositClick {
         id: beer,
@@ -397,6 +407,149 @@ fn stale_last_fish_is_skipped_for_a_current_incidental_candidate() {
     );
 }
 
+#[test]
+fn counted_product_deposit_moves_spare_harpoon_and_keeps_one() {
+    const HARPOON: i32 = 311;
+    let side = [native(HARPOON, "Harpoon", 1, 0, 2006, &[Some("Deposit-1")])];
+    let products = [HARPOON];
+    let spec = DepositSpec {
+        kind: DepositKind::Required,
+        keep: &[
+            KeepRule::All(HARPOON),
+            KeepRule::AtLeast {
+                id: HARPOON,
+                count: 1,
+            },
+        ],
+        keep_ids: &[],
+        only: Some(&products),
+        best_effort_skipped: 0,
+    };
+    let pack = [held_at(HARPOON, 1, 0), held_at(HARPOON, 1, 1)];
+
+    assert_eq!(
+        deposit_next(&spec, Some(&side), Some(&pack), false, true),
+        DepositScan::Click(DepositClick {
+            id: HARPOON,
+            slot: 0,
+            component: 2006,
+            operation: 1,
+        })
+    );
+
+    let one_left = [held_at(HARPOON, 1, 1)];
+    assert_eq!(
+        deposit_next(&spec, Some(&side), Some(&one_left), false, true),
+        DepositScan::Done
+    );
+}
+
+#[test]
+fn best_effort_keep_can_be_skipped_without_skipping_other_products() {
+    const HARPOON: i32 = 311;
+    const FISH: i32 = 359;
+    let side = [
+        native(HARPOON, "Harpoon", 1, 0, 2006, &[Some("Deposit-1")]),
+        native(FISH, "Tuna", 3, 1, 2006, &[Some("Deposit-All")]),
+    ];
+    let keep = [KeepRule::BestEffortAtLeast {
+        id: HARPOON,
+        count: 1,
+    }];
+    let products = [HARPOON, FISH];
+    let spec = DepositSpec {
+        kind: DepositKind::Required,
+        keep: &keep,
+        keep_ids: &[],
+        only: Some(&products),
+        best_effort_skipped: best_effort_keep_bit(&keep, HARPOON).unwrap(),
+    };
+    let pack = [
+        held_at(HARPOON, 1, 0),
+        held_at(HARPOON, 1, 2),
+        held_at(FISH, 3, 1),
+    ];
+
+    assert_eq!(
+        deposit_next(&spec, Some(&side), Some(&pack), false, true),
+        DepositScan::Click(DepositClick {
+            id: FISH,
+            slot: 1,
+            component: 2006,
+            operation: 1,
+        })
+    );
+}
+
+#[test]
+fn counted_product_deposit_keeps_a_single_harpoon() {
+    const HARPOON: i32 = 311;
+    let side = [native(HARPOON, "Harpoon", 1, 0, 2006, &[Some("Deposit-1")])];
+    let spec = DepositSpec {
+        kind: DepositKind::Required,
+        keep: &[
+            KeepRule::All(HARPOON),
+            KeepRule::AtLeast {
+                id: HARPOON,
+                count: 1,
+            },
+        ],
+        keep_ids: &[],
+        only: Some(&[HARPOON]),
+        best_effort_skipped: 0,
+    };
+
+    assert_eq!(
+        deposit_next(
+            &spec,
+            Some(&side),
+            Some(&[held_at(HARPOON, 1, 0)]),
+            false,
+            true
+        ),
+        DepositScan::Done
+    );
+}
+
+#[test]
+fn counted_keep_does_not_keep_other_product_ids() {
+    const HARPOON: i32 = 311;
+    const FISH: i32 = 359;
+    let side = [
+        native(FISH, "Tuna", 1, 2, 2006, &[Some("Deposit-All")]),
+        native(HARPOON, "Harpoon", 1, 0, 2006, &[Some("Deposit-1")]),
+    ];
+    let products = [HARPOON, FISH];
+    let spec = DepositSpec {
+        kind: DepositKind::Required,
+        keep: &[
+            KeepRule::All(HARPOON),
+            KeepRule::AtLeast {
+                id: HARPOON,
+                count: 1,
+            },
+        ],
+        keep_ids: &[],
+        only: Some(&products),
+        best_effort_skipped: 0,
+    };
+    let pack = [
+        held_at(HARPOON, 1, 0),
+        held_at(HARPOON, 1, 1),
+        held_at(FISH, 1, 2),
+    ];
+
+    assert_eq!(
+        deposit_next(&spec, Some(&side), Some(&pack), false, true),
+        DepositScan::Click(DepositClick {
+            id: FISH,
+            slot: 2,
+            component: 2006,
+            operation: 1,
+        })
+    );
+}
+
 /// Required completion follows current candidates, not leftover side rows;
 /// protected supplies remain untouched.
 #[test]
@@ -413,8 +566,10 @@ fn stale_side_rows_do_not_block_completion_when_only_kept_items_remain() {
     let pack = [held_at(311, 1, 0), held_at(995, 6191, 1)];
     let spec = DepositSpec {
         kind: DepositKind::Required,
-        keep: &[311, 995],
+        keep: &[KeepRule::All(311), KeepRule::All(995)],
+        keep_ids: &[],
         only: Some(&[fish][..]),
+        best_effort_skipped: 0,
     };
     assert_eq!(
         deposit_next(&spec, Some(&side[..]), Some(&pack[..]), false, true),
@@ -432,12 +587,16 @@ fn p_settle_posted_empty_is_not_absent() {
     let required = DepositSpec {
         kind: DepositKind::Required,
         keep: &[],
+        keep_ids: &[],
         only: Some(&[product][..]),
+        best_effort_skipped: 0,
     };
     let until_empty = DepositSpec {
         kind: DepositKind::UntilEmpty,
         keep: &[],
+        keep_ids: &[],
         only: None,
+        best_effort_skipped: 0,
     };
     let holding = [held(product, 1)];
     let empty: [ItemView; 0] = [];
@@ -497,7 +656,7 @@ fn p_settle_posted_empty_is_not_absent() {
     );
     // Keep wins over only.
     let kept = DepositSpec {
-        keep: &[product],
+        keep: &[KeepRule::All(product)],
         ..required
     };
     assert_eq!(
