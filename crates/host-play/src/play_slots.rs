@@ -2000,7 +2000,7 @@ fn spawn_slot_thread(
                             // status lock (scripts -> statuses is the only
                             // order the two mutexes may nest).
                             let paint = script_paint_of(&slot_scripts, name);
-                            let survival = script_survival_of(&slot_scripts, name);
+                            let survival = script_survival_of(&slot_scripts, &slot_navs, name);
                             let login_latch_reason = arm_latch_obs.login_latch_reason();
                             let (up, here, active_world) = {
                                 let mut all = lock_statuses(&slot_statuses);

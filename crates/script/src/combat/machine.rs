@@ -1818,6 +1818,29 @@ impl Combat {
             self.eat_ready = ready;
         }
     }
+
+    pub(crate) fn survival_report(&self) -> Option<crate::survival::SurvivalReport> {
+        let cure_drink = self.pending.iter().any(|pending| {
+            pending.row.kind == RowKind::Drink
+                && matches!(
+                    potion_kind(pending.row.aux),
+                    PotionKind::Antipoison | PotionKind::SuperAntipoison
+                )
+        });
+        let decision = if cure_drink {
+            crate::survival::Decision::Drinking
+        } else if self.pending_row(RowKind::Eat) || self.pending_row(RowKind::CureFruit) {
+            crate::survival::Decision::Eating
+        } else {
+            return None;
+        };
+        Some(crate::survival::SurvivalReport {
+            decision,
+            owner: crate::survival::Owner::Combat,
+            ..crate::survival::SurvivalReport::default()
+        })
+    }
+
     fn pending_row(&self, kind: RowKind) -> bool {
         self.pending.iter().any(|pending| pending.row.kind == kind)
     }

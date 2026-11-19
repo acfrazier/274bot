@@ -505,6 +505,29 @@ impl WalkGuard {
     pub fn pending_protect_tick(&self) -> Option<u16> {
         self.pending_protect().map(|_| self.prayer_admission_tick)
     }
+    /// Current admitted cure or food action.
+    pub fn survival_report(&self) -> Option<crate::survival::SurvivalReport> {
+        let decision = if self.schedule.pending(OpKind::Drink) && self.flags & FLAG_CURE_FRUIT != 0
+        {
+            crate::survival::Decision::Eating
+        } else if self.schedule.pending(OpKind::Drink)
+            && matches!(
+                self.drink_kind,
+                PotionKind::Antipoison | PotionKind::SuperAntipoison
+            )
+        {
+            crate::survival::Decision::Drinking
+        } else if self.schedule.pending(OpKind::Eat) {
+            crate::survival::Decision::Eating
+        } else {
+            return None;
+        };
+        Some(crate::survival::SurvivalReport {
+            decision,
+            owner: crate::survival::Owner::Guard,
+            ..crate::survival::SurvivalReport::default()
+        })
+    }
 
     /// Commit a proposal only after its host interaction was successfully sent.
     pub fn admitted(&mut self, op: &GuardOp, snapshot: &SnapshotView<'_>) {
@@ -1010,6 +1033,23 @@ pub(crate) mod tests {
         assert_eat(Some(&eat), "Cooked karambwan");
         guard.admitted(&eat, &scene.view_at(0));
         (Arc::clone(&scene.tables), guard, 0)
+    }
+
+    #[test]
+    fn survival_report_names_an_admitted_guard_bite() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (_tables, guard, _) = karambwan_guard_after_a_bite();
+        assert_eq!(
+            guard
+                .survival_report()
+                .map(|report| (report.decision, report.owner)),
+            Some((
+                crate::survival::Decision::Eating,
+                crate::survival::Owner::Guard
+            ))
+        );
     }
 
     /// The admitted karambwan bite locks input for a while; the guard reports
@@ -2892,13 +2932,18 @@ pub(crate) mod tests {
                 .unwrap();
             assert!(
                 matches!(
-                    op,
+                    &op,
                     GuardOp::Drink {
                         kind: PotionKind::Antipoison,
                         ..
                     }
                 ),
                 "food_only={food_only}, got {op:?}"
+            );
+            guard.admitted(&op, &scene.view_at(0));
+            assert_eq!(
+                guard.survival_report().map(|report| report.decision),
+                Some(crate::survival::Decision::Drinking)
             );
         }
     }

@@ -478,6 +478,10 @@ pub trait StepRun: Send {
         false
     }
     fn interrupt_transfer(&mut self, _actions: &mut NativeActions) {}
+    /// Current admitted survival action owned by this step.
+    fn survival_action(&self) -> Option<crate::survival::SurvivalReport> {
+        None
+    }
     /// Combat raises retained for a cancellation/error hygiene handoff.
     fn prayer_cleanup(&self) -> RaisedPrayers {
         RaisedPrayers::empty()

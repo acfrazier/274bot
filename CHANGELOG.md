@@ -356,6 +356,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   normal timers. Once the modal closes, a hit still keeps risk active until a
   new poison mark.
 
+- During a walk or fight, the status row shows the actual drink or bite.
+
 ### Fixed during development
 
 #### Survival

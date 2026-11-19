@@ -669,6 +669,45 @@ fn fight(scene: &mut Scene) -> Harness {
     assert_eq!(harness.machine.phase, Phase::Fight);
     harness
 }
+
+#[test]
+fn survival_report_names_pending_cures_and_bites() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let scene = Scene::new("imp");
+    let mut harness = Harness::new(&scene, scene.request());
+    let pending = |kind: RowKind, aux: u8| PendingRow {
+        row: PlanRow::new(kind, 0, aux),
+        ..PendingRow::default()
+    };
+    let expected = |decision: crate::survival::Decision| {
+        Some(crate::survival::SurvivalReport {
+            decision,
+            owner: crate::survival::Owner::Combat,
+            ..crate::survival::SurvivalReport::default()
+        })
+    };
+
+    harness.machine.pending[0] = pending(RowKind::Drink, PotionKind::Antipoison as u8);
+    assert_eq!(
+        harness.machine.survival_report(),
+        expected(crate::survival::Decision::Drinking)
+    );
+    harness.machine.pending[0] = pending(RowKind::Drink, PotionKind::Prayer as u8);
+    assert_eq!(harness.machine.survival_report(), None);
+    harness.machine.pending[0] = pending(RowKind::Eat, 0);
+    assert_eq!(
+        harness.machine.survival_report(),
+        expected(crate::survival::Decision::Eating)
+    );
+    harness.machine.pending[0] = pending(RowKind::CureFruit, 0);
+    assert_eq!(
+        harness.machine.survival_report(),
+        expected(crate::survival::Decision::Eating)
+    );
+}
+
 fn user_input_walk_receipt(harness: &mut Harness, tick: u64) {
     post_walk_receipt(harness, tick, crate::native::WalkEnd::UserInput, None);
 }

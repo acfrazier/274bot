@@ -355,6 +355,44 @@ mod tests {
     }
 
     #[test]
+    fn survival_actions_are_visible_in_wide_and_compact_status_captures() {
+        use frontend_core::{
+            SurvivalCureWhy as CureWhy, SurvivalDecision as Decision, SurvivalNeed,
+            SurvivalNeedWhy as NeedWhy, SurvivalOwner as Owner, SurvivalReport,
+        };
+
+        let mut detail = SlotDetail::default();
+        for (decision, owner, row) in [
+            (
+                Decision::Drinking,
+                Owner::Guard,
+                "Drinking: poisoned: would die; needs antipoison",
+            ),
+            (
+                Decision::Eating,
+                Owner::Combat,
+                "Eating: poisoned: would die; needs antipoison",
+            ),
+        ] {
+            detail.set_survival(SurvivalReport {
+                decision,
+                why: Some(CureWhy::Lethal),
+                need: Some(SurvivalNeed::Cure {
+                    or_food: 0,
+                    ref_heal: 12,
+                    why: NeedWhy::Lethal,
+                }),
+                tried: 0,
+                owner,
+            });
+            for (width, height) in [(120, 40), (80, 24)] {
+                let capture = render(StatusPane::new(Some(&detail), "—", "lowmem"), width, height);
+                assert!(capture.contains(row), "{width}x{height}: {capture:?}");
+            }
+        }
+    }
+
+    #[test]
     fn the_meter_shows_measuring_and_unavailable_values() {
         let view = ResourceView::with_metrics(
             Metric::Measuring,

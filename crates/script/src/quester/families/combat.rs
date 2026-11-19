@@ -2403,6 +2403,18 @@ impl CombatRun {
 }
 
 impl StepRun for CombatRun {
+    fn survival_action(&self) -> Option<crate::survival::SurvivalReport> {
+        match self.action.as_ref()? {
+            Action::Combat(handle) => handle
+                .inspect(|machine| machine.survival_report())
+                .flatten(),
+            Action::AbortHold(handle) => handle
+                .inspect(|machine| machine.guard.as_ref().and_then(WalkGuard::survival_report))
+                .flatten(),
+            _ => None,
+        }
+    }
+
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         self.capture_prayer_cleanup();
         self.observe_stand_walks();

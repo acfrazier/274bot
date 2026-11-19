@@ -46,6 +46,24 @@ pub struct SurvivalReport {
 
 const _: () = assert!(std::mem::size_of::<SurvivalReport>() <= 12);
 
+impl SurvivalReport {
+    /// Use a current guard or combat action in place of a deferred survival need.
+    ///
+    /// Keep the need details so the status row retains its reason.
+    pub fn with_action(mut self, action: Option<Self>) -> Self {
+        let Some(action) = action else {
+            return self;
+        };
+        if matches!(self.decision, Decision::None | Decision::Needed)
+            && matches!(action.decision, Decision::Drinking | Decision::Eating)
+        {
+            self.decision = action.decision;
+            self.owner = action.owner;
+        }
+        self
+    }
+}
+
 /// One current-frame survival outcome.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Decision {
@@ -1888,5 +1906,51 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn report_uses_current_guard_or_combat_action() {
+        let needed = SurvivalReport {
+            decision: Decision::Needed,
+            why: Some(crate::survival::cure::CureWhy::Lethal),
+            need: Some(SurvivalNeed::Cure {
+                or_food: 0,
+                ref_heal: 12,
+                why: NeedWhy::Lethal,
+            }),
+            tried: 1,
+            owner: Owner::Step,
+        };
+        for (decision, owner) in [
+            (Decision::Drinking, Owner::Guard),
+            (Decision::Eating, Owner::Combat),
+        ] {
+            let action = SurvivalReport {
+                decision,
+                owner,
+                ..SurvivalReport::default()
+            };
+            assert_eq!(
+                needed.with_action(Some(action)),
+                SurvivalReport {
+                    decision,
+                    owner,
+                    ..needed
+                }
+            );
+        }
+        assert_eq!(needed.with_action(None), needed);
+        let parked = SurvivalReport {
+            decision: Decision::Parked,
+            ..needed
+        };
+        assert_eq!(
+            parked.with_action(Some(SurvivalReport {
+                decision: Decision::Drinking,
+                owner: Owner::Guard,
+                ..SurvivalReport::default()
+            })),
+            parked
+        );
     }
 }
