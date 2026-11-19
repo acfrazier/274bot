@@ -1,13 +1,12 @@
 //! v2 hunt File cells. Each run below is what host-play records for one
-//! Start: the slot's dispatched requests (the act ledger), the host tile and
-//! pack each frame, the example's paint receipt and its named stop. A
+//! Start: the slot's dispatched requests (the act ledger), host tile and bank
+//! state each frame, the example's paint receipt and its named stop. A
 //! "no-op" run is the example with its `await *Run(...)` line deleted: it
 //! paints the same receipt shape, but the host saw no request and no move.
 
 use host_play::catalog_core::{
     parse_hunt_receipt_line, CoreCase, CoreWatch, HuntCell, LineOfSightTile, Observation,
-    ScriptAct, ScriptActLedger, ACQUIRE_KEY_DEST, BANK_V2_DEST, CELL_V2_DOOR, DUSTY_KEY_ID,
-    HUNT_ACT_ROWS, JAILER, JAIL_DOOR_LOC, JAIL_KEY_ID, VELRAK,
+    ScriptAct, ScriptActLedger, BANK_V2_DEST, HUNT_ACT_ROWS,
 };
 use serde_json::{json, Value};
 
@@ -54,12 +53,11 @@ struct HuntRun {
 }
 
 impl HuntRun {
-    /// Configure `case`, publish a Start baseline on `from` holding `items`
-    /// with `earlier` requests already in the slot's ledger, and Start.
+    /// Configure `case`, publish a Start baseline on `from` with `earlier`
+    /// requests already in the slot's ledger, and Start.
     fn start_after(
         case: &str,
         from: LineOfSightTile,
-        items: &[(i32, i32)],
         earlier: &[ScriptAct],
     ) -> Result<Self, String> {
         let case = CoreCase::parse(case).expect("a hunt case");
@@ -75,7 +73,6 @@ impl HuntRun {
             scene_state: 2,
             player: Some("catalogtest".into()),
             tile: Some((from.x, from.z, from.level)),
-            item_ids: items.iter().copied().collect(),
             ..Observation::default()
         };
         obs.hunt.available = true;
@@ -91,7 +88,7 @@ impl HuntRun {
     }
 
     fn start(case: &str, from: LineOfSightTile) -> Self {
-        Self::start_after(case, from, &[], &[]).expect("Start baseline")
+        Self::start_after(case, from, &[]).expect("Start baseline")
     }
 
     fn frame(&mut self) -> &mut Self {
@@ -111,11 +108,6 @@ impl HuntRun {
     fn at(&mut self, tile: LineOfSightTile) -> &mut Self {
         self.obs.tile = Some((tile.x, tile.z, tile.level));
         self.frame()
-    }
-
-    fn holding(&mut self, id: i32, count: i32) -> &mut Self {
-        self.obs.item_ids.insert(id, count);
-        self
     }
 
     /// The host bank interface this frame.
@@ -157,16 +149,11 @@ fn walk_dest() -> LineOfSightTile {
 #[test]
 fn hunt_cells_ignore_requests_from_before_start() {
     let (from, dest) = (walk_from(), walk_dest());
-    let before = HuntRun::start_after(
-        "walk_spot_v2_ts",
-        from,
-        &[],
-        &[walk_act(dest, true, 0, true)],
-    )
-    .expect("Start baseline")
-    .at(dest)
-    .paint(hunt_receipt(done(Value::Null), from, dest, dest))
-    .stop();
+    let before = HuntRun::start_after("walk_spot_v2_ts", from, &[walk_act(dest, true, 0, true)])
+        .expect("Start baseline")
+        .at(dest)
+        .paint(hunt_receipt(done(Value::Null), from, dest, dest))
+        .stop();
     assert!(!before, "a walk sent before Start is not this run's");
 }
 
@@ -218,139 +205,6 @@ fn walk_spot_passes_only_on_the_hosts_long_walk_and_arrival() {
         !short_return,
         "a short return walk cannot pass as a long walk to the declared spot"
     );
-}
-
-/// Frozen `HERO_TILE.TAVERLEY_DUNGEON`, the key and cell cards' landing.
-fn landing() -> LineOfSightTile {
-    ht(2884, 9798)
-}
-
-fn jail_receipt(outcome: Value, here: LineOfSightTile) -> Value {
-    let mut receipt = hunt_receipt(outcome, landing(), here, ACQUIRE_KEY_DEST);
-    receipt["key"] = json!("taverley-blue");
-    receipt
-}
-
-fn jailer_attack() -> ScriptAct {
-    ScriptAct::Npc {
-        name: JAILER.into(),
-        action: "Attack".into(),
-        index: 12,
-    }
-}
-
-#[test]
-fn acquire_key_passes_only_on_the_corridor_walk_the_attack_and_the_key() {
-    let (corridor, fight) = (ht(2931, 9691), ht(2932, 9693));
-    let real = HuntRun::start("acquire_key_v2_ts", landing())
-        .act(walk_act(ACQUIRE_KEY_DEST, false, 1, false))
-        .at(corridor)
-        .act(jailer_attack())
-        .at(fight)
-        .holding(JAIL_KEY_ID, 1)
-        .paint(jail_receipt(done(json!(true)), fight))
-        .stop();
-    assert!(
-        real,
-        "corridor walk, arrival, Jailer attack, key held, named stop"
-    );
-
-    let no_op = HuntRun::start("acquire_key_v2_ts", landing())
-        .paint(jail_receipt(done(json!(true)), landing()))
-        .stop();
-    assert!(!no_op, "a no-op run cannot pass");
-
-    let no_key = HuntRun::start("acquire_key_v2_ts", landing())
-        .act(walk_act(ACQUIRE_KEY_DEST, false, 1, false))
-        .at(corridor)
-        .act(jailer_attack())
-        .paint(jail_receipt(done(json!(true)), corridor))
-        .stop();
-    assert!(
-        !no_key,
-        "a settled true without the jail key in the pack cannot pass"
-    );
-
-    let unarrived = HuntRun::start("acquire_key_v2_ts", landing())
-        .act(walk_act(ACQUIRE_KEY_DEST, false, 1, false))
-        .act(jailer_attack())
-        .holding(JAIL_KEY_ID, 1)
-        .paint(jail_receipt(done(json!(true)), landing()))
-        .stop();
-    assert!(!unarrived, "the host tile never reached the corridor");
-
-    assert!(
-        HuntRun::start_after("acquire_key_v2_ts", landing(), &[(JAIL_KEY_ID, 1)], &[]).is_err(),
-        "a jail key already held at Start is not this run's"
-    );
-}
-
-#[test]
-fn cell_passes_only_on_the_frozen_fetch_from_velrak_sequence() {
-    let (at_door, door_loc, inside) = (ht(2931, 9691), ht(2931, 9689), ht(2931, 9686));
-    let unlock = ScriptAct::UseOnLoc {
-        item: "Jail key".into(),
-        tile: door_loc,
-    };
-    let talk = ScriptAct::Npc {
-        name: VELRAK.into(),
-        action: "Talk-to".into(),
-        index: 4,
-    };
-    let open = ScriptAct::Loc {
-        tile: door_loc,
-        id: JAIL_DOOR_LOC,
-        action: "Open".into(),
-    };
-    let fetch = |steps: &[ScriptAct]| {
-        let mut run = HuntRun::start_after("cell_v2_ts", landing(), &[(JAIL_KEY_ID, 1)], &[])
-            .expect("Start baseline");
-        for act in steps {
-            run.act(act.clone());
-            let tile = match act {
-                ScriptAct::Walk { .. } => at_door,
-                ScriptAct::UseOnLoc { .. } => inside,
-                ScriptAct::Loc { .. } => CELL_V2_DOOR,
-                _ => continue,
-            };
-            run.at(tile);
-        }
-        run.holding(DUSTY_KEY_ID, 1)
-            .paint(jail_receipt(done(json!(true)), CELL_V2_DOOR))
-            .stop()
-    };
-    let door_near = walk_act(CELL_V2_DOOR, false, 1, false);
-    assert!(
-        fetch(&[
-            door_near.clone(),
-            unlock.clone(),
-            talk.clone(),
-            open.clone()
-        ]),
-        "walk near the jail door, unlock, talk, open: dusty key held outside"
-    );
-    assert!(
-        !fetch(&[unlock.clone(), talk.clone(), open.clone()]),
-        "frozen fetchFromVelrak walks near JAIL_DOOR before anything else"
-    );
-    assert!(
-        !fetch(&[
-            door_near.clone(),
-            talk.clone(),
-            unlock.clone(),
-            open.clone()
-        ]),
-        "Velrak is behind the door: the unlock comes before the talk"
-    );
-    assert!(
-        !fetch(&[door_near, unlock, open]),
-        "a dusty key nobody talked to Velrak for cannot pass"
-    );
-
-    let no_op = HuntRun::start("cell_v2_ts", landing())
-        .paint(jail_receipt(done(json!(true)), landing()))
-        .stop();
-    assert!(!no_op, "a no-op run cannot pass");
 }
 
 fn bank_receipt(outcome: Value, from: LineOfSightTile, here: LineOfSightTile) -> Value {

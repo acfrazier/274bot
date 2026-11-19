@@ -129,8 +129,6 @@ pub enum CoreCase {
     RouteInspectBrimhavenV2,
     PrayerV2,
     WalkSpotV2,
-    AcquireKeyV2,
-    CellV2,
     BankV2,
 }
 
@@ -264,8 +262,6 @@ impl CoreCase {
             "route_inspect_brimhaven_v2_ts" => Ok(Self::RouteInspectBrimhavenV2),
             "prayer_v2_ts" => Ok(Self::PrayerV2),
             "walk_spot_v2_ts" => Ok(Self::WalkSpotV2),
-            "acquire_key_v2_ts" => Ok(Self::AcquireKeyV2),
-            "cell_v2_ts" => Ok(Self::CellV2),
             "bank_v2_ts" => Ok(Self::BankV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
@@ -402,8 +398,6 @@ impl CoreCase {
             Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2_ts",
             Self::PrayerV2 => "prayer_v2_ts",
             Self::WalkSpotV2 => "walk_spot_v2_ts",
-            Self::AcquireKeyV2 => "acquire_key_v2_ts",
-            Self::CellV2 => "cell_v2_ts",
             Self::BankV2 => "bank_v2_ts",
         }
     }
@@ -509,8 +503,6 @@ impl CoreCase {
             Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2",
             Self::PrayerV2 => "prayer_v2",
             Self::WalkSpotV2 => "walk_spot_v2",
-            Self::AcquireKeyV2 => "acquire_key_v2",
-            Self::CellV2 => "cell_v2",
             Self::BankV2 => "bank_v2",
         }
     }
@@ -531,8 +523,6 @@ impl CoreCase {
     pub fn hunt_cell(self) -> Option<HuntCell> {
         Some(match self {
             Self::WalkSpotV2 => HuntCell::WalkSpot,
-            Self::AcquireKeyV2 => HuntCell::Key,
-            Self::CellV2 => HuntCell::Cell,
             Self::BankV2 => HuntCell::Bank,
             _ => return None,
         })

@@ -27,14 +27,11 @@ pub use ranging::{
 #[path = "catalog_core_hunt.rs"]
 mod hunt;
 pub use hunt::{
-    hunt_baseline_ready, parse_hunt_receipt_line, HuntBox, HuntCell, HuntDeliveryCycle,
-    HuntObservation, HuntOutcome, HuntReceipt, LineOfSightTile, ScriptAct, ScriptActLedger,
-    ScriptActRow, ScriptActsPublished, ACQUIRE_KEY_DEST, ACQUIRE_KEY_RADIUS,
-    ACQUIRE_KEY_RECEIPT_PREFIX, ACQUIRE_KEY_V2_STOP, BANK_V2_DEST, BANK_V2_RADIUS,
-    BANK_V2_RECEIPT_PREFIX, BANK_V2_STOP, CELL_V2_DOOR, CELL_V2_RADIUS, CELL_V2_RECEIPT_PREFIX,
-    CELL_V2_STOP, DUSTY_KEY_ID, HUNT_ACT_ROWS, HUNT_LAIR_FIXTURE, JAILER, JAIL_CELL, JAIL_DOOR,
-    JAIL_DOOR_LOC, JAIL_KEY_ID, VELRAK, WALK_SPOT_MAX_CHEB, WALK_SPOT_MIN_CHEB,
-    WALK_SPOT_RECEIPT_PREFIX, WALK_SPOT_V2_STOP,
+    hunt_baseline_ready, parse_hunt_receipt_line, HuntCell, HuntDeliveryCycle, HuntObservation,
+    HuntOutcome, HuntReceipt, LineOfSightTile, ScriptAct, ScriptActLedger, ScriptActRow,
+    ScriptActsPublished, BANK_V2_DEST, BANK_V2_RADIUS, BANK_V2_RECEIPT_PREFIX, BANK_V2_STOP,
+    HUNT_ACT_ROWS, WALK_SPOT_MAX_CHEB, WALK_SPOT_MIN_CHEB, WALK_SPOT_RECEIPT_PREFIX,
+    WALK_SPOT_V2_STOP,
 };
 
 #[path = "catalog_ids.rs"]
