@@ -23,6 +23,13 @@ pub(crate) fn script_survival_of(
             status.survival
         })
 }
+#[cfg(test)]
+fn merge_survival_action(
+    current: script::survival::SurvivalReport,
+    _action: Option<script::survival::SurvivalReport>,
+) -> script::survival::SurvivalReport {
+    current
+}
 
 /// Copy the latest runner report unless this frame starts a new session.
 pub(crate) fn publish_script_survival(
@@ -104,5 +111,39 @@ mod tests {
 
         publish_script_survival(&mut status, report, true);
         assert_eq!(status.survival, script::survival::SurvivalReport::default());
+    }
+    #[test]
+    fn survival_action_replaces_deferred_need() {
+        use script::survival::{
+            cure::CureWhy,
+            math::{NeedWhy, SurvivalNeed},
+            Decision, Owner, SurvivalReport,
+        };
+
+        let needed = SurvivalReport {
+            decision: Decision::Needed,
+            why: Some(CureWhy::Lethal),
+            need: Some(SurvivalNeed::Cure {
+                or_food: 0,
+                ref_heal: 12,
+                why: NeedWhy::Lethal,
+            }),
+            tried: 1,
+            owner: Owner::Step,
+        };
+        let action = SurvivalReport {
+            decision: Decision::Drinking,
+            owner: Owner::Guard,
+            ..SurvivalReport::default()
+        };
+
+        assert_eq!(
+            merge_survival_action(needed, Some(action)),
+            SurvivalReport {
+                decision: Decision::Drinking,
+                owner: Owner::Guard,
+                ..needed
+            }
+        );
     }
 }
