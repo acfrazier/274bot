@@ -233,6 +233,13 @@
         "test": 0
       }
     },
+    "script-luau": {
+      "unsafe_code": {
+        "non_test": 1,
+        "test": 0,
+        "reason": "The approved Luau single-step FFI needs unsafe code in its one module."
+      }
+    },
     "vault": {
       "clippy::large_enum_variant": {
         "non_test": 1,

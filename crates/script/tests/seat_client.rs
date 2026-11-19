@@ -205,7 +205,7 @@ fn stamped_start_and_exact_terminal_are_consumed_once() {
     let page = SeatPageInput::new(&[], &results, &[], 0).unwrap();
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(page),
             ..Default::default()
         },
@@ -218,7 +218,7 @@ fn stamped_start_and_exact_terminal_are_consumed_once() {
     );
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(page),
             ..Default::default()
         },
@@ -238,7 +238,7 @@ fn stamped_start_and_exact_terminal_are_consumed_once() {
     let empty_page = SeatPageInput::new(&[], &[], &[], 0).unwrap();
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(empty_page),
             ..Default::default()
         },
@@ -261,7 +261,7 @@ fn typed_families_never_resume_from_a_bare_done_terminal() {
     let page = SeatPageInput::new(&[], &results, &[], 0).unwrap();
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(page),
             ..Default::default()
         },
@@ -275,7 +275,7 @@ fn typed_families_never_resume_from_a_bare_done_terminal() {
     };
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(page),
             api_gather_outcome: Some(&wrong),
             ..Default::default()
@@ -290,7 +290,7 @@ fn typed_families_never_resume_from_a_bare_done_terminal() {
     };
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(page),
             api_gather_outcome: Some(&end),
             ..Default::default()
@@ -310,7 +310,7 @@ fn typed_families_never_resume_from_a_bare_done_terminal() {
     };
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(combat_page),
             api_combat_outcome: Some(&combat),
             ..Default::default()
@@ -334,7 +334,7 @@ fn typed_families_never_resume_from_a_bare_done_terminal() {
     };
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(progress_page),
             api_progress: Some(&progress),
             ..Default::default()
@@ -372,7 +372,7 @@ fn walk_completion_waits_for_a_matching_host_outcome() {
         walk_outcome_request_id: id.get() + 1,
         ..Default::default()
     };
-    client.accept_delivery(&input, mismatched, 0, false);
+    client.accept_delivery(&input, &mismatched, 0, false);
     assert!(
         !client.completion_ready(),
         "a different request cannot settle this walk"
@@ -392,7 +392,7 @@ fn walk_completion_waits_for_a_matching_host_outcome() {
         walk_outcome_no_path: true,
         ..Default::default()
     };
-    client.accept_delivery(&input, matching, 0, false);
+    client.accept_delivery(&input, &matching, 0, false);
     let Some(SeatCompletion::Walk(walk)) = client.take_completion() else {
         panic!("matching walk outcome settles the wait")
     };
@@ -417,7 +417,7 @@ fn host_refusal_settles_after_admission_advances_route_generation() {
     let input = snapshot();
     let id = client.queue_walk(walk_request(), 71, &input).unwrap();
     client.drain_seat_batches();
-    client.accept_delivery(&input, admitted_walk_outcome(id, 72, true, None), 0, false);
+    client.accept_delivery(&input, &admitted_walk_outcome(id, 72, true, None), 0, false);
     let Some(SeatCompletion::Walk(walk)) = client.take_completion() else {
         panic!("host-refused walk must complete even when admission advances the generation")
     };
@@ -434,7 +434,7 @@ fn route_end_without_arrival_settles_after_admission_advances_generation() {
     client.drain_seat_batches();
     client.accept_delivery(
         &input,
-        admitted_walk_outcome(id, 72, false, Some(false)),
+        &admitted_walk_outcome(id, 72, false, Some(false)),
         0,
         false,
     );
@@ -473,7 +473,7 @@ fn starts_and_cancels_retry_until_a_page_acknowledges_them() {
     let page = SeatPageInput::new(&[], &results, &[], 0).unwrap();
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(page),
             ..Default::default()
         },
@@ -496,7 +496,7 @@ fn starts_and_cancels_retry_until_a_page_acknowledges_them() {
     let empty_page = SeatPageInput::new(&[], &[], &[], 0).unwrap();
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(empty_page),
             ..Default::default()
         },
@@ -591,7 +591,7 @@ fn reset_preserves_a_completion_already_copied_from_the_page() {
     let page = SeatPageInput::new(&[], &results, &[], 0).unwrap();
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(page),
             ..Default::default()
         },
@@ -630,7 +630,7 @@ fn reconnect_preserves_and_requeues_the_awaited_seat_start() {
     assert!(!client.completion_ready());
     assert_eq!(client.pending_starts(), 0);
 
-    client.accept_delivery(&snapshot(), NativeFactsInput::default(), 0, false);
+    client.accept_delivery(&snapshot(), &NativeFactsInput::default(), 0, false);
     assert!(!client.completion_ready());
     assert_eq!(
         client.awaiting(),
@@ -641,7 +641,7 @@ fn reconnect_preserves_and_requeues_the_awaited_seat_start() {
     );
     assert_eq!(client.pending_starts(), 0);
 
-    client.accept_delivery(&snapshot(), NativeFactsInput::default(), 0, true);
+    client.accept_delivery(&snapshot(), &NativeFactsInput::default(), 0, true);
     assert!(!client.completion_ready());
     assert_eq!(
         client.awaiting(),
@@ -666,11 +666,11 @@ fn reconnect_settles_a_next_tick_wait_on_the_first_full_tick() {
 
     assert_eq!(client.awaiting(), Some(Awaited::NextTick));
     assert!(!client.completion_ready());
-    client.accept_delivery(&snapshot(), NativeFactsInput::default(), 0, false);
+    client.accept_delivery(&snapshot(), &NativeFactsInput::default(), 0, false);
     assert!(!client.completion_ready());
     assert_eq!(client.awaiting(), Some(Awaited::NextTick));
 
-    client.accept_delivery(&snapshot(), NativeFactsInput::default(), 0, true);
+    client.accept_delivery(&snapshot(), &NativeFactsInput::default(), 0, true);
     assert_eq!(client.take_completion(), Some(SeatCompletion::NextTick));
     let batch = client.drain_seat_batches().pop().unwrap();
     assert_eq!(batch.batch.reqs.len(), 2);
@@ -693,13 +693,13 @@ fn reconnect_rearms_an_unsent_walk_on_the_first_full_tick() {
 
     assert_eq!(client.awaiting(), Some(Awaited::Walk { id }));
     assert!(!client.completion_ready());
-    client.accept_delivery(&input, NativeFactsInput::default(), 0, false);
+    client.accept_delivery(&input, &NativeFactsInput::default(), 0, false);
     assert!(!client.completion_ready());
 
     let new_generation = 93;
     client.accept_delivery(
         &input,
-        NativeFactsInput {
+        &NativeFactsInput {
             walk_outcome_generation: new_generation,
             ..Default::default()
         },
@@ -724,7 +724,7 @@ fn reconnect_rearms_an_unsent_walk_on_the_first_full_tick() {
 
     client.accept_delivery(
         &input,
-        NativeFactsInput {
+        &NativeFactsInput {
             walk_outcome_seq: 1,
             walk_outcome_generation: new_generation,
             walk_outcome_failed: true,
@@ -756,7 +756,7 @@ fn reconnect_rearmed_walk_settles_on_admitted_generation() {
     client.reconnect(Some(execution(24, 6)));
     client.accept_delivery(
         &input,
-        NativeFactsInput {
+        &NativeFactsInput {
             walk_outcome_generation: 93,
             ..Default::default()
         },
@@ -764,7 +764,7 @@ fn reconnect_rearmed_walk_settles_on_admitted_generation() {
         true,
     );
     client.drain_seat_batches();
-    client.accept_delivery(&input, admitted_walk_outcome(id, 94, true, None), 0, false);
+    client.accept_delivery(&input, &admitted_walk_outcome(id, 94, true, None), 0, false);
     let Some(SeatCompletion::Walk(walk)) = client.take_completion() else {
         panic!("re-armed walk must settle on its new session's admitted generation")
     };
@@ -786,7 +786,7 @@ fn reconnect_does_not_replay_an_already_sent_walk() {
     client.reconnect(Some(execution(24, 6)));
     client.accept_delivery(
         &input,
-        NativeFactsInput {
+        &NativeFactsInput {
             walk_outcome_generation: 93,
             ..Default::default()
         },
@@ -832,7 +832,7 @@ fn completion_waits_until_lifecycle_capacity_is_available() {
     let page = SeatPageInput::new(&[], &results, &[], 0).unwrap();
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(page),
             ..Default::default()
         },
@@ -858,7 +858,7 @@ fn lifecycle_rows_share_the_seat_batch_path() {
     let mut client = client();
     client.await_next_tick().unwrap();
     client.loop_settled().unwrap();
-    client.accept_delivery(&snapshot(), NativeFactsInput::default(), 0, true);
+    client.accept_delivery(&snapshot(), &NativeFactsInput::default(), 0, true);
     assert_eq!(client.take_completion(), Some(SeatCompletion::NextTick));
 
     let batch = client.drain_seat_batches().pop().unwrap();
@@ -917,7 +917,7 @@ fn terminal_page_consumes_every_result_sequence() {
     let page = SeatPageInput::new(&[], &results, &[], 0).unwrap();
     client.accept_delivery(
         &snapshot(),
-        NativeFactsInput {
+        &NativeFactsInput {
             seat_page: Some(page),
             ..Default::default()
         },
@@ -1024,7 +1024,7 @@ fn model_trace_drives_the_client_terminal_receipt() {
                 let page = SeatPageInput::new(&[], seat.results(), &[], 0).unwrap();
                 client.accept_delivery(
                     &snapshot(),
-                    NativeFactsInput {
+                    &NativeFactsInput {
                         seat_page: Some(page),
                         ..Default::default()
                     },

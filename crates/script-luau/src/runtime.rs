@@ -1629,17 +1629,13 @@ impl LuauSurfaceRun {
         }
     }
 
-    #[expect(
-        clippy::large_types_passed_by_value,
-        reason = "SeatClient consumes the lent native facts; moving them avoids a second frame copy"
-    )]
     fn dispatch_inner(
         &mut self,
         wake: SurfaceWake,
         snap_tick: u64,
         _input_identity: u64,
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
     ) -> LentOutcome {
         let Some(mut vm) = self.vm.take() else {
             return LentOutcome::Refused;
@@ -1950,7 +1946,7 @@ impl SurfaceRun for LuauSurfaceRun {
             return LentOutcome::Refused;
         }
         match catch_unwind(AssertUnwindSafe(|| {
-            self.dispatch_inner(wake, snap_tick, input_identity, input, native)
+            self.dispatch_inner(wake, snap_tick, input_identity, input, &native)
         })) {
             Ok(outcome) => outcome,
             Err(_) => {

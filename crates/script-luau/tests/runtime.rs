@@ -522,14 +522,10 @@ fn started_slot(source: &str, arm_seat: bool) -> SlotScript {
 }
 
 #[cfg(feature = "test-hooks")]
-#[expect(
-    clippy::large_types_passed_by_value,
-    reason = "SlotScript consumes NativeFactsInput; fixtures move it once instead of copying a large snapshot"
-)]
 fn slot_wake(
     slot: &mut SlotScript,
     input: &SnapshotInput<'_>,
-    native: NativeFactsInput<'_>,
+    native: &NativeFactsInput<'_>,
     tick: bool,
     held: bool,
 ) -> LentOutcome {
@@ -546,16 +542,16 @@ fn slot_wake(
         compiled: CompiledTick::default(),
     };
     if tick {
-        slot.on_game_tick_lent(&mut ctx, held, input, native)
+        slot.on_game_tick_lent(&mut ctx, held, input, *native)
     } else {
-        slot.on_snapshot_change_lent(&mut ctx, input, native)
+        slot.on_snapshot_change_lent(&mut ctx, input, *native)
     }
 }
 
 #[cfg(feature = "test-hooks")]
 fn slot_tick(slot: &mut SlotScript, tick: u64, held: bool) -> LentOutcome {
     let input = empty_snapshot(tick);
-    slot_wake(slot, &input, NativeFactsInput::default(), true, held)
+    slot_wake(slot, &input, &NativeFactsInput::default(), true, held)
 }
 
 #[cfg(feature = "test-hooks")]
@@ -730,7 +726,7 @@ fn real_slot_seat_terminal_resumes_after_pause_and_rejects_stale_ids() {
         slot_wake(
             &mut slot,
             &input,
-            NativeFactsInput {
+            &NativeFactsInput {
                 seat_page: Some(page),
                 ..Default::default()
             },
@@ -749,7 +745,7 @@ fn real_slot_seat_terminal_resumes_after_pause_and_rejects_stale_ids() {
         slot_wake(
             &mut slot,
             &input,
-            NativeFactsInput {
+            &NativeFactsInput {
                 seat_page: Some(stale_page),
                 ..Default::default()
             },
@@ -764,7 +760,7 @@ fn real_slot_seat_terminal_resumes_after_pause_and_rejects_stale_ids() {
     );
 
     assert_eq!(
-        slot_wake(&mut slot, &input, NativeFactsInput::default(), true, true),
+        slot_wake(&mut slot, &input, &NativeFactsInput::default(), true, true),
         LentOutcome::Accepted
     );
     assert!(
@@ -775,7 +771,7 @@ fn real_slot_seat_terminal_resumes_after_pause_and_rejects_stale_ids() {
         slot_wake(
             &mut slot,
             &input,
-            NativeFactsInput {
+            &NativeFactsInput {
                 seat_page: Some(page),
                 ..Default::default()
             },
@@ -792,7 +788,7 @@ fn real_slot_seat_terminal_resumes_after_pause_and_rejects_stale_ids() {
         slot_wake(
             &mut slot,
             &input,
-            NativeFactsInput {
+            &NativeFactsInput {
                 seat_page: Some(page),
                 ..Default::default()
             },
@@ -823,7 +819,7 @@ fn real_slot_walk_completion_copies_actual_request_after_held_tick() {
     let mut input = empty_snapshot(1);
     input.user_move_intent_seq = 17;
     assert_eq!(
-        slot_wake(&mut slot, &input, NativeFactsInput::default(), true, false),
+        slot_wake(&mut slot, &input, &NativeFactsInput::default(), true, false),
         LentOutcome::Accepted
     );
     let id = queued_walk_id(&mut slot);
@@ -832,7 +828,7 @@ fn real_slot_walk_completion_copies_actual_request_after_held_tick() {
         slot_wake(
             &mut slot,
             &input,
-            NativeFactsInput {
+            &NativeFactsInput {
                 walk_outcome_seq: 5,
                 walk_outcome_request_id: id.get(),
                 local_player_moving: Some(false),
@@ -852,7 +848,7 @@ fn real_slot_walk_completion_copies_actual_request_after_held_tick() {
         slot_wake(
             &mut slot,
             &stale_input,
-            NativeFactsInput {
+            &NativeFactsInput {
                 walk_outcome_seq: 6,
                 walk_outcome_request_id: id.get() + 1,
                 local_player_moving: Some(false),
@@ -874,7 +870,7 @@ fn real_slot_walk_completion_copies_actual_request_after_held_tick() {
         slot_wake(
             &mut slot,
             &completion_input,
-            NativeFactsInput {
+            &NativeFactsInput {
                 walk_outcome_seq: 7,
                 walk_outcome_request_id: id.get(),
                 local_player_moving: Some(false),
@@ -927,7 +923,7 @@ fn real_slot_progress_family_completion_survives_page_clear_before_resume() {
         slot_wake(
             &mut slot,
             &input,
-            NativeFactsInput {
+            &NativeFactsInput {
                 seat_page: Some(page),
                 ..Default::default()
             },
@@ -942,7 +938,7 @@ fn real_slot_progress_family_completion_survives_page_clear_before_resume() {
         slot_wake(
             &mut slot,
             &input,
-            NativeFactsInput {
+            &NativeFactsInput {
                 seat_page: Some(page),
                 ..Default::default()
             },

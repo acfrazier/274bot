@@ -485,7 +485,7 @@ impl SeatClient {
     pub fn accept_delivery(
         &mut self,
         input: &SnapshotInput<'_>,
-        native: NativeFactsInput<'_>,
+        native: &NativeFactsInput<'_>,
         release_floor: u64,
         tick: bool,
     ) {
@@ -846,7 +846,7 @@ impl ArrivalProbe for BorrowedReach<'_> {
 
 struct WalkObservation<'a, 's, 'n> {
     input: &'a SnapshotInput<'s>,
-    native: NativeFactsInput<'n>,
+    native: &'a NativeFactsInput<'n>,
     token: RequestId,
     intent_baseline: u64,
     manual_takeover_seq: u64,

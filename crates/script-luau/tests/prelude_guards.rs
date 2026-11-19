@@ -1,4 +1,6 @@
-include!("../src/prelude.rs");
+#[path = "../src/prelude.rs"]
+mod prelude;
+use prelude::PRELUDE;
 
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
