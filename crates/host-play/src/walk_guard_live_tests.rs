@@ -1350,13 +1350,14 @@ struct LiveState {
     hit_onset: HitOnset,
     second_attacker_staged: bool,
     tiles_by_tick: std::collections::VecDeque<(u32, WorldTile)>,
+    health: Vec<(u32, i32, i32)>,
     real_content: bool,
     level_up_enabled: bool,
-    level_up_requested_tick: Option<u32>,
+    level_up_seed_tick: Option<u32>,
     level_up_page_tick: Option<u32>,
     level_up_closed_tick: Option<u32>,
     level_up_attack_base_at_open: Option<i32>,
-    health: Vec<(u32, i32, i32)>,
+    level_up_hp_at_open: Option<i32>,
 }
 
 impl LiveState {
@@ -1426,7 +1427,7 @@ impl LiveState {
             }
         }
         if self.level_up_enabled {
-            if self.level_up_requested_tick.is_some() {
+            if self.level_up_seed_tick.is_some() {
                 let continue_id = self.snapshot.chat_continue_component_id();
                 if self.level_up_page_tick.is_none() && continue_id != -1 {
                     self.level_up_page_tick = Some(tick);
@@ -1436,6 +1437,12 @@ impl LiveState {
                         .iter()
                         .find(|row| row.index == 0)
                         .map(|row| row.base);
+                    self.level_up_hp_at_open = self
+                        .snapshot
+                        .stats()
+                        .iter()
+                        .find(|row| row.index == 3)
+                        .map(|row| row.effective);
                 } else if self.level_up_page_tick.is_some()
                     && self.level_up_closed_tick.is_none()
                     && continue_id == -1
@@ -1446,17 +1453,22 @@ impl LiveState {
             let left_start = self
                 .last_tile
                 .is_some_and(|tile| tile != (self.start.x, self.start.z, self.start.level));
-            if self.level_up_requested_tick.is_none() && self.started && !self.arrived && left_start
-            {
-                if send_cheat(client, "advancestat attack 2") {
-                    self.level_up_requested_tick = Some(tick);
-                } else {
+            if self.level_up_seed_tick.is_none() && self.started && !self.arrived && left_start {
+                if !send_cheat(client, "~stat_drain hitpoints 10 0") {
                     combat_proof::mark_invalid(
                         &self.account,
-                        "could not seed the Attack level-up page during the guarded walk",
+                        "could not seed low Hitpoints for the level-up page",
                     );
                     return;
                 }
+                if !send_cheat(client, "advancestat attack 2") {
+                    combat_proof::mark_invalid(
+                        &self.account,
+                        "could not seed the Attack level-up page after the low-HP command",
+                    );
+                    return;
+                }
+                self.level_up_seed_tick = Some(tick);
             }
         }
         if self.runner.on_start_script() && !self.started {
@@ -1708,7 +1720,7 @@ fn live_walk_guard_eat_no_food_control() {
 
 #[test]
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
-fn live_walk_guard_closes_level_up_page_during_crossing() {
+fn live_walk_guard_eats_on_level_up_page() {
     run_live_w1(W1Mode::Crossing, Some(true), true);
 }
 
@@ -1801,53 +1813,82 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
         gate_fail("arrival without a recorded Eat followed by HP rise and lobster consumption")
     }
 }
-fn evaluate_level_up_close(state: &LiveState, capture: &CombatCapture) -> W1GateDecision {
-    let Some(requested_tick) = state.level_up_requested_tick else {
+fn evaluate_level_up_eat(state: &LiveState, capture: &CombatCapture) -> W1GateDecision {
+    let Some(seed_tick) = state.level_up_seed_tick else {
         return W1GateDecision::Pending;
     };
     let Some(page_tick) = state.level_up_page_tick else {
         return W1GateDecision::Pending;
     };
-    let Some(closed_tick) = state.level_up_closed_tick else {
-        return W1GateDecision::Pending;
-    };
     let Some(baseline) = capture.start_baseline.as_ref() else {
         return W1GateDecision::Pending;
     };
-    let attack_base = baseline["stats"]
-        .as_array()
-        .and_then(|stats| stats.iter().find(|stat| stat["index"] == 0))
-        .and_then(|stat| stat["base"].as_i64());
-    if attack_base != Some(1) {
-        return gate_fail("level-up crossing did not start with Attack level 1");
-    }
-    if page_tick <= requested_tick || state.level_up_attack_base_at_open != Some(2) {
-        return gate_fail("advancestat did not produce an observed Attack level-2 page");
-    }
-    let Some(close_action) = capture.actions.iter().find(|action| {
-        action["kind"] == json!("guard")
-            && action["op"] == json!("close-dialogue")
-            && action["accepted"] == json!(true)
-    }) else {
-        return gate_fail("level-up page closed without an accepted walk-guard Continue");
+    let stat = |index, field: &str| {
+        baseline["stats"]
+            .as_array()
+            .and_then(|stats| stats.iter().find(|stat| stat["index"] == index))
+            .and_then(|stat| stat[field].as_i64())
     };
-    let Some(close_tick) = close_action["tick"]
+    let lobsters: i64 = baseline["inventory"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["id"] == 379)
+        .filter_map(|item| item["count"].as_i64())
+        .sum();
+    if stat(0, "base") != Some(1)
+        || stat(5, "base") != Some(37)
+        || stat(3, "base") != Some(40)
+        || stat(3, "effective") != Some(20)
+        || lobsters != 4
+    {
+        return gate_fail(
+            "level-up test did not start at Attack 1, Prayer 37, HP20/40 and four lobsters",
+        );
+    }
+    if page_tick <= seed_tick
+        || state.level_up_attack_base_at_open != Some(2)
+        || !state
+            .level_up_hp_at_open
+            .is_some_and(|hp| (1..=10).contains(&hp))
+    {
+        return gate_fail("low-HP seed did not produce an observed Attack level-up page");
+    }
+    let Some(eat_action) = capture.actions.iter().find(|action| {
+        action["kind"] == json!("guard")
+            && action["op"] == json!("eat")
+            && action["accepted"] == json!(true)
+            && action["dispatch"] == json!("sent")
+    }) else {
+        if state.level_up_closed_tick.is_some() || state.health.iter().any(|(_, hp, _)| *hp <= 0) {
+            return gate_fail("the level-up page closed or the player died before a guard Eat");
+        }
+        return W1GateDecision::Pending;
+    };
+    let Some(eat_tick) = eat_action["tick"]
         .as_u64()
         .and_then(|tick| u32::try_from(tick).ok())
     else {
-        return gate_fail("walk-guard Continue has no valid tick");
+        return gate_fail("walk-guard Eat has no valid tick");
     };
-    if close_tick < page_tick || close_tick >= closed_tick {
-        return gate_fail("walk-guard Continue did not close the observed level-up page");
-    }
-    let Some(arrival_tick) = state.arrival_tick else {
+    let Some(closed_tick) = state.level_up_closed_tick else {
         return W1GateDecision::Pending;
     };
-    if arrival_tick <= closed_tick || !state.arrived {
-        return gate_fail("the guarded route did not resume after closing the level-up page");
+    if eat_tick < page_tick || eat_tick >= closed_tick {
+        return gate_fail("walk-guard Eat was not sent while the level-up page was open");
     }
-    if !state.snapshot.ingame() || state.snapshot.scene_state() != 2 {
-        return gate_fail("arrival after the level-up page lacks a ready in-game scene");
+    if state.health.iter().any(|(_, hp, _)| *hp <= 0) {
+        return gate_fail("the player died before the Eat heal was observed");
+    }
+    if eat_heal(eat_action, &state.health).is_none() {
+        if state
+            .health
+            .last()
+            .is_none_or(|(tick, _, _)| *tick <= eat_tick.saturating_add(4))
+        {
+            return W1GateDecision::Pending;
+        }
+        return gate_fail("the guard Eat did not consume a lobster and raise HP");
     }
     W1GateDecision::Pass
 }
@@ -1857,16 +1898,6 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         std::env::var("LIVE").as_deref(),
         Ok("1"),
         "W1 requires LIVE=1"
-    );
-    std::env::set_var(
-        "BOT_LIVE_NAME_PREFIX",
-        if level_up {
-            "wgl"
-        } else if food.is_some() {
-            "ge"
-        } else {
-            "wg"
-        },
     );
     let evidence = evidence_dir().expect("W1 live prerequisites");
     std::fs::create_dir_all(&evidence).expect("create W1 lifecycle evidence directory");
@@ -1965,13 +1996,14 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         hit_onset: HitOnset::new(),
         second_attacker_staged: false,
         tiles_by_tick: std::collections::VecDeque::new(),
+        health: Vec::new(),
         real_content: food.is_some(),
         level_up_enabled: level_up,
-        level_up_requested_tick: None,
+        level_up_seed_tick: None,
         level_up_page_tick: None,
         level_up_closed_tick: None,
         level_up_attack_base_at_open: None,
-        health: Vec::new(),
+        level_up_hp_at_open: None,
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -2098,7 +2130,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
             stop_error: current.stop_error.as_deref(),
         };
         let decision = if level_up {
-            evaluate_level_up_close(&current, &capture_snapshot)
+            evaluate_level_up_eat(&current, &capture_snapshot)
         } else if let Some(food) = food {
             evaluate_eat_crossing(&current, &capture_snapshot, food)
         } else {
@@ -2154,6 +2186,30 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
             })
         })
         .collect();
+    let level_up_eat_action = capture_snapshot
+        .actions
+        .iter()
+        .find(|row| {
+            row["kind"] == json!("guard")
+                && row["op"] == json!("eat")
+                && row["accepted"] == json!(true)
+                && row["dispatch"] == json!("sent")
+        })
+        .cloned();
+    let level_up_eat_tick = level_up_eat_action
+        .as_ref()
+        .and_then(|row| row["tick"].as_u64())
+        .and_then(|tick| u32::try_from(tick).ok());
+    let level_up_eat_page_open = level_up_eat_tick.is_some_and(|eat_tick| {
+        snapshot
+            .level_up_page_tick
+            .is_some_and(|page_tick| eat_tick >= page_tick)
+            && snapshot
+                .level_up_closed_tick
+                .is_some_and(|closed_tick| eat_tick < closed_tick)
+    });
+    let level_up_eat_heal =
+        level_up_eat_action.as_ref().and_then(|row| eat_heal(row, &snapshot.health));
     let attack_emitted = capture_snapshot.actions.iter().any(|action| {
         action["request"]["op"] == json!("npc") && action["request"]["action"] == json!("Attack")
     });
@@ -2181,12 +2237,17 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         "outcome": outcome,
         "food": food,
         "level_up_enabled": snapshot.level_up_enabled,
-        "level_up_requested_tick": snapshot.level_up_requested_tick,
+        "level_up_seed_tick": snapshot.level_up_seed_tick,
         "level_up_page_tick": snapshot.level_up_page_tick,
         "level_up_closed_tick": snapshot.level_up_closed_tick,
         "level_up_attack_base_at_open": snapshot.level_up_attack_base_at_open,
-        "level_up_close_action": capture_snapshot.actions.iter()
-            .find(|row| row["kind"] == json!("guard") && row["op"] == json!("close-dialogue")),
+        "level_up_hp_at_open": snapshot.level_up_hp_at_open,
+        "level_up_eat_action": level_up_eat_action,
+        "level_up_eat_tick": level_up_eat_tick,
+        "level_up_eat_page_open": level_up_eat_page_open,
+        "level_up_eat_heal_tick": level_up_eat_heal.map(|(tick, _, _)| tick),
+        "level_up_eat_hp_after": level_up_eat_heal.map(|(_, hp, _)| hp),
+        "level_up_eat_lobsters_after": level_up_eat_heal.map(|(_, _, count)| count),
 
         "health": snapshot.health,
         "eat_heals": capture_snapshot.actions.iter()

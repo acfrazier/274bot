@@ -1344,7 +1344,6 @@ fn guard_interaction(op: &GuardOp) -> Option<InteractReq> {
             slot: None,
             target_item_id: None,
         }),
-        GuardOp::CloseDialogue => Some(InteractReq::ContinueDialog { component_id: None }),
         GuardOp::Locked { .. } | GuardOp::Unprotectable { .. } => None,
     }
 }

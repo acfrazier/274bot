@@ -7,9 +7,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Walk guard
 
-- The walk guard closes incidental dialogue and level-up pages before
-  resuming a route. A bite or dialogue Continue uses the whole tick, so the
-  walker does not click a door or move on the same tick.
+- The walk guard no longer sends Continue for an open dialogue page before a
+  survival action. Food, potions and protect prayers close the page through
+  their normal engine actions.
 
 ### Revision 377 login
 
