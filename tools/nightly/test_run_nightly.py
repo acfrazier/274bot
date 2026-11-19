@@ -3521,5 +3521,191 @@ class BranchListSummaryTests(unittest.TestCase):
             self.assertIn("Runner self-update", md)
             self.assertTrue((run_dir / "DONE").is_file())
 
+
+
+class UnchangedRunTests(unittest.TestCase):
+    branch_list = {"source": "cli", "commit": "", "note": "from --branch"}
+    self_update = {"status": "disabled", "from": "r" * 40, "to": "r" * 40,
+                   "detail": "self-update disabled"}
+
+    def run_attempt(self, *, previous=True, previous_commit="c" * 40, current_commit="c" * 40,
+                    previous_cells=("walk", "cook_bot"), previous_cells_file=None,
+                    current_cells_file=None, current_only=None, previous_result="PASS",
+                    previous_build_ok=True, previous_build_ran=True, previous_done=True,
+                    runner_changed=False, current_engine_pristine=None, env=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_update_tree(_branch, tree, _build_log):
+                catalog = tree / rn.CATALOG_RS
+                catalog.parent.mkdir(parents=True)
+                catalog.write_text(
+                    'const REGISTRY: &[Entry] = &[\n'
+                    '    Entry::new("walk"),\n'
+                    '    Entry::new("cook_bot"),\n'
+                    '];\n',
+                    encoding="utf-8")
+                return current_commit, current_commit[:9]
+
+            patches = [
+                mock.patch.object(rn, "ROOT", root),
+                mock.patch.object(rn, "RUNS_ROOT_OVERRIDE", None),
+                mock.patch.object(rn, "JOB", "main"),
+                mock.patch.object(rn, "STEPS", ["tui"]),
+                mock.patch.object(rn, "RUN_DEADLINE_S", 0),
+                mock.patch.object(rn, "FRESH_TREES", False),
+                mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+                mock.patch.object(rn, "ENGINE_MODE", "local"),
+                mock.patch.object(rn, "update_tree", fake_update_tree),
+                mock.patch.object(rn, "guard_disk", lambda *_args: None),
+                mock.patch.object(rn, "check_rs2b0t_api_drift",
+                                  lambda *_args: {"status": "unavailable",
+                                                  "reason": "not checked in test"}),
+                mock.patch.object(rn, "log", lambda _message: None),
+            ]
+            for patch in patches:
+                patch.start()
+            try:
+                previous_dir = None
+                if previous:
+                    previous_dir = root / "runs" / f"2026-11-18-dev-{previous_commit[:9]}{rn.RUN_SUFFIX}"
+                    previous_dir.mkdir(parents=True)
+                    rows = [
+                        {"cell": cell, "frontend": "tui",
+                         "renderer": "gpu" if rn.GPU_CELLS.search(cell) else "cpu",
+                         "result": previous_result}
+                        for cell in previous_cells
+                    ]
+                    summary = dict(
+                        job="main", run=previous_dir.name, branch="dev",
+                        commit=previous_commit[:9], commit_full=previous_commit,
+                        revision=int(rn.REVISION), cells_file=previous_cells_file,
+                        branch_list=self.branch_list, self_update=self.self_update,
+                        **rn.platform_id(),
+                        catalog_commit=rn.git_head(rn.CATALOG),
+                        runner_commit=rn.git_head(rn.RUNNER_REPO),
+                        profile=rn.PROFILE, parallel=1, cell_cap_s=rn.CELL_CAP_S,
+                        cell_caps_s=rn.CELL_CAPS_S, run_deadline_s=0,
+                        wall_s=1.0, interrupted=False, quiet_lock=None,
+                        build={"ok": previous_build_ok, "ran": previous_build_ran},
+                        engine={"status": rn.LOCAL_ENGINE_STATUS, "mode": "local",
+                                "source": rn.engine_source()},
+                        steps={"tui": {"status": "ran: 2", "deadline_s": rn.STEP_DEADLINE_S["tui"]}},
+                        cells=rows,
+                    )
+                    (previous_dir / "summary.json").write_text(
+                        json.dumps(summary), encoding="utf-8")
+                    if previous_done:
+                        (previous_dir / "DONE").write_text("finished\n", encoding="utf-8")
+
+                if runner_changed:
+                    real_git_head = rn.git_head
+
+                    def changed_git_head(path):
+                        if path == rn.RUNNER_REPO:
+                            return "different-runner"
+                        return real_git_head(path)
+
+                    patch = mock.patch.object(rn, "git_head", changed_git_head)
+                    patch.start()
+                    patches.append(patch)
+                if current_engine_pristine is not None:
+                    patch = mock.patch.object(rn, "ENGINE_PRISTINE", current_engine_pristine)
+                    patch.start()
+                    patches.append(patch)
+                if env:
+                    patch = mock.patch.dict(os.environ, env)
+                    patch.start()
+                    patches.append(patch)
+
+                run_dir = rn.run_branch(
+                    "dev", 1, current_only, None, unavailable="test run",
+                    only_exact=current_cells_file is not None, cells_file=current_cells_file,
+                    branch_list=self.branch_list, self_update=self.self_update,
+                )
+                result = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+                artifacts = dict(
+                    previous_name=previous_dir.name if previous_dir else None,
+                    done=(run_dir / "DONE").is_file(),
+                    manifest=(run_dir / "SHA256SUMS").is_file(),
+                    has_cells_dir=(run_dir / "cells").exists(),
+                    summary_md=(run_dir / "summary.md").read_text(encoding="utf-8"),
+                )
+                return result, artifacts
+            finally:
+                for patch in reversed(patches):
+                    patch.stop()
+
+    def test_a_complete_unchanged_run_writes_a_skip_summary_without_old_results(self):
+        summary, artifacts = self.run_attempt()
+
+        self.assertEqual(summary["status"], "SKIPPED-UNCHANGED")
+        self.assertEqual(summary["unchanged_from"], artifacts["previous_name"])
+        self.assertEqual(summary["skipped_cells"], ["walk", "cook_bot"])
+        self.assertFalse(summary["build"]["ran"])
+        self.assertEqual(summary["cells"], [])
+        self.assertFalse(artifacts["has_cells_dir"])
+        self.assertTrue(artifacts["done"])
+        self.assertTrue(artifacts["manifest"])
+        self.assertIn("SKIPPED-UNCHANGED", artifacts["summary_md"])
+        self.assertIn(artifacts["previous_name"], artifacts["summary_md"])
+
+    def test_an_incomplete_previous_run_runs_again(self):
+        cases = [
+            {"previous_done": False},
+            {"previous_result": "NOT_RUN"},
+            {"previous_build_ok": False, "previous_build_ran": False},
+        ]
+        for options in cases:
+            with self.subTest(options=options):
+                summary, _ = self.run_attempt(**options)
+                self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
+
+    def test_changed_commit_cells_file_contents_or_runner_runs_again(self):
+        cases = [
+            {"current_commit": "d" * 40},
+            {"previous_cells_file": "cells-old.conf", "current_cells_file": "cells-new.conf",
+             "current_only": ["walk", "cook_bot"]},
+            {"previous_cells_file": "cells.conf", "current_cells_file": "cells.conf",
+             "current_only": ["walk"]},
+            {"runner_changed": True},
+        ]
+        for options in cases:
+            with self.subTest(options=options):
+                summary, _ = self.run_attempt(**options)
+                self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
+
+    def test_changed_engine_identity_runs_again(self):
+        summary, _ = self.run_attempt(current_engine_pristine=Path("different-engine"))
+        self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
+
+    def test_rerun_override_forces_a_full_run(self):
+        summary, _ = self.run_attempt(env={"NIGHTLY_RERUN_UNCHANGED": "1"})
+        self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
+
+
+class RunDeadlineDefaultTests(unittest.TestCase):
+    def test_windows_main_has_no_default_whole_night_deadline(self):
+        env = {key: value for key, value in os.environ.items() if not key.startswith("NIGHTLY_")}
+        env["NIGHTLY_JOB"] = "main"
+        code = (
+            "import argparse, concurrent.futures, datetime, hashlib, json, os, pathlib, "
+            "platform, re, shutil, signal, socket, stat, statistics, subprocess, sys, tarfile, "
+            "tempfile, threading, time, types, typing, urllib.request, zoneinfo; "
+            "fake_pathlib = types.ModuleType('pathlib'); "
+            "fake_pathlib.__dict__.update(pathlib.__dict__); "
+            "fake_pathlib.Path = pathlib.PosixPath; sys.modules['pathlib'] = fake_pathlib; "
+            "sys.modules['msvcrt'] = types.ModuleType('msvcrt'); "
+            "os.name = 'nt'; sys.platform = 'win32'; "
+            "import run_nightly as rn; print(rn.IS_WINDOWS, rn.JOB, rn.RUN_DEADLINE_S)"
+        )
+        result = subprocess.run([sys.executable, "-c", code], cwd=HERE, env=env,
+                                capture_output=True, text=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        self.assertEqual(result.stdout.strip(), "True main 0")
+
+
 if __name__ == "__main__":
     unittest.main()

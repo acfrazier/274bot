@@ -313,9 +313,8 @@ STEP_DEADLINE_S = {
     "tui": int(os.environ.get("NIGHTLY_TUI_DEADLINE_S", "21600")),
     "latency": int(os.environ.get("NIGHTLY_LATENCY_DEADLINE_S", "3600")),
 }
-# The whole night: no step runs past it, so the summary and DONE are always written
-# before the scheduled task's own limit (11 h). 0 = no bound (the Linux VM).
-RUN_DEADLINE_S = int(os.environ.get("NIGHTLY_RUN_DEADLINE_S", "30600" if IS_WINDOWS else "0"))
+# Optional whole-run limit. A value of 0 leaves the per-step deadlines in control.
+RUN_DEADLINE_S = int(os.environ.get("NIGHTLY_RUN_DEADLINE_S", "0"))
 _run_deadline = float("inf")
 
 
@@ -3427,6 +3426,10 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
         f"- Engine: {meta['engine']['status']}; catalog `{meta['catalog_commit']}`; "
         f"{meta['parallel']} cells in parallel; outer cap {meta['cell_cap_s']} s",
     ]
+    if meta.get("status"):
+        md.append(f"- Status: {meta['status']}")
+    if meta.get("unchanged_from"):
+        md.append(f"- Earlier complete run: `{meta['unchanged_from']}`")
     md.append(f"- Branch list: {branch_list_text(meta.get('branch_list') or {})}")
     md.append(f"- Runner self-update: {self_update_text(meta.get('self_update') or {})}")
     md.append("- " + api_drift_md_line(
@@ -3496,6 +3499,202 @@ def run_dir_for(branch: str, commit: str, date: dt.date | None = None) -> Path:
         candidate = runs_root() / f"{base}-r{attempt}"
         attempt += 1
     return candidate
+
+
+UNCHANGED_RUN_ENV = "NIGHTLY_RERUN_UNCHANGED"
+UNCHANGED_MATCH_FIELDS = (
+    "job", "branch", "commit", "commit_full", "revision", "cells_file",
+    "branch_list", "self_update", "platform", "os", "host", "catalog_commit",
+    "runner_commit", "profile", "parallel", "cell_cap_s", "cell_caps_s",
+    "run_deadline_s",
+)
+TERMINAL_CELL_RESULTS = frozenset({"PASS", "FAIL", "ERROR", "TIMEOUT", "SKIP", "UNAVAILABLE"})
+TERMINAL_LANE_RESULTS = frozenset({"PASS", "FAIL", "ERROR", "TIMEOUT", "UNAVAILABLE"})
+LOCAL_ENGINE_STATUS = "fresh copy started, stopped after the run"
+
+
+def engine_source() -> str:
+    if ENGINE_MODE == "local":
+        return f"{ENGINE_PRISTINE} ({REVISION} engine copy, fresh DB)"
+    return (f"{ENGINE_LABEL} (running, shared; never started or stopped), "
+            f"{ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}; client data from {ENGINE_PRISTINE}")
+
+
+def _rows_are_complete(rows: object, expected_cells: list[str], terminal: frozenset[str]) -> bool:
+    if not isinstance(rows, list) or len(rows) != len(expected_cells):
+        return False
+    names = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("result") not in terminal:
+            return False
+        if "step deadline reached" in (
+                str(row.get("reason") or "") + " " + str(row.get("first_failure") or "")).lower():
+            return False
+        names.append(row.get("cell"))
+    return names == expected_cells
+
+
+def _latency_rows_are_complete(summary: dict, cells: list[str], bands: list[int],
+                               proxy_sha256: str) -> bool:
+    latency = summary.get("latency")
+    if not isinstance(latency, dict):
+        return False
+    proxy = latency.get("proxy")
+    if (not isinstance(proxy, dict) or proxy.get("file") != LATENCY_PROXY.name
+            or proxy.get("sha256") != proxy_sha256
+            or latency.get("branch") != LATENCY_BRANCH
+            or latency.get("cells_file") != LATENCY_CELLS_FILE
+            or latency.get("report_only") is not True):
+        return False
+    band_rows = latency.get("bands")
+    expected_bands = [(band_name(band), band, band / 2) for band in bands]
+    if not isinstance(band_rows, list):
+        return False
+    observed_bands = [(row.get("band"), row.get("rtt_ms"), row.get("one_way_ms"))
+                      for row in band_rows if isinstance(row, dict)]
+    if observed_bands != expected_bands:
+        return False
+    rows = summary.get("latency_cells")
+    expected_rows = {(cell, band) for band in bands for cell in cells}
+    if not isinstance(rows, list) or len(rows) != len(expected_rows):
+        return False
+    observed_rows = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("result") not in TERMINAL_CELL_RESULTS:
+            return False
+        if "step deadline reached" in (
+                str(row.get("reason") or "") + " " + str(row.get("first_failure") or "")).lower():
+            return False
+        observed_rows.add((row.get("cell"), row.get("latency_rtt_ms")))
+    return observed_rows == expected_rows
+
+
+def completed_run_matches(run_dir: Path, summary: dict, expected: dict, selected_cells: list[str],
+                          cell_steps: list[str], step_deadlines: dict[str, int],
+                          lane_names: list[str] | None, latency_cells: list[str],
+                          latency_bands: list[int], latency_proxy_sha256: str | None) -> bool:
+    if (not (run_dir / "DONE").is_file() or summary.get("status") == "SKIPPED-UNCHANGED"
+            or not selected_cells or not cell_steps):
+        return False
+    if any(summary.get(key) != expected[key] for key in UNCHANGED_MATCH_FIELDS):
+        return False
+    build = summary.get("build")
+    if not isinstance(build, dict) or build.get("ok") is not True or build.get("ran") is not True:
+        return False
+    if summary.get("interrupted") is not False or summary.get("quiet_lock"):
+        return False
+    run_deadline = summary.get("run_deadline_s")
+    wall_s = summary.get("wall_s")
+    if run_deadline and (not isinstance(wall_s, (int, float)) or wall_s >= run_deadline):
+        return False
+
+    steps = summary.get("steps")
+    if not isinstance(steps, dict) or set(steps) != set(step_deadlines):
+        return False
+    for name, deadline_s in step_deadlines.items():
+        step = steps.get(name)
+        if (not isinstance(step, dict) or step.get("deadline_s") != deadline_s
+                or "deadline reached" in str(step.get("status") or "").lower()):
+            return False
+
+    for frontend in cell_steps:
+        rows = summary.get("panel_cells" if frontend == "panel" else "cells")
+        if not _rows_are_complete(rows, selected_cells, TERMINAL_CELL_RESULTS):
+            return False
+    if lane_names is not None:
+        rows = summary.get("lanes")
+        if not isinstance(rows, list) or [row.get("lane") for row in rows if isinstance(row, dict)] != lane_names:
+            return False
+        if any(not isinstance(row, dict) or row.get("result") not in TERMINAL_LANE_RESULTS
+               or "deadline reached" in (
+                   str(row.get("reason") or "") + " " + str(row.get("first_failure") or "")).lower()
+               for row in rows):
+            return False
+    if latency_bands and (
+            latency_proxy_sha256 is None
+            or not _latency_rows_are_complete(summary, latency_cells, latency_bands, latency_proxy_sha256)):
+        return False
+    return True
+
+
+def find_unchanged_run(expected: dict, selected_cells: list[str], cell_steps: list[str],
+                       step_deadlines: dict[str, int], lane_names: list[str] | None,
+                       latency_cells: list[str], latency_bands: list[int]) -> tuple[Path, str] | None:
+    if env_flag(UNCHANGED_RUN_ENV, False):
+        return None
+    root = runs_root()
+    try:
+        candidates = sorted(
+            (entry for entry in root.iterdir() if entry.is_dir() and not entry.is_symlink()),
+            key=lambda entry: entry.name, reverse=True)
+    except OSError as error:
+        log(f"unchanged-run search failed at {root}: {error}; running the branch")
+        return None
+
+    proxy_sha256 = None
+    if latency_bands:
+        try:
+            proxy_sha256 = sha256(LATENCY_PROXY)
+        except OSError as error:
+            log(f"unchanged-run latency check failed: {error}; running the branch")
+            return None
+    engine_status = None
+    for previous in candidates:
+        try:
+            summary = json.loads((previous / "summary.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(summary, dict) or not completed_run_matches(
+                previous, summary, expected, selected_cells, cell_steps, step_deadlines,
+                lane_names, latency_cells, latency_bands, proxy_sha256):
+            continue
+        engine = summary.get("engine")
+        if (not isinstance(engine, dict) or engine.get("mode") != ENGINE_MODE
+                or engine.get("source") != engine_source()):
+            continue
+        if engine_status is None:
+            try:
+                engine_status = engine_check()[1] if ENGINE_MODE == "remote" else LOCAL_ENGINE_STATUS
+            except Exception as error:
+                log(f"unchanged-run engine check failed: {error}; running the branch")
+                return None
+        if engine.get("status") == engine_status:
+            return previous, engine_status
+    return None
+
+
+def write_unchanged_summary(run_dir: Path, expected: dict, selected_cells: list[str],
+                            step_deadlines: dict[str, int], previous: Path, engine_status: str,
+                            started: str, started_wall: float, tree: Path | None,
+                            session: dict | None) -> Path:
+    finished = now_iso()
+    meta = dict(
+        expected,
+        status="SKIPPED-UNCHANGED",
+        unchanged_from=previous.name,
+        skipped_cells=list(selected_cells),
+        run=run_dir.name,
+        started=started,
+        finished=finished,
+        wall_s=round(time.monotonic() - started_wall, 1),
+        interrupted=False,
+        quiet_lock=None,
+        session=session,
+        unavailable=None,
+        steps={name: {"status": f"skipped: unchanged from {previous.name}",
+                      "deadline_s": deadline_s}
+               for name, deadline_s in step_deadlines.items()},
+        build=dict(ok=True, ran=False, wall_s=0.0, error=None,
+                   tui_play_sha256=None, panel_play_sha256=None),
+        engine=dict(status=engine_status, mode=ENGINE_MODE, source=engine_source()),
+        tree=str(tree) if tree else None,
+        rs2b0t_api={"status": "unavailable", "reason": "not checked for unchanged run"},
+    )
+    write_summary(run_dir, meta, [], [], [])
+    write_source_manifest(run_dir)
+    wtext(run_dir / "DONE", finished + "\n")
+    log(f"{expected['branch']}: SKIPPED-UNCHANGED; using complete run {previous.name}")
+    return run_dir
 
 
 def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: list[str] | None,
@@ -3619,6 +3818,39 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     if latency_enabled and not latency_names:
         log(f"{branch}: latency lane names no cells for this run; it writes no band rows")
     cells = select_job_cells(cells, only, JOB)
+    cell_steps = [name for name in STEPS if name in ("panel", "tui")]
+    step_deadlines = {name: STEP_DEADLINE_S[name] for name in STEPS}
+    if latency_active:
+        step_deadlines["latency"] = STEP_DEADLINE_S["latency"]
+    branch_list_info = branch_list or {"source": "unknown", "commit": "", "note": ""}
+    self_update_info = self_update or {"status": "unknown", "from": "", "to": "", "detail": ""}
+    catalog_commit = git_head(CATALOG)
+    runner_commit = git_head(RUNNER_REPO)
+    expected = dict(
+        job=JOB, branch=branch, commit=commit, commit_full=commit_full,
+        revision=int(REVISION), cells_file=cells_file,
+        branch_list=branch_list_info, self_update=self_update_info,
+        **ident,
+        catalog_commit=catalog_commit, runner_commit=runner_commit,
+        profile=PROFILE, parallel=parallel, cell_cap_s=CELL_CAP_S,
+        cell_caps_s=CELL_CAPS_S, run_deadline_s=RUN_DEADLINE_S,
+    )
+    lane_names = None
+    if "lanes" in STEPS:
+        lane_names = [name for name, _, _ in lane_list(tree, require_generated=False)
+                      if not only_lanes or name in only_lanes]
+    if build_ok and tree is not None and cells and cell_steps:
+        previous = find_unchanged_run(
+            expected, cells, cell_steps, step_deadlines, lane_names,
+            latency_names if latency_active else [],
+            bands_wanted if latency_active else [],
+        )
+        if previous is not None:
+            previous_dir, previous_engine_status = previous
+            return write_unchanged_summary(
+                run_dir, expected, cells, step_deadlines, previous_dir, previous_engine_status,
+                started, started_wall, tree, session,
+            )
     cell_base = CellResult(cell="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
     lane_base = LaneResult(lane="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
     work = ROOT / "work" / run_dir.name
@@ -3774,10 +4006,9 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     if not build_ok and engine_status == "not started":
         engine_status = "not started (build failed)"
     meta = dict(
-        job=JOB, run=run_dir.name, branch=branch, commit=commit, commit_full=commit_full, revision=int(REVISION),
-        cells_file=cells_file,
-        branch_list=(branch_list or {"source": "unknown", "commit": "", "note": ""}),
-        self_update=(self_update or {"status": "unknown", "from": "", "to": "", "detail": ""}),
+        job=JOB, run=run_dir.name, branch=branch, commit=commit, commit_full=commit_full,
+        revision=int(REVISION), cells_file=cells_file,
+        branch_list=branch_list_info, self_update=self_update_info,
         **ident, started=started, finished=now_iso(),
         wall_s=round(time.monotonic() - started_wall, 1), parallel=parallel,
         cell_cap_s=CELL_CAP_S, cell_caps_s=CELL_CAPS_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE,
@@ -3786,11 +4017,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         build=dict(ok=build_ok, ran=build_ran, wall_s=build_wall, error=build_error,
                    tui_play_sha256=sha256(binaries["tui-play"]) if binaries.get("tui-play", Path()).is_file() else None,
                    panel_play_sha256=sha256(binaries["panel-play"]) if binaries.get("panel-play", Path()).is_file() else None),
-        engine=dict(status=engine_status, mode=ENGINE_MODE,
-                    source=(f"{ENGINE_PRISTINE} ({REVISION} engine copy, fresh DB)" if ENGINE_MODE == "local"
-                            else f"{ENGINE_LABEL} (running, shared; never started or stopped), "
-                                 f"{ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}; client data from {ENGINE_PRISTINE}")),
-        catalog_commit=git_head(CATALOG), runner_commit=git_head(RUNNER_REPO),
+        engine=dict(status=engine_status, mode=ENGINE_MODE, source=engine_source()),
+        catalog_commit=catalog_commit, runner_commit=runner_commit,
         tree=str(tree) if tree else None,
     )
     # Informational only: a failed check reports UNAVAILABLE and never
