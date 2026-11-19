@@ -11601,41 +11601,13 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
         assert!(names().contains(&name));
     }
     let duel = get("duel_arena").expect("Duel Arena pair is registered");
-    let start = duel
-        .steps
-        .iter()
-        .position(|step| matches!(step.kind, StepKind::StartScript))
-        .expect("Duel Arena pair must Start");
-    assert!(matches!(
-        &duel.steps[start + 1].kind,
-        StepKind::Await {
-            evidence: "duel_arena_both_fighters_returned_to_lobby",
-            ..
-        }
-    ));
-    assert!(matches!(&duel.steps[start + 2].kind, StepKind::StopScript));
-    assert!(matches!(&duel.steps[start + 2].wait.arm, Proof::ScriptIdle));
-    assert!(matches!(
-        &duel.steps[start + 3].kind,
-        StepKind::Walk { dest }
-            if dest.x == 3368 && dest.z == 3275 && dest.level == 0
-    ));
-    assert!(matches!(
-        &duel.steps[start + 3].wait.arm,
-        Proof::ArrivedNear {
-            x: 3368,
-            z: 3275,
-            level: 0,
-            radius: 0
-        }
-    ));
-    assert!(matches!(
-        &duel.steps[start + 4].kind,
-        StepKind::Await {
-            evidence: "duel_arena_peer_walked_to_safe_lobby_tile",
-            ..
-        }
-    ));
+    assert!(
+        matches!(
+            duel.steps.last().map(|step| &step.kind),
+            Some(StepKind::StartScript)
+        ),
+        "Duel Arena pair must keep Start as its final step"
+    );
     let mule = get("mule_crafter_air").expect("MuleCrafter pair is registered");
     assert!(mule
         .steps
