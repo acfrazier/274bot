@@ -123,6 +123,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Gatherer bank trips deposit duplicate copies of the active gathering tool
   while retaining one; alternate tools remain protected. If a full bank refuses
   the spare-tool deposit, the spare stays in the pack and the trip continues.
+- Gatherer bank trips for a full pack keep one Strange fruit for poison cures
+  and withdraw one when the pack has none and the bank has one. A trip started
+  only because supplies ran low does not fetch the fruit yet; the next full-pack
+  trip does. If a full bank refuses an extra fruit deposit, it stays in the pack
+  and the trip continues.
 
 ### Native acquisition
 

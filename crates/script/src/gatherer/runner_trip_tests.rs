@@ -543,6 +543,114 @@ fn gatherer_bank_trip_deposits_only_the_spare_harpoon() {
         "the bank trip does not click the retained tool"
     );
 }
+#[test]
+fn gatherer_bank_trip_keeps_one_strange_fruit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    const HARPOON: i32 = 311;
+    let fixture = BaitFixture::with_fishing_method("fishing.harpoon.tool_311.products_359_371");
+    let fruit_id = fixture
+        .prepared
+        .selected
+        .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+        .expect("revision 289 defines strange fruit")
+        .id;
+    let mut gatherer = fixture.gatherer(GatherRetained::default());
+    gatherer.needs_validate = false;
+    gatherer.trip = TripStep::Deposit;
+    gatherer.tool = ToolState {
+        id: HARPOON,
+        worn: false,
+    };
+    let mut snapshot = fixture.snapshot;
+    let tool_row = |slot| api::snapshot::ItemView {
+        def: def(HARPOON, "Harpoon"),
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot,
+        count: 1,
+        actions: Vec::new(),
+        component_id: 3214,
+    };
+    let fruit_row = |slot| api::snapshot::ItemView {
+        def: def(fruit_id, "Strange fruit"),
+        container: ItemContainer::Inventory,
+        action_family: ItemActionFamily::Held,
+        slot,
+        count: 1,
+        actions: Vec::new(),
+        component_id: 3214,
+    };
+    let bank_row = |slot| api::snapshot::ItemView {
+        def: def(fruit_id, "Strange fruit"),
+        container: ItemContainer::BankSide,
+        action_family: ItemActionFamily::Component,
+        slot,
+        count: 1,
+        actions: vec![Some("Deposit-1".into()), Some("Deposit-All".into())],
+        component_id: 7,
+    };
+    snapshot.seed_locs(relog_booth_locs());
+    snapshot.seed_inventory(vec![tool_row(0), fruit_row(1), fruit_row(2)], 28);
+    snapshot.seed_bank_observation(10, 1, Some(Vec::new()), vec![bank_row(1), bank_row(2)]);
+    let mut ledger = None;
+
+    with_tick(&snapshot, &mut ledger, 1, |tick| {
+        tick.cx.condition = Some(clear());
+        gatherer.tick(tick).unwrap();
+        assert!(matches!(
+            tick.cx
+                .ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .map(|action| &action.effect),
+            Some(crate::native::HostEffect::Interaction(
+                crate::interact::InteractReq::InvButton {
+                    id,
+                    operation: 1,
+                    ..
+                }
+            )) if *id == fruit_id
+        ));
+        let fruit_deposits = tick
+            .cx
+            .ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .filter(|action| {
+                matches!(
+                    &action.effect,
+                    crate::native::HostEffect::Interaction(
+                        crate::interact::InteractReq::InvButton { id, .. }
+                    ) if *id == fruit_id
+                )
+            })
+            .count();
+        assert_eq!(fruit_deposits, 1, "the trip deposits only one extra cure");
+        accept_last_interaction(tick);
+    });
+
+    snapshot.seed_inventory(vec![tool_row(0), fruit_row(2)], 28);
+    snapshot.seed_bank_observation(10, 1, Some(Vec::new()), vec![bank_row(2)]);
+    with_tick(&snapshot, &mut ledger, 2, |tick| {
+        tick.cx.condition = Some(clear());
+        gatherer.tick(tick).unwrap();
+    });
+    assert_eq!(
+        snapshot
+            .inventory()
+            .iter()
+            .filter(|item| item.def.id == fruit_id)
+            .map(|item| item.count)
+            .sum::<i32>(),
+        1
+    );
+}
 
 #[test]
 fn gatherer_bank_trip_skips_full_bank_spare_harpoon_and_deposits_stackable_product() {
@@ -578,6 +686,80 @@ fn gatherer_bank_trip_skips_full_bank_spare_harpoon_and_deposits_stackable_produ
         crate::bank::ops::count_id(trip.snapshot.inventory(), HARPOON),
         2
     );
+    assert_eq!(trip.gatherer.trips, 1);
+}
+
+#[test]
+fn gatherer_product_only_bank_trip_withdraws_strange_fruit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    const HARPOON: i32 = 311;
+    let fixture = BaitFixture::with_fishing_method("fishing.harpoon.tool_311.products_359_371");
+    let fruit_id = fixture
+        .prepared
+        .selected
+        .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+        .expect("revision 289 defines strange fruit")
+        .id;
+    let mut trip = Trip::new(fixture, TripStep::Deposit);
+    trip.tool_id = HARPOON;
+    trip.tool_name = "Harpoon";
+    trip.gatherer.tool = ToolState {
+        id: HARPOON,
+        worn: false,
+    };
+    trip.held_bait = trip.gatherer.prepared.settings.bait_target;
+    trip.bank_fruit = 1;
+    trip.snapshot.seed_inventory(trip.pack(), 28);
+    trip.open_page();
+
+    trip.run_until("completed product-only bank trip", |trip| {
+        trip.gatherer.trips == 1 && trip.gatherer.trip == TripStep::Idle
+    });
+
+    assert!(trip.deposited_ids.contains(&trip.product));
+    assert_eq!(trip.held_fruit, 1, "the bank fruit is withdrawn");
+    assert_eq!(trip.bank_fruit, 0, "one fruit leaves the bank");
+    assert_eq!(trip.gatherer.trips, 1, "fruit does not cause an extra trip");
+    assert_eq!(trip.fruit_id, Some(fruit_id));
+}
+
+#[test]
+fn gatherer_bank_trip_skips_full_bank_spare_fruit_and_deposits_stackable_product() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    const HARPOON: i32 = 311;
+    const FIRE_RUNE: i32 = 554;
+    let fixture = BaitFixture::with_fishing_method("fishing.harpoon.tool_311.products_359_371");
+    let fruit_id = fixture
+        .prepared
+        .selected
+        .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+        .expect("revision 289 defines strange fruit")
+        .id;
+    let mut trip = Trip::new(fixture, TripStep::Deposit);
+    trip.tool_id = HARPOON;
+    trip.tool_name = "Harpoon";
+    trip.held_fruit = 2;
+    trip.stackable_product = Some(FIRE_RUNE);
+    trip.bank_full_id = Some(fruit_id);
+    trip.gatherer.tool = ToolState {
+        id: HARPOON,
+        worn: false,
+    };
+    trip.snapshot.seed_inventory(trip.pack(), 28);
+    trip.open_page();
+
+    trip.run_until("completed bank trip", |trip| {
+        trip.gatherer.trips == 1 && trip.gatherer.trip == TripStep::Idle
+    });
+
+    assert!(trip.full_bank_attempts.contains(&(fruit_id, 1)));
+    assert!(trip.deposited_ids.contains(&FIRE_RUNE));
+    assert_eq!(trip.held_fruit, 2, "both fruits remain in the pack");
+    assert!(!trip.deposited_ids.contains(&fruit_id));
     assert_eq!(trip.gatherer.trips, 1);
 }
 
@@ -649,6 +831,10 @@ struct Trip {
     tool_count: usize,
     stackable_product: Option<i32>,
     bank_full_id: Option<i32>,
+    fruit_id: Option<i32>,
+    held_fruit: i32,
+    bank_fruit: i32,
+    full_bank_attempts: Vec<(i32, i32)>,
     deposited_ids: Vec<i32>,
     chat_sequence: i32,
     /// Clicks the engine has not applied yet: they land on the next tick.
@@ -668,6 +854,11 @@ impl Trip {
             .as_ref()
             .map(|bait| (bait.id, Arc::clone(&bait.name)));
         let product = fixture.prepared.products[0];
+        let fruit_id = fixture
+            .prepared
+            .selected
+            .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+            .map(|fruit| fruit.id);
         let mut gatherer = fixture.gatherer(GatherRetained::default());
         gatherer.needs_validate = false;
         gatherer.tool = ToolState {
@@ -702,6 +893,10 @@ impl Trip {
             tool_count: 1,
             stackable_product: None,
             bank_full_id: None,
+            fruit_id,
+            held_fruit: 0,
+            bank_fruit: 0,
+            full_bank_attempts: Vec::new(),
             deposited_ids: Vec::new(),
             chat_sequence: 0,
             deferred: Vec::new(),
@@ -734,6 +929,16 @@ impl Trip {
                 slot += 1;
             }
         }
+        if self.held_fruit > 0 {
+            pack.push(held(
+                self.fruit_id
+                    .expect("fruit count requires a selected Strange fruit"),
+                "Strange fruit",
+                self.held_fruit,
+                slot,
+            ));
+            slot += 1;
+        }
         if self.gatherer.trip == TripStep::Deposit {
             if !self.deposited_ids.contains(&self.product) {
                 pack.push(held(self.product, "Raw fish", 1, slot));
@@ -755,7 +960,9 @@ impl Trip {
             .map(|mut item| {
                 item.action_family = ItemActionFamily::Component;
                 item.actions = vec![Some(
-                    if item.def.id == self.tool_id && self.tool_count > 1 {
+                    if (item.def.id == self.tool_id && self.tool_count > 1)
+                        || (Some(item.def.id) == self.fruit_id && self.held_fruit > 1)
+                    {
                         "Deposit-1"
                     } else {
                         "Deposit-All"
@@ -775,14 +982,27 @@ impl Trip {
 
     fn apply(&mut self, request: crate::interact::InteractReq) {
         match request {
-            crate::interact::InteractReq::WithdrawX { count, .. } => {
-                self.held_bait += count;
+            crate::interact::InteractReq::WithdrawX {
+                bank_item_id,
+                count,
+                ..
+            } => {
+                if self.fruit_id == Some(bank_item_id) {
+                    self.held_fruit += count;
+                    self.bank_fruit -= count;
+                } else {
+                    self.held_bait += count;
+                }
                 let pack = self.pack();
                 self.snapshot.seed_inventory(pack, 28);
                 self.open_page();
             }
             crate::interact::InteractReq::InvButton { id, .. } => {
                 self.deposited_ids.push(id);
+                if self.fruit_id == Some(id) {
+                    assert!(self.held_fruit > 0, "cannot deposit absent fruit");
+                    self.held_fruit -= 1;
+                }
                 let pack = self.pack();
                 self.snapshot.seed_inventory(pack, 28);
                 self.open_page();
@@ -797,6 +1017,12 @@ impl Trip {
         });
         if let Some(id) = self.stackable_product {
             rows.push(bank_item(id, "Fire rune", 100, 1));
+        }
+        if self.bank_fruit > 0 {
+            if let Some(id) = self.fruit_id {
+                let slot = rows.iter().map(|row| row.slot).max().unwrap_or(-1) + 1;
+                rows.push(bank_item(id, "Strange fruit", self.bank_fruit, slot));
+            }
         }
         rows
     }
@@ -915,9 +1141,10 @@ impl Trip {
                         crate::interact::InteractReq::WithdrawX { .. } => {
                             self.deferred.push(request.clone());
                         }
-                        crate::interact::InteractReq::InvButton { id, .. }
+                        crate::interact::InteractReq::InvButton { id, operation, .. }
                             if self.bank_full_id == Some(*id) =>
                         {
+                            self.full_bank_attempts.push((*id, *operation));
                             self.chat_sequence += 1;
                             self.snapshot.seed_inventory(self.pack(), 28);
                             self.snapshot
