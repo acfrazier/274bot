@@ -107,7 +107,49 @@ with `--pair-core` and records the gate.
 The runner writes `SHA256SUMS` from the completed run files before it writes
 `DONE`. A read-only malbec mirror checks each transferred file against that
 source manifest. It leaves older malbec runs without a source manifest in place.
-Each job writes its summary and per-cell receipts. It writes `DONE` last.
+Each job writes a summary and per-cell receipts for cells it runs. It writes
+`DONE` last.
+
+## Reusing complete runs
+
+Before running a branch, the runner looks in its local `runs` directory for a
+completed run of the same job, branch and full commit. It also requires the
+same selected cells and cells-file name, branch-list selection, self-update
+state, runner commit, platform, OS, host, engine source and status, and run
+settings. Every configured step must have finished without a deadline, the
+build must have succeeded, and every selected cell must have a terminal result.
+Enabled lanes and latency rows must also be complete. `NOT_RUN`, an incomplete
+run, a failed build, or a deadline prevents reuse. Completed `FAIL`, `ERROR`,
+`TIMEOUT`, `SKIP` and `UNAVAILABLE` results are terminal and do not by
+themselves prevent reuse.
+
+A match creates a new summary with `SKIPPED-UNCHANGED` and the earlier run
+folder's name. The new folder contains no copied cell results. Set
+`NIGHTLY_RERUN_UNCHANGED=1` to force the branch to run again.
+
+The runner searches its local `runs` directory and, when set, a staged
+previous-run metadata root. Windows uses `C:\274bot-nightly\runs`, malbec uses
+`/srv/nightly/runs`, and the Mac guest uses `<guest_home>/nightly/runs` (or the
+configured `NIGHTLY_RUNS_ROOT`).
+
+Before starting a Mac guest job, the controller checks `$NIGHTLY_MAC_RUNS` and
+stages only `summary.json` and `DONE` from folders for the exact branch, job,
+and full commit whose summary digest matches `SHA256SUMS`. The guest reads this
+metadata through `NIGHTLY_PREVIOUS_RUNS_ROOT`. The controller passes the runner
+commit and self-update result from its staged checkout because it omits `.git`.
+The guest does not attempt a second self-update.
+The guest derives its selected cells and cell-list file, engine identity and
+status, platform, and host, then checks the full summary match and completeness.
+For local engines, the summary records the Git HEAD and dirty state for both
+the engine and content roots. It also records a digest of tracked changes and
+non-ignored untracked files. Missing or unreadable Git state disables skipping.
+For fresh engine roots, the matcher ignores only the per-clone absolute source
+root. It still compares the engine label, ports, source-folder name, mode,
+status, and local identity.
+Old cell results are not copied. A skip is written as a new
+`SKIPPED-UNCHANGED` summary and follows the normal archive flow. If the Mac
+archive or metadata cannot be read, no candidate is staged and the guest runs
+the branch.
 
 Cells listed in [`skip.conf`](skip.conf) still appear as `SKIP`. Quest cells do
 not belong in that file; the job filter routes them to Engine Q.
@@ -264,9 +306,9 @@ Settings for the Windows host live in `C:\274bot-nightly\nightly.env`
 ([`windows/nightly.env`](windows/nightly.env) is the deployed copy); the step list
 (`NIGHTLY_STEPS`, default `lanes,panel,tui`), each step's deadline
 (`NIGHTLY_LANES_DEADLINE_S`, `NIGHTLY_BUILD_DEADLINE_S`, `NIGHTLY_PANEL_DEADLINE_S`,
-`NIGHTLY_TUI_DEADLINE_S`), the whole night's (`NIGHTLY_RUN_DEADLINE_S`) and the disk
-guard's cap and floor (`NIGHTLY_TARGET_CAP_GB`, `NIGHTLY_MIN_FREE_GB`) can be set
-there too.
+`NIGHTLY_TUI_DEADLINE_S`), the optional whole-run deadline
+(`NIGHTLY_RUN_DEADLINE_S`, default 0), and the disk guard's cap and floor
+(`NIGHTLY_TARGET_CAP_GB`, `NIGHTLY_MIN_FREE_GB`) can be set there too.
 
 On merlot, `nightly-mac.sh` reads
 `~/.config/274bot-nightly/mac-nightly.env` and starts
@@ -1043,10 +1085,15 @@ In both cell steps every cell gets a throwaway `HOME`/`USERPROFILE`/`APPDATA`/
 `LOCALAPPDATA`/`TEMP`, and `BOT_CPU=1` unless its name matches `NIGHTLY_GPU_CELLS`
 (`^render_`: those draw with the GPU). The outer cap is 1200 s on this host
 (`NIGHTLY_CELL_CAP_S`). `jive_kbd` and `quester_queue` keep 3600 s.
-No step runs past the night's deadline either (8.5 h, so a 23:00 start ends by
-07:30, before Engine B's busy morning and well inside the task's
-11 h limit). A cell still running when its deadline passes is stopped as `TIMEOUT`,
-and cells not started by then are `NOT_RUN`.
+`NIGHTLY_RUN_DEADLINE_S` defaults to 0 on all hosts, so the runner has no
+whole-run deadline unless configured. Per-step deadlines and per-cell caps
+still apply. Separately, Windows Task Scheduler gives `274bot-nightly` an
+`ExecutionTimeLimit` of `PT20H` (from its 23:00 start, 19:00 local the
+next day). This is a host setting outside the runner; changing
+`NIGHTLY_RUN_DEADLINE_S` does not change it. The former `PT11H` setting ended
+the 2026-11-19 dev quest TUI step at 10:00 (Last Result `267014`). A cell still
+running when its step deadline passes is stopped as `TIMEOUT`, and cells not
+started before a step deadline are `NOT_RUN`.
 
 **Engine B.** The cells use Engine B, the shared engine other agents' live cells use,
 through the review machine's `274bot-nightly-win-engine` reverse forward on host

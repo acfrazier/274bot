@@ -654,6 +654,21 @@ class NightlyOrchestrationTests(unittest.TestCase):
         values.update(overrides or {})
         return nightly.Settings(values)
 
+    def make_archived_run(self, settings, branch: str, job: str, commit: str) -> Path:
+        suffix = "-mac" if job == "main" else "-mac-quest"
+        name = f"2026-11-18-{nightly.branch_slug(branch)}-{commit[:9]}{suffix}"
+        run = settings.runs / name
+        run.mkdir(parents=True)
+        summary = {"branch": branch, "job": job, "commit_full": commit}
+        (run / "summary.json").write_text(json.dumps(summary) + "\n", encoding="utf-8")
+        cells = run / "cells"
+        cells.mkdir()
+        (cells / "old-result.txt").write_text("prior cell output\n", encoding="utf-8")
+        nightly.write_sha256sums(run)
+        (run / "DONE").write_text("completed\n", encoding="utf-8")
+        return run
+
+
     def test_stages_purged_data_and_configured_274_inputs_into_the_guest(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -763,6 +778,111 @@ class NightlyOrchestrationTests(unittest.TestCase):
                 ),
                 "content\n",
             )
+
+
+    def test_stages_only_matching_prior_summaries_for_guest_matching(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.make_settings(root)
+            commit = nightly.git([
+                "-C", str(settings.source_repo), "rev-parse", "dev"
+            ]).stdout.strip()
+            main_run = self.make_archived_run(settings, "dev", "main", commit)
+            quest_run = self.make_archived_run(settings, "dev", "quest", commit)
+            self.make_archived_run(settings, "release/0.2.6", "main", commit)
+
+            share = root / "session/share"
+            share.mkdir(parents=True)
+            guest_home = root / "guest-home"
+            guest_home.mkdir()
+            vm = FakeVM(settings, lambda: 1000)
+            vm.session = {
+                "id": "stage-prior-runs", "vm": "fake-vm", "ip": "192.0.2.10",
+                "guest_home": str(guest_home), "share": str(share),
+            }
+            update_info = {
+                "status": "updated", "from": "a" * 40, "to": "b" * 40,
+                "detail": "self-update completed",
+            }
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=lambda *_: vm, self_update_info=update_info
+            )
+            readonly_paths = []
+            with mock.patch.object(
+                nightly, "make_readonly", side_effect=lambda path: readonly_paths.append(Path(path))
+            ), mock.patch.object(controller, "check_disk", return_value=1000):
+                controller.stage_inputs()
+
+            staged = controller.previous_runs_root
+            self.assertIsNotNone(staged)
+            self.assertEqual(
+                sorted(path.name for path in staged.iterdir()),
+                sorted((main_run.name, quest_run.name)),
+            )
+            for source in (main_run, quest_run):
+                summary_only = staged / source.name
+                self.assertEqual(
+                    {path.name for path in summary_only.iterdir()}, {"DONE", "summary.json"}
+                )
+                self.assertEqual(
+                    (summary_only / "summary.json").read_text(encoding="utf-8"),
+                    (source / "summary.json").read_text(encoding="utf-8"),
+                )
+                self.assertFalse((summary_only / "cells").exists())
+                self.assertFalse((summary_only / "SHA256SUMS").exists())
+            self.assertIn(staged, readonly_paths)
+
+            tools = {
+                "home": str(root / "home"), "tmp": str(root / "tmp"),
+                "node_bin": str(root / "node/bin"), "cargo_home": str(root / "cargo"),
+                "rustup_home": str(root / "rustup"), "isohome": str(root / "isohome"),
+                "python": str(root / "python"),
+                "typescript_runner": str(root / "engine-pristine/engine/node_modules/.bin/tsx"),
+            }
+            with mock.patch.object(nightly, "runner_head", return_value="c" * 40), mock.patch.dict(
+                os.environ, {"NIGHTLY_RERUN_UNCHANGED": "1"}
+            ):
+                environment = controller.job_environment("dev", "main", tools)
+            self.assertEqual(environment["NIGHTLY_RERUN_UNCHANGED"], "1")
+            self.assertEqual(environment["NIGHTLY_RUNNER_COMMIT"], "c" * 40)
+            self.assertEqual(json.loads(environment["NIGHTLY_SELF_UPDATE_INFO"]), update_info)
+            self.assertEqual(environment["NIGHTLY_SELF_UPDATE"], "0")
+            self.assertEqual(
+                environment["NIGHTLY_PREVIOUS_RUNS_ROOT"],
+                f"{nightly.GUEST_SHARE}/input/previous-runs",
+            )
+
+    def test_unreadable_mac_run_archive_fails_open(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.make_settings(root)
+            share = root / "session/share"
+            share.mkdir(parents=True)
+            guest_home = root / "guest-home"
+            guest_home.mkdir()
+            vm = FakeVM(settings, lambda: 1000)
+            vm.session = {
+                "id": "stage-prior-runs-unreadable", "vm": "fake-vm", "ip": "192.0.2.10",
+                "guest_home": str(guest_home), "share": str(share),
+            }
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=lambda *_: vm)
+            with mock.patch.object(
+                controller, "previous_run_candidates", side_effect=PermissionError("unreadable")
+            ), mock.patch.object(nightly, "make_readonly"), mock.patch.object(
+                controller, "check_disk", return_value=1000
+            ):
+                controller.stage_inputs()
+
+            self.assertIsNone(controller.previous_runs_root)
+            tools = {
+                "home": str(root / "home"), "tmp": str(root / "tmp"),
+                "node_bin": str(root / "node/bin"), "cargo_home": str(root / "cargo"),
+                "rustup_home": str(root / "rustup"), "isohome": str(root / "isohome"),
+                "python": str(root / "python"),
+                "typescript_runner": str(root / "engine-pristine/engine/node_modules/.bin/tsx"),
+            }
+            environment = controller.job_environment("dev", "main", tools)
+            self.assertNotIn("NIGHTLY_PREVIOUS_RUNS_ROOT", environment)
 
     def test_manual_overrides_run_only_the_main_build_lane(self):
         with tempfile.TemporaryDirectory() as temporary:
