@@ -108,12 +108,18 @@ fn throwers_crossing_path_compiles_with_current_schema() {
     if !api::test_support::game_data_available() {
         return;
     }
+    let default_pack = default_nav_pack_path();
+    let default_pack = default_pack.to_string_lossy();
+    let Some(pack) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        &default_pack,
+        "R289 throwers navigation catalog",
+    ) else {
+        return;
+    };
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     script::quester::compile::prepare_for_test(move |cap| {
-        let pack = std::env::var_os("NAV_PACK")
-            .map(PathBuf::from)
-            .unwrap_or_else(default_nav_pack_path);
         let bytes = std::fs::read(&pack).expect("read the throwers navigation catalog");
         let world = nav_planner::world::NavWorld::from_bytes(&bytes)
             .expect("load the throwers navigation catalog");

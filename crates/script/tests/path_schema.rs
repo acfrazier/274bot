@@ -283,6 +283,9 @@ fn squire_pie_pass_empties_a_burnt_pie_then_prefers_a_banked_one() {
     let Some((selected, quests)) = selected_and_quests() else {
         return;
     };
+    let Some(_pack) = real_nav_pack() else {
+        return;
+    };
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
         move |worker| selected.prepare_gathering(worker)
@@ -350,6 +353,9 @@ fn squire_pie_retry_with_spares_skips_the_varrock_legs() {
 
     let _home = script::IsolatedEnv::enter("path-schema-squire-pie-retry");
     let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(_pack) = real_nav_pack() else {
         return;
     };
     let _gathering = script::quester::compile::prepare_for_test({
@@ -1716,6 +1722,9 @@ fn members_a_paths_have_no_shadowed_journal_rules() {
     let Some((selected, quests)) = selected_and_quests() else {
         return;
     };
+    let Some(_pack) = real_nav_pack() else {
+        return;
+    };
     // Monk's Friend gathers a log, so its compile needs the gather catalog.
     let _gathering = script::quester::compile::prepare_for_test({
         let selected = Arc::clone(&selected);
@@ -1741,6 +1750,9 @@ fn ordered_monks_friend_wood_agrees_once_then_chops_and_hands_in() {
 
     let _home = script::IsolatedEnv::enter("path-schema-drunkmonk-wood");
     let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(_pack) = real_nav_pack() else {
         return;
     };
     let _gathering = script::quester::compile::prepare_for_test({
@@ -1933,6 +1945,9 @@ fn druid_rat_hunt_targets_both_giantrat_configs() {
     let Some((selected, quests)) = selected_and_quests() else {
         return;
     };
+    let Some(_pack) = real_nav_pack() else {
+        return;
+    };
     let mut value = read_path(&paths_dir().join("druid.json"));
     let step = find_step_mut(&mut value, "hunt-rat-for-meat").expect("hunt step");
     let npc = step
@@ -1965,6 +1980,9 @@ fn druid_rat_hunt_targets_both_giantrat_configs() {
 fn junglepotion_pick_snake_does_not_advance() {
     let _home = script::IsolatedEnv::enter("path-schema-jungle-snake");
     let Some((selected, quests)) = selected_and_quests() else {
+        return;
+    };
+    let Some(_pack) = real_nav_pack() else {
         return;
     };
     let mut value = read_path(&paths_dir().join("junglepotion.json"));
