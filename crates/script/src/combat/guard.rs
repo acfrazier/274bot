@@ -40,8 +40,8 @@ pub enum GuardFailure {
     NoPrayerPoints,
 }
 
-/// One host-executed decision. A walk hop plus one of these is two user
-/// events, never an exclusive combat batch.
+/// One host-executed upkeep decision. A bite or dialogue continue uses the tick
+/// alone; the host never combines either with a route action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuardOp {
     IfButton {
@@ -54,6 +54,7 @@ pub enum GuardOp {
     Eat {
         name: Arc<str>,
     },
+    CloseDialogue,
     Locked {
         until: u16,
     },
@@ -619,6 +620,12 @@ impl WalkGuard {
                     self.follow_until
                 },
             });
+        }
+        if snapshot
+            .chat_continue()
+            .is_some_and(|continue_id| continue_id.value != -1)
+        {
+            return Some(GuardOp::CloseDialogue);
         }
         let (points, base) = arbiter::stat(&frame, PRAYER_STAT);
         if self.flags & FLAG_FOOD_ONLY == 0 {

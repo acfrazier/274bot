@@ -465,6 +465,13 @@ pub(crate) fn apply_guard_op(
                 });
             (sent, "eat", None)
         }
+        GuardOp::CloseDialogue => {
+            let sent = matches!(
+                Interactions::new(snapshot, driver).continue_dialog(None),
+                api::interact::SendResult::Sent { .. }
+            );
+            (sent, "close-dialogue", None)
+        }
         _ => return false,
     };
     #[cfg(test)]
@@ -1681,6 +1688,10 @@ pub(crate) fn step_nav_bot<D: Driver>(
                     } else {
                         None
                     };
+                    let guard_action_uses_tick = matches!(
+                        guard_op.as_ref(),
+                        Some(GuardOp::Eat { .. } | GuardOp::CloseDialogue)
+                    );
                     if let Some(GuardOp::Unprotectable { protect, reason }) = guard_op {
                         if let Some(owner) = bot.native_walk.as_ref().filter(|owner| owner.live()) {
                             bot.walk_guard_events.push((
@@ -1699,6 +1710,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                         }
                     }
                     let skip_follow = !bot.has_route()
+                        || guard_action_uses_tick
                         || bot
                             .walk_guard
                             .as_ref()

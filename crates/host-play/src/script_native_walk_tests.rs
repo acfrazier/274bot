@@ -1507,6 +1507,55 @@ fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
         );
     }
 }
+#[test]
+fn walk_guard_closes_level_up_page_before_bite_and_suppresses_same_tick_follow() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut rig = open_rig(false);
+    rig.shared.lock().food_guard = true;
+    seed_protect_frame(&mut rig.snapshot, 43);
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+    rig.step();
+    assert!(rig.walk_armed());
+    let moves = rig.driver.move_calls;
+    assert!(
+        moves > 0,
+        "the guarded route must start before the page opens"
+    );
+
+    seed_guard_inventory(&mut rig.snapshot, &[("lobster", "Eat")], 1);
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_chat_modal(200, Vec::new());
+    rig.snapshot.seed_chat_options(Vec::new(), 201);
+    rig.snapshot.seed_tick(2);
+    rig.step();
+    assert_eq!(
+        rig.driver.menu_order.last(),
+        Some(&(MiniMenuAction::PAUSE_BUTTON, 201)),
+        "the guard must continue the open level-up page"
+    );
+    assert!(
+        rig.driver.held_item_ids.is_empty(),
+        "the page closes before eating"
+    );
+    assert_eq!(
+        rig.driver.move_calls, moves,
+        "route follow must not run on the page-close tick"
+    );
+
+    rig.snapshot.seed_chat_modal(-1, Vec::new());
+    rig.snapshot.seed_chat_options(Vec::new(), -1);
+    rig.snapshot.seed_tick(3);
+    rig.step();
+    assert_eq!(rig.driver.held_item_ids, [379]);
+    assert_eq!(
+        rig.driver.move_calls, moves,
+        "a bite must not share a tick with route follow"
+    );
+}
 
 #[test]
 fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {

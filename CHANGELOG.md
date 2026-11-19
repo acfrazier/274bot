@@ -5,6 +5,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
+### Walk guard
+
+- The walk guard closes incidental dialogue and level-up pages before
+  resuming a route. A bite or dialogue Continue uses the whole tick, so the
+  walker does not click a door or move on the same tick.
+
 ### Revision 377 login
 
 - Revision 377 login failures show clearer messages. An outdated-client

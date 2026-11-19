@@ -1351,6 +1351,11 @@ struct LiveState {
     second_attacker_staged: bool,
     tiles_by_tick: std::collections::VecDeque<(u32, WorldTile)>,
     real_content: bool,
+    level_up_enabled: bool,
+    level_up_requested_tick: Option<u32>,
+    level_up_page_tick: Option<u32>,
+    level_up_closed_tick: Option<u32>,
+    level_up_attack_base_at_open: Option<i32>,
     health: Vec<(u32, i32, i32)>,
 }
 
@@ -1417,6 +1422,40 @@ impl LiveState {
                         .map(|item| item.count)
                         .sum();
                     self.health.push((tick, hp.effective, lobsters));
+                }
+            }
+        }
+        if self.level_up_enabled {
+            if self.level_up_requested_tick.is_some() {
+                let continue_id = self.snapshot.chat_continue_component_id();
+                if self.level_up_page_tick.is_none() && continue_id != -1 {
+                    self.level_up_page_tick = Some(tick);
+                    self.level_up_attack_base_at_open = self
+                        .snapshot
+                        .stats()
+                        .iter()
+                        .find(|row| row.index == 0)
+                        .map(|row| row.base);
+                } else if self.level_up_page_tick.is_some()
+                    && self.level_up_closed_tick.is_none()
+                    && continue_id == -1
+                {
+                    self.level_up_closed_tick = Some(tick);
+                }
+            }
+            let left_start = self
+                .last_tile
+                .is_some_and(|tile| tile != (self.start.x, self.start.z, self.start.level));
+            if self.level_up_requested_tick.is_none() && self.started && !self.arrived && left_start
+            {
+                if send_cheat(client, "advancestat attack 2") {
+                    self.level_up_requested_tick = Some(tick);
+                } else {
+                    combat_proof::mark_invalid(
+                        &self.account,
+                        "could not seed the Attack level-up page during the guarded walk",
+                    );
+                    return;
                 }
             }
         }
@@ -1646,25 +1685,31 @@ fn scenario_for(
 #[test]
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
 fn live_walk_guard_w1_protected_crossing() {
-    run_live_w1(W1Mode::Crossing, None);
+    run_live_w1(W1Mode::Crossing, None, false);
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
 fn live_walk_guard_w1_stop_mid_crossing() {
-    run_live_w1(W1Mode::StopMidCrossing, None);
+    run_live_w1(W1Mode::StopMidCrossing, None, false);
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the local R289 engine"]
 fn live_walk_guard_eat_crossing() {
-    run_live_w1(W1Mode::Crossing, Some(true));
+    run_live_w1(W1Mode::Crossing, Some(true), false);
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the local R289 engine"]
 fn live_walk_guard_eat_no_food_control() {
-    run_live_w1(W1Mode::Crossing, Some(false));
+    run_live_w1(W1Mode::Crossing, Some(false), false);
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the isolated local R289 engine"]
+fn live_walk_guard_closes_level_up_page_during_crossing() {
+    run_live_w1(W1Mode::Crossing, Some(true), true);
 }
 
 fn eat_heal(row: &serde_json::Value, health: &[(u32, i32, i32)]) -> Option<(u32, i32, i32)> {
@@ -1756,8 +1801,58 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
         gate_fail("arrival without a recorded Eat followed by HP rise and lobster consumption")
     }
 }
+fn evaluate_level_up_close(state: &LiveState, capture: &CombatCapture) -> W1GateDecision {
+    let Some(requested_tick) = state.level_up_requested_tick else {
+        return W1GateDecision::Pending;
+    };
+    let Some(page_tick) = state.level_up_page_tick else {
+        return W1GateDecision::Pending;
+    };
+    let Some(closed_tick) = state.level_up_closed_tick else {
+        return W1GateDecision::Pending;
+    };
+    let Some(baseline) = capture.start_baseline.as_ref() else {
+        return W1GateDecision::Pending;
+    };
+    let attack_base = baseline["stats"]
+        .as_array()
+        .and_then(|stats| stats.iter().find(|stat| stat["index"] == 0))
+        .and_then(|stat| stat["base"].as_i64());
+    if attack_base != Some(1) {
+        return gate_fail("level-up crossing did not start with Attack level 1");
+    }
+    if page_tick <= requested_tick || state.level_up_attack_base_at_open != Some(2) {
+        return gate_fail("advancestat did not produce an observed Attack level-2 page");
+    }
+    let Some(close_action) = capture.actions.iter().find(|action| {
+        action["kind"] == json!("guard")
+            && action["op"] == json!("close-dialogue")
+            && action["accepted"] == json!(true)
+    }) else {
+        return gate_fail("level-up page closed without an accepted walk-guard Continue");
+    };
+    let Some(close_tick) = close_action["tick"]
+        .as_u64()
+        .and_then(|tick| u32::try_from(tick).ok())
+    else {
+        return gate_fail("walk-guard Continue has no valid tick");
+    };
+    if close_tick < page_tick || close_tick >= closed_tick {
+        return gate_fail("walk-guard Continue did not close the observed level-up page");
+    }
+    let Some(arrival_tick) = state.arrival_tick else {
+        return W1GateDecision::Pending;
+    };
+    if arrival_tick <= closed_tick || !state.arrived {
+        return gate_fail("the guarded route did not resume after closing the level-up page");
+    }
+    if !state.snapshot.ingame() || state.snapshot.scene_state() != 2 {
+        return gate_fail("arrival after the level-up page lacks a ready in-game scene");
+    }
+    W1GateDecision::Pass
+}
 
-fn run_live_w1(mode: W1Mode, food: Option<bool>) {
+fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
     assert_eq!(
         std::env::var("LIVE").as_deref(),
         Ok("1"),
@@ -1765,7 +1860,13 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     );
     std::env::set_var(
         "BOT_LIVE_NAME_PREFIX",
-        if food.is_some() { "ge" } else { "wg" },
+        if level_up {
+            "wgl"
+        } else if food.is_some() {
+            "ge"
+        } else {
+            "wg"
+        },
     );
     let evidence = evidence_dir().expect("W1 live prerequisites");
     std::fs::create_dir_all(&evidence).expect("create W1 lifecycle evidence directory");
@@ -1865,6 +1966,11 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         second_attacker_staged: false,
         tiles_by_tick: std::collections::VecDeque::new(),
         real_content: food.is_some(),
+        level_up_enabled: level_up,
+        level_up_requested_tick: None,
+        level_up_page_tick: None,
+        level_up_closed_tick: None,
+        level_up_attack_base_at_open: None,
         health: Vec::new(),
     }));
     let frame_state = Arc::clone(&state);
@@ -1991,7 +2097,9 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
             stop_off_tick: current.stop_off_tick,
             stop_error: current.stop_error.as_deref(),
         };
-        let decision = if let Some(food) = food {
+        let decision = if level_up {
+            evaluate_level_up_close(&current, &capture_snapshot)
+        } else if let Some(food) = food {
             evaluate_eat_crossing(&current, &capture_snapshot, food)
         } else {
             evaluate_w1_gate(mode, &gate_input)
@@ -2049,13 +2157,19 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     let attack_emitted = capture_snapshot.actions.iter().any(|action| {
         action["request"]["op"] == json!("npc") && action["request"]["action"] == json!("Attack")
     });
-    let mode_name = match (food, mode) {
-        (Some(true), _) => "eat_crossing",
-        (Some(false), _) => "no_food_control",
-        (None, W1Mode::Crossing) => "crossing",
-        (None, W1Mode::StopMidCrossing) => "stop_mid_crossing",
+    let mode_name = if level_up {
+        "level_up_page"
+    } else {
+        match (food, mode) {
+            (Some(true), _) => "eat_crossing",
+            (Some(false), _) => "no_food_control",
+            (None, W1Mode::Crossing) => "crossing",
+            (None, W1Mode::StopMidCrossing) => "stop_mid_crossing",
+        }
     };
-    let proof_name = if food.is_some() {
+    let proof_name = if level_up {
+        "WALK-GUARD-LEVELUP-1"
+    } else if food.is_some() {
         "GUARD-EAT-1"
     } else {
         "WALK-GUARD-LIFECYCLE-1_R2"
@@ -2066,6 +2180,14 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         "mode": mode_name,
         "outcome": outcome,
         "food": food,
+        "level_up_enabled": snapshot.level_up_enabled,
+        "level_up_requested_tick": snapshot.level_up_requested_tick,
+        "level_up_page_tick": snapshot.level_up_page_tick,
+        "level_up_closed_tick": snapshot.level_up_closed_tick,
+        "level_up_attack_base_at_open": snapshot.level_up_attack_base_at_open,
+        "level_up_close_action": capture_snapshot.actions.iter()
+            .find(|row| row["kind"] == json!("guard") && row["op"] == json!("close-dialogue")),
+
         "health": snapshot.health,
         "eat_heals": capture_snapshot.actions.iter()
             .filter(|row| row["kind"] == "guard" && row["op"] == "eat")
