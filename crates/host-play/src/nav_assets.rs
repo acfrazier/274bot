@@ -167,7 +167,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn staging_same_path_preserves_payload() {
         let root = TempRoot::new();
