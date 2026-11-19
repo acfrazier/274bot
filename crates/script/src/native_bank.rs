@@ -8,7 +8,7 @@
 use crate::bank::npc;
 use crate::bank::ops::{
     self, deposit_option, CloseBaseline, CloseScan, DepositKind, DepositScan, DepositSpec,
-    NoteIntent, Progress, WithdrawGoal, MAX_DEPOSITS, MAX_MEMO,
+    KeepRule, NoteIntent, Progress, WithdrawGoal, MAX_DEPOSITS, MAX_MEMO,
 };
 use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, BankDepositTrace, NativeMachine, WalkOptions};
@@ -406,8 +406,7 @@ pub struct OpenArgs {
 
 pub struct DepositArgs {
     pub products: Arc<[i32]>,
-    pub keep: Arc<[i32]>,
-    pub keep_counts: Arc<[(i32, i32)]>,
+    pub keep: Arc<[KeepRule]>,
     /// The stand that opened this session; a session lost before the
     /// deposit settles is re-opened from it (`MAX_BANK_REOPENS`).
     pub access: Option<Arc<BankStandAccess>>,
@@ -452,8 +451,7 @@ pub enum BankAction {
     },
     DepositProducts {
         products: Arc<[i32]>,
-        keep: Arc<[i32]>,
-        keep_counts: Arc<[(i32, i32)]>,
+        keep: Arc<[KeepRule]>,
     },
     /// Deposit exactly `slots` safe inventory rows, preserving all `keep` ids.
     DepositCapacity {
@@ -687,13 +685,9 @@ impl NativeMachine for BankMachine {
     fn begin(request: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         let mut protected_before = ProtectedCounts::Products(Vec::new());
         match &request.action {
-            BankAction::DepositProducts {
-                products,
-                keep,
-                keep_counts,
-            } => {
-                let mut before = Vec::with_capacity(keep.len() + keep_counts.len());
-                if products.len() + keep.len() + keep_counts.len() > MAX_MEMO {
+            BankAction::DepositProducts { products, keep } => {
+                let mut before = Vec::with_capacity(keep.len());
+                if products.len() + keep.len() > MAX_MEMO {
                     return Err(ActionError::Unavailable(Arc::from(
                         "bank product/keep set exceeds 64 items",
                     )));
@@ -702,11 +696,7 @@ impl NativeMachine for BankMachine {
                     .snapshot()
                     .inventory()
                     .ok_or_else(|| ActionError::Unavailable(Arc::from("inventory unavailable")))?;
-                for id in keep
-                    .iter()
-                    .copied()
-                    .chain(keep_counts.iter().map(|(id, _)| *id))
-                {
+                for id in keep.iter().map(|rule| rule.id()) {
                     if before.iter().any(|row: &BankCount| row.id == id) {
                         continue;
                     }
@@ -1573,7 +1563,7 @@ impl NativeMachine for BankMachine {
                             }
                             DepositScan::MissingRequired => {
                                 return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "inventory products remain but matching bank side row is missing",
+                                    "inventory products remain without a safe matching bank-side deposit operation",
                                 ))));
                             }
                             DepositScan::Click(click) => {
@@ -2038,23 +2028,19 @@ fn deposit_spec(action: &BankAction) -> Option<DepositSpec<'_>> {
         BankAction::Deposit { item } => Some(DepositSpec {
             kind: DepositKind::Required,
             keep: &[],
-            keep_counts: &[],
+            keep_ids: &[],
             only: Some(std::slice::from_ref(&item.id)),
         }),
         BankAction::DepositAll { keep } => Some(DepositSpec {
             kind: DepositKind::UntilEmpty,
-            keep,
-            keep_counts: &[],
+            keep: &[],
+            keep_ids: keep,
             only: None,
         }),
-        BankAction::DepositProducts {
-            products,
-            keep,
-            keep_counts,
-        } => Some(DepositSpec {
+        BankAction::DepositProducts { products, keep } => Some(DepositSpec {
             kind: DepositKind::Required,
             keep,
-            keep_counts,
+            keep_ids: &[],
             only: Some(products),
         }),
         _ => None,
@@ -2614,16 +2600,17 @@ impl BankMachine {
         let inventory = inventory?;
         Some(match &self.protected_before {
             ProtectedCounts::Products(before) => {
-                let keep_counts = match &self.request.action {
-                    BankAction::DepositProducts { keep_counts, .. } => keep_counts.as_ref(),
+                let keep = match &self.request.action {
+                    BankAction::DepositProducts { keep, .. } => keep.as_ref(),
                     _ => &[],
                 };
                 before.iter().all(|before| {
                     let current = ops::count_id(inventory, before.id);
-                    keep_counts
+                    let minimum = keep
                         .iter()
-                        .find_map(|(id, count)| (*id == before.id).then_some(*count))
-                        .map_or(current == before.count, |minimum| current >= minimum)
+                        .filter(|rule| rule.id() == before.id)
+                        .find_map(|rule| rule.minimum_count());
+                    minimum.map_or(current == before.count, |minimum| current >= minimum)
                 })
             }
             ProtectedCounts::Capacity(before) => {
@@ -3001,7 +2988,6 @@ impl NativeMachine for Deposit {
                 action: BankAction::DepositProducts {
                     products: Arc::clone(&args.products),
                     keep: args.keep,
-                    keep_counts: args.keep_counts,
                 },
                 partial_ok: false,
                 access: args.access,
@@ -5023,7 +5009,6 @@ mod tests {
             action: BankAction::DepositProducts {
                 products: Arc::from([item_id]),
                 keep: Arc::from([]),
-                keep_counts: Arc::from([]),
             },
             partial_ok: false,
             access: None,
@@ -5086,7 +5071,6 @@ mod tests {
                         action: BankAction::DepositProducts {
                             products: Arc::from([item_id]),
                             keep: Arc::from([]),
-                            keep_counts: Arc::from([]),
                         },
                         partial_ok: false,
                         access: None,
@@ -5578,8 +5562,7 @@ mod tests {
         let request = bank_request(
             BankAction::DepositProducts {
                 products: Arc::from([swordfish, tuna, net, beer]),
-                keep: Arc::from([harpoon, coins]),
-                keep_counts: Arc::from([]),
+                keep: Arc::from([KeepRule::All(harpoon), KeepRule::All(coins)]),
             },
             false,
         );
@@ -5657,8 +5640,7 @@ mod tests {
             bank_request(
                 BankAction::DepositProducts {
                     products: Arc::from([swordfish, tuna, net, beer]),
-                    keep: Arc::from([harpoon, coins]),
-                    keep_counts: Arc::from([]),
+                    keep: Arc::from([KeepRule::All(harpoon), KeepRule::All(coins)]),
                 },
                 false,
             )
@@ -5750,8 +5732,7 @@ mod tests {
             bank_request(
                 BankAction::DepositProducts {
                     products: Arc::from([swordfish, tuna, net, beer]),
-                    keep: Arc::from([harpoon, coins]),
-                    keep_counts: Arc::from([]),
+                    keep: Arc::from([KeepRule::All(harpoon), KeepRule::All(coins)]),
                 },
                 false,
             ),
@@ -6264,8 +6245,7 @@ mod tests {
             bank_request(
                 BankAction::DepositProducts {
                     products: Arc::from([trout]),
-                    keep: Arc::from([311]),
-                    keep_counts: Arc::from([]),
+                    keep: Arc::from([KeepRule::All(311)]),
                 },
                 false,
             )
@@ -6410,7 +6390,6 @@ mod tests {
                 BankAction::DepositProducts {
                     products: Arc::from([526]),
                     keep: Arc::from([]),
-                    keep_counts: Arc::from([]),
                 },
                 false,
             ),
@@ -7583,8 +7562,7 @@ mod tests {
             bank: None,
             action: BankAction::DepositProducts {
                 products: Arc::from([product]),
-                keep: Arc::from([tool]),
-                keep_counts: Arc::from([]),
+                keep: Arc::from([KeepRule::All(tool)]),
             },
             partial_ok: false,
             access: Some(Arc::clone(access)),
@@ -8189,8 +8167,7 @@ mod tests {
             &mut ledger,
             DepositArgs {
                 products: Arc::from([shrimp]),
-                keep: Arc::from([net]),
-                keep_counts: Arc::from([]),
+                keep: Arc::from([KeepRule::All(net)]),
                 access: Some(Arc::clone(&access)),
             },
         );
@@ -8269,8 +8246,7 @@ mod tests {
             &mut ledger,
             DepositArgs {
                 products: Arc::from([shrimp]),
-                keep: Arc::from([net]),
-                keep_counts: Arc::from([]),
+                keep: Arc::from([KeepRule::All(net)]),
                 access: Some(Arc::clone(&access)),
             },
         );
@@ -8379,8 +8355,7 @@ mod tests {
             &mut ledger,
             DepositArgs {
                 products: Arc::from([shrimp, anchovy]),
-                keep: Arc::from([net]),
-                keep_counts: Arc::from([]),
+                keep: Arc::from([KeepRule::All(net)]),
                 access: Some(Arc::clone(&access)),
             },
         );
@@ -8758,8 +8733,7 @@ mod tests {
                 &mut ledger,
                 DepositArgs {
                     products: Arc::from([PRODUCT]),
-                    keep: Arc::from([TOOL]),
-                    keep_counts: Arc::from([]),
+                    keep: Arc::from([KeepRule::All(TOOL)]),
                     access: None,
                 },
             );
@@ -8940,8 +8914,7 @@ mod tests {
                 &mut ledger,
                 DepositArgs {
                     products: Arc::from([PRODUCT, second]),
-                    keep: Arc::from([TOOL]),
-                    keep_counts: Arc::from([]),
+                    keep: Arc::from([KeepRule::All(TOOL)]),
                     access: None,
                 },
             );
@@ -9045,8 +9018,7 @@ mod tests {
                 &mut ledger,
                 DepositArgs {
                     products: Arc::from([PRODUCT]),
-                    keep: Arc::from([TOOL]),
-                    keep_counts: Arc::from([]),
+                    keep: Arc::from([KeepRule::All(TOOL)]),
                     access: Some(access),
                 },
             );
@@ -9148,8 +9120,7 @@ mod tests {
                 &mut ledger,
                 DepositArgs {
                     products: Arc::from([PRODUCT]),
-                    keep: Arc::from([TOOL]),
-                    keep_counts: Arc::from([]),
+                    keep: Arc::from([KeepRule::All(TOOL)]),
                     access: None,
                 },
             );
@@ -9210,8 +9181,7 @@ mod tests {
             &mut deposit_ledger,
             DepositArgs {
                 products: Arc::from([shrimp]),
-                keep: Arc::from([net]),
-                keep_counts: Arc::from([]),
+                keep: Arc::from([KeepRule::All(net)]),
                 access: None,
             },
         );

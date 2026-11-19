@@ -598,7 +598,6 @@ impl Grinch {
             deposit: Some(DepositSpec::Ids {
                 products: Arc::clone(&self.prepared.ids),
                 keep: Arc::from([]),
-                keep_counts: Arc::from([]),
             }),
             bank: BankChoice {
                 bank: None,

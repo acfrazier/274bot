@@ -460,15 +460,11 @@ impl AcquireRun {
                     let selected = api::game_data::for_revision(tick.cx.revision())
                         .map_err(|error| ActionError::Unavailable(Arc::from(error.to_string())))?;
                     match self.request.deposit.as_ref().expect("checked deposit") {
-                        DepositSpec::Ids {
-                            products,
-                            keep,
-                            keep_counts,
-                        } => {
+                        DepositSpec::Ids { products, keep } => {
                             if let Some(rows) = tick.cx.snapshot().inventory() {
                                 self.kept_unbankable |= rows.value.iter().any(|row| {
                                     row.count > 0
-                                        && keep.contains(&row.def.id)
+                                        && keep.iter().any(|rule| rule.id() == row.def.id)
                                         && super::unbankable_index(&selected, row).is_some()
                                 });
                             }
@@ -476,7 +472,6 @@ impl AcquireRun {
                                 bank::DepositArgs {
                                     products: Arc::clone(products),
                                     keep: Arc::clone(keep),
-                                    keep_counts: Arc::clone(keep_counts),
                                     access: self.access.clone(),
                                 },
                                 &mut tick.cx,

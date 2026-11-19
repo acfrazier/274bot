@@ -52,6 +52,28 @@ pub const DEPOSIT_VIEW_MS: u64 = 1_200;
 pub const MAX_DEPOSITS: u8 = 32;
 /// Cap on bounded transfer lists; shared capacity-deposit keeps are exempt.
 pub const MAX_MEMO: usize = 64;
+/// One bank deposit preservation rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeepRule {
+    /// Preserve every copy of this item.
+    All(i32),
+    /// Preserve at least `count` copies; excess copies remain deposit candidates.
+    AtLeast { id: i32, count: i32 },
+}
+impl KeepRule {
+    pub const fn id(self) -> i32 {
+        match self {
+            Self::All(id) | Self::AtLeast { id, .. } => id,
+        }
+    }
+
+    pub const fn minimum_count(self) -> Option<i32> {
+        match self {
+            Self::All(_) => None,
+            Self::AtLeast { count, .. } => Some(count),
+        }
+    }
+}
 
 /// A deposit dispatch or content refusal, distinct from an observed transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -627,32 +649,38 @@ pub enum DepositKind {
     Required,
 }
 
-/// Which pack ids a deposit moves. Borrows the caller's id lists (built
-/// once at begin, at most [`MAX_MEMO`] ids each), so a poll copies nothing
-/// and a machine stores nothing extra.
+/// Which pack ids a deposit moves. Borrows the caller's rules (built once at
+/// begin, at most [`MAX_MEMO`] entries), so a poll copies nothing and a
+/// machine stores nothing extra.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DepositSpec<'a> {
     pub kind: DepositKind,
-    /// Never deposited unless `keep_counts` sets an explicit lower bound.
-    pub keep: &'a [i32],
-    /// Per-id minimum inventory count to retain. Excess is deposited one at a
-    /// time so a stack cannot be swept below its requested retained count.
-    pub keep_counts: &'a [(i32, i32)],
+    /// Rule-based keep policy for product deposits.
+    pub keep: &'a [KeepRule],
+    /// Raw all-copy keep IDs for the until-empty deposit API.
+    pub keep_ids: &'a [i32],
     /// When set, only these ids are candidates.
     pub only: Option<&'a [i32]>,
 }
 
 impl DepositSpec<'_> {
     fn keep_count(&self, id: i32) -> Option<i32> {
-        self.keep_counts
-            .iter()
-            .find_map(|(keep_id, count)| (*keep_id == id).then_some(*count))
+        self.keep.iter().find_map(|rule| match *rule {
+            KeepRule::AtLeast { id: keep_id, count } if keep_id == id => Some(count),
+            _ => None,
+        })
     }
 
     fn candidate<R: BankRow>(&self, id: i32, pack: &[R]) -> bool {
         let kept = match self.keep_count(id) {
             Some(count) => count_id(pack, id) <= count,
-            None => self.keep.contains(&id),
+            None => {
+                self.keep_ids.contains(&id)
+                    || self
+                        .keep
+                        .iter()
+                        .any(|rule| matches!(rule, KeepRule::All(keep_id) if *keep_id == id))
+            }
         };
         !kept && self.only.is_none_or(|only| only.contains(&id))
     }
@@ -728,8 +756,7 @@ pub enum DepositScan {
     ViewExpired,
     Click(DepositClick),
     Done,
-    /// Capacity release: a matching row exists, but no safe operation can be
-    /// selected for its stackability or posted actions.
+    /// A required candidate has no safe matching bank-side deposit operation.
     MissingRequired,
     /// The bank closed or another session opened: nothing settles.
     SessionGone,

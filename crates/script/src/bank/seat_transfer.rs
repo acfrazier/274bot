@@ -395,8 +395,8 @@ impl DepositLoop {
         };
         let spec = DepositSpec {
             kind: DepositKind::UntilEmpty,
-            keep,
-            keep_counts: &[],
+            keep: &[],
+            keep_ids: keep,
             only: None,
         };
         match ops::deposit_next(&spec, side, pack, expired, true) {

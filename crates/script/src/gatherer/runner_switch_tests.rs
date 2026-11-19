@@ -2874,7 +2874,7 @@ fn unbankable_bank_fixture(fish_count: i32) -> (Gatherer, GameSnapshot) {
             if slot < 2 + fish_count {
                 "raw_shrimp"
             } else {
-                "net"
+                "misc_awful_anthem"
             },
             slot,
             1,
