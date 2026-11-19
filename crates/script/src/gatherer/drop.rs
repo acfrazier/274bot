@@ -10,6 +10,8 @@ const MAX_BATCH: usize = 5;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropBatchArgs {
     pub products: Arc<[i32]>,
+    pub include_products: bool,
+    pub empty_vial: Option<i32>,
     pub protected: [i32; MAX_PROTECTED],
     pub protected_len: u8,
 }
@@ -216,7 +218,7 @@ impl DropBatch {
 
     fn next_candidate<'a>(&self, rows: &'a [ItemView]) -> Option<&'a ItemView> {
         rows.iter().find(|row| {
-            self.is_product(row.def.id)
+            self.is_droppable(row.def.id)
                 && !self.is_protected(row.def.id)
                 && self.can_track(row.slot)
                 && !self
@@ -229,8 +231,9 @@ impl DropBatch {
         })
     }
 
-    fn is_product(&self, id: i32) -> bool {
-        self.args.products.contains(&id)
+    fn is_droppable(&self, id: i32) -> bool {
+        (self.args.include_products && self.args.products.contains(&id))
+            || self.args.empty_vial == Some(id)
     }
 
     fn is_protected(&self, id: i32) -> bool {
@@ -240,7 +243,7 @@ impl DropBatch {
     fn remaining(&self, rows: &[ItemView]) -> u16 {
         rows.iter()
             .filter(|row| {
-                row.count > 0 && self.is_product(row.def.id) && !self.is_protected(row.def.id)
+                row.count > 0 && self.is_droppable(row.def.id) && !self.is_protected(row.def.id)
             })
             .count() as u16
     }
@@ -283,6 +286,8 @@ mod tests {
                 .begin::<DropBatch>(
                     DropBatchArgs {
                         products: Arc::from([1511]),
+                        include_products: true,
+                        empty_vial: None,
                         protected: [0; MAX_PROTECTED],
                         protected_len: 0,
                     },
