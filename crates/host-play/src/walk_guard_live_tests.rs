@@ -188,8 +188,7 @@ fn pick_crossing(
             };
             let tile = WorldTile { x, z, level: 0 };
             if world.collision.standable(tile)
-                && (!start_near_throwers
-                    || chebyshev(tile, THROWER_TILE) <= THROWER_START_RADIUS)
+                && (!start_near_throwers || chebyshev(tile, THROWER_TILE) <= THROWER_START_RADIUS)
             {
                 starts.push(tile);
                 break;
@@ -1496,17 +1495,13 @@ impl LiveState {
             }
             // Open the level-up page only once the Thrower Troll is actually
             // targeting this player, so a survival bite is due on both builds.
-            let local_index = self
-                .snapshot
-                .local_player()
-                .map(|local| local.player.index);
+            let local_index = self.snapshot.local_player().map(|local| local.player.index);
             let thrower_targets_local = local_index.is_some_and(|index| {
                 self.snapshot.npcs().iter().any(|npc| {
                     npc.name.as_deref() == Some("Thrower Troll")
                         && npc.in_combat
                         && npc.target.is_some_and(|target| {
-                            target.kind == api::snapshot::ActorKind::Player
-                                && target.index == index
+                            target.kind == api::snapshot::ActorKind::Player && target.index == index
                         })
                 })
             });
@@ -1527,9 +1522,7 @@ impl LiveState {
                     return;
                 }
                 let drain = format!("~stat_drain hitpoints {} 0", hp - 2);
-                if !send_cheat(client, &drain)
-                    || !send_cheat(client, "advancestat attack 2")
-                {
+                if !send_cheat(client, &drain) || !send_cheat(client, "advancestat attack 2") {
                     combat_proof::mark_invalid(
                         &self.account,
                         "could not seed low HP and the Attack level-up page while a Thrower Troll targeted the player",
