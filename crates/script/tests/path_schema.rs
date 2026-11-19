@@ -1945,9 +1945,6 @@ fn druid_rat_hunt_targets_both_giantrat_configs() {
     let Some((selected, quests)) = selected_and_quests() else {
         return;
     };
-    let Some(_pack) = real_nav_pack() else {
-        return;
-    };
     let mut value = read_path(&paths_dir().join("druid.json"));
     let step = find_step_mut(&mut value, "hunt-rat-for-meat").expect("hunt step");
     let npc = step
@@ -1970,6 +1967,9 @@ fn druid_rat_hunt_targets_both_giantrat_configs() {
         names.contains(&"giantrat1".to_string()),
         "covers the stand spawns (id 87): {names:?}"
     );
+    let Some(_pack) = real_nav_pack() else {
+        return;
+    };
     compile_value(value, &selected, &quests).expect("druid compiles");
 }
 
@@ -1982,9 +1982,6 @@ fn junglepotion_pick_snake_does_not_advance() {
     let Some((selected, quests)) = selected_and_quests() else {
         return;
     };
-    let Some(_pack) = real_nav_pack() else {
-        return;
-    };
     let mut value = read_path(&paths_dir().join("junglepotion.json"));
     let step = find_step_mut(&mut value, "pick-snake").expect("pick-snake");
     assert_eq!(
@@ -1992,6 +1989,9 @@ fn junglepotion_pick_snake_does_not_advance() {
         Some(&serde_json::json!(false)),
         "pick-snake must settle without a journal re-read"
     );
+    let Some(_pack) = real_nav_pack() else {
+        return;
+    };
     compile_value(value, &selected, &quests).expect("junglepotion compiles");
 }
 
