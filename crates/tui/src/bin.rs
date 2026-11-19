@@ -293,7 +293,13 @@ struct LiveLogoutAccount {
     error: Option<String>,
 }
 
-type LiveLogoutAccounts = Arc<Mutex<Vec<LiveLogoutAccount>>>;
+#[derive(Default)]
+struct LiveLogoutControl {
+    accounts: Vec<LiveLogoutAccount>,
+    duel: Option<LiveDuelLogout>,
+}
+
+type LiveLogoutAccounts = Arc<Mutex<LiveLogoutControl>>;
 
 /// The TUI's per-frame client work on every slot. The core already
 /// publishes the frame and runs the shared live harness; this adds TUI-owned
@@ -340,13 +346,22 @@ impl frontend_core::frames::FrameHook for TuiFrameHook {
         }
         if let Some(logouts) = live_logout {
             let mut logouts = logouts.lock().unwrap();
-            if let Some(account) = logouts.iter_mut().find(|account| account.name == name) {
+            if let Some(account) = logouts
+                .accounts
+                .iter_mut()
+                .find(|account| account.name == name)
+            {
                 match account.combat.send_escape(c, Instant::now()) {
                     Ok(true) => {
                         eprintln!("[tui-play] live logout account-only safe tele account={name}");
                     }
                     Ok(false) => {}
                     Err(error) => account.error = Some(error),
+                }
+            }
+            if let Some(duel) = logouts.duel.as_mut() {
+                if duel.actor == name {
+                    duel.dispatch_frame(c, frame.session_boundary());
                 }
             }
         }
@@ -467,6 +482,10 @@ pub struct TuiSession {
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
     live_logout: Option<LiveLogoutAccounts>,
+    /// Only the resolved `duel_arena` pair-core cell may forfeit during
+    /// the TUI-owned clean logout path.
+    live_duel_arena_teardown: bool,
+    live_duel_receipt: Option<DuelTeardownReceipt>,
     /// `--catalog-core` / `--pair-core`: the shared witness the next
     /// `--live` prepare arms.
     live_catalog_core: bool,
@@ -841,6 +860,8 @@ impl TuiSession {
             walk_reset: false,
             live_name: None,
             live_logout: None,
+            live_duel_arena_teardown: false,
+            live_duel_receipt: None,
             live_catalog_core: false,
             live_pair_core: false,
             live_core_deadline: None,
@@ -1500,15 +1521,16 @@ impl TuiSession {
             self.live_pair_core,
         )?;
         #[cfg(not(feature = "js"))]
-        {
-            self.core.resolve_live_core(
-                &name,
-                profile_count,
-                self.live_catalog_core,
-                self.live_pair_core,
-            )?;
-        }
+        let live_core = self.core.resolve_live_core(
+            &name,
+            profile_count,
+            self.live_catalog_core,
+            self.live_pair_core,
+        )?;
         let profiles = frontend_core::live::LiveProfiles::mint(profile_count);
+        self.live_duel_arena_teardown =
+            cell_duel_teardown_enabled(&name, self.live_pair_core, &live_core);
+        self.live_duel_receipt = None;
         let names = profiles.names();
         // The driven slot's bag names its companion, exactly as the panel
         // injects it; the companion's own bag is built by the Start plan.
@@ -1529,7 +1551,7 @@ impl TuiSession {
         #[cfg(feature = "js")]
         let fleet_cards = scenario.fleet_cards(names)?;
         let path = profiles.tui_vault(guardian_fight);
-        self.live_logout = Some(Arc::new(Mutex::new(Vec::new())));
+        self.live_logout = Some(Arc::new(Mutex::new(LiveLogoutControl::default())));
         self.unlock_at(&path, profiles.passphrase())?;
         self.core.configure_live_core(names)?;
         self.live_name = Some(name);
@@ -4398,6 +4420,9 @@ impl TuiSession {
         self.quit(app);
         match (result, logout) {
             (result, Ok(())) => {
+                if let Some(receipt) = self.live_duel_receipt.take() {
+                    receipt.emit();
+                }
                 if let Some(name) = self.live_name.as_deref() {
                     eprintln!(
                         "PASS: live {name} clean logout accounts={}",
@@ -4420,6 +4445,12 @@ impl TuiSession {
     fn clean_logout_live(&mut self, app: &mut TuiApp) -> Result<(), String> {
         if self.live_name.is_none() {
             return Ok(());
+        }
+        self.live_duel_receipt = None;
+        if let Some(logouts) = self.live_logout.as_ref() {
+            let mut control = logouts.lock().unwrap();
+            control.accounts.clear();
+            control.duel = None;
         }
         let deadline = Instant::now() + Duration::from_secs(30);
         match self.submit_raw(OperatorCommand::StopScript, Targets::Everyone) {
@@ -4445,12 +4476,14 @@ impl TuiSession {
                     .with_slot_snapshot(account, |snapshot| snapshot.tick())
             );
         }
-        if self.names.iter().all(|account| {
-            self.core
-                .fleet_view()
-                .row(account)
-                .is_none_or(|row| !row.connected())
-        }) {
+        if !self.live_duel_arena_teardown
+            && all_live_accounts_disconnected(self.names.iter().map(|account| {
+                self.core
+                    .fleet_view()
+                    .row(account)
+                    .is_some_and(|row| row.connected())
+            }))
+        {
             return Ok(());
         }
         let logouts = self
@@ -4458,7 +4491,22 @@ impl TuiSession {
             .as_ref()
             .ok_or("live logout client hook is unavailable")?
             .clone();
-        *logouts.lock().unwrap() = self
+        if self.live_duel_arena_teardown {
+            self.live_duel_receipt = self.clean_logout_duel_arena(app, deadline, &logouts)?;
+        }
+        if all_live_accounts_disconnected(self.names.iter().map(|account| {
+            self.core
+                .fleet_view()
+                .row(account)
+                .is_some_and(|row| row.connected())
+        })) {
+            if let Some(receipt) = self.live_duel_receipt.as_mut() {
+                receipt.primary_disconnected = true;
+                receipt.peer_disconnected = true;
+            }
+            return Ok(());
+        }
+        let accounts = self
             .names
             .iter()
             .map(|account| {
@@ -4471,6 +4519,11 @@ impl TuiSession {
                     .ok_or_else(|| format!("live logout snapshot unavailable for {account}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        {
+            let mut control = logouts.lock().unwrap();
+            control.accounts = accounts;
+            control.duel = None;
+        }
         match self.submit_raw(OperatorCommand::Logout, Targets::Everyone) {
             Ok(_) | Err(SubmitError::NoTarget(_)) => {}
             Err(error) => return Err(format!("logout command failed: {error}")),
@@ -4485,12 +4538,16 @@ impl TuiSession {
             .collect::<Vec<_>>();
         loop {
             self.pump(app);
-            if self.names.iter().all(|account| {
+            if all_live_accounts_disconnected(self.names.iter().map(|account| {
                 self.core
                     .fleet_view()
                     .row(account)
-                    .is_none_or(|row| !row.connected())
-            }) {
+                    .is_some_and(|row| row.connected())
+            })) {
+                if let Some(receipt) = self.live_duel_receipt.as_mut() {
+                    receipt.primary_disconnected = true;
+                    receipt.peer_disconnected = true;
+                }
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -4527,7 +4584,7 @@ impl TuiSession {
                     .core
                     .with_slot_snapshot(account, |snapshot| {
                         let mut accounts = logouts.lock().unwrap();
-                        let state = &mut accounts[index];
+                        let state = &mut accounts.accounts[index];
                         if let Some(error) = &state.error {
                             return Err(error.clone());
                         }
@@ -4545,6 +4602,157 @@ impl TuiSession {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    fn observe_duel_pair(&self, actor: &str, peer: &str) -> DuelPairObservation {
+        let observe = |name: &str| {
+            let connected = self
+                .core
+                .fleet_view()
+                .row(name)
+                .is_some_and(|row| row.connected());
+            let fallback = DuelAccountObservation {
+                connected,
+                ..DuelAccountObservation::default()
+            };
+            self.core
+                .with_slot_snapshot(name, |snapshot| {
+                    let loaded = connected
+                        && snapshot.ingame()
+                        && snapshot.scene_state() == 2
+                        && snapshot.scene().available;
+                    let (forfeit_outcome, natural_outcome) = if loaded {
+                        duel_outcome_flags(snapshot)
+                    } else {
+                        (false, false)
+                    };
+                    DuelAccountObservation {
+                        connected,
+                        loaded,
+                        tile: loaded
+                            .then(|| {
+                                snapshot
+                                    .tile()
+                                    .map(|(x, z, level)| api::snapshot::WorldTile { x, z, level })
+                            })
+                            .flatten(),
+                        tick: loaded.then(|| snapshot.tick()),
+                        forfeit_outcome,
+                        natural_outcome,
+                    }
+                })
+                .unwrap_or(fallback)
+        };
+        DuelPairObservation {
+            primary: observe(actor),
+            peer: observe(peer),
+        }
+    }
+
+    fn clean_logout_duel_arena(
+        &mut self,
+        app: &mut TuiApp,
+        deadline: Instant,
+        logouts: &LiveLogoutAccounts,
+    ) -> Result<Option<DuelTeardownReceipt>, String> {
+        if !self.live_duel_arena_teardown {
+            return Ok(None);
+        }
+        if self.names.len() != 2 {
+            return Err(format!(
+                "duel teardown requires exactly two accounts, found {}",
+                self.names.len()
+            ));
+        }
+        let actor = self.names[0].clone();
+        let peer = self.names[1].clone();
+        let result = (|| loop {
+            let pair = self.observe_duel_pair(&actor, &peer);
+            let (mut stage, needs_bootstrap) = {
+                let control = logouts.lock().unwrap();
+                (
+                    control
+                        .duel
+                        .as_ref()
+                        .map(|duel| duel.phase.label())
+                        .unwrap_or("post-stop-observation"),
+                    control.duel.is_none(),
+                )
+            };
+            if let Some(error) = duel_deadline_error(Instant::now(), deadline, pair, stage) {
+                return Err(error);
+            }
+            let candidate_pen = pair.candidate_pen();
+            let nav_world = if needs_bootstrap && pair.both_connected() && candidate_pen.is_some() {
+                self.core.nav_world()
+            } else {
+                None
+            };
+            {
+                let mut control = logouts.lock().unwrap();
+                if control.duel.is_none() {
+                    if pair.both_in_lobby() {
+                        return duel_return_receipt(&actor, &peer, pair)
+                            .map(Some)
+                            .ok_or_else(|| {
+                                format!(
+                                    "duel lobby return had no outcome evidence: {}",
+                                    pair.diagnostic()
+                                )
+                            });
+                    }
+                    if !pair.primary.connected && !pair.peer.connected {
+                        return Ok(None);
+                    }
+                    if pair.initially_outside_pens() {
+                        return Ok(None);
+                    }
+                    if !pair.connected_slots_known() {
+                        stage = "post-stop-observation";
+                    } else if pair.any_connected_in_pen() && !pair.both_connected() {
+                        return Err(format!(
+                            "duel account disconnected while its peer remained in a pen: {}",
+                            pair.diagnostic()
+                        ));
+                    } else if pair.both_connected() {
+                        if let Some(pen) = candidate_pen {
+                            let nav_world =
+                                nav_world.ok_or("duel teardown navigation world is unavailable")?;
+                            control.duel = Some(LiveDuelLogout::new(
+                                actor.clone(),
+                                peer.clone(),
+                                pen,
+                                nav_world,
+                                pair,
+                            ));
+                        }
+                    }
+                }
+                if let Some(duel) = control.duel.as_mut() {
+                    duel.observe_pair(pair);
+                    if let Some(error) = duel.failure.as_deref() {
+                        return Err(format!(
+                            "duel teardown failed: {error}; {}",
+                            duel.diagnostic()
+                        ));
+                    }
+                    if let Some(receipt) = duel.receipt(pair) {
+                        control.duel = None;
+                        return Ok(Some(receipt));
+                    }
+                    stage = duel.phase.label();
+                }
+            }
+            if let Some(error) = duel_deadline_error(Instant::now(), deadline, pair, stage) {
+                return Err(error);
+            }
+            self.pump(app);
+            std::thread::sleep(Duration::from_millis(50));
+        })();
+        if result.is_err() {
+            logouts.lock().unwrap().duel = None;
+        }
+        result
     }
 
     /// Return a producer-marked terminal asset-init failure for a slot owned
@@ -4966,6 +5174,913 @@ fn live_logout_retry_due(last_tick: &mut Option<u32>, tick: Option<u32>) -> bool
     }
     *last_tick = Some(tick);
     true
+}
+/// Arena bounds decoded from pristine revision 289 fight-zone rows in
+/// `content/scripts/minigames/game_duelarena/configs/duelarena.dbrow:1-11`.
+/// The single-level bounds are the selected duel-arena pens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DuelArea {
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+}
+
+impl DuelArea {
+    fn contains(self, tile: api::snapshot::WorldTile) -> bool {
+        tile.level == 0
+            && (self.min_x..=self.max_x).contains(&tile.x)
+            && (self.min_z..=self.max_z).contains(&tile.z)
+    }
+
+    fn midpoint_z(self) -> i32 {
+        (self.min_z + self.max_z) / 2
+    }
+
+    /// Arena placements put Trapdoor 3203 on the pen edge at its midpoint;
+    /// the approach is the one-tile inward neighbor (`content/maps/m52_50.jm2:9918-12060`,
+    /// `content/scripts/minigames/game_duelarena/configs/duelarena.dbrow:1-11`).
+    fn inner_approach(self, west: bool) -> (api::snapshot::WorldTile, api::snapshot::WorldTile) {
+        let trapdoor_x = if west { self.min_x } else { self.max_x };
+        let approach_x = if west { self.min_x + 1 } else { self.max_x - 1 };
+        (
+            api::snapshot::WorldTile {
+                x: trapdoor_x,
+                z: self.midpoint_z(),
+                level: 0,
+            },
+            api::snapshot::WorldTile {
+                x: approach_x,
+                z: self.midpoint_z(),
+                level: 0,
+            },
+        )
+    }
+}
+
+const DUEL_ARENA_PENS: [DuelArea; 6] = [
+    DuelArea {
+        min_x: 3333,
+        max_x: 3357,
+        min_z: 3206,
+        max_z: 3220,
+    },
+    DuelArea {
+        min_x: 3333,
+        max_x: 3357,
+        min_z: 3225,
+        max_z: 3239,
+    },
+    DuelArea {
+        min_x: 3333,
+        max_x: 3357,
+        min_z: 3244,
+        max_z: 3258,
+    },
+    DuelArea {
+        min_x: 3364,
+        max_x: 3388,
+        min_z: 3206,
+        max_z: 3220,
+    },
+    DuelArea {
+        min_x: 3364,
+        max_x: 3388,
+        min_z: 3225,
+        max_z: 3239,
+    },
+    DuelArea {
+        min_x: 3364,
+        max_x: 3388,
+        min_z: 3244,
+        max_z: 3258,
+    },
+];
+
+/// Reset square from `content/scripts/minigames/game_duelarena/scripts/duel_arena_finish.rs2:75`.
+const DUEL_ARENA_LOBBY: DuelArea = DuelArea {
+    min_x: 3355,
+    max_x: 3379,
+    min_z: 3267,
+    max_z: 3279,
+};
+
+const DUEL_TRAPDOOR_ID: i32 = 3203; // `content/pack/loc.pack:3204` names `arena_trapdoor`.
+const DUEL_FORFEIT_PROMPT: &str = "Do you wish to forfeit?"; // `content/scripts/minigames/game_duelarena/scripts/duel_forfeit.rs2:11`.
+const DUEL_NO_FORFEIT_MESSAGE: &str = "This duel cannot be forfeited."; // `content/scripts/minigames/game_duelarena/scripts/duel_arena_settings.rs2:176-184`.
+
+const DUEL_NATURAL_WINNER_TEXT: &str = "You are victorious!"; // `content/scripts/minigames/game_duelarena/scripts/duel_arena_finish.rs2:30`.
+const DUEL_FORFEIT_WINNER_TEXT: &str = "You are victorious! Your opponent resigned!"; // `content/scripts/minigames/game_duelarena/scripts/duel_arena_finish.rs2:38`.
+
+/// Largest configured pen: 25 × 15 cells (`content/scripts/minigames/game_duelarena/configs/duelarena.dbrow:1-11`).
+const MAX_DUEL_PEN_CELLS: usize = 375;
+
+fn duel_arena_pen(tile: api::snapshot::WorldTile) -> Option<DuelArea> {
+    DUEL_ARENA_PENS
+        .iter()
+        .copied()
+        .find(|pen| pen.contains(tile))
+}
+
+fn cell_duel_teardown_enabled(
+    scenario: &str,
+    pair_core_requested: bool,
+    mode: &frontend_core::live::LiveCoreMode,
+) -> bool {
+    pair_core_requested
+        && scenario == "duel_arena"
+        && mode.eq(&frontend_core::live::LiveCoreMode::Pair)
+}
+
+fn all_live_accounts_disconnected(mut connected: impl Iterator<Item = bool>) -> bool {
+    connected.all(|is_connected| !is_connected)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DuelAccountObservation {
+    connected: bool,
+    loaded: bool,
+    tile: Option<api::snapshot::WorldTile>,
+    tick: Option<u32>,
+    forfeit_outcome: bool,
+    natural_outcome: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DuelPairObservation {
+    primary: DuelAccountObservation,
+    peer: DuelAccountObservation,
+}
+
+impl DuelPairObservation {
+    fn connected_slots_known(self) -> bool {
+        (!self.primary.connected || (self.primary.loaded && self.primary.tile.is_some()))
+            && (!self.peer.connected || (self.peer.loaded && self.peer.tile.is_some()))
+    }
+
+    fn both_connected(self) -> bool {
+        self.primary.connected && self.peer.connected
+    }
+
+    fn common_pen(self) -> Option<DuelArea> {
+        if !self.both_connected() || !self.primary.loaded || !self.peer.loaded {
+            return None;
+        }
+        let primary = duel_arena_pen(self.primary.tile?);
+        (primary == duel_arena_pen(self.peer.tile?))
+            .then_some(primary)
+            .flatten()
+    }
+
+    fn candidate_pen(self) -> Option<DuelArea> {
+        self.primary
+            .connected
+            .then_some(self.primary.tile)
+            .flatten()
+            .filter(|_| self.primary.loaded)
+            .and_then(duel_arena_pen)
+            .or_else(|| {
+                self.peer
+                    .connected
+                    .then_some(self.peer.tile)
+                    .flatten()
+                    .filter(|_| self.peer.loaded)
+                    .and_then(duel_arena_pen)
+            })
+    }
+
+    fn initially_outside_pens(self) -> bool {
+        self.connected_slots_known()
+            && (!self.primary.connected
+                || duel_arena_pen(self.primary.tile.expect("known connected tile")).is_none())
+            && (!self.peer.connected
+                || duel_arena_pen(self.peer.tile.expect("known connected tile")).is_none())
+    }
+
+    fn both_in_lobby(self) -> bool {
+        self.primary.loaded
+            && self.peer.loaded
+            && self
+                .primary
+                .tile
+                .is_some_and(|tile| DUEL_ARENA_LOBBY.contains(tile))
+            && self
+                .peer
+                .tile
+                .is_some_and(|tile| DUEL_ARENA_LOBBY.contains(tile))
+    }
+
+    fn any_connected_in_pen(self) -> bool {
+        (self.primary.connected
+            && self.primary.loaded
+            && self
+                .primary
+                .tile
+                .is_some_and(|tile| duel_arena_pen(tile).is_some()))
+            || (self.peer.connected
+                && self.peer.loaded
+                && self
+                    .peer
+                    .tile
+                    .is_some_and(|tile| duel_arena_pen(tile).is_some()))
+    }
+
+    fn diagnostic(self) -> String {
+        format!(
+            "primary_tile={:?} primary_tick={:?} peer_tile={:?} peer_tick={:?}",
+            self.primary.tile, self.primary.tick, self.peer.tile, self.peer.tick
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DuelLoc {
+    tile: api::snapshot::WorldTile,
+    typecode: i32,
+    layer: api::snapshot::LocLayer,
+}
+
+impl DuelLoc {
+    fn matches(self, loc: &api::snapshot::LocView) -> bool {
+        loc.id == DUEL_TRAPDOOR_ID
+            && loc.typecode == self.typecode
+            && loc.layer == self.layer
+            && loc.tile == self.tile
+            && loc
+                .name
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case("Trapdoor"))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DuelAction {
+    Walk(api::snapshot::WorldTile),
+    Forfeit(DuelLoc),
+    ConfirmYes,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DuelLogoutPhase {
+    AwaitStablePair,
+    NeedApproach,
+    Approaching,
+    AwaitPrompt,
+    AwaitReturns,
+}
+
+impl DuelLogoutPhase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::AwaitStablePair => "stable-pair",
+            Self::NeedApproach => "approach",
+            Self::Approaching => "approaching",
+            Self::AwaitPrompt => "forfeit-prompt",
+            Self::AwaitReturns => "lobby-returns",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DuelOutcome {
+    Forfeit,
+    NaturalFinish,
+}
+
+impl DuelOutcome {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Forfeit => "forfeit",
+            Self::NaturalFinish => "natural-finish",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DuelTeardownReceipt {
+    actor: String,
+    peer: String,
+    outcome: DuelOutcome,
+    loc: Option<api::snapshot::WorldTile>,
+    prompt: Option<&'static str>,
+    primary_return: api::snapshot::WorldTile,
+    primary_tick: Option<u32>,
+    peer_return: api::snapshot::WorldTile,
+    peer_tick: Option<u32>,
+    forfeit_action_sent: bool,
+    confirmation_sent: bool,
+    primary_disconnected: bool,
+    peer_disconnected: bool,
+}
+
+impl DuelTeardownReceipt {
+    fn emit(&self) {
+        let tile = |tile: api::snapshot::WorldTile| serde_json::json!({"x": tile.x, "z": tile.z, "level": tile.level});
+        let receipt = serde_json::json!({
+            "actor": self.actor,
+            "peer": self.peer,
+            "branch": self.outcome.label(),
+            "loc_id": self.loc.map(|_| DUEL_TRAPDOOR_ID),
+            "loc": self.loc.map(tile),
+            "prompt": self.prompt,
+            "primary_return": tile(self.primary_return),
+            "primary_return_tick": self.primary_tick,
+            "peer_return": tile(self.peer_return),
+            "peer_return_tick": self.peer_tick,
+            "primary_disconnected": self.primary_disconnected,
+            "peer_disconnected": self.peer_disconnected,
+            "forfeit_action_sent": self.forfeit_action_sent,
+            "confirmation_sent": self.confirmation_sent,
+        });
+        eprintln!("LIVE_DUEL_TEARDOWN: {receipt}");
+    }
+}
+
+/// Engine order is Forfeit interaction → exact Yes/No prompt → duel finish
+/// → reset telejump; wait for both lobby tiles before Logout
+/// (`content/scripts/minigames/game_duelarena/scripts/duel_forfeit.rs2:1-16`,
+/// `content/scripts/minigames/game_duelarena/scripts/duel_arena_finish.rs2:27-49,62-78`).
+struct LiveDuelLogout {
+    actor: String,
+    peer: String,
+    pen: DuelArea,
+    nav_world: Arc<nav_planner::world::NavWorld>,
+    snapshot: api::snapshot::GameSnapshot,
+    pair: DuelPairObservation,
+    phase: DuelLogoutPhase,
+    pending: Option<DuelAction>,
+    target: Option<DuelLoc>,
+    approach: Option<api::snapshot::WorldTile>,
+    forfeit_outcome: bool,
+    natural_outcome: bool,
+    prompt_seen: bool,
+    forfeit_action_sent: bool,
+    confirmation_sent: bool,
+    failure: Option<String>,
+}
+
+impl LiveDuelLogout {
+    fn new(
+        actor: String,
+        peer: String,
+        pen: DuelArea,
+        nav_world: Arc<nav_planner::world::NavWorld>,
+        pair: DuelPairObservation,
+    ) -> Self {
+        let phase = if pair.common_pen() == Some(pen) {
+            DuelLogoutPhase::NeedApproach
+        } else {
+            DuelLogoutPhase::AwaitStablePair
+        };
+        Self {
+            actor,
+            peer,
+            pen,
+            nav_world,
+            snapshot: api::snapshot::GameSnapshot::new(),
+            pair,
+            phase,
+            pending: None,
+            target: None,
+            approach: None,
+            forfeit_outcome: pair.primary.forfeit_outcome || pair.peer.forfeit_outcome,
+            natural_outcome: pair.primary.natural_outcome || pair.peer.natural_outcome,
+            prompt_seen: false,
+            forfeit_action_sent: false,
+            confirmation_sent: false,
+            failure: None,
+        }
+    }
+
+    fn observe_pair(&mut self, pair: DuelPairObservation) {
+        self.pair = pair;
+        self.forfeit_outcome |= pair.primary.forfeit_outcome || pair.peer.forfeit_outcome;
+        self.natural_outcome |= pair.primary.natural_outcome || pair.peer.natural_outcome;
+        if self.forfeit_outcome && self.natural_outcome {
+            self.failure = Some("duel result evidence conflicts".into());
+        }
+
+        if !pair.both_connected() && pair.any_connected_in_pen() {
+            self.failure = Some("one duel account disconnected before both lobby returns".into());
+        }
+        if !pair.connected_slots_known() {
+            self.pending = None;
+        }
+        if pair.both_in_lobby() {
+            if !self.outcome_seen() {
+                if self.confirmation_sent {
+                    self.forfeit_outcome = true;
+                } else {
+                    self.natural_outcome = true;
+                }
+            }
+            self.pending = None;
+        }
+        if self.outcome_seen() && !self.confirmation_sent {
+            self.pending = None;
+        }
+        if self.phase == DuelLogoutPhase::AwaitStablePair {
+            if let Some(pen) = pair.common_pen() {
+                self.pen = pen;
+                if !self.outcome_seen() {
+                    self.phase = DuelLogoutPhase::NeedApproach;
+                }
+            }
+        }
+    }
+
+    fn outcome_seen(&self) -> bool {
+        self.forfeit_outcome || self.natural_outcome
+    }
+
+    fn outcome(&self) -> Option<DuelOutcome> {
+        if self.forfeit_outcome {
+            Some(DuelOutcome::Forfeit)
+        } else if self.natural_outcome {
+            Some(DuelOutcome::NaturalFinish)
+        } else {
+            None
+        }
+    }
+
+    fn plan_next(
+        &mut self,
+        pair: DuelPairObservation,
+        actor_snapshot: &api::snapshot::GameSnapshot,
+    ) {
+        self.observe_pair(pair);
+        if self.failure.is_some()
+            || self.pending.is_some()
+            || self.confirmation_sent
+            || self.phase == DuelLogoutPhase::AwaitReturns
+            || self.outcome_seen()
+        {
+            return;
+        }
+        if !pair.both_connected()
+            || !pair.primary.loaded
+            || !pair.peer.loaded
+            || pair.common_pen() != Some(self.pen)
+            || !actor_snapshot.ingame()
+            || actor_snapshot.scene_state() != 2
+            || !actor_snapshot.scene().available
+        {
+            return;
+        }
+        let Some((x, z, level)) = actor_snapshot.tile() else {
+            return;
+        };
+        let actor_tile = api::snapshot::WorldTile { x, z, level };
+        if pair.primary.tile != Some(actor_tile) || !self.pen.contains(actor_tile) {
+            return;
+        }
+
+        match self.phase {
+            DuelLogoutPhase::AwaitStablePair => {}
+            DuelLogoutPhase::NeedApproach => {
+                let (target, approach) = match select_duel_trapdoor(
+                    actor_snapshot,
+                    &self.nav_world,
+                    self.pen,
+                    actor_tile,
+                ) {
+                    Ok(selected) => selected,
+                    Err(error) => {
+                        self.failure = Some(error);
+                        return;
+                    }
+                };
+                self.target = Some(target);
+                self.approach = Some(approach);
+                match duel_loc_operable(actor_snapshot, target, actor_tile) {
+                    Some(true) => self.pending = Some(DuelAction::Forfeit(target)),
+                    Some(false) => self.pending = Some(DuelAction::Walk(approach)),
+                    None => self.failure = Some("duel trapdoor reachability is unknown".into()),
+                }
+            }
+            DuelLogoutPhase::Approaching => {
+                let Some(target) = self.target else {
+                    self.failure = Some("duel trapdoor target was not retained".into());
+                    return;
+                };
+                match duel_loc_operable(actor_snapshot, target, actor_tile) {
+                    Some(true) => self.pending = Some(DuelAction::Forfeit(target)),
+                    Some(false) => {}
+                    None => self.failure = Some("duel trapdoor reachability is unknown".into()),
+                }
+            }
+            DuelLogoutPhase::AwaitPrompt => self.plan_confirmation(actor_snapshot),
+            DuelLogoutPhase::AwaitReturns => {}
+        }
+    }
+
+    fn plan_confirmation(&mut self, snapshot: &api::snapshot::GameSnapshot) {
+        if duel_modal_contains(snapshot, DUEL_NO_FORFEIT_MESSAGE) {
+            self.failure = Some("engine refused forfeit: no_forfeit rule".into());
+            return;
+        }
+        let prompt_present = snapshot
+            .chat_modal_texts()
+            .iter()
+            .any(|text| text.trim().eq_ignore_ascii_case(DUEL_FORFEIT_PROMPT));
+        let has_chat_evidence = snapshot.modals().chat != -1
+            || !snapshot.chat_modal_texts().is_empty()
+            || !snapshot.chat_options().is_empty();
+        if prompt_present {
+            if snapshot.modals().chat == -1 || snapshot.chat_options().is_empty() {
+                return;
+            }
+            let options = snapshot.chat_options();
+            if options.len() != 2
+                || !options[0].text.trim().eq_ignore_ascii_case("Yes")
+                || !options[1].text.trim().eq_ignore_ascii_case("No")
+            {
+                self.failure =
+                    Some("forfeit prompt choices are not the expected Yes/No pair".into());
+                return;
+            }
+            self.prompt_seen = true;
+            self.pending = Some(DuelAction::ConfirmYes);
+        } else if has_chat_evidence || !snapshot.main_modal_texts().is_empty() {
+            self.failure = Some("unexpected or stale modal while awaiting forfeit prompt".into());
+        }
+    }
+
+    fn dispatch_frame(&mut self, client: &mut Client, session_boundary: bool) {
+        if session_boundary {
+            self.snapshot.reset_session(client.gens);
+        }
+        self.snapshot.rebuild(client);
+        if self.pending.is_none() {
+            let pair = self.pair;
+            let snapshot =
+                std::mem::replace(&mut self.snapshot, api::snapshot::GameSnapshot::new());
+            self.plan_next(pair, &snapshot);
+            self.snapshot = snapshot;
+        }
+        let Some(action) = self.pending.take() else {
+            return;
+        };
+        if self.failure.is_some()
+            || !self.pair.both_connected()
+            || !self.pair.connected_slots_known()
+            || self.pair.common_pen() != Some(self.pen)
+        {
+            return;
+        }
+        let Some((x, z, level)) = self.snapshot.tile() else {
+            return;
+        };
+        let actor_tile = api::snapshot::WorldTile { x, z, level };
+        if self.pair.primary.tile != Some(actor_tile) || !self.pen.contains(actor_tile) {
+            return;
+        }
+
+        let send = match action {
+            DuelAction::Walk(tile) => {
+                if self.phase != DuelLogoutPhase::NeedApproach || !self.pen.contains(tile) {
+                    self.failure = Some("stale duel approach action".into());
+                    return;
+                }
+                if actor_tile == tile {
+                    self.accepted(action);
+                    return;
+                }
+                let mut interactions = api::interact::Interactions::new(&self.snapshot, client);
+                interactions.walk(tile)
+            }
+            DuelAction::Forfeit(target) => {
+                if !matches!(
+                    self.phase,
+                    DuelLogoutPhase::NeedApproach | DuelLogoutPhase::Approaching
+                ) {
+                    self.failure = Some("stale duel forfeit action".into());
+                    return;
+                }
+                let Some(loc) = self
+                    .snapshot
+                    .locs()
+                    .iter()
+                    .find(|loc| target.matches(loc) && duel_loc_has_forfeit(loc))
+                else {
+                    self.failure = Some("live Trapdoor/Forfeit target disappeared".into());
+                    return;
+                };
+                if duel_loc_operable(&self.snapshot, target, actor_tile) != Some(true) {
+                    return;
+                }
+                let mut interactions = api::interact::Interactions::new(&self.snapshot, client);
+                interactions.interact(
+                    api::interact::OpTarget::Loc(loc),
+                    api::interact::ActionSpec::Label("Forfeit".into()),
+                )
+            }
+            DuelAction::ConfirmYes => {
+                if self.phase != DuelLogoutPhase::AwaitPrompt
+                    || !self.prompt_seen
+                    || !snapshot_has_forfeit_prompt(&self.snapshot)
+                {
+                    return;
+                }
+                let mut interactions = api::interact::Interactions::new(&self.snapshot, client);
+                interactions.answer_choice(1)
+            }
+        };
+
+        match send {
+            api::interact::SendResult::Sent { tick, .. } => {
+                self.accepted(action);
+                eprintln!(
+                    "[tui-play] duel teardown action={} actor={} tick={tick}",
+                    duel_action_label(action),
+                    self.actor
+                );
+            }
+            api::interact::SendResult::Refused { tick, reason } => {
+                self.failure = Some(format!(
+                    "{} action refused at tick {tick}: {reason:?}",
+                    self.phase.label()
+                ));
+            }
+        }
+    }
+
+    fn accepted(&mut self, action: DuelAction) {
+        match action {
+            DuelAction::Walk(_) => self.phase = DuelLogoutPhase::Approaching,
+            DuelAction::Forfeit(target) => {
+                self.target = Some(target);
+                self.forfeit_action_sent = true;
+                self.phase = DuelLogoutPhase::AwaitPrompt;
+            }
+            DuelAction::ConfirmYes => {
+                self.confirmation_sent = true;
+                self.phase = DuelLogoutPhase::AwaitReturns;
+            }
+        }
+    }
+
+    fn receipt(&self, pair: DuelPairObservation) -> Option<DuelTeardownReceipt> {
+        if !pair.both_in_lobby() {
+            return None;
+        }
+        let outcome = self.outcome()?;
+        Some(DuelTeardownReceipt {
+            actor: self.actor.clone(),
+            peer: self.peer.clone(),
+            outcome,
+            loc: self.target.map(|target| target.tile),
+            prompt: self.prompt_seen.then_some(DUEL_FORFEIT_PROMPT),
+            primary_return: pair.primary.tile?,
+            primary_tick: pair.primary.tick,
+            peer_return: pair.peer.tile?,
+            peer_tick: pair.peer.tick,
+            forfeit_action_sent: self.forfeit_action_sent,
+            confirmation_sent: self.confirmation_sent,
+            primary_disconnected: false,
+            peer_disconnected: false,
+        })
+    }
+
+    fn diagnostic(&self) -> String {
+        format!("stage={} {}", self.phase.label(), self.pair.diagnostic())
+    }
+}
+
+fn duel_action_label(action: DuelAction) -> &'static str {
+    match action {
+        DuelAction::Walk(_) => "walk-to-inner-approach",
+        DuelAction::Forfeit(_) => "loc-forfeit",
+        DuelAction::ConfirmYes => "confirm-yes",
+    }
+}
+
+fn snapshot_has_forfeit_prompt(snapshot: &api::snapshot::GameSnapshot) -> bool {
+    snapshot.modals().chat != -1
+        && snapshot
+            .chat_modal_texts()
+            .iter()
+            .any(|text| text.trim().eq_ignore_ascii_case(DUEL_FORFEIT_PROMPT))
+        && snapshot.chat_options().len() == 2
+        && snapshot.chat_options()[0]
+            .text
+            .trim()
+            .eq_ignore_ascii_case("Yes")
+        && snapshot.chat_options()[1]
+            .text
+            .trim()
+            .eq_ignore_ascii_case("No")
+}
+
+fn duel_outcome_flags(snapshot: &api::snapshot::GameSnapshot) -> (bool, bool) {
+    let texts = snapshot.main_modal_texts();
+    let forfeit = texts
+        .iter()
+        .any(|text| text.trim().eq_ignore_ascii_case(DUEL_FORFEIT_WINNER_TEXT));
+    let natural = !forfeit
+        && texts
+            .iter()
+            .any(|text| text.trim().eq_ignore_ascii_case(DUEL_NATURAL_WINNER_TEXT));
+    (forfeit, natural)
+}
+
+fn duel_modal_contains(snapshot: &api::snapshot::GameSnapshot, target: &str) -> bool {
+    snapshot
+        .main_modal_texts()
+        .iter()
+        .chain(snapshot.chat_modal_texts())
+        .chain(snapshot.chat_lines().iter().map(|line| &line.text))
+        .any(|text| text.trim().eq_ignore_ascii_case(target))
+}
+
+fn duel_loc_has_forfeit(loc: &api::snapshot::LocView) -> bool {
+    loc.actions
+        .iter()
+        .flatten()
+        .any(|action| action.trim().eq_ignore_ascii_case("Forfeit"))
+}
+
+fn duel_loc_operable(
+    snapshot: &api::snapshot::GameSnapshot,
+    target: DuelLoc,
+    from: api::snapshot::WorldTile,
+) -> Option<bool> {
+    let loc = snapshot
+        .locs()
+        .iter()
+        .find(|loc| target.matches(loc) && duel_loc_has_forfeit(loc))?;
+    api::query::loc_approach::can_operate_from(loc, snapshot.scene(), from)
+}
+
+fn select_duel_trapdoor(
+    snapshot: &api::snapshot::GameSnapshot,
+    world: &nav_planner::world::NavWorld,
+    pen: DuelArea,
+    from: api::snapshot::WorldTile,
+) -> Result<(DuelLoc, api::snapshot::WorldTile), String> {
+    let (west_tile, west_approach) = pen.inner_approach(true);
+    let (east_tile, east_approach) = pen.inner_approach(false);
+    let mut saw_trapdoor = false;
+    let mut saw_expected_tile = false;
+    let mut saw_forfeit = false;
+    let mut best: Option<(DuelLoc, api::snapshot::WorldTile, u16, bool)> = None;
+
+    for loc in snapshot.locs().iter().filter(|loc| {
+        loc.id == DUEL_TRAPDOOR_ID
+            && loc
+                .name
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case("Trapdoor"))
+            && pen.contains(loc.tile)
+    }) {
+        saw_trapdoor = true;
+        let (approach, is_west) = if loc.tile == west_tile {
+            saw_expected_tile = true;
+            (west_approach, true)
+        } else if loc.tile == east_tile {
+            saw_expected_tile = true;
+            (east_approach, false)
+        } else {
+            continue;
+        };
+        if !duel_loc_has_forfeit(loc) {
+            continue;
+        }
+        saw_forfeit = true;
+        let Some(distance) = duel_pen_distance(&world.collision, pen, from, approach) else {
+            continue;
+        };
+        let target = DuelLoc {
+            tile: loc.tile,
+            typecode: loc.typecode,
+            layer: loc.layer,
+        };
+        if best.is_none_or(|(_, _, current, current_west)| {
+            distance < current || (distance == current && is_west && !current_west)
+        }) {
+            best = Some((target, approach, distance, is_west));
+        }
+    }
+
+    if let Some((target, approach, _, _)) = best {
+        return Ok((target, approach));
+    }
+    if saw_trapdoor && !saw_expected_tile {
+        Err("live Trapdoor is not at a configured pen endpoint".into())
+    } else if saw_expected_tile && !saw_forfeit {
+        Err("no_forfeit: live Trapdoor has no Forfeit action".into())
+    } else if saw_forfeit {
+        Err("no reachable inner approach to a live Trapdoor".into())
+    } else {
+        Err("live duel-arena Trapdoor is unavailable".into())
+    }
+}
+
+fn duel_pen_distance(
+    collision: &nav_planner::collision::WorldCollision,
+    pen: DuelArea,
+    from: api::snapshot::WorldTile,
+    target: api::snapshot::WorldTile,
+) -> Option<u16> {
+    if !pen.contains(from) || !pen.contains(target) {
+        return None;
+    }
+    let width = usize::try_from(pen.max_x - pen.min_x + 1).ok()?;
+    let height = usize::try_from(pen.max_z - pen.min_z + 1).ok()?;
+    let cells = width.checked_mul(height)?;
+    if cells > MAX_DUEL_PEN_CELLS {
+        return None;
+    }
+    let index = |tile: api::snapshot::WorldTile| {
+        Some(
+            usize::try_from(tile.z - pen.min_z).ok()? * width
+                + usize::try_from(tile.x - pen.min_x).ok()?,
+        )
+    };
+    let start = index(from)?;
+    let goal = index(target)?;
+    let mut distances = [u16::MAX; MAX_DUEL_PEN_CELLS];
+    let mut queue = [from; MAX_DUEL_PEN_CELLS];
+    let mut head = 0;
+    let mut tail = 1;
+    distances[start] = 0;
+
+    while head < tail {
+        let current = queue[head];
+        head += 1;
+        let current_index = index(current)?;
+        let distance = distances[current_index];
+        if current_index == goal {
+            return Some(distance);
+        }
+        for direction in [(0, -1), (-1, 0), (1, 0), (0, 1)] {
+            let next = api::snapshot::WorldTile {
+                x: current.x + direction.0,
+                z: current.z + direction.1,
+                level: current.level,
+            };
+            if !pen.contains(next) || !nav_planner::movement::step_ok(collision, current, direction)
+            {
+                continue;
+            }
+            let next_index = index(next)?;
+            if distances[next_index] != u16::MAX {
+                continue;
+            }
+            distances[next_index] = distance.saturating_add(1);
+            queue[tail] = next;
+            tail += 1;
+        }
+    }
+    None
+}
+
+fn duel_timeout_message(pair: DuelPairObservation, stage: &str) -> String {
+    format!(
+        "duel teardown timed out at stage={stage} {}",
+        pair.diagnostic()
+    )
+}
+
+fn duel_deadline_error(
+    now: Instant,
+    deadline: Instant,
+    pair: DuelPairObservation,
+    stage: &str,
+) -> Option<String> {
+    (now >= deadline).then(|| duel_timeout_message(pair, stage))
+}
+
+fn duel_test_outcome(pair: DuelPairObservation) -> Option<DuelOutcome> {
+    if pair.primary.forfeit_outcome || pair.peer.forfeit_outcome {
+        Some(DuelOutcome::Forfeit)
+    } else if pair.primary.natural_outcome || pair.peer.natural_outcome || pair.both_in_lobby() {
+        Some(DuelOutcome::NaturalFinish)
+    } else {
+        None
+    }
+}
+
+fn duel_return_receipt(
+    actor: &str,
+    peer: &str,
+    pair: DuelPairObservation,
+) -> Option<DuelTeardownReceipt> {
+    pair.both_in_lobby().then_some(DuelTeardownReceipt {
+        actor: actor.to_owned(),
+        peer: peer.to_owned(),
+        outcome: duel_test_outcome(pair)?,
+        loc: None,
+        prompt: None,
+        primary_return: pair.primary.tile?,
+        primary_tick: pair.primary.tick,
+        peer_return: pair.peer.tile?,
+        peer_tick: pair.peer.tick,
+        forfeit_action_sent: false,
+        confirmation_sent: false,
+        primary_disconnected: false,
+        peer_disconnected: false,
+    })
 }
 
 impl ProofLine {
