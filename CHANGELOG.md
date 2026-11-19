@@ -5,12 +5,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
-### Walk guard
-
-- The walk guard no longer sends Continue for an open dialogue page before a
-  survival action. Food, potions and protect prayers close the page through
-  their normal engine actions.
-
 ### Revision 377 login
 
 - Revision 377 login failures show clearer messages. An outdated-client
