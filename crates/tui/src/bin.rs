@@ -70,16 +70,6 @@ use frontend_core::rs2b0t_import::Stage;
 
 /// TUI retry cadence after a failed map-catalogue bind.
 const MAP_CATALOGUE_RETRY: Duration = Duration::from_secs(1);
-/// Safe lobby tile outside Duel Arena's fight and obstacle rectangles.
-/// `duel_arena_logout` returns inside those zones (`scripts/duel_arena.rs2:349-353,367-369`);
-/// the zone bounds are in `configs/duelarena.dbrow:1-11`.
-const LIVE_DUEL_ARENA_EXIT: Tile = Tile {
-    x: 3368,
-    z: 3275,
-    level: 0,
-};
-/// Keep the former 300-game-tick exit budget at Engine A's 600 ms tick rate.
-const LIVE_DUEL_ARENA_EXIT_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[cfg(test)]
 thread_local! {
@@ -4427,107 +4417,11 @@ impl TuiSession {
         }
     }
 
-    fn walk_duel_arena_pair_to_safe_lobby(&mut self, app: &mut TuiApp) -> Result<(), String> {
-        if self.names.len() != 2 {
-            return Err(format!(
-                "Duel Arena pair cleanup expected two profiles, found {}",
-                self.names.len()
-            ));
-        }
-        let nav = self
-            .bound()
-            .and_then(|profile| profile.nav_pack_id())
-            .ok_or_else(|| "Duel Arena pair cleanup requires a bound navigation pack".to_owned())?;
-        let Some(world) = app.world.clone().or_else(|| self.core.nav_world()) else {
-            return Err("Duel Arena pair cleanup requires a navigation world".into());
-        };
-        let overlay = app.map_catalogue.as_ref().map(|catalogue| catalogue.key());
-        for account in self.names.clone() {
-            let deadline = Instant::now() + LIVE_DUEL_ARENA_EXIT_TIMEOUT;
-            if !self
-                .core
-                .fleet_view()
-                .row(&account)
-                .is_some_and(|row| row.connected())
-            {
-                continue;
-            }
-            let origin = self
-                .core
-                .walk_slot_status(&account)
-                .origin()
-                .ok_or_else(|| format!("Duel Arena pair cleanup has no position for {account}"))?;
-            let context = self.core.walk_map_context(Some(&account), nav, overlay, 1);
-            app.map_model.bind(context);
-            let selected = app
-                .map_model
-                .select_tile(world.as_ref(), LIVE_DUEL_ARENA_EXIT)
-                .ok_or_else(|| {
-                    "Duel Arena safe exit tile is outside the loaded navigation world".to_owned()
-                })?;
-            if selected != LIVE_DUEL_ARENA_EXIT {
-                return Err(format!(
-                    "Duel Arena safe exit tile resolves to {selected:?}, not the exact fixture"
-                ));
-            }
-            if origin == LIVE_DUEL_ARENA_EXIT {
-                eprintln!("[tui-play] live duel cleanup already at safe exit account={account}");
-                continue;
-            }
-            let options = app.map_find_options();
-            self.map_desk
-                .stage_walk_to(&mut app.map_model, context, Some(origin), options);
-            let submitted = self
-                .submit(OperatorCommand::WalkTo, Targets::Profile(&account))
-                .map_err(|error| {
-                    format!("Duel Arena pair cleanup walk failed for {account}: {error}")
-                })?;
-            app.clear_consumed_map_selection();
-            if let Some(error) = self.core.command_failure(submitted.request()) {
-                return Err(format!(
-                    "Duel Arena pair cleanup walk failed for {account}: {error}"
-                ));
-            }
-            if !self.request_applied(submitted.request()) {
-                let reason = self
-                    .core
-                    .not_applied_reason(submitted.request(), "WalkTo")
-                    .unwrap_or_else(|| "WalkTo was not applied".into());
-                return Err(format!(
-                    "Duel Arena pair cleanup walk failed for {account}: {reason}"
-                ));
-            }
-            eprintln!(
-                "[tui-play] live duel cleanup walking account={account} origin={origin:?} exit={LIVE_DUEL_ARENA_EXIT:?}"
-            );
-            loop {
-                self.pump(app);
-                if self.core.walk_slot_status(&account).origin() == Some(LIVE_DUEL_ARENA_EXIT)
-                    && !self.core.walk_route_armed(&account)
-                {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    return Err(format!(
-                        "Duel Arena pair cleanup walk timed out for {account}"
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            eprintln!(
-                "[tui-play] live duel cleanup reached safe exit account={account} tick={:?}",
-                self.core
-                    .with_slot_snapshot(&account, |snapshot| snapshot.tick())
-            );
-        }
-        Ok(())
-    }
-
     fn clean_logout_live(&mut self, app: &mut TuiApp) -> Result<(), String> {
         if self.live_name.is_none() {
             return Ok(());
         }
-        let mut deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + Duration::from_secs(30);
         match self.submit_raw(OperatorCommand::StopScript, Targets::Everyone) {
             Ok(_) | Err(SubmitError::NoTarget(_)) => {}
             Err(error) => return Err(format!("script stop command failed: {error}")),
@@ -4558,10 +4452,6 @@ impl TuiSession {
                 .is_none_or(|row| !row.connected())
         }) {
             return Ok(());
-        }
-        if self.live_pair_core && self.live_name.as_deref() == Some("script_duel_arena") {
-            self.walk_duel_arena_pair_to_safe_lobby(app)?;
-            deadline = Instant::now() + Duration::from_secs(30);
         }
         let logouts = self
             .live_logout
