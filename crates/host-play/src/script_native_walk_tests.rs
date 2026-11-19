@@ -1508,7 +1508,7 @@ fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
     }
 }
 #[test]
-fn walk_guard_closes_level_up_page_before_bite_and_suppresses_same_tick_follow() {
+fn walk_guard_eats_on_open_level_up_page_without_continue_or_follow_lock() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -1520,41 +1520,39 @@ fn walk_guard_closes_level_up_page_before_bite_and_suppresses_same_tick_follow()
     rig.wait_routed();
     rig.step();
     assert!(rig.walk_armed());
-    let moves = rig.driver.move_calls;
-    assert!(
-        moves > 0,
-        "the guarded route must start before the page opens"
-    );
-
     seed_guard_inventory(&mut rig.snapshot, &[("lobster", "Eat")], 1);
     seed_melee_attack(&mut rig.snapshot);
     rig.snapshot.seed_chat_modal(200, Vec::new());
     rig.snapshot.seed_chat_options(Vec::new(), 201);
+    // R289 closes an open modal page through the held-item path
+    // (OpHeldHandler.ts:54-56 -> Player.ts:969-973).
     rig.snapshot.seed_tick(2);
+    let action_start = rig.driver.menu_order.len();
     rig.step();
     assert_eq!(
-        rig.driver.menu_order.last(),
-        Some(&(MiniMenuAction::PAUSE_BUTTON, 201)),
-        "the guard must continue the open level-up page"
+        rig.driver.menu_order[action_start].0,
+        MiniMenuAction::OP_HELD1,
+        "the guard must send the lobster's Eat operation while the page is open"
+    );
+    assert_eq!(
+        rig.driver.held_item_ids,
+        [379],
+        "the Eat operation must target the seeded lobster"
     );
     assert!(
-        rig.driver.held_item_ids.is_empty(),
-        "the page closes before eating"
+        !rig.driver.menu_order[action_start..]
+            .iter()
+            .any(|(action, _)| *action == MiniMenuAction::PAUSE_BUTTON),
+        "the guard must not Continue the open level-up page"
     );
-    assert_eq!(
-        rig.driver.move_calls, moves,
-        "route follow must not run on the page-close tick"
+    assert!(
+        rig.navs.lock().unwrap()["alice"]
+            .walk_guard
+            .as_ref()
+            .is_some_and(|guard| !guard.blocks_follow(2)),
+        "an ordinary lobster bite must leave route follow eligible"
     );
-
-    rig.snapshot.seed_chat_modal(-1, Vec::new());
-    rig.snapshot.seed_chat_options(Vec::new(), -1);
-    rig.snapshot.seed_tick(3);
-    rig.step();
-    assert_eq!(rig.driver.held_item_ids, [379]);
-    assert_eq!(
-        rig.driver.move_calls, moves,
-        "a bite must not share a tick with route follow"
-    );
+    assert_eq!(rig.end(), None);
 }
 
 #[test]

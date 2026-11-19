@@ -1561,7 +1561,8 @@ pub(crate) mod tests {
         assert!(matches!(food_op, GuardOp::Eat { .. }), "got {food_op:?}");
 
         let mut drink_scene = Scene::new(43);
-        drink_scene.stats[3].effective = 1;
+        // The food case above covers low-HP priority. Keep this case above the
+        // danger-scaled drink gate so it exercises an eligible potion.
         drink_scene.stats[5].effective = 0;
         drink_scene.add_prayer_potion();
         drink_scene.launch_arrow();
