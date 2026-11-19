@@ -8,6 +8,9 @@ use crate::combat::select;
 use crate::combat::tables::{CombatTables, PotionKind};
 use crate::survival::math::food_credit;
 
+/// Selected-content alias for the strange fruit accepted as a poison cure.
+pub(crate) const STRANGE_FRUIT_ALIAS: &str = "macro_triffidfruit";
+
 /// Operator policy for consuming a held poison cure.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -214,16 +217,15 @@ fn held_fruit(
     tables: &CombatTables,
     protected_items: &[crate::combat::FoodReserve],
 ) -> Option<i32> {
-    let item_id = tables.selected().item_by_alias("macro_triffidfruit")?.id;
+    let item_id = tables.selected().item_by_alias(STRANGE_FRUIT_ALIAS)?.id;
     let held = crate::bank::ops::count_id(inventory, item_id);
     (crate::combat::FoodReserve::spendable(protected_items, item_id, held) > 0).then_some(item_id)
 }
 
 /// Whether `item_id` is a dose of antipoison or super antipoison that
 /// [`cure_choice`] can drink. Runners keep these out of bank deposits so a
-/// later poison still finds them. Strange fruit is not kept: it reaches a
-/// gathering bot as a random-event reward, and the bank trip deposits it as an
-/// incidental item so repeated events do not fill the pack.
+/// later poison still finds them. Gatherer bank trips keep one strange fruit
+/// through a separate counted rule, leaving extra event rewards depositable.
 pub(crate) fn is_antipoison_dose(tables: &CombatTables, item_id: i32) -> bool {
     [PotionKind::Antipoison, PotionKind::SuperAntipoison]
         .into_iter()
@@ -880,7 +882,7 @@ mod tests {
         let super_1 = dose_id(&tables, PotionKind::SuperAntipoison, 1);
         let fruit_id = tables
             .selected()
-            .item_by_alias("macro_triffidfruit")
+            .item_by_alias(STRANGE_FRUIT_ALIAS)
             .unwrap()
             .id;
         let poison = PoisonState::Poisoned {
@@ -1031,7 +1033,7 @@ mod tests {
         let tables = tables();
         let fruit_id = tables
             .selected()
-            .item_by_alias("macro_triffidfruit")
+            .item_by_alias(STRANGE_FRUIT_ALIAS)
             .unwrap()
             .id;
         let inventory = [held(fruit_id, 1)];

@@ -599,7 +599,8 @@ pub fn protected_ids(prepared: &Prepared, tool_id: i32) -> ProtectedIds {
 /// Return every observed positive-count inventory item ID except gathering
 /// tools, prepared supplies, held antipoison doses and content-defined
 /// unbankable items. A duplicate copy of the selected active tool is eligible
-/// for count-bounded deposit; alternate tools remain protected.
+/// for count-bounded deposit; alternate tools remain protected. The runner
+/// keeps one held cure fruit through a separate counted rule.
 pub fn bank_deposit_ids(prepared: &Prepared, tool_id: i32, inventory: &[ItemView]) -> Arc<[i32]> {
     let mut protected = protected_ids(prepared, tool_id);
     protected.keep_unbankable(&prepared.selected, inventory);
@@ -669,8 +670,18 @@ impl SupplyPlan {
         stats: &[StatView],
         stock: Stock<'_>,
     ) -> Result<Arc<[crate::acquire::Need]>, crate::native::ActionError> {
-        let mut needs = Vec::with_capacity(4 + MAX_RESERVE_RUNES);
-        if let Some(tool) = tool_need(prepared, stats, stock)? {
+        let tool = tool_need(prepared, stats, stock)?;
+        let missing_tool = tool.as_ref().is_some_and(|need| {
+            !stock
+                .pack
+                .is_some_and(|pack| crate::bank::ops::count_id(pack, need.item) > 0)
+                && !stock
+                    .worn
+                    .is_some_and(|worn| crate::bank::ops::count_id(worn, need.item) > 0)
+        });
+        let bank_trip = missing_tool || supplies_due(&prepared.supply, &prepared.settings, stock);
+        let mut needs = Vec::with_capacity(7 + MAX_RESERVE_RUNES);
+        if let Some(tool) = tool {
             needs.push(tool);
         }
         if let Some(bait) = &prepared.supply.bait {
@@ -705,6 +716,28 @@ impl SupplyPlan {
                     item: COINS_ID,
                     name: Arc::clone(name),
                     target: prepared.settings.coin_target,
+                    minimum: 0,
+                    presence: Presence::Held,
+                    kind: NeedKind::Optional,
+                    sources: SourceSet::PACK | SourceSet::BANK,
+                    alternatives: Arc::<[i32]>::from([]),
+                });
+            }
+        }
+        if bank_trip {
+            if let Some(fruit) = prepared
+                .selected
+                .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+            {
+                let name = fruit
+                    .name
+                    .as_deref()
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or("Strange fruit");
+                needs.push(Need {
+                    item: fruit.id,
+                    name: Arc::from(name),
+                    target: 1,
                     minimum: 0,
                     presence: Presence::Held,
                     kind: NeedKind::Optional,
@@ -1639,19 +1672,23 @@ mod tests {
         let bait = prepared.supply.bait.as_ref().unwrap();
         let food = prepared.supply.food.as_ref().unwrap();
         let coin_name = prepared.supply.coin_name.as_deref().unwrap();
+        let fruit = prepared
+            .selected
+            .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+            .unwrap();
         let (tool_id, tool_name) = known_tool(&prepared);
         let held = vec![
             item(tool_id, &tool_name, 1, ItemContainer::Inventory),
-            item(bait.id, &bait.name, 3, ItemContainer::Inventory),
+            item(bait.id, &bait.name, 0, ItemContainer::Inventory),
             item(food.id, &food.name, 2, ItemContainer::Inventory),
             item(COINS_ID, coin_name, 100, ItemContainer::Inventory),
         ];
         let stats = stats(&prepared);
         let stock = pages(&held, &[]);
-        assert!(!SupplyPlan::due(&prepared, &stats, stock));
+        assert!(SupplyPlan::due(&prepared, &stats, stock));
 
         let needs = SupplyPlan::build(&prepared, &stats, stock).unwrap();
-        assert_eq!(needs.len(), 4);
+        assert_eq!(needs.len(), 5);
         let tool = tool_need(&needs);
         assert_eq!((tool.target, tool.minimum), (1, 1));
         assert_eq!(tool.kind, NeedKind::Required);
@@ -1688,15 +1725,24 @@ mod tests {
         assert!(coin_need.sources.contains(SourceSet::BANK));
         assert!(!coin_need.sources.contains(SourceSet::WORN));
         assert!(!coin_need.sources.contains(SourceSet::SHOP));
+        let fruit_need = needs.iter().find(|need| need.item == fruit.id).unwrap();
+        assert_eq!(fruit_need.name.as_ref(), fruit.name.as_deref().unwrap());
+        assert_eq!((fruit_need.target, fruit_need.minimum), (1, 0));
+        assert_eq!(fruit_need.kind, NeedKind::Optional);
+        assert_eq!(fruit_need.presence, Presence::Held);
+        assert!(fruit_need.sources.contains(SourceSet::PACK));
+        assert!(fruit_need.sources.contains(SourceSet::BANK));
+        assert!(!fruit_need.sources.contains(SourceSet::WORN));
+        assert!(!fruit_need.sources.contains(SourceSet::SHOP));
 
         let bank = memory(
-            &[(bait.id, 7), (food.id, 3), (COINS_ID, 400)],
+            &[(bait.id, 10), (food.id, 3), (COINS_ID, 400), (fruit.id, 1)],
             Origin::Session,
         );
         let plan = planned(core_plan_needs(needs, with_bank(&held, &[], &bank)));
         assert_eq!(
             targets(&plan),
-            vec![(bait.id, 10), (food.id, 5), (COINS_ID, 500)]
+            vec![(bait.id, 10), (food.id, 5), (COINS_ID, 500), (fruit.id, 1)]
         );
 
         let empty_bait = [
@@ -2325,7 +2371,7 @@ mod tests {
         assert_eq!(doses.len(), 8, "four doses of each antipoison");
         let fruit = prepared
             .selected
-            .item_by_alias("macro_triffidfruit")
+            .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
             .unwrap()
             .id;
         inventory.push(item(fruit, "Strange fruit", 1, ItemContainer::Inventory));

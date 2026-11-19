@@ -576,15 +576,39 @@ impl Gatherer {
         }
         let mut keep = supply::protected_ids(&self.prepared, self.tool.id);
         keep.keep_unbankable(&self.prepared.selected, inventory);
-        let mut keep_rules = keep
-            .as_slice()
-            .iter()
-            .copied()
-            .map(crate::bank::ops::KeepRule::All)
-            .collect::<Vec<_>>();
-        if crate::bank::ops::count_id(inventory, self.tool.id) > 1 {
+        let spare_active_tool = crate::bank::ops::count_id(inventory, self.tool.id) > 1;
+        let spare_fruit = self
+            .prepared
+            .selected
+            .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+            .and_then(|fruit| {
+                (crate::bank::ops::count_id(inventory, fruit.id) > 0
+                    && !keep.as_slice().contains(&fruit.id))
+                .then_some(fruit.id)
+            });
+        let mut keep_rule_capacity = keep.as_slice().len();
+        if spare_active_tool {
+            keep_rule_capacity += 1;
+        }
+        if spare_fruit.is_some() {
+            keep_rule_capacity += 1;
+        }
+        let mut keep_rules = Vec::with_capacity(keep_rule_capacity);
+        keep_rules.extend(
+            keep.as_slice()
+                .iter()
+                .copied()
+                .map(crate::bank::ops::KeepRule::All),
+        );
+        if spare_active_tool {
             keep_rules.push(crate::bank::ops::KeepRule::AtLeast {
                 id: self.tool.id,
+                count: 1,
+            });
+        }
+        if let Some(fruit_id) = spare_fruit {
+            keep_rules.push(crate::bank::ops::KeepRule::AtLeast {
+                id: fruit_id,
                 count: 1,
             });
         }

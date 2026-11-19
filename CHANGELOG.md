@@ -121,6 +121,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   counts player-tile movement on native and replacement routes.
 - Gatherer bank trips now deposit duplicate copies of the active gathering
   tool while retaining one; alternate gathering tools remain protected.
+- Gatherer bank trips keep one Strange fruit for poison cures. They withdraw it
+  when the pack has none and the bank has one.
 
 ### Native acquisition
 
