@@ -28,6 +28,14 @@ const MISSILES_BUTTON: i32 = 5622;
 const PRAYER_STABLE_TICKS: u32 = 3;
 const STOP_OFF_BUDGET_TICKS: u32 = 4;
 const ZONE: &str = "death-plateau-throwers";
+// R289 m44_56.jm2 places a Thrower Troll at (2870, 3600); its hunt radius is 8.
+const THROWER_TILE: WorldTile = WorldTile {
+    x: 2870,
+    z: 3600,
+    level: 0,
+};
+const THROWER_HUNT_RANGE: i32 = 8;
+const THROWER_START_RADIUS: i32 = THROWER_HUNT_RANGE - 2;
 
 fn path_json(dest: WorldTile) -> String {
     format!(
@@ -156,14 +164,33 @@ fn throwers_route_context(
     (opts, state)
 }
 
-fn pick_crossing(world: &nav_planner::world::NavWorld) -> (WorldTile, WorldTile) {
+fn pick_crossing(
+    world: &nav_planner::world::NavWorld,
+    start_near_throwers: bool,
+) -> (WorldTile, WorldTile) {
     let (opts, state) = throwers_route_context(world);
     let mut starts = Vec::new();
     let mut dests = Vec::new();
+    let (minimum_start_x, maximum_start_x) = if start_near_throwers {
+        (
+            THROWER_TILE.x - THROWER_START_RADIUS,
+            THROWER_TILE.x + THROWER_START_RADIUS,
+        )
+    } else {
+        (2800, 2843)
+    };
     for z in 3590..=3608 {
-        for x in (2800..2843).rev() {
+        for offset in 0..=(maximum_start_x - minimum_start_x) {
+            let x = if start_near_throwers {
+                minimum_start_x + offset
+            } else {
+                maximum_start_x - offset
+            };
             let tile = WorldTile { x, z, level: 0 };
-            if world.collision.standable(tile) {
+            if world.collision.standable(tile)
+                && (!start_near_throwers
+                    || chebyshev(tile, THROWER_TILE) <= THROWER_START_RADIUS)
+            {
                 starts.push(tile);
                 break;
             }
@@ -178,6 +205,9 @@ fn pick_crossing(world: &nav_planner::world::NavWorld) -> (WorldTile, WorldTile)
     }
     for start in &starts {
         for dest in &dests {
+            if start_near_throwers && chebyshev(*start, *dest) < 4 {
+                continue;
+            }
             if nav_planner::router::find_with(
                 &world.collision,
                 &world.graph,
@@ -192,7 +222,7 @@ fn pick_crossing(world: &nav_planner::world::NavWorld) -> (WorldTile, WorldTile)
             }
         }
     }
-    panic!("no standable protected crossing of {ZONE}");
+    panic!("no standable route of {ZONE}");
 }
 
 fn default_nav_pack_path() -> PathBuf {
@@ -226,8 +256,21 @@ fn death_plateau_throwers_has_a_standable_protected_crossing() {
         panic!("W1 pack missing at {}", pack.display());
     }
     let world = nav_planner::world::NavWorld::load_pack(&pack).expect("load baked 289 pack");
-    let (start, dest) = pick_crossing(&world);
+    let (start, dest) = pick_crossing(&world, false);
     let attacker_stage = thrower_stage_tile(&world, start, dest);
+    let (threat_start, threat_dest) = pick_crossing(&world, true);
+    assert!(
+        chebyshev(threat_start, THROWER_TILE) <= THROWER_START_RADIUS,
+        "level-up route must start inside the Thrower Troll's eight-tile hunt radius"
+    );
+    assert!(
+        chebyshev(threat_start, threat_dest) >= 4,
+        "level-up route must continue walking after the page opens"
+    );
+    assert!(
+        threat_dest.x > 2878,
+        "level-up route must continue walking east of the Troll zone"
+    );
     assert!(world.collision.standable(attacker_stage));
     assert!((3..=5).contains(&chebyshev(start, attacker_stage)));
     assert_ne!(start, dest, "crossing must move");
@@ -1958,7 +2001,8 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         .prepare_template()
         .expect("prepare isolated local-289 template");
     let world = template.world().expect("selected navigation world");
-    let (start, dest) = pick_crossing(world.as_ref());
+    // Start within the Trolls' hunt radius so the level-up page opens during the walk.
+    let (start, dest) = pick_crossing(world.as_ref(), level_up);
     let nav = nav_planner::producer::lease(&world).expect("selected navigation catalog");
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let quests = Arc::new(
