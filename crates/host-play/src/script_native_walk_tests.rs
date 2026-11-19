@@ -1507,6 +1507,53 @@ fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
         );
     }
 }
+#[test]
+fn walk_guard_eats_on_open_level_up_page_without_continue_or_follow_lock() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut rig = open_rig(false);
+    rig.shared.lock().food_guard = true;
+    seed_protect_frame(&mut rig.snapshot, 43);
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+    rig.step();
+    assert!(rig.walk_armed());
+    seed_guard_inventory(&mut rig.snapshot, &[("lobster", "Eat")], 1);
+    seed_melee_attack(&mut rig.snapshot);
+    rig.snapshot.seed_chat_modal(200, Vec::new());
+    rig.snapshot.seed_chat_options(Vec::new(), 201);
+    // R289 closes an open modal page through the held-item path
+    // (OpHeldHandler.ts:54-56 -> Player.ts:969-973).
+    rig.snapshot.seed_tick(2);
+    let action_start = rig.driver.menu_order.len();
+    rig.step();
+    assert_eq!(
+        rig.driver.menu_order[action_start].0,
+        MiniMenuAction::OP_HELD1,
+        "the guard must send the lobster's Eat operation while the page is open"
+    );
+    assert_eq!(
+        rig.driver.held_item_ids,
+        [379],
+        "the Eat operation must target the seeded lobster"
+    );
+    assert!(
+        !rig.driver.menu_order[action_start..]
+            .iter()
+            .any(|(action, _)| *action == MiniMenuAction::PAUSE_BUTTON),
+        "the guard must not Continue the open level-up page"
+    );
+    assert!(
+        rig.navs.lock().unwrap()["alice"]
+            .walk_guard
+            .as_ref()
+            .is_some_and(|guard| !guard.blocks_follow(2)),
+        "an ordinary lobster bite must leave route follow eligible"
+    );
+    assert_eq!(rig.end(), None);
+}
 
 #[test]
 fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {

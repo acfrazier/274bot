@@ -40,7 +40,7 @@ pub enum GuardFailure {
     NoPrayerPoints,
 }
 
-/// One host-executed decision. A walk hop plus one of these is two user
+/// One host-executed upkeep decision. A walk hop plus one of these is two user
 /// events, never an exclusive combat batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuardOp {
@@ -1571,6 +1571,64 @@ pub(crate) mod tests {
         }
         let scene = Scene::new(37);
         assert!(scene.begin().is_ok());
+    }
+
+    #[test]
+    fn open_dialogue_does_not_preempt_survival_actions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+
+        let mut food_scene = Scene::new(43);
+        food_scene.stats[3].effective = 1;
+        food_scene.stats[5].effective = 0;
+        food_scene.add_food("lobster", 0, 1);
+        food_scene.add_prayer_potion();
+        food_scene.launch_arrow();
+        food_scene
+            .snapshot
+            .seed_chat_modal(100, vec!["Level-up page".into()]);
+        food_scene.snapshot.seed_chat_options(Vec::new(), 99);
+        assert_eq!(food_scene.snapshot.chat_continue_component_id(), 99);
+        let mut food_guard = food_scene.begin().unwrap();
+        let food_op = food_guard
+            .tick(
+                &food_scene.view(),
+                food_scene.condition(),
+                CurePoison::WhenNeeded,
+            )
+            .expect("critical HP should choose food before the prayer potion");
+        assert!(matches!(food_op, GuardOp::Eat { .. }), "got {food_op:?}");
+
+        let mut drink_scene = Scene::new(43);
+        // The food case above covers low-HP priority. Keep this case above the
+        // danger-scaled drink gate so it exercises an eligible potion.
+        drink_scene.stats[5].effective = 0;
+        drink_scene.add_prayer_potion();
+        drink_scene.launch_arrow();
+        drink_scene
+            .snapshot
+            .seed_chat_modal(100, vec!["Level-up page".into()]);
+        drink_scene.snapshot.seed_chat_options(Vec::new(), 99);
+        assert_eq!(drink_scene.snapshot.chat_continue_component_id(), 99);
+        let mut drink_guard = drink_scene.begin().unwrap();
+        let drink_op = drink_guard
+            .tick(
+                &drink_scene.view(),
+                drink_scene.condition(),
+                CurePoison::WhenNeeded,
+            )
+            .expect("the prayer potion should be selected through an open page");
+        assert!(
+            matches!(
+                drink_op,
+                GuardOp::Drink {
+                    kind: PotionKind::Prayer,
+                    ..
+                }
+            ),
+            "got {drink_op:?}"
+        );
     }
 
     #[test]

@@ -644,13 +644,19 @@ kind = "known-issue"
 area = "Navigation"
 text = """During a walk, a dialogue page that is open (for example a level-up page
   or a gate's dialogue) can delay a drink or a bite until the walk moves on and
-  the page closes. An ordinary bite during a walk can go out in the same game
-  tick as a door or gate click."""
+  the page closes."""
 first = "0.2.7"
 listed = "0.2.9"
 target = "0.3.0"
 severity = "low"
 owner = "T2 survival"
+
+[[item.earlier]]
+until = "0.3.0"
+text = """During a walk, a dialogue page that is open (for example a level-up page
+  or a gate's dialogue) can delay a drink or a bite until the walk moves on and
+  the page closes. An ordinary bite during a walk can go out in the same game
+  tick as a door or gate click."""
 
 [[item]]
 id = "gatherer-power-keeps-empty-vial"

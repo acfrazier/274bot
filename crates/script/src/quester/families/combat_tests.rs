@@ -55,6 +55,36 @@ fn report(end: CombatEnd) -> CombatReport {
 }
 
 #[test]
+fn quester_guard_food_operations_map_to_held_actions() {
+    let eat = guard_interaction(&GuardOp::Eat {
+        name: Arc::from("Lobster"),
+    });
+    assert!(matches!(
+        eat,
+        Some(InteractReq::Held {
+            name,
+            action,
+            slot: None,
+            target_item_id: None,
+        }) if name == "Lobster" && action == "Eat"
+    ));
+
+    let drink = guard_interaction(&GuardOp::Drink {
+        name: Arc::from("Prayer potion"),
+        kind: crate::combat::tables::PotionKind::Prayer,
+    });
+    assert!(matches!(
+        drink,
+        Some(InteractReq::Held {
+            name,
+            action,
+            slot: None,
+            target_item_id: None,
+        }) if name == "Prayer potion" && action == "Drink"
+    ));
+}
+
+#[test]
 fn combat_table_preparation_retains_each_selected_revision() {
     let progress = CompiledProgress {
         binding: FactKey::new("journal:combat_revision"),
