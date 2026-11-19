@@ -107,6 +107,7 @@ const HERO_GUILD_SEED: &[&str] = &[
 const BANKED_AFTER: [i32; 4] = [70, 40, 10, 60];
 const CELL_BOUND: Duration = Duration::from_secs(600);
 const SAVE_GRACE: Duration = Duration::from_secs(15);
+const BANK_UPDATE_GRACE: Duration = Duration::from_secs(10);
 const LOGOUT_DEADLINE: Duration = Duration::from_secs(120);
 /// Port Sarim docks (`nav_fares_live`'s destination): no bank is open here;
 /// the nearest is Draynor's.
@@ -314,6 +315,9 @@ struct FetchTrace {
     /// `Play::bank_rows` after the walk: the trip's open bank observed.
     after_origin: Option<String>,
     after_rows: Option<Vec<(i32, i32)>>,
+    bank_update_latest_origin: Option<String>,
+    bank_update_latest_rows: Option<Vec<(i32, i32)>>,
+    bank_update_wait_ms: Option<u128>,
     hint_after: Option<String>,
     walk_ms: Option<u128>,
     failure: Option<String>,
@@ -478,6 +482,11 @@ enum Stage {
     },
     Walking {
         since: Instant,
+    },
+    AwaitBankUpdate {
+        since: Instant,
+        tile: Option<[i32; 3]>,
+        held: i32,
     },
     LoggingOut {
         since: Instant,
@@ -1470,16 +1479,41 @@ fn run_cell(variant: Variant) {
                             (guard.tile, guard.held_coins)
                         };
                         let after = play.bank_rows(&account);
+                        {
+                            let mut guard = trace.lock();
+                            guard.held_after_walk = Some(held);
+                            guard.after_origin = Some(format!("{:?}", after.origin));
+                            guard.after_rows = Some(after.rows.clone());
+                            guard.bank_update_latest_origin = Some(format!("{:?}", after.origin));
+                            guard.bank_update_latest_rows = Some(after.rows.clone());
+                            guard.bank_update_wait_ms = Some(0);
+                        }
+                        stage = Stage::AwaitBankUpdate {
+                            since: Instant::now(),
+                            tile,
+                            held,
+                        };
+                    } else if since.elapsed() > CELL_BOUND {
+                        fail("the walk did not finish".into());
+                    }
+                }
+                Stage::AwaitBankUpdate { since, tile, held } => {
+                    let latest = play.bank_rows(&account);
+                    let elapsed = since.elapsed();
+                    let banked = latest
+                        .rows
+                        .iter()
+                        .find(|&&(id, _)| id == COINS)
+                        .map(|&(_, count)| count);
+                    let want_banked = BANKED_AFTER[variant as usize];
+                    {
                         let mut guard = trace.lock();
-                        guard.held_after_walk = Some(held);
-                        guard.after_origin = Some(format!("{:?}", after.origin));
-                        guard.after_rows = Some(after.rows.clone());
-                        let banked = after
-                            .rows
-                            .iter()
-                            .find(|&&(id, _)| id == COINS)
-                            .map(|&(_, count)| count);
-                        let want_banked = BANKED_AFTER[variant as usize];
+                        guard.bank_update_latest_origin = Some(format!("{:?}", latest.origin));
+                        guard.bank_update_latest_rows = Some(latest.rows.clone());
+                        guard.bank_update_wait_ms = Some(elapsed.as_millis());
+                    }
+                    if latest.origin == Origin::Session && banked == Some(want_banked) {
+                        let guard = trace.lock();
                         let expected_withdraw = variant.expected_withdraw();
                         #[cfg(feature = "js")]
                         let hero_gate_in_route = if hero_guild {
@@ -1521,17 +1555,13 @@ fn run_cell(variant: Variant) {
                             && (guard.content_gate.is_none() || !hero_gate_in_route)
                         {
                             Some(format!(
-                                "the resumed route must cross the selected Heroes' Guild gate: gate={:?}, route={:?}",
+                                "the resumed route must cross the selected Heroes' Quest gate: gate={:?}, route={:?}",
                                 guard.content_gate, guard.resumed_route_legs
                             ))
                         } else if !arrived(tile) {
                             Some(format!("the walk ended at {tile:?}, not at {goal:?}"))
                         } else if held != 0 {
                             Some(format!("the fare was not paid: {held} coins held"))
-                        } else if after.origin != Origin::Session || banked != Some(want_banked) {
-                            Some(format!(
-                                "the trip's open bank must leave Session with {want_banked} coins: {after:?}"
-                            ))
                         } else {
                             None
                         };
@@ -1546,8 +1576,11 @@ fn run_cell(variant: Variant) {
                                 };
                             }
                         }
-                    } else if since.elapsed() > CELL_BOUND {
-                        fail("the walk did not finish".into());
+                    } else if elapsed >= BANK_UPDATE_GRACE {
+                        fail(format!(
+                            "the trip's open bank did not publish Session with {want_banked} coins within {} ms: {latest:?}",
+                            BANK_UPDATE_GRACE.as_millis()
+                        ));
                     }
                 }
                 Stage::LoggingOut { since } => {
