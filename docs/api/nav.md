@@ -1792,11 +1792,12 @@ same proof path. Otherwise, report candidate timing and committed scratch as an
 **absolute cost diagnostic, not an A/B or a gate**. Record the structural
 absence with source and receipt lines. Never synthesize gates or permissions.
 
-Prepare one standalone package for each explicitly selected source/API arm:
+Prepare one standalone package for each explicitly selected source root with
+the current observation API:
 
 ```bash
-python3 tools/perf/npr-proof/prepare.py --source-root /absolute/dev-base-source --api legacy --output /absolute/dev-base-proof
-python3 tools/perf/npr-proof/prepare.py --source-root /absolute/candidate-source --api observation --output /absolute/candidate-proof
+python3 tools/perf/npr-proof/prepare.py --source-root /absolute/dev-base-source --output /absolute/dev-base-proof
+python3 tools/perf/npr-proof/prepare.py --source-root /absolute/candidate-source --output /absolute/candidate-proof
 cargo test --manifest-path /absolute/candidate-proof/Cargo.toml
 cargo clippy --manifest-path /absolute/candidate-proof/Cargo.toml --all-targets -- -D warnings
 cargo fmt --manifest-path /absolute/candidate-proof/Cargo.toml --all -- --check
@@ -1805,10 +1806,11 @@ cargo build --release --manifest-path /absolute/candidate-proof/Cargo.toml
 ```
 
 Use the same preparation, checks and release build for the development-base
-package. Both depend on `crates/nav-planner`; `--api` selects only the real
-legacy or observation trait shape. A missing dependency or wrong API fails
-instead of selecting a fallback. Preparation seeds the standalone lockfile
-from that arm's committed workspace lockfile and records the source hashes.
+package. Both depend on `crates/nav-planner` and use the current
+`EvidenceProvider::observe_gate` and two-argument `QuestEvidence::new` APIs.
+A source root that lacks this contract fails instead of selecting a fallback.
+Preparation seeds the standalone lockfile from that arm's committed workspace
+lockfile and records the source hashes.
 
 Each process runs all 299 frozen coordinate pairs in all three original option
 groups, in order: **897 searches**, with the original 4,000,000-node limit.
