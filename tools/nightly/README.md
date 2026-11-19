@@ -127,13 +127,25 @@ A match creates a new summary with `SKIPPED-UNCHANGED` and the earlier run
 folder's name. The new folder contains no copied cell results. Set
 `NIGHTLY_RERUN_UNCHANGED=1` to force the branch to run again.
 
-The runner searches only the run directory visible on its own host:
-`C:\274bot-nightly\runs` on Windows, `/srv/nightly/runs` on malbec, and
-`<guest_home>/nightly/runs` in the Mac guest (or the configured
-`NIGHTLY_RUNS_ROOT`). The Mac controller copies guest results to the host's
-`$NIGHTLY_MAC_RUNS` after the guest jobs finish. That host archive is not
-available inside the next fresh guest clone, so the guest cannot see prior
-guest runs and fails open by running the branch again.
+The runner searches its local `runs` directory and, when set, a staged
+previous-run metadata root. Windows uses `C:\274bot-nightly\runs`, malbec uses
+`/srv/nightly/runs`, and the Mac guest uses `<guest_home>/nightly/runs` (or the
+configured `NIGHTLY_RUNS_ROOT`).
+
+Before starting a Mac guest job, the controller checks `$NIGHTLY_MAC_RUNS` and
+stages only `summary.json` and `DONE` from folders for the exact branch, job,
+and full commit whose summary digest matches `SHA256SUMS`. The guest reads this
+metadata through `NIGHTLY_PREVIOUS_RUNS_ROOT`. The controller passes the runner
+commit and self-update result from its staged checkout because it omits `.git`.
+The guest does not attempt a second self-update.
+The guest derives its selected cells and cell-list file, engine identity and
+status, platform, and host, then checks the full summary match and completeness.
+For fresh Tart paths, the matcher ignores only the per-clone absolute source
+root; it still compares the engine label, ports, source-folder name, mode, and
+status. Old cell results are not copied. A skip is written as a new
+`SKIPPED-UNCHANGED` summary and follows the normal archive flow. If the Mac
+archive or metadata cannot be read, no candidate is staged and the guest runs
+the branch.
 
 Cells listed in [`skip.conf`](skip.conf) still appear as `SKIP`. Quest cells do
 not belong in that file; the job filter routes them to Engine Q.
@@ -1069,15 +1081,15 @@ In both cell steps every cell gets a throwaway `HOME`/`USERPROFILE`/`APPDATA`/
 `LOCALAPPDATA`/`TEMP`, and `BOT_CPU=1` unless its name matches `NIGHTLY_GPU_CELLS`
 (`^render_`: those draw with the GPU). The outer cap is 1200 s on this host
 (`NIGHTLY_CELL_CAP_S`). `jive_kbd` and `quester_queue` keep 3600 s.
-`NIGHTLY_RUN_DEADLINE_S` defaults to 0 on all hosts, so the whole run has no
-runner-level deadline unless configured. Per-step deadlines and per-cell caps
+`NIGHTLY_RUN_DEADLINE_S` defaults to 0 on all hosts, so the runner has no
+whole-run deadline unless configured. Per-step deadlines and per-cell caps
 still apply. Separately, Windows Task Scheduler gives `274bot-nightly` an
-`ExecutionTimeLimit` of `PT11H`: its 23:00 start is ended by Task Scheduler at
-10:00 local regardless of the runner setting. On 2026-11-19 it ended the dev
-quest TUI step at 10:00 (Last Result `267014`). Removing the runner's former
-8.5 h deadline does not change the Task Scheduler limit. A cell still running
-when its step deadline passes is stopped as `TIMEOUT`, and cells not started
-before a step deadline are `NOT_RUN`.
+`ExecutionTimeLimit` of `PT20H` (from its 23:00 start, 19:00 local the
+next day). This is a host setting outside the runner; changing
+`NIGHTLY_RUN_DEADLINE_S` does not change it. The former `PT11H` setting ended
+the 2026-11-19 dev quest TUI step at 10:00 (Last Result `267014`). A cell still
+running when its step deadline passes is stopped as `TIMEOUT`, and cells not
+started before a step deadline are `NOT_RUN`.
 
 **Engine B.** The cells use Engine B, the shared engine other agents' live cells use,
 through the review machine's `274bot-nightly-win-engine` reverse forward on host

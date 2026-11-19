@@ -805,6 +805,8 @@ BRANCHES_REL = "tools/nightly/branches.conf"
 SELF_UPDATE_ENV = "NIGHTLY_SELF_UPDATE"
 SELF_UPDATE_DONE_ENV = "NIGHTLY_SELF_UPDATE_DONE"
 SELF_UPDATE_FROM_ENV = "NIGHTLY_SELF_UPDATE_FROM"
+RUNNER_COMMIT_ENV = "NIGHTLY_RUNNER_COMMIT"
+SELF_UPDATE_INFO_ENV = "NIGHTLY_SELF_UPDATE_INFO"
 # Set in the self-check subprocess: the updater's own tests skip when it is
 # present, so a check never re-tests the updater recursively.
 SELF_CHECK_ACTIVE_ENV = "NIGHTLY_SELF_CHECK_ACTIVE"
@@ -1025,6 +1027,22 @@ def maybe_self_update(repo: Path, script: Path, argv: list[str] | None = None,
     _exec(sys.executable, [sys.executable, str(script),
                            *(argv if argv is not None else sys.argv[1:])], env)
     return None
+
+
+def supplied_self_update_info(default: dict) -> dict:
+    raw = os.environ.get(SELF_UPDATE_INFO_ENV)
+    if raw is None:
+        return default
+    try:
+        supplied = json.loads(raw)
+    except (TypeError, ValueError):
+        supplied = None
+    fields = ("status", "from", "to", "detail")
+    if not isinstance(supplied, dict) or any(
+            not isinstance(supplied.get(field), str) for field in fields):
+        return {"status": "unknown", "from": "unknown", "to": "unknown",
+                "detail": "invalid controller self-update metadata"}
+    return {field: supplied[field] for field in fields}
 
 
 def branch_list_text(info: dict) -> str:
@@ -3519,6 +3537,22 @@ def engine_source() -> str:
     return (f"{ENGINE_LABEL} (running, shared; never started or stopped), "
             f"{ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}; client data from {ENGINE_PRISTINE}")
 
+def engine_source_identity(source: object) -> str | None:
+    """Normalize only the guest-local root, which changes between fresh Tart clones."""
+    if not isinstance(source, str):
+        return None
+    if ENGINE_MODE == "local":
+        suffix = f" ({REVISION} engine copy, fresh DB)"
+        if not source.endswith(suffix):
+            return None
+        return f"{Path(source[:-len(suffix)]).name}{suffix}"
+    marker = "; client data from "
+    prefix, separator, path = source.rpartition(marker)
+    if not separator:
+        return None
+    return f"{prefix}{marker}{Path(path).name}"
+
+
 
 def _rows_are_complete(rows: object, expected_cells: list[str], terminal: frozenset[str]) -> bool:
     if not isinstance(rows, list) or len(rows) != len(expected_cells):
@@ -3622,15 +3656,35 @@ def find_unchanged_run(expected: dict, selected_cells: list[str], cell_steps: li
                        latency_cells: list[str], latency_bands: list[int]) -> tuple[Path, str] | None:
     if env_flag(UNCHANGED_RUN_ENV, False):
         return None
-    root = runs_root()
-    try:
-        candidates = sorted(
-            (entry for entry in root.iterdir() if entry.is_dir() and not entry.is_symlink()),
-            key=lambda entry: entry.name, reverse=True)
-    except OSError as error:
-        log(f"unchanged-run search failed at {root}: {error}; running the branch")
+    runner_commit = expected.get("runner_commit")
+    if not isinstance(runner_commit, str) or runner_commit in ("", "unknown"):
+        log("unchanged-run runner identity unavailable; running the branch")
         return None
-
+    self_update = expected.get("self_update")
+    if (not isinstance(self_update, dict) or self_update.get("status") == "unknown"
+            or any(self_update.get(field) in (None, "", "unknown") for field in ("from", "to"))):
+        log("unchanged-run self-update identity unavailable; running the branch")
+        return None
+    root = runs_root()
+    candidate_roots = [root]
+    previous_root = os.environ.get("NIGHTLY_PREVIOUS_RUNS_ROOT")
+    if previous_root:
+        staged_root = Path(previous_root)
+        if staged_root != root:
+            candidate_roots.append(staged_root)
+    candidates = []
+    for candidate_root in candidate_roots:
+        try:
+            candidates.extend(
+                entry for entry in candidate_root.iterdir()
+                if entry.is_dir() and not entry.is_symlink()
+            )
+        except OSError as error:
+            if candidate_root == root:
+                log(f"unchanged-run search failed at {root}: {error}; running the branch")
+                return None
+            log(f"staged prior-run search failed ({type(error).__name__}); running the branch")
+    candidates.sort(key=lambda entry: entry.name, reverse=True)
     proxy_sha256 = None
     if latency_bands:
         try:
@@ -3639,6 +3693,10 @@ def find_unchanged_run(expected: dict, selected_cells: list[str], cell_steps: li
             log(f"unchanged-run latency check failed: {error}; running the branch")
             return None
     engine_status = None
+    source_identity = engine_source_identity(engine_source())
+    if source_identity is None:
+        log("unchanged-run engine identity unavailable; running the branch")
+        return None
     for previous in candidates:
         try:
             summary = json.loads((previous / "summary.json").read_text(encoding="utf-8"))
@@ -3650,7 +3708,7 @@ def find_unchanged_run(expected: dict, selected_cells: list[str], cell_steps: li
             continue
         engine = summary.get("engine")
         if (not isinstance(engine, dict) or engine.get("mode") != ENGINE_MODE
-                or engine.get("source") != engine_source()):
+                or engine_source_identity(engine.get("source")) != source_identity):
             continue
         if engine_status is None:
             try:
@@ -3825,7 +3883,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     branch_list_info = branch_list or {"source": "unknown", "commit": "", "note": ""}
     self_update_info = self_update or {"status": "unknown", "from": "", "to": "", "detail": ""}
     catalog_commit = git_head(CATALOG)
-    runner_commit = git_head(RUNNER_REPO)
+    runner_commit = current_runner_commit()
     expected = dict(
         job=JOB, branch=branch, commit=commit, commit_full=commit_full,
         revision=int(REVISION), cells_file=cells_file,
@@ -4047,6 +4105,17 @@ def git_head(path: Path) -> str:
         return "unknown"
 
 
+def current_runner_commit() -> str:
+    override = os.environ.get(RUNNER_COMMIT_ENV)
+    if override is None:
+        return git_head(RUNNER_REPO)
+    if re.fullmatch(r"[0-9a-f]{40}", override):
+        return override[:9]
+    if re.fullmatch(r"[0-9a-f]{9}", override):
+        return override
+    return "unknown"
+
+
 def prune_local() -> None:
     cutoff = time.time() - KEEP_DAYS * 86400
     runs = runs_root()
@@ -4144,7 +4213,9 @@ def main() -> int:
     # The self-update re-executes this same script path, so it runs before the
     # branch list is read: the new code decides the night's branches. --list
     # stays a read-only query of a checked-out tree and never updates.
-    self_update_info = maybe_self_update(RUNNER_REPO, HERE / "run_nightly.py")
+    self_update_info = supplied_self_update_info(
+        maybe_self_update(RUNNER_REPO, HERE / "run_nightly.py")
+    )
     branches, branch_info = resolve_branch_list(args.branch, RUNNER_REPO)
     log(f"branch list: {branch_list_text(branch_info)}")
     log(f"self-update: {self_update_text(self_update_info)}")

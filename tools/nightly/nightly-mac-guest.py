@@ -1439,6 +1439,7 @@ class NightlyOrchestrator:
         self.input_root: Optional[Path] = None
         self.control_root: Optional[Path] = None
         self.pins: Dict[str, str] = {}
+        self.previous_runs_root: Optional[Path] = None
         self.owned_lock = False
         self.quiet_stopped = False
         self.published_ok = False
@@ -1535,6 +1536,7 @@ class NightlyOrchestrator:
         if snapshot.is_dir():
             copy_tree(snapshot, self.input_root / "nav-snapshot", kind="snapshot")
         self.pins = pin_sources(self.settings.source_repo, self.branches, self.input_root)
+        self.previous_runs_root = self.stage_previous_run_summaries()
         for path in sorted(self.input_root.iterdir(), key=lambda item: item.name):
             make_readonly(path)
         make_readonly(self.input_root)
@@ -1560,6 +1562,7 @@ class NightlyOrchestrator:
             "tools_root": str(tools_root),
             "input": share_input,
             "runner": f"{share_input}/runner",
+            "previous_runs": f"{share_input}/previous-runs",
             "script": f"{share_input}/runner/tools/nightly/nightly-mac-guest.py",
             "source": f"{share_input}/source.git",
             "catalog": f"{share_input}/catalog",
@@ -1571,6 +1574,92 @@ class NightlyOrchestrator:
             "game_data_274_engine": str(guest_root / "game-data-274-engine"),
             "game_data_274_content": str(guest_root / "game-data-274-content"),
         }
+
+    def previous_run_candidates(self) -> List[Tuple[Path, Dict[str, Any]]]:
+        archive = self.settings.runs
+        if archive.is_symlink():
+            raise NightlyError("Mac run archive is a symlink")
+        if not archive.is_dir():
+            return []
+        selectors = []
+        for branch, commit in self.pins.items():
+            for job in self.settings.jobs:
+                suffix = "-mac" if job == "main" else "-mac-quest"
+                pattern = re.compile(
+                    rf"^\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(branch_slug(branch))}-"
+                    rf"{re.escape(commit[:9])}{re.escape(suffix)}(?:-r[1-9]\d*)?$"
+                )
+                selectors.append((pattern, branch, commit, job))
+        candidates: List[Tuple[Path, Dict[str, Any]]] = []
+        for run in archive.iterdir():
+            if run.is_symlink() or not run.is_dir():
+                continue
+            selection = next(
+                (item for item in selectors if item[0].fullmatch(run.name)), None
+            )
+            if selection is None:
+                continue
+            _pattern, branch, commit, job = selection
+            done = run / "DONE"
+            summary_path = run / "summary.json"
+            manifest_path = run / "SHA256SUMS"
+            if (done.is_symlink() or not done.is_file() or summary_path.is_symlink()
+                    or not summary_path.is_file() or manifest_path.is_symlink()
+                    or not manifest_path.is_file()):
+                continue
+            try:
+                summary_hashes = [
+                    match.group(1)
+                    for line in manifest_path.read_text(encoding="utf-8").splitlines()
+                    if (match := re.fullmatch(r"([0-9a-f]{64})  summary\.json", line))
+                ]
+                if (len(summary_hashes) != 1
+                        or sha256_file(summary_path) != summary_hashes[0]):
+                    raise NightlyError("archived summary does not match its SHA256SUMS entry")
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, ValueError, NightlyError) as error:
+                log(f"ignored unreadable prior Mac summary {run.name} ({type(error).__name__})")
+                continue
+            if (not isinstance(summary, dict) or summary.get("branch") != branch
+                    or summary.get("job") != job or summary.get("commit_full") != commit):
+                continue
+            candidates.append((run, summary))
+        candidates.sort(key=lambda item: item[0].name, reverse=True)
+        return candidates
+
+    def stage_previous_run_summaries(self) -> Optional[Path]:
+        if self.input_root is None:
+            raise NightlyError("nightly inputs are not staged")
+        try:
+            candidates = self.previous_run_candidates()
+        except (OSError, NightlyError) as error:
+            log(f"could not read prior Mac run archive ({type(error).__name__}); guest will run normally")
+            return None
+        if not candidates:
+            return None
+        staged_root = self.input_root / "previous-runs"
+        try:
+            staged_root.mkdir()
+        except OSError as error:
+            log(f"could not stage prior Mac summaries ({type(error).__name__}); guest will run normally")
+            return None
+        staged_count = 0
+        for run, _summary in candidates:
+            target = staged_root / run.name
+            try:
+                target.mkdir()
+                shutil.copy2(str(run / "summary.json"), str(target / "summary.json"))
+                shutil.copy2(str(run / "DONE"), str(target / "DONE"))
+            except OSError as error:
+                shutil.rmtree(target, ignore_errors=True)
+                log(f"could not stage prior Mac summary {run.name} ({type(error).__name__})")
+                continue
+            staged_count += 1
+        if not staged_count:
+            shutil.rmtree(staged_root, ignore_errors=True)
+            return None
+        log(f"staged {staged_count} prior Mac run summaries for guest matching")
+        return staged_root
 
     def sync_quiet_lock(self) -> bool:
         if self.settings.quiet_lock.exists():
@@ -1657,6 +1746,17 @@ class NightlyOrchestrator:
             "NIGHTLY_PURGED_DATA_DIR": paths["purged_data"],
             "NIGHTLY_PANEL_NAME_PREFIX": "nmp" if main else "nqp",
         }
+        if self.previous_runs_root is not None:
+            env["NIGHTLY_PREVIOUS_RUNS_ROOT"] = paths["previous_runs"]
+        rerun_override = os.environ.get("NIGHTLY_RERUN_UNCHANGED")
+        if rerun_override is not None:
+            env["NIGHTLY_RERUN_UNCHANGED"] = rerun_override
+        env["NIGHTLY_RUNNER_COMMIT"] = runner_head(self.settings.runner)
+        env["NIGHTLY_SELF_UPDATE"] = "0"
+        if self.self_update_info is not None:
+            env["NIGHTLY_SELF_UPDATE_INFO"] = json.dumps(
+                self.self_update_info, sort_keys=True
+            )
         if self.settings.game_data_274_engine is not None:
             env["NIGHTLY_GAME_DATA_274_ENGINE"] = paths["game_data_274_engine"]
         if self.settings.game_data_274_content is not None:

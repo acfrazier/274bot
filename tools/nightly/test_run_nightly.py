@@ -3528,7 +3528,8 @@ class UnchangedRunTests(unittest.TestCase):
     self_update = {"status": "disabled", "from": "r" * 40, "to": "r" * 40,
                    "detail": "self-update disabled"}
 
-    def run_attempt(self, *, previous=True, previous_commit="c" * 40, current_commit="c" * 40,
+    def run_attempt(self, *, previous=True, previous_external=False,
+                    previous_commit="c" * 40, current_commit="c" * 40,
                     previous_cells=("walk", "cook_bot"), previous_cells_file=None,
                     current_cells_file=None, current_only=None, previous_result="PASS",
                     previous_build_ok=True, previous_build_ran=True, previous_done=True,
@@ -3547,7 +3548,14 @@ class UnchangedRunTests(unittest.TestCase):
                     encoding="utf-8")
                 return current_commit, current_commit[:9]
 
+            actual_git_head = rn.git_head
+
+            def stable_git_head(path):
+                if path == rn.RUNNER_REPO:
+                    return "a" * 9
+                return actual_git_head(path)
             patches = [
+                mock.patch.object(rn, "git_head", stable_git_head),
                 mock.patch.object(rn, "ROOT", root),
                 mock.patch.object(rn, "RUNS_ROOT_OVERRIDE", None),
                 mock.patch.object(rn, "JOB", "main"),
@@ -3568,7 +3576,8 @@ class UnchangedRunTests(unittest.TestCase):
             try:
                 previous_dir = None
                 if previous:
-                    previous_dir = root / "runs" / f"2026-11-18-dev-{previous_commit[:9]}{rn.RUN_SUFFIX}"
+                    previous_root = root / ("previous-runs" if previous_external else "runs")
+                    previous_dir = previous_root / f"2026-11-18-dev-{previous_commit[:9]}{rn.RUN_SUFFIX}"
                     previous_dir.mkdir(parents=True)
                     rows = [
                         {"cell": cell, "frontend": "tui",
@@ -3603,7 +3612,7 @@ class UnchangedRunTests(unittest.TestCase):
 
                     def changed_git_head(path):
                         if path == rn.RUNNER_REPO:
-                            return "different-runner"
+                            return "b" * 9
                         return real_git_head(path)
 
                     patch = mock.patch.object(rn, "git_head", changed_git_head)
@@ -3613,6 +3622,9 @@ class UnchangedRunTests(unittest.TestCase):
                     patch = mock.patch.object(rn, "ENGINE_PRISTINE", current_engine_pristine)
                     patch.start()
                     patches.append(patch)
+                if previous_external:
+                    env = dict(env or {})
+                    env["NIGHTLY_PREVIOUS_RUNS_ROOT"] = str(root / "previous-runs")
                 if env:
                     patch = mock.patch.dict(os.environ, env)
                     patch.start()
@@ -3621,7 +3633,8 @@ class UnchangedRunTests(unittest.TestCase):
                 run_dir = rn.run_branch(
                     "dev", 1, current_only, None, unavailable="test run",
                     only_exact=current_cells_file is not None, cells_file=current_cells_file,
-                    branch_list=self.branch_list, self_update=self.self_update,
+                    branch_list=self.branch_list,
+                    self_update=rn.supplied_self_update_info(self.self_update),
                 )
                 result = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
                 artifacts = dict(
@@ -3677,6 +3690,28 @@ class UnchangedRunTests(unittest.TestCase):
 
     def test_changed_engine_identity_runs_again(self):
         summary, _ = self.run_attempt(current_engine_pristine=Path("different-engine"))
+        self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
+
+    def test_staged_previous_run_root_is_searched(self):
+        summary, _ = self.run_attempt(previous_external=True)
+        self.assertEqual(summary["status"], "SKIPPED-UNCHANGED")
+
+    def test_mac_guest_path_does_not_change_engine_identity(self):
+        summary, _ = self.run_attempt(
+            current_engine_pristine=Path("/fresh/guest/nightly/engine-pristine")
+        )
+        self.assertEqual(summary["status"], "SKIPPED-UNCHANGED")
+
+    def test_changed_staged_runner_commit_runs_again(self):
+        summary, _ = self.run_attempt(env={"NIGHTLY_RUNNER_COMMIT": "f" * 40})
+        self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
+
+    def test_changed_self_update_state_runs_again(self):
+        update_info = {
+            "status": "current", "from": "a" * 40, "to": "a" * 40,
+            "detail": "already current",
+        }
+        summary, _ = self.run_attempt(env={"NIGHTLY_SELF_UPDATE_INFO": json.dumps(update_info)})
         self.assertNotEqual(summary.get("status"), "SKIPPED-UNCHANGED")
 
     def test_rerun_override_forces_a_full_run(self):
