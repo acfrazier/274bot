@@ -5652,7 +5652,7 @@ impl LiveDuelLogout {
                 };
                 self.target = Some(target);
                 self.approach = Some(approach);
-                match duel_loc_operable(actor_snapshot, target, actor_tile) {
+                match duel_loc_operable_from(actor_snapshot, target, actor_tile, approach) {
                     Some(true) => self.pending = Some(DuelAction::Forfeit(target)),
                     Some(false) => self.pending = Some(DuelAction::Walk(approach)),
                     None => self.failure = Some("duel trapdoor reachability is unknown".into()),
@@ -5663,10 +5663,12 @@ impl LiveDuelLogout {
                     self.failure = Some("duel trapdoor target was not retained".into());
                     return;
                 };
-                match duel_loc_operable(actor_snapshot, target, actor_tile) {
-                    Some(true) => self.pending = Some(DuelAction::Forfeit(target)),
-                    Some(false) => {}
-                    None => self.failure = Some("duel trapdoor reachability is unknown".into()),
+                let Some(approach) = self.approach else {
+                    self.failure = Some("duel trapdoor approach was not retained".into());
+                    return;
+                };
+                if actor_tile == approach {
+                    self.pending = Some(DuelAction::Forfeit(target));
                 }
             }
             DuelLogoutPhase::AwaitPrompt => self.plan_confirmation(actor_snapshot),
@@ -5766,7 +5768,13 @@ impl LiveDuelLogout {
                     self.failure = Some("live Trapdoor/Forfeit target disappeared".into());
                     return;
                 };
-                if duel_loc_operable(&self.snapshot, target, actor_tile) != Some(true) {
+                let Some(approach) = self.approach else {
+                    self.failure = Some("duel trapdoor approach was not retained".into());
+                    return;
+                };
+                if duel_loc_operable_from(&self.snapshot, target, actor_tile, approach)
+                    != Some(true)
+                {
                     return;
                 }
                 let mut interactions = api::interact::Interactions::new(&self.snapshot, client);
@@ -5910,6 +5918,19 @@ fn duel_loc_operable(
         .iter()
         .find(|loc| target.matches(loc) && duel_loc_has_forfeit(loc))?;
     api::query::loc_approach::can_operate_from(loc, snapshot.scene(), from)
+}
+
+fn duel_loc_operable_from(
+    snapshot: &api::snapshot::GameSnapshot,
+    target: DuelLoc,
+    from: api::snapshot::WorldTile,
+    approach: api::snapshot::WorldTile,
+) -> Option<bool> {
+    if from == approach {
+        Some(true)
+    } else {
+        duel_loc_operable(snapshot, target, from)
+    }
 }
 
 fn select_duel_trapdoor(

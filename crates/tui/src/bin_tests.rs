@@ -5319,6 +5319,60 @@ fn duel_teardown_selects_a_reachable_pen_approach_from_the_real_nav_pack() {
 }
 
 #[test]
+fn duel_teardown_uses_inner_approach_when_loc_reachability_is_unknown() {
+    let Some(world) = real_duel_nav_world() else {
+        return;
+    };
+    let pen = DUEL_ARENA_PENS[2];
+    let (west_tile, approach) = pen.inner_approach(true);
+    let (east_tile, _) = pen.inner_approach(false);
+    let peer = api::snapshot::WorldTile {
+        x: 3335,
+        z: 3251,
+        level: 0,
+    };
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_tile(approach);
+    let mut scene = api::snapshot::SceneView::default();
+    scene.available = true;
+    scene.level = 0;
+    scene.base_x = 3330;
+    scene.base_z = 3240;
+    scene.width = 32;
+    scene.height = 32;
+    scene.collision_flags = vec![0; scene.width as usize * scene.height as usize];
+    snapshot.seed_scene(scene);
+    let west_loc = test_duel_loc(west_tile);
+    assert_eq!(
+        api::query::loc_approach::can_operate_from(&west_loc, snapshot.scene(), approach),
+        None,
+        "unsupported live-loc shape leaves the API reachability unknown"
+    );
+    snapshot.seed_locs(vec![test_duel_loc(east_tile), west_loc]);
+
+    let pair = test_duel_pair(Some(approach), Some(peer));
+    let mut duel = LiveDuelLogout::new("alice".into(), "bob".into(), pen, Arc::clone(&world), pair);
+    duel.plan_next(pair, &snapshot);
+
+    let target = duel.target.expect("selects the live west trapdoor");
+    assert_eq!(target.tile, west_tile);
+    assert_eq!(duel.approach, Some(approach));
+    assert_eq!(duel.pending, Some(DuelAction::Forfeit(target)));
+    assert_eq!(
+        duel_loc_operable_from(&snapshot, target, approach, approach),
+        Some(true)
+    );
+    assert!(duel.failure.is_none());
+
+    duel.pending = None;
+    duel.phase = DuelLogoutPhase::Approaching;
+    duel.plan_next(pair, &snapshot);
+    assert_eq!(duel.pending, Some(DuelAction::Forfeit(target)));
+    assert!(duel.failure.is_none());
+}
+
+#[test]
 fn duel_teardown_does_not_walk_from_the_lobby_to_a_pen() {
     let Some(world) = real_duel_nav_world() else {
         return;
