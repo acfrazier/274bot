@@ -1882,6 +1882,7 @@ danger controls and inherited script rows (re-checked at most once a second),
 and manual admission reads it again; until the database is open, and while it
 is refused, every grant is closed. A first start imports the whole
 `panel-ui.json` once (members this build does not know, a `schema_version`
+among them, are kept) and keeps it as `panel-ui.json.migrated`. An absent
 file defaults to **Always**. Stored danger settings remain unchanged. A saved
 `allow_danger_zones=false` remains **Never** unless
 `survivable_routing=true` selects **When survivable**. If an older file lacks

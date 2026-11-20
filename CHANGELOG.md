@@ -12,10 +12,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Navigation
 
-- Danger routing now defaults to **Always**, matching compat v1; walks may
+- Danger routing now defaults to **Always**, matching compat v1. Walks may
   cross dangerous monsters without a survival check. Existing saved choices,
-  including **Never**, stay unchanged. Choose **Never** in Nav config or TUI
-  Settings to make default routes avoid dangerous monsters.
+  including **Never**, stay unchanged.
+  Choose **Never** in Nav config or TUI Settings when a low-level bot must avoid
+  aggressive monsters. For example, choose **Never** near the King Scorpion
+  zones by Falador East.
 
 ### Scenario observations
 
