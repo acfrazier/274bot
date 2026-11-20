@@ -9,6 +9,20 @@ use crate::test_support::headless_gpu;
 use crate::theme::PANEL_FONT_SIZE;
 
 #[test]
+fn paced_panel_prefers_supported_mailbox_only_on_wayland() {
+    use wgpu::PresentMode::{Fifo, Mailbox};
+
+    let cfg = crate::app::runner_config();
+    assert_eq!(surface_present_mode(&cfg, true, &[Fifo, Mailbox]), Mailbox);
+    assert_eq!(surface_present_mode(&cfg, true, &[Fifo]), Fifo);
+    assert_eq!(surface_present_mode(&cfg, false, &[Fifo, Mailbox]), Fifo);
+    assert_eq!(
+        surface_present_mode(&PanelConfig::default(), true, &[Fifo, Mailbox]),
+        Fifo
+    );
+}
+
+#[test]
 fn recreated_window_preserves_visibility_without_background_activation() {
     use std::cell::RefCell;
 
