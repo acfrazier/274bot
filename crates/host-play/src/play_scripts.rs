@@ -679,6 +679,21 @@ impl ScriptStartHandle {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Play {
+    /// Evaluate an integration-test expression through the existing surface probe.
+    #[doc(hidden)]
+    pub fn script_probe_for_test(
+        &self,
+        name: &str,
+        expression: &str,
+    ) -> Result<serde_json::Value, String> {
+        let slot = script_slot(&self.scripts, name).ok_or("missing script slot")?;
+        let slot = slot.lock().map_err(|_| "script slot retiring")?;
+        slot.probe(expression).map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Play {
     /// Offline configuration fixtures use real generated facts without loading
     /// a client cache. Production only receives facts through ServerProfile.
     pub fn bind_script_test_data(&mut self, data: Arc<api::game_data::SelectedGameData>) {
