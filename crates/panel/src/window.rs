@@ -30,6 +30,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 #[path = "work_area.rs"]
@@ -389,6 +390,8 @@ pub struct PanelConfig {
     pub window_title: String,
     pub window_size: (f64, f64),
     pub present_mode: wgpu::PresentMode,
+    /// Use Mailbox on Wayland if supported. Enable only with paced redraws.
+    pub prefer_wayland_mailbox: bool,
     pub clear_color: [f32; 4],
     pub docking: DockingConfig,
     pub ini_filename: Option<PathBuf>,
@@ -408,6 +411,7 @@ impl Default for PanelConfig {
             window_title: "bot".into(),
             window_size: (1280.0, 720.0),
             present_mode: wgpu::PresentMode::Fifo,
+            prefer_wayland_mailbox: false,
             clear_color: [0.1, 0.2, 0.3, 1.0],
             docking: DockingConfig::default(),
             ini_filename: None,
@@ -416,6 +420,21 @@ impl Default for PanelConfig {
             io_config_flags: None,
             theme: None,
         }
+    }
+}
+
+fn surface_present_mode(
+    cfg: &PanelConfig,
+    is_wayland: bool,
+    modes: &[wgpu::PresentMode],
+) -> wgpu::PresentMode {
+    // KWin can hold FIFO buffers on a hidden surface until its fallback
+    // timer fires, blocking both the event loop and the shared device queue.
+    // Mailbox replaces the queued frame without allowing tearing.
+    if cfg.prefer_wayland_mailbox && is_wayland && modes.contains(&wgpu::PresentMode::Mailbox) {
+        wgpu::PresentMode::Mailbox
+    } else {
+        cfg.present_mode
     }
 }
 
@@ -934,12 +953,16 @@ impl AppWindow {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST
         };
 
+        let is_wayland = matches!(
+            window.window_handle().map(|handle| handle.as_raw()),
+            Ok(RawWindowHandle::Wayland(_))
+        );
         let surface_desc = wgpu::SurfaceConfiguration {
             usage: surface_usage,
             format,
             width: physical_size.width,
             height: physical_size.height,
-            present_mode: cfg.present_mode,
+            present_mode: surface_present_mode(cfg, is_wayland, &caps.present_modes),
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,

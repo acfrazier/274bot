@@ -176,6 +176,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The TUI keeps every Quester start-zone row reachable with PageUp and
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
 - Fixed unbounded memory growth when a CPU-rendered panel is minimized or occluded.
+- On KDE Plasma with Wayland, a locked screen no longer slows the panel to about 20 frames per second. While the screen was locked, the focused account's client also ran its frames, which include bot logic and drawing, at 100 ms or more each instead of 20 ms. The change applies when the graphics driver supports Mailbox presentation.
 
 ### Preferences and saved state
 

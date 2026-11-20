@@ -96,6 +96,7 @@ pub fn runner_config() -> window::PanelConfig {
         clear_color: BG,
         theme: Some(Theme::Dark),
         redraw: RedrawMode::WaitUntil { fps: 50.0 },
+        prefer_wayland_mailbox: true,
         ini_filename: None,
         restore_previous_geometry: false,
         docking: window::DockingConfig {
