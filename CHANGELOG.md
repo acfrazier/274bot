@@ -367,6 +367,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 - During a walk or fight, the status row shows the actual drink or bite.
 
+### Quester
+
+- Quester checks the way back to the quest stage before optional supply or gear
+  bank trips, and skips trips it cannot return from. Bank-selection timeouts
+  respect the caller's fallback policy.
+
 ### Fixed during development
 
 #### Survival
