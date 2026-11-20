@@ -90,8 +90,8 @@ Only metadata cases marked `adopted` run. Multi-account, DOM, NPC-spawn,
 shared-world mutation, and tick-rate cases remain excluded when their metadata
 records those limits. These cases do not replace existing native or UI cells.
 
-The current pin has 39 adopted cases and 51 exclusions from the 90 A/B
-candidates. Of the adopted cases, 33 gate and six are observational. Mining
+The current pin has 38 adopted cases and 52 exclusions from the 90 A/B
+candidates. Of the adopted cases, 32 gate and six are observational. Mining
 yield, random events, and wall-clock rate assertions do not gate.
 
 The adapter provides one native session per page, account-scoped seeds,
@@ -100,6 +100,11 @@ game-state evaluation, bounded waits, screenshots, and native console/error
 observations. Explicit upstream process exits produce structured records before
 the process exits. Unsupported page methods fail explicitly. Native host slots
 replace browser deployment isolation; no DOM or browser client is simulated.
+
+The simulator preflight checks the configured native game and asset sockets
+before an account exists. Account-only fixtures can use `advancestat`.
+Polling across a clean target stop waits for the actual native terminal state;
+native errors still fail, and a one-shot evaluation never repeats an expression.
 
 ## Validate test selectors
 

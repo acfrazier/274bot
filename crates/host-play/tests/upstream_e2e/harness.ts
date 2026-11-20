@@ -127,7 +127,7 @@ export async function requireSim(base: string) {
     if (!['localhost', '127.0.0.1', '::1'].includes(target.hostname)) {
         throw new UnsupportedCapabilityError('external simulator preflight');
     }
-    await rpc({ op: 'status' });
+    await rpc({ op: 'preflight' });
 }
 
 export function positionalArgs(argv: string[], fallbackBase: string): string[] {

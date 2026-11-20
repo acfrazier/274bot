@@ -1519,6 +1519,7 @@
         "account-session",
         "bounded-wait",
         "library-script-start",
+        "multiple-clients",
         "page-evaluate",
         "page-events",
         "screenshot-evidence",
@@ -1526,8 +1527,8 @@
       ],
       "deadline_seconds": 1800,
       "gate_class": "gating",
-      "eligibility": "adopted",
-      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "eligibility": "excluded",
+      "reason": "Excluded: the default source loops over two loadouts, creates a separate browser context and a different account for each, and therefore needs multiple accounts even though the newPage call occurs once in the loop body (lines 8-13, 85-93).",
       "family_paths": [
         "crates/scenario/src/scenarios/combat/fire_giant.rs"
       ],

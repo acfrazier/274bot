@@ -1,7 +1,7 @@
 //! Test-only transport for unchanged upstream e2e files. No product shim changes.
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
@@ -60,6 +60,16 @@ fn engine_port(value: Result<String, std::env::VarError>, fallback: u16) -> Resu
     }
 }
 
+fn engine_preflight(ports: &[u16; 2]) -> Result<(), String> {
+    // The upstream preflight checks the server before it creates an account.
+    for &port in ports {
+        let address = SocketAddr::from(([127, 0, 0, 1], port));
+        let _connection = TcpStream::connect_timeout(&address, Duration::from_secs(5))
+            .map_err(|error| format!("engine preflight {address}: {error}"))?;
+    }
+    Ok(())
+}
+
 fn account_cheat(command: &str) -> bool {
     if command.contains(['\n', '\r']) {
         return false;
@@ -71,6 +81,7 @@ fn account_cheat(command: &str) -> bool {
                 | "setvar"
                 | "getvar"
                 | "setstat"
+                | "advancestat"
                 | "give"
                 | "givebank"
                 | "clearinv"
@@ -129,6 +140,7 @@ struct Adapter {
     queue: FrameQueue,
     session: Option<Session>,
     output: PathBuf,
+    engine_ports: [u16; 2],
     last_diagnostic: Value,
 }
 
@@ -309,6 +321,37 @@ impl Adapter {
 
     fn dispatch(&mut self, request: Value) -> Reply {
         match request["op"].as_str().ok_or("missing op")? {
+            "await-terminal" => {
+                let account = &self.session.as_ref().ok_or("no session")?.account;
+                let milliseconds = request["timeout_ms"]
+                    .as_u64()
+                    .filter(|value| *value > 0)
+                    .ok_or("native terminal wait requires a positive timeout")?;
+                let deadline = Instant::now()
+                    .checked_add(Duration::from_millis(milliseconds))
+                    .ok_or("native terminal deadline overflow")?;
+                eprintln!("upstream adapter: waiting for native terminal state: {account}");
+                loop {
+                    if let Some(error) = self.play.script_last_error(account) {
+                        return Err(error);
+                    }
+                    match self.play.script_state(account) {
+                        script::RunState::Idle => return Ok(Value::Null),
+                        script::RunState::Error => {
+                            return Err("native script ended in Error without a message".into());
+                        }
+                        _ => {}
+                    }
+                    if Instant::now() >= deadline {
+                        return Err("native terminal state deadline".into());
+                    }
+                    frame_call(&self.queue, Box::new(|_| Ok(Value::Null)))?;
+                }
+            }
+            "preflight" => {
+                engine_preflight(&self.engine_ports)?;
+                Ok(Value::Null)
+            }
             "connect" => {
                 if self.session.is_some() {
                     return Err("adapter supports one account per test".into());
@@ -612,13 +655,17 @@ fn run_corpus() -> Result<(), String> {
     if !api::hostlog::install_sink(&NATIVE_EVENTS) {
         return Err("upstream adapter requires its own host event sink".into());
     }
+    let engine_ports = [
+        engine_port(std::env::var("WORLD_GAME_PORT"), 44594)?,
+        engine_port(std::env::var("WORLD_HTTP_PORT"), 1080)?,
+    ];
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(engine_port(std::env::var("WORLD_GAME_PORT"), 44594)?),
-        http_port: Some(engine_port(std::env::var("WORLD_HTTP_PORT"), 1080)?),
+        port: Some(engine_ports[0]),
+        http_port: Some(engine_ports[1]),
         engine_dir: Some(required("ENGINE_A_DIR")?),
         nav_pack: Some(required("NAV_PACK_289")?),
         nav_flags: Some(required("NAV_FLAGS_289")?),
@@ -649,6 +696,7 @@ fn run_corpus() -> Result<(), String> {
         play,
         library,
         queue,
+        engine_ports,
         session: None,
         last_diagnostic: Value::Null,
         output: output.clone(),
@@ -741,6 +789,17 @@ fn upstream_e2e_corpus() {
 }
 
 #[test]
+fn preflight_checks_both_real_loopback_endpoints_without_a_client() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    assert!(engine_preflight(&[port, port]).is_ok());
+    for ports in [[port, 0], [0, port]] {
+        let error = engine_preflight(&ports).unwrap_err();
+        assert!(error.contains("127.0.0.1:0"), "{error}");
+    }
+}
+
+#[test]
 fn screenshots_remain_in_the_selected_directory() {
     let root = Path::new("evidence");
     assert_eq!(
@@ -778,6 +837,7 @@ fn fixture_cheats_cannot_mutate_the_world_or_tick_speed() {
     for command in [
         "tele 0,50,50,20,20",
         "setstat herblore 20",
+        "advancestat thieving 50",
         "~clearinv",
         "~maxme",
         "givebank pot_empty 30",

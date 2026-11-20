@@ -252,7 +252,20 @@ export class HostPage {
         }
         const deadline = Date.now() + (options?.timeout ?? 30_000);
         for (;;) {
-            const value = await this.evaluate(fn, arg);
+            let value;
+            try {
+                value = await this.evaluate(fn, arg);
+            } catch (error) {
+                if (!(error instanceof Error) ||
+                    (error.message !== 'probe: isolate thread gone' &&
+                     error.message !== 'probe: channel is empty and sending half is closed')) throw error;
+                const remaining = deadline - Date.now();
+                if (remaining <= 0) throw new Error(`waitForFunction timed out: ${fn.toString()}`);
+                // Polls may cross a clean target stop. Wait for native terminal truth
+                // before the next poll; one-shot evaluate never replays an expression.
+                await rpc({ op: 'await-terminal', timeout_ms: remaining });
+                continue;
+            }
             if (value) return { jsonValue: async () => value };
             if (Date.now() >= deadline) throw new Error(`waitForFunction timed out: ${fn.toString()}`);
             await delay(polling);
