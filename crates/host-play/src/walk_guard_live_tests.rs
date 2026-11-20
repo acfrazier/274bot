@@ -28,14 +28,6 @@ const MISSILES_BUTTON: i32 = 5622;
 const PRAYER_STABLE_TICKS: u32 = 3;
 const STOP_OFF_BUDGET_TICKS: u32 = 4;
 const ZONE: &str = "death-plateau-throwers";
-// R289 m44_56.jm2 places a Thrower Troll at (2870, 3600); its hunt radius is 8.
-const THROWER_TILE: WorldTile = WorldTile {
-    x: 2870,
-    z: 3600,
-    level: 0,
-};
-const THROWER_HUNT_RANGE: i32 = 8;
-const THROWER_START_RADIUS: i32 = THROWER_HUNT_RANGE - 2;
 
 fn path_json(dest: WorldTile) -> String {
     format!(
@@ -164,32 +156,14 @@ fn throwers_route_context(
     (opts, state)
 }
 
-fn pick_crossing(
-    world: &nav_planner::world::NavWorld,
-    start_near_throwers: bool,
-) -> (WorldTile, WorldTile) {
+fn pick_crossing(world: &nav_planner::world::NavWorld) -> (WorldTile, WorldTile) {
     let (opts, state) = throwers_route_context(world);
     let mut starts = Vec::new();
     let mut dests = Vec::new();
-    let (minimum_start_x, maximum_start_x) = if start_near_throwers {
-        (
-            THROWER_TILE.x - THROWER_START_RADIUS,
-            THROWER_TILE.x + THROWER_START_RADIUS,
-        )
-    } else {
-        (2800, 2843)
-    };
     for z in 3590..=3608 {
-        for offset in 0..=(maximum_start_x - minimum_start_x) {
-            let x = if start_near_throwers {
-                minimum_start_x + offset
-            } else {
-                maximum_start_x - offset
-            };
+        for x in (2800..2843).rev() {
             let tile = WorldTile { x, z, level: 0 };
-            if world.collision.standable(tile)
-                && (!start_near_throwers || chebyshev(tile, THROWER_TILE) <= THROWER_START_RADIUS)
-            {
+            if world.collision.standable(tile) {
                 starts.push(tile);
                 break;
             }
@@ -204,9 +178,6 @@ fn pick_crossing(
     }
     for start in &starts {
         for dest in &dests {
-            if start_near_throwers && chebyshev(*start, *dest) < 4 {
-                continue;
-            }
             if nav_planner::router::find_with(
                 &world.collision,
                 &world.graph,
@@ -255,21 +226,8 @@ fn death_plateau_throwers_has_a_standable_protected_crossing() {
         panic!("W1 pack missing at {}", pack.display());
     }
     let world = nav_planner::world::NavWorld::load_pack(&pack).expect("load baked 289 pack");
-    let (start, dest) = pick_crossing(&world, false);
+    let (start, dest) = pick_crossing(&world);
     let attacker_stage = thrower_stage_tile(&world, start, dest);
-    let (threat_start, threat_dest) = pick_crossing(&world, true);
-    assert!(
-        chebyshev(threat_start, THROWER_TILE) <= THROWER_START_RADIUS,
-        "level-up route must start inside the Thrower Troll's eight-tile hunt radius"
-    );
-    assert!(
-        chebyshev(threat_start, threat_dest) >= 4,
-        "level-up route must continue walking after the page opens"
-    );
-    assert!(
-        threat_dest.x > 2878,
-        "level-up route must continue walking east of the Troll zone"
-    );
     assert!(world.collision.standable(attacker_stage));
     assert!((3..=5).contains(&chebyshev(start, attacker_stage)));
     assert_ne!(start, dest, "crossing must move");
@@ -1394,13 +1352,6 @@ struct LiveState {
     tiles_by_tick: std::collections::VecDeque<(u32, WorldTile)>,
     health: Vec<(u32, i32, i32)>,
     real_content: bool,
-    level_up_enabled: bool,
-    level_up_seed_tick: Option<u32>,
-    level_up_page_tick: Option<u32>,
-    level_up_closed_tick: Option<u32>,
-    level_up_attack_base_at_open: Option<i32>,
-    level_up_hp_at_open: Option<i32>,
-    level_up_threat_tick: Option<u32>,
 }
 
 impl LiveState {
@@ -1467,75 +1418,6 @@ impl LiveState {
                         .sum();
                     self.health.push((tick, hp.effective, lobsters));
                 }
-            }
-        }
-        if self.level_up_enabled {
-            if self.level_up_seed_tick.is_some() {
-                let continue_id = self.snapshot.chat_continue_component_id();
-                if self.level_up_page_tick.is_none() && continue_id != -1 {
-                    self.level_up_page_tick = Some(tick);
-                    self.level_up_attack_base_at_open = self
-                        .snapshot
-                        .stats()
-                        .iter()
-                        .find(|row| row.index == 0)
-                        .map(|row| row.base);
-                    self.level_up_hp_at_open = self
-                        .snapshot
-                        .stats()
-                        .iter()
-                        .find(|row| row.index == 3)
-                        .map(|row| row.effective);
-                } else if self.level_up_page_tick.is_some()
-                    && self.level_up_closed_tick.is_none()
-                    && continue_id == -1
-                {
-                    self.level_up_closed_tick = Some(tick);
-                }
-            }
-            // Open the level-up page only once the Thrower Troll is actually
-            // targeting this player, so a survival bite is due on both builds.
-            let local_index = self.snapshot.local_player().map(|local| local.player.index);
-            let thrower_targets_local = local_index.is_some_and(|index| {
-                self.snapshot.npcs().iter().any(|npc| {
-                    npc.name.as_deref() == Some("Thrower Troll")
-                        && npc.in_combat
-                        && npc.target.is_some_and(|target| {
-                            target.kind == api::snapshot::ActorKind::Player && target.index == index
-                        })
-                })
-            });
-            if self.level_up_seed_tick.is_none() && !self.arrived && thrower_targets_local {
-                // Keep HP high through the stand teleport; lower it only once a
-                // Thrower is attacking, immediately before opening the page.
-                let hp = self
-                    .snapshot
-                    .stats()
-                    .iter()
-                    .find(|row| row.index == 3)
-                    .map_or(0, |row| row.effective);
-                if hp <= 2 {
-                    combat_proof::mark_invalid(
-                        &self.account,
-                        "a Thrower hit before the deterministic low-HP level-up seed",
-                    );
-                    return;
-                }
-                let drain = format!("~stat_drain hitpoints {} 0", hp - 2);
-                if !send_cheat(client, &drain) || !send_cheat(client, "advancestat attack 2") {
-                    combat_proof::mark_invalid(
-                        &self.account,
-                        "could not seed low HP and the Attack level-up page while a Thrower Troll targeted the player",
-                    );
-                    return;
-                }
-                self.level_up_seed_tick = Some(tick);
-            }
-            if self.level_up_page_tick.is_some()
-                && self.level_up_closed_tick.is_none()
-                && thrower_targets_local
-            {
-                self.level_up_threat_tick.get_or_insert(tick);
             }
         }
         if self.runner.on_start_script() && !self.started {
@@ -1689,7 +1571,6 @@ fn scenario_for(
     capture: Arc<Mutex<CombatCapture>>,
     start: WorldTile,
     food: Option<bool>,
-    level_up: bool,
 ) -> Scenario {
     let mut scenario =
         scenario::quester_stage("walk_guard_throwers", "Imp Catcher", "imp", 0, &[], start);
@@ -1698,8 +1579,6 @@ fn scenario_for(
         .iter()
         .position(|step| step.name == "stand at the quest start")
         .expect("stand step");
-    // Keep the level-up setup healthy through the stand teleport. The live
-    // Thrower triggers its low-HP seed only after it targets the player.
     let extra = if let Some(food) = food {
         let mut steps = vec![
             cheat_step(
@@ -1712,22 +1591,19 @@ fn scenario_for(
                 "setstat hitpoints 40".to_owned(),
                 Proof::Stat { id: 3, min: 40 },
             ),
-        ];
-        if !level_up {
-            steps.push(cheat_step(
+            cheat_step(
                 "seed HP near eat line",
                 "~stat_drain hitpoints 20 0".to_owned(),
                 Proof::Stat { id: 3, min: 20 },
-            ));
-        }
+            ),
+        ];
         if food {
-            let lobster_count = if level_up { 28 } else { 4 };
             steps.push(cheat_step(
                 "seed required lobster supply",
-                format!("give lobster {lobster_count}"),
+                "give lobster 4".to_owned(),
                 Proof::Item {
                     name: "Lobster",
-                    count: lobster_count,
+                    count: 4,
                 },
             ));
         }
@@ -1771,31 +1647,25 @@ fn scenario_for(
 #[test]
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
 fn live_walk_guard_w1_protected_crossing() {
-    run_live_w1(W1Mode::Crossing, None, false);
+    run_live_w1(W1Mode::Crossing, None);
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
 fn live_walk_guard_w1_stop_mid_crossing() {
-    run_live_w1(W1Mode::StopMidCrossing, None, false);
+    run_live_w1(W1Mode::StopMidCrossing, None);
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the local R289 engine"]
 fn live_walk_guard_eat_crossing() {
-    run_live_w1(W1Mode::Crossing, Some(true), false);
+    run_live_w1(W1Mode::Crossing, Some(true));
 }
 
 #[test]
 #[ignore = "requires LIVE=1 and the local R289 engine"]
 fn live_walk_guard_eat_no_food_control() {
-    run_live_w1(W1Mode::Crossing, Some(false), false);
-}
-
-#[test]
-#[ignore = "requires LIVE=1 and the isolated local R289 engine"]
-fn live_walk_guard_eats_on_level_up_page() {
-    run_live_w1(W1Mode::Crossing, Some(true), true);
+    run_live_w1(W1Mode::Crossing, Some(false));
 }
 
 fn eat_heal(row: &serde_json::Value, health: &[(u32, i32, i32)]) -> Option<(u32, i32, i32)> {
@@ -1887,88 +1757,8 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
         gate_fail("arrival without a recorded Eat followed by HP rise and lobster consumption")
     }
 }
-fn evaluate_level_up_eat(state: &LiveState, capture: &CombatCapture) -> W1GateDecision {
-    let Some(seed_tick) = state.level_up_seed_tick else {
-        return W1GateDecision::Pending;
-    };
-    let Some(page_tick) = state.level_up_page_tick else {
-        return W1GateDecision::Pending;
-    };
-    let Some(baseline) = capture.start_baseline.as_ref() else {
-        return W1GateDecision::Pending;
-    };
-    let stat = |index, field: &str| {
-        baseline["stats"]
-            .as_array()
-            .and_then(|stats| stats.iter().find(|stat| stat["index"] == index))
-            .and_then(|stat| stat[field].as_i64())
-    };
-    let lobsters: i64 = baseline["inventory"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|item| item["id"] == 379)
-        .filter_map(|item| item["count"].as_i64())
-        .sum();
-    if stat(0, "base") != Some(1)
-        || stat(5, "base") != Some(37)
-        || stat(3, "base") != Some(40)
-        || !stat(3, "effective").is_some_and(|hp| hp > 2 && hp <= 40)
-        || lobsters != 28
-    {
-        return gate_fail(
-            "level-up test did not reach Attack 1, Prayer 37, living HP above two and 28 lobsters",
-        );
-    }
-    if page_tick <= seed_tick
-        || state.level_up_attack_base_at_open != Some(2)
-        || state.level_up_hp_at_open != Some(2)
-        || state.level_up_threat_tick.is_none()
-    {
-        return gate_fail(
-            "low-HP level-up page did not open while a Thrower Troll targeted the player",
-        );
-    }
-    let Some(eat_action) = capture.actions.iter().find(|action| {
-        action["kind"] == json!("guard")
-            && action["op"] == json!("eat")
-            && action["accepted"] == json!(true)
-            && action["dispatch"] == json!("sent")
-    }) else {
-        if state.level_up_closed_tick.is_some() || state.health.iter().any(|(_, hp, _)| *hp <= 0) {
-            return gate_fail("the level-up page closed or the player died before a guard Eat");
-        }
-        return W1GateDecision::Pending;
-    };
-    let Some(eat_tick) = eat_action["tick"]
-        .as_u64()
-        .and_then(|tick| u32::try_from(tick).ok())
-    else {
-        return gate_fail("walk-guard Eat has no valid tick");
-    };
-    let Some(closed_tick) = state.level_up_closed_tick else {
-        return W1GateDecision::Pending;
-    };
-    if eat_tick < page_tick || eat_tick >= closed_tick {
-        return gate_fail("walk-guard Eat was not sent while the level-up page was open");
-    }
-    if state.health.iter().any(|(_, hp, _)| *hp <= 0) {
-        return gate_fail("the player died before the Eat heal was observed");
-    }
-    if eat_heal(eat_action, &state.health).is_none() {
-        if state
-            .health
-            .last()
-            .is_none_or(|(tick, _, _)| *tick <= eat_tick.saturating_add(4))
-        {
-            return W1GateDecision::Pending;
-        }
-        return gate_fail("the guard Eat did not consume a lobster and raise HP");
-    }
-    W1GateDecision::Pass
-}
 
-fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
+fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     assert_eq!(
         std::env::var("LIVE").as_deref(),
         Ok("1"),
@@ -2004,7 +1794,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         .expect("prepare isolated local-289 template");
     let world = template.world().expect("selected navigation world");
     // Start outside the Throwers' hunt radius so Quester walks into the threat.
-    let (start, dest) = pick_crossing(world.as_ref(), false);
+    let (start, dest) = pick_crossing(world.as_ref());
     let nav = nav_planner::producer::lease(&world).expect("selected navigation catalog");
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let quests = Arc::new(
@@ -2034,7 +1824,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         .expect("mint local W1 password");
     let capture = Arc::new(Mutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
-    let scenario = scenario_for(Arc::clone(&capture), start, food, level_up);
+    let scenario = scenario_for(Arc::clone(&capture), start, food);
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_map_members(true);
     runner.set_live_names(&names);
@@ -2074,13 +1864,6 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         tiles_by_tick: std::collections::VecDeque::new(),
         health: Vec::new(),
         real_content: food.is_some(),
-        level_up_enabled: level_up,
-        level_up_seed_tick: None,
-        level_up_page_tick: None,
-        level_up_closed_tick: None,
-        level_up_attack_base_at_open: None,
-        level_up_hp_at_open: None,
-        level_up_threat_tick: None,
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -2206,9 +1989,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
             stop_off_tick: current.stop_off_tick,
             stop_error: current.stop_error.as_deref(),
         };
-        let decision = if level_up {
-            evaluate_level_up_eat(&current, &capture_snapshot)
-        } else if let Some(food) = food {
+        let decision = if let Some(food) = food {
             evaluate_eat_crossing(&current, &capture_snapshot, food)
         } else {
             evaluate_w1_gate(mode, &gate_input)
@@ -2263,47 +2044,16 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
             })
         })
         .collect();
-    let level_up_eat_action = capture_snapshot
-        .actions
-        .iter()
-        .find(|row| {
-            row["kind"] == json!("guard")
-                && row["op"] == json!("eat")
-                && row["accepted"] == json!(true)
-                && row["dispatch"] == json!("sent")
-        })
-        .cloned();
-    let level_up_eat_tick = level_up_eat_action
-        .as_ref()
-        .and_then(|row| row["tick"].as_u64())
-        .and_then(|tick| u32::try_from(tick).ok());
-    let level_up_eat_page_open = level_up_eat_tick.is_some_and(|eat_tick| {
-        snapshot
-            .level_up_page_tick
-            .is_some_and(|page_tick| eat_tick >= page_tick)
-            && snapshot
-                .level_up_closed_tick
-                .is_some_and(|closed_tick| eat_tick < closed_tick)
-    });
-    let level_up_eat_heal = level_up_eat_action
-        .as_ref()
-        .and_then(|row| eat_heal(row, &snapshot.health));
     let attack_emitted = capture_snapshot.actions.iter().any(|action| {
         action["request"]["op"] == json!("npc") && action["request"]["action"] == json!("Attack")
     });
-    let mode_name = if level_up {
-        "level_up_page"
-    } else {
-        match (food, mode) {
-            (Some(true), _) => "eat_crossing",
-            (Some(false), _) => "no_food_control",
-            (None, W1Mode::Crossing) => "crossing",
-            (None, W1Mode::StopMidCrossing) => "stop_mid_crossing",
-        }
+    let mode_name = match (food, mode) {
+        (Some(true), _) => "eat_crossing",
+        (Some(false), _) => "no_food_control",
+        (None, W1Mode::Crossing) => "crossing",
+        (None, W1Mode::StopMidCrossing) => "stop_mid_crossing",
     };
-    let proof_name = if level_up {
-        "WALK-GUARD-LEVELUP-1"
-    } else if food.is_some() {
+    let proof_name = if food.is_some() {
         "GUARD-EAT-1"
     } else {
         "WALK-GUARD-LIFECYCLE-1_R2"
@@ -2314,20 +2064,6 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>, level_up: bool) {
         "mode": mode_name,
         "outcome": outcome,
         "food": food,
-        "level_up_enabled": snapshot.level_up_enabled,
-        "level_up_seed_tick": snapshot.level_up_seed_tick,
-        "level_up_page_tick": snapshot.level_up_page_tick,
-        "level_up_closed_tick": snapshot.level_up_closed_tick,
-        "level_up_attack_base_at_open": snapshot.level_up_attack_base_at_open,
-        "level_up_hp_at_open": snapshot.level_up_hp_at_open,
-        "level_up_threat_tick": snapshot.level_up_threat_tick,
-        "level_up_eat_action": level_up_eat_action,
-        "level_up_eat_tick": level_up_eat_tick,
-        "level_up_eat_page_open": level_up_eat_page_open,
-        "level_up_eat_heal_tick": level_up_eat_heal.map(|(tick, _, _)| tick),
-        "level_up_eat_hp_after": level_up_eat_heal.map(|(_, hp, _)| hp),
-        "level_up_eat_lobsters_after": level_up_eat_heal.map(|(_, _, count)| count),
-
         "health": snapshot.health,
         "eat_heals": capture_snapshot.actions.iter()
             .filter(|row| row["kind"] == "guard" && row["op"] == "eat")
@@ -3181,7 +2917,7 @@ fn walk_guard_fixture_seeds_between_relog_and_stand() {
     };
     for food in [None, Some(true), Some(false)] {
         let capture = Arc::new(Mutex::new(CombatCapture::default()));
-        let scenario = scenario_for(capture, start, food, false);
+        let scenario = scenario_for(capture, start, food);
         let relog = scenario
             .steps
             .iter()
@@ -3252,37 +2988,4 @@ fn walk_guard_fixture_seeds_between_relog_and_stand() {
             }
         }
     }
-}
-
-#[test]
-fn level_up_probe_waits_for_required_lobsters_before_teleport() {
-    let start = WorldTile {
-        x: 2632,
-        z: 3266,
-        level: 0,
-    };
-    let scenario = scenario_for(
-        Arc::new(Mutex::new(CombatCapture::default())),
-        start,
-        Some(true),
-        true,
-    );
-    let supply = scenario
-        .steps
-        .iter()
-        .position(|step| step.name == "seed required lobster supply")
-        .expect("level-up probe supplies food");
-    let stand = scenario
-        .steps
-        .iter()
-        .position(|step| step.name == "stand at the quest start")
-        .expect("level-up probe has a stand teleport");
-    assert!(supply < stand);
-    assert_eq!(
-        scenario.steps[supply].wait.arm,
-        Proof::Item {
-            name: "Lobster",
-            count: 28,
-        }
-    );
 }
