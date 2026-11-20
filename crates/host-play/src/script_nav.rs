@@ -12241,14 +12241,17 @@ mod route_quest_provider_tests {
             cross: vec![Arc::from("named-cross")],
             ..Default::default()
         };
+        let mut globals = crate::WalkGlobals::default();
+        globals.set_danger_level(crate::DangerLevel::Never);
         let mut bot = NavBot {
+            walk_globals: Some(Arc::new(Mutex::new(globals))),
             quest_context: Some(context(selected, stamp(run(), 100, 100))),
             route_generation: 7,
             walk_request_id: request_id,
             requested_route: Some((target, 3, false, false, true, ZoneExempt::NONE)),
             requested_exclusions: Some(Arc::new(exclusions)),
             admission: Some(Box::new(crate::admission::Admission::manual(
-                crate::WalkGlobals::default().manual_decision(false),
+                globals.manual_decision(false),
                 Default::default(),
                 7,
             ))),

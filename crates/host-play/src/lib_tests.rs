@@ -95,6 +95,27 @@ fn native_requested(
         nav_planner::zones::ZoneExempt::NONE,
     )
 }
+fn native_requested_with_all_zones(
+    to: WorldTile,
+    radius: i32,
+    allow_teleports: bool,
+) -> (
+    WorldTile,
+    i32,
+    bool,
+    bool,
+    bool,
+    nav_planner::zones::ZoneExempt,
+) {
+    (
+        to,
+        radius,
+        allow_teleports,
+        false,
+        false,
+        nav_planner::zones::ZoneExempt::all(),
+    )
+}
 fn test_navs(name: &str) -> Arc<Mutex<HashMap<String, NavBot>>> {
     Arc::new(Mutex::new(HashMap::from([(
         name.to_string(),
@@ -4470,7 +4491,7 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_result() {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
             work_scope: Some(next_test_route_scope()),
-            requested_route: Some(native_requested(nearby, 1, false)),
+            requested_route: Some(native_requested_with_all_zones(nearby, 1, false)),
             ..Default::default()
         }),
     )])));
@@ -4496,7 +4517,10 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_result() {
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("bank").expect("nav bot");
         assert_eq!(bot.route_generation, 2);
-        assert_eq!(bot.requested_route, Some(native_requested(exact, 0, false)));
+        assert_eq!(
+            bot.requested_route,
+            Some(native_requested_with_all_zones(exact, 0, false))
+        );
         assert_eq!(bot.route_destination(), Some(nearby));
         assert!(bot.route_work_pending());
         assert!(bot.pending_route.is_some());
@@ -5421,7 +5445,7 @@ fn same_key_walk_near_refuses_distinct_id_and_keeps_inflight() {
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            requested_route: Some(native_requested(dest, 1, false)),
+            requested_route: Some(native_requested_with_all_zones(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
         }),
@@ -5473,7 +5497,10 @@ fn same_key_walk_near_refuses_distinct_id_and_keeps_inflight() {
     let bot = &navs.lock().unwrap()["coal"];
     assert_eq!(bot.route_generation, 1);
     assert_eq!(bot.walk_request_id, 7);
-    assert_eq!(bot.requested_route, Some(native_requested(dest, 1, false)));
+    assert_eq!(
+        bot.requested_route,
+        Some(native_requested_with_all_zones(dest, 1, false))
+    );
     assert_eq!(bot.route_destination(), Some(dest));
     assert!(bot.route_work_pending());
     assert!(bot.walk_outcome_failed);
@@ -5500,7 +5527,7 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            requested_route: Some(native_requested(dest, 1, false)),
+            requested_route: Some(native_requested_with_all_zones(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
         }),
@@ -5536,7 +5563,7 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
         assert_eq!(bot.route_destination(), Some(dest));
         assert_eq!(bot.walk_request_id, 7);
         assert!(bot.requested_route.is_none());
-        bot.requested_route = Some(native_requested(dest, 1, false));
+        bot.requested_route = Some(native_requested_with_all_zones(dest, 1, false));
     }
     assert!(!arm.queue_route(
         dest.x,
@@ -5557,7 +5584,7 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
         bot.publish_route(1, 7, false, RouteOutcome::NoPath);
         assert_eq!(bot.walk_outcome_request_id, 11);
         bot.mark_walk_outcome_posted(bot.walk_outcome_seq);
-        bot.requested_route = Some(native_requested(dest, 1, false));
+        bot.requested_route = Some(native_requested_with_all_zones(dest, 1, false));
         bot.publish_route(1, 7, false, RouteOutcome::NoPath);
         assert_eq!(
             bot.walk_outcome_request_id, 7,
@@ -5582,7 +5609,7 @@ fn same_key_pending_route_refuses_distinct_id() {
         "pend".to_string(),
         with_pending_route_work(NavBot {
             route_generation: 1,
-            requested_route: Some(native_requested(dest, 1, false)),
+            requested_route: Some(native_requested_with_all_zones(dest, 1, false)),
             walk_request_id: 7,
             ..Default::default()
         }),
@@ -5637,7 +5664,7 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            requested_route: Some(native_requested(dest, 1, false)),
+            requested_route: Some(native_requested_with_all_zones(dest, 1, false)),
             walk_request_id: first_id,
             ..Default::default()
         }),
@@ -5729,7 +5756,7 @@ fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            requested_route: Some(native_requested(dest, 1, false)),
+            requested_route: Some(native_requested_with_all_zones(dest, 1, false)),
             walk_request_id: first_id,
             ..Default::default()
         }),
@@ -5816,7 +5843,7 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
             route_generation: 1,
-            requested_route: Some(native_requested(dest, 1, false)),
+            requested_route: Some(native_requested_with_all_zones(dest, 1, false)),
             walk_request_id: first_id,
             ..Default::default()
         }),
@@ -10619,6 +10646,15 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
     );
     let world = Some(Arc::new(NavWorld::from_parts(collision, graph, Vec::new())));
     let (navs, _) = empty_nav();
+    let mut globals = crate::WalkGlobals::default();
+    globals.set_danger_level(crate::DangerLevel::Never);
+    navs.lock().unwrap().insert(
+        "alice".to_owned(),
+        NavBot {
+            walk_globals: Some(Arc::new(Mutex::new(globals))),
+            ..NavBot::default()
+        },
+    );
     let mut client = bank_client();
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(&client);
@@ -15843,7 +15879,8 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
         11,
     ));
     assert!(wait_settled(|| {
-        navs.lock().unwrap()["flags"].requested_route == Some(native_requested(dest, 1, false))
+        navs.lock().unwrap()["flags"].requested_route
+            == Some(native_requested_with_all_zones(dest, 1, false))
     }));
     assert!(arm.queue_route(
         dest.x,
@@ -15868,7 +15905,7 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
                         false,
                         true,
                         false,
-                        nav_planner::zones::ZoneExempt::NONE,
+                        nav_planner::zones::ZoneExempt::all(),
                     ))
         }),
         "changed wilderness must not reuse the prior permissioned route"
@@ -15897,7 +15934,7 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
                         false,
                         true,
                         true,
-                        nav_planner::zones::ZoneExempt::NONE,
+                        nav_planner::zones::ZoneExempt::all(),
                     ))
         }),
         "changed bank-fetch must not reuse the prior permissioned route"
@@ -15960,7 +15997,10 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
     ));
     let bot = &navs.lock().unwrap()["alice"];
     assert_eq!(bot.walk_request_id, 77);
-    assert_eq!(bot.requested_route, Some(native_requested(dest, 1, false)));
+    assert_eq!(
+        bot.requested_route,
+        Some(native_requested_with_all_zones(dest, 1, false))
+    );
     assert_eq!(
         bot.requested_route
             .map(|(to, radius, ..)| (to.level, radius)),

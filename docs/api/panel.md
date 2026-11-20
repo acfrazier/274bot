@@ -737,7 +737,7 @@ for its defaults, selected-only bank trip and status contract.
 groups): the durable walk permissions — teleports, wilderness
 and bank fetch (all default off), the prerequisite grants **Allow dialogue steps on walks**
 and **Allow starting quests on walks** (both default on), plus **Danger routing**, a full-width drop-down
-(Never, the default, and Always; its tooltip is the shared `danger_routing_tooltip`, and
+(Never, When survivable, and Always; Always is the default; its tooltip is the shared `danger_routing_tooltip`, and
 Always shows the global-override warning under it) — **Pause script on
 manual movement** (default on; manual movement pauses any running rs2b0t
 script, or a built-in script with an active walk or native action), and debug

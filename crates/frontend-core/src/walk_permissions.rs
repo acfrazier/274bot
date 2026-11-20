@@ -23,15 +23,7 @@ pub struct WalkGlobals {
 
 impl Default for WalkGlobals {
     fn default() -> Self {
-        Self {
-            allow_teleports: false,
-            allow_wilderness: false,
-            allow_bank_fetch: false,
-            allow_danger_zones: false,
-            survivable_routing: false,
-            allow_prereq_dialogue: true,
-            allow_quest_start: true,
-        }
+        Self::from_host(HostWalkGlobals::default())
     }
 }
 
@@ -152,7 +144,7 @@ pub const fn danger_routing_tooltip(level: DangerLevel) -> &'static str {
     }
 }
 
-/// The default level's explanation.
+/// Explanation for the Never level.
 pub const NEVER_DANGER_NOTE: &str = "Danger-zone routes are refused unless the walk or its script asks to cross. A script's request is checked against a death-probability bound of 1%.";
 
 /// Explanation for the held middle level.
@@ -370,7 +362,8 @@ mod tests {
         let store = TempStore::new("read");
         let absent = WalkGlobalsView::read(store.prefs());
         assert_eq!(absent, WalkGlobalsView::default());
-        assert_eq!(absent.danger_level(), DangerLevel::Never);
+        assert_eq!(absent.danger_level(), DangerLevel::Always);
+        assert!(absent.globals.allow_danger_zones());
 
         let store = TempStore::with_legacy(
             "read-full",
@@ -411,6 +404,7 @@ mod tests {
         );
         let migrated = WalkGlobalsView::read(store.prefs());
         assert_eq!(migrated.danger_level(), DangerLevel::Never);
+        assert!(!migrated.globals.allow_danger_zones());
         assert!(
             migrated.globals.allow_prereq_dialogue,
             "an old file without the prereq keys keeps dialogue steps on"
@@ -615,7 +609,12 @@ mod tests {
                 DangerLevel::Always
             ]
         );
-        assert_eq!(WalkGlobals::default().danger_level(), DangerLevel::Never);
+        assert_eq!(WalkGlobals::default().danger_level(), DangerLevel::Always);
+        let missing: WalkGlobals = serde_json::from_str("{}").unwrap();
+        assert_eq!(missing.danger_level(), DangerLevel::Always);
+        let saved_never: WalkGlobals =
+            serde_json::from_str(r#"{"allow_danger_zones":false}"#).unwrap();
+        assert_eq!(saved_never.danger_level(), DangerLevel::Never);
         for level in super::DANGER_ROUTING_LEVELS {
             let globals = WalkGlobals::default().with_danger_level(level);
             assert_eq!(globals.danger_level(), level);

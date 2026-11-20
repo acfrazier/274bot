@@ -1837,7 +1837,7 @@ fn panel_driver_selects_when_survivable_from_the_open_dropdown() {
         }
         settled
     });
-    assert_eq!(rig.session().ui.nav.danger_level(), DangerLevel::Never);
+    assert_eq!(rig.session().ui.nav.danger_level(), DangerLevel::Always);
 
     let combo = stable_combo.expect("the real Nav config frame draws the Danger routing combo");
     let center = |bounds: [f32; 4]| [(bounds[0] + bounds[2]) * 0.5, (bounds[1] + bounds[3]) * 0.5];

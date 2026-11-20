@@ -217,6 +217,14 @@ impl Fixture {
     }
 }
 
+fn use_never_danger_for_refusal_test(core: &mut OperatorSession<()>) {
+    // These refusal tests need Never explicitly now the default is Always.
+    core.set_walk_globals(
+        crate::walk_permissions::WalkGlobals::default()
+            .with_danger_level(crate::walk_permissions::DangerLevel::Never),
+    );
+}
+
 fn marks(uids: &[i32]) -> MarkedSelection {
     let mut selection = MarkedSelection::default();
     selection.mark_all(uids.iter().copied().map(ProfileIdentity::uid));
@@ -296,6 +304,7 @@ fn group_walk_report_shows_counts_and_the_first_bot_name() {
         .map(|(i, name)| slot(name, t(1, 1 + i as i32, 0)))
         .collect();
     let mut f = fixture_with_world(&names, &slots, world);
+    use_never_danger_for_refusal_test(&mut f.core);
 
     let base: Vec<usize> = names.iter().map(|name| slot_lines(name).len()).collect();
     let report = f.walk_to(&marks(&[1, 2, 3, 4, 5, 6]), t(10, 10, 0));
@@ -385,6 +394,7 @@ fn a_group_walk_logs_each_bots_detail_once() {
         .map(|(i, name)| slot(name, t(0, 1 + i as i32, 0)))
         .collect();
     let mut f = fixture_with_world(&names, &slots, world);
+    use_never_danger_for_refusal_test(&mut f.core);
     let base: Vec<usize> = names.iter().map(|name| slot_lines(name).len()).collect();
     let report = f.walk_to(&marks(&[1, 2, 3, 4, 5, 6]), t(11, 10, 0));
     assert_eq!(report.failed_count(), 6, "{}", report.summary());
@@ -433,6 +443,27 @@ fn a_group_walk_logs_each_bots_detail_once() {
         "the process ring holds no zone"
     );
     assert!(!report.summary().contains("strip00"));
+}
+
+/// The default Always grant lets a group cross an explicit hazard zone.
+#[test]
+fn a_group_walk_with_default_always_crosses_a_hazard_zone() {
+    let mut world = world(12, &[]);
+    world.graph.zones = Some(barrier_zone_table());
+    let names = ["alice", "bravo"];
+    let slots = [slot("alice", t(1, 1, 0)), slot("bravo", t(1, 8, 0))];
+    let mut f = fixture_with_world(&names, &slots, world);
+    assert_eq!(
+        f.core.play().unwrap().walk_globals().danger_level(),
+        map_host::DangerLevel::Always
+    );
+
+    let destination = t(10, 10, 0);
+    let report = f.walk_to(&marks(&[1, 2]), destination);
+    assert_eq!(report.done_count(), 2, "{}", report.summary());
+    for name in names {
+        assert_eq!(f.queued(name), Some(destination), "{name}");
+    }
 }
 
 /// A whole-command refusal (here a stale confirmation naming 99 zones) logs

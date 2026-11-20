@@ -488,6 +488,8 @@ fn route_through_zones_checkbox_toggles_and_resets_on_each_picker_open() {
     for marked in [false, true] {
         super::note_closed();
         let mut session = Session::new();
+        // The per-WalkTo checkbox is shown only under a saved Never policy.
+        peer_sets_danger_zones(&session.preferences, &session, false);
         session.route_through_zones = true;
         if marked {
             session.open_walkto_for_fleet();
@@ -690,6 +692,7 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
         level: 0,
     };
     let (_profile, mut session) = probability_picker_session(&world, outside);
+    peer_sets_danger_zones(&session.preferences, &session, false);
     let world = session.core.nav_world().expect("the checked fixture world");
     super::note_closed();
     session.walkto_open = true;
@@ -747,6 +750,7 @@ fn probability_admission_checkbox_and_default_escape_use_the_real_picker() {
         level: 0,
     };
     let (_escape_profile, mut escape) = probability_picker_session(&world, inside);
+    peer_sets_danger_zones(&escape.preferences, &escape, false);
     let world = escape.core.nav_world().expect("the checked fixture world");
     super::note_closed();
     escape.walkto_open = true;

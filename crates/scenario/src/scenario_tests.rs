@@ -11176,8 +11176,8 @@ fn nav_shantay_walks_exactly_through_both_henge_branches() {
         s.settings.nav.engine_speed_ms.is_none(),
         "the live Shantay route must keep the 600ms engine speed without ::speed"
     );
-    // The default Danger routing admits the desert route only above the
-    // Ugthanki combat cap (84): the account's own melee stats are seeded
+    // The scenario's Never routing overlay admits the desert route only
+    // above the Ugthanki combat cap (84): the account's own melee stats are seeded
     // to 99 before the tail.
     assert!(matches!(
         s.steps[4].wait.arm,

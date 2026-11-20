@@ -1578,10 +1578,7 @@ mod tests {
         assert!(nav.allow_wilderness());
         assert!(nav.allow_bank_fetch());
         assert!(!nav.allow_danger_zones());
-        assert_eq!(
-            nav.danger_level(),
-            frontend_core::DangerLevel::WhenSurvivable
-        );
+        assert_eq!(nav.danger_level(), frontend_core::DangerLevel::Never);
         assert!(
             !nav.allow_prereq_dialogue(),
             "the dialogue row toggles the default-on grant off"
@@ -1634,11 +1631,11 @@ mod tests {
         let settings = SettingsDraft::default();
         let mut nav = WalkGlobals::default();
         let mut bake = MapBakeChoice::Ask;
-        assert_eq!(nav.danger_level(), DangerLevel::Never, "the default level");
+        assert_eq!(nav.danger_level(), DangerLevel::Always, "the default level");
         for expected in [
+            DangerLevel::Never,
             DangerLevel::WhenSurvivable,
             DangerLevel::Always,
-            DangerLevel::Never,
         ] {
             let mut state = SettingsState {
                 open: true,

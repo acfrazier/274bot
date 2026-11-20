@@ -154,13 +154,12 @@ pub(crate) fn route_inspect_brimhaven_v2_scenario() -> Scenario {
         },
     };
     let mut steps = script_live_seed_steps();
-    // The default Danger routing refuses the Karamja leg for a level-3
-    // account: Jungle spiders (L44), Snakes and Poison Scorpions hunt
+    // This scenario's Never routing overlay refuses the Karamja leg for a
+    // level-3 account: Jungle spiders (L44), Snakes and Poison Scorpions hunt
     // (`check_nottoostrong=outside_wilderness`) players up to twice their
-    // level. v2 walk and inspect ops follow that global setting. Seed the
-    // account's own melee stats to 99 (combat 113, above the spiders' 88)
-    // so the route the card inspects is the one the product admits by
-    // default, then drain the level-up dialogs.
+    // level. v2 walk and inspect ops follow this overlay. Seed the account's
+    // own melee stats to 99 (combat 113, above the spiders' 88) so the route
+    // the card inspects is safe under Never, then drain the level-up dialogs.
     steps.push(Step {
         name: "set melee stats to 99 before Start so the Karamja hunters ignore the account",
         kind: StepKind::Perform {

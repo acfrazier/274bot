@@ -1851,11 +1851,11 @@ grant allows the step, and only a per-request Forbid narrows it.
 
 The panel Nav config and TUI settings share these global permissions in
 the saved preferences. Teleports and wilderness apply to manual and Rust-native
-walks. Danger routing has three levels: **Never** (the default), **When
-survivable**, and **Always** (the global override). The middle level stores
+walks. Danger routing has three levels: **Never**, **When survivable**, and
+**Always** (the default global override). The middle level stores
 `allow_danger_zones=false` and `survivable_routing=true`. Reading a saved
-middle pair keeps it selected and does not rewrite the saved value. **Always** wins
-if both danger bits are true.
+middle pair keeps it selected and does not rewrite the saved value. **Always**
+wins if both danger bits are true.
 
 With `host_play::NET_AVAILABLE` false, **When survivable** behaves exactly
 like **Never** for every script, walk and crossing combination. It uses the
@@ -1882,10 +1882,11 @@ danger controls and inherited script rows (re-checked at most once a second),
 and manual admission reads it again; until the database is open, and while it
 is refused, every grant is closed. A first start imports the whole
 `panel-ui.json` once (members this build does not know, a `schema_version`
-among them, are kept) and keeps it as `panel-ui.json.migrated`. An absent
-file defaults to **Never**. If an older file lacks `survivable_routing`, that
-bit defaults to false; `allow_danger_zones` still selects **Never** or
-**Always**. A file that is not a JSON object is kept as
+file defaults to **Always**. Stored danger settings remain unchanged. A saved
+`allow_danger_zones=false` remains **Never** unless
+`survivable_routing=true` selects **When survivable**. If an older file lacks
+`survivable_routing`, that bit defaults to false; `allow_danger_zones` still
+selects **Never** or **Always**. A file that is not a JSON object is kept as
 `panel-ui.json.corrupt-<time>` and defaults start, with a warning and an
 audit line. A file that is too large, holds a duplicate field, holds a member
 that cannot be a preference row (a name with a `.`, outside `[A-Za-z0-9_-]` or

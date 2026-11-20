@@ -1,7 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 use std::io;
 
-use host_play::local_state::Update;
+use host_play::{local_state::Update, DangerLevel};
 
 use crate::prefs::{PreferenceError, PreferencePatch, UiPreferences};
 
@@ -29,14 +29,17 @@ pub enum NavPreference {
 }
 
 impl NavPreference {
-    const fn key_and_default(self) -> (&'static str, bool) {
+    fn key_and_default(self) -> (&'static str, bool) {
         match self {
             Self::ShowSpecialAreas => ("show_special_areas", false),
             Self::PauseScriptOnManualWalkAbort => ("pause_script_on_manual_walk_abort", true),
             Self::AllowTeleports => ("allow_teleports", false),
             Self::AllowWilderness => ("allow_wilderness", false),
             Self::AllowBankFetch => ("allow_bank_fetch", false),
-            Self::AllowDangerZones => ("allow_danger_zones", false),
+            Self::AllowDangerZones => (
+                "allow_danger_zones",
+                DangerLevel::default() == DangerLevel::Always,
+            ),
             Self::AllowPrereqDialogue => ("allow_prereq_dialogue", true),
             Self::AllowQuestStart => ("allow_quest_start", true),
             Self::ScriptScopeNoticeAck => ("script_scope_notice_ack", false),
@@ -182,7 +185,6 @@ mod tests {
             NavPreference::AllowTeleports,
             NavPreference::AllowWilderness,
             NavPreference::AllowBankFetch,
-            NavPreference::AllowDangerZones,
             NavPreference::ScriptScopeNoticeAck,
         ] {
             assert!(
@@ -191,6 +193,13 @@ mod tests {
             );
             settled_for_test(write_nav_preference(&prefs, preference, true)).unwrap();
         }
+        assert!(nav_preference(&prefs, NavPreference::AllowDangerZones).unwrap());
+        settled_for_test(write_nav_preference(
+            &prefs,
+            NavPreference::AllowDangerZones,
+            true,
+        ))
+        .unwrap();
 
         settled_for_test(write_nav_preference(
             &prefs,
@@ -235,11 +244,11 @@ mod tests {
             NavPreference::AllowTeleports,
             NavPreference::AllowWilderness,
             NavPreference::AllowBankFetch,
-            NavPreference::AllowDangerZones,
             NavPreference::ScriptScopeNoticeAck,
         ] {
             assert!(!nav_preference(&missing, preference).unwrap());
         }
+        assert!(nav_preference(&missing, NavPreference::AllowDangerZones).unwrap());
         assert!(!nav_preference(&missing, NavPreference::ShowSpecialAreas).unwrap());
 
         std::fs::remove_dir_all(dir).unwrap();

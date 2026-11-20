@@ -4594,6 +4594,8 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     assert_eq!(app.on_key(enter), AppAction::None);
     app.settings_state.row = 8;
     assert_eq!(app.on_key(enter), AppAction::None);
+    // Always is the default; pass through Never to reach WhenSurvivable.
+    assert_eq!(app.on_key(enter), AppAction::None);
     app.settings_state.row = 9;
     assert_eq!(app.on_key(enter), AppAction::None);
     app.settings_state.row = 10;
