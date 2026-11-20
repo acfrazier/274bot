@@ -82,6 +82,14 @@ const CROSSING_BITE_WINDOW: u32 = 3;
 /// stat and inventory are seen one tick later. The cell keeps its documented
 /// four-tick window (docs/dev/harness.md).
 const EAT_HEAL_WINDOW: u32 = 4;
+/// The cell tests the crossing Eat, not provisioning. The Quester's
+/// stage-survival provisioner sizes `imp:0` food at the 28-slot maximum
+/// (quester/survival.rs:450-469; status `provision_need 28` in
+/// EAT-CROSSING-1120 map pass 3). With fewer lobsters held and the bank
+/// unread it scans the bank before the walk (provision.rs:971-1010,1097-1117;
+/// acquire/plan.rs:198-207), which happened in 1 of 10 runs with 4 lobsters.
+/// Holding 28 makes the held count meet that target, so no trip can start.
+const CROSSING_LOBSTERS: i32 = 28;
 
 fn in_throwers_zone(tile: WorldTile) -> bool {
     tile.level == 0
@@ -1753,10 +1761,10 @@ fn scenario_for(
         if food {
             steps.push(cheat_step(
                 "seed required lobster supply",
-                "give lobster 4".to_owned(),
+                format!("give lobster {CROSSING_LOBSTERS}"),
                 Proof::Item {
                     name: "Lobster",
-                    count: 4,
+                    count: CROSSING_LOBSTERS,
                 },
             ));
         }
@@ -1875,10 +1883,11 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
             .filter(|item| item["id"] == 379)
             .filter_map(|item| item["count"].as_i64())
             .sum();
+        let expected_lobsters = if food { CROSSING_LOBSTERS } else { 0 };
         if stat(5, "base") != Some(37)
             || stat(3, "base") != Some(40)
             || stat(3, "effective") != Some(20)
-            || lobsters != if food { 4 } else { 0 }
+            || lobsters != i64::from(expected_lobsters)
         {
             return gate_fail(
                 "GUARD-EAT-1 seed differs from Prayer37, HP20/40 and requested lobsters",
