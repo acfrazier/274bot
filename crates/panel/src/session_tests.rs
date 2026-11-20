@@ -11759,9 +11759,8 @@ fn settings_feedback_a_save_of_unknown_outcome_shows_as_unknown_not_as_not_saved
     );
 }
 
-/// A typed Quest Paths folder survives any number of refresh frames, whether
-/// or not another process saved in between, and a held operational choice
-/// keeps showing the operator's choice across them.
+/// A typed Quest Paths folder survives refresh frames with a pending capture
+/// save. It also survives adoption of the folder saved by a peer during the hold.
 #[test]
 fn settings_feedback_a_typed_pending_draft_survives_refresh_frames_and_a_second_process_version() {
     use frontend_core::command::DrawSwitch;
@@ -11774,18 +11773,32 @@ fn settings_feedback_a_typed_pending_draft_survives_refresh_frames_and_a_second_
     s.quester_paths_folder_dirty = true;
     let disk = PanelDisk::install(&s);
     s.set_capture(!capture);
-    for frame in 0..5 {
-        crate::test_support::set_patiently(&peer, "peer_marker", serde_json::json!(frame));
-        // A frame's re-read; it may find the held writer busy.
-        let _ = s.preferences.reload();
+    let peer_folder = "peer-saved-source";
+    set_patiently(
+        &peer,
+        "quester_paths",
+        serde_json::json!({ "folder": peer_folder }),
+    );
+    for _ in 0..5 {
+        // Frames poll the cache. A blocking reload would wait for the same
+        // writer that the test is holding.
         s.pump_status();
         s.poll_panel_preferences();
+        assert!(s.preferences_pending());
+        assert_eq!(s.draw.capture(), capture);
         assert_eq!(s.quester_paths_folder_edit, "typed-but-not-committed");
         assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), !capture);
     }
     disk.failing.store(false, Ordering::SeqCst);
     drop(disk.release());
+    s.preferences.reload().unwrap();
     settle_panel_writes(&mut s);
+    assert_eq!(
+        s.quester_paths.settings().folder(),
+        std::path::Path::new(peer_folder),
+        "the panel applied the peer's saved folder"
+    );
+    assert!(s.quester_paths_folder_dirty);
     assert_eq!(s.draw_shown(DrawSwitch::CaptureInput), !capture);
     assert_eq!(s.quester_paths_folder_edit, "typed-but-not-committed");
 }
