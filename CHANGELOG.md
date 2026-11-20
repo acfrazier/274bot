@@ -176,6 +176,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The TUI keeps every Quester start-zone row reachable with PageUp and
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
 - Fixed unbounded memory growth when a CPU-rendered panel is minimized or occluded.
+- On Wayland, the panel uses Mailbox when supported so a hidden or locked
+  surface does not stall the event loop while waiting for a FIFO image.
 
 ### Preferences and saved state
 
