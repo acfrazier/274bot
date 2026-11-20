@@ -29,6 +29,113 @@ const PRAYER_STABLE_TICKS: u32 = 3;
 const STOP_OFF_BUDGET_TICKS: u32 = 4;
 const ZONE: &str = "death-plateau-throwers";
 
+// GUARD-EAT-1 crossing seed. Engine and content references are the Engine-A
+// 289 sources (engine 574f10f, content a608090). No NPC attacks the account in
+// the real-content cell, so the fixture makes the emergency bite due on the
+// crossing itself instead of waiting for a Thrower Troll.
+/// The `death-plateau-throwers` zone rectangle (nav-bake zones.rs:37-48). The
+/// seed starts only once the network tile is inside it, so the bite is due on
+/// the crossing, not at the start tile.
+const ZONE_MIN_X: i32 = 2843;
+const ZONE_MAX_X: i32 = 2878;
+const ZONE_MIN_Z: i32 = 3590;
+const ZONE_MAX_Z: i32 = 3608;
+/// `~stat_drain hitpoints 12 0` runs `stat_drain` (debug_stat.rs2:1-3), which
+/// subtracts the constant from the current level with no hitmark and no
+/// `if_close` (PlayerOps.ts:574-587). The verified HP 20/40 becomes 8/40. At a
+/// known zero danger and with no poison the guard does not bite
+/// (policy.rs:550-563); the poison below makes the bite due.
+const CROSSING_DRAIN: &str = "~stat_drain hitpoints 12 0";
+const CROSSING_HP: i32 = 8;
+/// `~poison 27` queues `poison_player` (cheat_other.rs2:1-3), which prints
+/// "You have been poisoned!" and sets `%poison` (poison.rs2:6-16). The slot
+/// reads that line as poison onset (slot_condition.rs:24,540;
+/// condition.rs:364-371). At onset the guard's next-fire damage is the
+/// unknown-source pulse (condition.rs:558-575): the largest R289
+/// `poison_severity` is 55, so the pulse is `(55 + 4) / 5 = 11`
+/// (risk/facts.rs:334-340,492-508). The emergency line at zero danger is then
+/// `1 + 11 = 12` (guard.rs:690-701, select.rs:227-236, policy.rs:465-477), so
+/// HP 8 is due a bite. The poison is sent only after HP 8 is observed, so the
+/// bite's HP-rise check starts from the drained HP.
+///
+/// Login also starts the 30-tick poison timer (login.rs2:63, poison.rs2:72-75),
+/// and `set_poison_timer` does not restart a running timer, so the first fire
+/// can land at any tick up to 30 after onset (measured: onset tick 26, fire
+/// tick 33 in EAT-CROSSING-1120 try-1). One fire is `(27 + 4) / 5 = 6` damage
+/// (poison.rs2:20-29) and the next is 30 ticks later
+/// (Player.ts:945-958). HP 8 survives one fire before the bite, and the
+/// remaining HP 2 is still at the post-mark line `1 + 6 = 7`
+/// (condition.rs:313-334,524-555), so the fire's timing cannot change the
+/// outcome.
+const CROSSING_POISON: &str = "~poison 27";
+/// A cheat is read in the next server tick's client input (World.ts:356,379)
+/// and its stat change is seen one tick later. The drained HP must show within
+/// this many observed ticks of the drain send.
+const CROSSING_SEED_WINDOW: u32 = 3;
+/// The poison cheat is read in the next server tick and `poison_player` runs in
+/// that tick's queue pass (World.ts:356,379), so the poison line is seen one
+/// tick later; the guard decides in that frame. One more tick of slack.
+const CROSSING_BITE_WINDOW: u32 = 3;
+/// The Eat click runs the lobster's consume script in the next server tick
+/// (OpHeldHandler.ts:54-68; consume.rs2:4,115-134), which heals 12 and removes
+/// the item (consume_normal.dbrow:172-179, consume_effects.rs2:2-11,69-74); the
+/// stat and inventory are seen one tick later. The cell keeps its documented
+/// four-tick window (docs/dev/harness.md).
+const EAT_HEAL_WINDOW: u32 = 4;
+/// The cell tests the crossing Eat, not provisioning. The Quester's
+/// stage-survival provisioner sizes `imp:0` food at the 28-slot maximum
+/// (quester/survival.rs:450-469; status `provision_need 28` in
+/// EAT-CROSSING-1120 map pass 3). With fewer lobsters held and the bank
+/// unread it scans the bank before the walk (provision.rs:971-1010,1097-1117;
+/// acquire/plan.rs:198-207), which happened in 1 of 10 runs with 4 lobsters.
+/// Holding 28 makes the held count meet that target, so no trip can start.
+const CROSSING_LOBSTERS: i32 = 28;
+
+fn in_throwers_zone(tile: WorldTile) -> bool {
+    tile.level == 0
+        && (ZONE_MIN_X..=ZONE_MAX_X).contains(&tile.x)
+        && (ZONE_MIN_Z..=ZONE_MAX_Z).contains(&tile.z)
+}
+
+/// HP after the drain. `health_regen` heals one point every 100 ticks
+/// (stat.rs2:59-60, login.rs2:38), so at most one point can land between the
+/// verified start baseline and the drain a few ticks later: HP 8 or 9. Both
+/// are at the emergency line once poison onset is read.
+fn crossing_drained(hp: i32) -> bool {
+    (1..=CROSSING_HP + 1).contains(&hp)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SentCheat {
+    tick: u32,
+    accepted: bool,
+}
+
+impl SentCheat {
+    fn json(self) -> serde_json::Value {
+        json!({ "tick": self.tick, "accepted": self.accepted })
+    }
+}
+
+/// The eat-crossing cell's two-step seed, driven from the frame hook.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CrossingSeed {
+    drain: Option<SentCheat>,
+    /// The first observed tick with HP [`CROSSING_HP`] after the drain.
+    drained_tick: Option<u32>,
+    poison: Option<SentCheat>,
+}
+
+impl CrossingSeed {
+    fn json(self) -> serde_json::Value {
+        json!({
+            "drain": self.drain.map(SentCheat::json),
+            "drained_tick": self.drained_tick,
+            "poison": self.poison.map(SentCheat::json),
+        })
+    }
+}
+
 fn path_json(dest: WorldTile) -> String {
     format!(
         r#"{{
@@ -1352,6 +1459,12 @@ struct LiveState {
     tiles_by_tick: std::collections::VecDeque<(u32, WorldTile)>,
     health: Vec<(u32, i32, i32)>,
     real_content: bool,
+    /// The eat-crossing cell seeds HP and poison on the crossing.
+    seed_crossing: bool,
+    crossing_seed: CrossingSeed,
+    /// First observed tick whose Quester status is the `no step for stage`
+    /// block (quester/runner.rs:3651-3691).
+    park_tick: Option<u32>,
 }
 
 impl LiveState {
@@ -1393,6 +1506,39 @@ impl LiveState {
             .rev()
             .find(|(at, _)| *at <= tick)
             .map(|(_, tile)| *tile)
+    }
+
+    /// Advance the eat-crossing seed by at most one cheat for this frame.
+    fn step_crossing_seed(&mut self, client: &mut client::client::Client, tick: u32) {
+        if !self.started || self.arrived {
+            return;
+        }
+        let hp = self
+            .snapshot
+            .stats()
+            .iter()
+            .find(|row| row.index == 3)
+            .map(|row| row.effective);
+        let inside = self
+            .last_tile
+            .is_some_and(|(x, z, level)| in_throwers_zone(WorldTile { x, z, level }));
+        let seed = &mut self.crossing_seed;
+        match (seed.drain, seed.drained_tick) {
+            (None, _) if inside => {
+                seed.drain = Some(SentCheat {
+                    tick,
+                    accepted: send_cheat(client, CROSSING_DRAIN),
+                });
+            }
+            (Some(drain), None) if drain.accepted && hp.is_some_and(crossing_drained) => {
+                seed.drained_tick = Some(tick);
+                seed.poison = Some(SentCheat {
+                    tick,
+                    accepted: send_cheat(client, CROSSING_POISON),
+                });
+            }
+            _ => {}
+        }
     }
 
     fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
@@ -1498,6 +1644,21 @@ impl LiveState {
             self.arrival_tick.get_or_insert(tick);
             self.arrived = true;
         }
+        if self.seed_crossing {
+            self.step_crossing_seed(client, tick);
+        }
+        if self.real_content && self.started && self.park_tick.is_none() {
+            let parked = self
+                .capture
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .statuses
+                .last()
+                .is_some_and(|status| status["fields"]["block_reason"] == "no step for stage");
+            if parked {
+                self.park_tick = Some(tick);
+            }
+        }
         if self.arrived && !prayers_active(&self.snapshot) {
             self.off_tick.get_or_insert(tick);
             self.prayers_off_after_arrival = true;
@@ -1600,10 +1761,10 @@ fn scenario_for(
         if food {
             steps.push(cheat_step(
                 "seed required lobster supply",
-                "give lobster 4".to_owned(),
+                format!("give lobster {CROSSING_LOBSTERS}"),
                 Proof::Item {
                     name: "Lobster",
-                    count: 4,
+                    count: CROSSING_LOBSTERS,
                 },
             ));
         }
@@ -1683,7 +1844,7 @@ fn eat_heal(row: &serde_json::Value, health: &[(u32, i32, i32)]) -> Option<(u32,
         .sum();
     health.iter().copied().find(|(at, after_hp, after_count)| {
         u64::from(*at) > tick
-            && u64::from(*at) <= tick + 4
+            && u64::from(*at) <= tick + u64::from(EAT_HEAL_WINDOW)
             && i64::from(*after_hp) > hp
             && i64::from(*after_count) < count
     })
@@ -1722,10 +1883,11 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
             .filter(|item| item["id"] == 379)
             .filter_map(|item| item["count"].as_i64())
             .sum();
+        let expected_lobsters = if food { CROSSING_LOBSTERS } else { 0 };
         if stat(5, "base") != Some(37)
             || stat(3, "base") != Some(40)
             || stat(3, "effective") != Some(20)
-            || lobsters != if food { 4 } else { 0 }
+            || lobsters != i64::from(expected_lobsters)
         {
             return gate_fail(
                 "GUARD-EAT-1 seed differs from Prayer37, HP20/40 and requested lobsters",
@@ -1737,25 +1899,289 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
     if state.health.iter().any(|(_, hp, _)| *hp <= 0) {
         return gate_fail("death during throwers crossing");
     }
-    if !state.arrived {
-        return W1GateDecision::Pending;
-    }
-    if !state.snapshot.ingame() || state.snapshot.scene_state() != 2 {
-        return gate_fail("arrival lacks a ready in-game scene");
-    }
     if !food {
+        if !state.arrived {
+            return W1GateDecision::Pending;
+        }
+        if !state.snapshot.ingame() || state.snapshot.scene_state() != 2 {
+            return gate_fail("arrival lacks a ready in-game scene");
+        }
         return W1GateDecision::Pass;
     }
-    let healed = capture
+    let eats: Vec<EatClick> = capture
         .actions
         .iter()
         .filter(|row| row["kind"] == "guard" && row["op"] == "eat")
-        .any(|row| eat_heal(row, &state.health).is_some());
-    if healed {
-        W1GateDecision::Pass
-    } else {
-        gate_fail("arrival without a recorded Eat followed by HP rise and lobster consumption")
+        .filter_map(|row| {
+            let tick = u32::try_from(row["tick"].as_u64()?).ok()?;
+            Some((tick, eat_heal(row, &state.health)))
+        })
+        .collect();
+    let decision = crossing_eat_decision(&CrossingEatInput {
+        seed: state.crossing_seed,
+        arrival_tick: state.arrival_tick,
+        park_tick: state.park_tick,
+        current_tick: state.snapshot.tick(),
+        eats: &eats,
+    });
+    if decision == W1GateDecision::Pass
+        && (!state.snapshot.ingame() || state.snapshot.scene_state() != 2)
+    {
+        return gate_fail("arrival lacks a ready in-game scene");
     }
+    decision
+}
+
+/// A guard Eat click tick, with its `eat_heal` result (heal tick, HP, lobsters).
+type EatClick = (u32, Option<(u32, i32, i32)>);
+
+struct CrossingEatInput<'a> {
+    seed: CrossingSeed,
+    arrival_tick: Option<u32>,
+    park_tick: Option<u32>,
+    current_tick: u32,
+    /// Every guard Eat click, in capture order.
+    eats: &'a [EatClick],
+}
+
+/// GUARD-EAT-1 oracle for the seeded crossing. Pass needs: the drain seen as
+/// HP 8 inside the zone, the poison sent, no guard Eat before that HP, the
+/// first guard Eat within [`CROSSING_BITE_WINDOW`] observed ticks of the poison
+/// send and at or before arrival, and the heal and one lobster consumed within
+/// [`EAT_HEAL_WINDOW`] ticks of that Eat. Refused or unseen seeds are fixture
+/// failures. An Eat before the seeded HP drop is interference (only outside
+/// damage could cause it). A `no step for stage` park before arrival is a
+/// product failure: the path's only step is skipped only near the destination
+/// (`path_json`), so that park is due only after arrival.
+fn crossing_eat_decision(input: &CrossingEatInput<'_>) -> W1GateDecision {
+    let seed = input.seed;
+    for (name, sent) in [("drain", seed.drain), ("poison", seed.poison)] {
+        if let Some(sent) = sent.filter(|sent| !sent.accepted) {
+            return gate_fail(format!(
+                "fixture: the {name} cheat was refused at tick {}",
+                sent.tick
+            ));
+        }
+    }
+    if let (Some(drain), None) = (seed.drain, seed.drained_tick) {
+        if input.current_tick > drain.tick.saturating_add(CROSSING_SEED_WINDOW) {
+            return gate_fail(format!(
+                "fixture: HP {CROSSING_HP} was not observed within {CROSSING_SEED_WINDOW} ticks of the drain at tick {}",
+                drain.tick
+            ));
+        }
+    }
+    if let Some(&(tick, _)) = input
+        .eats
+        .iter()
+        .find(|(tick, _)| seed.drained_tick.is_none_or(|drained| *tick < drained))
+    {
+        return gate_fail(format!(
+            "interference: guard Eat at tick {tick} before the seeded HP drop"
+        ));
+    }
+    if let Some(park) = input.park_tick {
+        if input.arrival_tick.is_none_or(|arrival| park < arrival) {
+            return gate_fail(format!(
+                "product: Quester parked `no step for stage` at tick {park} before arrival"
+            ));
+        }
+    }
+    let poison = seed.poison.map(|sent| sent.tick);
+    match (input.eats.first(), poison) {
+        (Some(&(click, heal)), Some(poison)) => {
+            if click > poison.saturating_add(CROSSING_BITE_WINDOW) {
+                return gate_fail(format!(
+                    "product: the first guard Eat at tick {click} is more than {CROSSING_BITE_WINDOW} ticks after the poison at tick {poison}"
+                ));
+            }
+            if input.arrival_tick.is_some_and(|arrival| click > arrival) {
+                return gate_fail(format!(
+                    "product: the guard Eat at tick {click} came after arrival"
+                ));
+            }
+            match heal {
+                Some(_) if input.arrival_tick.is_some() => W1GateDecision::Pass,
+                Some(_) => W1GateDecision::Pending,
+                None if input.current_tick <= click.saturating_add(EAT_HEAL_WINDOW) => {
+                    W1GateDecision::Pending
+                }
+                None => gate_fail(format!(
+                    "product: the guard Eat at tick {click} was not followed within {EAT_HEAL_WINDOW} ticks by an HP rise and one lobster consumed"
+                )),
+            }
+        }
+        (None, Some(poison)) if input.current_tick > poison.saturating_add(CROSSING_BITE_WINDOW) => {
+            gate_fail(format!(
+                "product: no guard Eat within {CROSSING_BITE_WINDOW} ticks of HP {CROSSING_HP} and the poison at tick {poison}"
+            ))
+        }
+        (None, Some(_)) => W1GateDecision::Pending,
+        (_, None) => match input.arrival_tick {
+            Some(arrival) => gate_fail(format!(
+                "fixture: arrival at tick {arrival} before the crossing seed completed"
+            )),
+            None => W1GateDecision::Pending,
+        },
+    }
+}
+
+fn seeded_crossing() -> CrossingSeed {
+    CrossingSeed {
+        drain: Some(SentCheat {
+            tick: 30,
+            accepted: true,
+        }),
+        drained_tick: Some(32),
+        poison: Some(SentCheat {
+            tick: 32,
+            accepted: true,
+        }),
+    }
+}
+
+fn crossing_input(
+    seed: CrossingSeed,
+    arrival_tick: Option<u32>,
+    park_tick: Option<u32>,
+    current_tick: u32,
+    eats: &[EatClick],
+) -> W1GateDecision {
+    crossing_eat_decision(&CrossingEatInput {
+        seed,
+        arrival_tick,
+        park_tick,
+        current_tick,
+        eats,
+    })
+}
+
+fn fails_with(decision: W1GateDecision, prefix: &str) -> bool {
+    matches!(decision, W1GateDecision::Fail(reason) if reason.starts_with(prefix))
+}
+
+#[test]
+fn crossing_eat_passes_only_a_seeded_prompt_healed_eat_before_arrival() {
+    let healed = [(34, Some((36, 14, 3)))];
+    assert_eq!(
+        crossing_input(seeded_crossing(), Some(45), Some(47), 47, &healed),
+        W1GateDecision::Pass
+    );
+    assert_eq!(
+        crossing_input(seeded_crossing(), None, None, 36, &healed),
+        W1GateDecision::Pending
+    );
+    // The heal window is still open.
+    assert_eq!(
+        crossing_input(seeded_crossing(), Some(36), None, 37, &[(35, None)]),
+        W1GateDecision::Pending
+    );
+    assert!(fails_with(
+        crossing_input(seeded_crossing(), Some(45), None, 45, &[(35, None)]),
+        "product: the guard Eat at tick 35 was not followed"
+    ));
+    assert!(fails_with(
+        crossing_input(seeded_crossing(), None, None, 36, &[]),
+        "product: no guard Eat within"
+    ));
+    assert_eq!(
+        crossing_input(seeded_crossing(), None, None, 35, &[]),
+        W1GateDecision::Pending
+    );
+    assert!(fails_with(
+        crossing_input(
+            seeded_crossing(),
+            Some(45),
+            None,
+            45,
+            &[(36, Some((38, 14, 3)))]
+        ),
+        "product: the first guard Eat at tick 36"
+    ));
+    assert!(fails_with(
+        crossing_input(
+            seeded_crossing(),
+            Some(33),
+            None,
+            40,
+            &[(34, Some((36, 14, 3)))]
+        ),
+        "product: the guard Eat at tick 34 came after arrival"
+    ));
+}
+
+#[test]
+fn crossing_eat_classifies_interference_park_and_fixture_failures() {
+    // An Eat before the drained HP is visible had no seeded cause.
+    assert!(fails_with(
+        crossing_input(seeded_crossing(), None, None, 31, &[(31, None)]),
+        "interference: guard Eat at tick 31"
+    ));
+    assert!(fails_with(
+        crossing_input(CrossingSeed::default(), None, None, 20, &[(20, None)]),
+        "interference:"
+    ));
+    // The only step is skipped only at the destination.
+    assert!(fails_with(
+        crossing_input(seeded_crossing(), None, Some(33), 33, &[]),
+        "product: Quester parked `no step for stage` at tick 33"
+    ));
+    assert!(fails_with(
+        crossing_input(
+            seeded_crossing(),
+            Some(45),
+            Some(44),
+            45,
+            &[(34, Some((36, 14, 3)))]
+        ),
+        "product: Quester parked"
+    ));
+    let refused = CrossingSeed {
+        drain: Some(SentCheat {
+            tick: 30,
+            accepted: false,
+        }),
+        ..CrossingSeed::default()
+    };
+    assert!(fails_with(
+        crossing_input(refused, None, None, 30, &[]),
+        "fixture: the drain cheat was refused"
+    ));
+    let unseen = CrossingSeed {
+        drained_tick: None,
+        poison: None,
+        ..seeded_crossing()
+    };
+    assert_eq!(
+        crossing_input(unseen, None, None, 33, &[]),
+        W1GateDecision::Pending
+    );
+    assert!(fails_with(
+        crossing_input(unseen, None, None, 34, &[]),
+        "fixture: HP 8 was not observed"
+    ));
+    assert!(fails_with(
+        crossing_input(CrossingSeed::default(), Some(40), None, 40, &[]),
+        "fixture: arrival at tick 40 before the crossing seed"
+    ));
+}
+
+#[test]
+fn crossing_drain_accepts_one_regeneration_point() {
+    assert!(!crossing_drained(0));
+    assert!(crossing_drained(CROSSING_HP));
+    assert!(crossing_drained(CROSSING_HP + 1));
+    assert!(!crossing_drained(CROSSING_HP + 2));
+    assert!(in_throwers_zone(WorldTile {
+        x: ZONE_MIN_X,
+        z: ZONE_MAX_Z,
+        level: 0
+    }));
+    assert!(!in_throwers_zone(WorldTile {
+        x: ZONE_MIN_X - 1,
+        z: 3600,
+        level: 0
+    }));
 }
 
 fn run_live_w1(mode: W1Mode, food: Option<bool>) {
@@ -1864,6 +2290,9 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         tiles_by_tick: std::collections::VecDeque::new(),
         health: Vec::new(),
         real_content: food.is_some(),
+        seed_crossing: food == Some(true),
+        crossing_seed: CrossingSeed::default(),
+        park_tick: None,
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -2081,6 +2510,8 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
             }).collect::<Vec<_>>(),
         "hp_drop_observed": snapshot.health.windows(2).any(|rows| rows[1].1 < rows[0].1),
         "real_content": snapshot.real_content,
+        "crossing_seed": snapshot.crossing_seed.json(),
+        "park_tick": snapshot.park_tick,
         "start_baseline": capture_snapshot.start_baseline,
         "error": error,
         "account": account,
