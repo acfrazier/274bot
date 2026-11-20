@@ -532,6 +532,20 @@ struct BankPickPreflights {
     return_route: Option<SearchPreflight>,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+struct BankPickSearchTiming {
+    elapsed: Duration,
+    settled: usize,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+struct BankPickSearchTimings {
+    outbound: Option<BankPickSearchTiming>,
+    return_route: Option<BankPickSearchTiming>,
+}
+
 struct CooperativeBankPickJob {
     job: BankPickJob,
     input: BankPickInput,
@@ -557,6 +571,10 @@ struct CooperativeBankPickJob {
     pending_many_results: Option<Box<[BankPickTargetResult]>>,
     result: Option<PickResult>,
     fallback_started: bool,
+    #[cfg(test)]
+    search_started_at: Option<Instant>,
+    #[cfg(test)]
+    search_timings: Option<Arc<parking_lot::Mutex<BankPickSearchTimings>>>,
 }
 impl CooperativeBankPickJob {
     fn new(job: BankPickJob, input: BankPickInput, preflights: BankPickPreflights) -> Self {
@@ -586,6 +604,10 @@ impl CooperativeBankPickJob {
             pending_many_results: None,
             result: None,
             fallback_started: false,
+            #[cfg(test)]
+            search_started_at: None,
+            #[cfg(test)]
+            search_timings: None,
         }
     }
 
@@ -599,6 +621,26 @@ impl CooperativeBankPickJob {
         let mut result = PickResult::plain(index, access_tile, kind);
         result.route = route;
         result
+    }
+
+    #[cfg(test)]
+    fn record_search_timing(&mut self, kind: BankPickSearchKind, settled: usize) {
+        let Some(started) = self.search_started_at.take() else {
+            return;
+        };
+        let Some(timings) = &self.search_timings else {
+            return;
+        };
+        let timing = BankPickSearchTiming {
+            elapsed: started.elapsed(),
+            settled,
+        };
+        let mut timings = timings.lock();
+        match kind {
+            BankPickSearchKind::First => timings.outbound = Some(timing),
+            BankPickSearchKind::Return => timings.return_route = Some(timing),
+            _ => {}
+        }
     }
 
     fn release_search_storage(&mut self, keep_fallback: bool) {
@@ -1112,6 +1154,10 @@ impl CooperativeJob for CooperativeBankPickJob {
                         self.search_error(kind);
                         continue;
                     };
+                    #[cfg(test)]
+                    let search_started_at = (self.search_timings.is_some()
+                        && matches!(kind, BankPickSearchKind::First | BankPickSearchKind::Return))
+                    .then(Instant::now);
                     match SearchCursor::new_preflighted(
                         request,
                         self.job.request.lease.clone(),
@@ -1119,6 +1165,10 @@ impl CooperativeJob for CooperativeBankPickJob {
                         preflight,
                     ) {
                         Ok(cursor) => {
+                            #[cfg(test)]
+                            {
+                                self.search_started_at = search_started_at;
+                            }
                             self.cursor = Some(cursor);
                             self.stage = BankPickStage::Search;
                             if let Some(outcome) = self.consume_unit(ctx) {
@@ -1176,6 +1226,10 @@ impl CooperativeJob for CooperativeBankPickJob {
                         }
                         CursorStep::Complete(completion) => {
                             let forward_settled = completion.forward_settled();
+                            #[cfg(test)]
+                            if let Some(kind) = self.search_kind {
+                                self.record_search_timing(kind, forward_settled);
+                            }
                             if self.timeout_fallback_due(Instant::now()) {
                                 drop(completion);
                                 self.start_timeout_fallback();

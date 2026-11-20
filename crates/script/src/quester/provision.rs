@@ -3137,13 +3137,19 @@ mod tests {
                 &quests,
             );
             if provisioner.gear_run.is_some() {
-                assert!(scanned, "the checked scan must finish before the loadout starts");
+                assert!(
+                    scanned,
+                    "the checked scan must finish before the loadout starts"
+                );
                 assert!(snapshot_view(&snapshot, tick)
                     .bank_session()
                     .is_some_and(|bank| bank.value.open));
-                assert!(ledger.as_ref().unwrap().outbox.iter().all(|action| {
-                    !matches!(action.effect, HostEffect::BankPick(_))
-                }));
+                assert!(ledger
+                    .as_ref()
+                    .unwrap()
+                    .outbox
+                    .iter()
+                    .all(|action| { !matches!(action.effect, HostEffect::BankPick(_)) }));
                 return;
             }
             match result {
@@ -3227,11 +3233,9 @@ mod tests {
         let memory = BankMemory::default();
         let unknown = ready_snapshot(Vec::new());
         assert!(snapshot_view(&unknown, 1).here().is_none());
-        for (known_at_start, target) in [
-            (false, None),
-            (false, Some(tile(2838, 3601))),
-            (true, None),
-        ] {
+        for (known_at_start, target) in
+            [(false, None), (false, Some(tile(2838, 3601))), (true, None)]
+        {
             let mut provisioner = Provisioner::new();
             let mut ledger = None;
             let start = if known_at_start { &snapshot } else { &unknown };
@@ -3271,7 +3275,9 @@ mod tests {
                 &quests,
             )
             .is_pending());
-            assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
+            assert!(ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()));
             assert_eq!(provisioner.unmet_logged.len(), 1);
             assert!(matches!(
                 poll_once_at(
@@ -3288,7 +3294,9 @@ mod tests {
                 ),
                 Poll::Ready(Ok(ProvisionEvent::Ready))
             ));
-            assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
+            assert!(ledger
+                .as_ref()
+                .is_none_or(|ledger| ledger.outbox.is_empty()));
         }
     }
 
@@ -3341,17 +3349,16 @@ mod tests {
                 "the shortfall record must keep the typed refusal detail: {detail}"
             );
             assert!(
-                provisioner.unmet_logged[0].cause.to_string().contains(detail),
+                provisioner.unmet_logged[0]
+                    .cause
+                    .to_string()
+                    .contains(detail),
                 "the operator's shortfall line must include the refusal detail"
             );
         }
     }
 
-    fn refuse_bank_pick(
-        ledger: &mut Option<Box<ledger::Ledger>>,
-        tick: u64,
-        detail: &'static str,
-    ) {
+    fn refuse_bank_pick(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64, detail: &'static str) {
         let ledger = ledger.as_mut().expect("survival scan queued a bank pick");
         let action = ledger.outbox.remove(0);
         assert!(matches!(

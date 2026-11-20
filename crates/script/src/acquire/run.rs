@@ -103,9 +103,8 @@ enum BankReturnTarget {
     Unavailable,
 }
 
-const _: () = assert!(
-    std::mem::size_of::<BankReturnTarget>() <= std::mem::size_of::<Option<WorldTile>>()
-);
+const _: () =
+    assert!(std::mem::size_of::<BankReturnTarget>() <= std::mem::size_of::<Option<WorldTile>>());
 
 pub struct AcquireRun {
     request: AcquireRequest,
@@ -281,9 +280,9 @@ impl AcquireRun {
             ))));
         }
         if matches!(self.bank_return_to, BankReturnTarget::Unavailable) {
-            return Poll::Ready(Err(self.no_bank_candidate(Some(Arc::from(
-                BANK_RETURN_POSITION_UNAVAILABLE,
-            )))));
+            return Poll::Ready(Err(
+                self.no_bank_candidate(Some(Arc::from(BANK_RETURN_POSITION_UNAVAILABLE)))
+            ));
         }
         if let Some(block) = &self.block {
             return Poll::Ready(Err(block.action_error()));
@@ -319,7 +318,8 @@ impl AcquireRun {
                         return Poll::Pending;
                     }
                     let Some(from) = tick.cx.snapshot().here() else {
-                        let error = if matches!(self.bank_return_to, BankReturnTarget::NotRequired) {
+                        let error = if matches!(self.bank_return_to, BankReturnTarget::NotRequired)
+                        {
                             self.attach_last_access_reason(ActionError::Unavailable(Arc::from(
                                 "player position unavailable for bank selection",
                             )))
