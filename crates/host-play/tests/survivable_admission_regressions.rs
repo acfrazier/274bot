@@ -161,6 +161,8 @@ fn stored_danger_levels_map_to_admission_for_every_preference_source() {
             )
             .unwrap(),
         ),
+        // A malformed legacy file is quarantined before the service starts a
+        // fresh preference document. It therefore uses the product default.
         (
             "malformed",
             read("malformed", Some("{nav:")).unwrap_or_else(|_| WalkGlobals::fail_closed()),
@@ -171,9 +173,9 @@ fn stored_danger_levels_map_to_admission_for_every_preference_source() {
     let world = api::test_support::game_data_available().then(|| corridor(40, &[20]));
     for (name, globals) in sources {
         let expected_level = match name {
-            "default" | "absent" | "empty-nav" | "no-nav" => DangerLevel::Always,
+            "default" | "absent" | "empty-nav" | "no-nav" | "malformed" => DangerLevel::Always,
             "explicit-middle" => DangerLevel::WhenSurvivable,
-            "old" | "malformed" => DangerLevel::Never,
+            "old" => DangerLevel::Never,
             _ => unreachable!("known preference source: {name}"),
         };
         let global_override = expected_level == DangerLevel::Always;
