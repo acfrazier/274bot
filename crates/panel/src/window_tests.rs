@@ -1085,7 +1085,11 @@ fn occluded_cpu_frames_release_upload_staging_and_restore_current_pixels() {
     let baseline_buffers = device.get_internal_counters().hal.buffers.read();
 
     for frame in 0..64 {
-        let color = if frame == 63 { 0x0000_ff00 } else { 0x00ff_0000 };
+        let color = if frame == 63 {
+            0x0000_ff00
+        } else {
+            0x00ff_0000
+        };
         view.present(
             &mut Gpu::new(&device, &queue, &mut renderer),
             FrameOutput::PixMap(PixMap {
