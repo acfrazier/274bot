@@ -838,6 +838,8 @@ fn start_drop(
             Box::new(RealDropScript {
                 args: Some(script::gatherer::DropBatchArgs {
                     products: Arc::from([1511]),
+                    include_products: true,
+                    empty_vial: None,
                     protected: protected_ids,
                     protected_len: u8::from(protected),
                 }),
