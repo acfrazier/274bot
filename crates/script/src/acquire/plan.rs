@@ -61,7 +61,7 @@ pub struct NeedObservation {
 }
 
 /// Why an optional need finished below its target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnmetCause {
     /// The selected bank has no stock remaining for this item.
     NoSupply,
@@ -71,19 +71,29 @@ pub enum UnmetCause {
     AssessmentUnavailable,
     /// The assessed survival bound exceeds the accepted threshold.
     SurvivalBound,
-    /// No eligible bank has a route from the account's current position.
-    NoReachableBank,
+    /// An optional bank trip failed its outbound or required return check.
+    NoReachableBank { detail: Arc<str> },
 }
 
 impl UnmetCause {
-    pub const fn describe(self) -> &'static str {
+    pub const fn describe(&self) -> &'static str {
         match self {
             Self::NoSupply => "bank stock is below target",
             Self::NoRoom => "no free pack slot for it",
             Self::AssessmentUnavailable => "survival assessment unavailable",
             Self::SurvivalBound => "survival bound above 1%",
-            Self::NoReachableBank => "no reachable bank for optional supplies",
+            Self::NoReachableBank { .. } => "no reachable bank for optional supplies",
         }
+    }
+}
+
+impl std::fmt::Display for UnmetCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.describe())?;
+        if let Self::NoReachableBank { detail } = self {
+            write!(f, ": {detail}")?;
+        }
+        Ok(())
     }
 }
 

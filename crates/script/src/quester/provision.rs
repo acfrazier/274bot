@@ -1358,6 +1358,12 @@ impl Provisioner {
                 if let Some(stage) =
                     stage_index(plan, current_stage).filter(|_| optional_unreachable)
                 {
+                    let detail = match error {
+                        ActionError::Unavailable(detail)
+                        | ActionError::Failed(detail)
+                        | ActionError::Blocked(detail) => detail,
+                        other => return Poll::Ready(Err(other)),
+                    };
                     let unmet = UnmetNeed {
                         item: survival_label(
                             plan,
@@ -1367,7 +1373,7 @@ impl Provisioner {
                         ),
                         need: self.status.need,
                         have: self.status.pack,
-                        cause: UnmetCause::NoReachableBank,
+                        cause: UnmetCause::NoReachableBank { detail },
                     };
                     self.log_unmet(plan, &[unmet]);
                     self.survival_stage = stage;
@@ -1473,14 +1479,16 @@ impl Provisioner {
 
     fn require_survival_return(&mut self, cx: &StepContext<'_, '_>, return_to: Option<WorldTile>) {
         self.survival_bank = true;
-        if let Some(target) =
-            return_to.or_else(|| cx.tick.cx.snapshot().here().map(|here| here.value))
-        {
-            self.bank_run
-                .as_mut()
-                .expect("survival return is attached before the bank run polls")
-                .require_bank_return(target);
-        }
+        let target = cx
+            .tick
+            .cx
+            .snapshot()
+            .here()
+            .map(|here| return_to.unwrap_or(here.value));
+        self.bank_run
+            .as_mut()
+            .expect("survival return is attached before the bank run polls")
+            .require_bank_return(target);
     }
 
     /// Ends the bank session: closes the bank this provisioner's trips opened
@@ -1562,7 +1570,7 @@ impl Provisioner {
                 need.need,
                 need.have,
                 need.need.saturating_sub(need.have),
-                need.cause.describe()
+                need.cause
             );
         }
         self.unmet_logged = unmet.to_vec();
@@ -3048,7 +3056,302 @@ mod tests {
         assert!(ledger.is_none());
     }
 
-    fn refuse_bank_pick(ledger: &mut Option<Box<ledger::Ledger>>, tick: u64) {
+    fn banked_survival_gear_fixture() -> (
+        Arc<CompiledPath>,
+        QuestCatalog,
+        GameSnapshot,
+        BankMemory,
+        Vec<ItemView>,
+    ) {
+        let (path, quests, mut snapshot) = survival_fixture_document(true, true, |document| {
+            document
+                .quest
+                .as_mut()
+                .unwrap()
+                .loadouts
+                .get_mut("survival")
+                .unwrap()
+                .worn
+                .retain(|slot, _| slot == "hat");
+            document.roles[0].sequences[0].steps[0]
+                .args
+                .as_object_mut()
+                .unwrap()
+                .remove("loadout");
+        });
+        let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let helmet = selected.item_by_alias("bronze_full_helm").unwrap();
+        let rows = vec![bank_row(helmet.id, helmet.name.as_deref().unwrap(), 1)];
+        snapshot.seed_bank_observation(1, 0, Some(rows.clone()), Vec::new());
+        let mut memory = BankMemory::default();
+        memory.track(&snapshot, 0);
+        snapshot.seed_bank_observation(-1, 0, None, Vec::new());
+        (path, quests, snapshot, memory, rows)
+    }
+
+    #[test]
+    fn review_survival_banked_gear_scans_then_uses_the_open_bank() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, mut snapshot, mut memory, rows) = banked_survival_gear_fixture();
+        let plan = &path.provisioning;
+        let (_, bank, banks) = openable_bank_fixture();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert_eq!(memory.count(rows[0].def.id), Some(1));
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            plan,
+            None,
+            Some(&plan.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert!(provisioner.gear_run.is_none());
+        assert_eq!(provisioner.status().phase, ProvisionPhase::Scanning);
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox[0].effect,
+            HostEffect::BankPick(request)
+                if !request.allow_air_fallback
+                    && request.return_to == snapshot_view(&snapshot, 1).here().map(|here| here.value)
+        ));
+        complete_bank_pick(&mut ledger, bank, bank.tile, 2);
+        let mut scanned = false;
+        for tick in 2..=16 {
+            let result = poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            );
+            if provisioner.gear_run.is_some() {
+                assert!(scanned, "the checked scan must finish before the loadout starts");
+                assert!(snapshot_view(&snapshot, tick)
+                    .bank_session()
+                    .is_some_and(|bank| bank.value.open));
+                assert!(ledger.as_ref().unwrap().outbox.iter().all(|action| {
+                    !matches!(action.effect, HostEffect::BankPick(_))
+                }));
+                return;
+            }
+            match result {
+                Poll::Ready(Ok(ProvisionEvent::BankReceipt(_))) => scanned = true,
+                Poll::Pending => {}
+                other => panic!("the checked gear scan must continue: {other:?}"),
+            }
+            if let Some(action) = ledger.as_ref().and_then(|ledger| ledger.outbox.first()) {
+                assert!(matches!(
+                    action.effect,
+                    HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
+                ));
+                complete_open_stand(&mut ledger, tick);
+                snapshot.seed_bank_observation(1, tick, Some(rows.clone()), Vec::new());
+                memory.track(&snapshot, tick);
+            }
+        }
+        panic!("the opened checked bank must start the survival loadout");
+    }
+
+    #[test]
+    fn review_survival_gear_return_refusal_records_shortfall() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, snapshot, memory, rows) = banked_survival_gear_fixture();
+        let plan = &path.provisioning;
+        let (_, _, banks) = openable_bank_fixture();
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            plan,
+            None,
+            Some(&plan.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        refuse_bank_pick(&mut ledger, 2, "bank return route unavailable");
+        for tick in 2..=4 {
+            let result = poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                tick,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            );
+            if tick == 2 {
+                assert!(result.is_pending());
+            } else {
+                assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
+            }
+            assert!(provisioner.gear_run.is_none());
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        }
+        assert_eq!(provisioner.bank_starts(), 1);
+        assert_eq!(provisioner.unmet_logged.len(), 1);
+        assert!(provisioner.unmet_logged[0]
+            .item
+            .contains(rows[0].def.name.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn review_survival_unknown_position_refuses_trip_even_if_position_recovers() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, snapshot) = survival_fixture(true);
+        let plan = &path.provisioning;
+        let (_, _, banks) = openable_bank_fixture();
+        let memory = BankMemory::default();
+        let unknown = ready_snapshot(Vec::new());
+        assert!(snapshot_view(&unknown, 1).here().is_none());
+        for (known_at_start, target) in [
+            (false, None),
+            (false, Some(tile(2838, 3601))),
+            (true, None),
+        ] {
+            let mut provisioner = Provisioner::new();
+            let mut ledger = None;
+            let start = if known_at_start { &snapshot } else { &unknown };
+            with_tick_bank(start, Some(&memory), &mut ledger, 1, |native| {
+                let required_after = native.cx.evidence();
+                let mut cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after,
+                    banks: &banks,
+                    choices: &crate::quester::choices::QuestChoices::default(),
+                };
+                provisioner.start_bank(
+                    &mut cx,
+                    plan,
+                    BankAction::Scan,
+                    ProvisionPhase::Scanning,
+                    Some(Arc::from("survival supplies")),
+                    1,
+                    0,
+                    None,
+                );
+                provisioner.require_survival_return(&cx, target);
+            });
+            let select = if known_at_start { &unknown } else { &snapshot };
+            assert!(poll_once_at(
+                &mut provisioner,
+                select,
+                &mut ledger,
+                2,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            )
+            .is_pending());
+            assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
+            assert_eq!(provisioner.unmet_logged.len(), 1);
+            assert!(matches!(
+                poll_once_at(
+                    &mut provisioner,
+                    &snapshot,
+                    &mut ledger,
+                    3,
+                    plan,
+                    None,
+                    Some(&plan.stages[0]),
+                    &memory,
+                    &banks,
+                    &quests,
+                ),
+                Poll::Ready(Ok(ProvisionEvent::Ready))
+            ));
+            assert!(ledger.as_ref().is_none_or(|ledger| ledger.outbox.is_empty()));
+        }
+    }
+
+    #[test]
+    fn review_survival_shortfall_keeps_bank_pick_reason() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        for detail in [
+            "bank selection timed out",
+            "bank return route unavailable",
+            "no routable bank candidate after NoPath",
+        ] {
+            let (path, quests, snapshot) = survival_fixture(true);
+            let plan = &path.provisioning;
+            let (_, _, banks) = openable_bank_fixture();
+            let memory = BankMemory::default();
+            let mut provisioner = Provisioner::new();
+            let mut ledger = None;
+            assert!(poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                1,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            )
+            .is_pending());
+            refuse_bank_pick(&mut ledger, 2, detail);
+            assert!(poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                2,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            )
+            .is_pending());
+            assert_eq!(provisioner.unmet_logged.len(), 1);
+            assert!(
+                format!("{:?}", provisioner.unmet_logged[0].cause).contains(detail),
+                "the shortfall record must keep the typed refusal detail: {detail}"
+            );
+            assert!(
+                provisioner.unmet_logged[0].cause.to_string().contains(detail),
+                "the operator's shortfall line must include the refusal detail"
+            );
+        }
+    }
+
+    fn refuse_bank_pick(
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        tick: u64,
+        detail: &'static str,
+    ) {
         let ledger = ledger.as_mut().expect("survival scan queued a bank pick");
         let action = ledger.outbox.remove(0);
         assert!(matches!(
@@ -3066,7 +3369,7 @@ mod tests {
                     sequence: tick,
                 },
                 outcome: crate::bank::BankPickOutcome::NoCandidate {
-                    detail: Arc::from("no routable bank candidate after NoPath"),
+                    detail: Arc::from(detail),
                 },
             },
         );
@@ -3144,7 +3447,7 @@ mod tests {
             HostEffect::BankPick(request)
                 if request.return_to == snapshot_view(&snapshot, 1).here().map(|here| here.value)
         ));
-        refuse_bank_pick(&mut ledger, 2);
+        refuse_bank_pick(&mut ledger, 2, "no routable bank candidate after NoPath");
         assert!(poll_once_at(
             &mut provisioner,
             &snapshot,
@@ -3178,7 +3481,11 @@ mod tests {
         assert_eq!(provisioner.bank_starts(), 1);
         assert_eq!(provisioner.unmet_logged.len(), 1);
         let unmet = &provisioner.unmet_logged[0];
-        assert_eq!(unmet.cause, UnmetCause::NoReachableBank);
+        assert!(matches!(
+            &unmet.cause,
+            UnmetCause::NoReachableBank { detail }
+                if detail.as_ref() == "no routable bank candidate after NoPath"
+        ));
         assert!(unmet.need > unmet.have);
         assert!(unmet.item.contains("stage "));
         assert_eq!(memory.origin(), Origin::Unknown);
@@ -3217,7 +3524,7 @@ mod tests {
         )
         .is_pending());
         assert!(!provisioner.survival_bank);
-        refuse_bank_pick(&mut ledger, 2);
+        refuse_bank_pick(&mut ledger, 2, "no routable bank candidate after NoPath");
         assert!(matches!(
             poll_once_at(
                 &mut provisioner,
