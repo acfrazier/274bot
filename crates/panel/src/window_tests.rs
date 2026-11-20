@@ -1067,6 +1067,35 @@ fn occluded_acquisition_without_promoted_wanted_records_no_gpu_work() {
 
 #[test]
 fn occluded_cpu_frames_release_upload_staging_and_restore_current_pixels() {
+    assert_cpu_frames_release_upload_staging_and_restore_current_pixels(
+        wgpu::CurrentSurfaceTexture::Occluded,
+    );
+}
+
+#[test]
+fn lost_cpu_frames_release_upload_staging_and_restore_current_pixels() {
+    assert_cpu_frames_release_upload_staging_and_restore_current_pixels(
+        wgpu::CurrentSurfaceTexture::Lost,
+    );
+}
+
+#[test]
+fn outdated_cpu_frames_release_upload_staging_and_restore_current_pixels() {
+    assert_cpu_frames_release_upload_staging_and_restore_current_pixels(
+        wgpu::CurrentSurfaceTexture::Outdated,
+    );
+}
+
+#[test]
+fn timeout_cpu_frames_release_upload_staging_and_restore_current_pixels() {
+    assert_cpu_frames_release_upload_staging_and_restore_current_pixels(
+        wgpu::CurrentSurfaceTexture::Timeout,
+    );
+}
+
+fn assert_cpu_frames_release_upload_staging_and_restore_current_pixels(
+    surface_frame: wgpu::CurrentSurfaceTexture,
+) {
     use crate::game_view::{GameView, APPLET_H, APPLET_W};
     use client::graphics::PixMap;
     use client::render::backend::FrameOutput;
@@ -1102,26 +1131,28 @@ fn occluded_cpu_frames_release_upload_staging_and_restore_current_pixels() {
             device.get_internal_counters().hal.buffers.read() > baseline_buffers,
             "the CPU upload must allocate staging before the frame is submitted"
         );
-        let submission = submit_acquired_frame(
-            &device,
-            &queue,
-            &mut renderer,
-            draw_known_rect(&mut context),
-            GREEN_CLEAR,
-            &desc,
-            None,
-            AcquiredFrame::Occluded,
-            &shots,
-        )
-        .unwrap();
-        assert!(matches!(submission, FrameSubmission::Skipped));
+        if let Some(acquired) = acquired_surface_frame(&queue, &surface_frame).unwrap() {
+            let submission = submit_acquired_frame(
+                &device,
+                &queue,
+                &mut renderer,
+                draw_known_rect(&mut context),
+                GREEN_CLEAR,
+                &desc,
+                None,
+                acquired,
+                &shots,
+            )
+            .unwrap();
+            assert!(matches!(submission, FrameSubmission::Skipped));
+        }
         // Poll retires submitted work, but cannot submit a queued write itself.
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     }
     assert_eq!(
         device.get_internal_counters().hal.buffers.read(),
         baseline_buffers,
-        "occluded frames must not retain CPU upload staging buffers"
+        "non-presenting frames must not retain CPU upload staging buffers"
     );
 
     let image = test_texture(

@@ -1124,54 +1124,26 @@ impl AppWindow {
         }
 
         // Acquire the swapchain image as late as possible to reduce time holding it.
-        let (frame, reconfigure_after_present) = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(frame) => (frame, false),
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => (frame, true),
+        let surface_frame = self.surface.get_current_texture();
+        match &surface_frame {
             wgpu::CurrentSurfaceTexture::Lost => {
                 report_deferred_readback(shots, "lost");
                 self.surface.configure(&self.device, &self.surface_desc);
-                return Ok(exit_requested);
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
                 report_deferred_readback(shots, "outdated");
                 self.surface.configure(&self.device, &self.surface_desc);
-                return Ok(exit_requested);
             }
             wgpu::CurrentSurfaceTexture::Timeout => {
                 report_deferred_readback(shots, "timeout");
-                return Ok(exit_requested);
             }
-            wgpu::CurrentSurfaceTexture::Occluded => {
-                // Presentation is blocked, but a promoted capture can still
-                // rasterize the current UI into a COPY_SRC target and
-                // complete without a present. Unpromoted jobs stay queued.
-                let submission = submit_acquired_frame(
-                    &self.device,
-                    &self.queue,
-                    &mut self.imgui.renderer,
-                    draw_data,
-                    self.clear_color,
-                    &self.surface_desc,
-                    self.offscreen.as_ref(),
-                    AcquiredFrame::Occluded,
-                    shots,
-                )?;
-                // No image to present: the staged readbacks complete here.
-                if let FrameSubmission::Submitted(readbacks) = submission {
-                    if !readbacks.is_empty() && std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
-                        eprintln!(
-                            "[panel] capture offscreen readback submitted on occluded surface: {}",
-                            readbacks.len()
-                        );
-                    }
-                    complete_readbacks(&self.device, self.surface_desc.format, readbacks, shots);
-                }
-                return Ok(exit_requested);
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err(PanelError::SurfaceValidation);
-            }
+            _ => {}
+        }
+        let Some(acquired) = acquired_surface_frame(&self.queue, &surface_frame)? else {
+            return Ok(exit_requested);
         };
+        let reconfigure_after_present =
+            matches!(surface_frame, wgpu::CurrentSurfaceTexture::Suboptimal(_));
 
         let submission = submit_acquired_frame(
             &self.device,
@@ -1181,15 +1153,30 @@ impl AppWindow {
             self.clear_color,
             &self.surface_desc,
             self.offscreen.as_ref(),
-            AcquiredFrame::Presentable(&frame.texture),
+            acquired,
             shots,
         )?;
-        // Submit → present → map, in that order: mapping/failed-capture
-        // bookkeeping stays after the present, so a slow capture map never
-        // holds the drawable (the original visible-frame ordering).
-        frame.present();
-        #[cfg(feature = "memory-profile")]
-        memory_profile_frame.presented();
+        // Submit → present → map, in that order: a slow capture map never
+        // holds a drawable. An occluded capture has no image to present.
+        match surface_frame {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                frame.present();
+                #[cfg(feature = "memory-profile")]
+                memory_profile_frame.presented();
+            }
+            wgpu::CurrentSurfaceTexture::Occluded => {
+                if let FrameSubmission::Submitted(readbacks) = &submission {
+                    if !readbacks.is_empty() && std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
+                        eprintln!(
+                            "[panel] capture offscreen readback submitted on occluded surface: {}",
+                            readbacks.len()
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
         if let FrameSubmission::Submitted(readbacks) = submission {
             complete_readbacks(&self.device, self.surface_desc.format, readbacks, shots);
         }
@@ -1247,11 +1234,39 @@ enum AcquiredFrame<'a> {
     Occluded,
 }
 
+/// Normalize surface acquisition and submit uploads when acquisition must retry.
+fn acquired_surface_frame<'a>(
+    queue: &wgpu::Queue,
+    surface_frame: &'a wgpu::CurrentSurfaceTexture,
+) -> Result<Option<AcquiredFrame<'a>>, PanelError> {
+    match surface_frame {
+        wgpu::CurrentSurfaceTexture::Success(frame)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+            Ok(Some(AcquiredFrame::Presentable(&frame.texture)))
+        }
+        wgpu::CurrentSurfaceTexture::Occluded => Ok(Some(AcquiredFrame::Occluded)),
+        wgpu::CurrentSurfaceTexture::Lost
+        | wgpu::CurrentSurfaceTexture::Outdated
+        | wgpu::CurrentSurfaceTexture::Timeout => {
+            submit_queued_uploads(queue);
+            Ok(None)
+        }
+        wgpu::CurrentSurfaceTexture::Validation => Err(PanelError::SurfaceValidation),
+    }
+}
+
+/// GUI processing can stage CPU pixmaps and other texture uploads before
+/// acquisition. Submit them even when no UI draw follows, so wgpu can retire
+/// their staging buffers instead of retaining them until a visible frame.
+fn submit_queued_uploads(queue: &wgpu::Queue) {
+    queue.submit([]);
+}
+
 /// What one acquired frame recorded. `Skipped` is the occluded no-draw path
-/// (no promoted capture): no target allocated, no draw, no readback, no
-/// present. Queued uploads still submit. `Submitted` carries the staged readbacks that
-/// [`complete_readbacks`] maps once the caller has presented — or, with no
-/// image to present, immediately.
+/// (no promoted capture): no target allocated, no draw, no readback, and no
+/// present. Queued uploads still submit. `Submitted` carries staged readbacks
+/// that [`complete_readbacks`] maps after present, or immediately when there
+/// is no image to present.
 enum FrameSubmission {
     Skipped,
     Submitted(Vec<ShotReadback>),
@@ -1293,10 +1308,9 @@ fn submit_acquired_frame(
     };
 
     // An occluded frame without a promoted capture needs no draw target.
-    // Submit the UI's queued texture writes so their staging buffers can retire.
     // Unpromoted jobs and an armed recording frame wait for a visible frame.
     if present_dest.is_none() && !shots.lock().unwrap().capture_pending() {
-        queue.submit([]);
+        submit_queued_uploads(queue);
         return Ok(FrameSubmission::Skipped);
     }
 
