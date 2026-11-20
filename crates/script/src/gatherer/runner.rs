@@ -634,8 +634,30 @@ impl Gatherer {
                 return true;
             }
         };
-        let request = self.acquire_request(needs, None, CloseBank::Close, cx);
-        match crate::acquire::run::plan_current(&request, cx) {
+        let mut request = self.acquire_request(needs, None, CloseBank::Close, cx);
+        let verdict = match crate::acquire::run::plan_current(&request, cx) {
+            Ok(AcquireVerdict::Plan(plan)) if plan.scan || plan.withdrawal_count > 0 => {
+                let needs = match SupplyPlan::build_for_bank_trip(
+                    &self.prepared,
+                    stats.value,
+                    snapshot.stock(),
+                ) {
+                    Ok(needs) => needs,
+                    Err(error) => {
+                        self.action_failure(error);
+                        return true;
+                    }
+                };
+                if needs.len() > request.needs.len() {
+                    request.needs = needs;
+                    crate::acquire::run::plan_current(&request, cx)
+                } else {
+                    Ok(AcquireVerdict::Plan(plan))
+                }
+            }
+            verdict => verdict,
+        };
+        match verdict {
             Ok(AcquireVerdict::Satisfied) => false,
             Ok(AcquireVerdict::Plan(plan)) => {
                 self.start_supply_plan(request, plan, cx);
@@ -4091,6 +4113,32 @@ mod tests {
             fishing_method: &str,
             banks: Arc<api::named_banks::NamedBankFacts>,
         ) -> Self {
+            Self::with_eat_below_disposition_method_banks_and_buy_tools(
+                eat_below,
+                disposition,
+                fishing_method,
+                banks,
+                false,
+            )
+        }
+
+        pub(super) fn with_buy_tools(fishing_method: &str) -> Self {
+            Self::with_eat_below_disposition_method_banks_and_buy_tools(
+                0,
+                "Bank",
+                fishing_method,
+                Self::test_banks(),
+                true,
+            )
+        }
+
+        fn with_eat_below_disposition_method_banks_and_buy_tools(
+            eat_below: i32,
+            disposition: &str,
+            fishing_method: &str,
+            banks: Arc<api::named_banks::NamedBankFacts>,
+            buy_tools: bool,
+        ) -> Self {
             use crate::quester::families::tests::{def, local_player};
             use api::bank_memory::{BankMemory, ObservedAt};
             use api::snapshot::{
@@ -4105,7 +4153,7 @@ mod tests {
                 ("fishingMethod", serde_json::json!(fishing_method)),
                 ("baitTarget", serde_json::json!(10)),
                 ("disposition", serde_json::json!(disposition)),
-                ("buyTools", serde_json::json!(false)),
+                ("buyTools", serde_json::json!(buy_tools)),
                 ("eatBelow", serde_json::json!(eat_below)),
             ] {
                 bag.insert(key.into(), value);

@@ -726,6 +726,105 @@ fn gatherer_product_only_bank_trip_withdraws_strange_fruit() {
 }
 
 #[test]
+fn gatherer_supply_bank_trip_requests_optional_strange_fruit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::quester::families::tests::with_tick_bank;
+
+    let fixture = BaitFixture::new();
+    let fruit_id = fixture
+        .prepared
+        .selected
+        .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+        .expect("revision 289 defines strange fruit")
+        .id;
+    let mut gatherer = fixture.gatherer(GatherRetained::default());
+    let mut ledger = None;
+    with_tick_bank(
+        &fixture.snapshot,
+        Some(&fixture.hint),
+        &mut ledger,
+        1,
+        |tick| {
+            assert!(gatherer.admit_supply(&tick.cx));
+        },
+    );
+
+    assert!(matches!(
+        gatherer.trip,
+        TripStep::Supply {
+            return_to_work: true,
+            deposit_products: true
+        }
+    ));
+    let fruit = gatherer
+        .scratch
+        .needs
+        .as_ref()
+        .expect("the supply trip retains its needs")
+        .iter()
+        .find(|need| need.item == fruit_id)
+        .expect("the bank-backed supply trip requests Strange fruit");
+    assert_eq!(fruit.kind, NeedKind::Optional);
+    assert_eq!(fruit.target, 1);
+    assert_eq!(fruit.minimum, 0);
+    assert!(fruit.sources.contains(SourceSet::PACK));
+    assert!(fruit.sources.contains(SourceSet::BANK));
+}
+
+#[test]
+fn gatherer_shop_only_supply_trip_does_not_add_bank_work_or_strange_fruit() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::quester::families::tests::with_tick_bank;
+
+    let mut fixture = BaitFixture::with_buy_tools("fishing.saltfish.op3");
+    let bait_id = fixture.prepared.supply.bait.as_ref().unwrap().id;
+    let fruit_id = fixture
+        .prepared
+        .selected
+        .item_by_alias(crate::survival::cure::STRANGE_FRUIT_ALIAS)
+        .expect("revision 289 defines strange fruit")
+        .id;
+    let mut inventory = fixture.snapshot.inventory().to_vec();
+    inventory.push(held(995, "Coins", 10_000, 1));
+    fixture.snapshot.seed_inventory(inventory, 28);
+    let mut gatherer = fixture.gatherer(GatherRetained::default());
+    let mut ledger = None;
+
+    with_tick_bank(
+        &fixture.snapshot,
+        Some(&fixture.session),
+        &mut ledger,
+        1,
+        |tick| {
+            assert!(gatherer.admit_supply(&tick.cx));
+        },
+    );
+
+    assert!(matches!(
+        gatherer.trip,
+        TripStep::Supply {
+            return_to_work: true,
+            deposit_products: false
+        }
+    ));
+    let needs = gatherer
+        .scratch
+        .needs
+        .as_ref()
+        .expect("the shop trip retains its needs");
+    let bait = needs
+        .iter()
+        .find(|need| need.item == bait_id)
+        .expect("the trip retains its bait need");
+    assert!(bait.sources.contains(SourceSet::SHOP));
+    assert!(!needs.iter().any(|need| need.item == fruit_id));
+}
+
+#[test]
 fn gatherer_bank_trip_skips_full_bank_spare_fruit_and_deposits_stackable_product() {
     if !api::test_support::game_data_available() {
         return;
