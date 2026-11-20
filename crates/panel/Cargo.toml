@@ -82,3 +82,4 @@ proc-macro2 = "1"
 syn = "2"
 sha2 = "0.10.9"
 parking_lot = "0.12"
+wgpu = { version = "29", features = ["counters"] }

@@ -1247,9 +1247,9 @@ enum AcquiredFrame<'a> {
     Occluded,
 }
 
-/// What one acquired frame recorded. `Skipped` is the occluded no-op (no
-/// promoted capture): no target allocated, no draw, no readback, no
-/// present. `Submitted` carries the staged readbacks that
+/// What one acquired frame recorded. `Skipped` is the occluded no-draw path
+/// (no promoted capture): no target allocated, no draw, no readback, no
+/// present. Queued uploads still submit. `Submitted` carries the staged readbacks that
 /// [`complete_readbacks`] maps once the caller has presented — or, with no
 /// image to present, immediately.
 enum FrameSubmission {
@@ -1292,11 +1292,11 @@ fn submit_acquired_frame(
         AcquiredFrame::Occluded => None,
     };
 
-    // The promoted-wanted check runs before any GPU work: an occluded frame
-    // with nothing promoted allocates no target and stages no readback
-    // (unpromoted jobs stay queued for the next visible frame; an armed
-    // recording frame likewise waits for the next visible frame).
+    // An occluded frame without a promoted capture needs no draw target.
+    // Submit the UI's queued texture writes so their staging buffers can retire.
+    // Unpromoted jobs and an armed recording frame wait for a visible frame.
     if present_dest.is_none() && !shots.lock().unwrap().capture_pending() {
+        queue.submit([]);
         return Ok(FrameSubmission::Skipped);
     }
 

@@ -977,8 +977,8 @@ fn occluded_acquisition_captures_composed_frame_without_present() {
 }
 
 /// Occluded with nothing promoted: the production route must allocate no
-/// target, render nothing, and stage no readback — it returns `Skipped`
-/// before any GPU work, so a still-queued actor job keeps its request.
+/// target, render nothing, and stage no readback. It only submits queued
+/// uploads, so a still-queued actor job keeps its request.
 /// The old path rendered (and cleared) its target first and only then
 /// found `wanted` empty, which both checks below catch: the prefilled
 /// target would be overwritten, and the out-of-range surface config
@@ -1063,6 +1063,95 @@ fn occluded_acquisition_without_promoted_wanted_records_no_gpu_work() {
     assert!(shots.wanted.is_empty());
     assert!(shots.done.is_empty());
     assert_eq!(shots.requests.len(), 1);
+}
+
+#[test]
+fn occluded_cpu_frames_release_upload_staging_and_restore_current_pixels() {
+    use crate::game_view::{GameView, APPLET_H, APPLET_W};
+    use client::graphics::PixMap;
+    use client::render::backend::FrameOutput;
+
+    let Some((device, queue)) = headless_gpu() else {
+        return;
+    };
+    let _guard = crate::test_support::imgui_context_guard();
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let (mut context, mut renderer) = headless_capture_renderer(&device, &queue, format);
+    let desc = test_surface_desc(format);
+    let shots = Mutex::new(ShotState::default());
+    let mut view = GameView::init(&mut Gpu::new(&device, &queue, &mut renderer));
+    queue.submit([]);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let baseline_buffers = device.get_internal_counters().hal.buffers.read();
+
+    for frame in 0..64 {
+        let color = if frame == 63 { 0x0000_ff00 } else { 0x00ff_0000 };
+        view.present(
+            &mut Gpu::new(&device, &queue, &mut renderer),
+            FrameOutput::PixMap(PixMap {
+                width: APPLET_W as i32,
+                height: APPLET_H as i32,
+                pixels: vec![color; (APPLET_W * APPLET_H) as usize],
+            }),
+        );
+        assert!(
+            device.get_internal_counters().hal.buffers.read() > baseline_buffers,
+            "the CPU upload must allocate staging before the frame is submitted"
+        );
+        let submission = submit_acquired_frame(
+            &device,
+            &queue,
+            &mut renderer,
+            draw_known_rect(&mut context),
+            GREEN_CLEAR,
+            &desc,
+            None,
+            AcquiredFrame::Occluded,
+            &shots,
+        )
+        .unwrap();
+        assert!(matches!(submission, FrameSubmission::Skipped));
+        // Poll retires submitted work, but cannot submit a queued write itself.
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    }
+    assert_eq!(
+        device.get_internal_counters().hal.buffers.read(),
+        baseline_buffers,
+        "occluded frames must not retain CPU upload staging buffers"
+    );
+
+    let image = test_texture(
+        &device,
+        format,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    context.frame().get_foreground_draw_list().add_image(
+        view.tex_id,
+        [0.0, 0.0],
+        [64.0, 64.0],
+        [0.0, 0.0],
+        [1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0],
+    );
+    submit_acquired_frame(
+        &device,
+        &queue,
+        &mut renderer,
+        context.render(),
+        wgpu::Color::BLACK,
+        &desc,
+        None,
+        AcquiredFrame::Presentable(&image),
+        &shots,
+    )
+    .unwrap();
+    let restored = read_texture_rgba(&device, &queue, &image, format);
+    assert_eq!(
+        pixel(&restored, OCCLUDED_TEST_PX, 32, 32),
+        GREEN,
+        "the first visible frame must sample the latest CPU frame, not the earlier red frame"
+    );
+    view.dispose(&mut Gpu::new(&device, &queue, &mut renderer));
 }
 
 /// The visible path through the same production entry point: a
