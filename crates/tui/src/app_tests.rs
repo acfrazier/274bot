@@ -738,9 +738,9 @@ fn wrapped_global_settings_rows_use_the_drawn_hit_target() {
     app.settings_state.row = 8;
     app.script_scope_notice_ack = true;
     for expected in [
+        frontend_core::DangerLevel::Never,
         frontend_core::DangerLevel::WhenSurvivable,
         frontend_core::DangerLevel::Always,
-        frontend_core::DangerLevel::Never,
     ] {
         let rows = draw(&mut app, 60, 14);
         let (col, row) = find(&rows, "Danger routing:")
@@ -764,14 +764,14 @@ fn danger_routing_cycles_all_three_levels_without_a_migration_notice() {
     app.settings_state.open = true;
     app.script_scope_notice_ack = true;
     app.settings_state.row = 8;
-    assert_eq!(app.nav.danger_level(), frontend_core::DangerLevel::Never);
+    assert_eq!(app.nav.danger_level(), frontend_core::DangerLevel::Always);
     let first = draw(&mut app, 100, 24);
-    assert!(find(&first, "Danger routing: Never").is_some());
+    assert!(find(&first, "Danger routing: Always").is_some());
     assert!(find(&first, "dismiss this notice").is_none());
     for expected in [
+        frontend_core::DangerLevel::Never,
         frontend_core::DangerLevel::WhenSurvivable,
         frontend_core::DangerLevel::Always,
-        frontend_core::DangerLevel::Never,
     ] {
         assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
         assert_eq!(app.nav.danger_level(), expected);
@@ -935,6 +935,13 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     // Both restores (the live store, then the refused one) share the
     // process-wide Quester registry: no other test may restore in between.
     let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+    // Exercise the one-WalkTo control under an explicit saved Never policy.
+    frontend_core::nav_prefs::write_nav_preference_for_test(
+        &preferences,
+        frontend_core::NavPreference::AllowDangerZones,
+        false,
+    )
+    .unwrap();
     app.restore_preferences(preferences.share());
 
     app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "WalkPermissions"));

@@ -1324,9 +1324,9 @@ pub(crate) fn alcher_scenario() -> Scenario {
 /// Falador West. On the reference pack (`bake-r2-a`) the cheapest route to
 /// Falador East (75.0 ticks, south through the mine to the Falador stairs)
 /// crosses the King Scorpion zones (L32, aggressive up to combat 64; the
-/// Magic-55 account is combat 29), so the default Danger routing plans the
-/// safe routes through the Ice Mountain ladder: Falador West (2945,3368)
-/// 92.5 ticks, Edgeville 97 and Falador East (3013,3355) 105.
+/// Magic-55 account is combat 29), so this scenario's Never routing overlay
+/// plans the safe routes through the Ice Mountain ladder: Falador West
+/// (2945,3368) 92.5 ticks, Edgeville 97 and Falador East (3013,3355) 105.
 /// Every action after Start belongs to Alcher; the cell only observes.
 pub(crate) fn alcher_dwarven_mine_scenario() -> Scenario {
     let origin = WorldTile {

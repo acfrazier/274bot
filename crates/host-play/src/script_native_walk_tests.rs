@@ -144,8 +144,8 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
     let shared = Arc::new(parking_lot::Mutex::new(Walker {
         blocked,
         walks: 1,
-        // These pre-admission geometry/guard fixtures use a legacy no-zone
-        // grid with no danger permission: the walk is inherited.
+        // Fixtures leave walk-level danger inherited; slot globals decide
+        // whether that inherited request grants zone access.
         options: script::native::WalkOptions::default(),
         ..Walker::default()
     }));
@@ -977,6 +977,18 @@ fn selection_snapshot(
     snapshot
 }
 
+fn navs_with_danger_level(level: crate::DangerLevel) -> Arc<Mutex<HashMap<String, NavBot>>> {
+    let mut globals = WalkGlobals::default();
+    globals.set_danger_level(level);
+    Arc::new(Mutex::new(HashMap::from([(
+        "alice".to_owned(),
+        NavBot {
+            walk_globals: Some(Arc::new(Mutex::new(globals))),
+            ..NavBot::default()
+        },
+    )])))
+}
+
 fn selection_danger(
     world: &NavWorld,
     snapshot: Option<&GameSnapshot>,
@@ -987,7 +999,7 @@ fn selection_danger(
 ) -> Result<(), String> {
     use script::native::{WalkDanger, WalkDangerQuery};
 
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = navs_with_danger_level(crate::DangerLevel::Never);
     let query =
         crate::walk_permissions::SelectionDangerQuery::new(&navs, "alice", world, snapshot, None);
     match query.check(target, loc_id, radius, arrival) {
@@ -1925,7 +1937,7 @@ fn seed_guard_poison_onset(rig: &mut Rig, policy: script::survival::CurePoison) 
 }
 
 #[test]
-fn a_default_walk_with_food_allowed_starts_no_host_guard() {
+fn a_default_always_danger_walk_with_food_allowed_arms_the_host_guard() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -1936,8 +1948,8 @@ fn a_default_walk_with_food_allowed_starts_no_host_guard() {
         rig.observe(1);
         rig.wait_routed();
         assert!(
-            rig.navs.lock().unwrap()["alice"].walk_guard.is_none(),
-            "default walks (allow.food=true, no food_guard) must not start the food-only guard"
+            rig.navs.lock().unwrap()["alice"].walk_guard.is_some(),
+            "default Always danger grants must arm the food guard"
         );
         rig.step();
         assert!(rig.walk_armed());
@@ -3268,6 +3280,14 @@ fn native_cross_request_is_scoped_to_one_walk() {
         return;
     }
     let mut rig = rig(Some(Arc::new(s2b_admission_contract::ice_world())), false);
+    let mut globals = WalkGlobals::default();
+    globals.set_danger_level(crate::DangerLevel::Never);
+    rig.navs
+        .lock()
+        .unwrap()
+        .entry("alice".into())
+        .or_default()
+        .walk_globals = Some(Arc::new(Mutex::new(globals)));
     s2b_admission_contract::observed_loadout_with_hp(&mut rig.snapshot, 99);
     let goal = WorldTile {
         x: 255,
@@ -3602,7 +3622,7 @@ fn selection_safe_access_goals_restrict_mixed_live_loc_stands() {
         nav_planner::transport::WildernessRules::default(),
     );
     let snapshot = selection_snapshot(target, 3, 0, None);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = navs_with_danger_level(crate::DangerLevel::Never);
     let query = crate::walk_permissions::SelectionDangerQuery::new(
         &navs,
         "alice",
@@ -3744,7 +3764,7 @@ fn selection_safe_access_goals_filter_existing_goal_tiers() {
         None,
         nav_planner::transport::WildernessRules::default(),
     );
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = navs_with_danger_level(crate::DangerLevel::Never);
     let query =
         crate::walk_permissions::SelectionDangerQuery::new(&navs, "alice", &world, None, None);
     let existing = WalkGoals::with_preferred(
@@ -3787,7 +3807,7 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
         nav_planner::transport::WildernessRules::default(),
     );
     let snapshot = selection_snapshot(target, 3, 0, None);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = navs_with_danger_level(crate::DangerLevel::Never);
     let query = crate::walk_permissions::SelectionDangerQuery::new(
         &navs,
         "alice",
@@ -3860,7 +3880,14 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
     );
     let world = Arc::new(world);
     let mut rig = rig(Some(Arc::clone(&world)), false);
-
+    let mut globals = WalkGlobals::default();
+    globals.set_danger_level(crate::DangerLevel::Never);
+    rig.navs
+        .lock()
+        .unwrap()
+        .get_mut("alice")
+        .expect("nav bot")
+        .walk_globals = Some(Arc::new(Mutex::new(globals)));
     let mut snapshot = selection_snapshot(target, 3, 0, None);
     let mut player = snapshot
         .local_player()
@@ -4223,7 +4250,7 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
         level: 0,
     };
     let snapshot = packed_collision_scene(&world, target);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = navs_with_danger_level(crate::DangerLevel::Never);
     let query = crate::walk_permissions::SelectionDangerQuery::new(
         &navs,
         "alice",
@@ -4316,6 +4343,14 @@ fn native_protect_alone_does_not_grant_danger_and_unknown_cross_still_refuses() 
     }
     {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        let mut globals = WalkGlobals::default();
+        globals.set_danger_level(crate::DangerLevel::Never);
+        rig.navs
+            .lock()
+            .unwrap()
+            .get_mut("alice")
+            .expect("nav bot")
+            .walk_globals = Some(Arc::new(Mutex::new(globals)));
         rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
         rig.shared.lock().protect = true;
         seed_prayer(&mut rig.snapshot, 43);
@@ -4339,6 +4374,14 @@ fn native_protect_alone_does_not_grant_danger_and_unknown_cross_still_refuses() 
         ],
     ] {
         let mut rig = rig(Some(Arc::new(zoned_open_world())), false);
+        let mut globals = WalkGlobals::default();
+        globals.set_danger_level(crate::DangerLevel::Never);
+        rig.navs
+            .lock()
+            .unwrap()
+            .get_mut("alice")
+            .expect("nav bot")
+            .walk_globals = Some(Arc::new(Mutex::new(globals)));
         rig.shared.lock().options.allow_danger_zones = script::native::WalkBit::Forbid;
         rig.shared.lock().cross_first = names;
         rig.observe(1);
@@ -4593,7 +4636,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     let many =
         crate::script_runtime::resolve_route_exclusions(&world, from, from, &state, many).unwrap();
     assert_eq!(many.cross.len(), 12);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = navs_with_danger_level(crate::DangerLevel::Never);
     let (options, decision) = crate::walk_permissions::compiled_options(
         &navs,
         "alice",
@@ -7032,6 +7075,14 @@ mod s2b_admission_contract {
             return;
         }
         let mut rig = rig(Some(Arc::new(ice_world())), false);
+        let mut globals = WalkGlobals::default();
+        globals.set_danger_level(crate::DangerLevel::Never);
+        rig.navs
+            .lock()
+            .unwrap()
+            .get_mut("alice")
+            .expect("nav bot")
+            .walk_globals = Some(Arc::new(Mutex::new(globals)));
         observed_loadout(&mut rig.snapshot);
         rig.observe(1);
         rig.wait_routed();

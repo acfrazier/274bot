@@ -7681,8 +7681,11 @@ fn nav_danger_routing_drop_down_offers_three_levels_and_always_submits_set_dange
     let mut ctx = dock_host_context();
     super::amber_style(&mut ctx);
     let mut session = crate::session::Session::new();
-    let before = session.ui.nav.clone();
-    assert_eq!(before.danger_level(), DangerLevel::Never);
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    let mut before = session.ui.nav.clone();
+    assert_eq!(before.danger_level(), DangerLevel::Always);
+    before.set_danger_level(DangerLevel::Never);
     let mut nav = before.clone();
 
     let (routing, _) = nav_routing_frame(&mut ctx, &mut nav);

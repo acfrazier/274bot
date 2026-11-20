@@ -446,7 +446,7 @@ const MERGED_NAV_KEYS: &[(&str, bool)] = &[
     ("allow_bank_fetch", false),
     ("allow_prereq_dialogue", true),
     ("allow_quest_start", true),
-    ("allow_danger_zones", false),
+    ("allow_danger_zones", true),
     ("survivable_routing", false),
     ("script_scope_notice_ack", false),
     ("pause_script_on_manual_walk_abort", true),

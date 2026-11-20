@@ -43,11 +43,9 @@ fn bound_context(play: &crate::Play) -> MapContext {
 }
 
 fn routing_test_admission() -> crate::admission::Admission {
-    crate::admission::Admission::manual(
-        crate::WalkGlobals::default().manual_decision(false),
-        Default::default(),
-        0,
-    )
+    let mut globals = crate::WalkGlobals::default();
+    globals.set_danger_level(crate::DangerLevel::Never);
+    crate::admission::Admission::manual(globals.manual_decision(false), Default::default(), 0)
 }
 
 fn t(x: i32, z: i32, level: i32) -> Tile {
@@ -1738,6 +1736,9 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
     install_zone_wall(&mut nav);
     let fixture = MapFixture::new(&nav, "local-289");
     let play = fixture.play(t(3201, 3201, 0));
+    let mut globals = crate::WalkGlobals::default();
+    globals.set_danger_level(crate::DangerLevel::Never);
+    play.set_walk_globals(globals);
     let dest_ctx = bound_context(&play);
     let baked = play.world().unwrap();
     let mut model = MapModel::default();
@@ -2015,7 +2016,7 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
         "{message}"
     );
     assert!(message.contains("need 60, carrying 30"), "{message}");
-    // A held default refusal is the pre-S2b bare NoPath: no arm is created.
+    // A held Never refusal is the pre-S2b bare NoPath: no arm is created.
     assert!(arms.lock().unwrap().get("alice").is_none());
 }
 

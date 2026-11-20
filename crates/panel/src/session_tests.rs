@@ -3748,16 +3748,14 @@ fn walk_status_is_dash_when_no_route() {
 }
 
 #[test]
-fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
+fn picker_walk_zone_policy_defaults_to_global_always_override() {
     let mut session = Session::new();
     hydrate_panel_preferences(&mut session);
     assert_eq!(
         session.ui.nav.danger_level(),
-        frontend_core::DangerLevel::Never
+        frontend_core::DangerLevel::Always
     );
-    assert_eq!(session.ui.nav.danger_level().label(), "Never");
-    assert_eq!(session.walk_find_options().zones, ZoneExempt::NONE);
-    session.route_through_zones = true;
+    assert_eq!(session.ui.nav.danger_level().label(), "Always");
     assert!(session.walk_find_options().zones.is_all());
 }
 

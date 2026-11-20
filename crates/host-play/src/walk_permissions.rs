@@ -11,10 +11,11 @@ use script::native::{PrereqAllow, RiskPolicy, WalkBit, WalkOptions, WalkPermissi
 pub const NET_AVAILABLE: bool = false;
 
 /// Stored global danger-routing level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DangerLevel {
     Never,
     WhenSurvivable,
+    #[default]
     Always,
 }
 
@@ -116,12 +117,13 @@ pub struct WalkGlobals {
 
 impl Default for WalkGlobals {
     fn default() -> Self {
+        let danger_level = DangerLevel::default();
         Self {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
-            allow_danger_zones: false,
-            survivable_routing: false,
+            allow_danger_zones: danger_level == DangerLevel::Always,
+            survivable_routing: danger_level == DangerLevel::WhenSurvivable,
             allow_prereq_dialogue: true,
             allow_quest_start: true,
         }
@@ -995,9 +997,12 @@ mod tests {
             allow_danger_zones: true,
             ..Default::default()
         };
+        let mut globals = WalkGlobals::default();
+        globals.set_danger_level(DangerLevel::Never);
         let navs = Arc::new(Mutex::new(HashMap::from([(
             "alice".into(),
             super::super::NavBot {
+                walk_globals: Some(Arc::new(Mutex::new(globals))),
                 native_permissions: Some(previous),
                 ..Default::default()
             },
@@ -1769,11 +1774,12 @@ mod tests {
         assert!(!defaults.allow_teleports);
         assert!(!defaults.allow_wilderness);
         assert!(!defaults.allow_bank_fetch);
-        assert!(!defaults.allow_danger_zones);
+        assert!(defaults.allow_danger_zones);
         assert!(!defaults.survivable_routing);
         assert!(defaults.allow_prereq_dialogue);
         assert!(defaults.allow_quest_start);
-        assert_eq!(defaults.danger_level(), DangerLevel::Never);
+        assert_eq!(defaults.danger_level(), DangerLevel::Always);
+        assert_eq!(DangerLevel::default(), DangerLevel::Always);
         assert_eq!(
             serde_json::from_value::<WalkGlobals>(serde_json::to_value(defaults).unwrap()).unwrap(),
             defaults
@@ -1788,9 +1794,24 @@ mod tests {
             vault::write_private_file(&root.preferences_file(), bytes).unwrap();
             super::super::local_state::LocalStateService::open_process(root).preferences()
         };
+        // A file with no danger key inherits the Always default without adding a key.
+        let missing = legacy("missing-danger", br#"{"nav":{}}"#);
+        missing.reload().unwrap();
+        assert_eq!(WalkGlobals::read(&missing).unwrap(), defaults);
+        assert!(missing.document().unwrap()["nav"]
+            .get("allow_danger_zones")
+            .is_none());
+
+        // A saved Never remains Never, including in an older preferences file.
         let older = legacy("older", br#"{"nav":{"allow_danger_zones":false}}"#);
         older.reload().unwrap();
-        assert_eq!(WalkGlobals::read(&older).unwrap(), defaults);
+        let saved_never = WalkGlobals::read(&older).unwrap();
+        assert!(!saved_never.allow_danger_zones);
+        assert_eq!(saved_never.danger_level(), DangerLevel::Never);
+        assert_eq!(
+            older.document().unwrap()["nav"]["allow_danger_zones"],
+            false
+        );
 
         // The saved middle level stays intact and the import does not change it.
         let middle = br#"{"nav":{"allow_danger_zones":false,"survivable_routing":true}}"#;
@@ -2232,7 +2253,8 @@ mod held_gate_tests {
         let enforce = |globals: WalkGlobals, script, walk, crossing| {
             globals.danger_decision(script, walk, crossing).enforce
         };
-        let globals = WalkGlobals::default();
+        let mut globals = WalkGlobals::default();
+        globals.set_danger_level(DangerLevel::Never);
         assert!(!enforce(globals, none, WalkOptions::default(), false));
         // A request (a walk option, a card setting or a named crossing)
         // enforces the bound while the net is held.

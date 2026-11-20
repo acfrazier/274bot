@@ -286,9 +286,10 @@ pub fn settings_inject_map(
 pub struct ScenarioNav {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
-    /// Let the runner's own Walk/Follow routes cross danger zones, as the
-    /// **Danger routing: Always** Nav setting does for a user's walks
-    /// (`ZoneExempt::all()`). Default false keeps the product default.
+    /// Let the runner's own Walk/Follow routes cross danger zones, as **Danger
+    /// routing: Always** does for product walks (`ZoneExempt::all()`). This
+    /// scenario overlay intentionally defaults to Never; it does not inherit
+    /// the product preference.
     pub allow_danger_zones: bool,
     pub show_nav_path: bool,
     pub hop_labels: bool,

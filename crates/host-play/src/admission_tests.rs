@@ -1804,7 +1804,7 @@ fn global_override_beats_a_walk_forbid_on_an_undeclared_zone() {
     ));
 }
 
-/// R3 L-C (`nav_fares_live` "refusal armed a walk"): a held default manual
+/// R3 L-C (`nav_fares_live` "refusal armed a walk"): a held Never manual
 /// NoPath is the pre-S2b bare refusal. It must not create an arm for the
 /// focused slot, nor stop the walk an existing arm is following. Enforcing
 /// refusals keep S2b's retained arm refusal.
@@ -1843,11 +1843,9 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
     );
     let mut risk_input = input(99);
     risk_input.pos = tile(0, 1);
-    let held = Admission::manual(
-        crate::WalkGlobals::default().manual_decision(false),
-        risk_input,
-        1,
-    );
+    let mut globals = crate::WalkGlobals::default();
+    globals.set_danger_level(crate::DangerLevel::Never);
+    let held = Admission::manual(globals.manual_decision(false), risk_input, 1);
     assert!(!held.decision.enforce);
     for name in ["alice", "bob"] {
         let refused = crate::arm_walk_on(
@@ -1992,8 +1990,10 @@ fn real_squire_walk(
         },
     )
     .unwrap();
-    // The step's `cross` is the script's request; the override is off.
-    let decision = crate::WalkGlobals::default().danger_decision(
+    // The step's `cross` is the script's request; the global setting is Never.
+    let mut globals = crate::WalkGlobals::default();
+    globals.set_danger_level(crate::DangerLevel::Never);
+    let decision = globals.danger_decision(
         Default::default(),
         Default::default(),
         !exclusions.cross.is_empty(),

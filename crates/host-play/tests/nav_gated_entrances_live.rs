@@ -1423,7 +1423,7 @@ fn run_case(case: EntranceCase) {
         write_receipt(&receipt_path, &receipt);
         assert!(
             default_refused,
-            "the named crossing must not alter default danger admission"
+            "the route must remain blocked without a danger-zone exemption"
         );
     }
     assert!(

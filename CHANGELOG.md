@@ -10,6 +10,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Revision 377 login failures show clearer messages. An outdated-client
   refusal asks you to reload the page instead of suggesting a login-key problem.
 
+### Navigation
+
+- Danger routing now defaults to **Always**, matching compat v1. Walks may
+  cross dangerous monsters without a survival check. Existing saved choices,
+  including **Never**, stay unchanged.
+  Choose **Never** in Nav config or TUI Settings when a low-level bot must avoid
+  aggressive monsters. For example, choose **Never** near the King Scorpion
+  zones by Falador East.
+
 ### Scenario observations
 
 - `ObserveActor` records a selected actor's native pose, public-chat style and
