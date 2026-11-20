@@ -43,6 +43,7 @@ use std::time::{Duration, Instant};
 // own fallback from (`script::native_bank::BANK_PICK_HOST_WINDOW_MS`).
 const BANK_SELECTION_WINDOW: Duration =
     Duration::from_millis(script::native_bank::BANK_PICK_HOST_WINDOW_MS);
+const BANK_SELECTION_TIMEOUT_DETAIL: &str = "bank selection timed out";
 
 const BANK_PICK_JOB_BYTES: usize = 192 * 1024 * 1024;
 const BANK_PICK_FAILURE_BYTES: usize =
@@ -370,6 +371,12 @@ impl PickResult {
         }
     }
 
+    fn timeout_no_candidate() -> Self {
+        let mut result = Self::plain(None, None, PickKind::NoCandidate);
+        result.failure_detail = Some(Arc::from(BANK_SELECTION_TIMEOUT_DETAIL));
+        result
+    }
+
     fn retained_bytes(&self) -> Option<usize> {
         let route = self
             .route
@@ -670,6 +677,18 @@ impl CooperativeBankPickJob {
             self.fallback_started = true;
             self.release_search_storage(false);
             self.search_kind = None;
+            self.stage = BankPickStage::Finish;
+            return;
+        }
+        if self.job.request.native.is_some() && !self.job.request.allow_air_fallback() {
+            self.fallback_started = true;
+            self.release_search_storage(false);
+            self.pending_route = None;
+            self.pending_many_results = None;
+            self.first_target = None;
+            self.first_access_tile = None;
+            self.search_kind = None;
+            self.result = Some(PickResult::timeout_no_candidate());
             self.stage = BankPickStage::Finish;
             return;
         }
@@ -2024,7 +2043,10 @@ impl BankPickRequest {
         if bank_index == u16::MAX {
             return None;
         }
-        if kind == PickKind::AirFallback && self.allow_air_fallback() {
+        if kind == PickKind::AirFallback {
+            if !self.allow_air_fallback() {
+                return None;
+            }
             return Some(SelectedBank {
                 bank_index,
                 access_tile: self.bank_facts().banks()[index].air_tile(),
@@ -2036,7 +2058,6 @@ impl BankPickRequest {
         let access_tile = match (kind, access_tile) {
             (PickKind::Reachable, Some(tile)) if tiles.contains(&tile) => tile,
             (PickKind::NearShortcut, None) if self.allow_air_fallback() => self.route_target(index),
-            (PickKind::AirFallback, None) => self.route_target(index),
             _ => return None,
         };
         Some(SelectedBank {
@@ -2045,8 +2066,7 @@ impl BankPickRequest {
             kind: match kind {
                 PickKind::NearShortcut => NativePickKind::NearShortcut,
                 PickKind::Reachable => NativePickKind::Reachable,
-                PickKind::AirFallback => NativePickKind::AirFallback,
-                PickKind::NoCandidate => return None,
+                PickKind::NoCandidate | PickKind::AirFallback => return None,
             },
             access: Some(Arc::new(access.clone())),
         })
@@ -3359,13 +3379,11 @@ fn expire_bank_pick_deadline(
             let scope = active.scope;
             let result = if job.request.service.is_some() {
                 PickResult::service(ServicePickOutcome::NotSettled)
+            } else if job.request.native.is_some() && !job.request.allow_air_fallback() {
+                PickResult::timeout_no_candidate()
             } else {
                 let index = job.request.first();
-                let kind = if index.is_none()
-                    || (job.request.native.is_some()
-                        && !job.request.allow_air_fallback()
-                        && job.request.target_count == 0)
-                {
+                let kind = if index.is_none() {
                     PickKind::NoCandidate
                 } else {
                     PickKind::AirFallback
@@ -4277,3 +4295,190 @@ mod tests;
 #[cfg(all(test, feature = "js"))]
 #[path = "script_seat_answer_tests.rs"]
 mod seat_answer_tests;
+
+#[cfg(test)]
+mod timeout_opt_in_tests {
+    use super::*;
+    use api::named_banks::NamedBank;
+    use nav_planner::collision::{pack_walk, WorldCollision};
+    use nav_planner::transport::TransportGraph;
+
+    fn tile(x: i32, z: i32) -> WorldTile {
+        WorldTile { x, z, level: 0 }
+    }
+
+    fn world(bank_tile: WorldTile) -> Arc<NavWorld> {
+        let flags = vec![0; 4 * 16 * 16];
+        let (walk, blocked) = pack_walk(&flags);
+        Arc::new(NavWorld::from_parts(
+            WorldCollision {
+                origin: tile(0, 0),
+                width: 16,
+                height: 16,
+                walk,
+                blocked,
+                flags: None,
+            },
+            TransportGraph::default(),
+            vec![nav_planner::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: bank_tile,
+                access: nav_planner::pack::BankAccess::Booth { op: 2 },
+            }],
+        ))
+    }
+
+    fn native_request(allow_air_fallback: bool) -> (script::SlotScript, Arc<BankPickRequest>) {
+        let from = tile(0, 2);
+        let bank_tile = tile(12, 2);
+        let (slot, action) = harness::native_pick_action(
+            vec![NamedBank::new("bank", bank_tile)],
+            from,
+            None,
+            allow_air_fallback,
+        );
+        let authority = action.authority();
+        let script::native::HostEffect::BankPick(request) = action.effect else {
+            panic!("native Select emits BankPick");
+        };
+        let evidence = EvidenceStamp {
+            run: authority.run(),
+            tick: 1,
+            sequence: 1,
+        };
+        let request = harness::request(
+            &world(bank_tile),
+            authority.request_id().get(),
+            1,
+            from,
+            WorldState::default(),
+            false,
+            Some(NativeBankPickInput {
+                request,
+                authority,
+                evidence,
+            }),
+        );
+        assert!(request.target_count > 0, "fixture provides a bank access tile");
+        (slot, request)
+    }
+
+    fn staged_deadline_pick(
+        allow_air_fallback: bool,
+    ) -> (
+        script::SlotScript,
+        Arc<Mutex<HashMap<String, crate::NavBot>>>,
+        Instant,
+    ) {
+        let (slot, request) = native_request(allow_air_fallback);
+        let generation = 1;
+        let deadline = Instant::now();
+        let job = BankPickJob {
+            generation,
+            request: Arc::clone(&request),
+            deadline: Some(deadline),
+        };
+        let (input, preflights) = request
+            .work_input(generation, false, "test")
+            .expect("native bank pick has a bounded worker input");
+        let pending_job = BankPickWorkerJob::for_job("test", job.clone(), input, preflights);
+        let mut bot = crate::NavBot::default();
+        bot.bank_pick.generation = generation;
+        bot.bank_pick.current = Some(ActivePick {
+            job,
+            scope: Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
+            deadline: Some(deadline),
+            ticket: None,
+            cancellation: None,
+            pending_job: Some(Box::new(pending_job)),
+            submitting: false,
+            capacity_sequence: None,
+            owner_result_full: false,
+            last_submission_refusal: None,
+        });
+        let navs = Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])));
+        (slot, navs, deadline)
+    }
+
+    fn expire_native_request(allow_air_fallback: bool) -> script::native_bank::BankPickOutcome {
+        let (mut slot, navs, deadline) = staged_deadline_pick(allow_air_fallback);
+        poll_bank_pick_inner(&navs, "test", deadline, None);
+        let receipt = navs
+            .lock()
+            .unwrap()
+            .get_mut("test")
+            .unwrap()
+            .bank_pick
+            .take_native_receipt()
+            .expect("deadline publishes the native pick receipt")
+            .1;
+        slot.stop();
+        receipt.outcome
+    }
+
+    #[test]
+    fn native_deadline_without_air_fallback_publishes_timeout_no_candidate() {
+        let outcome = expire_native_request(false);
+        let script::native_bank::BankPickOutcome::NoCandidate { detail } = outcome else {
+            panic!("a no-opt-in timeout must not select an air-distance fallback");
+        };
+        assert_eq!(detail.as_ref(), BANK_SELECTION_TIMEOUT_DETAIL);
+    }
+
+    #[test]
+    fn native_deadline_with_air_fallback_preserves_air_fallback() {
+        let outcome = expire_native_request(true);
+        assert!(matches!(
+            outcome,
+            script::native_bank::BankPickOutcome::Selected(selected)
+                if selected.kind == NativePickKind::AirFallback
+        ));
+    }
+
+    #[test]
+    fn selected_rejects_air_fallback_without_opt_in() {
+        let (_slot, request) = native_request(false);
+        assert!(request
+            .selected(Some(0), PickKind::AirFallback, None)
+            .is_none());
+        let (_slot, request) = native_request(true);
+        assert_eq!(
+            request
+                .selected(Some(0), PickKind::AirFallback, None)
+                .expect("opt-in permits the existing fallback")
+                .kind,
+            NativePickKind::AirFallback
+        );
+    }
+
+    #[test]
+    fn worker_timeout_respects_air_fallback_opt_in() {
+        for (allow_air_fallback, expected) in [
+            (false, PickKind::NoCandidate),
+            (true, PickKind::AirFallback),
+        ] {
+            let (_slot, request) = native_request(allow_air_fallback);
+            let (input, preflights) = request
+                .work_input(1, false, "test")
+                .expect("native bank pick has a bounded worker input");
+            let mut worker = CooperativeBankPickJob::new(
+                BankPickJob {
+                    generation: 1,
+                    request,
+                    deadline: None,
+                },
+                input,
+                preflights,
+            );
+            worker.start_timeout_fallback();
+            let result = worker.result.expect("timeout creates a terminal result");
+            assert_eq!(result.kind, expected);
+            if expected == PickKind::NoCandidate {
+                assert_eq!(
+                    result.failure_detail.as_deref(),
+                    Some(BANK_SELECTION_TIMEOUT_DETAIL)
+                );
+            }
+        }
+    }
+}
