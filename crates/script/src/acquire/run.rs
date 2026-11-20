@@ -25,6 +25,8 @@ pub(crate) const MAX_OPEN_ATTEMPTS: u8 = 3;
 // count. A large bank roster stays bounded by it.
 pub(crate) const MAX_ACCESS_RECOVERY_ACTIONS: u8 = 2;
 pub(crate) const MAX_CLOSE_ATTEMPTS: u8 = 3;
+const BANK_RETURN_POSITION_UNAVAILABLE: &str =
+    "player position unavailable for optional bank return check";
 const _: () = assert!(2 * MAX_MEMO <= u8::MAX as usize);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -94,6 +96,16 @@ enum WearStep {
     Skip,
 }
 
+#[derive(Clone, Copy)]
+enum BankReturnTarget {
+    NotRequired,
+    Required(WorldTile),
+    Unavailable,
+}
+
+const _: () =
+    assert!(std::mem::size_of::<BankReturnTarget>() <= std::mem::size_of::<Option<WorldTile>>());
+
 pub struct AcquireRun {
     request: AcquireRequest,
     banks: Arc<NamedBankFacts>,
@@ -107,6 +119,7 @@ pub struct AcquireRun {
     access: Option<Arc<BankStandAccess>>,
     target: Option<WorldTile>,
     walk_retry: Option<WalkRetryState>,
+    bank_return_to: BankReturnTarget,
     withdrawals: Option<Arc<[Withdrawal]>>,
     // Planned and post-purchase steps share one queue, bounded by 2 * MAX_MEMO.
     wears: Option<Box<[WearStep]>>,
@@ -188,6 +201,7 @@ impl AcquireRun {
             access: None,
             target: None,
             walk_retry: None,
+            bank_return_to: BankReturnTarget::NotRequired,
             withdrawals: None,
             wears: None,
             purchases: None,
@@ -242,6 +256,12 @@ impl AcquireRun {
         self
     }
 
+    /// Optional supplies must not strand the owner away from its current stage.
+    pub(crate) fn require_bank_return(&mut self, target: Option<WorldTile>) {
+        self.bank_return_to =
+            target.map_or(BankReturnTarget::Unavailable, BankReturnTarget::Required);
+    }
+
     pub fn poll(
         &mut self,
         tick: &mut NativeTick<'_>,
@@ -258,6 +278,11 @@ impl AcquireRun {
             return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
                 "required bank is not in the bank catalog",
             ))));
+        }
+        if matches!(self.bank_return_to, BankReturnTarget::Unavailable) {
+            return Poll::Ready(Err(
+                self.no_bank_candidate(Some(Arc::from(BANK_RETURN_POSITION_UNAVAILABLE)))
+            ));
         }
         if let Some(block) = &self.block {
             return Poll::Ready(Err(block.action_error()));
@@ -293,11 +318,17 @@ impl AcquireRun {
                         return Poll::Pending;
                     }
                     let Some(from) = tick.cx.snapshot().here() else {
-                        return Poll::Ready(Err(self.attach_last_access_reason(
-                            ActionError::Unavailable(Arc::from(
+                        let error = if matches!(self.bank_return_to, BankReturnTarget::NotRequired)
+                        {
+                            self.attach_last_access_reason(ActionError::Unavailable(Arc::from(
                                 "player position unavailable for bank selection",
-                            )),
-                        )));
+                            )))
+                        } else {
+                            self.no_bank_candidate(Some(Arc::from(
+                                BANK_RETURN_POSITION_UNAVAILABLE,
+                            )))
+                        };
+                        return Poll::Ready(Err(error));
                     };
                     let args = bank::SelectArgs {
                         facts: Arc::clone(&self.banks),
@@ -306,6 +337,10 @@ impl AcquireRun {
                         options: self.request.walk,
                         explicit: self.explicit.clone(),
                         allow_air_fallback: false,
+                        return_to: match self.bank_return_to {
+                            BankReturnTarget::Required(target) => Some(target),
+                            BankReturnTarget::NotRequired | BankReturnTarget::Unavailable => None,
+                        },
                     };
                     if let Some(avoid) = self.access_recovery.as_ref().and_then(|state| state.avoid)
                     {
@@ -1016,13 +1051,18 @@ impl AcquireRun {
         Ok(())
     }
 
-    /// No bank is eligible. The Gatherer (which brings its own access
-    /// recovery) reports the typed receipt's detail and the last access-walk
-    /// failure; every other owner keeps the stable terminal outcome.
+    /// No bank is eligible. Optional return checks and access recovery keep the
+    /// typed refusal detail. Other owners retain their stable terminal outcome.
     fn no_bank_candidate(&mut self, detail: Option<Arc<str>>) -> ActionError {
         self.pick_kind = Some(PickKind::NoCandidate);
         let Some(state) = self.access_recovery.as_ref() else {
-            return ActionError::Unavailable(Arc::from("no eligible bank"));
+            return ActionError::Unavailable(
+                if matches!(self.bank_return_to, BankReturnTarget::NotRequired) {
+                    Arc::from("no eligible bank")
+                } else {
+                    detail.unwrap_or_else(|| Arc::from("no eligible bank"))
+                },
+            );
         };
         let mut message =
             detail.map_or_else(|| String::from("no eligible bank"), |d| d.to_string());

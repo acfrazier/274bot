@@ -3543,6 +3543,7 @@ fn kitchen_select_args() -> KitchenSelectArgs {
         },
         explicit: Some(Arc::from("Selected test bank")),
         allow_air_fallback: false,
+        return_to: None,
     }
 }
 

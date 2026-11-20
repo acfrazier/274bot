@@ -2865,6 +2865,7 @@ mod survival_provisioning {
                     &path.provisioning,
                     None,
                     Some(&path.provisioning.stages[0]),
+                    None,
                 )
             },
         );

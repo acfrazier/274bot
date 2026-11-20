@@ -43,6 +43,8 @@ use std::time::{Duration, Instant};
 // own fallback from (`script::native_bank::BANK_PICK_HOST_WINDOW_MS`).
 const BANK_SELECTION_WINDOW: Duration =
     Duration::from_millis(script::native_bank::BANK_PICK_HOST_WINDOW_MS);
+const BANK_SELECTION_TIMEOUT_DETAIL: &str = "bank selection timed out";
+const BANK_RETURN_FAILURE_DETAIL: &str = "bank return route unavailable";
 
 const BANK_PICK_JOB_BYTES: usize = 192 * 1024 * 1024;
 const BANK_PICK_FAILURE_BYTES: usize =
@@ -283,6 +285,7 @@ struct NativePickContext {
     authority: HostAuthority,
     evidence: EvidenceStamp,
     allow_air_fallback: bool,
+    return_to: Option<WorldTile>,
     prereq_allow: script::native::PrereqAllow,
 }
 
@@ -368,6 +371,12 @@ impl PickResult {
             prereq_gates: None,
             failure_detail: None,
         }
+    }
+
+    fn timeout_no_candidate() -> Self {
+        let mut result = Self::plain(None, None, PickKind::NoCandidate);
+        result.failure_detail = Some(Arc::from(BANK_SELECTION_TIMEOUT_DETAIL));
+        result
     }
 
     fn retained_bytes(&self) -> Option<usize> {
@@ -505,6 +514,7 @@ enum BankPickSearchKind {
     First,
     UnresolvedQuestGates,
     Journal,
+    Return,
 }
 type BankPickTargetResult =
     Result<nav_planner::router::TargetCost, nav_planner::router::TargetError>;
@@ -519,6 +529,21 @@ struct BankPickPreflights {
     fallback: Option<SearchPreflight>,
     diagnosis: Option<SearchPreflight>,
     journal: Option<SearchPreflight>,
+    return_route: Option<SearchPreflight>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+struct BankPickSearchTiming {
+    elapsed: Duration,
+    settled: usize,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+struct BankPickSearchTimings {
+    outbound: Option<BankPickSearchTiming>,
+    return_route: Option<BankPickSearchTiming>,
 }
 
 struct CooperativeBankPickJob {
@@ -546,6 +571,10 @@ struct CooperativeBankPickJob {
     pending_many_results: Option<Box<[BankPickTargetResult]>>,
     result: Option<PickResult>,
     fallback_started: bool,
+    #[cfg(test)]
+    search_started_at: Option<Instant>,
+    #[cfg(test)]
+    search_timings: Option<Arc<parking_lot::Mutex<BankPickSearchTimings>>>,
 }
 impl CooperativeBankPickJob {
     fn new(job: BankPickJob, input: BankPickInput, preflights: BankPickPreflights) -> Self {
@@ -575,6 +604,10 @@ impl CooperativeBankPickJob {
             pending_many_results: None,
             result: None,
             fallback_started: false,
+            #[cfg(test)]
+            search_started_at: None,
+            #[cfg(test)]
+            search_timings: None,
         }
     }
 
@@ -590,6 +623,26 @@ impl CooperativeBankPickJob {
         result
     }
 
+    #[cfg(test)]
+    fn record_search_timing(&mut self, kind: BankPickSearchKind, settled: usize) {
+        let Some(started) = self.search_started_at.take() else {
+            return;
+        };
+        let Some(timings) = &self.search_timings else {
+            return;
+        };
+        let timing = BankPickSearchTiming {
+            elapsed: started.elapsed(),
+            settled,
+        };
+        let mut timings = timings.lock();
+        match kind {
+            BankPickSearchKind::First => timings.outbound = Some(timing),
+            BankPickSearchKind::Return => timings.return_route = Some(timing),
+            _ => {}
+        }
+    }
+
     fn release_search_storage(&mut self, keep_fallback: bool) {
         self.cursor = None;
         self.search_request = None;
@@ -599,7 +652,23 @@ impl CooperativeBankPickJob {
         if !keep_fallback {
             self.search_preflights.fallback = None;
             self.search_preflights.journal = None;
+            self.search_preflights.return_route = None;
         }
+    }
+
+    fn start_return_search(&mut self, from: WorldTile, to: WorldTile) {
+        let preflight = self.search_preflights.return_route.take();
+        self.release_search_storage(false);
+        self.search_preflights.return_route = preflight;
+        self.search_kind = Some(BankPickSearchKind::Return);
+        self.search_request = Some(SearchRequest::Single {
+            from,
+            to,
+            options: self.job.request.return_options(),
+            avoid: Box::default(),
+            max_settles: NODE_BUDGET,
+        });
+        self.stage = BankPickStage::StartSearch;
     }
 
     fn start_fallback_search(&mut self) {
@@ -673,6 +742,18 @@ impl CooperativeBankPickJob {
             self.stage = BankPickStage::Finish;
             return;
         }
+        if self.job.request.native.is_some() && !self.job.request.allow_air_fallback() {
+            self.fallback_started = true;
+            self.release_search_storage(false);
+            self.pending_route = None;
+            self.pending_many_results = None;
+            self.first_target = None;
+            self.first_access_tile = None;
+            self.search_kind = None;
+            self.result = Some(PickResult::timeout_no_candidate());
+            self.stage = BankPickStage::Finish;
+            return;
+        }
         if self.job.request.walk_generation.is_some() {
             self.start_fallback_search();
             return;
@@ -714,6 +795,12 @@ impl CooperativeBankPickJob {
         match kind {
             BankPickSearchKind::Journal => {
                 // The strict NoPath and its detail remain the failure outcome.
+                self.stage = BankPickStage::Finish;
+            }
+            BankPickSearchKind::Return => {
+                let mut result = PickResult::plain(None, None, PickKind::NoCandidate);
+                result.failure_detail = Some(Arc::from(BANK_RETURN_FAILURE_DETAIL));
+                self.result = Some(result);
                 self.stage = BankPickStage::Finish;
             }
             BankPickSearchKind::First => {
@@ -783,6 +870,7 @@ impl CooperativeBankPickJob {
                 }
                 Ok(())
             }
+            BankPickSearchKind::Return => Err(kind),
             BankPickSearchKind::Many
             | BankPickSearchKind::First
             | BankPickSearchKind::UnresolvedQuestGates
@@ -831,7 +919,9 @@ impl CooperativeBankPickJob {
                     }
                 }
             }
-            BankPickSearchKind::Single => unreachable!("single searches have no target array"),
+            BankPickSearchKind::Single | BankPickSearchKind::Return => {
+                unreachable!("single searches have no target array")
+            }
         };
         if let Some(target) = target {
             let targets = self
@@ -888,6 +978,9 @@ impl CooperativeBankPickJob {
                 } else {
                     let mut options = self.job.request.opts;
                     options.allow_teleports = false;
+                    if self.job.request.return_target().is_some() {
+                        options.allow_bank_fetch = false;
+                    }
                     SearchRequest::First {
                         from: self.job.request.from,
                         targets,
@@ -927,13 +1020,17 @@ impl CooperativeBankPickJob {
                     relaxation: GateRelaxation::UnknownOnly,
                 }
             }
-            BankPickSearchKind::Single => unreachable!("single searches have no target array"),
+            BankPickSearchKind::Single | BankPickSearchKind::Return => {
+                unreachable!("single searches have no target array")
+            }
         });
         Ok(())
     }
 
     fn current_preflight(&mut self) -> Option<SearchPreflight> {
-        if self.search_kind == Some(BankPickSearchKind::UnresolvedQuestGates) {
+        if self.search_kind == Some(BankPickSearchKind::Return) {
+            self.search_preflights.return_route.take()
+        } else if self.search_kind == Some(BankPickSearchKind::UnresolvedQuestGates) {
             self.search_preflights.diagnosis.take()
         } else if self.search_kind == Some(BankPickSearchKind::Journal) {
             self.search_preflights.journal.take()
@@ -1035,7 +1132,10 @@ impl CooperativeJob for CooperativeBankPickJob {
                         continue;
                     };
                     let kind = match &request {
-                        SearchRequest::Single { .. } => BankPickSearchKind::Single,
+                        SearchRequest::Single { .. } => self
+                            .search_kind
+                            .filter(|kind| *kind == BankPickSearchKind::Return)
+                            .unwrap_or(BankPickSearchKind::Single),
                         SearchRequest::Many { .. } => BankPickSearchKind::Many,
                         SearchRequest::First { .. } => BankPickSearchKind::First,
                         SearchRequest::UnresolvedQuestGates { .. } => {
@@ -1054,6 +1154,10 @@ impl CooperativeJob for CooperativeBankPickJob {
                         self.search_error(kind);
                         continue;
                     };
+                    #[cfg(test)]
+                    let search_started_at = (self.search_timings.is_some()
+                        && matches!(kind, BankPickSearchKind::First | BankPickSearchKind::Return))
+                    .then(Instant::now);
                     match SearchCursor::new_preflighted(
                         request,
                         self.job.request.lease.clone(),
@@ -1061,6 +1165,10 @@ impl CooperativeJob for CooperativeBankPickJob {
                         preflight,
                     ) {
                         Ok(cursor) => {
+                            #[cfg(test)]
+                            {
+                                self.search_started_at = search_started_at;
+                            }
                             self.cursor = Some(cursor);
                             self.stage = BankPickStage::Search;
                             if let Some(outcome) = self.consume_unit(ctx) {
@@ -1118,6 +1226,10 @@ impl CooperativeJob for CooperativeBankPickJob {
                         }
                         CursorStep::Complete(completion) => {
                             let forward_settled = completion.forward_settled();
+                            #[cfg(test)]
+                            if let Some(kind) = self.search_kind {
+                                self.record_search_timing(kind, forward_settled);
+                            }
                             if self.timeout_fallback_due(Instant::now()) {
                                 drop(completion);
                                 self.start_timeout_fallback();
@@ -1127,6 +1239,18 @@ impl CooperativeJob for CooperativeBankPickJob {
                             let (outcome, state) = completion.into_parts();
                             drop(state);
                             match outcome {
+                                SearchOutcome::Single { route }
+                                    if self.search_kind == Some(BankPickSearchKind::Return) =>
+                                {
+                                    if route.is_err() {
+                                        let mut result =
+                                            PickResult::plain(None, None, PickKind::NoCandidate);
+                                        result.failure_detail =
+                                            Some(Arc::from(BANK_RETURN_FAILURE_DETAIL));
+                                        self.result = Some(result);
+                                    }
+                                    self.stage = BankPickStage::Finish;
+                                }
                                 SearchOutcome::Single { route } => {
                                     let index = self.job.request.first();
                                     let mut result = match route {
@@ -1328,7 +1452,11 @@ impl CooperativeJob for CooperativeBankPickJob {
                                         None,
                                     )
                                 });
-                                self.stage = BankPickStage::Finish;
+                                if let Some(return_to) = self.job.request.return_target() {
+                                    self.start_return_search(access_tile, return_to);
+                                } else {
+                                    self.stage = BankPickStage::Finish;
+                                }
                             }
                         }
                         _ => {
@@ -1440,6 +1568,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                     self.search_preflights.primary = None;
                     self.search_preflights.fallback = None;
                     self.search_preflights.journal = None;
+                    self.search_preflights.return_route = None;
                     self.search_kind = None;
                     self.search_request = None;
                     self.target_buffer = None;
@@ -1541,6 +1670,17 @@ impl BankPickRequest {
             .as_deref()
             .expect("bank request retains named-bank facts")
     }
+    fn return_target(&self) -> Option<WorldTile> {
+        self.native.as_ref().and_then(|native| native.return_to)
+    }
+
+    fn return_options(&self) -> FindOptions {
+        let mut options = self.opts;
+        options.allow_teleports = false;
+        options.allow_bank_fetch = false;
+        options
+    }
+
     fn single_search_request(&self) -> Option<SearchRequest> {
         let index = self.first()?;
         let facts = self.facts.as_deref()?;
@@ -1585,6 +1725,9 @@ impl BankPickRequest {
         if self.native.is_some() {
             let mut options = self.opts;
             options.allow_teleports = false;
+            if self.return_target().is_some() {
+                options.allow_bank_fetch = false;
+            }
             return Some((
                 BankPickSearchKind::First,
                 SearchRequestShape::First {
@@ -1633,6 +1776,19 @@ impl BankPickRequest {
         } else {
             None
         };
+        let return_route = if self.return_target().is_some() {
+            Some(SearchCursor::preflight(
+                SearchRequestShape::Single {
+                    options: self.return_options(),
+                    avoid_capacity: 0,
+                    max_settles: NODE_BUDGET,
+                },
+                &self.lease,
+                &self.state,
+            )?)
+        } else {
+            None
+        };
         let diagnosis = if self.service.is_some() {
             let mut options = self.opts;
             options.allow_teleports = false;
@@ -1652,6 +1808,7 @@ impl BankPickRequest {
         };
         let journal = if self.native.is_some()
             && !route_only
+            && self.return_target().is_none()
             && self
                 .state
                 .establishable
@@ -1742,6 +1899,10 @@ impl BankPickRequest {
             Some(preflight) => Some(phase_charge(preflight)?),
             None => None,
         };
+        let return_charge = match return_route.as_ref() {
+            Some(preflight) => Some(phase_charge(preflight)?),
+            None => None,
+        };
         let journal_charge = match journal.as_ref() {
             Some(preflight) => {
                 let reservation = preflight.reservation();
@@ -1766,9 +1927,14 @@ impl BankPickRequest {
             None => None,
         };
         let mut charge = primary_charge;
-        for additional in [fallback_charge, diagnosis_charge, journal_charge]
-            .into_iter()
-            .flatten()
+        for additional in [
+            fallback_charge,
+            diagnosis_charge,
+            journal_charge,
+            return_charge,
+        ]
+        .into_iter()
+        .flatten()
         {
             if additional.total_bytes()? > charge.total_bytes()? {
                 charge = additional;
@@ -1791,6 +1957,7 @@ impl BankPickRequest {
                 fallback,
                 diagnosis,
                 journal,
+                return_route,
             },
         ))
     }
@@ -2024,7 +2191,10 @@ impl BankPickRequest {
         if bank_index == u16::MAX {
             return None;
         }
-        if kind == PickKind::AirFallback && self.allow_air_fallback() {
+        if kind == PickKind::AirFallback {
+            if !self.allow_air_fallback() {
+                return None;
+            }
             return Some(SelectedBank {
                 bank_index,
                 access_tile: self.bank_facts().banks()[index].air_tile(),
@@ -2036,7 +2206,6 @@ impl BankPickRequest {
         let access_tile = match (kind, access_tile) {
             (PickKind::Reachable, Some(tile)) if tiles.contains(&tile) => tile,
             (PickKind::NearShortcut, None) if self.allow_air_fallback() => self.route_target(index),
-            (PickKind::AirFallback, None) => self.route_target(index),
             _ => return None,
         };
         Some(SelectedBank {
@@ -2045,8 +2214,7 @@ impl BankPickRequest {
             kind: match kind {
                 PickKind::NearShortcut => NativePickKind::NearShortcut,
                 PickKind::Reachable => NativePickKind::Reachable,
-                PickKind::AirFallback => NativePickKind::AirFallback,
-                PickKind::NoCandidate => return None,
+                PickKind::NoCandidate | PickKind::AirFallback => return None,
             },
             access: Some(Arc::new(access.clone())),
         })
@@ -2859,6 +3027,7 @@ fn queue_bank(
         authority: native.authority,
         evidence: native.evidence,
         allow_air_fallback: native.request.allow_air_fallback,
+        return_to: native.request.return_to,
         prereq_allow: prereq_allow
             .expect("native admission captures its original prerequisite grants"),
     });
@@ -3359,13 +3528,11 @@ fn expire_bank_pick_deadline(
             let scope = active.scope;
             let result = if job.request.service.is_some() {
                 PickResult::service(ServicePickOutcome::NotSettled)
+            } else if job.request.native.is_some() && !job.request.allow_air_fallback() {
+                PickResult::timeout_no_candidate()
             } else {
                 let index = job.request.first();
-                let kind = if index.is_none()
-                    || (job.request.native.is_some()
-                        && !job.request.allow_air_fallback()
-                        && job.request.target_count == 0)
-                {
+                let kind = if index.is_none() {
                     PickKind::NoCandidate
                 } else {
                     PickKind::AirFallback
@@ -4277,3 +4444,193 @@ mod tests;
 #[cfg(all(test, feature = "js"))]
 #[path = "script_seat_answer_tests.rs"]
 mod seat_answer_tests;
+
+#[cfg(test)]
+mod timeout_opt_in_tests {
+    use super::*;
+    use api::named_banks::NamedBank;
+    use nav_planner::collision::{pack_walk, WorldCollision};
+    use nav_planner::transport::TransportGraph;
+
+    fn tile(x: i32, z: i32) -> WorldTile {
+        WorldTile { x, z, level: 0 }
+    }
+
+    fn world(bank_tile: WorldTile) -> Arc<NavWorld> {
+        let flags = vec![0; 4 * 16 * 16];
+        let (walk, blocked) = pack_walk(&flags);
+        Arc::new(NavWorld::from_parts(
+            WorldCollision {
+                origin: tile(0, 0),
+                width: 16,
+                height: 16,
+                walk,
+                blocked,
+                flags: None,
+            },
+            TransportGraph::default(),
+            vec![nav_planner::pack::BankStand {
+                name: "Bank booth".into(),
+                tile: bank_tile,
+                access: nav_planner::pack::BankAccess::Booth { op: 2 },
+            }],
+        ))
+    }
+
+    fn native_request(allow_air_fallback: bool) -> (script::SlotScript, Arc<BankPickRequest>) {
+        let from = tile(0, 2);
+        let bank_tile = tile(12, 2);
+        let (slot, action) = harness::native_pick_action(
+            vec![NamedBank::new("bank", bank_tile)],
+            from,
+            None,
+            allow_air_fallback,
+        );
+        let authority = action.authority();
+        let script::native::HostEffect::BankPick(request) = action.effect else {
+            panic!("native Select emits BankPick");
+        };
+        let evidence = EvidenceStamp {
+            run: authority.run(),
+            tick: 1,
+            sequence: 1,
+        };
+        let request = harness::request(
+            &world(bank_tile),
+            authority.request_id().get(),
+            1,
+            from,
+            WorldState::default(),
+            false,
+            Some(NativeBankPickInput {
+                request,
+                authority,
+                evidence,
+            }),
+        );
+        assert!(
+            request.target_count > 0,
+            "fixture provides a bank access tile"
+        );
+        (slot, request)
+    }
+
+    fn staged_deadline_pick(
+        allow_air_fallback: bool,
+    ) -> (
+        script::SlotScript,
+        Arc<Mutex<HashMap<String, crate::NavBot>>>,
+        Instant,
+    ) {
+        let (slot, request) = native_request(allow_air_fallback);
+        let generation = 1;
+        let deadline = Instant::now();
+        let job = BankPickJob {
+            generation,
+            request: Arc::clone(&request),
+            deadline: Some(deadline),
+        };
+        let (input, preflights) = request
+            .work_input(generation, false, "test")
+            .expect("native bank pick has a bounded worker input");
+        let pending_job = BankPickWorkerJob::for_job("test", job.clone(), input, preflights);
+        let mut bot = crate::NavBot::default();
+        bot.bank_pick.generation = generation;
+        bot.bank_pick.current = Some(ActivePick {
+            job,
+            scope: Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
+            deadline: Some(deadline),
+            ticket: None,
+            cancellation: None,
+            pending_job: Some(Box::new(pending_job)),
+            submitting: false,
+            capacity_sequence: None,
+            owner_result_full: false,
+            last_submission_refusal: None,
+        });
+        let navs = Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])));
+        (slot, navs, deadline)
+    }
+
+    fn expire_native_request(allow_air_fallback: bool) -> script::native_bank::BankPickOutcome {
+        let (mut slot, navs, deadline) = staged_deadline_pick(allow_air_fallback);
+        poll_bank_pick_inner(&navs, "test", deadline, None);
+        let receipt = navs
+            .lock()
+            .unwrap()
+            .get_mut("test")
+            .unwrap()
+            .bank_pick
+            .take_native_receipt()
+            .expect("deadline publishes the native pick receipt")
+            .1;
+        slot.stop();
+        receipt.outcome
+    }
+
+    #[test]
+    fn native_deadline_without_air_fallback_publishes_timeout_no_candidate() {
+        let outcome = expire_native_request(false);
+        let script::native_bank::BankPickOutcome::NoCandidate { detail } = outcome else {
+            panic!("a no-opt-in timeout must not select an air-distance fallback");
+        };
+        assert_eq!(detail.as_ref(), BANK_SELECTION_TIMEOUT_DETAIL);
+    }
+
+    #[test]
+    fn native_deadline_with_air_fallback_preserves_air_fallback() {
+        let outcome = expire_native_request(true);
+        assert!(matches!(
+            outcome,
+            script::native_bank::BankPickOutcome::Selected(selected)
+                if selected.kind == NativePickKind::AirFallback
+        ));
+    }
+
+    #[test]
+    fn selected_rejects_air_fallback_without_opt_in() {
+        let (_slot, request) = native_request(false);
+        assert!(request
+            .selected(Some(0), PickKind::AirFallback, None)
+            .is_none());
+        let (_slot, request) = native_request(true);
+        assert_eq!(
+            request
+                .selected(Some(0), PickKind::AirFallback, None)
+                .expect("opt-in permits the existing fallback")
+                .kind,
+            NativePickKind::AirFallback
+        );
+    }
+
+    #[test]
+    fn worker_timeout_respects_air_fallback_opt_in() {
+        for (allow_air_fallback, expected) in [
+            (false, PickKind::NoCandidate),
+            (true, PickKind::AirFallback),
+        ] {
+            let (_slot, request) = native_request(allow_air_fallback);
+            let (input, preflights) = request
+                .work_input(1, false, "test")
+                .expect("native bank pick has a bounded worker input");
+            let mut worker = CooperativeBankPickJob::new(
+                BankPickJob {
+                    generation: 1,
+                    request,
+                    deadline: None,
+                },
+                input,
+                preflights,
+            );
+            worker.start_timeout_fallback();
+            let result = worker.result.expect("timeout creates a terminal result");
+            assert_eq!(result.kind, expected);
+            if expected == PickKind::NoCandidate {
+                assert_eq!(
+                    result.failure_detail.as_deref(),
+                    Some(BANK_SELECTION_TIMEOUT_DETAIL)
+                );
+            }
+        }
+    }
+}

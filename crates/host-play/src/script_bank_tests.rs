@@ -574,6 +574,147 @@ fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bou
 }
 
 #[test]
+fn typed_select_rejects_a_bank_whose_return_requires_unworn_boots() {
+    use nav_planner::transport::{TransportEdge, TransportKind};
+
+    let mut flags = vec![0; 4 * 16 * 16];
+    for z in 0..16 {
+        flags[z * 16 + 6] =
+            CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+    }
+    let (walk, blocked) = pack_walk(&flags);
+    let outbound = TransportEdge {
+        kind: TransportKind::AgilityShortcut,
+        at: tile(5, 8),
+        to: tile(7, 8),
+        takeoff: Some(tile(5, 8)),
+        player_delta: None,
+        loc_id: 42,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        worn_all_req: vec![],
+        forbidden_held: vec![],
+        forbidden_worn: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
+    let inbound = TransportEdge {
+        at: outbound.to,
+        to: outbound.at,
+        takeoff: Some(outbound.to),
+        worn_all_req: vec![3105],
+        ..outbound.clone()
+    };
+    let public = bank("Public", 14, 8);
+    let world = Some(Arc::new(NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0),
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph {
+            at: HashMap::from([(outbound.at, vec![0]), (inbound.at, vec![1])]),
+            edges: vec![outbound, inbound],
+            ..TransportGraph::default()
+        },
+        vec![nav_planner::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: public.tile,
+            access: nav_planner::pack::BankAccess::Booth { op: 2 },
+        }],
+    )));
+    for (held, worn, require_return, selected) in [
+        (false, false, true, false),
+        (true, false, true, false),
+        (false, true, true, true),
+        (false, false, false, true),
+    ] {
+        let banks = vec![public];
+        let (mut slot, action) = native_pick_action(banks.clone(), tile(2, 8), None, false);
+        let authority = action.authority();
+        let script::native::HostEffect::BankPick(mut request) = action.effect else {
+            panic!("Select must emit its typed bank request");
+        };
+        request.return_to = require_return.then_some(tile(2, 8));
+        let mut state = WorldState::empty();
+        state.inventory_ready = true;
+        state.equipment_ready = true;
+        if held {
+            state.inv.insert(3105, 1);
+        }
+        if worn {
+            state.worn.insert(3105);
+        }
+        let state = Arc::new(state);
+        let evidence = EvidenceStamp {
+            run: authority.run(),
+            tick: 1,
+            sequence: 1,
+        };
+        let navs = navs(banks);
+        queue_native_bank_pick_scoped(
+            &navs,
+            "test",
+            api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
+            &world,
+            Some(&state),
+            &GameSnapshot::new(),
+            NativeBankPickInput {
+                request,
+                authority,
+                evidence,
+            },
+            None,
+        );
+        let deadline = Instant::now() + BANK_SELECTION_WINDOW;
+        let (_, receipt) = loop {
+            poll_bank_pick(&navs, "test", Instant::now());
+            if let Some(receipt) = navs
+                .lock()
+                .unwrap()
+                .get_mut("test")
+                .unwrap()
+                .bank_pick
+                .take_native_receipt()
+            {
+                break receipt;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "bounded round-trip selection stalled"
+            );
+            std::thread::yield_now();
+        };
+        if selected {
+            assert!(matches!(
+                &receipt.outcome,
+                BankPickOutcome::Selected(pick) if pick.kind == NativePickKind::Reachable
+            ));
+        } else {
+            assert!(matches!(
+                &receipt.outcome,
+                BankPickOutcome::NoCandidate { detail } if detail.contains("return")
+            ));
+        }
+        assert!(navs.lock().unwrap()["test"].route.is_none());
+        slot.stop();
+    }
+}
+
+#[test]
 fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_immutable() {
     if !api::test_support::game_data_available() {
         return;
@@ -1637,6 +1778,208 @@ mod bank_pick_capture {
         let path = std::env::var_os("BOT_BANK_PICK_CAPTURE_OUT")
             .expect("set BOT_BANK_PICK_CAPTURE_OUT to the capture destination");
         std::fs::write(path, output).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires canonical NAV_PACK_289, NAV_FLAGS_289, and BOT_BANK_PICK_RETURN_PROOF_OUT"]
+    fn canonical_289_edgeville_bank_return_route_selects_within_window() {
+        fn sha256_file(path: &std::path::Path) -> String {
+            use sha2::Digest;
+            use std::io::Read;
+
+            let mut file = std::fs::File::open(path).unwrap();
+            let mut hasher = sha2::Sha256::new();
+            let mut buffer = [0; 64 * 1024];
+            loop {
+                let read = file.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..read]);
+            }
+            format!("{:x}", hasher.finalize())
+        }
+
+        let pack = api::test_support::local_asset_path(
+            "NAV_PACK_289",
+            "",
+            "canonical 289 bank-return proof navpack",
+        )
+        .expect("NAV_PACK_289 must identify the canonical 289 navpack");
+        let flags = api::test_support::local_asset_path(
+            "NAV_FLAGS_289",
+            "",
+            "canonical 289 bank-return proof navflags",
+        )
+        .expect("NAV_FLAGS_289 must identify the canonical 289 navflags");
+        let pack_sha256 = sha256_file(&pack);
+        let flags_sha256 = sha256_file(&flags);
+        assert_eq!(
+            pack_sha256,
+            "946709cf75b3086c348ac295b6147c33f8f1356456979a0518b7f7804ed8f12e"
+        );
+        assert_eq!(
+            flags_sha256,
+            "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
+        );
+
+        let loaded = NavWorld::load_pack(&pack).unwrap();
+        loaded
+            .bind_named_bank_facts(
+                &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+            )
+            .unwrap();
+        let world = Arc::new(loaded);
+        let banks = world.named_bank_facts().unwrap().banks().to_vec();
+        let start = tile(3080, 3472);
+        let return_to = start;
+        let (_slot, action) = native_pick_action(banks, start, Some("Edgeville"), false);
+        let authority = action.authority();
+        let script::native::HostEffect::BankPick(mut native_request) = action.effect else {
+            panic!("the proof must use the production native Select request");
+        };
+        native_request.return_to = Some(return_to);
+        let evidence = EvidenceStamp {
+            run: authority.run(),
+            tick: 1,
+            sequence: 1,
+        };
+        let pick_request = request(
+            &world,
+            authority.request_id().get(),
+            1,
+            start,
+            WorldState::default().with_map_members(true),
+            false,
+            Some(NativeBankPickInput {
+                request: native_request,
+                authority,
+                evidence,
+            }),
+        );
+        assert_eq!(pick_request.return_target(), Some(return_to));
+
+        let queued_at = Instant::now();
+        let deadline = queued_at + super::super::BANK_SELECTION_WINDOW;
+        let (input, preflights) = pick_request
+            .work_input(1, false, "canonical-return-proof")
+            .expect("the real native bank request must be admissible");
+        let job = BankPickJob {
+            generation: 1,
+            request: Arc::clone(&pick_request),
+            deadline: Some(deadline),
+        };
+        let mut worker =
+            BankPickWorkerJob::for_job("canonical-return-proof", job, input, preflights);
+        let search_timings = Arc::new(parking_lot::Mutex::new(
+            super::super::BankPickSearchTimings::default(),
+        ));
+        worker.inner.search_timings = Some(Arc::clone(&search_timings));
+
+        let service = service();
+        let scope = scope();
+        let ticket = {
+            let mut service = service.lock();
+            let identity = service.mint_identity(scope, None).unwrap();
+            let conditions = ProcessConditions::new(service.incarnation());
+            service
+                .try_submit::<BankPickSpec, _>(identity, &input, worker, &conditions)
+                .unwrap_or_else(|refused| {
+                    let (reason, _) = refused.into_parts();
+                    panic!("canonical return-proof submission refused: {reason:?}")
+                })
+        };
+        WorkService::wait_terminal(&service, &ticket)
+            .expect("the scheduled native bank-pick worker must complete");
+        let result = match service.lock().consume(&ticket).unwrap() {
+            Settlement::Completed(result) => result,
+            _ => panic!("the canonical native bank-pick worker did not complete"),
+        };
+        let selected = pick_request.selected(result.index, result.kind, result.access_tile);
+        let total_elapsed = queued_at.elapsed();
+        let bank = result.index.and_then(|index| {
+            pick_request
+                .facts
+                .as_ref()
+                .and_then(|facts| facts.banks().get(index).copied())
+        });
+        let (outbound, return_route) = {
+            let timings = search_timings.lock();
+            (timings.outbound, timings.return_route)
+        };
+        let report = serde_json::json!({
+            "schema": 1,
+            "case": "canonical real 289 native Edgeville bank pick with a return search",
+            "nav_pack": pack.display().to_string(),
+            "nav_pack_sha256": pack_sha256,
+            "nav_flags": flags.display().to_string(),
+            "nav_flags_sha256": flags_sha256,
+            "start_tile": [start.x, start.z, start.level],
+            "selected_bank": bank.map(|bank| bank.name),
+            "bank_tile": bank.map(|bank| [bank.tile.x, bank.tile.z, bank.tile.level]),
+            "bank_access_tile": result.access_tile.map(|tile| [tile.x, tile.z, tile.level]),
+            "return_tile": [return_to.x, return_to.z, return_to.level],
+            "required_items": [],
+            "selected_outcome": format!("{selected:?}"),
+            "result_kind": format!("{:?}", result.kind),
+            "deadline_ms": super::super::BANK_SELECTION_WINDOW.as_millis(),
+            "total_elapsed_ns": total_elapsed.as_nanos(),
+            "deadline_ns": super::super::BANK_SELECTION_WINDOW.as_nanos(),
+            "timer_start": "queued_at starts immediately before work_input and anchors BankPickJob.deadline.",
+            "timer_includes": "work_input preflight, worker construction, WorkService queue submission and scheduling, worker slices, terminal wait, and selected-outcome projection.",
+            "timer_stops": "after terminal consumption and selected-outcome projection, before evidence serialization.",
+            "timer_excludes": "navpack loading, bank-fact binding, native Select construction, and request construction.",
+            "phase_timer_scope": "Each phase runs from immediately before SearchCursor construction through CursorStep::Complete, including worker scheduling between slices.",
+            "settled_source": "SearchCompletion::forward_settled()",
+            "outbound": outbound.map(|timing| serde_json::json!({
+                "elapsed_ns": timing.elapsed.as_nanos(),
+                "settled_nodes": timing.settled,
+            })),
+            "return": return_route.map(|timing| serde_json::json!({
+                "elapsed_ns": timing.elapsed.as_nanos(),
+                "settled_nodes": timing.settled,
+            })),
+        });
+        let output = std::env::var_os("BOT_BANK_PICK_RETURN_PROOF_OUT")
+            .expect("set BOT_BANK_PICK_RETURN_PROOF_OUT to the evidence path");
+        std::fs::write(&output, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        eprintln!("bank_pick_return_route_proof {report}");
+        drop(_slot);
+
+        let outbound = outbound.expect("the outbound First search must complete");
+        let return_route = return_route.expect("the return Single search must complete");
+        assert!(
+            outbound.settled > 0,
+            "the outbound search must settle real nodes"
+        );
+        assert!(
+            return_route.settled > 0,
+            "the return search must settle real nodes"
+        );
+        assert_eq!(result.kind, PickKind::Reachable);
+        assert!(
+            result.access_tile.is_some(),
+            "a reachable result retains its real access tile"
+        );
+        assert_eq!(
+            bank.expect("a successful result retains the selected bank")
+                .name,
+            "Edgeville"
+        );
+        assert_eq!(
+            selected
+                .expect("a successful return check selects a bank")
+                .kind,
+            script::native_bank::PickKind::Reachable
+        );
+        assert!(
+            outbound.elapsed + return_route.elapsed <= total_elapsed,
+            "the sequential search timings must fit inside the whole pick timing"
+        );
+        assert!(
+            total_elapsed < super::super::BANK_SELECTION_WINDOW,
+            "the measured native pick must fit inside the five-second deadline"
+        );
     }
 
     #[test]

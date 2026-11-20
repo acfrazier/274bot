@@ -118,6 +118,7 @@ fn prepare(
                     .next()
                     .map(AsRef::as_ref),
                 Some(&path.provisioning.stages[0]),
+                None,
             )
         });
         let effect = ledger
