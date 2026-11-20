@@ -51,14 +51,15 @@ impl Default for NavSettings {
     /// rs2b0t Path-paint defaults: path red, transport green, click/text
     /// white, collision reserved blue, client cyan, run-alt yellow.
     fn default() -> Self {
+        let walk_globals = frontend_core::WalkGlobals::default();
         Self {
             allow_teleports: false,
             allow_wilderness: false,
             allow_bank_fetch: false,
             allow_prereq_dialogue: true,
             allow_quest_start: true,
-            allow_danger_zones: false,
-            survivable_routing: false,
+            allow_danger_zones: walk_globals.allow_danger_zones(),
+            survivable_routing: walk_globals.survivable_routing(),
             script_scope_notice_ack: false,
             show_nav_path: false,
             hop_labels: true,
@@ -261,7 +262,9 @@ mod tests {
     fn danger_level_keeps_both_saved_bits_and_round_trips() {
         use frontend_core::DangerLevel;
 
-        assert_eq!(NavSettings::default().danger_level(), DangerLevel::Never);
+        assert_eq!(NavSettings::default().danger_level(), DangerLevel::Always);
+        let missing: NavSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(missing.danger_level(), DangerLevel::Always);
         let partial: NavSettings = serde_json::from_str(r#"{"allow_danger_zones":false}"#).unwrap();
         assert_eq!(partial.danger_level(), DangerLevel::Never);
 

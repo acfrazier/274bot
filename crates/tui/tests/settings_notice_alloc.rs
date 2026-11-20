@@ -192,7 +192,7 @@ fn danger_routing_levels_cost_the_same_allocations_to_draw() {
     use frontend_core::{danger_routing_tooltip, DANGER_ROUTING_LEVELS};
     assert_eq!(
         WalkGlobals::default().danger_level(),
-        DANGER_ROUTING_LEVELS[0]
+        frontend_core::DangerLevel::Always
     );
     let mut counts = Vec::new();
     for level in DANGER_ROUTING_LEVELS {

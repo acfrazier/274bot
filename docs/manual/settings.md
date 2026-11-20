@@ -54,10 +54,11 @@ a first run; an unreadable or malformed settings file denies them until the
 next save. The grants are additive: the global switch or the script's own
 grant allows the step, and only a per-request Forbid narrows it.
 
-**Danger routing** decides if a walk may pass dangerous monsters. It has
-three levels. **Never** is the default. A walk avoids dangerous monsters
-unless its script asks to cross them. A requested crossing passes only when
-the chance of death is at most 1%.
+Danger routing has three levels. **Always** is the default and lets every walk
+cross dangerous monsters without a survival check. Choose **Never** when a
+low-level bot should avoid aggressive monsters near the King Scorpion zones by
+Falador East. A script can still request a crossing. With Never, the request
+passes only when the chance of death is at most 1%.
 
 **When survivable** stays selectable and keeps its saved middle-level pair:
 `allow_danger_zones=false` and `survivable_routing=true`. Reading this pair

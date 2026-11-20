@@ -1215,8 +1215,8 @@ freezes manual/scenario movement during script Starting/Running/Paused/
 Stopping, native movement or an existing escape obligation.
 Advisory `assess_walk` never acquires that movement ownership.
 
-Danger routing has three levels: **Never**, the default; **When survivable**;
-and **Always**, the global override. The middle level stores
+Danger routing has three levels: **Never**, **When survivable**, and
+**Always**. **Always** is the default global override. The middle level stores
 `nav.allow_danger_zones=false` and `nav.survivable_routing=true`. A saved
 middle-level pair remains selected when read. Reading it does not rewrite the
 file. If both stored bits are true, **Always** takes precedence.

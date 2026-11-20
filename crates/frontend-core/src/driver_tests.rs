@@ -6565,9 +6565,25 @@ fn saved_settings() -> Vec<Saved> {
             name: "danger",
             setting: S::DangerRouting,
             stage: nothing_staged,
-            command: OperatorCommand::SetDangerLevel(DangerLevel::Always),
-            unchanged: |d| d.models().walk_globals().danger_level() != DangerLevel::Always,
-            changed: |d| d.models().walk_globals().danger_level() == DangerLevel::Always,
+            command: OperatorCommand::SetDangerLevel(DangerLevel::Never),
+            unchanged: |d| {
+                d.models().walk_globals().danger_level() == DangerLevel::Always
+                    && d.session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .danger_level()
+                        == DangerLevel::Always
+            },
+            changed: |d| {
+                d.models().walk_globals().danger_level() == DangerLevel::Never
+                    && d.session()
+                        .play()
+                        .expect("play")
+                        .walk_globals()
+                        .danger_level()
+                        == DangerLevel::Never
+            },
         },
         Saved {
             name: "pause",

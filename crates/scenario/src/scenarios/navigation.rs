@@ -1080,13 +1080,13 @@ pub(crate) fn nav_shantay_scenario() -> Scenario {
                     budget_ticks: 600,
                 },
             },
-            // The default Danger routing refuses the desert walk for the new
-            // level-3 account: Ugthanki (L42) and Desert Wolves (L27) hunt
-            // (`desert.npc` `huntmode=cowardly`,
+            // This scenario's Never routing overlay refuses the desert walk
+            // for the new level-3 account: Ugthanki (L42) and Desert Wolves
+            // (L27) hunt (`desert.npc` `huntmode=cowardly`,
             // `check_nottoostrong=outside_wilderness`) players up to combat
             // 84 and 54. Seed the account's own melee stats to 99 (combat
-            // 113) so the route the cell exercises is the one the product
-            // admits by default, then drain the level-up dialogs.
+            // 113), so neither can hunt it and the route is safe under the
+            // overlay, then drain the level-up dialogs.
             Step {
                 name: "set melee stats to 99 so the desert hunters ignore the account",
                 kind: StepKind::Perform {

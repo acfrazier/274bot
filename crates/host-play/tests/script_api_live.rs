@@ -44,23 +44,11 @@ export function tick(api) {
       site: 'woodcutting.catherby',
       allowTeleports: false,
       allowWilderness: false,
-      __DANGER_OPTION__
     });
     run.then(value => api.log('walk option outcome: ' + JSON.stringify(value)));
   }
 }
 "#;
-
-fn walk_options_source(allow_danger_zones: bool) -> String {
-    WALK_OPTIONS_SOURCE.replace(
-        "__DANGER_OPTION__",
-        if allow_danger_zones {
-            "allowDangerZones: true"
-        } else {
-            ""
-        },
-    )
-}
 
 fn in_walk_target_site(tile: WorldTile) -> bool {
     tile.level == 0
@@ -1800,85 +1788,46 @@ fn script_api_compat_journal_twice() {
     );
 }
 
-fn gather_walk_variant(
-    play: &Play,
-    account: &str,
-    fixture: &Arc<Mutex<Fixture>>,
-    allow_danger_zones: bool,
-) -> Value {
-    let prepared = prepared_native(&walk_options_source(allow_danger_zones));
+fn gather_walk_default(play: &Play, account: &str, fixture: &Arc<Mutex<Fixture>>) -> Value {
+    let prepared = prepared_native(WALK_OPTIONS_SOURCE);
     play.script_start_load(account, prepared.js, prepared.checked, None, vec![])
         .expect("start Load Gather walk-options proof");
 
-    let mut logs = Vec::new();
-    if allow_danger_zones {
-        wait_for(play, account, fixture, Duration::from_secs(300), |_| {
-            fixture.lock().unwrap().walk_arrival.is_some()
-        });
-        let arrival = fixture
-            .lock()
-            .unwrap()
-            .walk_arrival
-            .expect("Gatherer arrived in the real Catherby woodcutting site");
-        let page = play.script_api_live_probe(account);
-        assert_eq!(page["gather"]["phase"], "running");
-        play.script_stop(account);
-        wait_for(play, account, fixture, Duration::from_secs(30), |play| {
-            play.script_state(account) == script::RunState::Idle
-        });
-        no_drops(account);
-        json!({
-            "account": account,
-            "allowDangerZones": true,
-            "allowWilderness": false,
-            "arrival": [arrival.x, arrival.z, arrival.level],
-            "page": page,
-        })
-    } else {
-        wait_for(play, account, fixture, Duration::from_secs(180), |play| {
-            take_logs(play, account, &mut logs);
-            logs.iter()
-                .any(|line| line.starts_with("walk option outcome: "))
-        });
-        let outcome = logged(&logs, "walk option outcome: ");
-        assert_eq!(outcome["kind"], "done");
-        assert_ne!(outcome["value"]["end"], "stopped");
-        assert!(
-            outcome.to_string().to_ascii_lowercase().contains("danger"),
-            "default danger-zone permission must refuse the route: {outcome}"
-        );
-        assert!(
-            fixture.lock().unwrap().walk_arrival.is_none(),
-            "the default session must not enter the Catherby site"
-        );
-        play.script_stop(account);
-        wait_for(play, account, fixture, Duration::from_secs(30), |play| {
-            play.script_state(account) == script::RunState::Idle
-        });
-        no_drops(account);
-        json!({
-            "account": account,
-            "allowDangerZones": "omitted",
-            "allowWilderness": false,
-            "outcome": outcome,
-            "arrival": null,
-        })
-    }
+    wait_for(play, account, fixture, Duration::from_secs(300), |_| {
+        fixture.lock().unwrap().walk_arrival.is_some()
+    });
+    let arrival = fixture
+        .lock()
+        .unwrap()
+        .walk_arrival
+        .expect("the default Danger routing reaches Catherby");
+    let page = play.script_api_live_probe(account);
+    assert_eq!(page["gather"]["phase"], "running");
+    play.script_stop(account);
+    wait_for(play, account, fixture, Duration::from_secs(30), |play| {
+        play.script_state(account) == script::RunState::Idle
+    });
+    no_drops(account);
+    json!({
+        "account": account,
+        "allowDangerZones": "omitted",
+        "allowWilderness": false,
+        "arrival": [arrival.x, arrival.z, arrival.level],
+        "page": page,
+    })
 }
 
 fn gather_walk_options_cell() {
     let (play, account, fixture) = start_fixture_at(false, Some(WALK_START_TILE));
     fixture.lock().unwrap().started = true;
-    let refused = gather_walk_variant(&play, &account, &fixture, false);
-    let allowed = gather_walk_variant(&play, &account, &fixture, true);
+    let default = gather_walk_default(&play, &account, &fixture);
     let account = account.to_owned();
     let receipt = json!({
         "account": account,
         "cell": "script_api_gather_walk_options",
         "site": "woodcutting.catherby",
         "start": [WALK_START_TILE.x, WALK_START_TILE.z, WALK_START_TILE.level],
-        "refused": refused,
-        "allowed": allowed,
+        "default": default,
     });
     save("script-api-gather-walk-options-receipt.json", &receipt);
 }

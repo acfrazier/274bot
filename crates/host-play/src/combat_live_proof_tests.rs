@@ -348,8 +348,8 @@ impl Case {
             Self::M1 | Self::M5 | Self::M5Stop => Ok(IMP_START),
             Self::M0Manual | Self::M0ManualPaused => standable_neighbor(world, M0_START_ANCHOR),
             Self::S2InPlace | Self::S2InPlacePaused => Ok(IMP_START),
-            // COMBAT-S3A-2 operator-authorized hand-in-only staging: the
-            // CB46 seed cannot cross the default danger zones from Ardougne.
+            // COMBAT-S3A-2 operator-authorized hand-in-only staging: this
+            // cell does not qualify the Ardougne approach for a CB46 seed.
             // Start on the Wizard Tower ground floor, not at the farm.
             // wizard_mizgog.rs2:3-19,39-52 still runs both production talks.
             Self::M1HandIn => {
