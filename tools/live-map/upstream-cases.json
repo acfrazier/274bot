@@ -1526,7 +1526,7 @@
         "upstream-no-deploy"
       ],
       "deadline_seconds": 1800,
-      "gate_class": "gating",
+      "gate_class": "non-gating",
       "eligibility": "excluded",
       "reason": "Excluded: the default source loops over two loadouts, creates a separate browser context and a different account for each, and therefore needs multiple accounts even though the newPage call occurs once in the loop body (lines 8-13, 85-93).",
       "family_paths": [

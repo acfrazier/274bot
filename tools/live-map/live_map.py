@@ -17,7 +17,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from unittest.mock import patch
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -422,6 +422,8 @@ def load_upstream_manifest(
             raise MapError(f"{label} gate_class must be gating or non-gating")
         if eligibility not in ("adopted", "excluded"):
             raise MapError(f"{label} eligibility must be adopted or excluded")
+        if eligibility == "excluded" and gate_class != "non-gating":
+            raise MapError(f"{label} excluded cases must be non-gating")
         if not isinstance(reason, str) or (eligibility == "excluded" and not reason.strip()):
             raise MapError(f"{label} reason must explain each exclusion")
         if not isinstance(family_paths, list) or any(
@@ -809,6 +811,17 @@ class LiveMapTests(unittest.TestCase):
                 ),
             ),
         )
+
+    def test_excluded_upstream_case_cannot_be_a_gate(self) -> None:
+        raw = json.loads(json.dumps(asdict(self.upstream_manifest())))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cases.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            load_upstream_manifest(path)
+            raw["cases"][-1]["gate_class"] = "gating"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(MapError, "excluded cases must be non-gating"):
+                load_upstream_manifest(path)
 
     def test_upstream_family_change_selects_adopted_family_as_one_group(self) -> None:
         config = validate_map(
