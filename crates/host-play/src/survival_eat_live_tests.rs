@@ -60,6 +60,48 @@ const CELL_TICK_LIMIT: u32 = 100;
 const POISON_PREFIX_TICKS: u32 = 31;
 const POISON_LINE: &str = "You have been poisoned!";
 
+// KI 33 (a): the route guard's emergency Eat while a level-up page is open.
+// Engine and content references are the Engine-A 289 sources (engine 574f10f,
+// content a6080908).
+const LEVEL_UP_CELL: &str = "L-EAT-LEVEL-UP-PAGE-WALK";
+/// `::advancestat` sets the stat back to level 1 and then adds the XP of the
+/// named level (ClientCheatHandler.ts:486-502). `addXp` sees the level gain
+/// and queues `[advancestat,attack]` on the engine queue (Player.ts:1848-1896),
+/// which runs in the same server tick after client input (World.ts:356,379).
+/// The script opens the level-up chat page and waits on `p_pausebutton`
+/// (levelup.rs2:3,23-55). Any seeded Attack level gives this page.
+const LEVEL_UP_PAGE: &str = "advancestat attack 2";
+/// `~stat_drain hitpoints 8 0` removes 8 current Hitpoints with no hitmark and
+/// no `if_close` (debug_stat.rs2:1-3), so the open page stays open: HP 10/10
+/// becomes 2/10. It is sent only in the first frame that shows the page. In
+/// one server tick the stat update is written before the modal
+/// (World.ts:1107-1123, NetworkPlayer.ts:155-182), and the client can read the
+/// two in different frames: a drain sent with the page showed HP 2 one frame
+/// before the page (KI33A-CELL-1120 run1, tick 33). After the page is seen the
+/// drain is read in a later server tick, so HP 2 cannot arrive before the page.
+const LEVEL_UP_DRAIN: &str = "~stat_drain hitpoints 8 0";
+const LEVEL_UP_HP: i32 = 2;
+const LEVEL_UP_HP_MAX: i32 = 10;
+/// A cheat is read in the next server tick's client input, and the level-up
+/// script runs in that tick's queue pass (World.ts:356,379). The page shows
+/// within this many observed ticks of its send, and HP 2 within this many
+/// observed ticks of the page.
+const LEVEL_UP_SEED_WINDOW: u32 = 3;
+/// A walk click closes chat modals (MoveClickHandler.ts:30-32,
+/// Player.ts:970-973). The traveller sends its next walk only within
+/// Chebyshev 2 of its aim, which the client shows as the minimap flag
+/// (nav-executor traveller/walk.rs:161-170). A player moves at most 2 tiles a
+/// tick (PathingEntity.ts:144-149). The page send to the guard's bite takes at
+/// most 4 observed ticks (page read in 1 tick, seen in 1 more, drain read in
+/// 1, HP seen in 1), so a flag at least 2 * 4 + 2 + 1 tiles away keeps every
+/// walk click out of that span.
+const LEVEL_UP_FLAG_DISTANCE: i32 = 11;
+/// The first poison fire is 30 ticks after onset (poison.rs2:72-75) and runs
+/// `if_close` (poison.rs2:36), which would close the page itself. Seed the page
+/// no later than onset + 20 so the bite, close and heal windows end before
+/// that fire.
+const LEVEL_UP_LATEST_SEED_OFFSET: u32 = 20;
+
 const WALK_ORIGIN: WorldTile = WorldTile {
     x: 3185,
     z: 3440,
@@ -171,6 +213,77 @@ struct SentAction {
     accepted: bool,
 }
 
+/// The level-up cell's two-step seed, driven from the frame hook so each step
+/// goes out in the first frame its condition holds.
+#[derive(Debug, Clone, Copy, Default)]
+enum LevelUpSeed {
+    #[default]
+    Idle,
+    /// Send the page once the walk's minimap flag is far enough away.
+    Armed,
+    /// The page cheat went out; send the drain once the page shows.
+    PageSent {
+        page: SentAction,
+        flag_distance: i32,
+    },
+    Drained {
+        page: SentAction,
+        flag_distance: i32,
+        drain: SentAction,
+    },
+}
+
+impl LevelUpSeed {
+    fn page(self) -> Option<SentAction> {
+        match self {
+            Self::Idle | Self::Armed => None,
+            Self::PageSent { page, .. } | Self::Drained { page, .. } => Some(page),
+        }
+    }
+
+    fn evidence(self) -> Value {
+        let sent = |sent: SentAction| json!({"tick": sent.tick, "accepted": sent.accepted});
+        match self {
+            Self::Idle => json!({"state": "idle"}),
+            Self::Armed => json!({"state": "armed"}),
+            Self::PageSent {
+                page,
+                flag_distance,
+            } => json!({
+                "state": "page-sent",
+                "page": sent(page),
+                "flag_distance": flag_distance,
+            }),
+            Self::Drained {
+                page,
+                flag_distance,
+                drain,
+            } => json!({
+                "state": "drained",
+                "page": sent(page),
+                "flag_distance": flag_distance,
+                "drain": sent(drain),
+            }),
+        }
+    }
+}
+
+/// Chebyshev distance from the player to the client's minimap flag, which
+/// marks the walk's current aim.
+fn walk_flag_distance(snapshot: &GameSnapshot) -> Option<i32> {
+    let flag = snapshot.map_flag()?;
+    let scene = snapshot.scene();
+    let (x, z, _) = snapshot.tile()?;
+    if !scene.available {
+        return None;
+    }
+    Some(
+        (scene.base_x + flag.lx - x)
+            .abs()
+            .max((scene.base_z + flag.lz - z).abs()),
+    )
+}
+
 #[derive(Default)]
 struct LiveObserver {
     snapshot: GameSnapshot,
@@ -181,6 +294,33 @@ struct LiveObserver {
     arrived_tick: Option<u32>,
     action: Option<LiveAction>,
     sent: Option<SentAction>,
+    level_up: LevelUpSeed,
+    /// Kept from the page send onward.
+    page_rows: Vec<PageRow>,
+}
+
+/// One observed change of the level-up cell's page and health state. A row is
+/// kept for every frame whose values differ from the previous row, so a page
+/// or stat packet that arrives in a later frame of the same tick is visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PageRow {
+    tick: u32,
+    hp: i32,
+    lobsters: i32,
+    chat_root: i32,
+    continue_id: i32,
+}
+
+impl PageRow {
+    fn evidence(&self) -> Value {
+        json!({
+            "tick": self.tick,
+            "hp": self.hp,
+            "lobsters": self.lobsters,
+            "chat_root": self.chat_root,
+            "continue_id": self.continue_id,
+        })
+    }
 }
 
 impl LiveObserver {
@@ -192,6 +332,49 @@ impl LiveObserver {
             self.final_login_tick = Some(self.snapshot.tick());
         }
         self.was_ingame = client.ingame;
+        if self.level_up.page().is_some() {
+            let row = PageRow {
+                tick: self.snapshot.tick(),
+                hp: stat_levels(&self.snapshot, 3).map_or(-1, |(_, effective)| effective),
+                lobsters: bank_core_live::count(self.snapshot.inventory(), LOBSTER_ID),
+                chat_root: self.snapshot.modals().chat,
+                continue_id: self.snapshot.chat_continue_component_id(),
+            };
+            if self.page_rows.last() != Some(&row) {
+                self.page_rows.push(row);
+            }
+        }
+    }
+
+    /// Advance the level-up seed by at most one cheat for this frame.
+    fn step_level_up(&mut self, client: &mut client::client::Client) {
+        let tick = self.snapshot.tick();
+        match self.level_up {
+            LevelUpSeed::Armed => {
+                let Some(flag_distance) = walk_flag_distance(&self.snapshot)
+                    .filter(|distance| *distance >= LEVEL_UP_FLAG_DISTANCE)
+                else {
+                    return;
+                };
+                let accepted = interact::cheat(client, LEVEL_UP_PAGE) == client::CheatSend::Sent;
+                self.level_up = LevelUpSeed::PageSent {
+                    page: SentAction { tick, accepted },
+                    flag_distance,
+                };
+            }
+            LevelUpSeed::PageSent {
+                page,
+                flag_distance,
+            } if page.accepted && self.snapshot.modals().chat != -1 => {
+                let accepted = interact::cheat(client, LEVEL_UP_DRAIN) == client::CheatSend::Sent;
+                self.level_up = LevelUpSeed::Drained {
+                    page,
+                    flag_distance,
+                    drain: SentAction { tick, accepted },
+                };
+            }
+            _ => {}
+        }
     }
 }
 
@@ -494,6 +677,7 @@ fn start_cell(
                 let tick = live.snapshot.tick();
                 live.sent = Some(SentAction { tick, accepted });
             }
+            live.step_level_up(client);
         },
     )
     .expect("start one-slot Engine-A Play");
@@ -1354,6 +1538,209 @@ fn evaluate_fruit(
     }
 }
 
+/// KI 33 (a) oracle. Poison onset makes the guard's next-fire damage positive
+/// (survival/math.rs:50-75), so HP 2/10 is at or below the emergency line with
+/// no attacking NPC (guard.rs:690-701, policy.rs:550-569). Without poison the
+/// guard would not bite at a known-zero danger (policy.rs:558-563). Pass needs:
+/// 1. the page open at the first observed HP 2. HP 2 before the page, or after
+///    a page that closed with no guard action, is a fixture failure: the bite
+///    was never due with the page open;
+/// 2. no guard action other than Eat while the page is open, and the first
+///    guard action after the page opened is an accepted lobster Eat, decided
+///    on a snapshot that shows the same page, within three observed ticks of
+///    HP 2;
+/// 3. the page closed within three observed ticks of the Eat. An inventory op
+///    closes the chat modal and aborts its `p_pausebutton` script
+///    (OpHeldHandler.ts:54-56, Player.ts:760-800,970-973);
+/// 4. HP 10/10 and one lobster fewer in the same window: a lobster heals 12
+///    in the tick its packet is read (OpHeldHandler.ts:65-68,
+///    consume.rs2:4,115-134, consume_normal.dbrow:172-179).
+fn evaluate_level_up(
+    poison_seed: u32,
+    page_sent: u32,
+    rows: &[PageRow],
+    frames: &[ObservedFrame],
+    actions: &[Value],
+) -> OracleDecision {
+    if frames.iter().any(|frame| frame.hp == 0) || rows.iter().any(|row| row.hp == 0) {
+        return OracleDecision::Fail("product: account died during the level-up cell".into());
+    }
+    if let Some(frame) = frames.iter().find(|frame| frame.non_poison_damage) {
+        return OracleDecision::Fail(format!(
+            "interference: non-poison hitmark at observed tick {}",
+            frame.tick
+        ));
+    }
+    if let Some(frame) = frames
+        .iter()
+        .find(|frame| frame.tick >= poison_seed && !frame.route_active)
+    {
+        return OracleDecision::Fail(format!(
+            "product: native route guard was not active at observed tick {}",
+            frame.tick
+        ));
+    }
+    let guard = actions
+        .iter()
+        .filter(|action| action["kind"] == json!("guard"))
+        .collect::<Vec<_>>();
+    if guard
+        .iter()
+        .any(|action| ActionSnapshotTick::from_capture(action).0.is_none())
+    {
+        return OracleDecision::Fail(
+            "oracle: captured guard action has no explicit snapshot_tick".into(),
+        );
+    }
+    let eats = eat_actions(actions);
+    let last_tick = rows.last().map_or(page_sent, |row| row.tick);
+    let Some(open_index) = rows.iter().position(|row| row.chat_root != -1) else {
+        if last_tick > page_sent + LEVEL_UP_SEED_WINDOW {
+            return OracleDecision::Fail(format!(
+                "fixture: `{LEVEL_UP_PAGE}` opened no chat page within {LEVEL_UP_SEED_WINDOW} observed ticks"
+            ));
+        }
+        return OracleDecision::Pending;
+    };
+    let open = &rows[open_index];
+    let open_tick = ActionSnapshotTick(Some(open.tick));
+    if let Some(low) = rows[..open_index].iter().find(|row| row.hp == LEVEL_UP_HP) {
+        return OracleDecision::Fail(format!(
+            "fixture: HP {LEVEL_UP_HP} was first visible at tick {} before the level-up page opened at tick {}",
+            low.tick, open.tick
+        ));
+    }
+    if eats.iter().any(|eat| eat.tick < open_tick) {
+        return OracleDecision::Fail("product: food was emitted before the level-up page".into());
+    }
+    let close = rows[open_index..].iter().find(|row| row.chat_root == -1);
+    let first = guard
+        .iter()
+        .find(|action| ActionSnapshotTick::from_capture(action) >= open_tick);
+    // A guard action other than Eat while the page is open is the old
+    // automatic Continue (or another upkeep op) taking the bite's place.
+    if let Some(first) = first.filter(|action| !is_eat(action)) {
+        let tick = ActionSnapshotTick::from_capture(first)
+            .0
+            .unwrap_or_default();
+        if close.is_none_or(|close| tick < close.tick) {
+            return OracleDecision::Fail(format!(
+                "product: the guard sent `{}` at tick {tick} before any Eat while the level-up page was open",
+                first["op"].as_str().unwrap_or("?")
+            ));
+        }
+    }
+    let Some(low_index) = rows.iter().position(|row| row.hp == LEVEL_UP_HP) else {
+        if last_tick > open.tick + LEVEL_UP_SEED_WINDOW {
+            return OracleDecision::Fail(format!(
+                "fixture: `{LEVEL_UP_DRAIN}` did not show HP {LEVEL_UP_HP} within {LEVEL_UP_SEED_WINDOW} observed ticks of the page"
+            ));
+        }
+        return OracleDecision::Pending;
+    };
+    let low = &rows[low_index];
+    if low.chat_root != open.chat_root {
+        // Something other than a guard action (a walk click) closed the page
+        // before the drain: the bite was never due with the page open.
+        return OracleDecision::Fail(format!(
+            "fixture: HP {LEVEL_UP_HP} was first visible at tick {} after the level-up page (root {}, opened at tick {}) had closed",
+            low.tick, open.chat_root, open.tick
+        ));
+    }
+    let Some(first) = first else {
+        if let Some(close) = close {
+            return OracleDecision::Fail(format!(
+                "product: the level-up page opened at tick {} closed at tick {} with no guard action; HP {LEVEL_UP_HP}/{LEVEL_UP_HP_MAX} was visible from tick {}",
+                open.tick, close.tick, low.tick
+            ));
+        }
+        if last_tick > low.tick + 3 {
+            return OracleDecision::Fail(format!(
+                "product: no guard Eat within three observed ticks of HP {LEVEL_UP_HP}/{LEVEL_UP_HP_MAX} at tick {} with the level-up page open",
+                low.tick
+            ));
+        }
+        return OracleDecision::Pending;
+    };
+    let Some(eat_tick) = ActionSnapshotTick::from_capture(first).0 else {
+        return OracleDecision::Fail("oracle: guard action lost its snapshot_tick".into());
+    };
+    if !is_eat(first) {
+        return OracleDecision::Fail(format!(
+            "product: the guard sent `{}` at tick {eat_tick} after the level-up page closed and before any Eat",
+            first["op"].as_str().unwrap_or("?")
+        ));
+    }
+    let eat_chat = first["snapshot"]["roots"]["chat"].as_i64();
+    if eat_chat != Some(i64::from(open.chat_root)) {
+        return OracleDecision::Fail(format!(
+            "product: the guard Eat at tick {eat_tick} was decided without the level-up page (chat root {eat_chat:?}, page {})",
+            open.chat_root
+        ));
+    }
+    if eat_tick < low.tick || eat_tick > low.tick + 3 {
+        return OracleDecision::Fail(format!(
+            "product: the guard Eat at tick {eat_tick} is outside ticks {}..={} after HP {LEVEL_UP_HP}",
+            low.tick,
+            low.tick + 3
+        ));
+    }
+    let eat_at = ActionSnapshotTick(Some(eat_tick));
+    let Some(eat) = eats.iter().find(|eat| eat.tick == eat_at) else {
+        return OracleDecision::Fail("oracle: guard Eat has no stat or inventory snapshot".into());
+    };
+    if !eat.accepted
+        || eat.source != "guard"
+        || eat.hp_before != LEVEL_UP_HP
+        || eat.hp_max != LEVEL_UP_HP_MAX
+        || eat.lobsters_before != 5
+    {
+        return OracleDecision::Fail(format!("product: invalid native guard eat action: {eat:?}"));
+    }
+    if eats
+        .iter()
+        .filter(|eat| eat.tick <= ActionSnapshotTick(Some(eat_tick + 3)))
+        .count()
+        > 1
+    {
+        return OracleDecision::Fail("product: multiple bites followed HP 2".into());
+    }
+    let window_over = last_tick > eat_tick + 3;
+    match close {
+        Some(close) if (eat_tick..=eat_tick + 3).contains(&close.tick) => {}
+        Some(close) => {
+            return OracleDecision::Fail(format!(
+                "product: the level-up page closed at tick {} outside ticks {eat_tick}..={} of the Eat",
+                close.tick,
+                eat_tick + 3
+            ));
+        }
+        None if window_over => {
+            return OracleDecision::Fail(
+                "product: the level-up page stayed open three observed ticks after the guard Eat"
+                    .into(),
+            );
+        }
+        None => return OracleDecision::Pending,
+    }
+    let healed = rows.iter().any(|row| {
+        row.tick > eat_tick
+            && row.tick <= eat_tick + 3
+            && row.hp == LEVEL_UP_HP_MAX
+            && row.lobsters == eat.lobsters_before - 1
+    });
+    if healed {
+        OracleDecision::Pass
+    } else if window_over {
+        OracleDecision::Fail(
+            "product: the guard Eat did not heal to full HP and use one lobster within three observed ticks"
+                .into(),
+        )
+    } else {
+        OracleDecision::Pending
+    }
+}
+
 fn evaluate_combat(
     seed_tick: u32,
     frames: &[ObservedFrame],
@@ -1717,18 +2104,7 @@ fn run_walk_case(case: EatCase, fruit_delay: bool) {
         match decision {
             OracleDecision::Pending => {}
             OracleDecision::Pass => passed = true,
-            OracleDecision::Fail(reason) => {
-                let class = if reason.starts_with("interference:") {
-                    "interference"
-                } else if reason.starts_with("fixture:") {
-                    "fixture"
-                } else if reason.starts_with("oracle:") {
-                    "oracle"
-                } else {
-                    "product"
-                };
-                failure = Some((class, reason));
-            }
+            OracleDecision::Fail(reason) => failure = Some((failure_class(&reason), reason)),
         }
         let walk = walk_state.lock();
         if failure.is_none() && walk.start_error.is_some() {
@@ -1774,6 +2150,241 @@ fn run_walk_case(case: EatCase, fruit_delay: bool) {
         passed,
         "{} failed: {}; receipt={}",
         case.name(),
+        failure.map_or_else(|| "no passing receipt".to_owned(), |(_, reason)| reason),
+        receipt_path.display()
+    );
+}
+
+fn failure_class(reason: &str) -> &'static str {
+    if reason.starts_with("interference:") {
+        "interference"
+    } else if reason.starts_with("fixture:") {
+        "fixture"
+    } else if reason.starts_with("oracle:") {
+        "oracle"
+    } else {
+        "product"
+    }
+}
+
+/// KI 33 (a): a native protected walk is poisoned at HP 10/10 (`~poison 27`
+/// runs `if_close` first, cheat_other.rs2:1-3, so no page is open then). After
+/// the poison line, and when the walk's next click is far off, the level-up
+/// page opens; in the first frame that shows it, HP drops to 2. The guard must
+/// eat through the open page; the page must then close and HP rise.
+fn run_level_up_page_case() {
+    let cell = start_cell(LEVEL_UP_CELL, FULL_HP_SEED, full_hp_seed_ready, WALK_ORIGIN);
+    let mut frames = Vec::new();
+    let mut failure = None;
+    let mut passed = false;
+    let setup_tick = match wait_for_destination(&cell) {
+        Ok(tick) => tick,
+        Err(error) => {
+            failure = Some(("fixture", error));
+            0
+        }
+    };
+    let walk_state = Arc::new(Mutex::new(WalkState::default()));
+    let mut poison_seed = None;
+    let mut poison_send = None;
+    let mut poison_scheduled = false;
+    let mut level_up_armed_since = None;
+    if failure.is_none() {
+        {
+            let live = cell.live.lock();
+            combat_proof::record_start_baseline(&cell.account, &live.snapshot);
+        }
+        let script_start = cell.play.script_start_handle().start_test_script(
+            &cell.account,
+            Box::new(NativeWalkScript {
+                state: Arc::clone(&walk_state),
+                handle: None,
+            }),
+            None,
+        );
+        match script_start {
+            Ok(_) => cell.play.wake(&cell.account),
+            Err(error) => {
+                failure = Some(("product", format!("native Walk did not start: {error}")))
+            }
+        }
+    }
+
+    let deadline = Instant::now() + WALK_CELL_WALL_LIMIT;
+    let mut last_tick = None;
+    while failure.is_none() && !passed {
+        if Instant::now() >= deadline {
+            failure = Some((
+                "fixture",
+                format!("wall watchdog expired after {WALK_CELL_WALL_LIMIT:?}"),
+            ));
+            break;
+        }
+        let status = cell
+            .play
+            .statuses()
+            .into_iter()
+            .find(|status| status.username == cell.account);
+        let route = route_sample(&cell.play, &cell.account);
+        let Some(status) = status else {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        };
+        let Some(frame) = sample_frame(&cell, status.condition, route.as_ref()) else {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        };
+        let tick = frame.tick;
+        let actions = capture_sample(&cell.capture, frame, &mut last_tick, &mut frames);
+        if poison_seed.is_none() && !poison_scheduled && {
+            let live = cell.live.lock();
+            walk_poison_seed_ready(
+                live.final_login_tick,
+                tick,
+                route.as_ref().is_some_and(RouteSample::active),
+                live.snapshot
+                    .tile()
+                    .is_some_and(|tile| tile != (WALK_ORIGIN.x, WALK_ORIGIN.z, WALK_ORIGIN.level)),
+            )
+        } {
+            cell.live.lock().action = Some(LiveAction::Poison);
+            poison_scheduled = true;
+        }
+        if let Some(sent) = cell.live.lock().sent.take() {
+            poison_send = Some(sent);
+            if sent.accepted {
+                poison_seed = Some(sent.tick);
+            } else {
+                failure = Some((
+                    "fixture",
+                    format!("~poison 27 was refused at tick {}", sent.tick),
+                ));
+            }
+        }
+        if poison_seed.is_some() && level_up_armed_since.is_none() {
+            if let Some((onset_tick, since)) = onset(&frames) {
+                let onset_frame = frames
+                    .iter()
+                    .find(|frame| frame.tick == onset_tick)
+                    .expect("onset frame");
+                let mut live = cell.live.lock();
+                let chat_root = live.snapshot.modals().chat;
+                if !onset_frame.poison_line
+                    || onset_frame.hp != LEVEL_UP_HP_MAX
+                    || onset_frame.hp_max != LEVEL_UP_HP_MAX
+                    || chat_root != -1
+                {
+                    failure = Some((
+                        "fixture",
+                        format!(
+                            "poison onset did not match line, HP 10/10 and no chat page: line={}, hp={}/{}, chat_root={chat_root}",
+                            onset_frame.poison_line, onset_frame.hp, onset_frame.hp_max
+                        ),
+                    ));
+                } else {
+                    live.level_up = LevelUpSeed::Armed;
+                    level_up_armed_since = Some(since);
+                }
+            }
+        }
+        let level_up = cell.live.lock().level_up;
+        match (level_up, level_up_armed_since) {
+            (LevelUpSeed::Armed, Some(since)) if tick > since + LEVEL_UP_LATEST_SEED_OFFSET => {
+                failure = Some((
+                    "fixture",
+                    format!(
+                        "no walk flag {LEVEL_UP_FLAG_DISTANCE} or more tiles away by poison onset {since} + {LEVEL_UP_LATEST_SEED_OFFSET}"
+                    ),
+                ));
+            }
+            (LevelUpSeed::PageSent { page, .. } | LevelUpSeed::Drained { page, .. }, _)
+                if !page.accepted =>
+            {
+                failure = Some((
+                    "fixture",
+                    format!("`{LEVEL_UP_PAGE}` was refused at tick {}", page.tick),
+                ));
+            }
+            (LevelUpSeed::Drained { drain, .. }, _) if !drain.accepted => {
+                failure = Some((
+                    "fixture",
+                    format!("`{LEVEL_UP_DRAIN}` was refused at tick {}", drain.tick),
+                ));
+            }
+            _ => {}
+        }
+        if let Some(seed) = poison_seed {
+            if tick.saturating_sub(seed) > CELL_TICK_LIMIT {
+                failure = Some((
+                    "product",
+                    format!("100 observed-tick oracle bound expired at tick {tick}"),
+                ));
+            }
+        }
+        if failure.is_none() {
+            if let (Some(poison), Some(page)) = (poison_seed, level_up.page()) {
+                let rows = cell.live.lock().page_rows.clone();
+                match evaluate_level_up(poison, page.tick, &rows, &frames, &actions) {
+                    OracleDecision::Pending => {}
+                    OracleDecision::Pass => passed = true,
+                    OracleDecision::Fail(reason) => {
+                        failure = Some((failure_class(&reason), reason))
+                    }
+                }
+            }
+        }
+        let walk = walk_state.lock();
+        if failure.is_none() && walk.start_error.is_some() {
+            failure = Some(("product", walk.start_error.clone().unwrap_or_default()));
+        }
+        if failure.is_none() && walk.receipt.is_some() && !passed && poison_seed.is_some() {
+            failure = Some((
+                "product",
+                format!(
+                    "native walk ended before the level-up oracle passed: {:?}",
+                    walk.receipt
+                ),
+            ));
+        }
+        drop(walk);
+        if failure.is_none() && !passed && status.condition.hp == 0 {
+            failure = Some(("product", format!("account died at observed tick {tick}")));
+        }
+        if failure.is_none() && !passed {
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    cell.play.script_stop(&cell.account);
+    let mut receipt = walk_receipt(
+        &cell,
+        EatCase::FullHp,
+        setup_tick,
+        poison_send,
+        &frames,
+        failure
+            .as_ref()
+            .map(|(class, reason)| (*class, reason.clone())),
+        &walk_state,
+    );
+    receipt["cell"] = json!(LEVEL_UP_CELL);
+    receipt["known_issue"] = json!("walk-guard-dialogue-and-door-tick (a)");
+    let live = cell.live.lock();
+    receipt["level_up_seed"] = json!({
+        "commands": [LEVEL_UP_PAGE, LEVEL_UP_DRAIN],
+        "flag_distance_min": LEVEL_UP_FLAG_DISTANCE,
+        "armed_at_onset_since": level_up_armed_since,
+        "seed": live.level_up.evidence(),
+    });
+    receipt["page_rows"] = json!(live
+        .page_rows
+        .iter()
+        .map(PageRow::evidence)
+        .collect::<Vec<_>>());
+    drop(live);
+    let receipt_path = write_receipt(&cell.evidence, &receipt);
+    assert!(
+        passed,
+        "{LEVEL_UP_CELL} failed: {}; receipt={}",
         failure.map_or_else(|| "no passing receipt".to_owned(), |(_, reason)| reason),
         receipt_path.display()
     );
@@ -2062,6 +2673,12 @@ fn live_survival_eat_full_hp_native_walk() {
 #[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
 fn live_survival_strange_fruit_after_bite() {
     run_walk_case(EatCase::FullHp, true);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
+fn live_survival_eat_through_level_up_page_native_walk() {
+    run_level_up_page_case();
 }
 
 #[cfg(feature = "js")]
@@ -2924,6 +3541,245 @@ mod oracle_tests {
         assert!(matches!(
             evaluate_combat(99, &dead, &[eat], &attacks),
             OracleDecision::Fail(reason) if reason.contains("died")
+        ));
+    }
+
+    const PAGE_ROOT: i32 = 6206;
+
+    fn page_row(tick: u32, hp: i32, lobsters: i32, chat_root: i32) -> PageRow {
+        PageRow {
+            tick,
+            hp,
+            lobsters,
+            chat_root,
+            continue_id: if chat_root == -1 { -1 } else { chat_root + 3 },
+        }
+    }
+
+    fn guard_action(op: &str, tick: u32, hp: i32, lobsters: i32, chat_root: i32) -> Value {
+        json!({
+            "kind": "guard", "op": op, "item": (op == "eat").then_some("Lobster"),
+            "snapshot_tick": tick, "accepted": true,
+            "snapshot": {
+                "stats": [{"index": 3, "effective": hp, "base": 10}],
+                "inventory": [{"id": LOBSTER_ID, "count": lobsters}],
+                "roots": {"chat": chat_root},
+            },
+        })
+    }
+
+    /// Page cheat sent at 101, page shown at 102 (HP 10), HP 2 at 103 with the
+    /// page, Eat decided on that snapshot, page closed and HP 10 with four
+    /// lobsters at 104.
+    fn level_up_receipt() -> (Vec<ObservedFrame>, Vec<PageRow>, Vec<Value>) {
+        (
+            vec![onset_frame(100, 10, 10)],
+            vec![
+                page_row(101, 10, 5, -1),
+                page_row(102, 10, 5, PAGE_ROOT),
+                page_row(103, 2, 5, PAGE_ROOT),
+                page_row(104, 10, 4, -1),
+                page_row(107, 10, 4, -1),
+            ],
+            vec![guard_action("eat", 103, 2, 5, PAGE_ROOT)],
+        )
+    }
+
+    fn level_up_failure(rows: &[PageRow], actions: &[Value]) -> String {
+        let (frames, _, _) = level_up_receipt();
+        match evaluate_level_up(69, 101, rows, &frames, actions) {
+            OracleDecision::Fail(reason) => reason,
+            other => panic!("expected a failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn level_up_oracle_passes_an_eat_through_the_open_page() {
+        let (frames, rows, actions) = level_up_receipt();
+        assert_eq!(
+            evaluate_level_up(69, 101, &rows, &frames, &actions),
+            OracleDecision::Pass
+        );
+        // Page and HP 2 in one snapshot is also a valid seed.
+        let same_tick = vec![
+            page_row(101, 10, 5, -1),
+            page_row(102, 2, 5, PAGE_ROOT),
+            page_row(103, 10, 4, -1),
+            page_row(106, 10, 4, -1),
+        ];
+        assert_eq!(
+            evaluate_level_up(
+                69,
+                101,
+                &same_tick,
+                &frames,
+                &[guard_action("eat", 102, 2, 5, PAGE_ROOT)]
+            ),
+            OracleDecision::Pass
+        );
+    }
+
+    #[test]
+    fn level_up_oracle_waits_inside_the_observation_windows() {
+        let (frames, rows, actions) = level_up_receipt();
+        assert_eq!(
+            evaluate_level_up(69, 101, &rows[..2], &frames, &[]),
+            OracleDecision::Pending
+        );
+        assert_eq!(
+            evaluate_level_up(69, 101, &rows[..3], &frames, &[]),
+            OracleDecision::Pending
+        );
+        assert_eq!(
+            evaluate_level_up(69, 101, &rows[..3], &frames, &actions),
+            OracleDecision::Pending
+        );
+    }
+
+    #[test]
+    fn level_up_oracle_rejects_the_old_continue_before_the_eat() {
+        // Guard before df1a50cda: Continue on the first snapshot with the page,
+        // so the page closes before the drain and the Eat comes after it.
+        let rows = vec![
+            page_row(101, 10, 5, -1),
+            page_row(102, 10, 5, PAGE_ROOT),
+            page_row(103, 2, 5, -1),
+            page_row(104, 10, 4, -1),
+            page_row(107, 10, 4, -1),
+        ];
+        let actions = vec![
+            guard_action("close-dialogue", 102, 10, 5, PAGE_ROOT),
+            guard_action("eat", 103, 2, 5, -1),
+        ];
+        let reason = level_up_failure(&rows, &actions);
+        assert!(
+            reason.starts_with("product:") && reason.contains("`close-dialogue` at tick 102"),
+            "{reason}"
+        );
+        // The same Continue with HP 2 already visible is the same failure.
+        let late_continue = vec![
+            guard_action("close-dialogue", 103, 2, 5, PAGE_ROOT),
+            guard_action("eat", 104, 2, 5, -1),
+        ];
+        let (_, rows, _) = level_up_receipt();
+        let reason = level_up_failure(&rows, &late_continue);
+        assert!(reason.contains("`close-dialogue` at tick 103"), "{reason}");
+    }
+
+    #[test]
+    fn level_up_oracle_rejects_a_missing_late_or_pageless_eat() {
+        let (_, rows, _) = level_up_receipt();
+        let closed = level_up_failure(&rows, &[]);
+        assert!(
+            closed.starts_with("product:")
+                && closed.contains("closed at tick 104 with no guard action"),
+            "{closed}"
+        );
+        let open_rows = vec![
+            page_row(101, 10, 5, -1),
+            page_row(102, 10, 5, PAGE_ROOT),
+            page_row(103, 2, 5, PAGE_ROOT),
+            page_row(107, 2, 5, PAGE_ROOT),
+        ];
+        let missing = level_up_failure(&open_rows, &[]);
+        assert!(
+            missing.starts_with("product:") && missing.contains("no guard Eat within three"),
+            "{missing}"
+        );
+        let pageless = level_up_failure(&rows, &[guard_action("eat", 103, 2, 5, -1)]);
+        assert!(
+            pageless.contains("decided without the level-up page"),
+            "{pageless}"
+        );
+        let late_rows = vec![
+            page_row(101, 10, 5, -1),
+            page_row(102, 10, 5, PAGE_ROOT),
+            page_row(103, 2, 5, PAGE_ROOT),
+            page_row(107, 2, 5, PAGE_ROOT),
+            page_row(108, 10, 4, -1),
+        ];
+        let late = level_up_failure(&late_rows, &[guard_action("eat", 107, 2, 5, PAGE_ROOT)]);
+        assert!(late.contains("outside ticks 103..=106"), "{late}");
+        let early = level_up_failure(
+            &rows,
+            &[
+                guard_action("eat", 100, 10, 5, -1),
+                guard_action("eat", 103, 2, 5, PAGE_ROOT),
+            ],
+        );
+        assert!(early.contains("before the level-up page"), "{early}");
+    }
+
+    #[test]
+    fn level_up_oracle_rejects_a_page_that_stays_open_or_no_heal() {
+        let stays_open = vec![
+            page_row(101, 10, 5, -1),
+            page_row(102, 10, 5, PAGE_ROOT),
+            page_row(103, 2, 5, PAGE_ROOT),
+            page_row(104, 10, 4, PAGE_ROOT),
+            page_row(107, 10, 4, PAGE_ROOT),
+        ];
+        let open = level_up_failure(&stays_open, &[guard_action("eat", 103, 2, 5, PAGE_ROOT)]);
+        assert!(open.contains("stayed open"), "{open}");
+        let no_heal = vec![
+            page_row(101, 10, 5, -1),
+            page_row(102, 10, 5, PAGE_ROOT),
+            page_row(103, 2, 5, PAGE_ROOT),
+            page_row(104, 2, 5, -1),
+            page_row(107, 2, 5, -1),
+        ];
+        let unhealed = level_up_failure(&no_heal, &[guard_action("eat", 103, 2, 5, PAGE_ROOT)]);
+        assert!(unhealed.contains("did not heal"), "{unhealed}");
+    }
+
+    #[test]
+    fn level_up_oracle_classifies_seed_order_and_interference_as_non_product() {
+        let (frames, rows, actions) = level_up_receipt();
+        // KI33A-CELL-1120 run1: HP 2 one frame before the page in tick 33.
+        let drop_first = vec![
+            page_row(32, 10, 5, -1),
+            page_row(33, 2, 5, -1),
+            page_row(33, 2, 5, 6247),
+        ];
+        let order = match evaluate_level_up(
+            31,
+            32,
+            &drop_first,
+            &frames,
+            &[guard_action("eat", 33, 2, 5, -1)],
+        ) {
+            OracleDecision::Fail(reason) => reason,
+            other => panic!("expected a failure, got {other:?}"),
+        };
+        assert!(order.starts_with("fixture:"), "{order}");
+        // A walk click closed the page before the drain was read.
+        let walk_closed = vec![
+            page_row(101, 10, 5, -1),
+            page_row(102, 10, 5, PAGE_ROOT),
+            page_row(103, 10, 5, -1),
+            page_row(104, 2, 5, -1),
+        ];
+        let closed = level_up_failure(&walk_closed, &[guard_action("eat", 104, 2, 5, -1)]);
+        assert!(closed.starts_with("fixture:"), "{closed}");
+        let no_page = vec![page_row(101, 10, 5, -1), page_row(105, 10, 5, -1)];
+        assert!(level_up_failure(&no_page, &[]).starts_with("fixture:"));
+        let no_drain = vec![
+            page_row(101, 10, 5, -1),
+            page_row(102, 10, 5, PAGE_ROOT),
+            page_row(106, 10, 5, PAGE_ROOT),
+        ];
+        assert!(level_up_failure(&no_drain, &[]).starts_with("fixture:"));
+        let mut hit = frames.clone();
+        hit[0].non_poison_damage = true;
+        assert!(matches!(
+            evaluate_level_up(69, 101, &rows, &hit, &actions),
+            OracleDecision::Fail(reason) if reason.starts_with("interference:")
+        ));
+        let mut inactive = frames;
+        inactive[0].route_active = false;
+        assert!(matches!(
+            evaluate_level_up(69, 101, &rows, &inactive, &actions),
+            OracleDecision::Fail(reason) if reason.contains("route guard was not active")
         ));
     }
 }

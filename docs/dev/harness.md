@@ -1433,6 +1433,27 @@ A late policy change produces a classified fixture failure. The receipt is
 written before the final assertion. Receipts include `commit` and
 `worktree_dirty`, so an uncommitted mutation is not reported as clean source.
 
+## Level-up page Eat cell
+
+`survival_eat_live_tests::live_survival_eat_through_level_up_page_native_walk`
+(map cell `host.survival-eat-level-up-page`) runs with the same inputs as the
+survival fruit cells against Engine A at 600 ms. A native protected walk is
+poisoned at HP 10/10 with five lobsters. After the poison line, when the
+walk's minimap flag is at least 11 tiles away (so no walk click, which closes
+chat pages, can come in the next four ticks), the cell sends
+`advancestat attack 2` (the level-up page). In the first frame that shows the
+page it sends `~stat_drain hitpoints 8 0` (HP 2/10). Sending both together is
+not used: the engine writes the stat update before the page in one tick, and
+the client can show HP 2 one frame before the page. No NPC attacks: the poison
+onset alone puts HP 2 under the guard's emergency line. The cell passes only
+when the first guard action after the page opens is a lobster Eat decided on a
+snapshot that shows the page, within three observed ticks of HP 2; the page
+then closes and HP returns to 10 with one lobster used, each within three
+observed ticks of the Eat. A guard Continue or other guard action before the
+Eat while the page is open, an Eat decided without the page, or no Eat fails
+as a product defect. HP 2 seen without the page open fails as a fixture
+defect. The receipt keeps every observed page and HP change in `page_rows`.
+
 ## JS API v2 checks
 
 ### Declarations and sample

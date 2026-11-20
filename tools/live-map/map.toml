@@ -1397,6 +1397,19 @@ cells = [
   "host.walk-no-route-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=47594 WORLD_HTTP_PORT=3080 WORLD_ENGINE_DIR=${BOT_ENGINE_DIR:?} WORLD_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked --release -p host-play --features live-harness,test-support,live-probe --test walk_no_route_live -- --ignored --exact live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_ticks --nocapture --test-threads=1",
 ]
 
+# KI 33 (a): the route guard's emergency Eat goes out while a level-up page is
+# open, then the page closes and HP rises. Poison onset and a drained HP make
+# the bite due with no attacking NPC; see survival_eat_live_tests.rs.
+[[cover]]
+globs = [
+  "crates/script/src/combat/guard.rs",
+  "crates/host-play/src/script_walk.rs",
+  "crates/host-play/src/survival_eat_live_tests.rs",
+]
+cells = [
+  "host.survival-eat-level-up-page|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib survival_eat_live_tests::live_survival_eat_through_level_up_page_native_walk -- --ignored --exact --nocapture --test-threads=1",
+]
+
 [[cover]]
 globs = ["crates/host-play/src/script_bank.rs"]
 cells = [
