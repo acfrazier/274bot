@@ -45,9 +45,9 @@ const SIDE_VIEW_TICKS: u64 = 1;
 /// wall milliseconds. It is the host-job contract, written once here and read
 /// by the host worker (`host-play` `script_bank.rs` `BANK_SELECTION_WINDOW`):
 /// the worker ranks candidates under this bound and, when it is spent,
-/// publishes its own air-distance fallback receipt of the same kind that
-/// [`Select`] holds. The window is a host-job bound, so it is a wall time by
-/// contract; the kernel counts it in observed ticks from its dispatch.
+/// publishes a timeout refusal unless the request opted in to an air-distance
+/// fallback. The window is a host-job bound, so it is a wall time by contract;
+/// the kernel counts it in observed ticks from its dispatch.
 pub const BANK_PICK_HOST_WINDOW_MS: u64 = 5_000;
 /// The observed ticks after its dispatch at which [`Select`] takes its own
 /// air-distance fallback when no receipt came: the host window, rounded up to
@@ -280,6 +280,8 @@ pub struct BankPickRequest {
     /// Select-only compatibility may return an eligible air-ranked bank after
     /// bounded routing fails. Native callers leave this false.
     pub allow_air_fallback: bool,
+    /// Require a strict route from the chosen access tile to this destination.
+    pub return_to: Option<WorldTile>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BankPickOutcome {
@@ -398,6 +400,8 @@ pub struct SelectArgs {
     pub explicit: Option<Arc<str>>,
     /// Opt in only for select-only contracts that promise an air fallback.
     pub allow_air_fallback: bool,
+    /// Optional bank trips must retain a strict route to this destination.
+    pub return_to: Option<WorldTile>,
 }
 
 pub struct OpenArgs {
@@ -2839,6 +2843,7 @@ impl Select {
                 eligible,
                 explicit_bank,
                 allow_air_fallback: args.allow_air_fallback,
+                return_to: args.return_to,
             }),
             request_id: None,
             immediate: None,
@@ -3229,6 +3234,7 @@ mod tests {
                         options: WalkOptions::default(),
                         explicit: None,
                         allow_air_fallback,
+                        return_to: None,
                     },
                     &mut frame.cx,
                 )
@@ -3304,6 +3310,7 @@ mod tests {
                 options: WalkOptions::default(),
                 explicit: explicit.map(Arc::from),
                 allow_air_fallback: false,
+                return_to: None,
             };
             if let Some(avoid) = avoid {
                 let handle = frame

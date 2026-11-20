@@ -107,6 +107,7 @@ pub struct AcquireRun {
     access: Option<Arc<BankStandAccess>>,
     target: Option<WorldTile>,
     walk_retry: Option<WalkRetryState>,
+    bank_return_to: Option<WorldTile>,
     withdrawals: Option<Arc<[Withdrawal]>>,
     // Planned and post-purchase steps share one queue, bounded by 2 * MAX_MEMO.
     wears: Option<Box<[WearStep]>>,
@@ -188,6 +189,7 @@ impl AcquireRun {
             access: None,
             target: None,
             walk_retry: None,
+            bank_return_to: None,
             withdrawals: None,
             wears: None,
             purchases: None,
@@ -240,6 +242,11 @@ impl AcquireRun {
     pub(crate) fn with_quester_walk_retries(mut self) -> Self {
         self.walk_retry = Some(WalkRetryState::default());
         self
+    }
+
+    /// Optional supplies must not strand the owner away from its current stage.
+    pub(crate) fn require_bank_return(&mut self, target: WorldTile) {
+        self.bank_return_to = Some(target);
     }
 
     pub fn poll(
@@ -306,6 +313,7 @@ impl AcquireRun {
                         options: self.request.walk,
                         explicit: self.explicit.clone(),
                         allow_air_fallback: false,
+                        return_to: self.bank_return_to,
                     };
                     if let Some(avoid) = self.access_recovery.as_ref().and_then(|state| state.avoid)
                     {

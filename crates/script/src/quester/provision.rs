@@ -35,7 +35,7 @@ use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, Nat
 use crate::native_bank::{BankAction, BankReceipt};
 use api::bank_memory::Origin;
 use api::selected::{FactKey, Truth};
-use api::snapshot::ItemView;
+use api::snapshot::{ItemView, WorldTile};
 use api::stock::Stock;
 use std::sync::Arc;
 use std::task::Poll;
@@ -334,8 +334,9 @@ impl Provisioner {
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
         current_stage: Option<&FactKey>,
+        return_to: Option<WorldTile>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
-        let result = self.poll_inner(cx, plan, active_loadout, current_stage);
+        let result = self.poll_inner(cx, plan, active_loadout, current_stage, return_to);
         // Read after the poll, so a bank that this poll's own kernel opened is
         // recorded on the tick it appears, even when the poll ends the session.
         self.observe_bank(cx.tick);
@@ -357,6 +358,7 @@ impl Provisioner {
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
         current_stage: Option<&FactKey>,
+        return_to: Option<WorldTile>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         if self.acquire_finished {
             self.acquire_run = None;
@@ -394,7 +396,7 @@ impl Provisioner {
             return self.poll_acquire(cx);
         }
 
-        let prepared = self.poll_prepare(cx, plan, active_loadout, current_stage);
+        let prepared = self.poll_prepare(cx, plan, active_loadout, current_stage, return_to);
         // A bank trip or recipe started by this plan acts on this tick when
         // starting it spent nothing (TICK-FIX #4/#7, E-Q7/E-Q8a).
         if prepared.is_pending() && cx.tick.cx.may_continue_this_tick() {
@@ -590,6 +592,7 @@ impl Provisioner {
         plan: &CompiledProvisioning,
         active_loadout: Option<&str>,
         current_stage: Option<&FactKey>,
+        return_to: Option<WorldTile>,
     ) -> Poll<Result<ProvisionEvent, ActionError>> {
         let current = stage_index(plan, current_stage);
         if plan.owns_inventory
@@ -650,9 +653,12 @@ impl Provisioner {
                         unknown: Some(why),
                     });
                 if self.gear_stage != stage {
-                    if target.gear.iter().any(|item| {
-                        stock.carried(item.id).unwrap_or(0) == 0 && stock.banked(item.id).is_none()
-                    }) {
+                    if !bank_open(&cx.tick.cx)
+                        && target.gear.iter().any(|item| {
+                            stock.carried(item.id).unwrap_or(0) == 0
+                                && stock.banked(item.id).is_none_or(|count| count > 0)
+                        })
+                    {
                         self.start_bank(
                             cx,
                             plan,
@@ -663,7 +669,7 @@ impl Provisioner {
                             0,
                             None,
                         );
-                        self.survival_bank = true;
+                        self.require_survival_return(cx, return_to);
                         return Poll::Pending;
                     }
                     let gear: Vec<_> = target
@@ -1110,10 +1116,13 @@ impl Provisioner {
                 pack,
                 bank,
             );
-            self.survival_bank = survival
+            if survival
                 .as_ref()
                 .and_then(|target| target.food.as_ref())
-                .is_some_and(|(item, _)| item.id == scan.id);
+                .is_some_and(|(item, _)| item.id == scan.id)
+            {
+                self.require_survival_return(cx, return_to);
+            }
             return Poll::Pending;
         }
         if let Some(missing) = needs.blocked() {
@@ -1135,6 +1144,15 @@ impl Provisioner {
             );
             return Poll::Ready(Ok(ProvisionEvent::Blocked { item }));
         }
+        let survival_only = survival
+            .as_ref()
+            .and_then(|target| target.food.as_ref())
+            .is_some_and(|(item, _)| {
+                needs.withdrawal_count() > 0
+                    && needs
+                        .withdrawals()
+                        .all(|withdrawal| withdrawal.id == item.id)
+            });
 
         let mut required_slots = if plan.owns_inventory && needs.withdrawal_count() > 0 {
             planned_survival_slots(plan, &needs, inventory, current, active_need, active_recipe)
@@ -1206,6 +1224,9 @@ impl Provisioner {
                 status.map_or(ops::occupied(inventory), |need| need.pack),
                 status.and_then(|need| need.bank),
             );
+            if survival_only {
+                self.require_survival_return(cx, return_to);
+            }
             return Poll::Pending;
         }
 
@@ -1225,6 +1246,9 @@ impl Provisioner {
                 first.pack,
                 first.bank,
             );
+            if survival_only {
+                self.require_survival_return(cx, return_to);
+            }
             return Poll::Pending;
         }
         if let (Some(recipe_need), Some(recipe)) = (recipe_need, active_recipe) {
@@ -1445,6 +1469,18 @@ impl Provisioner {
         self.attempts = self.attempts.saturating_add(1);
         self.bank_starts = self.bank_starts.wrapping_add(1);
         self.set_status(phase, item, need, pack, bank, bank_known(cx));
+    }
+
+    fn require_survival_return(&mut self, cx: &StepContext<'_, '_>, return_to: Option<WorldTile>) {
+        self.survival_bank = true;
+        if let Some(target) =
+            return_to.or_else(|| cx.tick.cx.snapshot().here().map(|here| here.value))
+        {
+            self.bank_run
+                .as_mut()
+                .expect("survival return is attached before the bank run polls")
+                .require_bank_return(target);
+        }
     }
 
     /// Ends the bank session: closes the bank this provisioner's trips opened
@@ -2058,7 +2094,7 @@ mod tests {
                 banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
-            provisioner.poll(&mut cx, plan, active_loadout, None)
+            provisioner.poll(&mut cx, plan, active_loadout, None, None)
         })
     }
 
@@ -2085,7 +2121,7 @@ mod tests {
                 banks,
                 choices: &crate::quester::choices::QuestChoices::default(),
             };
-            provisioner.poll(&mut cx, plan, active_loadout, stage)
+            provisioner.poll(&mut cx, plan, active_loadout, stage, None)
         })
     }
 
@@ -3037,6 +3073,49 @@ mod tests {
     }
 
     #[test]
+    fn optional_survival_bank_must_return_to_the_authored_step_target() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, snapshot) = survival_fixture(true);
+        let (_, _, banks) = openable_bank_fixture();
+        let memory = BankMemory::default();
+        let target = WorldTile {
+            x: 2838,
+            z: 3601,
+            level: 0,
+        };
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        assert!(
+            with_tick_bank(&snapshot, Some(&memory), &mut ledger, 1, |native| {
+                let required_after = native.cx.evidence();
+                let mut cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after,
+                    banks: &banks,
+                    choices: &crate::quester::choices::QuestChoices::default(),
+                };
+                provisioner.poll(
+                    &mut cx,
+                    &path.provisioning,
+                    None,
+                    Some(&path.provisioning.stages[0]),
+                    Some(target),
+                )
+            })
+            .is_pending()
+        );
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox[0].effect,
+            HostEffect::BankPick(request)
+                if !request.allow_air_fallback && request.return_to == Some(target)
+        ));
+    }
+
+    #[test]
     fn unreachable_optional_survival_bank_records_shortfall_without_parking() {
         if !api::test_support::game_data_available() {
             return;
@@ -3060,6 +3139,11 @@ mod tests {
             &quests,
         )
         .is_pending());
+        assert!(matches!(
+            &ledger.as_ref().unwrap().outbox[0].effect,
+            HostEffect::BankPick(request)
+                if request.return_to == snapshot_view(&snapshot, 1).here().map(|here| here.value)
+        ));
         refuse_bank_pick(&mut ledger, 2);
         assert!(poll_once_at(
             &mut provisioner,
@@ -6313,7 +6397,7 @@ mod tests {
                     banks: &banks,
                     choices: &crate::quester::choices::QuestChoices::default(),
                 };
-                provisioner.poll(&mut cx, &plan, None, None)
+                provisioner.poll(&mut cx, &plan, None, None, None)
             });
             match ledger
                 .as_ref()

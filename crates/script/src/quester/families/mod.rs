@@ -1284,6 +1284,9 @@ impl StepPlan for WalkPlan {
         run.begin_walk(cx)?;
         Ok(Box::new(run))
     }
+    fn provisioning_anchor(&self) -> Option<WorldTile> {
+        Some(self.tile)
+    }
 }
 struct WalkRun {
     plan: WalkPlan,

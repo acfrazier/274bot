@@ -2297,6 +2297,7 @@ impl SelectorCore {
                 options,
                 explicit: None,
                 allow_air_fallback,
+                return_to: None,
             },
             cx,
         )?;

@@ -1079,11 +1079,42 @@ impl Quester {
         false
     }
 
+    fn provisioning_return_target(&self, tick: &NativeTick<'_>) -> Option<api::WorldTile> {
+        if self.provisioner.has_run() {
+            return None;
+        }
+        if self.step.is_some() {
+            return self
+                .current_step()
+                .and_then(|step| step.plan.provisioning_anchor());
+        }
+        let pred = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &self.quests,
+            progress: self
+                .progress
+                .as_deref()
+                .map(std::slice::from_ref)
+                .unwrap_or(&[]),
+            required_after: tick.cx.evidence(),
+            chat_since: super::families::reach::last_chat_seq(&tick.cx),
+            outcome: self.last_combat.as_ref().or(self.last_outcome.as_ref()),
+        };
+        match select(&self.path, self.seq_index, self.cursor, &pred) {
+            SelectionDecision::Selected(selected) | SelectionDecision::Unknown(selected) => {
+                selected.step.plan.provisioning_anchor()
+            }
+            SelectionDecision::Exhausted => None,
+        }
+    }
+
     fn poll_provision_once(&mut self, tick: &mut NativeTick<'_>) -> Provisioned {
         let required_after = tick.cx.evidence();
         let bank_phase = self.provisioner.bank_phase();
         let bank_starts = self.provisioner.bank_starts();
         let revision = self.provisioner.status_revision();
+        let return_to = self.provisioning_return_target(tick);
         let mut cx = StepContext {
             tick,
             quests: &self.quests,
@@ -1101,6 +1132,7 @@ impl Quester {
             &self.path.provisioning,
             self.active_loadout.as_deref(),
             self.stage.as_ref(),
+            return_to,
         );
         while let Some(event) = self.provisioner.take_trace_event() {
             self.trace_step_event(tick.output, event);
@@ -8092,6 +8124,46 @@ mod tests {
             true,
         );
         (script, snapshot)
+    }
+
+    #[test]
+    fn survival_return_target_uses_the_ordered_cursor_not_the_previous_step() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use super::super::families::tests::with_tick;
+        use super::super::path::{PredicateDocument, SequenceOrder};
+
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let sequence = &mut document.roles[0].sequences[0];
+        sequence.order = SequenceOrder::Ordered;
+        let mut first = sequence.steps[0].clone();
+        first.kind = "walk".into();
+        first.args = serde_json::json!({
+            "tile": [2838, 3601, 0], "source": "return target fixture"
+        });
+        first.skip_if = PredicateDocument::Any(vec![]);
+        first.settle = PredicateDocument::All(vec![]);
+        let mut second = first.clone();
+        second.id = FactKey::new("second_walk");
+        second.args = serde_json::json!({
+            "tile": [2840, 3605, 0], "source": "return target fixture"
+        });
+        sequence.steps = vec![first, second];
+        let (mut script, snapshot) = status_fixture(document);
+        script.step_index = 0;
+        script.cursor = 1;
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |native| {
+            assert_eq!(
+                script.provisioning_return_target(native),
+                Some(api::WorldTile {
+                    x: 2840,
+                    z: 3605,
+                    level: 0,
+                })
+            );
+        });
     }
 
     #[test]

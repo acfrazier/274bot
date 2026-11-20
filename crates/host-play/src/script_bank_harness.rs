@@ -80,6 +80,7 @@ pub(super) fn native_pick_action(
                 options: script::native::WalkOptions::default(),
                 explicit: explicit.map(Arc::from),
                 allow_air_fallback,
+                return_to: None,
             }),
             handle: None,
         }),
@@ -142,6 +143,7 @@ pub(super) fn request(
         authority: native.authority,
         evidence: native.evidence,
         allow_air_fallback: native.request.allow_air_fallback,
+        return_to: native.request.return_to,
         // This isolated CPU replay never owns prerequisite consent.
         prereq_allow: script::native::PrereqAllow {
             dialogue: false,

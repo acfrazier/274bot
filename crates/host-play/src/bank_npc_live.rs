@@ -1231,6 +1231,7 @@ impl Script for TellerScript {
                         },
                         explicit: Some(Arc::from(MAGE_BANK_NAME)),
                         allow_air_fallback: false,
+                        return_to: None,
                     };
                     match tick.actions.begin::<Select>(args, &mut tick.cx) {
                         Ok(handle) => self.select = Some(handle),
@@ -2547,6 +2548,7 @@ impl Script for BankPickBurstScript {
                         options: script::native::WalkOptions::default(),
                         explicit: Some(Arc::from(BANK_PICK_BURST_BANK)),
                         allow_air_fallback: false,
+                        return_to: None,
                     };
                     {
                         let mut guest = self.guest.lock();

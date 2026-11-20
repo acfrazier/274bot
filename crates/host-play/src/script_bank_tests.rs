@@ -574,6 +574,147 @@ fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bou
 }
 
 #[test]
+fn typed_select_rejects_a_bank_whose_return_requires_unworn_boots() {
+    use nav_planner::transport::{TransportEdge, TransportKind};
+
+    let mut flags = vec![0; 4 * 16 * 16];
+    for z in 0..16 {
+        flags[z * 16 + 6] =
+            CollisionFlag::SQ_BLOCKED as u32 | CollisionFlag::WALK_BLOCK_FLAGS as u32;
+    }
+    let (walk, blocked) = pack_walk(&flags);
+    let outbound = TransportEdge {
+        kind: TransportKind::AgilityShortcut,
+        at: tile(5, 8),
+        to: tile(7, 8),
+        takeoff: Some(tile(5, 8)),
+        player_delta: None,
+        loc_id: 42,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        consumed_req: vec![],
+        item_returns: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        worn_all_req: vec![],
+        forbidden_held: vec![],
+        forbidden_worn: vec![],
+        members_req: false,
+        wildy_cap: None,
+        quest_gates: None,
+    };
+    let inbound = TransportEdge {
+        at: outbound.to,
+        to: outbound.at,
+        takeoff: Some(outbound.to),
+        worn_all_req: vec![3105],
+        ..outbound.clone()
+    };
+    let public = bank("Public", 14, 8);
+    let world = Some(Arc::new(NavWorld::from_parts(
+        WorldCollision {
+            origin: tile(0, 0),
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph {
+            at: HashMap::from([(outbound.at, vec![0]), (inbound.at, vec![1])]),
+            edges: vec![outbound, inbound],
+            ..TransportGraph::default()
+        },
+        vec![nav_planner::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: public.tile,
+            access: nav_planner::pack::BankAccess::Booth { op: 2 },
+        }],
+    )));
+    for (held, worn, require_return, selected) in [
+        (false, false, true, false),
+        (true, false, true, false),
+        (false, true, true, true),
+        (false, false, false, true),
+    ] {
+        let banks = vec![public];
+        let (mut slot, action) = native_pick_action(banks.clone(), tile(2, 8), None, false);
+        let authority = action.authority();
+        let script::native::HostEffect::BankPick(mut request) = action.effect else {
+            panic!("Select must emit its typed bank request");
+        };
+        request.return_to = require_return.then_some(tile(2, 8));
+        let mut state = WorldState::empty();
+        state.inventory_ready = true;
+        state.equipment_ready = true;
+        if held {
+            state.inv.insert(3105, 1);
+        }
+        if worn {
+            state.worn.insert(3105);
+        }
+        let state = Arc::new(state);
+        let evidence = EvidenceStamp {
+            run: authority.run(),
+            tick: 1,
+            sequence: 1,
+        };
+        let navs = navs(banks);
+        queue_native_bank_pick_scoped(
+            &navs,
+            "test",
+            api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap()),
+            &world,
+            Some(&state),
+            &GameSnapshot::new(),
+            NativeBankPickInput {
+                request,
+                authority,
+                evidence,
+            },
+            None,
+        );
+        let deadline = Instant::now() + BANK_SELECTION_WINDOW;
+        let (_, receipt) = loop {
+            poll_bank_pick(&navs, "test", Instant::now());
+            if let Some(receipt) = navs
+                .lock()
+                .unwrap()
+                .get_mut("test")
+                .unwrap()
+                .bank_pick
+                .take_native_receipt()
+            {
+                break receipt;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "bounded round-trip selection stalled"
+            );
+            std::thread::yield_now();
+        };
+        if selected {
+            assert!(matches!(
+                &receipt.outcome,
+                BankPickOutcome::Selected(pick) if pick.kind == NativePickKind::Reachable
+            ));
+        } else {
+            assert!(matches!(
+                &receipt.outcome,
+                BankPickOutcome::NoCandidate { detail } if detail.contains("return")
+            ));
+        }
+        assert!(navs.lock().unwrap()["test"].route.is_none());
+        slot.stop();
+    }
+}
+
+#[test]
 fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_immutable() {
     if !api::test_support::game_data_available() {
         return;

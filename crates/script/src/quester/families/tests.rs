@@ -989,6 +989,14 @@ fn walk_retry_plan(target: WorldTile) -> WalkPlan {
     .expect("valid walk retry plan")
 }
 
+#[test]
+fn walk_provisioning_target_does_not_change_nearest_selection_anchor() {
+    let target = tile(3224, 3200);
+    let plan = walk_retry_plan(target);
+    assert_eq!(plan.provisioning_anchor(), Some(target));
+    assert_eq!(plan.anchor(), None);
+}
+
 fn latest_walk_request(ledger: &Option<Box<ledger::Ledger>>) -> (u64, u64) {
     let action = ledger
         .as_ref()

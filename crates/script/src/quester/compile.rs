@@ -412,6 +412,11 @@ pub trait StepPlan: Send + Sync {
     fn anchor(&self) -> Option<api::WorldTile> {
         None
     }
+    /// Destination that optional provisioning must be able to return to.
+    /// This is separate from the anchor used by nearest-first selection.
+    fn provisioning_anchor(&self) -> Option<api::WorldTile> {
+        self.anchor()
+    }
     /// Post-machine predicate window, measured on the eligible clock.
     fn settle_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(8)
