@@ -175,6 +175,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   and the next settings save writes Flee. A saved Fight stays Fight.
 - The TUI keeps every Quester start-zone row reachable with PageUp and
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
+- Fixed unbounded memory growth when a CPU-rendered panel is minimized or occluded.
 
 ### Preferences and saved state
 
