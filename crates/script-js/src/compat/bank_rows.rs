@@ -249,7 +249,9 @@ mod tests {
         let spec = DepositSpec {
             kind: DepositKind::UntilEmpty,
             keep: &[],
+            keep_ids: &[],
             only: None,
+            best_effort_skipped: 0,
         };
         let pack_native = [held_at(TROUT, 3, 6)];
         let pack_compat = [compat(TROUT, "Trout", 3, None, None, &[])];
