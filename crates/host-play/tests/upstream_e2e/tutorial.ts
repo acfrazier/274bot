@@ -1,5 +1,6 @@
 import { HostPage, rpc } from './adapter.ts';
-import { cheatQuiet, login as nativeLogin, logout, startScript as nativeStartScript } from './harness.ts';
+import { cheatQuiet, login as nativeLogin, logout } from './harness.ts';
+export { cheatQuiet, startScript } from './harness.ts';
 
 async function ready(page: HostPage, timeout = 120_000) {
     const deadline = Date.now() + timeout;
@@ -30,7 +31,6 @@ export async function mainlandAccount(page: HostPage, _base: string, user: strin
     const status = await rpc({ op: 'status' });
     if (status.inventoryTab === -1) throw new Error('tutorial sidebar remains locked');
 }
-export async function startScript(page: HostPage, name: string) { await nativeStartScript(page, name); }
 export async function getServerVarQuiet(page: HostPage, name: string): Promise<number | null> {
     await cheatQuiet(page, `getvar ${name}`, 900);
     const lines = await page.evaluate(() => (globalThis as any).rs2b0t.reader.chat(8));

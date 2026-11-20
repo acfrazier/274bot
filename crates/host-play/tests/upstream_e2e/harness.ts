@@ -52,9 +52,7 @@ export async function launchBrowser() {
 }
 
 export async function boot(page: HostPage) {
-    const user = process.env.USER_NAME;
-    if (!user) throw new Error('missing USER_NAME for native host session');
-    await page.connect(user);
+    await page.goto('http://127.0.0.1:1080/bot.html');
     await rpc({ op: 'status' });
 }
 
