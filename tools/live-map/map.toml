@@ -2073,6 +2073,15 @@ cells = [
   "scenario.lib-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib",
 ]
 
+# The Alcher Dwarven Mine change only clarifies its explicit Never overlay in
+# a comment. The scenario library cell compiles the production scenario; no
+# gameplay behavior changed.
+[[cover]]
+globs = ["crates/scenario/src/scenarios/production/alcher.rs"]
+cells = [
+  "scenario.lib-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib",
+]
+
 # The catalog-core witness (catalog_core.rs with its #[path] children
 # catalog_case.rs, catalog_prayer.rs and catalog_witness.rs) runs only when a
 # `--live` run is qualified under `--catalog-core` (tui/src/bin.rs:111-113,
