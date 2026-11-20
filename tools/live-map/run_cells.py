@@ -22,11 +22,14 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 import unittest.mock
 from dataclasses import dataclass
@@ -58,7 +61,17 @@ class RunResult:
     command: str
     start_utc: str
     end_utc: str
+    upstream_results: tuple[UpstreamCaseResult, ...] = ()
 
+
+@dataclass(frozen=True)
+class UpstreamCaseResult:
+    id: str
+    verdict: str
+    gate_class: str
+    reason: str
+    seconds: float
+    classification: str | None
 
 def _port(value: str, label: str) -> int:
     try:
@@ -508,6 +521,183 @@ def load_map_for_repo(repo: Path) -> dict:
         return live_map.load_map(candidate)
     return live_map.load_map()
 
+def load_upstream_manifest_for_repo(repo: Path) -> live_map.UpstreamManifest:
+    return live_map.load_upstream_manifest(
+        repo / "tools" / "live-map" / "upstream-cases.json"
+    )
+
+
+def upstream_cases_from_env(
+    manifest: live_map.UpstreamManifest, raw_case_ids: str | None = None
+) -> tuple[live_map.UpstreamCase, ...]:
+    value = os.environ.get("UEP_CASES", "") if raw_case_ids is None else raw_case_ids
+    case_ids = [part.strip() for part in value.split(",")]
+    if not value.strip() or any(not case_id for case_id in case_ids):
+        raise live_map.MapError(
+            "run-cells: set UEP_CASES to one or more comma-separated adopted case ids"
+        )
+    return live_map.resolve_upstream_cases(manifest, case_ids)
+
+
+def ensure_upstream_archive(
+    archive_value: str | None, cases: tuple[live_map.UpstreamCase, ...]
+) -> Path:
+    if not archive_value:
+        raise live_map.MapError(
+            "run-cells: set UEP_UPSTREAM to the frozen upstream source archive"
+        )
+    archive = Path(archive_value)
+    if not archive.is_absolute() or not archive.is_dir():
+        raise live_map.MapError(
+            f"run-cells: UEP_UPSTREAM must name an existing absolute directory: {archive}"
+        )
+    missing = [case.path for case in cases if not (archive / case.path).is_file()]
+    if missing:
+        raise live_map.MapError(
+            f"run-cells: UEP_UPSTREAM is missing selected case files: {', '.join(missing)}"
+        )
+    for case in cases:
+        if case.sha256 is None:
+            continue
+        try:
+            actual_sha256 = hashlib.sha256(
+                (archive / case.path).read_bytes()
+            ).hexdigest()
+        except OSError as error:
+            raise live_map.MapError(
+                f"run-cells: cannot read UEP_UPSTREAM case {case.id}: {error}"
+            ) from error
+        if actual_sha256 != case.sha256.lower():
+            raise live_map.MapError(
+                f"run-cells: UEP_UPSTREAM source hash does not match case {case.id}"
+            )
+    return archive.resolve()
+
+
+def read_upstream_verdict(
+    sink_path: Path,
+    *,
+    manifest: live_map.UpstreamManifest,
+    cases: tuple[live_map.UpstreamCase, ...],
+    upstream_archive: Path,
+    host_commit: str,
+) -> tuple[UpstreamCaseResult, ...]:
+    prefix = f"invalid upstream verdict sink {sink_path}: "
+    try:
+        raw = json.loads(sink_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise live_map.MapError(f"{prefix}{error}") from error
+    if not isinstance(raw, dict) or set(raw) != {
+        "pin",
+        "abi_pin",
+        "host_commit",
+        "results",
+    }:
+        raise live_map.MapError(f"{prefix}expected pin, abi_pin, host_commit, and results")
+    if raw["pin"] != manifest.pin or raw["abi_pin"] != manifest.abi_pin:
+        raise live_map.MapError(f"{prefix}source or ABI pin does not match metadata")
+    if raw["host_commit"] != host_commit:
+        raise live_map.MapError(f"{prefix}host_commit does not match the selected repository")
+    if not isinstance(raw["results"], list):
+        raise live_map.MapError(f"{prefix}results must be an array")
+
+    expected = {case.id: case for case in cases}
+    actual: dict[str, UpstreamCaseResult] = {}
+    classifications = {
+        "compat defect",
+        "adapter defect",
+        "upstream assumption",
+        "environment",
+    }
+    for result in raw["results"]:
+        if not isinstance(result, dict):
+            raise live_map.MapError(f"{prefix}each result must be an object")
+        case_id = result.get("id")
+        if not isinstance(case_id, str) or case_id not in expected:
+            raise live_map.MapError(f"{prefix}result has an unexpected case id")
+        if case_id in actual:
+            raise live_map.MapError(f"{prefix}duplicate result for {case_id}")
+        case = expected[case_id]
+        metadata = {
+            "id": case.id,
+            "path": case.path,
+            "family": case.family,
+            "capabilities": list(case.capabilities),
+            "deadline_seconds": case.deadline_seconds,
+            "gate_class": case.gate_class,
+            "eligibility": case.eligibility,
+            "family_paths": list(case.family_paths),
+        }
+        required_fields = set(metadata) | {
+            "eligibility_reason",
+            "reason",
+            "verdict",
+            "seconds",
+            "sha256",
+        }
+        if set(result) not in (required_fields, required_fields | {"classification"}):
+            raise live_map.MapError(f"{prefix}case {case_id} has unexpected result fields")
+        if any(result.get(key) != value for key, value in metadata.items()):
+            raise live_map.MapError(f"{prefix}metadata does not match case {case_id}")
+        if result.get("eligibility_reason") != case.reason:
+            raise live_map.MapError(
+                f"{prefix}eligibility_reason does not match case {case_id}"
+            )
+        verdict = result.get("verdict")
+        if verdict not in ("PASS", "FAIL", "UNSUPPORTED"):
+            raise live_map.MapError(f"{prefix}case {case_id} has an invalid verdict")
+        reason = result.get("reason")
+        if not isinstance(reason, str) or (verdict != "PASS" and not reason.strip()):
+            raise live_map.MapError(f"{prefix}case {case_id} has an invalid result reason")
+        seconds = result.get("seconds")
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+            raise live_map.MapError(f"{prefix}case {case_id} has invalid seconds")
+        try:
+            seconds_value = float(seconds)
+        except (OverflowError, ValueError):
+            raise live_map.MapError(f"{prefix}case {case_id} has invalid seconds")
+        if not math.isfinite(seconds_value) or seconds_value < 0:
+            raise live_map.MapError(f"{prefix}case {case_id} has invalid seconds")
+        sha256 = result.get("sha256")
+        if not isinstance(sha256, str) or re.fullmatch(r"[0-9a-fA-F]{64}", sha256) is None:
+            raise live_map.MapError(f"{prefix}case {case_id} has an invalid source SHA-256")
+        try:
+            source_sha256 = hashlib.sha256(
+                (upstream_archive / case.path).read_bytes()
+            ).hexdigest()
+        except OSError as error:
+            raise live_map.MapError(
+                f"{prefix}cannot read selected source file for {case_id}: {error}"
+            ) from error
+        if sha256.lower() != source_sha256 or (
+            case.sha256 is not None and sha256.lower() != case.sha256.lower()
+        ):
+            raise live_map.MapError(f"{prefix}source hash does not match case {case_id}")
+        classification = result.get("classification")
+        if verdict == "FAIL":
+            if not isinstance(classification, str) or classification not in classifications:
+                raise live_map.MapError(
+                    f"{prefix}failed case {case_id} needs a supported classification"
+                )
+        elif "classification" in result:
+            raise live_map.MapError(
+                f"{prefix}case {case_id} classification is only valid for FAIL"
+            )
+        actual[case_id] = UpstreamCaseResult(
+            id=case_id,
+            verdict=verdict,
+            gate_class=case.gate_class,
+            reason=reason,
+            seconds=seconds_value,
+            classification=classification,
+        )
+    missing_ids = [case.id for case in cases if case.id not in actual]
+    if missing_ids:
+        raise live_map.MapError(
+            f"{prefix}missing results for selected cases: {', '.join(missing_ids)}"
+        )
+    return tuple(actual[case.id] for case in cases)
+
 
 def _utc_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -590,6 +780,14 @@ def format_summary(
         lines.append(f"{item.cell} pass {item.passed_pass} command={item.command}")
         lines.append(f"{item.cell} pass {item.passed_pass} start_utc={item.start_utc}")
         lines.append(f"{item.cell} pass {item.passed_pass} end_utc={item.end_utc}")
+        for case in item.upstream_results:
+            reason = case.reason.replace("\n", " ").replace("\r", " ")
+            classification = case.classification or ""
+            lines.append(
+                f"  upstream {case.id} verdict={case.verdict} "
+                f"class={case.gate_class} seconds={case.seconds:g} "
+                f"classification={classification} reason={reason}"
+            )
     passed = sum(1 for item in results if item.exit_code == 0)
     lines.append("")
     lines.append(f"passed {passed}/{len(results)}")
@@ -611,8 +809,20 @@ def run_all(
     catalog_root: str | None = None,
     unpack_source: str | None = None,
     partner_prefix: str | None = None,
+    upstream_manifest: live_map.UpstreamManifest | None = None,
+    upstream_cases: tuple[live_map.UpstreamCase, ...] = (),
+    upstream_archive: Path | None = None,
     runner: Callable[..., tuple[int, str, str, int]] | None = None,
 ) -> list[RunResult]:
+    has_upstream_runner = any(
+        cell.name == live_map.UPSTREAM_RUNNER_CELL for cell in cells
+    )
+    if has_upstream_runner and (
+        upstream_manifest is None or not upstream_cases or upstream_archive is None
+    ):
+        raise live_map.MapError(
+            "run-cells: the upstream runner needs metadata, UEP_CASES, and UEP_UPSTREAM"
+        )
     head = repo_head(repo)
     results: list[RunResult] = []
     run_fn = runner or run_one_cell_by_args
@@ -622,7 +832,8 @@ def run_all(
         client_dir = cell_dir / "client-unpack"
         cache_dir.mkdir(parents=True, exist_ok=True)
         client_dir.mkdir(parents=True, exist_ok=True)
-        for passed_pass in range(1, passes + 1):
+        cell_passes = 1 if cell.name == live_map.UPSTREAM_RUNNER_CELL else passes
+        for passed_pass in range(1, cell_passes + 1):
             pass_dir = cell_dir / f"pass{passed_pass}"
             live_dir = pass_dir / "evidence"
             panel_home = pass_dir / "panel-home"
@@ -634,6 +845,7 @@ def run_all(
             shutil.copytree(cache_dir, pass_cache_dir, symlinks=False)
             log_path = pass_dir / "cell.log"
             receipt_path = pass_dir / "receipt.txt"
+            upstream_output: Path | None = None
             unpack_record: str | None = None
             if unpack_source is not None and "PANEL_LIVE_HOME" in cell.command:
                 unpack_record = stage_panel_unpack(panel_home, unpack_source)
@@ -655,6 +867,21 @@ def run_all(
                 catalog_root=catalog_root,
                 partner_prefix=partner_prefix,
             )
+            upstream_results: tuple[UpstreamCaseResult, ...] = ()
+            if cell.name == live_map.UPSTREAM_RUNNER_CELL:
+                if upstream_manifest is None or upstream_archive is None:
+                    raise live_map.MapError("run-cells: upstream runner inputs were not resolved")
+                upstream_output = Path(
+                    tempfile.mkdtemp(prefix="upstream-", dir=live_dir)
+                )
+                env.update(
+                    {
+                        "UEP_CASES": ",".join(case.id for case in upstream_cases),
+                        "UEP_UPSTREAM": str(upstream_archive),
+                        "UEP_OUTPUT": str(upstream_output.resolve()),
+                        "UEP_HOST_COMMIT": head,
+                    }
+                )
             try:
                 if runner is not None:
                     exit_code, start, end, duration = runner(
@@ -682,6 +909,32 @@ def run_all(
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 with log_path.open("a", encoding="utf-8") as stream:
                     stream.write(f"\nrunner error: {error}\n")
+            if cell.name == live_map.UPSTREAM_RUNNER_CELL:
+                try:
+                    if (
+                        upstream_output is None
+                        or upstream_manifest is None
+                        or upstream_archive is None
+                    ):
+                        raise live_map.MapError(
+                            "run-cells: upstream verdict sink inputs were not configured"
+                        )
+                    upstream_results = read_upstream_verdict(
+                        upstream_output / "verdict.json",
+                        manifest=upstream_manifest,
+                        cases=upstream_cases,
+                        upstream_archive=upstream_archive,
+                        host_commit=head,
+                    )
+                    if exit_code == 0 and any(
+                        case.gate_class == "gating" and case.verdict != "PASS"
+                        for case in upstream_results
+                    ):
+                        exit_code = 1
+                except live_map.MapError as error:
+                    exit_code = 1
+                    with log_path.open("a", encoding="utf-8") as stream:
+                        stream.write(f"\nverdict sink error: {error}\n")
             receipt_fields: dict[str, str] = {
                 "cell": cell.name,
                 "pass": str(passed_pass),
@@ -701,6 +954,8 @@ def run_all(
                 receipt_fields["catalog_root"] = catalog_root
             if unpack_record is not None:
                 receipt_fields["unpack_source"] = unpack_record
+            if upstream_output is not None:
+                receipt_fields["verdict_sink"] = str(upstream_output / "verdict.json")
             write_receipt(receipt_path, receipt_fields)
             results.append(
                 RunResult(
@@ -713,6 +968,7 @@ def run_all(
                     command=command,
                     start_utc=start,
                     end_utc=end,
+                    upstream_results=upstream_results,
                 )
             )
     return results
@@ -735,16 +991,31 @@ def main(argv: list[str] | None = None) -> int:
     try:
         ensure_clean(repo)
         config = load_map_for_repo(repo)
+        upstream_manifest: live_map.UpstreamManifest | None = None
+        upstream_cases: tuple[live_map.UpstreamCase, ...] = ()
+        upstream_archive: Path | None = None
         if args.cells:
             names = [part.strip() for part in args.cells.split(",") if part.strip()]
             if not names:
                 print("run-cells: --cells is empty", file=sys.stderr)
                 return 2
             cells = resolve_cells(config, names)
+            if any(cell.name == live_map.UPSTREAM_RUNNER_CELL for cell in cells):
+                upstream_manifest = load_upstream_manifest_for_repo(repo)
+                upstream_cases = upstream_cases_from_env(upstream_manifest)
+                upstream_archive = ensure_upstream_archive(
+                    os.environ.get("UEP_UPSTREAM"), upstream_cases
+                )
         else:
             paths = live_map.diff_paths(args.diff, repo)
-            plan = live_map.make_plan(paths, config)
+            upstream_manifest = load_upstream_manifest_for_repo(repo)
+            plan = live_map.make_plan(paths, config, upstream_manifest)
             cells = list(plan.cells)
+            upstream_cases = plan.upstream_cases
+            if upstream_cases:
+                upstream_archive = ensure_upstream_archive(
+                    os.environ.get("UEP_UPSTREAM"), upstream_cases
+                )
             if plan.uncovered or plan.unclassified:
                 print(
                     "run-cells: diff has uncovered or unclassified paths; "
@@ -777,6 +1048,9 @@ def main(argv: list[str] | None = None) -> int:
             catalog_root=catalog_root,
             unpack_source=unpack_source,
             partner_prefix=partner_prefix,
+            upstream_manifest=upstream_manifest,
+            upstream_cases=upstream_cases,
+            upstream_archive=upstream_archive,
         )
         head = repo_head(repo)
         summary = format_summary(
@@ -795,6 +1069,165 @@ def main(argv: list[str] | None = None) -> int:
 
 
 class RunCellsTests(unittest.TestCase):
+
+    def upstream_sink_fixture(self):
+        case = live_map.UpstreamCase(
+            id="gather-one",
+            path="e2e/gather-one-live.ts",
+            family="gather",
+            capabilities=("inventory",),
+            deadline_seconds=60,
+            gate_class="gating",
+            eligibility="adopted",
+            reason="",
+            family_paths=("crates/script-js/src/compat/gather/**",),
+        )
+        manifest = live_map.UpstreamManifest(
+            pin="a" * 40,
+            abi_pin="b" * 40,
+            cases=(case,),
+        )
+        host_commit = "c" * 40
+        payload = {
+            "pin": manifest.pin,
+            "abi_pin": manifest.abi_pin,
+            "host_commit": host_commit,
+            "results": [
+                {
+                    "id": case.id,
+                    "path": case.path,
+                    "family": case.family,
+                    "capabilities": list(case.capabilities),
+                    "deadline_seconds": case.deadline_seconds,
+                    "gate_class": case.gate_class,
+                    "family_paths": list(case.family_paths),
+                    "eligibility": case.eligibility,
+                    "eligibility_reason": case.reason,
+                    "verdict": "PASS",
+                    "reason": "",
+                    "seconds": 1.25,
+                    "sha256": hashlib.sha256(b"source").hexdigest(),
+                }
+            ],
+        }
+        return manifest, (case,), host_commit, payload
+
+    def write_upstream_archive(self, parent: Path) -> Path:
+        archive = parent / "upstream"
+        source = archive / "e2e" / "gather-one-live.ts"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"source")
+        return archive
+
+    def test_upstream_verdict_reads_and_checks_sink_fields(self) -> None:
+        manifest, cases, host_commit, payload = self.upstream_sink_fixture()
+        with tempfile.TemporaryDirectory(prefix="run-cells-verdict-") as temp:
+            archive = self.write_upstream_archive(Path(temp))
+            sink = Path(temp) / "verdict.json"
+            sink.write_text(json.dumps(payload), encoding="utf-8")
+            results = read_upstream_verdict(
+                sink,
+                manifest=manifest,
+                cases=cases,
+                host_commit=host_commit,
+                upstream_archive=archive,
+            )
+        self.assertEqual(
+            results,
+            (UpstreamCaseResult("gather-one", "PASS", "gating", "", 1.25, None),),
+        )
+
+    def test_upstream_verdict_preserves_runtime_reason(self) -> None:
+        manifest, cases, host_commit, payload = self.upstream_sink_fixture()
+        result = payload["results"][0]
+        result["verdict"] = "FAIL"
+        result["reason"] = "the observed value did not match"
+        result["classification"] = "compat defect"
+        with tempfile.TemporaryDirectory(prefix="run-cells-verdict-") as temp:
+            archive = self.write_upstream_archive(Path(temp))
+            sink = Path(temp) / "verdict.json"
+            sink.write_text(json.dumps(payload), encoding="utf-8")
+            results = read_upstream_verdict(
+                sink,
+                manifest=manifest,
+                cases=cases,
+                host_commit=host_commit,
+                upstream_archive=archive,
+            )
+        self.assertEqual(results[0].reason, "the observed value did not match")
+        self.assertEqual(results[0].classification, "compat defect")
+
+    def test_upstream_verdict_fails_closed_on_sink_errors(self) -> None:
+        manifest, cases, host_commit, payload = self.upstream_sink_fixture()
+        with tempfile.TemporaryDirectory(prefix="run-cells-verdict-") as temp:
+            archive = self.write_upstream_archive(Path(temp))
+            sink = Path(temp) / "verdict.json"
+            with self.assertRaisesRegex(live_map.MapError, "invalid upstream verdict sink"):
+                read_upstream_verdict(
+                    sink,
+                    manifest=manifest,
+                    cases=cases,
+                    upstream_archive=archive,
+                    host_commit=host_commit,
+                )
+            sink.write_text("{", encoding="utf-8")
+            with self.assertRaisesRegex(live_map.MapError, "invalid upstream verdict sink"):
+                read_upstream_verdict(
+                    sink,
+                    manifest=manifest,
+                    cases=cases,
+                    upstream_archive=archive,
+                    host_commit=host_commit,
+                )
+            malformed = json.loads(json.dumps(payload))
+            malformed["host_commit"] = "e" * 40
+            sink.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(live_map.MapError, "host_commit"):
+                read_upstream_verdict(
+                    sink,
+                    manifest=manifest,
+                    cases=cases,
+                    upstream_archive=archive,
+                    host_commit=host_commit,
+                )
+
+            malformed = json.loads(json.dumps(payload))
+            malformed["results"][0]["unexpected"] = True
+            sink.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(live_map.MapError, "unexpected result fields"):
+                read_upstream_verdict(
+                    sink,
+                    manifest=manifest,
+                    cases=cases,
+                    host_commit=host_commit,
+                    upstream_archive=archive,
+                )
+            malformed = json.loads(json.dumps(payload))
+            malformed["results"][0]["verdict"] = "FAIL"
+            malformed["results"][0]["reason"] = "host returned the wrong value"
+            sink.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(live_map.MapError, "classification"):
+                read_upstream_verdict(
+                    sink,
+                    manifest=manifest,
+                    cases=cases,
+                    host_commit=host_commit,
+                    upstream_archive=archive,
+                )
+
+            malformed = json.loads(json.dumps(payload))
+            malformed["results"][0]["sha256"] = "e" * 64
+            sink.write_text(json.dumps(malformed), encoding="utf-8")
+            with self.assertRaisesRegex(live_map.MapError, "source hash"):
+                read_upstream_verdict(
+                    sink,
+                    manifest=manifest,
+                    cases=cases,
+                    upstream_archive=archive,
+                    host_commit=host_commit,
+                )
+
+
     def test_cells_and_diff_are_exclusive(self) -> None:
         with self.assertRaises(SystemExit):
             parse_run_args(

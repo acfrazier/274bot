@@ -12,15 +12,85 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const FACADE: &str = include_str!("upstream_e2e/facade.js");
+const CASES: &str = include_str!("../../../tools/live-map/upstream-cases.json");
 const OBSERVER: &str = "import { LoopingBot } from '#/bot/api/bot/Bot.js';\nexport default class E2EObserver extends LoopingBot { async loop() { return 1000; } }";
 type Reply = Result<Value, String>;
 type FrameAction = Box<dyn FnOnce(&mut client::client::Client) -> Reply + Send>;
 type FrameQueue = Arc<Mutex<VecDeque<(FrameAction, mpsc::Sender<Reply>)>>>;
 
+struct NativeEvents(Mutex<VecDeque<Value>>);
+
+impl api::hostlog::Sink for NativeEvents {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        if !record.slot.is_some_and(|slot| slot.starts_with("uea")) {
+            return;
+        }
+        let mut events = self.0.lock().unwrap();
+        if events.len() == 1024 {
+            events.pop_front();
+        }
+        events.push_back(json!({
+            "account":record.slot, "tick":record.tick, "source":record.source.label(),
+            "level":record.level.label(), "message":record.message,
+        }));
+    }
+
+    fn test_nav_trace_enabled(&self) -> bool {
+        true
+    }
+}
+
+static NATIVE_EVENTS: NativeEvents = NativeEvents(Mutex::new(VecDeque::new()));
+
 fn required(key: &str) -> Result<PathBuf, String> {
     std::env::var_os(key)
         .map(PathBuf::from)
         .ok_or_else(|| format!("missing {key}"))
+}
+
+fn engine_port(value: Result<String, std::env::VarError>, fallback: u16) -> Result<u16, String> {
+    match value {
+        Ok(value) => value
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .ok_or_else(|| format!("invalid engine port: {value}")),
+        Err(std::env::VarError::NotPresent) => Ok(fallback),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn account_cheat(command: &str) -> bool {
+    if command.contains(['\n', '\r']) {
+        return false;
+    }
+    matches!(
+        command.split_whitespace().next(),
+        Some(
+            "tele"
+                | "setvar"
+                | "getvar"
+                | "setstat"
+                | "give"
+                | "givebank"
+                | "clearinv"
+                | "~clearinv"
+                | "~maxme"
+        )
+    )
+}
+
+fn record_stop(
+    logs: &mut Vec<String>,
+    previous: &mut Option<script::ScriptLifecycleReceipt>,
+    receipt: Option<script::ScriptLifecycleReceipt>,
+) {
+    if let Some(receipt) = receipt {
+        if previous.as_ref() != Some(&receipt) {
+            logs.push(format!("stopped — {}", receipt.reason));
+            *previous = Some(receipt);
+        }
+    }
 }
 
 fn shot_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
@@ -47,6 +117,9 @@ struct Session {
     tested: bool,
     observer: bool,
     logs: Vec<String>,
+    receipt: Option<script::ScriptLifecycleReceipt>,
+    error: Option<String>,
+    last_issue: Option<Value>,
     settings: script::ScriptSettingsStore,
 }
 
@@ -56,6 +129,7 @@ struct Adapter {
     queue: FrameQueue,
     session: Option<Session>,
     output: PathBuf,
+    last_diagnostic: Value,
 }
 
 impl Adapter {
@@ -108,6 +182,11 @@ impl Adapter {
         if session.observer {
             self.play.script_stop(&session.account);
         }
+        if name != "E2EObserver" {
+            session.logs.clear();
+            session.receipt = None;
+            session.error = None;
+        }
         self.play
             .script_start_load(&session.account, js, checked, Some(settings), siblings)?;
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -126,28 +205,25 @@ impl Adapter {
                 }
             }
         }
-        if name == "E2EObserver" {
-            // Setup readiness does not imply delivery of the first native snapshot.
-            let deadline = Instant::now() + Duration::from_secs(20);
-            while self
-                .play
-                .script_probe_for_test(
-                    &session.account,
-                    "Boolean(globalThis.__rs2b0t_host?.snapshot?.stats?.length)",
-                )?
-                .as_bool()
-                != Some(true)
-            {
-                if Instant::now() >= deadline {
-                    return Err("observer first native snapshot deadline".into());
-                }
-                frame_call(&self.queue, Box::new(|_| Ok(Value::Null)))?;
+        // Setup readiness does not imply delivery of the first native snapshot.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while self
+            .play
+            .script_probe_for_test(
+                &session.account,
+                "Boolean(globalThis.__rs2b0t_host?.snapshot?.stats?.length)",
+            )?
+            .as_bool()
+            != Some(true)
+        {
+            if Instant::now() >= deadline {
+                return Err(format!("{name} first native snapshot deadline"));
             }
+            frame_call(&self.queue, Box::new(|_| Ok(Value::Null)))?;
         }
         session.observer = name == "E2EObserver";
         if !session.observer {
             session.tested = true;
-            session.logs.clear();
         }
         Ok(Value::Null)
     }
@@ -163,20 +239,50 @@ impl Adapter {
         session
             .logs
             .extend(self.play.script_take_pending_logs(&session.account));
+        if !session.observer {
+            session.error = self.play.script_last_error(&session.account);
+            record_stop(
+                &mut session.logs,
+                &mut session.receipt,
+                self.play.script_lifecycle_receipt(&session.account),
+            );
+        }
+        let native_state;
         let state_name = if session.observer {
             if session.tested {
                 "stopped"
             } else {
                 "idle"
             }
+        } else if matches!(state, script::RunState::Paused) {
+            // Native runtime state distinguishes an operator pause from a scene-load hold.
+            native_state = self.play.script_probe_for_test(
+                &session.account,
+                "globalThis.__rs2b0t_script_runtime('state')",
+            )?;
+            native_state
+                .as_str()
+                .ok_or("invalid native runtime state")?
         } else {
             match state {
                 script::RunState::Running | script::RunState::Starting => "running",
-                script::RunState::Paused => "paused",
+                script::RunState::Stopping => "stopping",
+                script::RunState::Error => "crashed",
                 _ => "stopped",
             }
         };
-        let status = json!({"state":state_name, "logs":session.logs.iter().map(|msg| json!({"msg":msg})).collect::<Vec<_>>()});
+        let error = &session.error;
+        let receipt = &session.receipt;
+        let status = json!({
+            "state":state_name,
+            "logs":session.logs.iter().map(|msg| json!({"msg":msg})).collect::<Vec<_>>(),
+            "error":error,
+            "receipt":receipt,
+            "walk_cancelled_by_user": self.play.script_walk_cancelled_by_user(&session.account),
+        });
+        if state_name == "paused" || error.is_some() {
+            session.last_issue = Some(status.clone());
+        }
         if !session.observer && matches!(state, script::RunState::Idle | script::RunState::Stopping)
         {
             self.start_script("E2EObserver")?;
@@ -205,17 +311,18 @@ impl Adapter {
         match request["op"].as_str().ok_or("missing op")? {
             "connect" => {
                 if self.session.is_some() {
-                    return Err("pilot supports one account per test".into());
+                    return Err("adapter supports one account per test".into());
                 }
                 let user = request["user"].as_str().ok_or("missing user")?;
-                let account = format!(
-                    "uep{}",
-                    &script_js::JsCache::origin_sha(user.as_bytes())[..9]
-                );
-                let uid = SystemTime::now()
+                let nonce = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .map_err(|e| e.to_string())?
-                    .subsec_nanos() as i32;
+                    .map_err(|e| e.to_string())?;
+                let identity = format!("{user}:{}", nonce.as_nanos());
+                let account = format!(
+                    "uea{}",
+                    &script_js::JsCache::origin_sha(identity.as_bytes())[..9]
+                );
+                let uid = nonce.subsec_nanos() as i32;
                 self.play.try_spawn_slot(
                     Profile {
                         username: account.clone(),
@@ -236,7 +343,10 @@ impl Adapter {
                     tested: false,
                     observer: false,
                     logs: Vec::new(),
+                    receipt: None,
+                    error: None,
                     settings,
+                    last_issue: None,
                 });
                 self.start_script("E2EObserver")
             }
@@ -266,8 +376,8 @@ impl Adapter {
                     .as_str()
                     .ok_or("missing command")?
                     .to_string();
-                if command.starts_with("speed ") || command.starts_with("npcadd ") {
-                    return Err("pilot refuses world and tick-speed changes".into());
+                if !account_cheat(&command) {
+                    return Err(format!("unsupported account-scoped cheat: {command}"));
                 }
                 frame_call(
                     &self.queue,
@@ -331,10 +441,42 @@ impl Adapter {
                     }),
                 )
             }
+            "diagnostics" => {
+                let Some(session) = self.session.as_mut() else {
+                    return Ok(self.last_diagnostic.clone());
+                };
+                session
+                    .logs
+                    .extend(self.play.script_take_pending_logs(&session.account));
+                let facts = self.play.script_probe_for_test(&session.account,
+                    "({stats:globalThis.__rs2b0t_host?.snapshot?.stats, tile:rs2b0t.reader.worldTile()})");
+                Ok(json!({
+                    "account":session.account,
+                    "state":format!("{:?}", self.play.script_state(&session.account)),
+                    "observer":session.observer,
+                    "error":self.play.script_last_error(&session.account).or_else(||session.error.clone()),
+                    "receipt":self.play.script_lifecycle_receipt(&session.account).or_else(||session.receipt.clone()),
+                    "logs":session.logs,
+                    "facts":facts,
+                    "last_issue":session.last_issue,
+                    "host_events":NATIVE_EVENTS.0.lock().unwrap().iter()
+                        .filter(|row| row["account"].as_str() == Some(session.account.as_str()))
+                        .collect::<Vec<_>>(),
+                    "walk_cancelled_by_user": self.play.script_walk_cancelled_by_user(&session.account),
+                }))
+            }
             "close" => {
+                if self.session.is_some() {
+                    self.last_diagnostic = self.dispatch(json!({"op":"diagnostics"}))?;
+                }
                 if let Some(session) = self.session.take() {
                     self.play.script_stop(&session.account);
                     self.play.stop_slot(&session.account);
+                    std::fs::write(
+                        self.output.join(format!("{}-host.json", session.account)),
+                        format!("{}\n", self.last_diagnostic),
+                    )
+                    .map_err(|e| e.to_string())?;
                 }
                 self.queue.lock().unwrap().clear();
                 Ok(Value::Null)
@@ -344,20 +486,139 @@ impl Adapter {
     }
 }
 
-fn run_pilot() -> Result<(), String> {
+fn selected_cases<'a>(
+    metadata: &'a Value,
+    requested: Option<&str>,
+) -> Result<Vec<&'a Value>, String> {
+    let cases = metadata["cases"]
+        .as_array()
+        .ok_or("missing upstream cases")?;
+    let ids: Vec<_> = requested
+        .into_iter()
+        .flat_map(|value| value.split(','))
+        .filter(|id| !id.is_empty())
+        .collect();
+    for id in &ids {
+        if !cases.iter().any(|case| case["id"] == *id) {
+            return Err(format!("unknown upstream case {id}"));
+        }
+    }
+    let selected: Vec<_> = cases
+        .iter()
+        .filter(|case| {
+            if ids.is_empty() {
+                case["eligibility"] == "adopted"
+            } else {
+                ids.iter().any(|id| case["id"] == *id)
+            }
+        })
+        .collect();
+    if selected.is_empty() {
+        return Err("no upstream cases selected".into());
+    }
+    Ok(selected)
+}
+
+fn validate_verdict(metadata: &Value, selected: &[&Value], verdict: &Value) -> Result<(), String> {
+    for key in ["pin", "abi_pin"] {
+        if verdict[key] != metadata[key] || !verdict[key].is_string() {
+            return Err(format!("upstream verdict has the wrong {key}"));
+        }
+    }
+    let commit = verdict["host_commit"]
+        .as_str()
+        .ok_or("missing host commit")?;
+    if commit.len() != 40 || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("upstream verdict requires a full host commit".into());
+    }
+    let rows = verdict["results"]
+        .as_array()
+        .ok_or("missing upstream results")?;
+    if rows.len() != selected.len() {
+        return Err("upstream verdict does not cover the selected cases".into());
+    }
+    let mut failures = Vec::new();
+    for case in selected {
+        let id = case["id"].as_str().ok_or("upstream case has no id")?;
+        let mut matches = rows.iter().filter(|row| row["id"] == id);
+        let row = matches
+            .next()
+            .ok_or_else(|| format!("missing upstream result for {id}"))?;
+        if matches.next().is_some() {
+            return Err(format!("duplicate upstream result for {id}"));
+        }
+        for key in [
+            "path",
+            "family",
+            "capabilities",
+            "deadline_seconds",
+            "gate_class",
+            "eligibility",
+        ] {
+            if row[key] != case[key] {
+                return Err(format!("upstream verdict metadata differs for {id}: {key}"));
+            }
+        }
+        if row["eligibility_reason"] != case["reason"] {
+            return Err(format!(
+                "upstream verdict eligibility reason differs for {id}"
+            ));
+        }
+        match (case["gate_class"].as_str(), row["verdict"].as_str()) {
+            (Some("gating" | "non-gating"), Some("PASS")) => {}
+            (Some("non-gating"), Some("FAIL" | "UNSUPPORTED")) => {}
+            (Some("gating"), Some("FAIL" | "UNSUPPORTED")) => {
+                failures.push(format!("{id}: {} ({})", row["verdict"], row["reason"]));
+            }
+            _ => return Err(format!("invalid upstream verdict for {id}")),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+fn read_verdict(metadata: &Value, selected: &[&Value], output: &Path) -> Result<(), String> {
+    let path = output.join("verdict.json");
+    let verdict = std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let verdict: Value = serde_json::from_slice(&verdict).map_err(|error| error.to_string())?;
+    validate_verdict(metadata, selected, &verdict)
+}
+
+fn run_corpus() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Err("requires LIVE=1".into());
     }
     let upstream = required("UEP_UPSTREAM")?;
     let output = required("UEP_OUTPUT")?;
     std::fs::create_dir_all(&output).map_err(|e| e.to_string())?;
+    if output.join("verdict.json").exists() {
+        return Err("UEP_OUTPUT already contains verdict.json; use a new run directory".into());
+    }
+    let metadata: Value = serde_json::from_str(CASES).map_err(|error| error.to_string())?;
+    let requested = std::env::var("UEP_CASES").ok();
+    let selected = selected_cases(&metadata, requested.as_deref())?;
+    let seconds = selected.iter().try_fold(60u64, |total, case| {
+        let seconds = case["deadline_seconds"]
+            .as_u64()
+            .ok_or("invalid case deadline")?;
+        if seconds == 0 {
+            return Err("case deadline must be positive");
+        }
+        total.checked_add(seconds).ok_or("corpus deadline overflow")
+    })?;
+    if !api::hostlog::install_sink(&NATIVE_EVENTS) {
+        return Err("upstream adapter requires its own host event sink".into());
+    }
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(44594),
-        http_port: Some(1080),
+        port: Some(engine_port(std::env::var("WORLD_GAME_PORT"), 44594)?),
+        http_port: Some(engine_port(std::env::var("WORLD_HTTP_PORT"), 1080)?),
         engine_dir: Some(required("ENGINE_A_DIR")?),
         nav_pack: Some(required("NAV_PACK_289")?),
         nav_flags: Some(required("NAV_FLAGS_289")?),
@@ -389,6 +650,7 @@ fn run_pilot() -> Result<(), String> {
         library,
         queue,
         session: None,
+        last_diagnostic: Value::Null,
         output: output.clone(),
     };
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
@@ -435,19 +697,21 @@ fn run_pilot() -> Result<(), String> {
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|e| e.to_string())?;
-    let deadline = Instant::now() + Duration::from_secs(2700);
+    let deadline = Instant::now() + Duration::from_secs(seconds);
     let result = loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            break if status.success() {
-                Ok(())
-            } else {
-                Err(format!("upstream pilot exited {status}"))
-            };
+            break read_verdict(&metadata, &selected, &output).and_then(|()| {
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("upstream corpus exited {status}; see verdict.json"))
+                }
+            });
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            break Err("pilot deadline exceeded".into());
+            break Err("upstream corpus deadline exceeded".into());
         }
         match rx.recv_timeout(Duration::from_millis(20)) {
             Ok((line, reply)) => {
@@ -470,8 +734,8 @@ fn run_pilot() -> Result<(), String> {
 
 #[test]
 #[ignore = "requires LIVE=1, local Engine A, UEP_UPSTREAM and UEP_OUTPUT"]
-fn upstream_e2e_pilot() {
-    if let Err(error) = run_pilot() {
+fn upstream_e2e_corpus() {
+    if let Err(error) = run_corpus() {
         panic!("{error}");
     }
 }
@@ -507,4 +771,85 @@ fn facade_runs_in_the_real_load_isolate_and_keeps_actions_explicit() {
     assert!(isolate.probe("rs2b0t.runner.start(null)").is_err());
     assert!(isolate.probe("__rs2b0t.Inventory.nonexistent()").is_err());
     isolate.join();
+}
+
+#[test]
+fn fixture_cheats_cannot_mutate_the_world_or_tick_speed() {
+    for command in [
+        "tele 0,50,50,20,20",
+        "setstat herblore 20",
+        "~clearinv",
+        "~maxme",
+        "givebank pot_empty 30",
+    ] {
+        assert!(account_cheat(command), "{command}");
+    }
+    for command in [
+        "speed 200",
+        "npcadd goblin",
+        "locadd tree",
+        "give coins 1\nspeed 200",
+        "",
+    ] {
+        assert!(!account_cheat(command), "{command}");
+    }
+}
+
+#[test]
+fn native_stop_receipts_reach_the_runner_log_once() {
+    let mut logs = vec!["script output".into()];
+    let mut previous = None;
+    let receipt = script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: 8,
+        reason: "native stop reason".into(),
+    };
+    record_stop(&mut logs, &mut previous, Some(receipt.clone()));
+    record_stop(&mut logs, &mut previous, Some(receipt.clone()));
+    record_stop(&mut logs, &mut previous, None);
+    assert_eq!(logs, ["script output", "stopped — native stop reason"]);
+    assert_eq!(previous, Some(receipt));
+}
+
+#[test]
+fn upstream_verdict_requires_complete_structured_results() {
+    let metadata: Value = serde_json::from_str(CASES).unwrap();
+    let case = metadata["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["eligibility"] == "adopted" && case["gate_class"] == "gating")
+        .unwrap();
+    let mut row = case.clone();
+    row["eligibility_reason"] = case["reason"].clone();
+    row["verdict"] = json!("PASS");
+    row["reason"] = json!("unchanged upstream test passed");
+    let mut verdict = json!({
+        "pin":metadata["pin"], "abi_pin":metadata["abi_pin"],
+        "host_commit":"0123456789012345678901234567890123456789", "results":[row]
+    });
+    assert!(validate_verdict(&metadata, &[case], &verdict).is_ok());
+    verdict["results"][0]["verdict"] = json!("UNSUPPORTED");
+    assert!(validate_verdict(&metadata, &[case], &verdict).is_err());
+    verdict["results"][0]["verdict"] = json!("PASS");
+    let duplicate = verdict["results"][0].clone();
+    verdict["results"].as_array_mut().unwrap().push(duplicate);
+    assert!(validate_verdict(&metadata, &[case], &verdict).is_err());
+    verdict["results"] = json!([]);
+    assert!(validate_verdict(&metadata, &[case], &verdict).is_err());
+    assert!(selected_cases(&metadata, Some("not-an-upstream-case")).is_err());
+}
+
+#[test]
+fn engine_ports_follow_the_cell_runner_without_falling_back_on_invalid_values() {
+    assert_eq!(
+        engine_port(Err(std::env::VarError::NotPresent), 44594),
+        Ok(44594)
+    );
+    assert_eq!(engine_port(Ok("47594".into()), 44594), Ok(47594));
+    for value in ["0", "65536", "bad"] {
+        assert!(engine_port(Ok(value.into()), 44594).is_err());
+    }
+    assert!(engine_port(Err(std::env::VarError::NotUnicode("bad".into())), 44594).is_err());
 }

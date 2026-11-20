@@ -384,6 +384,9 @@ exceptions = [
   "crates/host-play/src/walk_guard_live_tests.rs",
   "crates/host-play/src/gather_bait_live.rs",
   "crates/host-play/tests/gatherer_live.rs",
+  "tools/live-map/upstream-cases.json",
+  "crates/host-play/tests/upstream_e2e.rs",
+  "crates/host-play/tests/upstream_e2e/**",
 ]
 
 # Controlled native steps prove slow-return, shutdown, panic and custody rules.
@@ -2928,3 +2931,13 @@ cells = [
   "host.varbit-377-known-missing-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_377_CACHE_DIR=${CLIENT_377_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} WORLD_GAME_PORT=${LIVE_377_GAME_PORT:-43595} WORLD_HTTP_PORT=${LIVE_377_HTTP_PORT:-81} PARITY_VARBIT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --release --locked -p host-play --features test-support --test revision_377_live -- --ignored --exact varbit::varbit_377_known_and_missing_are_read_only --nocapture --test-threads=1",
 ]
 
+
+[[cover]]
+globs = [
+  "tools/live-map/upstream-cases.json",
+  "crates/host-play/tests/upstream_e2e.rs",
+  "crates/host-play/tests/upstream_e2e/**",
+]
+cells = [
+  "host.upstream-e2e-adopted|LIVE=1 BOT_CPU=1 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 UEP_CASES=${UEP_CASES:?} UEP_UPSTREAM=${UEP_UPSTREAM:?} UEP_OUTPUT=${UEP_OUTPUT:?} UEP_HOST_COMMIT=${UEP_HOST_COMMIT:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture|--locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture",
+]

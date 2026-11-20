@@ -28,6 +28,79 @@ system temporary directory.
 python3 -B tools/live-map/live_map.py --self-test
 ```
 
+
+## Upstream E2E selection
+
+`tools/live-map/upstream-cases.json` records full `pin` and `abi_pin` values,
+and each case's ID, test path, family, capabilities, deadline, gate class,
+eligibility, reason, family path globs, and a `sha256` source digest. Excluded
+cases need a reason. The native adapter requires pinned source digests.
+
+The diff selector adds the adopted upstream cases beside the existing native
+and host cells:
+
+- A matching case `path` selects that case.
+- A matching `family_paths` glob selects every adopted case in that family.
+- Shared ABI, Load, and adapter-harness paths select all adopted cases.
+- A change to `upstream-cases.json`, including either pin, selects all adopted
+  cases.
+- Native-only changes keep their existing native and host cells. UI changes do
+  not use upstream cases as a substitute.
+
+List the selected native cells and upstream cases:
+
+```sh
+python3 -B tools/live-map/live_map.py --diff BASE..HEAD
+```
+
+Run the selected cases from the pinned source archive. The runner invokes the
+single `host.upstream-e2e-adopted` cell once for the selected group. The existing
+native and host cells keep the `--passes` setting.
+
+```sh
+UEP_UPSTREAM=/path/to/frozen/upstream \
+python3 -B tools/live-map/live_map.py run \
+  --repo /path/to/clone --diff BASE..HEAD \
+  --prefix uep --evidence /path/to/evidence
+```
+
+To run one case or an explicit group, set `UEP_CASES` to comma-separated IDs:
+
+```sh
+UEP_CASES=case-one,case-two UEP_UPSTREAM=/path/to/frozen/upstream \
+python3 -B tools/live-map/live_map.py run \
+  --repo /path/to/clone --cells host.upstream-e2e-adopted \
+  --prefix uep --evidence /path/to/evidence
+```
+
+`run_cells` assigns a fresh `UEP_OUTPUT` directory under the evidence path.
+The Bun runner writes `verdict.json`. The Rust test consumes it, and
+`run_cells` reads it once after the command. The top level has `pin`, `abi_pin`,
+`host_commit`, and `results`. Each flat result repeats case metadata, including
+`family_paths`; `eligibility_reason` echoes the manifest reason, and `reason`
+contains runtime detail. Its `sha256` is checked against the selected archive
+file and any optional manifest digest. A `FAIL` requires a supported
+`classification`. The reader checks both pins, the host commit, case metadata,
+source hashes, and selected results. It does not read stderr for verdicts. A
+missing, malformed, or mismatched sink fails.
+Gating `FAIL` and `UNSUPPORTED` results fail the cell. Non-gating results stay
+in the summary and do not gate.
+
+Only metadata cases marked `adopted` run. Multi-account, DOM, NPC-spawn,
+shared-world mutation, and tick-rate cases remain excluded when their metadata
+records those limits. These cases do not replace existing native or UI cells.
+
+The current pin has 39 adopted cases and 51 exclusions from the 90 A/B
+candidates. Of the adopted cases, 33 gate and six are observational. Mining
+yield, random events, and wall-clock rate assertions do not gate.
+
+The adapter provides one native session per page, account-scoped seeds,
+login/logout/relog, settings, one library-start helper, native runner controls,
+game-state evaluation, bounded waits, screenshots, and native console/error
+observations. Explicit upstream process exits produce structured records before
+the process exits. Unsupported page methods fail explicitly. Native host slots
+replace browser deployment isolation; no DOM or browser client is simulated.
+
 ## Validate test selectors
 
 Before using a map, list the tests selected by every unique cell command:
