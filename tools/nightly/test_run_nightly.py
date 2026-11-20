@@ -2678,15 +2678,16 @@ class LatencyPassTests(unittest.TestCase):
         listener, echo_port, thread, stopping = _start_echo_server()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                # RTT395 leaves timer slack inside the unchanged ±10ms health band.
+                # More samples resist brief host scheduling stalls without widening ±10 ms.
                 rows, meta, run_dir = self.run_pass(
                     Path(tmp), echo_port,
                     {"walk": ("PASS", 10), "cook": ("FAIL", 4), "bank": ("FAIL", 1)},
-                    latency_rtts=(395,), traffic_rounds=5)
+                    latency_rtts=(395,), traffic_rounds=15)
                 by_cell = {row.cell: row for row in rows}
                 self.assertEqual(by_cell["walk"].latency_class, "pass", by_cell["walk"].reason)
                 self.assertEqual(by_cell["cook"].latency_class, "latency-defect")
-                self.assertEqual(by_cell["bank"].latency_class, "also-fails-at-0")
+                self.assertEqual(by_cell["bank"].latency_class, "also-fails-at-0",
+                                 by_cell["bank"].reason)
                 for row in rows:
                     cell_dir = run_dir / "cells-latency" / "rtt395" / row.cell
                     doc = json.loads((cell_dir / "latency.json").read_text(encoding="utf-8"))
@@ -2707,9 +2708,9 @@ class LatencyPassTests(unittest.TestCase):
                 records = rn.read_proxy_stats(stats)
                 self.assertGreaterEqual(len(records), 3)
                 self.assertGreaterEqual(sum(record["queue_delay_ms_client_to_server"]["samples"]
-                                            for record in records), 15)
+                                            for record in records), 45)
                 self.assertGreaterEqual(sum(record["queue_delay_ms_server_to_client"]["samples"]
-                                            for record in records), 15)
+                                            for record in records), 45)
                 self.assertEqual(meta["bands"][0]["band"], "rtt395")
                 self.assertTrue(meta["report_only"])
         finally:
