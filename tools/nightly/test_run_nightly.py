@@ -2654,7 +2654,7 @@ class LatencyPassTests(unittest.TestCase):
         if stats_p50_override is not None:
             real_read = rn.read_proxy_stats
 
-            def off_band(path):
+            def override_p50(path):
                 rows = real_read(path)
                 for row in rows:
                     for field in ("queue_delay_ms_client_to_server",
@@ -2663,7 +2663,7 @@ class LatencyPassTests(unittest.TestCase):
                             row[field] = {**row[field], "p50": stats_p50_override}
                 return rows
 
-            patches.append(mock.patch.object(rn, "read_proxy_stats", off_band))
+            patches.append(mock.patch.object(rn, "read_proxy_stats", override_p50))
         for patch in patches:
             patch.start()
         try:
@@ -2678,15 +2678,16 @@ class LatencyPassTests(unittest.TestCase):
         listener, echo_port, thread, stopping = _start_echo_server()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                # RTT395 leaves timer slack inside the unchanged ±10ms health band.
+                # Fixed p50 inputs keep classification and sidecar assertions independent of host load.
                 rows, meta, run_dir = self.run_pass(
                     Path(tmp), echo_port,
                     {"walk": ("PASS", 10), "cook": ("FAIL", 4), "bank": ("FAIL", 1)},
-                    latency_rtts=(395,), traffic_rounds=5)
+                    latency_rtts=(395,), traffic_rounds=5, stats_p50_override=197.5)
                 by_cell = {row.cell: row for row in rows}
                 self.assertEqual(by_cell["walk"].latency_class, "pass", by_cell["walk"].reason)
                 self.assertEqual(by_cell["cook"].latency_class, "latency-defect")
-                self.assertEqual(by_cell["bank"].latency_class, "also-fails-at-0")
+                self.assertEqual(by_cell["bank"].latency_class, "also-fails-at-0",
+                                 by_cell["bank"].reason)
                 for row in rows:
                     cell_dir = run_dir / "cells-latency" / "rtt395" / row.cell
                     doc = json.loads((cell_dir / "latency.json").read_text(encoding="utf-8"))
