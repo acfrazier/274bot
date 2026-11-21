@@ -142,6 +142,10 @@ const TEST_LANES: &[(&str, &str)] = &[
         "host-render-test-hooks",
         "cargo test -p host --features render-test-hooks",
     ),
+    (
+        "compat-js",
+        "cd crates/script-js/compat-js && npm ci && npm test",
+    ),
 ];
 
 #[derive(Clone, Copy)]
@@ -1359,10 +1363,10 @@ mod tests {
     fn ci_step_list_contains_every_lane_and_clippy_command() {
         let names: Vec<String> = steps().into_iter().map(|step| step.name).collect();
         assert_eq!(CLIPPY_COMMANDS.len(), 16);
-        assert_eq!(TEST_LANES.len(), 17);
-        assert!(names.iter().any(|name| name == "clippy-16"));
+        assert_eq!(TEST_LANES.len(), 18);
         assert!(names.iter().any(|name| name == "test-luau-only"));
         assert!(names.iter().any(|name| name == "test-js-only"));
+        assert!(names.iter().any(|name| name == "test-compat-js"));
         assert!(
             names
                 .iter()
