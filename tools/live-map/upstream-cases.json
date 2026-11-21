@@ -1,0 +1,2014 @@
+{
+  "pin": "2de6bb2397ceb9ffd05f2354f67dde328e324531",
+  "abi_pin": "ae56ccc95ba5681b12f1f66ec2adea14427fe497",
+  "cases": [
+    {
+      "id": "alcher-fire-battlestaff-live",
+      "path": "e2e/alcher-fire-battlestaff-live.ts",
+      "family": "Alcher",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/alcher.rs"
+      ],
+      "sha256": "e0738a0c586c4ced537f1a45dc328f199bdf179c20ce5ad504c86ceb6ea53832"
+    },
+    {
+      "id": "alcher-low-744-live",
+      "path": "e2e/alcher-low-744-live.ts",
+      "family": "Alcher",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/alcher.rs"
+      ],
+      "sha256": "d3b7a869bc47ed6ba3fae3e1f91066d5b649952d1be191a2f4a58f7fe143ec47"
+    },
+    {
+      "id": "alcher-nearest-bank-live",
+      "path": "e2e/alcher-nearest-bank-live.ts",
+      "family": "Alcher",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/alcher.rs"
+      ],
+      "sha256": "259a5ac9a5b4ee4a6f677179f75da4d1d987ddefe654ff94124d8b8dbcebb630"
+    },
+    {
+      "id": "alcher-swarm-drain-live",
+      "path": "e2e/alcher-swarm-drain-live.ts",
+      "family": "Alcher",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "world-fixture"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: spawns NPCs or random-event actors into shared world state.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/alcher.rs"
+      ],
+      "sha256": "7c083b46c1ad06e292c48f0e455494d5135d593c41b4579d31638cc37cf7a5cf"
+    },
+    {
+      "id": "ardyfighter-restock-loop-live",
+      "path": "e2e/ardyfighter-restock-loop-live.ts",
+      "family": "ArdyFighter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/ardy_fighter.rs"
+      ],
+      "sha256": "f6b05c022b06a4e0f180a1d43dc9abd68a67c4e5ef0c99461584cb2850146507"
+    },
+    {
+      "id": "autofighter-bank-resume-live",
+      "path": "e2e/autofighter-bank-resume-live.ts",
+      "family": "AutoFighter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/auto_fighter.rs"
+      ],
+      "sha256": "5a392df5a59f644a3ce41d5cc664e34a088ddd89ec507b054482d4b46f2ab0b5"
+    },
+    {
+      "id": "autofighter-eat-resume-659-live",
+      "path": "e2e/autofighter-eat-resume-659-live.ts",
+      "family": "AutoFighter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-client-internals",
+        "library-script-start",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: depends on browser-only rs2b0t.client internals.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/auto_fighter.rs"
+      ],
+      "sha256": "58fae94371f43fef8c2e314c656d1dee614f7e3fa993506492392a12ce9c53e9"
+    },
+    {
+      "id": "autofighter-special-live",
+      "path": "e2e/autofighter-special-live.ts",
+      "family": "AutoFighter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "world-fixture"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: spawns NPCs or random-event actors into shared world state.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/auto_fighter.rs"
+      ],
+      "sha256": "c913ed93262a9a58c2b84d856f485032c144ace55b7a10b4bded4dd328d7c1cd"
+    },
+    {
+      "id": "autofighter-targets-loot-live",
+      "path": "e2e/autofighter-targets-loot-live.ts",
+      "family": "AutoFighter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "world-fixture"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: spawns NPCs or random-event actors into shared world state.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/auto_fighter.rs"
+      ],
+      "sha256": "d235ed0f4d1ae5f3598c92a8d601a4f1f4ea500424d9183a146a0cbbf6a4458c"
+    },
+    {
+      "id": "bankfletcher-live",
+      "path": "e2e/bankfletcher-live.ts",
+      "family": "BankFletcher",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/bank_fletcher.rs"
+      ],
+      "sha256": "1e354362dabdfb4fb33676a9022beb3a7e06cb8b9738121a1a31217e7ae4dba9"
+    },
+    {
+      "id": "baxtorian-rope-369-live",
+      "path": "e2e/baxtorian-rope-369-live.ts",
+      "family": "FireGiant",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/fire_giant.rs"
+      ],
+      "sha256": "23a6e4e208f492454b1b650573df32b7071c1c238125feece2aee0b7cc7f3739"
+    },
+    {
+      "id": "brimhaven-agility-test",
+      "path": "e2e/brimhaven-agility-test.ts",
+      "family": "BrimhavenAgility",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "multiple-clients",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: requires multiple simultaneous accounts or clients; changes the engine tick rate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/agility.rs"
+      ],
+      "sha256": "2288bbe64cc58fdae74b11c3b7110d5f8824f0067fe91aa27a10efa15c8ae484"
+    },
+    {
+      "id": "brimhaven-mossgiants-live",
+      "path": "e2e/brimhaven-mossgiants-live.ts",
+      "family": "BrimhavenMossGiants",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/moss_giant.rs"
+      ],
+      "sha256": "aa35fbd3b3f0517e8d35c4ab85b01eec18b261ec16ef34b5319899095793918f"
+    },
+    {
+      "id": "brimhaven-steal-restock-live",
+      "path": "e2e/brimhaven-steal-restock-live.ts",
+      "family": "BrimhavenAgility",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/agility.rs"
+      ],
+      "sha256": "c952b3e2111c98ee771c30b12f1f15adefcd3b57ac0ee1c5af92038c8e4f2926"
+    },
+    {
+      "id": "brimhaven-swarm-597-live",
+      "path": "e2e/brimhaven-swarm-597-live.ts",
+      "family": "BrimhavenAgility",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control",
+        "world-fixture"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: spawns NPCs or random-event actors into shared world state; changes the engine tick rate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/agility.rs"
+      ],
+      "sha256": "1a509105dc4941a592982639516b94d0bd7e338a015515e8caee760516ccd5d7"
+    },
+    {
+      "id": "coaltrucks-test",
+      "path": "e2e/coaltrucks-test.ts",
+      "family": "CoalTrucks",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "adopted",
+      "reason": "Adopted for observation: default full-cycle assertions depend on mining yield within an eight-minute window (upstream lines 83 and 152-153).",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/coal_trucks.rs"
+      ],
+      "sha256": "df4bb77d76268d1f3a9541b87d0e4e5c26a49db7e9f0f1f3c5b4fd03b984496c"
+    },
+    {
+      "id": "common-reward-banking-test",
+      "path": "e2e/common-reward-banking-test.ts",
+      "family": "AutoFighter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-client-internals",
+        "browser-dom-or-navigation",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; depends on browser-only rs2b0t.client internals; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/auto_fighter.rs"
+      ],
+      "sha256": "40bf56a4a8c054ea0c745a7491bc4f6c66c51dfd31a661b9bb54f72481a4139a"
+    },
+    {
+      "id": "cookbot-zanaris-live",
+      "path": "e2e/cookbot-zanaris-live.ts",
+      "family": "CookBot",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/cooking.rs"
+      ],
+      "sha256": "267b0b1aa5bb7b87ce2318782dfb3903d4624e74ffbfc8cb827a7adb4bda3791"
+    },
+    {
+      "id": "crandor-ship-367-live",
+      "path": "e2e/crandor-ship-367-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "42521d9b0ad42ea80576b5d78dbd8dc2b0d13263885e034c70dde5028c548f5d"
+    },
+    {
+      "id": "dartfletcher-test",
+      "path": "e2e/dartfletcher-test.ts",
+      "family": "DartFletcher",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1200,
+      "gate_class": "non-gating",
+      "eligibility": "adopted",
+      "reason": "Adopted for observation only: the source has a rate/chance-dependent outcome, so that outcome is non-gating.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/dart_fletcher.rs"
+      ],
+      "sha256": "440cba8b0e05b0441e7fbcaeeac190393530b3fba3b482e0bd320b05b169c0ce"
+    },
+    {
+      "id": "entrana-gear-368-live",
+      "path": "e2e/entrana-gear-368-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "dfcda36c85ecd70259112eb0a038760c8b1ee05228a1708ec8335880fee4c53e"
+    },
+    {
+      "id": "firegiant-test",
+      "path": "e2e/firegiant-test.ts",
+      "family": "FireGiant",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events"
+      ],
+      "deadline_seconds": 2700,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/fire_giant.rs"
+      ],
+      "sha256": "d5736749ece1747a87cb54dc8a649a6c6cbc9a4df33925a4b967f9ebcae1c411"
+    },
+    {
+      "id": "firemaker-empty-bank-live",
+      "path": "e2e/firemaker-empty-bank-live.ts",
+      "family": "Firemaker",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/firemaking.rs"
+      ],
+      "sha256": "d8e835e06a86cfa5e54615568af3cbc519524c6781c9586d2f5edba2aa5ecf1b"
+    },
+    {
+      "id": "fishing-gear-749-live",
+      "path": "e2e/fishing-gear-749-live.ts",
+      "family": "Fisher",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "world-fixture"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: spawns NPCs or random-event actors into shared world state; requires a dropped ground-item/random-event fixture.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/gatherer.rs"
+      ],
+      "sha256": "d42d0e36b3b2a97ca3f173c6e402b37b247336f5a10f60d0017c196e1a3fdc43"
+    },
+    {
+      "id": "flaxaio-pick-spin-live",
+      "path": "e2e/flaxaio-pick-spin-live.ts",
+      "family": "FlaxAIO",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/flax.rs"
+      ],
+      "sha256": "819b9470d73864f1a88b017b2ab0b69f4eaf0afcaa36e6ac0ab14e6b158dd524"
+    },
+    {
+      "id": "flour-collector-310-live",
+      "path": "e2e/flour-collector-310-live.ts",
+      "family": "FlourCollector",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/flour_collector.rs"
+      ],
+      "sha256": "b89c18be8dfdeaa7b9d8fa5e9a1585858bd0732ccc62cccd23040e9c0a8ff244"
+    },
+    {
+      "id": "greendragon-pk-flee-test",
+      "path": "e2e/greendragon-pk-flee-test.ts",
+      "family": "GreenDragon",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-client-internals",
+        "multiple-clients",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: requires multiple simultaneous accounts or clients; depends on browser-only rs2b0t.client internals.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/green_dragon.rs"
+      ],
+      "sha256": "de38d7640bcd4de5253964bb4f65487ee8cbac2ebd662e29a5b5ca11aa748ddd"
+    },
+    {
+      "id": "greendragon-test",
+      "path": "e2e/greendragon-test.ts",
+      "family": "GreenDragon",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-client-internals",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: depends on browser-only rs2b0t.client internals.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/green_dragon.rs"
+      ],
+      "sha256": "e5248fa48546fd8d2f32c31ff4a2390cc8bb34967437c3d004d66bad35cb9f95"
+    },
+    {
+      "id": "gutanoth-ledges-364-live",
+      "path": "e2e/gutanoth-ledges-364-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "f0e547fa1b6b836da6eecdef9be748b45e290bd7ce0c749eca98144bd3d274d1"
+    },
+    {
+      "id": "herbcleaner-empty-bank-live",
+      "path": "e2e/herbcleaner-empty-bank-live.ts",
+      "family": "HerbCleaner",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/herb_cleaner.rs"
+      ],
+      "sha256": "432bdc0d3dc6c7aa7eeb2866beeda8c89ca2ba07bf764aa318934d8a637aa6f7"
+    },
+    {
+      "id": "herblore-grinding-live",
+      "path": "e2e/herblore-grinding-live.ts",
+      "family": "HerbloreSecondaries",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "multiple-clients",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: the default source loops over two cases, creates a new account and page for each, and therefore needs multiple accounts even though the newPage call occurs once in the loop body (e2e/herblore-grinding-live.ts:14-23).",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/herblore_secondaries.rs"
+      ],
+      "sha256": "63f1c858c7eb6e0d6110fc8063e5cd11ea99c901f53a87098d1b44132a92b690"
+    },
+    {
+      "id": "herblore-secondaries-test",
+      "path": "e2e/herblore-secondaries-test.ts",
+      "family": "HerbloreSecondaries",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/herblore_secondaries.rs"
+      ],
+      "sha256": "0f443446a67636c969e0039acb4173c62e867976866be364f03368824093b76a"
+    },
+    {
+      "id": "hillgiant-bank-428-live",
+      "path": "e2e/hillgiant-bank-428-live.ts",
+      "family": "HillGiant",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "product-runner-registry"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/hill_giant.rs"
+      ],
+      "sha256": "af98a882b9d33f9af580bfeae67ba09983fd56502120a0f94233e6f73feb2424"
+    },
+    {
+      "id": "hillgiant-test",
+      "path": "e2e/hillgiant-test.ts",
+      "family": "HillGiant",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "product-runner-registry"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/hill_giant.rs"
+      ],
+      "sha256": "4abdb16c885a2c54b404e6a708736a81b45a9fcd82728c77fff77f80239175b0"
+    },
+    {
+      "id": "hosted-proof-test",
+      "path": "e2e/hosted-proof-test.ts",
+      "family": "ChickenKiller",
+      "capabilities": [
+        "account-session",
+        "bounded-wait",
+        "browser-client-internals",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: depends on browser-only rs2b0t.client internals.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/chickens.rs"
+      ],
+      "sha256": "f269cf766c1cf65cc2bc9efe33384db7c231a9101d7b76f51d58258f0a10e428"
+    },
+    {
+      "id": "hostile-random-damage-live",
+      "path": "e2e/hostile-random-damage-live.ts",
+      "family": "RandomEvents",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-dom-or-navigation",
+        "page-evaluate",
+        "screenshot-evidence",
+        "world-fixture"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: spawns NPCs or random-event actors into shared world state; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/guardian_events.rs"
+      ],
+      "sha256": "23f679015874c6b56645d05839302a03c2eb5290928f8dd9688bf8e82b11ab56"
+    },
+    {
+      "id": "jivechests-live",
+      "path": "e2e/jivechests-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "64c4ea39b2c669be31147d82bc2a12e75c7caf8bd281439508ee78730e9ba00d"
+    },
+    {
+      "id": "jivecrafting-live",
+      "path": "e2e/jivecrafting-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "ed50a40607e81b7a13299bad77bf818c1e462c3eaeb9e1e659489a468ab5b8e9"
+    },
+    {
+      "id": "jivedemons-live",
+      "path": "e2e/jivedemons-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 2100,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "ba3f5fdb11b35c3a60838c5cfb63f6d15a1ef03fa903c1c70b3343c89e916a85"
+    },
+    {
+      "id": "jivedragons-black-range-live",
+      "path": "e2e/jivedragons-black-range-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "bounded-wait",
+        "browser-dom-or-navigation",
+        "library-script-start",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "9c92b6c5b623e502c8d2ffe303266367dd77251be4077aefd7d4a4bdc87b9817"
+    },
+    {
+      "id": "jivedragons-live",
+      "path": "e2e/jivedragons-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-dom-or-navigation",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "25ff02b6de1cc8d9a54b8ed2c60e45ad7493f9b0c1e62d6486c1480191d0ea60"
+    },
+    {
+      "id": "jivedragons-potion-restock-live",
+      "path": "e2e/jivedragons-potion-restock-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 2100,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "45b3a29b881e147511b3629cd8896747d3fcb34eb98e45cc58d30a3a57450d59"
+    },
+    {
+      "id": "jiveenchanter-live",
+      "path": "e2e/jiveenchanter-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "766c46a8c75ca31d696a631258e9fdc672feed42bc7a39001c57f7a35cc5eba1"
+    },
+    {
+      "id": "jivekbd-live",
+      "path": "e2e/jivekbd-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 3300,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "74a45e46876ea1b6175ae5c499c634c1ea8ecc6e40915da2629855eb3fbccb6e"
+    },
+    {
+      "id": "jivekq-live",
+      "path": "e2e/jivekq-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-dom-or-navigation",
+        "library-script-start",
+        "multiple-clients",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: requires multiple simultaneous accounts or clients; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "a90a5ff9a6104df12157268191b51ac6c94cf6dfc87486a8204397afba3ca5ff"
+    },
+    {
+      "id": "jivemarketdumper-live",
+      "path": "e2e/jivemarketdumper-live.ts",
+      "family": "Jive",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-dom-or-navigation",
+        "library-script-start",
+        "multiple-clients",
+        "page-evaluate",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: requires multiple simultaneous accounts or clients; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/jive.rs"
+      ],
+      "sha256": "e655f5a0c876425d7424463b822aad9189ae9b6a07848d9840f1326ffddfa1db"
+    },
+    {
+      "id": "leather-thread-279-live",
+      "path": "e2e/leather-thread-279-live.ts",
+      "family": "LeatherCrafter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/leather.rs"
+      ],
+      "sha256": "cea1ef2a06ad6bbb65af2da4de68a5123f8f327ff906a1bcc3bf0650a0aff035"
+    },
+    {
+      "id": "leathercrafter-hard-bank-gap-live",
+      "path": "e2e/leathercrafter-hard-bank-gap-live.ts",
+      "family": "LeatherCrafter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/leather.rs"
+      ],
+      "sha256": "37eee4735caf1a4222e06418b7fbbc8c0aab028631209a7455cf8d2414b88ed6"
+    },
+    {
+      "id": "leathercrafter-hard-total-live",
+      "path": "e2e/leathercrafter-hard-total-live.ts",
+      "family": "LeatherCrafter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/leather.rs"
+      ],
+      "sha256": "1a422f10bed4bbf1c97e3acd6b89d64c2dda151b7ad0ffe764f98caaa3d2f520"
+    },
+    {
+      "id": "leathercrafter-nearest-bank-live",
+      "path": "e2e/leathercrafter-nearest-bank-live.ts",
+      "family": "LeatherCrafter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/leather.rs"
+      ],
+      "sha256": "b805cdd483956ec00639cba158a122bdbfd85bc4deff32f300d79019f738c7c0"
+    },
+    {
+      "id": "mage-bank-live",
+      "path": "e2e/mage-bank-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "81fa2d209afbe164cb9c2b75c5589f837d37f0c0a4594dc2270ef8f8c03d6572"
+    },
+    {
+      "id": "maze-at-start-live",
+      "path": "e2e/maze-at-start-live.ts",
+      "family": "RandomEvents",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-dom-or-navigation",
+        "page-evaluate",
+        "page-events"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/guardian_events.rs"
+      ],
+      "sha256": "68f536e08bc1e25b5bf91120f917d5bd1a7bff88d413f8da8b4a07a0407be4aa"
+    },
+    {
+      "id": "maze-probe-live",
+      "path": "e2e/maze-probe-live.ts",
+      "family": "RandomEvents",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 900,
+      "gate_class": "non-gating",
+      "eligibility": "adopted",
+      "reason": "Adopted for observation: the native host session is isolated; random-event arrival is not a gate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/guardian_events.rs"
+      ],
+      "sha256": "0d4e982c38bddc59b8bab1b27ebb46deb7dcdf4ec99e70eb09e04bbb6011f27f"
+    },
+    {
+      "id": "mortton-shop-798-live",
+      "path": "e2e/mortton-shop-798-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "dynamic-script-registration",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "016da1b925f70d5dd7d8be32c0c6451cd4ac4a0a3e3fe23e04ddb5f837d07cab"
+    },
+    {
+      "id": "mossgiant-dart-test",
+      "path": "e2e/mossgiant-dart-test.ts",
+      "family": "MossGiant",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-client-internals",
+        "browser-dom-or-navigation",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point; depends on browser-only rs2b0t.client internals; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/moss_giant.rs"
+      ],
+      "sha256": "52c5e6a50bf33bca3abd9d61a86127ecb5593887d6aa5a5af50578d3860a3902"
+    },
+    {
+      "id": "mulecrafter-test",
+      "path": "e2e/mulecrafter-test.ts",
+      "family": "MuleCrafter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "multiple-clients",
+        "page-evaluate",
+        "page-events"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: requires multiple simultaneous accounts or clients.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/runecrafting.rs"
+      ],
+      "sha256": "6ef4e6a7cf41c755cdd8541c3d12a22849996abaff16b22bf37312a3d870e534"
+    },
+    {
+      "id": "nature-runner-coins-739-live",
+      "path": "e2e/nature-runner-coins-739-live.ts",
+      "family": "NatureCrafter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/runecrafting.rs"
+      ],
+      "sha256": "6974d5895098d38a6228d4ca9d49f965505e6813aa7b6bbe4677b724384fc6a9"
+    },
+    {
+      "id": "naturecrafter-soak-test",
+      "path": "e2e/naturecrafter-soak-test.ts",
+      "family": "NatureCrafter",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-dom-or-navigation",
+        "library-script-start",
+        "multiple-clients",
+        "page-evaluate",
+        "page-events"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: requires multiple simultaneous accounts or clients; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/runecrafting.rs"
+      ],
+      "sha256": "d120d69de60f8af2a892c9d25d9a7f9bf084e06fd233ef189b952cac52de377a"
+    },
+    {
+      "id": "nav-script-routes-live",
+      "path": "e2e/nav-script-routes-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "206ef0d21d6ed546808d2993f0051c5d9186eb3600f5ef06243fbbfca1ab3eb8"
+    },
+    {
+      "id": "nav-script-travel-live",
+      "path": "e2e/nav-script-travel-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "56215ff792f2571a99c67671da8d1c71901df161715ef8b12b305e59be33217b"
+    },
+    {
+      "id": "nav-stress-live",
+      "path": "e2e/nav-stress-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "b3fbe043e5354929a43b675244de9aade975262e3df12e4135f16c64360c2382"
+    },
+    {
+      "id": "nav-tele-smoke",
+      "path": "e2e/nav-tele-smoke.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641"
+    },
+    {
+      "id": "nav-two-route-smoke-live",
+      "path": "e2e/nav-two-route-smoke-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "1799607d03151bed7cbc956051bc490f19f203a0cbf333641c55f383fa47b0ca"
+    },
+    {
+      "id": "boat-stall-probe-live",
+      "path": "e2e/nav/boat-stall-probe-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "product-runner-registry"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "99f15b296d3c662e475675bf8ece3619e96ef7c8f851cd2572703f47c0508015"
+    },
+    {
+      "id": "route-walk-live",
+      "path": "e2e/nav/route-walk-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "product-runner-registry"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "d657582e7ce1099e6169cd5a0a2c8350c4ab8bb6bd1423c4da44f97dbac19a07"
+    },
+    {
+      "id": "plague-pipe-366-live",
+      "path": "e2e/plague-pipe-366-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "e4987f6150aecbf71b4410f151f4c001b37c3276b2e0bca04b8cf53f06498045"
+    },
+    {
+      "id": "potionmaker-empty-secondary-live",
+      "path": "e2e/potionmaker-empty-secondary-live.ts",
+      "family": "PotionMaker",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/potion_maker.rs"
+      ],
+      "sha256": "d1a4f68e2d82a2b2e7bcae0141f2d04e97abde58e0bf9d594da29a0f12231c9b"
+    },
+    {
+      "id": "random-events-live",
+      "path": "e2e/random-events-live.ts",
+      "family": "RandomEvents",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "world-fixture"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: spawns NPCs or random-event actors into shared world state.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/guardian_events.rs"
+      ],
+      "sha256": "a6866af025f7acd3244ab6b01e7c4f67739c214cf2f3e455a5b0b73bcd2f2796"
+    },
+    {
+      "id": "ranged-ammo-483-live",
+      "path": "e2e/ranged-ammo-483-live.ts",
+      "family": "FireGiant",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "multiple-clients",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: the default source loops over two loadouts, creates a separate browser context and a different account for each, and therefore needs multiple accounts even though the newPage call occurs once in the loop body (lines 8-13, 85-93).",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/fire_giant.rs"
+      ],
+      "sha256": "12ecbf3ad841d047320433e5ee2f6716df5e527262df4fc08ce897c974db4f85"
+    },
+    {
+      "id": "rangingguild-live",
+      "path": "e2e/rangingguild-live.ts",
+      "family": "RangingGuild",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/ranging_guild.rs"
+      ],
+      "sha256": "5990d04cca63ce61b323a1bf7d338e2cc11136cf2f77c2ab51567f62fd61495e"
+    },
+    {
+      "id": "rockcrab-dart-test",
+      "path": "e2e/rockcrab-dart-test.ts",
+      "family": "RockCrab",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-client-internals",
+        "browser-dom-or-navigation",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point; requires unsupported page events (requestfailed); depends on browser-only rs2b0t.client internals; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/combat/rock_crab.rs"
+      ],
+      "sha256": "0826fdaa2c4d132ff388c05b9d97aad42f7253de4d6621d3aadfff5396c4c5a0"
+    },
+    {
+      "id": "shantay-pass-route-test",
+      "path": "e2e/shantay-pass-route-test.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-client-internals",
+        "browser-dom-or-navigation",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point; requires unsupported page events (requestfailed); depends on browser-only rs2b0t.client internals; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "9ea4a948e4c5cc65040370c5096aff473f57768128d6db65dd6fd4d54dc03411"
+    },
+    {
+      "id": "shopbuyout-fernahei-live",
+      "path": "e2e/shopbuyout-fernahei-live.ts",
+      "family": "ShopBuyout",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence",
+        "upstream-no-deploy"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/shop/buyout.rs"
+      ],
+      "sha256": "501b30a6a83df04fea57628762506e3c827ca9712e6bb9477fb73ff1a8d6209d"
+    },
+    {
+      "id": "smelter-swarm-422-live",
+      "path": "e2e/smelter-swarm-422-live.ts",
+      "family": "SmelterBot",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "product-runner-registry",
+        "world-fixture"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: spawns NPCs or random-event actors into shared world state.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/smelting.rs"
+      ],
+      "sha256": "26acb435b90281b44381493e1dfbbb8e1bd143db1f64642ed40e98d49c124761"
+    },
+    {
+      "id": "smithingbot-bank-loop-live",
+      "path": "e2e/smithingbot-bank-loop-live.ts",
+      "family": "SmithingBot",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/smithing.rs"
+      ],
+      "sha256": "edc949b738b032571b5d88f01eac3114c44046da8ccffa64c6d30d26bb2beeaa"
+    },
+    {
+      "id": "smithingbot-doors-live",
+      "path": "e2e/smithingbot-doors-live.ts",
+      "family": "SmithingBot",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/smithing.rs"
+      ],
+      "sha256": "31fd8141080b2085def165cbb3f41b0b98fe388b4bf3c329a3fac657950eeffa"
+    },
+    {
+      "id": "snape-bank-distance-653-live",
+      "path": "e2e/snape-bank-distance-653-live.ts",
+      "family": "HerbloreSecondaries",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/herblore_secondaries.rs"
+      ],
+      "sha256": "752737729f01c41917b15c8cb08bfb16300274df0dfd9d0d7d8b1cd9c86c62ee"
+    },
+    {
+      "id": "spirit-tree-walk-live",
+      "path": "e2e/spirit-tree-walk-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "9caa257b4ecebef196d8c8ca8e826d007392f959f2a7eab383fcb96e3db9db59"
+    },
+    {
+      "id": "strangebox-bank-open-live",
+      "path": "e2e/strangebox-bank-open-live.ts",
+      "family": "RandomEvents",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/guardian_events.rs"
+      ],
+      "sha256": "2fe3d8a692a3c620d94d533ef99f707e21546972b05420bc54838684683e6853"
+    },
+    {
+      "id": "strangebox-repro-live",
+      "path": "e2e/strangebox-repro-live.ts",
+      "family": "RandomEvents",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events"
+      ],
+      "deadline_seconds": 900,
+      "gate_class": "non-gating",
+      "eligibility": "adopted",
+      "reason": "Adopted for observation: the event item is account-seeded and console observations use actual native host logs; event outcome is not a gate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/guardian_events.rs"
+      ],
+      "sha256": "84ef40c1a2c33b73dd812a4487b5f63d37c0c009820b235613588a14ba6f48d4"
+    },
+    {
+      "id": "strangebox-underscript-live",
+      "path": "e2e/strangebox-underscript-live.ts",
+      "family": "RandomEvents",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events"
+      ],
+      "deadline_seconds": 900,
+      "gate_class": "non-gating",
+      "eligibility": "adopted",
+      "reason": "Adopted for observation: the event item is account-seeded and console observations use actual native host logs; event outcome is not a gate.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/guardian_events.rs"
+      ],
+      "sha256": "f231bb6bbb5bedc680ad8987492a7cc32f619b990594317602dd9d53675bab35"
+    },
+    {
+      "id": "superheater-fire-battlestaff-live",
+      "path": "e2e/superheater-fire-battlestaff-live.ts",
+      "family": "Superheater",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/superheater.rs"
+      ],
+      "sha256": "99aacb37d8f6c3d1525995f7963810a8bc0680d638416032c7bf48a14a25c61b"
+    },
+    {
+      "id": "superheater-smelt-live",
+      "path": "e2e/superheater-smelt-live.ts",
+      "family": "Superheater",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/superheater.rs"
+      ],
+      "sha256": "728776d4eff952cd4ef992ae81c7a46c0998b55be2e5e63787eda9c1e8c552a0"
+    },
+    {
+      "id": "thievingbot-test",
+      "path": "e2e/thievingbot-test.ts",
+      "family": "Thiever",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "library-script-start",
+        "page-evaluate",
+        "page-events"
+      ],
+      "deadline_seconds": 1200,
+      "gate_class": "non-gating",
+      "eligibility": "adopted",
+      "reason": "Adopted for observation only: the source has a rate/chance-dependent outcome, so that outcome is non-gating.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/thiever.rs"
+      ],
+      "sha256": "f1797ac81aeee3099d641e4df686d55609804bd23507eb4a55d603f945d99b15"
+    },
+    {
+      "id": "trapdoor-mines-live",
+      "path": "e2e/trapdoor-mines-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "0cb1bf1564ca8e6a499d30a207e86cf860a02cebb73a47d3414187c9cb4495e7"
+    },
+    {
+      "id": "varrock-sewer-web-370-live",
+      "path": "e2e/varrock-sewer-web-370-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "f7306b18807d60ecf762ecde4db59064505c45ec847cec98d6c2bc3b9a067e55"
+    },
+    {
+      "id": "vialfiller-test",
+      "path": "e2e/vialfiller-test.ts",
+      "family": "VialFiller",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 900,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: registry start uses the shared native helper, and console observations use actual native host logs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/vial_filler.rs"
+      ],
+      "sha256": "51da8a1dd49e75ee230882fff4d255165f551e1283e46f7e22bf2e266ad3ab05"
+    },
+    {
+      "id": "waterfall-exit-test",
+      "path": "e2e/waterfall-exit-test.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-client-internals",
+        "browser-dom-or-navigation",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence",
+        "tick-control"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: changes the engine tick rate; uses dynamic script/navigation registration instead of the one shared library-start entry point; depends on browser-only rs2b0t.client internals; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "5fcd177a91690c3580ee4cb0e4f458fc98e63a9cf66dad6294bb4163f24047aa"
+    },
+    {
+      "id": "west-ardougne-373-live",
+      "path": "e2e/west-ardougne-373-live.ts",
+      "family": "nav",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "browser-dom-or-navigation",
+        "dynamic-script-registration",
+        "page-evaluate",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 600,
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: uses dynamic script/navigation registration instead of the one shared library-start entry point; depends on browser DOM, page navigation, or reload APIs.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/navigation.rs"
+      ],
+      "sha256": "7cd13bbcf1e24e96a96f7b5ea572358aa3e240918ff992bbc893ab89c061d701"
+    },
+    {
+      "id": "wildyagility-food-startup-live",
+      "path": "e2e/wildyagility-food-startup-live.ts",
+      "family": "WildyAgility",
+      "capabilities": [
+        "account-seeding",
+        "account-session",
+        "bounded-wait",
+        "page-evaluate",
+        "page-events",
+        "product-runner-registry",
+        "screenshot-evidence"
+      ],
+      "deadline_seconds": 1800,
+      "gate_class": "gating",
+      "eligibility": "adopted",
+      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "family_paths": [
+        "crates/scenario/src/scenarios/production/agility.rs"
+      ],
+      "sha256": "bd1652812da855e5cad11e29f4ca5353ef8be40882c96b20333bc16e9db05d54"
+    }
+  ]
+}

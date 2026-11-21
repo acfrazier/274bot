@@ -100,6 +100,10 @@ name = "paired_catalog_live"
 required-features = ["js"]
 
 [[test]]
+name = "upstream_e2e"
+required-features = ["js", "test-support"]
+
+[[test]]
 name = "nav_gated_entrances_live"
 required-features = ["test-support"]
 

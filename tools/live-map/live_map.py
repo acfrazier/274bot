@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import fnmatch
+import json
 import os
 from pathlib import Path
 import re
@@ -16,14 +17,40 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from unittest.mock import patch
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 MAP_PATH = Path(__file__).with_name("map.toml")
 _CELL_NAME = re.compile(r"[A-Za-z0-9_.:-]+\Z")
+UPSTREAM_CASES_PATH = Path(__file__).with_name("upstream-cases.json")
+UPSTREAM_CASES_RELATIVE_PATH = "tools/live-map/upstream-cases.json"
+UPSTREAM_RUNNER_CELL = "host.upstream-e2e-adopted"
 CLIENT_SUBMODULE_PATH = "vendor/fr-client-rust"
+
+# These paths affect the shared ABI, Load runtime, or upstream test harness.
+# Family-specific behavior remains mapped by upstream-cases.json.
+UPSTREAM_SHARED_PATH_GLOBS = (
+    "crates/script-js/compat-js/abi-contract.json",
+    "crates/script-js/compat-js/abi-contract.cjs",
+    "crates/script-js/compat-js/generate.cjs",
+    "crates/script-js/schema/isolate.fbs",
+    "crates/script-js/src/library/**",
+    "crates/script-js/src/materialize/**",
+    "crates/script-js/src/runtime/**",
+    "crates/script-js/src/shim/**",
+    "crates/script-js/src/wire/**",
+    "crates/script-js/src/surface.rs",
+    "crates/script/src/native/abi.rs",
+    "crates/script/src/native/request.rs",
+    "crates/script/src/slot.rs",
+    "crates/script/src/slot/**",
+    "crates/host-play/src/play_scripts.rs",
+    "crates/host-play/src/script_runtime.rs",
+    "crates/host-play/tests/upstream_e2e.rs",
+    "crates/host-play/tests/upstream_e2e/**",
+)
 
 
 class MapError(ValueError):
@@ -38,12 +65,34 @@ class Cell:
 
 
 @dataclass(frozen=True)
+class UpstreamCase:
+    id: str
+    path: str
+    family: str
+    capabilities: tuple[str, ...]
+    deadline_seconds: int
+    gate_class: str
+    eligibility: str
+    reason: str
+    family_paths: tuple[str, ...]
+    sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class UpstreamManifest:
+    pin: str
+    abi_pin: str
+    cases: tuple[UpstreamCase, ...]
+
+
+@dataclass(frozen=True)
 class Plan:
     cells: tuple[Cell, ...]
     uncovered: tuple[str, ...]
     unclassified: tuple[str, ...]
     not_live: tuple[str, ...]
-
+    upstream_cases: tuple[UpstreamCase, ...] = ()
+    upstream_runner: Cell | None = None
 
 def _array_end(text: str) -> bool:
     """Return true when a possibly multiline array has closed."""
@@ -294,6 +343,168 @@ def matches_any(path: str, globs: list[str]) -> bool:
     return any(matches(path, pattern) for pattern in globs)
 
 
+def load_upstream_manifest(
+    path: Path = UPSTREAM_CASES_PATH,
+) -> UpstreamManifest:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise MapError(f"cannot read upstream case metadata {path}: {error}") from error
+    if not isinstance(raw, dict) or set(raw) != {"pin", "abi_pin", "cases"}:
+        raise MapError(
+            "upstream case metadata must contain only pin, abi_pin, and cases"
+        )
+    pin = raw["pin"]
+    abi_pin = raw["abi_pin"]
+    if not isinstance(pin, str) or re.fullmatch(r"[0-9a-fA-F]{40}", pin) is None:
+        raise MapError("upstream case metadata pin must be a full 40-character commit")
+    if not isinstance(abi_pin, str) or re.fullmatch(r"[0-9a-fA-F]{40}", abi_pin) is None:
+        raise MapError("upstream case metadata abi_pin must be a full 40-character SHA")
+    if not isinstance(raw["cases"], list):
+        raise MapError("upstream case metadata cases must be an array")
+
+    required = {
+        "id",
+        "path",
+        "family",
+        "capabilities",
+        "deadline_seconds",
+        "gate_class",
+        "eligibility",
+        "reason",
+        "family_paths",
+    }
+    cases: list[UpstreamCase] = []
+    seen_ids: set[str] = set()
+    seen_paths: set[str] = set()
+    for index, entry in enumerate(raw["cases"], start=1):
+        label = f"upstream case {index}"
+        if not isinstance(entry, dict) or set(entry) - (required | {"sha256"}) or not required.issubset(entry):
+            raise MapError(f"{label} has invalid fields")
+        case_id = entry["id"]
+        path_value = entry["path"]
+        family = entry["family"]
+        capabilities = entry["capabilities"]
+        deadline = entry["deadline_seconds"]
+        gate_class = entry["gate_class"]
+        eligibility = entry["eligibility"]
+        reason = entry["reason"]
+        family_paths = entry["family_paths"]
+        source_sha256 = entry.get("sha256")
+        if source_sha256 is not None and (
+            not isinstance(source_sha256, str)
+            or re.fullmatch(r"[0-9a-fA-F]{64}", source_sha256) is None
+        ):
+            raise MapError(f"{label} sha256 must be a 64-character digest")
+        if not isinstance(case_id, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", case_id) is None:
+            raise MapError(f"{label} id must be a safe case basename")
+        if case_id in seen_ids:
+            raise MapError(f"duplicate upstream case id: {case_id}")
+        if (
+            not isinstance(path_value, str)
+            or not path_value.startswith("e2e/")
+            or not path_value.endswith(".ts")
+            or "\\" in path_value
+            or any(part in ("", ".", "..") for part in path_value.split("/"))
+        ):
+            raise MapError(f"{label} path must be a relative e2e/*.ts path")
+        if path_value in seen_paths:
+            raise MapError(f"duplicate upstream case path: {path_value}")
+        if not isinstance(family, str) or not family.strip():
+            raise MapError(f"{label} family must be a non-empty string")
+        if not isinstance(capabilities, list) or any(
+            not isinstance(value, str) or not value for value in capabilities
+        ):
+            raise MapError(f"{label} capabilities must be an array of non-empty strings")
+        if type(deadline) is not int or deadline < 1:
+            raise MapError(f"{label} deadline_seconds must be a positive integer")
+        if gate_class not in ("gating", "non-gating"):
+            raise MapError(f"{label} gate_class must be gating or non-gating")
+        if eligibility not in ("adopted", "excluded"):
+            raise MapError(f"{label} eligibility must be adopted or excluded")
+        if eligibility == "excluded" and gate_class != "non-gating":
+            raise MapError(f"{label} excluded cases must be non-gating")
+        if not isinstance(reason, str) or (eligibility == "excluded" and not reason.strip()):
+            raise MapError(f"{label} reason must explain each exclusion")
+        if not isinstance(family_paths, list) or any(
+            not isinstance(pattern, str)
+            or not pattern
+            or pattern.startswith("/")
+            or "\\" in pattern
+            for pattern in family_paths
+        ):
+            raise MapError(f"{label} family_paths must be relative glob strings")
+        cases.append(
+            UpstreamCase(
+                id=case_id,
+                path=path_value,
+                family=family,
+                capabilities=tuple(capabilities),
+                deadline_seconds=deadline,
+                gate_class=gate_class,
+                eligibility=eligibility,
+                reason=reason,
+                family_paths=tuple(family_paths),
+                sha256=source_sha256,
+            )
+        )
+        seen_ids.add(case_id)
+        seen_paths.add(path_value)
+    if not any(case.eligibility == "adopted" for case in cases):
+        raise MapError("upstream case metadata must include an adopted case")
+    return UpstreamManifest(pin=pin, abi_pin=abi_pin, cases=tuple(cases))
+
+
+def select_upstream_cases(
+    paths: list[str], manifest: UpstreamManifest
+) -> tuple[UpstreamCase, ...]:
+    adopted = tuple(case for case in manifest.cases if case.eligibility == "adopted")
+    if not adopted:
+        return ()
+    full_corpus = any(
+        matches(path, UPSTREAM_CASES_RELATIVE_PATH)
+        or matches_any(path, list(UPSTREAM_SHARED_PATH_GLOBS))
+        for path in paths
+    )
+    if full_corpus:
+        return adopted
+
+    selected_ids: set[str] = set()
+    selected_families: set[str] = set()
+    for path in paths:
+        for case in adopted:
+            if matches(path, case.path):
+                selected_ids.add(case.id)
+            if matches_any(path, list(case.family_paths)):
+                selected_families.add(case.family)
+    return tuple(
+        case
+        for case in adopted
+        if case.id in selected_ids or case.family in selected_families
+    )
+
+
+def resolve_upstream_cases(
+    manifest: UpstreamManifest, case_ids: list[str]
+) -> tuple[UpstreamCase, ...]:
+    if not case_ids or any(not case_id for case_id in case_ids):
+        raise MapError("UEP_CASES must contain one or more comma-separated case ids")
+    if len(set(case_ids)) != len(case_ids):
+        raise MapError("UEP_CASES contains duplicate case ids")
+    cases_by_id = {case.id: case for case in manifest.cases}
+    missing = [case_id for case_id in case_ids if case_id not in cases_by_id]
+    if missing:
+        raise MapError(f"unknown upstream case ids: {', '.join(missing)}")
+    excluded = [
+        case_id
+        for case_id in case_ids
+        if cases_by_id[case_id].eligibility != "adopted"
+    ]
+    if excluded:
+        raise MapError(f"UEP_CASES cannot select excluded cases: {', '.join(excluded)}")
+    return tuple(cases_by_id[case_id] for case_id in case_ids)
+
+
 def _is_exact_test_source_cover(path: str, config: dict[str, Any]) -> bool:
     return any(
         pattern.endswith(".rs")
@@ -305,7 +516,11 @@ def _is_exact_test_source_cover(path: str, config: dict[str, Any]) -> bool:
     )
 
 
-def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
+def make_plan(
+    paths: list[str],
+    config: dict[str, Any],
+    upstream_manifest: UpstreamManifest | None = None,
+) -> Plan:
     unique_paths = sorted(set(paths))
     live_globs = config["live"]["globs"]
     excluded_globs = config["not_live"]["globs"]
@@ -342,8 +557,37 @@ def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
                 previous = selected_cells.get(cell.command)
                 if previous is None or cell.name < previous.name:
                     selected_cells[cell.command] = cell
+
+    upstream_cases = (
+        select_upstream_cases(unique_paths, upstream_manifest)
+        if upstream_manifest is not None
+        else ()
+    )
+    upstream_runner: Cell | None = None
+    if upstream_cases:
+        for index, row in enumerate(config["cover"]):
+            for cell_spec in row["cells"]:
+                candidate = _cell_fields(cell_spec, f"cover row {index + 1}")
+                if candidate.name == UPSTREAM_RUNNER_CELL:
+                    upstream_runner = candidate
+                    break
+            if upstream_runner is not None:
+                break
+        if upstream_runner is None:
+            raise MapError(
+                f"map.toml must define the {UPSTREAM_RUNNER_CELL!r} cell"
+            )
+        selected_cells[upstream_runner.command] = upstream_runner
+
     ordered_cells = tuple(sorted(selected_cells.values(), key=lambda cell: cell.name))
-    return Plan(ordered_cells, tuple(uncovered), tuple(unclassified), tuple(not_live))
+    return Plan(
+        ordered_cells,
+        tuple(uncovered),
+        tuple(unclassified),
+        tuple(not_live),
+        upstream_cases=upstream_cases,
+        upstream_runner=upstream_runner,
+    )
 
 
 def _git_output(repo: Path, *args: str) -> str:
@@ -453,11 +697,14 @@ def diff_paths(diff_range: str, repo: Path = ROOT) -> list[str]:
 
 
 def format_plan(plan: Plan) -> str:
-    lines = [f"Required cells ({len(plan.cells)}; run each 3 times):"]
-    if plan.cells:
+    native_cells = tuple(
+        cell for cell in plan.cells if cell.name != UPSTREAM_RUNNER_CELL
+    )
+    lines = [f"Required native cells ({len(native_cells)}; run each 3 times):"]
+    if native_cells:
         lines.extend(
             line
-            for cell in plan.cells
+            for cell in native_cells
             for line in (
                 f"- {cell.name}",
                 f"  Command: `{cell.command}`",
@@ -466,6 +713,22 @@ def format_plan(plan: Plan) -> str:
         )
     else:
         lines.append("- None")
+    lines.append(f"Adopted upstream cases ({len(plan.upstream_cases)}):")
+    lines.extend(
+        f"- {case.id} [{case.family}; {case.gate_class}]"
+        for case in plan.upstream_cases
+    )
+    if not plan.upstream_cases:
+        lines.append("- None")
+    if plan.upstream_runner is not None:
+        runner = plan.upstream_runner
+        lines.extend(
+            (
+                f"Upstream runner (one grouped invocation): {runner.name}",
+                f"  Command: `{runner.command}`",
+                f"  Test selector: `{runner.selector}`",
+            )
+        )
     lines.append(f"Changed live paths without a covering cell ({len(plan.uncovered)}):")
     lines.extend(f"- {path}" for path in plan.uncovered)
     if not plan.uncovered:
@@ -493,6 +756,132 @@ class LiveMapTests(unittest.TestCase):
                 ],
             }
         )
+
+
+    def upstream_manifest(self) -> UpstreamManifest:
+        shared = ("crates/script-js/src/runtime/**",)
+        gather_paths = ("crates/script-js/src/compat/gather/**", *shared)
+        return UpstreamManifest(
+            pin="a" * 40,
+            abi_pin="d" * 40,
+            cases=(
+                UpstreamCase(
+                    id="gather-one",
+                    path="e2e/gather-one-live.ts",
+                    family="gather",
+                    capabilities=("inventory",),
+                    deadline_seconds=60,
+                    gate_class="gating",
+                    eligibility="adopted",
+                    reason="",
+                    family_paths=gather_paths,
+                ),
+                UpstreamCase(
+                    id="gather-two",
+                    path="e2e/gather-two-live.ts",
+                    family="gather",
+                    capabilities=("inventory",),
+                    deadline_seconds=60,
+                    gate_class="non-gating",
+                    eligibility="adopted",
+                    reason="",
+                    family_paths=gather_paths,
+                ),
+                UpstreamCase(
+                    id="combat-one",
+                    path="e2e/combat-one-live.ts",
+                    family="combat",
+                    capabilities=("combat",),
+                    deadline_seconds=90,
+                    gate_class="gating",
+                    eligibility="adopted",
+                    reason="",
+                    family_paths=("crates/script-js/src/compat/combat/**", *shared),
+                ),
+                UpstreamCase(
+                    id="gather-excluded",
+                    path="e2e/gather-excluded-live.ts",
+                    family="gather",
+                    capabilities=("two-accounts",),
+                    deadline_seconds=60,
+                    gate_class="non-gating",
+                    eligibility="excluded",
+                    reason="requires two accounts",
+                    family_paths=gather_paths,
+                ),
+            ),
+        )
+
+    def test_excluded_upstream_case_cannot_be_a_gate(self) -> None:
+        raw = json.loads(json.dumps(asdict(self.upstream_manifest())))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cases.json"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            load_upstream_manifest(path)
+            raw["cases"][-1]["gate_class"] = "gating"
+            path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(MapError, "excluded cases must be non-gating"):
+                load_upstream_manifest(path)
+
+    def test_upstream_family_change_selects_adopted_family_as_one_group(self) -> None:
+        config = validate_map(
+            {
+                "live": {"globs": ["crates/script-js/src/compat/gather/**"]},
+                "not_live": {"globs": ["tools/**"]},
+                "cover": [
+                    {
+                        "globs": ["tools/live-map/upstream-cases.json"],
+                        "cells": [
+                            "host.upstream-e2e-adopted|${ISOHOME:?} cargo test --locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture|--locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture"
+                        ],
+                    }
+                ],
+            }
+        )
+        plan = make_plan(
+            ["crates/script-js/src/compat/gather/worker.rs"], config, self.upstream_manifest()
+        )
+        self.assertEqual(
+            [case.id for case in plan.upstream_cases],
+            ["gather-one", "gather-two"],
+        )
+        self.assertEqual(
+            [cell.name for cell in plan.cells],
+            ["host.upstream-e2e-adopted"],
+        )
+        self.assertEqual(plan.upstream_runner, plan.cells[0])
+
+    def test_upstream_shared_paths_and_metadata_changes_select_full_adopted_set(self) -> None:
+        manifest = self.upstream_manifest()
+        adopted_ids = ["gather-one", "gather-two", "combat-one"]
+        for path in (
+            "crates/script-js/src/runtime/bindings.rs",
+            "crates/script-js/src/materialize/skills_v8.rs",
+            "crates/script-js/src/library/prepare.rs",
+            "crates/script-js/schema/isolate.fbs",
+            UPSTREAM_CASES_RELATIVE_PATH,
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    [case.id for case in select_upstream_cases([path], manifest)],
+                    adopted_ids,
+                )
+
+    def test_upstream_exact_case_and_native_or_ui_changes_stay_narrow(self) -> None:
+        manifest = self.upstream_manifest()
+        self.assertEqual(
+            [case.id for case in select_upstream_cases(["e2e/gather-one-live.ts"], manifest)],
+            ["gather-one"],
+        )
+        self.assertEqual(select_upstream_cases(["crates/nav/src/router.rs"], manifest), ())
+        native_plan = make_plan(
+            ["crates/nav/src/router.rs"], self.config, manifest
+        )
+        self.assertEqual([cell.name for cell in native_plan.cells], ["nav.routes"])
+        self.assertEqual(native_plan.upstream_cases, ())
+        ui_plan = make_plan(["crates/panel/src/views.rs"], self.config, manifest)
+        self.assertEqual(ui_plan.upstream_cases, ())
+        self.assertIsNone(ui_plan.upstream_runner)
 
     def test_glob_matches_components_and_double_star(self) -> None:
         self.assertTrue(matches("crates/nav/src/router.rs", "crates/nav/src/**"))
@@ -995,8 +1384,9 @@ def main(argv: list[str] | None = None) -> int:
         return self_test()
     try:
         config = load_map()
+        manifest = load_upstream_manifest()
         paths = diff_paths(args.diff)
-        plan = make_plan(paths, config)
+        plan = make_plan(paths, config, manifest)
     except (MapError, OSError) as error:
         print(f"live-map: {error}", file=sys.stderr)
         return 2

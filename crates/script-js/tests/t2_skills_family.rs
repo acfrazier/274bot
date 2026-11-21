@@ -30,6 +30,34 @@ export default class SkillsFixture extends LoopingBot {
 }
 
 #[test]
+fn xp_requires_the_new_isolates_first_posted_snapshot() {
+    let isolate = LoadIsolate::spawn(
+        "import { Skills } from '#/bot/api/skills/Skills.js';\n\
+         globalThis.readHerbloreXp = () => Skills.xp('herblore');\n\
+         export default class SnapshotFixture extends LoopingBot { loop() {} }"
+            .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    assert!(isolate.probe("readHerbloreXp()").is_err());
+    let stats = [script::native::snapshot_source::StatInput {
+        index: 15,
+        name: "herblore",
+        xp: 4470,
+        base: 20,
+        effective: 20,
+    }];
+    let snapshot = script::native::snapshot_source::SnapshotInput {
+        stats: &stats,
+        ..common::ingame_snapshot()
+    };
+    common::post_snapshot_input(&isolate, &snapshot);
+    assert_eq!(isolate.probe("readHerbloreXp()").unwrap(), 4470);
+    isolate.join();
+}
+
+#[test]
 fn posted_stats_cover_every_skill_and_all_five_methods() {
     let isolate = skills_isolate();
     let result = isolate
