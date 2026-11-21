@@ -75,13 +75,15 @@ impl FoodRoute {
         })
     }
 
-    /// Food-only occupancy at the observed movement speed. Missing measurements
-    /// require the caller's full walking hunt-range fallback.
+    /// Food-only occupancy at the observed movement speed. An unvisited zone
+    /// has zero exposure; an unusable measurement needs the walking fallback.
     pub fn ticks(&self, zone: BoundZoneKey, run: bool) -> Option<u16> {
         if zone.pack() != self.pack {
             return None;
         }
-        let time = self.zones.iter().find(|time| time.zone == zone)?;
+        let Some(time) = self.zones.iter().find(|time| time.zone == zone) else {
+            return Some(0);
+        };
         // PathingEntity.processMovement: one step, then a second only for RUN.
         // Each takeStep changes each coordinate by at most one tile.
         u16::try_from((if run { time.run_ticks } else { time.tiles }).checked_add(time.holds)?).ok()
@@ -1057,6 +1059,12 @@ mod food_sizing_tests {
         };
         assert_eq!(measured.ticks(key, false), Some(walking));
         assert_eq!(measured.ticks(key, true), Some(walking.div_ceil(2)));
+        let unvisited = FoodRoute {
+            pack: zones.pack(),
+            zones: Box::new([]),
+        };
+        assert_eq!(unvisited.ticks(key, false), Some(0));
+        assert_eq!(unvisited.ticks(key, true), Some(0));
         let (foreign, foreign_name) = risk::provisioning_cross_fixture();
         assert_eq!(
             measured.ticks(

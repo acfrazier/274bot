@@ -7450,9 +7450,16 @@ mod s2b_admission_contract {
         assert_eq!(receipt.refusal, Some(expected_oversized_route_refusal()));
         assert_eq!(
             receipt.detail.as_deref(),
-            Some(expected_oversized_route_refusal().to_string().as_str())
+            Some(
+                format!(
+                    "{}; food exposure: walking hunt-range fallback",
+                    expected_oversized_route_refusal()
+                )
+                .as_str()
+            )
         );
         assert!(receipt.assessment.is_none());
+        assert!(receipt.food_route.is_none());
         assert!(rig.driver.walked.is_none());
     }
 
