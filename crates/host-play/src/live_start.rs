@@ -375,6 +375,7 @@ pub fn fire_pending_catalog_start(
             }) {
                 match error {
                     script::StartLoadError::Waiting(reason) => {
+                        pair.retry_start();
                         pending[index].waiting(reason);
                         return StartScriptPump::Hold;
                     }
@@ -403,6 +404,7 @@ pub fn fire_pending_catalog_start(
         {
             match error {
                 script::StartLoadError::Waiting(reason) => {
+                    watch.retry_start(&card.slot);
                     card.waiting(reason);
                     return StartScriptPump::Hold;
                 }
