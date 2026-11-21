@@ -762,7 +762,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$JS/compat/reach_entity.rs:579-587,622-635"
+      "evidence": "$JS/compat/reach_entity.rs:562-566,654-673"
     },
     {
       "families": [
