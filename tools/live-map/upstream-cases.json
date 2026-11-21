@@ -685,13 +685,14 @@
         "account-session",
         "bounded-wait",
         "library-script-start",
+        "multiple-clients",
         "page-evaluate",
         "screenshot-evidence"
       ],
       "deadline_seconds": 1800,
-      "gate_class": "gating",
-      "eligibility": "adopted",
-      "reason": "Adopted: deterministic single-account behavior with game-state evidence and no excluded browser/world/tick dependency in the reviewed path.",
+      "gate_class": "non-gating",
+      "eligibility": "excluded",
+      "reason": "Excluded: the default source loops over two cases, creates a new account and page for each, and therefore needs multiple accounts even though the newPage call occurs once in the loop body (e2e/herblore-grinding-live.ts:14-23).",
       "family_paths": [
         "crates/scenario/src/scenarios/production/herblore_secondaries.rs"
       ],

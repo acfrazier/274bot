@@ -90,8 +90,8 @@ Only metadata cases marked `adopted` run. Multi-account, DOM, NPC-spawn,
 shared-world mutation, and tick-rate cases remain excluded when their metadata
 records those limits. These cases do not replace existing native or UI cells.
 
-The current pin has 38 adopted cases and 52 exclusions from the 90 A/B
-candidates. Of the adopted cases, 32 gate and six are observational. Mining
+The current pin has 37 adopted cases and 53 exclusions from the 90 A/B
+candidates. Of the adopted cases, 31 gate and six are observational. Mining
 yield, random events, and wall-clock rate assertions do not gate.
 
 The adapter provides one native session per page, account-scoped seeds,
