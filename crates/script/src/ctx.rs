@@ -243,6 +243,15 @@ pub mod test_support {
         fn do_action(&mut self, _slot: i32) -> bool {
             true
         }
+        fn dispatch_native_menu(
+            &mut self,
+            _snapshot: &api::snapshot::GameSnapshot,
+            _target: api::interact::NativeMenuTarget<'_>,
+        ) -> Result<(), api::interact::SendReason> {
+            self.do_action(0)
+                .then_some(())
+                .ok_or(api::interact::SendReason::DriverRejected)
+        }
         fn try_move(
             &mut self,
             _src_x: i32,

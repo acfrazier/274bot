@@ -12119,6 +12119,13 @@ mod route_quest_provider_tests {
             fn do_action(&mut self, _: i32) -> bool {
                 false
             }
+            fn dispatch_native_menu(
+                &mut self,
+                _: &api::snapshot::GameSnapshot,
+                _: api::interact::NativeMenuTarget<'_>,
+            ) -> Result<(), api::interact::SendReason> {
+                Err(api::interact::SendReason::MenuUnavailable)
+            }
             fn try_move(
                 &mut self,
                 _: i32,

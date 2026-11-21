@@ -160,6 +160,14 @@ impl Driver for DiagnosticDriver {
         false
     }
 
+    fn dispatch_native_menu(
+        &mut self,
+        _: &api::snapshot::GameSnapshot,
+        _: api::interact::NativeMenuTarget<'_>,
+    ) -> Result<(), api::interact::SendReason> {
+        Err(api::interact::SendReason::MenuUnavailable)
+    }
+
     fn try_move(
         &mut self,
         _src_x: i32,

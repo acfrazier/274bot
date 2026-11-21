@@ -12,6 +12,13 @@ impl Driver for HeldDriver {
     fn do_action(&mut self, _: i32) -> bool {
         panic!("held bank walk dispatched an action");
     }
+    fn dispatch_native_menu(
+        &mut self,
+        _: &GameSnapshot,
+        _: api::interact::NativeMenuTarget<'_>,
+    ) -> Result<(), api::interact::SendReason> {
+        panic!("held bank walk dispatched a native menu action");
+    }
     fn try_move(
         &mut self,
         _: i32,
