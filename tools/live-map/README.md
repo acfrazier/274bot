@@ -51,6 +51,18 @@ The actual cell still runs the full summary-shape executable.
 The headed survival cell lists its `app::tests` status-card proxy.
 Neither proxy listing proves a headed frame or a live game result.
 
+## Native menu dispatch
+
+`host.native-menu-dialogue` checks one received NPC Talk-to, Continue and
+dialogue choice through the shared native-row dispatcher. Each action must
+produce a newly received dialogue state. A queued packet alone cannot pass.
+The cell writes its computed receipt under `LIVE_EVIDENCE_DIR`.
+
+Supply `ENGINE_DIR`, `BOT_GAME_PORT`, `BOT_HTTP_PORT`, `BOT_CACHE_DIR`,
+`BOT_LIVE_NAME_PREFIX`, `LIVE=1` and `BOT_CPU=1`. The map supplies these values
+from the selected engine and disposable account inputs.
+
+
 ## Clean logout
 
 A gameplay pass does not excuse a failed shutdown. Live terminal runs and the

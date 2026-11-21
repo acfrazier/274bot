@@ -32,6 +32,7 @@ pub use decode::{
     PLAYER_FACE_BASE,
 };
 mod varbit;
+pub(crate) use decode::npc_menu_form;
 use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIfaceGate};
 use login_quest_colours::LoginQuestColours;
 pub use varbit::{varbit_value, VarbitObservation, VarbitUnavailable, VarbitValue};

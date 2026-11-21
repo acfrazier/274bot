@@ -15,6 +15,8 @@ use crate::snapshot::{
 
 mod driver;
 pub use driver::*;
+mod native_menu;
+pub use native_menu::NativeMenuTarget;
 
 /// Selected, source-proven facts for named server-ordered content operations.
 pub mod server_ordered;
@@ -123,6 +125,16 @@ pub enum SendReason {
     InvalidTab,
     AlreadyIngame,
     DriverRejected,
+    /// The client did not build the requested action and target row.
+    MenuUnavailable,
+    /// More than one current row matches the requested identity.
+    MenuAmbiguous,
+    /// Current selection, visibility, or input state excludes the action.
+    MenuIneligible,
+    /// The observation belongs to another client connection.
+    StaleSession,
+    /// The observation belongs to another scene.
+    StaleScene,
 }
 
 /// The outcome of a wire interaction: the command was accepted and sent at
@@ -1214,6 +1226,69 @@ impl<'a> Interactions<'a> {
         tick: u64,
         rejected_reason: SendReason,
     ) -> SendResult<'t> {
+        let native_target = match &command {
+            WireCommand::Op {
+                target: OpTarget::Npc(npc),
+                operation: 1,
+            } if npc
+                .actions
+                .first()
+                .and_then(Option::as_deref)
+                .is_some_and(|action| action.eq_ignore_ascii_case("Talk-to"))
+                || self.snapshot.npcs().iter().any(|live| {
+                    live.index == npc.index
+                        && live
+                            .actions
+                            .first()
+                            .and_then(Option::as_deref)
+                            .is_some_and(|action| action.eq_ignore_ascii_case("Talk-to"))
+                }) =>
+            {
+                Some(NativeMenuTarget::NpcTalk(npc))
+            }
+            WireCommand::Button {
+                component_id,
+                button_type,
+            } => self
+                .snapshot
+                .widgets()
+                .iter()
+                .find(|widget| {
+                    widget.component_id == *component_id
+                        && (widget.root == crate::snapshot::WidgetRoot::Chat || *button_type == 6)
+                })
+                .and_then(|widget| {
+                    button_opcode(*button_type)
+                        .map(|action| NativeMenuTarget::Component { widget, action })
+                }),
+            WireCommand::Continue { component_id } => {
+                let Some(widget) = self
+                    .snapshot
+                    .widgets()
+                    .iter()
+                    .find(|widget| widget.component_id == *component_id)
+                else {
+                    return SendResult::Refused {
+                        tick,
+                        reason: SendReason::StaleTarget,
+                    };
+                };
+                Some(NativeMenuTarget::Component {
+                    widget,
+                    action: MiniMenuAction::PAUSE_BUTTON,
+                })
+            }
+            _ => None,
+        };
+        if let Some(target) = native_target {
+            return match self.driver.dispatch_native_menu(self.snapshot, target) {
+                Ok(()) => {
+                    self.driver.note_input_activity();
+                    SendResult::Sent { tick, command }
+                }
+                Err(reason) => SendResult::Refused { tick, reason },
+            };
+        }
         let accepted = self.send_command(&command);
         if accepted {
             if counts_as_input_activity(&command) {

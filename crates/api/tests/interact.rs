@@ -367,6 +367,8 @@ struct Recorder {
     cheats: Vec<String>,
     menus: Vec<(i32, i32, i32, i32, i32)>,
     actions: Vec<i32>,
+    native_rows: Vec<(i32, i32)>,
+    native_refusal: Option<SendReason>,
     moves: Vec<WalkMove>,
     out: OutSink,
     logins: usize,
@@ -413,6 +415,22 @@ impl Driver for Recorder {
     fn do_action(&mut self, slot: i32) -> bool {
         self.actions.push(slot);
         true
+    }
+    fn dispatch_native_menu(
+        &mut self,
+        _snapshot: &GameSnapshot,
+        target: api::interact::NativeMenuTarget<'_>,
+    ) -> Result<(), SendReason> {
+        let row = match target {
+            api::interact::NativeMenuTarget::NpcTalk(npc) => {
+                (MiniMenuAction::OP_NPC1, npc.index as i32)
+            }
+            api::interact::NativeMenuTarget::Component { widget, action } => {
+                (action, widget.component_id)
+            }
+        };
+        self.native_rows.push(row);
+        self.native_refusal.map_or(Ok(()), Err)
     }
 
     fn try_move(
@@ -3774,10 +3792,8 @@ fn continue_dialog_sends_pause_button_and_refuses_without_chat_modal() {
             SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
         }
     }
-    assert_eq!(
-        rec.menus,
-        vec![(0, MiniMenuAction::PAUSE_BUTTON, 0, 0, 201)]
-    );
+    assert!(rec.menus.is_empty());
+    assert_eq!(rec.native_rows, vec![(MiniMenuAction::PAUSE_BUTTON, 201)]);
 
     let mut s = scene();
     let snap = rebuild(&mut s.client);
@@ -3835,13 +3851,8 @@ fn explicit_continue_resumes_main_modal_pause_without_changing_ordinary_press() 
             }
         ));
     }
-    assert_eq!(
-        rec.menus,
-        vec![
-            (0, MiniMenuAction::PAUSE_BUTTON, 0, 0, 104),
-            (0, MiniMenuAction::IF_BUTTON, 0, 0, 102),
-        ]
-    );
+    assert_eq!(rec.native_rows, vec![(MiniMenuAction::PAUSE_BUTTON, 104)]);
+    assert_eq!(rec.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 102)]);
 }
 
 #[test]
@@ -3987,7 +3998,8 @@ fn answer_choice_presses_the_chat_option_button_and_refuses_without_one() {
             }
         ));
     }
-    assert_eq!(rec.menus, vec![(0, MiniMenuAction::IF_BUTTON, 0, 0, 201)]);
+    assert!(rec.menus.is_empty());
+    assert_eq!(rec.native_rows, vec![(MiniMenuAction::IF_BUTTON, 201)]);
 
     // No chat modal: the second choice is refused, never a fake send.
     let mut s = scene();
@@ -5697,4 +5709,77 @@ fn active_opnpc_avoids_idle_timer_inactive_client_still_emits() {
         game_loop_wrote_idle_timer(&legacy),
         "inactive 274 client must still reach IDLE_TIMER"
     );
+}
+
+#[test]
+fn native_menu_refusals_never_fall_back_to_synthetic_rows() {
+    let mut s = scene();
+    plant_npc_type(&mut s.client, 9, "Guide", &["Talk-to"]);
+    plant_npc(&mut s.client, 7, 9);
+    set_iface(
+        &mut s.client,
+        200,
+        IfType {
+            id: 200,
+            layer_id: 200,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![201, 202]),
+            ..Default::default()
+        },
+    );
+    for (id, button_type, text) in [
+        (201, ButtonType::BUTTON_CONTINUE, "Continue"),
+        (202, ButtonType::BUTTON_OK, "Yes."),
+    ] {
+        set_iface(
+            &mut s.client,
+            id,
+            IfType {
+                id: id as i32,
+                layer_id: 200,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        set_iface_mut(
+            &mut s.client,
+            id,
+            IfTypeMut {
+                button_type,
+                text: text.into(),
+                ..Default::default()
+            },
+        );
+    }
+    s.client.chat_modal_id = 200;
+    let snap = rebuild(&mut s.client);
+    for reason in [
+        SendReason::MenuUnavailable,
+        SendReason::MenuAmbiguous,
+        SendReason::MenuIneligible,
+        SendReason::StaleSession,
+        SendReason::StaleScene,
+        SendReason::StaleTarget,
+    ] {
+        let mut rec = Recorder {
+            native_refusal: Some(reason),
+            ..Default::default()
+        };
+        {
+            let mut ix = Interactions::new(&snap, &mut rec);
+            for result in [
+                ix.interact(OpTarget::Npc(&snap.npcs()[0]), ActionSpec::Operation(1)),
+                ix.answer_choice(1),
+                ix.continue_dialog(None),
+            ] {
+                assert!(matches!(
+                    result,
+                    SendResult::Refused { reason: actual, .. } if actual == reason
+                ));
+            }
+        }
+        assert_eq!(rec.native_rows.len(), 3);
+        assert!(rec.menus.is_empty());
+        assert!(rec.actions.is_empty());
+    }
 }
