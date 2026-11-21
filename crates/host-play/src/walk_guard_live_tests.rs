@@ -87,6 +87,37 @@ const EAT_HEAL_WINDOW: u32 = 4;
 /// The oracle checks a bite and continuation, never a random damage total.
 const CROSSING_LOBSTERS: i32 = 22;
 
+struct FoodSizingHostLog(Mutex<Vec<(String, String)>>);
+
+impl api::hostlog::Sink for FoodSizingHostLog {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        let Some(slot) = record.slot else {
+            return;
+        };
+        if record.message.starts_with("quester food ") {
+            self.0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push((slot.to_owned(), record.message.to_owned()));
+        }
+    }
+}
+
+static FOOD_SIZING_HOST_LOG: FoodSizingHostLog = FoodSizingHostLog(Mutex::new(Vec::new()));
+static FOOD_SIZING_HOST_LOG_INSTALLED: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| api::hostlog::install_sink(&FOOD_SIZING_HOST_LOG));
+
+fn food_sizing_host_log(account: &str) -> Vec<serde_json::Value> {
+    FOOD_SIZING_HOST_LOG
+        .0
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .filter(|(slot, _)| slot == account)
+        .map(|(slot, message)| json!({"account": slot, "message": message}))
+        .collect()
+}
+
 fn in_throwers_zone(tile: WorldTile) -> bool {
     tile.level == 0
         && (ZONE_MIN_X..=ZONE_MAX_X).contains(&tile.x)
@@ -313,7 +344,9 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
             && destination.z > z0
             && destination.z < z1
     }));
-    let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+    let quests = Arc::new(QuestCatalog::from_identity(selected.quest_identity()).unwrap());
+    let carved_selected = Arc::clone(&selected);
+    let carved_quests = Arc::clone(&quests);
     let compile_world = Arc::clone(&world);
     let compiled = script::quester::compile::prepare_for_test(move |cap| {
         let lease = nav_planner::contract::NavLease::wrap(compile_world).unwrap();
@@ -483,6 +516,74 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
         "low energy walks the exposed remainder"
     );
     assert_eq!(counts, [11, 7, 11]);
+    let compile_world = Arc::clone(&world);
+    let carved_path = script::quester::compile::prepare_for_test(move |cap| {
+        let lease = nav_planner::contract::NavLease::wrap(compile_world).unwrap();
+        compile_path(
+            path_json(WorldTile {
+                x: 2880,
+                z: 3596,
+                level: 0,
+            })
+            .as_bytes(),
+            &carved_selected,
+            &carved_quests,
+            cap,
+            &script::local_state::OperatorLoadouts::absent(),
+            lease.zones(),
+        )
+    })
+    .unwrap();
+    let carved_model = carved_path.provisioning.survival.as_ref().unwrap();
+    for (run, energy) in [(false, 0), (true, 100), (true, 1)] {
+        let mut input = script::combat::risk::RiskInput::default();
+        input.hp = 14;
+        input.hp_max = 40;
+        input.tick = 35;
+        input.prayer = 37;
+        input.prayer_base = 37;
+        input.combat = Some(3);
+        input.defence = 1;
+        input.pos = WorldTile {
+            x: 2838,
+            z: 3601,
+            level: 0,
+        };
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 32,
+            hit_since_mark: false,
+        };
+        input.set_missing_facts(false);
+        input.set_input_locked(false);
+        input.set_unattributed(false);
+        input.set_overflow(false);
+        input.set_map_members(true);
+        input.set_run(run);
+        input.run_ticks = if run {
+            script::combat::risk::RiskInput::available_run_ticks(energy, 8)
+        } else {
+            0
+        };
+        input.food_len = 1;
+        input.food_ids[0] = 379;
+        input.food_counts[0] = CROSSING_LOBSTERS as u8;
+        input.free_slots = 28 - CROSSING_LOBSTERS as u8;
+        let need = carved_model
+            .plan(
+                0,
+                stock,
+                input,
+                Some(&carved_path.provisioning),
+                Some(&food),
+            )
+            .unwrap();
+        assert_eq!(
+            need.food.as_ref().map(|(item, count)| (item.id, *count)),
+            Some((379, 1)),
+            "known poison must not replace the carved route with admission exposure"
+        );
+    }
 }
 
 fn throwers_route_context(
@@ -2462,6 +2563,10 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         Ok("1"),
         "W1 requires LIVE=1"
     );
+    assert!(
+        *FOOD_SIZING_HOST_LOG_INSTALLED,
+        "W1 requires its food-sizing diagnostic sink"
+    );
     let evidence = evidence_dir().expect("W1 live prerequisites");
     std::fs::create_dir_all(&evidence).expect("create W1 lifecycle evidence directory");
     let home = food
@@ -2785,6 +2890,9 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         "crossing_seed": snapshot.crossing_seed.json(),
         "park_tick": snapshot.park_tick,
         "start_baseline": capture_snapshot.start_baseline,
+        "frames": capture_snapshot.frames,
+        "statuses": capture_snapshot.statuses,
+        "food_sizing": food_sizing_host_log(&account),
         "error": error,
         "account": account,
         "zone": ZONE,

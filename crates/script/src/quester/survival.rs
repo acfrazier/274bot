@@ -723,7 +723,8 @@ impl CompiledSurvival {
         if maximum == 0 {
             return Ok(None);
         }
-        let count = if unknown {
+        // A measured route sizes food even when every combat fact is known.
+        let count = if unknown || food_route.is_some() {
             estimated_food_count(
                 stage.food_exposures(food_route, input.run()),
                 &self.tables,
@@ -737,6 +738,43 @@ impl CompiledSurvival {
             self.food_count(stage, input, id, heal, maximum)?
                 .unwrap_or(maximum)
         };
+        #[cfg(any(test, feature = "test-hooks"))]
+        if api::hostlog::enabled(api::hostlog::Category::BankOp) {
+            let branch = if food_route.is_none() && !stage.food_zones.is_empty() {
+                "fallback"
+            } else if unknown {
+                "unknown"
+            } else {
+                "known"
+            };
+            api::host_log!(
+                api::hostlog::Category::BankOp,
+                api::hostlog::Level::Info,
+                "quester food sizing tick={} branch={branch} unknown={unknown} origin={:?} run={} run_ticks={} duration={} count={count} poison={:?}",
+                input.tick,
+                input.pos,
+                input.run(),
+                input.run_ticks,
+                stage.food_duration(food_route, input.run()),
+                input.poison,
+            );
+            for (index, exposure) in stage.food_exposures(food_route, input.run()).enumerate() {
+                let zone = stage.food_zones.iter().find(|zone| zone.exposure == index);
+                api::host_log!(
+                    api::hostlog::Category::BankOp,
+                    api::hostlog::Level::Info,
+                    "quester food term tick={} index={index} npc={} ticks={} walk={:?} run={:?} fallback={:?} max_hit={} attack_interval={}",
+                    input.tick,
+                    exposure.ident,
+                    exposure.ticks,
+                    zone.and_then(|zone| food_route.and_then(|route| route.ticks(zone.zone, false))),
+                    zone.and_then(|zone| food_route.and_then(|route| route.ticks(zone.zone, true))),
+                    zone.map(|zone| zone.walking_ticks),
+                    exposure.kind.max_hit,
+                    exposure.kind.rate,
+                );
+            }
+        }
         Ok(Some((
             BankItem {
                 id,
@@ -1401,6 +1439,95 @@ mod food_sizing_tests {
         assert_eq!(
             stage.food_duration(Some(&measured), false),
             u64::from(walking + 40)
+        );
+    }
+
+    #[test]
+    fn known_food_sizing_uses_the_route_without_changing_admission() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (lease, name) = risk::provisioning_cross_fixture();
+        let zones = lease.zones().unwrap();
+        let key = zones.resolve(&name).unwrap();
+        let zone = zones.zone(key).unwrap();
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let tables = Arc::new(CombatTables::build(selected).unwrap());
+        let stage = StageSurvival {
+            exposures: Arc::from([SupplyExposure {
+                ident: zone.kind().npc_id().unwrap(),
+                kind: RiskTables::build(&tables).zone_kind(zone.kind()),
+                ticks: 100,
+            }]),
+            duration_ticks: 0,
+            food_zones: Arc::from([FoodZone {
+                exposure: 0,
+                zone: key,
+                crossing: 0,
+                walking_ticks: 100,
+            }]),
+            kits: Arc::from([]),
+            inventory: super::super::compile::StageInventory {
+                items: Arc::from([]),
+                equipment_slots: 0,
+            },
+        };
+        let route = FoodRoute {
+            pack: zones.pack(),
+            zones: Box::new([]),
+        };
+        let model = CompiledSurvival {
+            tables: Arc::clone(&tables),
+            stages: Box::new([]),
+            choices: Box::new([]),
+            equipment_slots: 0,
+        };
+        let mut input = RiskInput::default();
+        input.hp = 14;
+        input.hp_max = 40;
+        input.tick = 35;
+        input.prayer = 37;
+        input.prayer_base = 37;
+        input.combat = Some(3);
+        input.defence = 1;
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 32,
+            hit_since_mark: false,
+        };
+        input.set_missing_facts(false);
+        input.set_input_locked(false);
+        input.set_unattributed(false);
+        input.set_overflow(false);
+        let food = Food {
+            item: 379,
+            heal: 12,
+            count: 22,
+        };
+        let admission = risk::supply_bound(&stage.exposures, &input, &tables, food)
+            .expect("the generic NPC and poison facts are known")
+            .bound;
+        let need = model
+            .food_need(
+                &stage,
+                &input,
+                false,
+                Some((379, "Lobster", 12, 2)),
+                None,
+                Some(&route),
+            )
+            .unwrap();
+        assert_eq!(
+            need.as_ref().map(|(item, count)| (item.id, *count)),
+            Some((379, 1)),
+            "food sizing must not replace a measured zero exposure with the admission bound"
+        );
+        assert_eq!(stage.exposures[0].ticks, 100);
+        assert_eq!(
+            risk::supply_bound(&stage.exposures, &input, &tables, food)
+                .unwrap()
+                .bound,
+            admission
         );
     }
 

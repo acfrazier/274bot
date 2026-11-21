@@ -762,11 +762,19 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
         .iter()
         .find(|row| row.index == 108)
         .map(|row| row.value);
+    let mut run_varps = snapshot
+        .varps()
+        .iter()
+        .filter(|row| row.index == 173)
+        .map(|row| row.value);
+    let run_varp = run_varps.next().filter(|_| run_varps.next().is_none());
     let local = snapshot.local_player().map(|player| {
         json!({
             "name": player.player.actor.name,
             "tile": player.player.actor.tile,
             "network": player.player.network,
+            "energy_percent": player.energy,
+            "weight_kg": player.weight,
             "in_combat": player.player.actor.in_combat,
             "target": player.player.actor.target.map(|target| {
                 json!({"kind": format!("{:?}", target.kind), "index": target.index})
@@ -789,6 +797,7 @@ pub(crate) fn snapshot_facts(snapshot: &GameSnapshot, host_tick: Option<u64>) ->
         "local_player": local,
         "stats": stats,
         "prayer_varps": prayer_varps,
+        "run_varp_173": run_varp,
         "active_side_tab": snapshot.active_side_tab(),
         "magicvarp": magicvarp,
         "roots": roots,

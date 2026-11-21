@@ -692,6 +692,17 @@ impl Provisioner {
                     });
                 cx.tick.cx.assess_walk(request).ok()
             });
+            #[cfg(any(test, feature = "test-hooks"))]
+            api::host_log!(
+                api::hostlog::Category::BankOp,
+                api::hostlog::Level::Info,
+                "quester food request tick={} request_id={} stage={stage} origin={:?} target={destination:?} run_ticks={} plan_revision={}",
+                cx.tick.cx.evidence().tick,
+                request_id.unwrap_or(0),
+                key.origin,
+                key.run_ticks,
+                key.plan_revision,
+            );
             self.preparation.food = Some(FoodAssessment {
                 key,
                 request_id: request_id.unwrap_or(0),
@@ -719,6 +730,20 @@ impl Provisioner {
         };
         state.route = receipt.food_route;
         state.complete = true;
+        #[cfg(any(test, feature = "test-hooks"))]
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Info,
+            "quester food route tick={} request_id={} origin={:?} target={:?} route_ticks={} run_ticks={} measured={} refusal={:?}",
+            cx.tick.cx.evidence().tick,
+            state.request_id,
+            state.key.origin,
+            state.key.destination,
+            receipt.route_ticks,
+            state.key.run_ticks,
+            state.route.is_some(),
+            receipt.refusal,
+        );
         api::host_log!(
             api::hostlog::Category::BankOp,
             api::hostlog::Level::Info,
@@ -813,6 +838,17 @@ impl Provisioner {
                         bound: 1.0,
                         unknown: Some(why),
                     });
+                #[cfg(any(test, feature = "test-hooks"))]
+                api::host_log!(
+                    api::hostlog::Category::BankOp,
+                    api::hostlog::Level::Info,
+                    "quester food chosen tick={} request_id={:?} target={return_to:?} measured={} food={:?} unknown={:?}",
+                    input.tick,
+                    self.preparation.food.as_ref().map(|state| state.request_id),
+                    self.preparation.food.as_ref().is_some_and(|state| state.route.is_some()),
+                    target.food.as_ref().map(|(item, count)| (item.id, *count)),
+                    target.unknown,
+                );
                 if self.preparation.gear_stage != stage {
                     if !bank_open(&cx.tick.cx)
                         && target.gear.iter().any(|item| {
