@@ -15,23 +15,26 @@ use host::Pump;
 use host_play::{ProfileOptions, SharedClientTemplate};
 use serde_json::json;
 
-// Engine A `content/maps/m51_47.jm2:5030` places the captain at this home.
-// `quest_desertrescue/configs/desertrescue.npc:252-285` gives it wander range 3.
-// Stand outside that footprint: engine PathingEntity.ts:426-429 rejects approach
-// from underneath an NPC. Quest stages and dialogue order come from
-// `quest_desertrescue/configs/desertrescue.constant:3,33` and
-// `quest_desertrescue/scripts/mercenary_captain.rs2:13-19,29-43`.
+// Engine A `content/maps/m49_53.jm2:7715,10214` places the bank booth between
+// this public stand and banker1. `interface_bank/configs/banker.npc:1-29`
+// makes that banker stationary. `interface_bank/scripts/banker.rs2:7-12`
+// permits Talk-to at range 2; lines 21-33 define the dialogue order below.
 // Client packet paths are `client/client.rs:4288-4333,8644-8700`.
-const DESERT_CAPTAIN_HOME: (i32, i32, i32) = (3270, 3029, 0);
-const DESERT_CAPTAIN_WANDER_RANGE: i32 = 3;
-const DESERT_CAPTAIN_STAND: (i32, i32, i32) = (
-    DESERT_CAPTAIN_HOME.0 + DESERT_CAPTAIN_WANDER_RANGE + 1,
-    DESERT_CAPTAIN_HOME.1,
-    DESERT_CAPTAIN_HOME.2,
+const BANKER_HOME: WorldTile = WorldTile {
+    x: 3187,
+    z: 3436,
+    level: 0,
+};
+const BANKER_TALK_RANGE: i32 = 2;
+const BANKER_STAND: (i32, i32, i32) = (
+    BANKER_HOME.x - BANKER_TALK_RANGE,
+    BANKER_HOME.z,
+    BANKER_HOME.level,
 );
 const TALK_TO: &str = "Talk-to";
-const FIRST_MENU_OPTION: &str = "Wow! A real captain!";
-const SECOND_MENU_FIRST_OPTION: &str = "That's rude, I ought to teach you some manners.";
+const FIRST_MENU_OPTION: &str = "I'd like to access my bank account, please.";
+const EXPLAIN_BANK_OPTION: &str = "What is this place?";
+const SECOND_MENU_FIRST_OPTION: &str = "And what do you do?";
 
 fn required(key: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| panic!("live cell requires {key}"))
@@ -150,9 +153,9 @@ fn live_engine_a_native_menu_talk_continue_choice() {
     );
     let selected =
         api::game_data::for_revision(ClientRevision::R289).expect("load selected R289 game data");
-    let captain_type = selected
-        .npc_by_config("desertminingcaptain")
-        .expect("Engine A Mercenary Captain config")
+    let banker_type = selected
+        .npc_by_config("banker1")
+        .expect("Engine A stationary banker config")
         .id as usize;
 
     let profile = live_profile_options()
@@ -184,83 +187,75 @@ fn live_engine_a_native_menu_talk_continue_choice() {
         |_, state| state.ingame() && state.attached() && state.scene_state() == 2,
     );
 
-    // Stage 3 is `approached_captain`; clearing mechanisms leaves spoke-bit 6
-    // unset, selecting the three-choice path at mercenary_captain.rs2:16-19.
-    for (command, expected) in [
-        ("setvar desertrescue 3", "get desertrescue: 3"),
-        (
-            "setvar desertrescue_map_mechanisms 0",
-            "get desertrescue_map_mechanisms: 0",
-        ),
-    ] {
-        assert!(
-            interact::cheat(&mut client, command).is_sent(),
-            "seed refused: {command}"
-        );
-        let query = command
-            .strip_prefix("setvar ")
-            .and_then(|rest| rest.split_whitespace().next())
-            .expect("varp name in setup command");
-        assert!(
-            interact::cheat(&mut client, &format!("getvar {query}")).is_sent(),
-            "varp query refused: {query}"
-        );
-        wait_for(
-            &mut client,
-            &mut snapshot,
-            &mut pump,
-            "account quest seed",
-            |_, state| state.chat_lines().iter().any(|line| line.text == expected),
-        );
-    }
-
-    interact::seed_at(
-        &mut client,
-        DESERT_CAPTAIN_STAND.2,
-        DESERT_CAPTAIN_STAND.0,
-        DESERT_CAPTAIN_STAND.1,
+    // Confirm only this account's tutorial seed before its teleport.
+    // ClientCheatHandler.ts:192-244,279-318,558-591 checks access and applies both.
+    assert!(
+        interact::cheat(&mut client, "setvar tutorial 1000").is_sent(),
+        "tutorial seed was refused"
+    );
+    assert!(
+        interact::cheat(&mut client, "getvar tutorial").is_sent(),
+        "tutorial seed query was refused"
     );
     wait_for(
         &mut client,
         &mut snapshot,
         &mut pump,
-        "Captain tile",
+        "account tutorial seed",
+        |_, state| {
+            state
+                .chat_lines()
+                .iter()
+                .any(|line| line.text == "get tutorial: 1000")
+        },
+    );
+
+    assert!(
+        interact::cheat(
+            &mut client,
+            &interact::tele_args(BANKER_STAND.2, BANKER_STAND.0, BANKER_STAND.1),
+        )
+        .is_sent(),
+        "account-only banker teleport was refused"
+    );
+    wait_for(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        "stationary banker stand",
         |_, state| {
             state.ingame()
                 && state.scene_state() == 2
-                && state.tile() == Some(DESERT_CAPTAIN_STAND)
+                && state.tile() == Some(BANKER_STAND)
                 && state.npcs().iter().any(|npc| {
-                    npc.r#type == Some(captain_type)
+                    npc.r#type == Some(banker_type)
+                        && npc.tile == BANKER_HOME
                         && npc.actions.first().and_then(Option::as_deref) == Some(TALK_TO)
                 })
         },
     );
     let stand = WorldTile {
-        x: DESERT_CAPTAIN_STAND.0,
-        z: DESERT_CAPTAIN_STAND.1,
-        level: DESERT_CAPTAIN_STAND.2,
+        x: BANKER_STAND.0,
+        z: BANKER_STAND.1,
+        level: BANKER_STAND.2,
     };
     assert!(
         SceneQuery::new(snapshot.scene(), None).walkable(stand),
         "the account-only fixture stand must be walkable"
     );
-    let (captain_slot, captain_tile, talk_result_record) = {
-        let captain = snapshot
+    let (banker_slot, banker_tile, talk_result_record) = {
+        let banker = snapshot
             .npcs()
             .iter()
-            .filter(|npc| {
-                npc.r#type == Some(captain_type)
-                    && npc
-                        .actions
-                        .iter()
-                        .flatten()
-                        .any(|action| action.as_str() == TALK_TO)
+            .find(|npc| {
+                npc.r#type == Some(banker_type)
+                    && npc.tile == BANKER_HOME
+                    && npc.actions.first().and_then(Option::as_deref) == Some(TALK_TO)
             })
-            .min_by_key(|npc| npc.distance)
-            .expect("Mercenary Captain with Talk-to in the live scene");
-        assert_ne!(
-            captain.tile, stand,
-            "the account-only fixture must not stand underneath the Captain"
+            .expect("stationary banker with Talk-to at the authored position");
+        assert_eq!(
+            banker.distance, BANKER_TALK_RANGE,
+            "the account stand must be in the banker's authored Talk-to range"
         );
         let checkpoint = PacketCheckpoint::capture(&client);
         let local_route = client
@@ -268,7 +263,7 @@ fn live_engine_a_native_menu_talk_continue_choice() {
             .as_ref()
             .map(|player| (player.route_x[0], player.route_z[0]));
         let talk_result = Interactions::new(&snapshot, &mut client)
-            .interact(OpTarget::Npc(captain), ActionSpec::Label(TALK_TO.into()));
+            .interact(OpTarget::Npc(banker), ActionSpec::Label(TALK_TO.into()));
         let mut opcodes = Vec::new();
         assert!(
             client.trace_packets(checkpoint, &mut |opcode| opcodes.push(opcode)),
@@ -287,21 +282,21 @@ fn live_engine_a_native_menu_talk_continue_choice() {
         eprintln!(
             "native-menu Talk-to account={account} player={:?} npc_slot={} npc_tile={:?} result={talk_result:?} opcodes={opcodes:?} local_route={local_route:?} path={:?} flag=({},{}) map_base=({},{})",
             snapshot.tile(),
-            captain.index,
-            captain.tile,
+            banker.index,
+            banker.tile,
             client.try_move_path,
             client.minimap_flag_x,
             client.minimap_flag_z,
             client.map_build_base_x,
             client.map_build_base_z,
         );
-        (captain.index, captain.tile, format!("{talk_result:?}"))
+        (banker.index, banker.tile, format!("{talk_result:?}"))
     };
     wait_for(
         &mut client,
         &mut snapshot,
         &mut pump,
-        "Captain Continue prompt",
+        "banker Continue prompt",
         |current, state| state.chat_continue_component_id() >= 0 && !current.resumed_pause_button,
     );
 
@@ -324,7 +319,7 @@ fn live_engine_a_native_menu_talk_continue_choice() {
         &mut client,
         &mut snapshot,
         &mut pump,
-        "Captain first choice menu",
+        "banker first choice menu",
         |_, state| {
             state
                 .chat_options()
@@ -333,18 +328,20 @@ fn live_engine_a_native_menu_talk_continue_choice() {
         },
     );
     let first_menu = option_texts(&snapshot);
-    assert!(
-        first_menu.len() >= 3,
-        "expected the Captain's three choices: {first_menu:?}"
+    assert_eq!(
+        first_menu.len(),
+        2,
+        "expected the banker's two choices: {first_menu:?}"
     );
+    assert_eq!(first_menu[1], EXPLAIN_BANK_OPTION);
 
-    let first_choice_component = snapshot
+    let choice_component = snapshot
         .chat_options()
-        .first()
-        .expect("first choice component")
+        .get(1)
+        .expect("bank explanation choice component")
         .component_id;
     let choice_result_record = {
-        let choice_result = Interactions::new(&snapshot, &mut client).answer_choice(1);
+        let choice_result = Interactions::new(&snapshot, &mut client).answer_choice(2);
         assert!(
             matches!(
                 &choice_result,
@@ -355,16 +352,16 @@ fn live_engine_a_native_menu_talk_continue_choice() {
                             button_type: ButtonType::BUTTON_OK,
                         },
                     ..
-                } if *component_id == first_choice_component
+                } if *component_id == choice_component
             ),
-            "native first choice was refused: {choice_result:?}"
+            "native bank explanation choice was refused: {choice_result:?}"
         );
         format!("{choice_result:?}")
     };
-    // The chosen branch has one player line and one NPC line before multi2
-    // (mercenary_captain.rs2:29-32). Wait for each newly received pause control.
+    // The explanation has one player line and one NPC line before its next
+    // two-choice menu (banker.rs2:31-33). Wait for each newly received pause control.
     let mut response_continues = Vec::with_capacity(2);
-    for phase in ["Captain player reply", "Captain NPC reply"] {
+    for phase in ["banker player reply", "banker NPC reply"] {
         wait_for(
             &mut client,
             &mut snapshot,
@@ -396,7 +393,7 @@ fn live_engine_a_native_menu_talk_continue_choice() {
         &mut client,
         &mut snapshot,
         &mut pump,
-        "response to choice one",
+        "response to bank explanation choice",
         |_, state| {
             state
                 .chat_options()
@@ -408,7 +405,7 @@ fn live_engine_a_native_menu_talk_continue_choice() {
     assert_eq!(
         next_menu.len(),
         2,
-        "choice one should open the expected two-choice menu"
+        "the explanation should open the expected two-choice menu"
     );
 
     let receipt = write_receipt(
@@ -420,25 +417,25 @@ fn live_engine_a_native_menu_talk_continue_choice() {
             "account": account,
             "seed_scope": "disposable account only",
             "seed": {
-                "desertrescue": 3,
-                "desertrescue_map_mechanisms": 0,
-                "tile": DESERT_CAPTAIN_STAND,
-                "captain_home": DESERT_CAPTAIN_HOME,
-                "captain_wander_range": DESERT_CAPTAIN_WANDER_RANGE,
+                "tutorial": 1000,
+                "tile": BANKER_STAND,
+                "banker_home": BANKER_HOME,
+                "talk_range": BANKER_TALK_RANGE,
             },
             "target": {
-                "npc_config": "desertminingcaptain",
-                "npc_type": captain_type,
-                "npc_slot": captain_slot,
-                "npc_tile": captain_tile,
+                "npc_config": "banker1",
+                "npc_type": banker_type,
+                "npc_slot": banker_slot,
+                "npc_tile": banker_tile,
                 "operation": TALK_TO,
             },
             "talk_result": talk_result_record,
             "continue_component": continue_id,
             "continue_result": continue_result_record,
             "first_menu": first_menu,
-            "first_choice_component": first_choice_component,
-            "choice_one_result": choice_result_record,
+            "selected_choice": 2,
+            "choice_component": choice_component,
+            "choice_result": choice_result_record,
             "response_continues": response_continues,
             "next_menu": next_menu,
         }),
