@@ -526,6 +526,20 @@ impl Census {
             }
             self.edges.insert(key, calls);
         }
+        // Rule T3: every function that a binding reaches, other than a
+        // binding or a Host method, is a conversion helper of convert.rs.
+        for key in &self.reach.clone() {
+            let function = &self.functions[key];
+            if !bindings.contains(key)
+                && function.owner.as_deref() != Some("Host")
+                && function.file != "convert.rs"
+            {
+                let file = function.file.clone();
+                self.violation(format!(
+                    "T3: `{key}` of {file} is reached from a binding: a helper outside convert.rs"
+                ));
+            }
+        }
         self.check_cycles();
     }
 
@@ -774,6 +788,21 @@ impl Census {
             self.violation(format!(
                 "numeric: `{key}` uses the `FromLua` conversion of mlua"
             ));
+        }
+        // Rule T3: a `use` alias of a crate item outside the binding
+        // directory is a call outside it under another name.
+        if let Some(import) = self.imports.get(&path[0]) {
+            let crate_outside = import.first().is_some_and(|first| first == "crate")
+                && import.get(1).is_none_or(|second| second != "bindings");
+            let above_bindings = import.starts_with(&["super".to_owned(), "super".to_owned()]);
+            if crate_outside || above_bindings {
+                self.violation(format!(
+                    "T3: `{key}` names `{}`, an import of `{}` outside the binding directory",
+                    path.join("::"),
+                    import.join("::")
+                ));
+                return;
+            }
         }
         let first = path[0].as_str();
         let rest = match first {
@@ -1340,6 +1369,113 @@ fn crate_shape_violations(files: &[SourceFile]) -> Vec<String> {
     violations
 }
 
+/// Rule T9: the prelude is the crate's only Luau source. Code enters the VM
+/// through `.load` and `.compile`. Their only arguments are the prelude, the
+/// card's source and the bytecode compiled from it; no file is included.
+#[derive(Default)]
+struct LuauSources {
+    file: String,
+    prelude_loads: usize,
+    prelude_consts: usize,
+    violations: Vec<String>,
+}
+
+fn without_reference(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Reference(reference) => without_reference(&reference.expr),
+        syn::Expr::Paren(paren) => without_reference(&paren.expr),
+        other => other,
+    }
+}
+
+impl<'ast> Visit<'ast> for LuauSources {
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        // A `#[cfg(test)]` module is no product source: its chunks never
+        // reach a run.
+        let test_only = module.attrs.iter().any(|attribute| {
+            attribute.meta.to_token_stream_string().replace(' ', "") == "cfg(test)"
+        });
+        if !test_only {
+            syn::visit::visit_item_mod(self, module);
+        }
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if mac.path.is_ident("include_str") || mac.path.is_ident("include_bytes") {
+            self.violations.push(format!(
+                "T9: {} includes a file with `{}!`",
+                self.file,
+                path_idents(&mac.path).join("::")
+            ));
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+
+    fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+        if item.ident == "PRELUDE" {
+            self.prelude_consts += 1;
+            if self.file != "prelude.rs" {
+                self.violations
+                    .push(format!("T9: {} defines a second `PRELUDE`", self.file));
+            }
+        }
+        syn::visit::visit_item_const(self, item);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        let method = call.method.to_string();
+        if method == "load" || method == "compile" {
+            let argument = call.args.first().map(without_reference);
+            let allowed = match (method.as_str(), argument) {
+                ("load", Some(syn::Expr::Path(path))) if path.path.is_ident("PRELUDE") => {
+                    self.prelude_loads += 1;
+                    true
+                }
+                // The bytecode of the card's source, or an atomic load.
+                ("load", Some(syn::Expr::Path(path))) => {
+                    path.path.is_ident("bytecode")
+                        || path
+                            .path
+                            .segments
+                            .first()
+                            .is_some_and(|segment| segment.ident == "Ordering")
+                }
+                ("compile", Some(argument)) => chain_root(argument).as_deref() == Some("card"),
+                _ => false,
+            };
+            if !allowed {
+                self.violations.push(format!(
+                    "T9: {} gives `.{method}` a source other than the prelude or the card",
+                    self.file
+                ));
+            }
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+}
+
+fn luau_source_violations(files: &[SourceFile]) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut prelude_loads = 0;
+    let mut prelude_consts = 0;
+    for file in files {
+        let mut sources = LuauSources {
+            file: file.name.clone(),
+            ..Default::default()
+        };
+        sources.visit_file(&file.ast);
+        prelude_loads += sources.prelude_loads;
+        prelude_consts += sources.prelude_consts;
+        violations.extend(sources.violations);
+    }
+    if prelude_consts != 1 || prelude_loads != 1 {
+        violations.push(format!(
+            "T9: the crate defines `PRELUDE` {prelude_consts} times and loads it {prelude_loads} times; each must be once"
+        ));
+    }
+    violations
+}
+
 // ---------------------------------------------------------------------------
 // Running the census on the crate
 
@@ -1372,15 +1508,15 @@ fn sources_with(edit: impl Fn(&str, String) -> String) -> Sources {
 fn run_census(sources: &Sources) -> Census {
     let mut census = Census::build(&sources.bindings, &sources.outside);
     census.check();
-    let (_, registrations) = registration_violations(
-        &sources
-            .bindings
-            .iter()
-            .chain(&sources.outside)
-            .map(|file| parse(&file.name, file.text.clone()))
-            .collect::<Vec<_>>(),
-    );
+    let all = sources
+        .bindings
+        .iter()
+        .chain(&sources.outside)
+        .map(|file| parse(&file.name, file.text.clone()))
+        .collect::<Vec<_>>();
+    let (_, registrations) = registration_violations(&all);
     census.violations.extend(registrations);
+    census.violations.extend(luau_source_violations(&all));
     census
 }
 
@@ -1531,6 +1667,35 @@ fn the_crate_has_no_machine_and_no_other_unsafe() {
         registrations >= 1,
         "the census sees the registration function"
     );
+}
+
+#[test]
+fn the_prelude_is_the_only_luau_source() {
+    fn other_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("the crate's source directory is readable") {
+            let path = entry.expect("a source directory entry is readable").path();
+            if path.is_dir() {
+                other_files(&path, out);
+            } else if path.extension().is_none_or(|extension| extension != "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let mut others = Vec::new();
+    other_files(&crate_dir().join("src"), &mut others);
+    assert!(
+        others.is_empty(),
+        "rule T9: src holds files that are not Rust: {others:?}"
+    );
+    let sources = sources_with(|_, text| text);
+    let all = sources
+        .bindings
+        .iter()
+        .chain(&sources.outside)
+        .map(|file| parse(&file.name, file.text.clone()))
+        .collect::<Vec<_>>();
+    let violations = luau_source_violations(&all);
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
 #[test]
@@ -1810,6 +1975,34 @@ const FIXTURES: &[Fixture] = &[
         outside: "fn fixture_register(lua: &Lua) -> mlua::Result<Function> { lua.create_function(|_, count: i32| Ok(count)) }",
         expected: "a registration takes a Rust number",
     },
+    Fixture {
+        name: "19: a converter calls a runtime helper through an import alias",
+        binding: HOST_BINDING,
+        convert: "use crate::runtime::fixture_outside as outside_alias;\npub(crate) fn fixture_helper(_args: &Args) -> Reply { outside_alias(); Ok(Out::Nothing) }",
+        outside: "pub(crate) fn fixture_outside() {}",
+        expected: "outside the binding directory",
+    },
+    Fixture {
+        name: "20: a binding calls an argument-conversion helper of mod.rs",
+        binding: "fn fixture_binding(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply { Ok(Out::from(host.wait_next_tick()?)).and(fixture_policy(args)) }\nfn fixture_policy(_args: &Args) -> Reply { Ok(Out::Nothing) }",
+        convert: "",
+        outside: "",
+        expected: "a helper outside convert.rs",
+    },
+    Fixture {
+        name: "21: Luau source in a string outside the prelude",
+        binding: HOST_BINDING,
+        convert: "pub(crate) fn fixture_helper(_args: &Args) -> Reply { Ok(Out::Nothing) }",
+        outside: "fn fixture_chunk(lua: &Lua) -> mlua::Result<()> { lua.load(\"return 1\").exec() }",
+        expected: "T9:",
+    },
+    Fixture {
+        name: "22: Luau source included from a file",
+        binding: HOST_BINDING,
+        convert: "pub(crate) fn fixture_helper(_args: &Args) -> Reply { Ok(Out::Nothing) }",
+        outside: "const FIXTURE_CHUNK: &str = include_str!(\"fixture.luau\");\nfn fixture_chunk(lua: &Lua) -> mlua::Result<()> { lua.load(FIXTURE_CHUNK).exec() }",
+        expected: "T9:",
+    },
 ];
 
 fn fixture_sources(fixture: &Fixture) -> Sources {
@@ -1839,6 +2032,7 @@ fn fixture_sources(fixture: &Fixture) -> Sources {
 #[test]
 fn the_census_refuses_every_negative_fixture() {
     let blessed = read(&checked_in("core-paths.txt"));
+    let mut accepted = Vec::new();
     for fixture in FIXTURES {
         let sources = fixture_sources(fixture);
         let census = run_census(&sources);
@@ -1849,23 +2043,25 @@ fn the_census_refuses_every_negative_fixture() {
                 violations.push(format!("T5: `{line}` is not in core-paths.txt"));
             }
         }
-        if fixture.name.starts_with("16:") {
-            // The fixture binding passes the host's value, not the host; the
-            // helper that names `Host` must still be refused.
-            assert!(
-                violations
-                    .iter()
-                    .any(|v| v.contains("takes the host but is no binding")),
-                "fixture {} was accepted: {violations:#?}",
-                fixture.name
-            );
-            continue;
-        }
-        assert!(
-            violations.iter().any(|v| v.contains(fixture.expected)),
-            "fixture {} was not refused with {:?}: {violations:#?}",
-            fixture.name,
+        // Fixture 16 passes the host's value, not the host; the helper that
+        // names `Host` must still be refused.
+        let expected = if fixture.name.starts_with("16:") {
+            "takes the host but is no binding"
+        } else {
             fixture.expected
+        };
+        let refused = violations.iter().any(|v| v.contains(expected));
+        println!(
+            "fixture {}: {} (expected {expected:?}); violations: {violations:#?}",
+            fixture.name,
+            if refused { "refused" } else { "ACCEPTED" },
         );
+        if !refused {
+            accepted.push(fixture.name);
+        }
     }
+    assert!(
+        accepted.is_empty(),
+        "the census accepted these negative fixtures: {accepted:#?}"
+    );
 }

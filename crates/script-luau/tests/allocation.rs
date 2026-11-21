@@ -1,10 +1,13 @@
 //! The allocation gates of `LUAU-DESIGN-1114/design-r3.md` 8.1 for plan slice
-//! L4a: G2 (a suspended tick with no completion) and M1/G3 (a tick that reads
-//! one scalar through the lent frame). Each dispatch is measured alone; the
-//! seat batch and the tick outcome that the slot drains between two ticks
-//! are drained outside the measurement, as the slot does.
+//! L4a: G2 (a suspended tick with no completion) and G3 (a tick that reads
+//! one scalar through the lent frame), with G3 held as the accepted limit of
+//! configuration S (operator decision D22(a)). Each dispatch is measured
+//! alone; the seat batch and the tick outcome that the slot drains between
+//! two ticks are drained outside the measurement, as the slot does.
 
 pub mod support;
+
+use std::collections::BTreeMap;
 
 use script::surface::{LentOutcome, SurfaceRun};
 use support::{snapshot, spawn, tick};
@@ -59,52 +62,153 @@ fn g2_suspended_tick_without_completion_allocates_nothing_and_stays_out_of_the_v
     assert!(run.drain_logs().is_empty());
 }
 
-/// M1 of `design-r3.md` 8.1: configuration S (the safe scoped lend) on the
-/// G3 workload. The count is pinned so that a change of it shows. G3 needs
-/// zero; this configuration cannot reach it, because the scope of the safe
-/// lend allocates its reader on every entry (`design-r3.md` rule B8 item 7).
-/// The count is a measurement, not a pass of G3.
-///
-/// Measured on merlot at L4a: 7 allocations on every tick, plus one on a
-/// tick where the VM grows its heap for the scope's garbage (7,022 in 1,000
-/// ticks). The VM frees that garbage at its own collection steps.
-const M1_ALLOCATIONS_PER_ENTRY: u64 = 7;
-const M1_HEAP_GROWTH_PER_ENTRY: u64 = 1;
+/// The VM-entering ticks of one workload after its warm-up.
+struct Profile {
+    counts: Vec<u64>,
+    /// The used-bytes change of each tick: a rise is the tick's new VM
+    /// objects, a fall is a collection step of the VM.
+    changes: Vec<i64>,
+    used_after_warm_up: u64,
+    used_after: u64,
+    used_peak: u64,
+}
 
-#[test]
-fn m1_scalar_read_tick_allocation_count_in_configuration_s() {
-    let mut run = spawn(
-        r#"
-        local last = 0
-        return { tick = function(api)
-            last = api.status.tick()
-        end }
-        "#,
-    );
+fn profile(source: &str, ticks: u64) -> Profile {
+    let mut run = spawn(source);
     for number in 1..=WARM_UP {
         measured_tick(&mut *run, number);
     }
     let used_after_warm_up = used_bytes(&*run);
+    let mut used = used_after_warm_up;
+    let mut used_peak = used;
     let mut counts = Vec::new();
-    for number in WARM_UP + 1..=WARM_UP + TICKS {
+    let mut changes = Vec::new();
+    for number in WARM_UP + 1..=WARM_UP + ticks {
         counts.push(measured_tick(&mut *run, number));
+        let now = used_bytes(&*run);
+        changes.push(now as i64 - used as i64);
+        used = now;
+        used_peak = used_peak.max(now);
     }
-    let used_after = used_bytes(&*run);
-    let total = counts.iter().sum::<u64>();
-    let minimum = counts.iter().copied().min().unwrap_or(0);
-    let maximum = counts.iter().copied().max().unwrap_or(0);
-    println!(
-        "M1: {TICKS} scalar-read ticks made {total} Rust allocations (min {minimum}, max {maximum} per tick); \
-         VM used bytes {used_after_warm_up} after {WARM_UP} ticks, {used_after} after {}",
-        WARM_UP + TICKS
-    );
     assert!(run.drain_logs().is_empty());
-    assert_eq!(
-        minimum, M1_ALLOCATIONS_PER_ENTRY,
-        "M1 changed; update the pin with the measured value and report it"
+    Profile {
+        counts,
+        changes,
+        used_after_warm_up,
+        used_after: used,
+        used_peak,
+    }
+}
+
+impl Profile {
+    fn minimum(&self) -> u64 {
+        self.counts.iter().copied().min().unwrap_or(0)
+    }
+
+    fn maximum(&self) -> u64 {
+        self.counts.iter().copied().max().unwrap_or(0)
+    }
+
+    fn peak_growth(&self) -> u64 {
+        self.used_peak - self.used_after_warm_up
+    }
+
+    fn print(&self, name: &str) {
+        let total = self.counts.iter().sum::<u64>();
+        let mut changes = BTreeMap::new();
+        for change in &self.changes {
+            *changes.entry(*change).or_insert(0) += 1;
+        }
+        let gross_rise = self
+            .changes
+            .iter()
+            .filter(|change| **change > 0)
+            .sum::<i64>();
+        println!(
+            "{name}: {} ticks made {total} Rust allocations (min {}, max {} per tick); \
+             VM used bytes {} after warm-up, {} at the end, peak {} (+{}); \
+             gross rise {gross_rise} bytes ({} per tick); changes per tick {changes:?}",
+            self.counts.len(),
+            self.minimum(),
+            self.maximum(),
+            self.used_after_warm_up,
+            self.used_after,
+            self.used_peak,
+            self.peak_growth(),
+            gross_rise / self.changes.len().max(1) as i64,
+        );
+    }
+}
+
+const SCALAR_READ: &str = r#"
+    local last = 0
+    return { tick = function(api)
+        last = api.status.tick()
+    end }
+"#;
+
+const EMPTY_TICK: &str = r#"
+    return { tick = function(api) end }
+"#;
+
+/// G3 of `design-r3.md` 8.1, held as the documented limit of operator
+/// decision D22(a) (2026-11-21). G3 as designed is zero Rust allocations and
+/// unchanged VM used bytes after ten ticks. Configuration S, the safe scoped
+/// lend, cannot reach it: each VM-entering dispatch opens one `Lua::scope`
+/// with one scoped reader, and mlua 0.12.2 boxes that callback, registers
+/// its destructor and tears both down through vectors
+/// (`mlua-0.12.2/src/scope.rs:50-62,256-271,299-314`). The accepted limit:
+///
+/// 1. At most 8 Rust allocations on each VM-entering tick (measured: 7 on
+///    each tick, 8 on a tick where the VM takes a new heap page).
+/// 2. VM used bytes stay below the warm-up level plus 16 small Luau pages
+///    (`16 * 16_360` bytes; `kSmallPageSize`, `luau/VM/src/lmem.cpp:147`)
+///    over 10,000 ticks. Why: the scoped reader that each entry creates is
+///    VM garbage when the scope ends. Luau takes heap in whole pages and its
+///    incremental collector frees that garbage at its own steps, so used
+///    bytes rise and fall by pages but have no per-entry trend. The gross
+///    rise was 328 to 375 bytes per entry (measured at L4a); an entry that kept
+///    even 27 bytes alive would pass the bound within 10,000 ticks. The
+///    empty-tick control makes the same Rust allocations and the same page
+///    changes, so the scope causes both, not the scalar read.
+///
+/// The follow-up slice "configuration E" (`design-r3.md` 8.1 case 2, an
+/// `unsafe` frame holder) removes the limit before 0.3.0 ships. That slice
+/// first tries a safe dependency change: an mlua scope teardown without the
+/// temporary vectors may remove some of the allocations (review of L4a).
+const G3_ACCEPTED_RUST_ALLOCATIONS_PER_TICK: u64 = 8;
+const LUAU_SMALL_PAGE_BYTES: u64 = 16 * 1024 - 24;
+const G3_ACCEPTED_VM_GROWTH_BYTES: u64 = 16 * LUAU_SMALL_PAGE_BYTES;
+const LONG_TICKS: u64 = 10 * TICKS;
+
+#[test]
+fn g3_scalar_read_tick_stays_within_the_accepted_limit() {
+    let read = profile(SCALAR_READ, TICKS);
+    read.print("G3 scalar read");
+    let empty = profile(EMPTY_TICK, TICKS);
+    empty.print("G3 empty tick (control: the scope alone)");
+    let long = profile(SCALAR_READ, LONG_TICKS);
+    long.print("G3 scalar read, long");
+    println!(
+        "G3 accepted limit: at most {G3_ACCEPTED_RUST_ALLOCATIONS_PER_TICK} Rust allocations per tick; \
+         VM used bytes at most {G3_ACCEPTED_VM_GROWTH_BYTES} above the warm-up level"
     );
-    assert!(
-        maximum <= M1_ALLOCATIONS_PER_ENTRY + M1_HEAP_GROWTH_PER_ENTRY,
-        "M1 changed: {maximum} allocations on one tick"
+
+    for (name, profile) in [("read", &read), ("empty", &empty), ("long", &long)] {
+        assert!(
+            profile.maximum() <= G3_ACCEPTED_RUST_ALLOCATIONS_PER_TICK,
+            "G3 limit: a {name} tick made {} Rust allocations",
+            profile.maximum()
+        );
+        assert!(
+            profile.peak_growth() <= G3_ACCEPTED_VM_GROWTH_BYTES,
+            "G3 limit: {name} VM used bytes rose {} above the warm-up level",
+            profile.peak_growth()
+        );
+    }
+    assert_eq!(
+        read.minimum(),
+        empty.minimum(),
+        "the scalar read itself makes a Rust allocation"
     );
 }
