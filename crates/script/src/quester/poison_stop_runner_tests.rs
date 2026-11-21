@@ -471,7 +471,7 @@ fn poison_stop_judges_the_tile_the_player_stands_on() {
         return;
     }
     let (mut run, _) = run(at(3202), &[THROWERS]);
-    let mut observed = begin_retreat(&mut run);
+    let observed = begin_retreat(&mut run);
     assert_eq!(run.walks(), [at(3194)]);
     run.post_walk(observed, WalkEnd::Arrived, None);
     run.tick(observed, at(3197), stranded());
