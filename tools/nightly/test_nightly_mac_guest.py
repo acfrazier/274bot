@@ -668,6 +668,99 @@ class NightlyOrchestrationTests(unittest.TestCase):
         (run / "DONE").write_text("completed\n", encoding="utf-8")
         return run
 
+    def test_stages_readonly_lab_inputs_and_an_independent_frozen_worktree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.make_settings(root)
+            settings.nav_snapshot = root / "decoded"
+            snapshot = settings.nav_snapshot / "37214163f1e6ceca/versionlist"
+            snapshot.parent.mkdir(parents=True)
+            snapshot.write_bytes(b"decoded versionlist")
+            settings.nav_fixture = root / "reference.navpack"
+            settings.nav_fixture.write_bytes(b"pack")
+            settings.nav_fixture.with_suffix(".navflags").write_bytes(b"flags")
+            settings.multiway_csv = root / "multiway.csv"
+            settings.multiway_csv.write_text("1,2,3,4\n", encoding="utf-8")
+            settings.catalogs_root = root / "frozen-catalogs"
+            settings.catalogs_root.mkdir()
+            (settings.catalogs_root / "fixture.json").write_text("{}\n", encoding="utf-8")
+            settings.frozen_catalog = root / "frozen-worktree"
+            git("-C", settings.source_repo, "worktree", "add", "--detach",
+                str(settings.frozen_catalog), "HEAD")
+            frozen_head = git("-C", str(settings.frozen_catalog), "rev-parse", "HEAD")
+            settings.validate()
+
+            share = root / "share"
+            share.mkdir()
+            vm = FakeVM(settings, lambda: 1000)
+            vm.session = {"id": "fixtures", "share": str(share), "guest_home": "/guest"}
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=lambda *_: vm)
+            try:
+                with mock.patch.object(controller, "check_disk", return_value=1000):
+                    controller.stage_inputs()
+                staged = controller.input_root
+                for relative, expected in (
+                    ("nav-snapshot/37214163f1e6ceca/versionlist", b"decoded versionlist"),
+                    ("fixtures/nav-fixture.navpack", b"pack"),
+                    ("fixtures/nav-fixture.navflags", b"flags"),
+                    ("multiway.csv", b"1,2,3,4\n"),
+                    ("catalogs/fixture.json", b"{}\n"),
+                ):
+                    path = staged / relative
+                    self.assertEqual(path.read_bytes(), expected)
+                    self.assertEqual(path.stat().st_mode & 0o222, 0)
+                frozen = staged / "frozen-catalog"
+                self.assertTrue((frozen / ".git").is_dir())
+                self.assertEqual(git("-C", str(frozen), "rev-parse", "HEAD"), frozen_head)
+                self.assertFalse((frozen / ".git/objects/info/alternates").exists())
+                self.assertEqual((frozen / ".git/HEAD").stat().st_mode & 0o222, 0)
+                tools = dict.fromkeys(
+                    ("home", "tmp", "node_bin", "cargo_home", "rustup_home", "isohome",
+                     "python", "typescript_runner"), "/guest/tool"
+                )
+                environment = controller.job_environment("dev", "main", tools)
+                for key, relative in (
+                    ("NIGHTLY_FROZEN_CATALOG", "frozen-catalog"),
+                    ("NIGHTLY_CATALOGS_ROOT", "catalogs"),
+                    ("NIGHTLY_MULTIWAY_CSV", "multiway.csv"),
+                    ("NIGHTLY_NAV_FIXTURE", "fixtures/nav-fixture.navpack"),
+                ):
+                    self.assertEqual(environment[key], f"{nightly.GUEST_SHARE}/input/{relative}")
+                self.assertEqual(environment["NIGHTLY_NAV_SNAPSHOT"], "/guest/nightly/nav-snapshot")
+                self.assertEqual(snapshot.stat().st_mode & 0o200, 0o200)
+            finally:
+                nightly.make_writable_and_remove(share / "input")
+                nightly.make_writable_and_remove(share / "control")
+
+    def test_configured_fixture_inputs_fail_before_start_when_missing(self):
+        for name in ("NIGHTLY_MAC_MULTIWAY_CSV", "NIGHTLY_MAC_NAV_FIXTURE",
+                     "NIGHTLY_MAC_FROZEN_CATALOG", "NIGHTLY_MAC_CATALOGS_ROOT"):
+            with self.subTest(setting=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                settings = self.make_settings(root, {name: str(root / "missing")})
+                with self.assertRaisesRegex(nightly.NightlyError, name):
+                    settings.validate()
+
+    def test_configured_nav_fixture_requires_its_flags(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pack = root / "reference.navpack"
+            pack.write_bytes(b"pack")
+            settings = self.make_settings(root, {"NIGHTLY_MAC_NAV_FIXTURE": str(pack)})
+            with self.assertRaisesRegex(nightly.NightlyError, "NIGHTLY_MAC_NAV_FIXTURE flags"):
+                settings.validate()
+
+    def test_manual_cell_selection_reaches_the_guest_runner(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(Path(temporary), {
+                "NIGHTLY_MAC_JOBS": "main", "NIGHTLY_MAC_STEPS": "tui",
+                "NIGHTLY_MAC_CELLS": "walk,inventory",
+            })
+            vm = FakeVM(settings, lambda: 1000)
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=lambda *_: vm)
+            self.assertEqual(controller.run(), 0)
+            self.assertEqual(vm.run_calls[1][0][-2:], ["--cells", "walk,inventory"])
+
 
     def test_stages_purged_data_and_configured_274_inputs_into_the_guest(self):
         with tempfile.TemporaryDirectory() as temporary:

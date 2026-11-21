@@ -727,6 +727,25 @@ class Settings:
             Path(values["NIGHTLY_MAC_GAME_DATA_274_CONTENT"]).expanduser()
             if values.get("NIGHTLY_MAC_GAME_DATA_274_CONTENT") else None
         )
+        self.nav_snapshot = Path(
+            values.get("NIGHTLY_MAC_NAV_SNAPSHOT") or str(self.root / "nav-snapshot")
+        ).expanduser()
+        self.nav_fixture = (
+            Path(values["NIGHTLY_MAC_NAV_FIXTURE"]).expanduser()
+            if values.get("NIGHTLY_MAC_NAV_FIXTURE") else None
+        )
+        self.multiway_csv = (
+            Path(values["NIGHTLY_MAC_MULTIWAY_CSV"]).expanduser()
+            if values.get("NIGHTLY_MAC_MULTIWAY_CSV") else None
+        )
+        self.frozen_catalog = (
+            Path(values["NIGHTLY_MAC_FROZEN_CATALOG"]).expanduser().resolve()
+            if values.get("NIGHTLY_MAC_FROZEN_CATALOG") else None
+        )
+        self.catalogs_root = (
+            Path(values["NIGHTLY_MAC_CATALOGS_ROOT"]).expanduser()
+            if values.get("NIGHTLY_MAC_CATALOGS_ROOT") else None
+        )
         self.quiet_lock = Path(values["NIGHTLY_MAC_QUIET_LOCK"]).expanduser()
         self.isohome = Path(values["NIGHTLY_MAC_ISOHOME"]).expanduser().resolve()
         self.python = values["NIGHTLY_MAC_PYTHON"]
@@ -759,6 +778,11 @@ class Settings:
             self.lanes = self.lanes.strip()
             if not self.lanes:
                 raise NightlyError("NIGHTLY_MAC_LANES cannot be empty")
+        self.cells = values.get("NIGHTLY_MAC_CELLS")
+        if self.cells is not None:
+            self.cells = self.cells.strip()
+            if not self.cells:
+                raise NightlyError("NIGHTLY_MAC_CELLS cannot be empty")
         try:
             self.min_free_gib = int(values.get("NIGHTLY_MAC_MIN_FREE_GIB", str(MIN_FREE_GIB)))
         except ValueError as error:
@@ -802,9 +826,21 @@ class Settings:
         for path, setting in (
             (self.game_data_274_engine, "NIGHTLY_MAC_GAME_DATA_274_ENGINE"),
             (self.game_data_274_content, "NIGHTLY_MAC_GAME_DATA_274_CONTENT"),
+            (self.frozen_catalog, "NIGHTLY_MAC_FROZEN_CATALOG"),
+            (self.catalogs_root, "NIGHTLY_MAC_CATALOGS_ROOT"),
         ):
             if path is not None and not path.is_dir():
                 raise NightlyError(f"{setting} is not a directory: {path}")
+        if self.nav_snapshot.exists() and not self.nav_snapshot.is_dir():
+            raise NightlyError(f"nav snapshot is not a directory: {self.nav_snapshot}")
+        for path, setting in (
+            (self.multiway_csv, "NIGHTLY_MAC_MULTIWAY_CSV"),
+            (self.nav_fixture, "NIGHTLY_MAC_NAV_FIXTURE"),
+            (self.nav_fixture.with_suffix(".navflags") if self.nav_fixture else None,
+             "NIGHTLY_MAC_NAV_FIXTURE flags"),
+        ):
+            if path is not None and not path.is_file():
+                raise NightlyError(f"{setting} is not a file: {path}")
 
 
 class TartVM:
@@ -1532,9 +1568,23 @@ class NightlyOrchestrator:
         shutil.copy2(str(self.settings.isohome), str(self.input_root / "isohome"))
         fixture_root = self.settings.root / "fixtures"
         copy_tree(fixture_root, self.input_root / "fixtures", kind="fixtures")
-        snapshot = self.settings.root / "nav-snapshot"
-        if snapshot.is_dir():
-            copy_tree(snapshot, self.input_root / "nav-snapshot", kind="snapshot")
+        if self.settings.nav_fixture is not None:
+            shutil.copy2(str(self.settings.nav_fixture),
+                         str(self.input_root / "fixtures/nav-fixture.navpack"))
+            shutil.copy2(str(self.settings.nav_fixture.with_suffix(".navflags")),
+                         str(self.input_root / "fixtures/nav-fixture.navflags"))
+        if self.settings.nav_snapshot.is_dir():
+            copy_tree(self.settings.nav_snapshot, self.input_root / "nav-snapshot", kind="snapshot")
+        if self.settings.multiway_csv is not None:
+            shutil.copy2(str(self.settings.multiway_csv), str(self.input_root / "multiway.csv"))
+        if self.settings.catalogs_root is not None:
+            copy_tree(self.settings.catalogs_root, self.input_root / "catalogs", kind="catalog")
+        if self.settings.frozen_catalog is not None:
+            # A worktree's .git file points outside the share. Fetch an independent
+            # shallow checkout so guest tests can verify its frozen HEAD.
+            frozen = self.input_root / "frozen-catalog"
+            git(["clone", "--no-local", "--no-hardlinks", "--depth", "1",
+                 str(self.settings.frozen_catalog), str(frozen)])
         self.pins = pin_sources(self.settings.source_repo, self.branches, self.input_root)
         self.previous_runs_root = self.stage_previous_run_summaries()
         for path in sorted(self.input_root.iterdir(), key=lambda item: item.name):
@@ -1567,6 +1617,9 @@ class NightlyOrchestrator:
             "source": f"{share_input}/source.git",
             "catalog": f"{share_input}/catalog",
             "fixtures": f"{share_input}/fixtures",
+            "frozen_catalog": f"{share_input}/frozen-catalog",
+            "catalogs_root": f"{share_input}/catalogs",
+            "multiway_csv": f"{share_input}/multiway.csv",
             "nav_snapshot": str(guest_root / "nav-snapshot"),
             "quiet_lock": f"{GUEST_SHARE}/quiet/MAC-QUIET.lock",
             "outbox": f"{GUEST_SHARE}/results",
@@ -1717,7 +1770,10 @@ class NightlyOrchestrator:
             "NIGHTLY_FRESH_TREES": "1",
             "NIGHTLY_CATALOG": paths["catalog"],
             "NIGHTLY_NAV_SNAPSHOT": paths["nav_snapshot"],
-            "NIGHTLY_NAV_FIXTURE": f"{paths['fixtures']}/274bot-289-v19.navpack",
+            "NIGHTLY_NAV_FIXTURE": (
+                f"{paths['fixtures']}/nav-fixture.navpack" if self.settings.nav_fixture is not None
+                else f"{paths['fixtures']}/274bot-289-v19.navpack"
+            ),
             "NIGHTLY_INSPECT_BASELINE": f"{paths['fixtures']}/inspect.fb",
             "NIGHTLY_QUIET_LOCK": paths["quiet_lock"],
             "NIGHTLY_ISOHOME": tools["isohome"],
@@ -1761,6 +1817,13 @@ class NightlyOrchestrator:
             env["NIGHTLY_GAME_DATA_274_ENGINE"] = paths["game_data_274_engine"]
         if self.settings.game_data_274_content is not None:
             env["NIGHTLY_GAME_DATA_274_CONTENT"] = paths["game_data_274_content"]
+        for source, key, path_key in (
+            (self.settings.frozen_catalog, "NIGHTLY_FROZEN_CATALOG", "frozen_catalog"),
+            (self.settings.catalogs_root, "NIGHTLY_CATALOGS_ROOT", "catalogs_root"),
+            (self.settings.multiway_csv, "NIGHTLY_MULTIWAY_CSV", "multiway_csv"),
+        ):
+            if source is not None:
+                env[key] = paths[path_key]
         return env
 
     def guest_command(self, branch: str, job: str, tools: Dict[str, str]) -> List[str]:
@@ -1772,6 +1835,8 @@ class NightlyOrchestrator:
                         "--branch", branch])
         if self.settings.lanes is not None:
             command.extend(["--lanes", self.settings.lanes])
+        if self.settings.cells is not None:
+            command.extend(["--cells", self.settings.cells])
         return command
 
     def export_runs(self) -> None:

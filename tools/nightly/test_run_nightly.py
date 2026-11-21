@@ -945,6 +945,19 @@ class LaneEnvironmentTests(unittest.TestCase):
         self.assertNotIn("T5W_INSPECT_CAPTURE_BASELINE", env)
         self.assertEqual(env["NAV_PACK"], str(rn.NAV_FIXTURE))
 
+    def test_test_lanes_receive_staged_catalog_and_multiway_inputs(self):
+        configured = {
+            "NIGHTLY_FROZEN_CATALOG": "/guest/input/frozen-catalog",
+            "NIGHTLY_CATALOGS_ROOT": "/guest/input/catalogs",
+            "NIGHTLY_MULTIWAY_CSV": "/guest/input/multiway.csv",
+            "RS2B0T": "/host/catalog-must-not-win",
+        }
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, configured):
+            env = self.asset_env(Path(tmp), snapshot=False, baseline=False)
+        self.assertEqual(env["RS2B0T"], configured["NIGHTLY_FROZEN_CATALOG"])
+        self.assertEqual(env["RS2B0T_CATALOGS_ROOT"], configured["NIGHTLY_CATALOGS_ROOT"])
+        self.assertEqual(env["BOT_NAV_CONTENT_DIR_MULTIWAY_CSV"], configured["NIGHTLY_MULTIWAY_CSV"])
+
 
     def test_post_adr_test_lanes_use_the_tree_pack_for_each_revision(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1935,6 +1948,7 @@ class QuestJobTests(unittest.TestCase):
 
             self.assertEqual(env["ISOHOME_ROOT"], str(root / "isohome"))
             self.assertEqual(env["ISOHOME_DIR"], str(root / "home"))
+            self.assertEqual(env["BOT_NAV_SNAPSHOT_ROOT"], str(rn.NAV_SNAPSHOT))
             self.assertNotIn("UNRELATED_SECRET", env)
 
     def test_only_the_non_windows_quest_cell_environment_gets_300_ms(self):

@@ -2385,6 +2385,7 @@ def cell_env(home: Path, tmp: Path, evidence: Path, cell: str, prefix: str,
         "LIVE_EVIDENCE_DIR": str(evidence),
         "RS2B0T": str(CATALOG),
         "ENGINE_DIR": str(ENGINE_RUN / "engine"),
+        "BOT_NAV_SNAPSHOT_ROOT": str(NAV_SNAPSHOT),
     })
     env.pop("QUESTER_TICK_MS", None)
     if JOB_DEFAULTS["tick_ms"] is not None:
@@ -3151,6 +3152,14 @@ def lane_asset_env(tree: Path | None = None, *, require_generated: bool = True) 
         "ENGINE_DIR": str(ENGINE_PRISTINE / "engine"),
         "WORLD_ENGINE_DIR": str(ENGINE_PRISTINE / "engine"),
     }
+    for source, target in (
+        ("NIGHTLY_FROZEN_CATALOG", "RS2B0T"),
+        ("NIGHTLY_CATALOGS_ROOT", "RS2B0T_CATALOGS_ROOT"),
+        ("NIGHTLY_MULTIWAY_CSV", "BOT_NAV_CONTENT_DIR_MULTIWAY_CSV"),
+    ):
+        value = os.environ.get(source) or os.environ.get(target)
+        if value:
+            env[target] = value
     if snapshot_ready():
         env["BOT_NAV_SNAPSHOT_ROOT"] = str(NAV_SNAPSHOT)
     if INSPECT_BASELINE.is_file():
