@@ -525,8 +525,7 @@ fn validate_start_baseline(
             case.scenario_name()
         )));
     }
-    validate_case_baseline_with_preparation(case, observation, start_preparation)
-        .map_err(Refused)
+    validate_case_baseline_with_preparation(case, observation, start_preparation).map_err(Refused)
 }
 #[derive(Debug, Default)]
 enum CoreWatchState {

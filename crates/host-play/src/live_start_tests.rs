@@ -235,12 +235,10 @@ fn catalog_start_waits_for_pre_start_publication() {
         fire_pending_catalog_start(&mut pending, true, false, arming),
         StartScriptPump::Hold
     );
-    assert!(
-        pending[0]
-            .waiting_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("no published pre-Start observation"))
-    );
+    assert!(pending[0]
+        .waiting_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("no published pre-Start observation")));
     assert_eq!(watch.evidence()["phase"], "ready");
 
     watch.observe("catalogtest", Observation::default(), false);
@@ -248,12 +246,10 @@ fn catalog_start_waits_for_pre_start_publication() {
         fire_pending_catalog_start(&mut pending, true, false, arming),
         StartScriptPump::Hold
     );
-    assert!(
-        pending[0]
-            .waiting_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("not attached ingame scene2"))
-    );
+    assert!(pending[0]
+        .waiting_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("not attached ingame scene2")));
     assert_eq!(watch.evidence()["phase"], "ready");
 
     watch.observe("catalogtest", prepared_thiever(), false);
@@ -336,10 +332,7 @@ fn no_slot_pair_start_restores_the_prepared_pair_for_retry() {
         },
         false,
     );
-    assert_eq!(
-        pair.barrier(),
-        crate::paired_core::StartBarrier::StartBoth
-    );
+    assert_eq!(pair.barrier(), crate::paired_core::StartBarrier::StartBoth);
 
     let handle = play.script_start_handle();
     let arming = || StartArming {
@@ -400,11 +393,15 @@ fn pair_start_without_both_cards_fails_instead_of_holding() {
     let StartScriptPump::Failed(error) = pump else {
         panic!("expected a Failed pump, got {pump:?}");
     };
-    assert!(error.contains("actual scripts on both visible slots"), "{error}");
-    assert!(pair.failure().is_some(), "{:?}", pair.failure());
+    assert!(
+        error.contains("actual scripts on both visible slots"),
+        "{error}"
+    );
+    // The card-count refusal happens before the pair starts its witness.
+    assert_eq!(pair.evidence()["phase"], "ready");
+    assert!(pair.failure().is_none(), "{:?}", pair.failure());
     assert!(!pending[0].started);
 }
-
 
 #[cfg(feature = "js")]
 #[test]
