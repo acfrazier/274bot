@@ -1,4 +1,5 @@
 import { Bank } from '../../api/bank/Bank.js';
+import { Banking } from '../../api/bank/Banking.js';
 import { Equipment } from '../../api/equipment/Equipment.js';
 import { selectedLoadout } from '../../api/loadout/loadoutSetting.js';
 import { suppliesOf, weaponOf } from '../../api/loadout/loadoutPlan.js';
@@ -19,7 +20,7 @@ export default class T extends LoopingBot {
                 return;
             }
             if (!Bank.ready()) {
-                const opened = await Bank.openNearestWorld();
+                const opened = await Banking.open();
                 if (!opened || !Bank.ready()) {
                     globalThis.__stale = true;
                     return;
