@@ -1863,7 +1863,19 @@ pub(crate) mod tests {
     /// nav implementation type (the D8 poison stop tests).
     pub(crate) fn test_zone_lease(
         ids: &[&str],
-        (min_x, max_x, min_z, max_z): (i32, i32, i32, i32),
+        rect: (i32, i32, i32, i32),
+        origin: WorldTile,
+    ) -> nav_planner::contract::NavLease {
+        let zones: Vec<_> = ids.iter().map(|id| (*id, rect)).collect();
+        test_zone_rects_lease(&zones, origin)
+    }
+
+    /// One fixture zone: its id and plane-0 `(min_x, max_x, min_z, max_z)`.
+    pub(crate) type TestZone<'a> = (&'a str, (i32, i32, i32, i32));
+
+    /// [`test_zone_lease`] with one plane-0 rectangle per zone id.
+    pub(crate) fn test_zone_rects_lease(
+        zones: &[TestZone<'_>],
         origin: WorldTile,
     ) -> nav_planner::contract::NavLease {
         let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 1024]);
@@ -1875,30 +1887,31 @@ pub(crate) mod tests {
             blocked,
             flags: None,
         };
-        let rect = nav_planner::router::AvoidRect {
-            min_x,
-            max_x,
-            min_z,
-            max_z,
-            level: Some(0),
-        };
         test_nav_lease_over(collision, |world| {
-            let zones = (0..ids.len())
-                .map(|index| {
+            let rects = zones
+                .iter()
+                .enumerate()
+                .map(|(index, (_, (min_x, max_x, min_z, max_z)))| {
                     nav_planner::zones::Zone::hazard(
-                        rect,
+                        nav_planner::router::AvoidRect {
+                            min_x: *min_x,
+                            max_x: *max_x,
+                            min_z: *min_z,
+                            max_z: *max_z,
+                            level: Some(0),
+                        },
                         0,
                         u16::try_from(index).expect("fixture zone index fits"),
                     )
                 })
                 .collect();
-            let kinds = ids
+            let kinds = zones
                 .iter()
-                .map(|id| nav_planner::zones::ZoneKind::new(*id, *id, -1, 0, false, false))
+                .map(|(id, _)| nav_planner::zones::ZoneKind::new(*id, *id, -1, 0, false, false))
                 .collect();
             world.graph.zones = Some(
                 nav_planner::zones::ZoneTable::from_parts(
-                    zones,
+                    rects,
                     kinds,
                     Vec::new(),
                     Vec::new(),
