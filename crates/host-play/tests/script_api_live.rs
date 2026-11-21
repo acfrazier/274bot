@@ -101,6 +101,8 @@ struct Fixture {
     /// Seed combat stats when the fixture needs combat-level routing.
     seed_combat_stats: bool,
     walk_arrival: Option<WorldTile>,
+    /// The player's tile on the latest frame, from the client.
+    observed_tile: Option<WorldTile>,
     advance: bool,
     advance_phase: u8,
     advance_ready: bool,
@@ -238,6 +240,9 @@ fn fixture_frame(
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(client);
     state.observed_tick = snapshot.tick();
+    state.observed_tile = snapshot
+        .tile()
+        .map(|(x, z, level)| WorldTile { x, z, level });
     if state.start_tile.is_some() {
         if let Some((x, z, level)) = snapshot.tile() {
             let tile = WorldTile { x, z, level };
@@ -1221,6 +1226,134 @@ fn luau_lifecycle_cell() {
     );
 }
 
+/// The landing tile of the mainland hop in the Lumbridge courtyard; the
+/// `walk` scenario walks south from it over open tiles to (3220, 3216, 0)
+/// and (3220, 3212, 0), with 90 game ticks for each step
+/// (`crates/scenario/src/scenarios/navigation.rs:6-63`).
+#[cfg(feature = "luau")]
+const LUAU_WALK_START: WorldTile = WorldTile {
+    x: 3220,
+    z: 3222,
+    level: 0,
+};
+#[cfg(feature = "luau")]
+const LUAU_WALK_DEST: WorldTile = WorldTile {
+    x: 3220,
+    z: 3212,
+    level: 0,
+};
+
+/// Two awaited walks of the `walk` scenario route, each reported with the
+/// walk result and the status reads of the frame that resumed it.
+#[cfg(feature = "luau")]
+const LUAU_WALK_SOURCE: &str = r#"
+local started = false
+local function report(label, result)
+    local x, z, level = api.status.tile()
+    api.log(label, tostring(result.ok), tostring(result.failed), result.x, result.z,
+        result.level, tostring(result.no_path), result.cancel_reason, result.request_id,
+        result.seq, x, z, level, api.status.tick())
+end
+return {
+    tick = function(api)
+        if started then
+            return
+        end
+        started = true
+        api.log("luau-walk-start", api.status.tick(), api.status.tile())
+        report("luau-walk-mid", api.walk.to(3220, 3216, 0))
+        report("luau-walk-dest", api.walk.to(3220, 3212, 0))
+        api.stop("luau walk done")
+    end,
+}
+"#;
+
+#[cfg(feature = "luau")]
+fn logged_fields(logs: &[String], label: &str) -> Vec<String> {
+    let prefix = format!("{label}\t");
+    let rows = logs
+        .iter()
+        .filter_map(|line| line.strip_prefix(&prefix))
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 1, "expected one {label:?}, logs={logs:?}");
+    rows[0].split('\t').map(str::to_owned).collect()
+}
+
+#[cfg(feature = "luau")]
+fn luau_walk_cell() {
+    let (play, account, fixture) = start_fixture_with_options(false, Some(LUAU_WALK_START), false);
+    play.script_start_luau(&account, LUAU_WALK_SOURCE.into(), None)
+        .expect("start real Luau walk run");
+    let mut logs = Vec::new();
+    // Two steps of at most 90 game ticks each (the `walk` scenario budget)
+    // are 108 s at 600 ms per tick; the harness deadline adds start-up.
+    wait_for(
+        &play,
+        &account,
+        &fixture,
+        Duration::from_secs(240),
+        |play| {
+            take_logs(play, &account, &mut logs);
+            play.script_state(&account) == script::RunState::Idle
+                && play
+                    .script_lifecycle_receipt(&account)
+                    .is_some_and(|receipt| {
+                        receipt.state == script::slot::ScriptTerminalState::Stopped
+                    })
+        },
+    );
+    take_logs(&play, &account, &mut logs);
+    let receipt = play
+        .script_lifecycle_receipt(&account)
+        .expect("self-stop receipt");
+    assert_eq!(receipt.reason, "luau walk done", "logs={logs:?}");
+
+    let start = logged_fields(&logs, "luau-walk-start");
+    assert_eq!(start[1..], ["3220", "3222", "0"], "seeded start tile");
+    let mid = logged_fields(&logs, "luau-walk-mid");
+    let dest = logged_fields(&logs, "luau-walk-dest");
+    for (fields, tile) in [(&mid, (3220, 3216)), (&dest, (3220, 3212))] {
+        let (x, z) = (tile.0.to_string(), tile.1.to_string());
+        assert_eq!(
+            fields[..7],
+            [
+                "true",
+                "false",
+                x.as_str(),
+                z.as_str(),
+                "0",
+                "false",
+                "none"
+            ],
+            "walk result: ok, not failed, its own target, a route, no manual cancel"
+        );
+        assert_ne!(fields[7], "0", "the seat client stamped the walk id");
+        assert_eq!(
+            fields[9..12],
+            [x.as_str(), z.as_str(), "0"],
+            "api.status.tile on the frame that resumed the walk is the target"
+        );
+    }
+    let observed = fixture.lock().unwrap().observed_tile;
+    assert_eq!(
+        observed,
+        Some(LUAU_WALK_DEST),
+        "the client observes the player on the arrival tile"
+    );
+    no_drops(&account);
+    save(
+        "luau-walk-receipt.json",
+        &json!({"cell":"luau_walk","account":account,"logs":logs,
+                "start":[LUAU_WALK_START.x,LUAU_WALK_START.z,LUAU_WALK_START.level],
+                "dest":[LUAU_WALK_DEST.x,LUAU_WALK_DEST.z,LUAU_WALK_DEST.level],
+                "observed_tile":observed.map(|tile| [tile.x, tile.z, tile.level]),
+                "walk_mid":mid,"walk_dest":dest,
+                "walk_path":"api.walk.to -> SeatClient::queue_walk -> seat batch -> SlotScript seat admission -> host route job -> lent walk outcome -> coroutine resume",
+                "host_commit":build_stamp::COMMIT,"host_dirty":build_stamp::DIRTY,
+                "receipt":receipt}),
+    );
+}
+
 const RUNTIME_COMPAT_SOURCE: &str = r#"
 import { LoopingBot } from '../../api/bot/Bot.js';
 import { BotHost } from '../../runtime/BotHost.js';
@@ -1657,6 +1790,7 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
             | "owner_lifecycle"
             | "script_api_compat_journal_twice"
             | "luau_lifecycle"
+            | "luau_walk"
     ) {
         receipt["driver"] =
             json!({"trace":trace,"accepted_requests":requests,"packet_ticks":packets});
@@ -1708,6 +1842,13 @@ fn luau_lifecycle() {
         "luau-lifecycle-receipt.json",
         luau_lifecycle_cell,
     );
+}
+
+#[cfg(feature = "luau")]
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache, Engine A and the real R289 nav pack"]
+fn luau_walk() {
+    run_captured("luau_walk", "luau-walk-receipt.json", luau_walk_cell);
 }
 
 #[test]

@@ -208,6 +208,8 @@ return function(host)
     local host_format = host.format
     local raw_bindings = host.bindings
     local waiting = host.waiting
+    local host_dispatch = host.dispatch
+    local frame = host.frame
     if native_type(host_guard) ~= "function" then
         native_error("Luau prelude host.guard must be a function", 0)
     end
@@ -219,6 +221,12 @@ return function(host)
     end
     if waiting ~= nil and native_type(waiting) ~= "table" then
         native_error("Luau prelude host.waiting must be a table", 0)
+    end
+    if host_dispatch ~= nil and native_type(host_dispatch) ~= "function" then
+        native_error("Luau prelude host.dispatch must be a function", 0)
+    end
+    if frame ~= nil and native_type(frame) ~= "table" then
+        native_error("Luau prelude host.frame must be a table", 0)
     end
 
     local function finish_binding(wait_for_resume, status, ...)
@@ -250,6 +258,51 @@ return function(host)
         end
     end
 
+    -- An indexed binding returns its status, then its value count and up to
+    -- three values, or the message.
+    local function finish_indexed(wait_for_resume, status, count, first, second, third)
+        if status == false then
+            if native_type(count) ~= "string" then
+                native_error("host binding failure did not include a string message", 3)
+            end
+            native_error(count, 3)
+        end
+        if status ~= true then
+            native_error("host binding returned an invalid status", 3)
+        end
+        if wait_for_resume then
+            return native_yield()
+        end
+        if count == 0 then
+            return
+        end
+        if count == 1 then
+            return first
+        end
+        if count == 2 then
+            return first, second
+        end
+        return first, second, third
+    end
+
+    -- Slot 1 of the frame holds the reader of the entry that lends input, or
+    -- false. The host's dispatcher serves an entry that lends nothing.
+    local function wrap_index(index, wait_for_resume)
+        if native_type(host_dispatch) ~= "function" or native_type(frame) ~= "table" then
+            native_error("Luau prelude indexed binding needs host.dispatch and host.frame", 0)
+        end
+        return function(...)
+            if wait_for_resume and not native_isyieldable() then
+                native_error("waiting binding cannot yield from this callback", 2)
+            end
+            local call = native_rawget(frame, 1)
+            if call == false then
+                call = host_dispatch
+            end
+            return finish_indexed(wait_for_resume, call(index, native_select("#", ...), ...))
+        end
+    end
+
     local function wrap_tree(source, wait_tree)
         if wait_tree ~= nil and native_type(wait_tree) ~= "table" then
             native_error("Luau prelude waiting tree does not match bindings", 0)
@@ -261,11 +314,15 @@ return function(host)
                 wait_value = native_rawget(wait_tree, key)
             end
             local kind = native_type(value)
-            if kind == "function" then
+            if kind == "function" or kind == "number" then
                 if wait_value ~= nil and native_type(wait_value) ~= "boolean" then
                     native_error("Luau prelude waiting leaf must be boolean", 0)
                 end
-                wrapped[key] = wrap_binding(value, wait_value == true)
+                if kind == "function" then
+                    wrapped[key] = wrap_binding(value, wait_value == true)
+                else
+                    wrapped[key] = wrap_index(value, wait_value == true)
+                end
             elseif kind == "table" then
                 wrapped[key] = wrap_tree(value, wait_value)
             else

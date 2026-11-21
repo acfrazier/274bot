@@ -247,7 +247,7 @@ fn host_binding_errors_are_catchable_without_escaping_the_vm() {
     let logs = run.drain_logs();
     assert_eq!(logs.len(), 3);
     assert_eq!(logs[0], "true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue");
-    assert!(logs[1].contains("api.settings.str expects a string key"));
+    assert!(logs[1].contains("api.settings.str: key must be a string"));
     assert_eq!(logs[2], "continued");
     assert_eq!(
         run.drain_tick_outcomes(),

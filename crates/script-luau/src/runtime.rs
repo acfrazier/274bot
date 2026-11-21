@@ -1,8 +1,10 @@
+use crate::bindings::convert::{self, Args, Out, Refusal, MAX_ARGS};
+use crate::bindings::{Call, Frame, Host, Kind, BINDINGS};
 use crate::{prelude::PRELUDE, single_step};
 use api::identity::ExecutionId;
 use mlua::chunk::{ChunkMode, Compiler};
 use mlua::thread::ThreadStatus;
-use mlua::{Error, Function, Lua, LuaOptions, MultiValue, StdLib, Table, Thread, Value};
+use mlua::{Error, Function, Lua, LuaOptions, LuaString, MultiValue, StdLib, Table, Thread, Value};
 #[cfg(feature = "test-hooks")]
 use script::api_progress::ProgressPage;
 use script::native::recovery_hints::RecoveryHintsCell;
@@ -17,9 +19,7 @@ use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
 #[cfg(feature = "test-hooks")]
 use script::native::WalkCancelReason;
 use script::native::{ScriptFailure, SettingsBag};
-use script::surface::client::SeatClient;
-#[cfg(feature = "test-hooks")]
-use script::surface::client::SeatCompletion;
+use script::surface::client::{SeatClient, SeatCompletion};
 use script::surface::{
     InputDelivery, JournalWait, LentOutcome, PostedSnapshotFacts, RouteInspectIdentities,
     ScriptRuntimeContext, ScriptStopReceipt, StopCompletion, SurfaceCard, SurfaceError,
@@ -48,9 +48,7 @@ const NO_DEADLINE: u64 = u64::MAX;
 const MEMORY_ERROR: &[u8] = b"not enough memory";
 const LOST_ERROR: &str = "error in error handling";
 const MAX_ERROR_BYTES: usize = 8 * 1024;
-const STOP_REASON_MAX_BYTES: usize = 256;
 const MAX_LOG_LINE_BYTES: usize = 4 * 1024;
-const MAX_LOG_ARGS: usize = 256;
 const MAX_LOG_LINES_PER_ENTRY: usize = 256;
 const MAX_LOG_BYTES_PER_ENTRY: usize = 64 * 1024;
 const MAX_LOG_QUEUE_LINES: usize = 1024;
@@ -229,10 +227,10 @@ impl LuauSurfaceFactory {
         });
         single_step::enable(&lua).map_err(|error| spawn_error("luau-internal", &error))?;
 
-        let api = build_api(&lua, &state).map_err(|error| spawn_error("luau-setup", &error))?;
-        freeze_api(&api).map_err(|error| spawn_error("luau-setup", &error))?;
+        let vm_api = build_api(&lua, &state).map_err(|error| spawn_error("luau-setup", &error))?;
+        freeze_api(&vm_api.api).map_err(|error| spawn_error("luau-setup", &error))?;
         lua.globals()
-            .raw_set("api", api.clone())
+            .raw_set("api", vm_api.api.clone())
             .map_err(|error| spawn_error("luau-setup", &error))?;
         retain_allowed_globals(&lua).map_err(|error| spawn_error("luau-setup", &error))?;
         lua.sandbox(true)
@@ -312,7 +310,9 @@ impl LuauSurfaceFactory {
         Ok(Box::new(LuauSurfaceRun {
             vm: Some(ActiveVm {
                 lua,
-                api,
+                api: vm_api.api,
+                frame: vm_api.frame,
+                fallback: vm_api.fallback,
                 tick_function,
                 tick_thread,
                 tick_needs_reset: false,
@@ -351,8 +351,18 @@ fn surface_error(failure: ScriptFailure) -> SurfaceError {
     SurfaceError::Spawn(format!("{}: {}", failure.code, failure.message))
 }
 
-fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<Table> {
+/// The API table and the two values that the run keeps to lend input.
+struct VmApi {
+    api: Table,
+    /// The prelude reads slot 1: the scoped reader of a lending entry, or
+    /// `false` outside one.
+    frame: Table,
+    fallback: LuaString,
+}
+
+fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<VmApi> {
     let host = lua.create_table()?;
+    let fallback = lua.create_string("Luau host binding failed")?;
     host.set(
         "guard",
         host_function(lua, state, |lua, value: Value, state| {
@@ -372,9 +382,11 @@ fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<Table> {
         host_function(
             lua,
             state,
-            |_, values: MultiValue, state| match append_log_values(state, &values) {
+            |_, values: MultiValue, state| match convert::log_line(&values)
+                .and_then(|line| state.log_line(line))
+            {
                 Ok(()) => Ok((true, Option::<String>::None)),
-                Err(message) => Ok((false, Some(message.to_owned()))),
+                Err(refusal) => Ok((false, Some(print_refusal(refusal)))),
             },
         )?,
     )?;
@@ -391,106 +403,6 @@ fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<Table> {
     )?;
 
     let bindings = lua.create_table()?;
-    bindings.set(
-        "log",
-        host_function(
-            lua,
-            state,
-            |_, values: MultiValue, state| match append_log_values(state, &values) {
-                Ok(()) => Ok((true, Option::<String>::None)),
-                Err(message) => Ok((false, Some(message.to_owned()))),
-            },
-        )?,
-    )?;
-    bindings.set(
-        "stop",
-        host_function(lua, state, |_, values: MultiValue, state| {
-            if !matches!(state.phase(), PHASE_TICK | PHASE_PAINT) {
-                return Ok((
-                    false,
-                    Some("api.stop is only available during tick or paint".to_owned()),
-                ));
-            }
-            let reason = match stop_reason(&values) {
-                Ok(reason) => reason,
-                Err(message) => return Ok((false, Some(message.to_owned()))),
-            };
-            state.write_self_stop(reason);
-            Ok((false, Some("Luau script stopped itself".to_owned())))
-        })?,
-    )?;
-    bindings.set(
-        "wait",
-        host_function(lua, state, |_, _: MultiValue, state| {
-            if state.phase() != PHASE_TICK {
-                return Ok((
-                    false,
-                    Some("api.wait is only available during tick".to_owned()),
-                ));
-            }
-            let mut client = state.client_lock()?;
-            match client.await_next_tick() {
-                Ok(()) => {
-                    state.wait_armed.store(true, Ordering::Relaxed);
-                    Ok((true, Option::<String>::None))
-                }
-                Err(error) => Ok((false, Some(bounded_display(&error)))),
-            }
-        })?,
-    )?;
-
-    let settings = lua.create_table()?;
-    settings.set(
-        "str",
-        host_function(lua, state, |lua, values: MultiValue, state| {
-            let key = match string_argument(&values, 0, "api.settings.str") {
-                Ok(key) => key,
-                Err(message) => {
-                    return Ok((false, Value::String(lua.create_string(message)?)));
-                }
-            };
-            let bag = lock(&state.settings);
-            let value = match bag.get(key.as_ref()).and_then(serde_json::Value::as_str) {
-                Some(value) => Value::String(lua.create_string(value)?),
-                None => Value::Nil,
-            };
-            Ok((true, value))
-        })?,
-    )?;
-    settings.set(
-        "num",
-        host_function(lua, state, |lua, values: MultiValue, state| {
-            let key = match string_argument(&values, 0, "api.settings.num") {
-                Ok(key) => key,
-                Err(message) => return Ok((false, Value::String(lua.create_string(message)?))),
-            };
-            let bag = lock(&state.settings);
-            let value = bag
-                .get(key.as_ref())
-                .and_then(serde_json::Value::as_f64)
-                .map(Value::Number)
-                .unwrap_or(Value::Nil);
-            Ok((true, value))
-        })?,
-    )?;
-    settings.set(
-        "bool",
-        host_function(lua, state, |lua, values: MultiValue, state| {
-            let key = match string_argument(&values, 0, "api.settings.bool") {
-                Ok(key) => key,
-                Err(message) => return Ok((false, Value::String(lua.create_string(message)?))),
-            };
-            let bag = lock(&state.settings);
-            let value = bag
-                .get(key.as_ref())
-                .and_then(serde_json::Value::as_bool)
-                .map(Value::Boolean)
-                .unwrap_or(Value::Nil);
-            Ok((true, value))
-        })?,
-    )?;
-    bindings.set("settings", settings)?;
-
     #[cfg(feature = "test-hooks")]
     {
         let test = lua.create_table()?;
@@ -650,7 +562,7 @@ fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<Table> {
     }
 
     let waiting = lua.create_table()?;
-    waiting.set("wait", true)?;
+    register_bindings(lua, state, &fallback, &bindings, &waiting)?;
     #[cfg(feature = "test-hooks")]
     {
         let test_waiting = lua.create_table()?;
@@ -659,11 +571,224 @@ fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<Table> {
         test_waiting.set("awaitProgress", true)?;
         waiting.set("__test", test_waiting)?;
     }
+    let frame = lua.create_table()?;
+    frame.raw_set(1, false)?;
+    let dispatch_state = Arc::clone(state);
+    let dispatch_fallback = fallback.clone();
+    host.set(
+        "dispatch",
+        lua.create_function(move |lua, args: DispatchArgs| {
+            Ok(dispatch_row(
+                lua,
+                &dispatch_state,
+                None,
+                &dispatch_fallback,
+                args,
+            ))
+        })?,
+    )?;
+    host.set("frame", frame.clone())?;
     host.set("bindings", bindings)?;
     host.set("waiting", waiting)?;
     let setup: Function = lua.load(PRELUDE).eval()?;
     let api: Table = setup.call(host)?;
-    Ok(api)
+    Ok(VmApi {
+        api,
+        frame,
+        fallback,
+    })
+}
+
+/// The arguments of one indexed call: the row, the argument count, and
+/// [`MAX_ARGS`] values. Fixed values, so a call allocates no argument list.
+type DispatchArgs = (Value, Value, Value, Value, Value, Value, Value);
+/// The status, then the value count and up to three values, or the message.
+type DispatchReply = (bool, Value, Value, Value, Value);
+
+const _: () = assert!(MAX_ARGS == 5, "DispatchArgs carries five values");
+
+/// Put every row of [`BINDINGS`] in the binding tree that the prelude wraps.
+/// An `Output` row is a function; every other row is its index, which the
+/// prelude passes to the dispatcher of the entry.
+fn register_bindings(
+    lua: &Lua,
+    state: &Arc<RunState>,
+    fallback: &LuaString,
+    bindings: &Table,
+    waiting: &Table,
+) -> mlua::Result<()> {
+    for (index, row) in BINDINGS.iter().enumerate() {
+        let (group, name) = match row.path.split_once('.') {
+            Some((group, name)) => (Some(group), name),
+            None => (None, row.path),
+        };
+        let leaf = match row.call {
+            Call::Output(_) => Value::Function(output_function(lua, state, fallback, index)?),
+            Call::Frame(_) | Call::Host(_) => Value::Number(index as f64),
+        };
+        group_table(lua, bindings, group)?.raw_set(name, leaf)?;
+        if row.kind == Kind::Await {
+            group_table(lua, waiting, group)?.raw_set(name, true)?;
+        }
+    }
+    Ok(())
+}
+
+fn group_table(lua: &Lua, tree: &Table, group: Option<&str>) -> mlua::Result<Table> {
+    let Some(group) = group else {
+        return Ok(tree.clone());
+    };
+    match tree.raw_get::<Value>(group)? {
+        Value::Table(table) => Ok(table),
+        _ => {
+            let table = lua.create_table()?;
+            tree.raw_set(group, table.clone())?;
+            Ok(table)
+        }
+    }
+}
+
+/// The one function that gives an `Output` row to the VM. It returns a
+/// status and never an error (ADR 0023 item 30).
+fn output_function(
+    lua: &Lua,
+    state: &Arc<RunState>,
+    fallback: &LuaString,
+    index: usize,
+) -> mlua::Result<Function> {
+    let state = Arc::clone(state);
+    let fallback = fallback.clone();
+    lua.create_function(move |lua, values: MultiValue| {
+        let row = &BINDINGS[index];
+        let reply = invoke(lua, &state, || match row.call {
+            Call::Output(write) => write(lua, Host::new(&state, None), &values),
+            Call::Frame(_) | Call::Host(_) => Err(Refusal::Run("takes fixed arguments")),
+        });
+        Ok(match reply {
+            Ok(_) => (true, Value::Nil),
+            Err(refusal) => (
+                false,
+                refusal_value(lua, &state, row.path, refusal, &fallback),
+            ),
+        })
+    })
+}
+
+/// The one call path of every indexed row. `frame` is `Some` only inside
+/// the scope of a lending entry; this is the only function that knows how
+/// the frame arrives (`design-r3.md` rule B8 item 3).
+fn dispatch_row(
+    lua: &Lua,
+    state: &RunState,
+    frame: Option<&Frame<'_>>,
+    fallback: &LuaString,
+    (index, count, first, second, third, fourth, fifth): DispatchArgs,
+) -> DispatchReply {
+    let Some(row) = prelude_count(&index).and_then(|index| BINDINGS.get(index)) else {
+        state.internal_failure();
+        return (
+            false,
+            Value::String(fallback.clone()),
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+        );
+    };
+    let count = prelude_count(&count).unwrap_or(usize::MAX);
+    let args = Args::new([first, second, third, fourth, fifth]);
+    let reply = invoke(lua, state, || {
+        if count > row.arity {
+            return Err(Refusal::Arity(row.arity));
+        }
+        match row.call {
+            Call::Frame(read) => {
+                frame.map_or(Err(Refusal::NoInput), |frame| read(lua, frame, &args))
+            }
+            Call::Host(act) => act(lua, Host::new(state, frame), &args),
+            Call::Output(_) => Err(Refusal::Run("takes no fixed arguments")),
+        }
+    });
+    match reply {
+        Ok(Out::Nothing) => (true, Value::Number(0.0), Value::Nil, Value::Nil, Value::Nil),
+        Ok(Out::One(value)) => (true, Value::Number(1.0), value, Value::Nil, Value::Nil),
+        Ok(Out::Three(first, second, third)) => (true, Value::Number(3.0), first, second, third),
+        Err(refusal) => (
+            false,
+            refusal_value(lua, state, row.path, refusal, fallback),
+            Value::Nil,
+            Value::Nil,
+            Value::Nil,
+        ),
+    }
+}
+
+/// A row index or an argument count that the prelude passed.
+fn prelude_count(value: &Value) -> Option<usize> {
+    match value {
+        Value::Integer(number) => usize::try_from(*number).ok(),
+        Value::Number(number) if number.is_finite() && number.fract() == 0.0 && *number >= 0.0 => {
+            Some(*number as usize)
+        }
+        _ => None,
+    }
+}
+
+/// Check the run before the body, and contain a panic of the body
+/// (`design-r3.md` rule X11).
+fn invoke(
+    lua: &Lua,
+    state: &RunState,
+    body: impl FnOnce() -> Result<Out, Refusal>,
+) -> Result<Out, Refusal> {
+    state.check_lua(lua)?;
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(reply) => reply,
+        Err(_) => {
+            state.internal_failure();
+            Err(Refusal::Run("failed inside the host"))
+        }
+    }
+}
+
+/// The Luau error value of a refusal. A VM error sets the latch when it
+/// holds a refused allocation, and the script then gets the fixed text.
+fn refusal_value(
+    lua: &Lua,
+    state: &RunState,
+    path: &str,
+    refusal: Refusal,
+    fallback: &LuaString,
+) -> Value {
+    let message = match refusal {
+        Refusal::Argument { argument, expected } => {
+            format!("api.{path}: {argument} must be {expected}")
+        }
+        Refusal::Arity(1) => format!("api.{path}: expects at most 1 argument"),
+        Refusal::Arity(arity) => format!("api.{path}: expects at most {arity} arguments"),
+        Refusal::NoInput => {
+            format!("api.{path}: game input is lent only to tick and onPaint")
+        }
+        Refusal::Run(text) => format!("api.{path}: {text}"),
+        Refusal::Seat(error) => format!("api.{path}: {error}"),
+        Refusal::Vm(error) => {
+            state.observe_callback_error(&error);
+            return Value::String(fallback.clone());
+        }
+    };
+    match lua.create_string(message) {
+        Ok(message) => Value::String(message),
+        Err(error) => {
+            state.observe_callback_error(&error);
+            Value::String(fallback.clone())
+        }
+    }
+}
+
+fn print_refusal(refusal: Refusal) -> String {
+    match refusal {
+        Refusal::Run(text) => text.to_owned(),
+        other => format!("print: {other:?}"),
+    }
 }
 
 #[cfg(feature = "test-hooks")]
@@ -914,108 +1039,7 @@ fn validate_format_arguments(values: &MultiValue) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn string_argument(
-    values: &MultiValue,
-    index: usize,
-    name: &'static str,
-) -> Result<mlua::BorrowedStr, &'static str> {
-    match values.get(index) {
-        Some(Value::String(value)) => value.to_str().map_err(|_| match name {
-            "api.settings.str" => "api.settings.str expects a UTF-8 key",
-            "api.settings.num" => "api.settings.num expects a UTF-8 key",
-            _ => "api.settings.bool expects a UTF-8 key",
-        }),
-        _ => Err(match name {
-            "api.settings.str" => "api.settings.str expects a string key",
-            "api.settings.num" => "api.settings.num expects a string key",
-            _ => "api.settings.bool expects a string key",
-        }),
-    }
-}
-
-fn stop_reason(values: &MultiValue) -> Result<String, &'static str> {
-    match (values.len(), values.front()) {
-        (0, _) | (1, Some(Value::Nil)) => Ok("stopped".to_owned()),
-        (1, Some(Value::String(reason))) => reason
-            .to_str()
-            .map(|reason| bounded_stop_reason(reason.as_ref()))
-            .map_err(|_| "api.stop reason must be UTF-8 text"),
-        _ => Err("api.stop expects an optional string reason"),
-    }
-}
-
-fn bounded_stop_reason(reason: &str) -> String {
-    let mut end = reason.len().min(STOP_REASON_MAX_BYTES);
-    while !reason.is_char_boundary(end) {
-        end -= 1;
-    }
-    reason[..end].to_owned()
-}
-
-fn append_log_values(state: &RunState, values: &MultiValue) -> Result<(), &'static str> {
-    let line = format_log_values(values)?;
-    state.push_log(line)
-}
-
-fn format_log_values(values: &MultiValue) -> Result<String, &'static str> {
-    if values.len() > MAX_LOG_ARGS {
-        return Err("log argument count exceeds 256");
-    }
-    let mut line = BoundedString::with_capacity(MAX_LOG_LINE_BYTES.min(128), MAX_LOG_LINE_BYTES);
-    for (index, value) in values.iter().enumerate() {
-        if index > 0 {
-            line.push_str("\t")?;
-        }
-        match value {
-            Value::Nil => line.push_str("nil")?,
-            Value::Boolean(value) => line.push_str(if *value { "true" } else { "false" })?,
-            Value::Integer(value) => line.push_str(&value.to_string())?,
-            Value::Number(value) => line.push_str(&value.to_string())?,
-            Value::String(value) => {
-                let bytes = value.as_bytes();
-                if bytes.len() > MAX_LOG_LINE_BYTES {
-                    return Err("log line exceeds 4096 bytes");
-                }
-                let text = String::from_utf8_lossy(bytes.as_ref());
-                line.push_str(&text)?;
-            }
-            Value::Table(_) => line.push_str("<table>")?,
-            Value::Function(_) => line.push_str("<function>")?,
-            Value::Thread(_) => line.push_str("<thread>")?,
-            Value::UserData(_) => line.push_str("<userdata>")?,
-            _ => line.push_str("<value>")?,
-        }
-    }
-    Ok(line.finish())
-}
-
-struct BoundedString {
-    value: String,
-    max: usize,
-}
-
-impl BoundedString {
-    fn with_capacity(capacity: usize, max: usize) -> Self {
-        Self {
-            value: String::with_capacity(capacity),
-            max,
-        }
-    }
-
-    fn push_str(&mut self, text: &str) -> Result<(), &'static str> {
-        if self.value.len().saturating_add(text.len()) > self.max {
-            return Err("log line exceeds 4096 bytes");
-        }
-        self.value.push_str(text);
-        Ok(())
-    }
-
-    fn finish(self) -> String {
-        self.value
-    }
-}
-
-struct RunState {
+pub(crate) struct RunState {
     started: Instant,
     phase: AtomicU8,
     latch: AtomicU8,
@@ -1260,6 +1284,57 @@ impl RunState {
         lock(&self.logs).push(line)
     }
 
+    /// `api.log` and `print`.
+    pub(crate) fn log_line(&self, line: String) -> Result<(), Refusal> {
+        self.push_log(line).map_err(Refusal::Run)
+    }
+
+    /// `api.stop`: write the self-stop latch. The call then ends its entry
+    /// with an error, so no later statement of the entry runs.
+    pub(crate) fn request_self_stop(&self, reason: String) -> Result<(), Refusal> {
+        if !matches!(self.phase(), PHASE_TICK | PHASE_PAINT) {
+            return Err(Refusal::Run("is only available during tick or paint"));
+        }
+        self.write_self_stop(reason);
+        Err(Refusal::Run("Luau script stopped itself"))
+    }
+
+    /// `api.wait`: the seat client owes the next unheld game tick.
+    pub(crate) fn await_next_tick(&self) -> Result<(), Refusal> {
+        if self.phase() != PHASE_TICK {
+            return Err(Refusal::Run("is only available during tick"));
+        }
+        self.client_lock()?.await_next_tick()?;
+        self.wait_armed.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// One value of the posted settings bag.
+    pub(crate) fn setting(&self, key: &str) -> Option<serde_json::Value> {
+        lock(&self.settings).get(key).cloned()
+    }
+
+    /// `api.walk.*`: queue one walk row through the seat client with the
+    /// route generation and the movement intent of the lent frame. The slot
+    /// admits it through its seat, as for a JS v2 walk op.
+    pub(crate) fn await_walk(
+        &self,
+        request: InteractReq,
+        frame: Option<&Frame<'_>>,
+    ) -> Result<(), Refusal> {
+        if self.phase() != PHASE_TICK {
+            return Err(Refusal::Run("is only available during tick"));
+        }
+        let frame = frame.ok_or(Refusal::NoInput)?;
+        self.client_lock()?.queue_walk(
+            request,
+            frame.native.walk_outcome_generation,
+            frame.input,
+        )?;
+        self.wait_armed.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
     fn drain_logs(&self) -> Vec<String> {
         lock(&self.logs).drain()
     }
@@ -1446,6 +1521,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 struct ActiveVm {
     lua: Lua,
     api: Table,
+    frame: Table,
+    fallback: LuaString,
     tick_function: Function,
     tick_thread: Thread,
     tick_needs_reset: bool,
@@ -1629,6 +1706,74 @@ impl LuauSurfaceRun {
         }
     }
 
+    /// The entries of one dispatch, inside the lending scope: the resume of
+    /// an awaited binding, then a new `tick`, then `onPaint` (rules X4-X6).
+    /// `Err` means that the run failed and drops its VM.
+    fn run_entries(
+        &mut self,
+        vm: &mut ActiveVm,
+        snap_tick: u64,
+        is_game_tick: bool,
+        held: bool,
+        resume_ready: bool,
+    ) -> Result<Option<TickOutcome>, ()> {
+        let mut outcome = None;
+        let mut resumed_wait = false;
+        if resume_ready {
+            let completion = self
+                .state
+                .client_lock()
+                .ok()
+                .and_then(|mut client| client.take_completion());
+            if let Some(completion) = completion {
+                resumed_wait = true;
+                let value = self.resume_value(&vm.lua, completion)?;
+                outcome = self.resume_tick(vm, snap_tick, value);
+            }
+        }
+        if is_game_tick && !held && !vm.tick_suspended && !resumed_wait {
+            outcome = self.run_tick(vm, snap_tick);
+        }
+        if is_game_tick && self.state.latch.load(Ordering::Relaxed) == LATCH_EMPTY {
+            if let Some(paint_outcome) = self.run_paint(vm, snap_tick) {
+                outcome = Some(match outcome {
+                    Some(TickOutcome::Error {
+                        tick,
+                        generation,
+                        message,
+                    }) => TickOutcome::Error {
+                        tick,
+                        generation,
+                        message: bounded_string(format!("{message}; {paint_outcome:?}")),
+                    },
+                    _ => paint_outcome,
+                });
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// The value that the awaited binding returns when its wait resumes.
+    fn resume_value(&self, lua: &Lua, completion: SeatCompletion) -> Result<Value, ()> {
+        #[cfg(feature = "test-hooks")]
+        if self
+            .state
+            .test_waiting_for_completion
+            .swap(false, Ordering::Relaxed)
+        {
+            let request_token = self.state.test_wait_token.swap(0, Ordering::Relaxed);
+            return test_completion_table(lua, completion, request_token)
+                .map(Value::Table)
+                .map_err(|error| self.conversion_failed(&error));
+        }
+        convert::completion(lua, &completion).map_err(|error| self.conversion_failed(&error))
+    }
+
+    fn conversion_failed(&self, error: &Error) {
+        self.state.observe_callback_error(error);
+        self.state.internal_failure();
+    }
+
     fn dispatch_inner(
         &mut self,
         wake: SurfaceWake,
@@ -1694,70 +1839,46 @@ impl LuauSurfaceRun {
             client.accept_delivery(input, native, release_floor, is_game_tick && !held);
         }
 
-        let mut outcome = None;
-        let mut resumed_wait = false;
-        if vm.tick_suspended && !held {
-            let ready = self
+        // A dispatch that enters no entry opens no scope and lends nothing.
+        let resume_ready = vm.tick_suspended
+            && !held
+            && self
                 .state
                 .client_lock()
                 .is_ok_and(|client| client.completion_ready());
-            if ready {
-                let completion = self
-                    .state
-                    .client_lock()
-                    .ok()
-                    .and_then(|mut client| client.take_completion());
-                if let Some(completion) = completion {
-                    resumed_wait = true;
-                    #[cfg(feature = "test-hooks")]
-                    {
-                        if self
-                            .state
-                            .test_waiting_for_completion
-                            .swap(false, Ordering::Relaxed)
-                        {
-                            let request_token =
-                                self.state.test_wait_token.swap(0, Ordering::Relaxed);
-                            let result =
-                                match test_completion_table(&vm.lua, completion, request_token) {
-                                    Ok(result) => result,
-                                    Err(error) => {
-                                        self.state.observe_callback_error(&error);
-                                        self.state.internal_failure();
-                                        self.vm = None;
-                                        return LentOutcome::Failed(self.state.failure());
-                                    }
-                                };
-                            outcome = self.resume_tick(&mut vm, snap_tick, result);
-                        } else {
-                            outcome = self.resume_tick(&mut vm, snap_tick, ());
-                        }
-                    }
-                    #[cfg(not(feature = "test-hooks"))]
-                    {
-                        let _ = completion;
-                        outcome = self.resume_tick(&mut vm, snap_tick, ());
-                    }
+        let starts_tick = is_game_tick && !held && !vm.tick_suspended;
+        let paints = is_game_tick && vm.paint_function.is_some();
+        let mut outcome = None;
+        if resume_ready || starts_tick || paints {
+            // ADR 0023 item 2: the entries of this dispatch read the lent
+            // frame through one scoped reader. The scope ends before the
+            // dispatch returns, so no binding keeps a borrow.
+            let frame = Frame { input, native };
+            let lua = vm.lua.clone();
+            let state = Arc::clone(&self.state);
+            let fallback = vm.fallback.clone();
+            let lent = lua.scope(|scope| {
+                let reader = scope.create_function(move |lua, args: DispatchArgs| {
+                    Ok(dispatch_row(lua, &state, Some(&frame), &fallback, args))
+                })?;
+                vm.frame.raw_set(1, reader)?;
+                let entered =
+                    self.run_entries(&mut vm, snap_tick, is_game_tick, held, resume_ready);
+                vm.frame.raw_set(1, false)?;
+                Ok(entered)
+            });
+            match lent {
+                Ok(Ok(entered)) => outcome = entered,
+                Ok(Err(())) => {
+                    self.vm = None;
+                    return LentOutcome::Failed(self.state.failure());
                 }
-            }
-        }
-        if is_game_tick && !held && !vm.tick_suspended && !resumed_wait {
-            outcome = self.run_tick(&mut vm, snap_tick);
-        }
-        if is_game_tick && self.state.latch.load(Ordering::Relaxed) == LATCH_EMPTY {
-            if let Some(paint_outcome) = self.run_paint(&mut vm, snap_tick) {
-                outcome = Some(match outcome {
-                    Some(TickOutcome::Error {
-                        tick,
-                        generation,
-                        message,
-                    }) => TickOutcome::Error {
-                        tick,
-                        generation,
-                        message: bounded_string(format!("{message}; {paint_outcome:?}")),
-                    },
-                    _ => paint_outcome,
-                });
+                Err(error) => {
+                    self.state.observe_callback_error(&error);
+                    self.state.internal_failure();
+                    self.vm = None;
+                    return LentOutcome::Failed(self.state.failure());
+                }
             }
         }
         self.state.clear_deadline();
