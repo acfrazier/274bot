@@ -1857,6 +1857,62 @@ pub(crate) mod tests {
             .expect("lease ids are not exhausted in tests")
     }
 
+    /// A lease over one open 16 by 16 square at `origin` (each of the four
+    /// planes) whose zones `ids` each cover the plane-0 rectangle
+    /// `(min_x, max_x, min_z, max_z)`. Callers outside this module name no
+    /// nav implementation type (the D8 poison stop tests).
+    pub(crate) fn test_zone_lease(
+        ids: &[&str],
+        (min_x, max_x, min_z, max_z): (i32, i32, i32, i32),
+        origin: WorldTile,
+    ) -> nav_planner::contract::NavLease {
+        let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 1024]);
+        let collision = nav_planner::collision::WorldCollision {
+            origin,
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let rect = nav_planner::router::AvoidRect {
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+            level: Some(0),
+        };
+        test_nav_lease_over(collision, |world| {
+            let zones = (0..ids.len())
+                .map(|index| {
+                    nav_planner::zones::Zone::hazard(
+                        rect,
+                        0,
+                        u16::try_from(index).expect("fixture zone index fits"),
+                    )
+                })
+                .collect();
+            let kinds = ids
+                .iter()
+                .map(|id| nav_planner::zones::ZoneKind::new(*id, *id, -1, 0, false, false))
+                .collect();
+            world.graph.zones = Some(
+                nav_planner::zones::ZoneTable::from_parts(
+                    zones,
+                    kinds,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    world.collision.origin,
+                    world.collision.width as u32,
+                    world.collision.height as u32,
+                    &world.graph.wilderness,
+                )
+                .expect("zone lease fixture"),
+            );
+        })
+    }
+
     /// A lease over a small synthetic collision the test keeps for its raw
     /// oracle: the grid is copied once (fixture-sized, never a real pack).
     pub(crate) fn test_nav_lease_for_collision(

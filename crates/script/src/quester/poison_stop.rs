@@ -95,6 +95,10 @@ pub(super) struct DangerArea<'a> {
     pub(super) step: &'a [Arc<str>],
 }
 
+/// A running walk step's target and its declared `cross` ids
+/// (`StepPlan::walk_target`).
+pub(super) type WalkTarget<'a> = (WorldTile, &'a [Arc<str>]);
+
 impl DangerArea<'_> {
     /// Whether `tile` is inside the area. `None` when the zone table is
     /// unavailable and the area is not empty.
@@ -258,7 +262,7 @@ impl PoisonStop {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+mod tests {
     use super::*;
 
     fn tile(x: i32) -> WorldTile {
@@ -334,67 +338,13 @@ pub(super) mod tests {
         );
     }
 
-    /// A pack whose zones `ids` all cover `rect` on plane 0, over one open
-    /// 16 by 16 square at `origin` on each of the four planes.
-    pub(in crate::quester) fn danger_lease(
-        ids: &[&str],
-        rect: nav_planner::router::AvoidRect,
-        origin: WorldTile,
-    ) -> nav_planner::contract::NavLease {
-        let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 1024]);
-        crate::gatherer::select::tests::test_nav_lease_over(
-            nav_planner::collision::WorldCollision {
-                origin,
-                width: 16,
-                height: 16,
-                walk,
-                blocked,
-                flags: None,
-            },
-            |world| {
-                let zones = ids
-                    .iter()
-                    .enumerate()
-                    .map(|(index, _)| {
-                        nav_planner::zones::Zone::hazard(
-                            rect,
-                            0,
-                            u16::try_from(index).expect("fixture zone index fits"),
-                        )
-                    })
-                    .collect();
-                let kinds = ids
-                    .iter()
-                    .map(|id| nav_planner::zones::ZoneKind::new(*id, *id, -1, 0, false, false))
-                    .collect();
-                world.graph.zones = Some(
-                    nav_planner::zones::ZoneTable::from_parts(
-                        zones,
-                        kinds,
-                        Vec::new(),
-                        Vec::new(),
-                        Vec::new(),
-                        world.collision.origin,
-                        world.collision.width as u32,
-                        world.collision.height as u32,
-                        &world.graph.wilderness,
-                    )
-                    .expect("danger area fixture"),
-                );
-            },
-        )
-    }
-
     #[test]
     fn danger_area_is_the_declared_cross_zones_only() {
-        let rect = nav_planner::router::AvoidRect {
-            min_x: 2,
-            max_x: 5,
-            min_z: 0,
-            max_z: 5,
-            level: Some(0),
-        };
-        let lease = danger_lease(&["throwers", "other"], rect, tile(0));
+        let lease = crate::gatherer::select::tests::test_zone_lease(
+            &["throwers", "other"],
+            (2, 5, 0, 5),
+            tile(0),
+        );
         let zones = lease.zones();
         let declared: [Arc<str>; 1] = [Arc::from("throwers")];
         let step_area = DangerArea {

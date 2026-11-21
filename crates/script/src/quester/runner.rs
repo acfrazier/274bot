@@ -2141,7 +2141,7 @@ impl Quester {
     }
 
     /// The stage `cross` ids, and the running walk step's target and `cross`.
-    fn danger_cross(&self) -> (&[Arc<str>], Option<(api::WorldTile, &[Arc<str>])>) {
+    fn danger_cross(&self) -> (&[Arc<str>], Option<super::poison_stop::WalkTarget<'_>>) {
         let stage = self
             .stage
             .as_ref()
@@ -7616,15 +7616,9 @@ mod tests {
             target,
             cross: Arc::from([Arc::from("throwers")]),
         });
-        let lease = super::super::poison_stop::tests::danger_lease(
+        let lease = crate::gatherer::select::tests::test_zone_lease(
             &["throwers"],
-            nav_planner::router::AvoidRect {
-                min_x: 3196,
-                max_x: 3204,
-                min_z: 3196,
-                max_z: 3204,
-                level: Some(0),
-            },
+            (3196, 3204, 3196, 3204),
             api::WorldTile {
                 x: 3192,
                 z: 3192,
