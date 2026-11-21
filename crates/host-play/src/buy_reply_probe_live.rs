@@ -410,6 +410,7 @@ struct SceneIdentity {
 struct SceneObservation {
     identity: SceneIdentity,
     player_tile: WorldTile,
+    evidence_tick: u64,
     local_player_teleport_watermark: u64,
     rebuild_invalidation_watermark: u64,
 }
@@ -419,6 +420,7 @@ struct SceneFence {
     identity: SceneIdentity,
     baseline_player_tile: WorldTile,
     last_player_tile: WorldTile,
+    baseline_evidence_tick: u64,
     local_player_teleport_watermark: u64,
     rebuild_invalidation_watermark: u64,
 }
@@ -429,6 +431,7 @@ impl SceneFence {
             identity: observation.identity,
             baseline_player_tile: observation.player_tile,
             last_player_tile: observation.player_tile,
+            baseline_evidence_tick: observation.evidence_tick,
             local_player_teleport_watermark: observation.local_player_teleport_watermark,
             rebuild_invalidation_watermark: observation.rebuild_invalidation_watermark,
         }
@@ -450,6 +453,7 @@ fn scene_observation(cx: &ActionContext<'_>) -> Option<SceneObservation> {
             level: world.value.level,
         },
         player_tile,
+        evidence_tick: cx.evidence().tick,
         local_player_teleport_watermark,
         rebuild_invalidation_watermark,
     })
@@ -2163,6 +2167,7 @@ fn terminal_context(
             "expected_scene": expected_scene,
             "observed_scene": observed_scene,
             "baseline_tile": trace.scene_fence.map(|fence| fence.baseline_player_tile),
+            "baseline_evidence_tick": trace.scene_fence.map(|fence| fence.baseline_evidence_tick),
             "last_observed_tile": trace.scene_fence.map(|fence| fence.last_player_tile),
             "observed_tile": player_tile,
             "expected_rebuild_invalidation_watermark": trace
@@ -3351,6 +3356,7 @@ mod network_coords_tests {
                 z: 3410,
                 level: 0,
             },
+            evidence_tick: 12,
             local_player_teleport_watermark: 0,
             rebuild_invalidation_watermark: 0,
         };
@@ -3611,6 +3617,7 @@ mod network_coords_tests {
                 z: 3410,
                 level: 0,
             },
+            evidence_tick: 1,
             local_player_teleport_watermark: 0,
             rebuild_invalidation_watermark: 0,
         };
@@ -3905,6 +3912,738 @@ mod network_coords_tests {
             )
             .expect("the expected network keeper");
             assert_eq!(actual, expected);
+        }
+    }
+
+    const PROBE_TEST_BASE_X: i32 = 3000;
+    const PROBE_TEST_BASE_Z: i32 = 3200;
+    const PROBE_TEST_KEEPER_INDEX: usize = 434;
+
+    fn gerrant_fixture() -> Fixture {
+        let stand = WorldTile {
+            x: 3012,
+            z: 3225,
+            level: 0,
+        };
+        Fixture {
+            feather: ItemFact {
+                id: 314,
+                name: "Feather".into(),
+            },
+            coins: ItemFact {
+                id: 995,
+                name: "Coins".into(),
+            },
+            keeper: KeeperFact {
+                config: "gerrant".into(),
+                name: "Gerrant".into(),
+                id: 558,
+                tile: WorldTile {
+                    x: 3013,
+                    z: 3225,
+                    level: 0,
+                },
+                access: vec![stand],
+            },
+            stand,
+            baseline_stock: 100,
+            baseline_unit_price: 1,
+        }
+    }
+
+    fn probe_inventory(feathers: i32) -> Vec<api::snapshot::ItemView> {
+        let mut items = vec![api::snapshot::ItemView {
+            def: api::ItemDefView {
+                id: 995,
+                name: Some("Coins".into()),
+                stackable: true,
+                members: false,
+                base_value: 1,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: api::snapshot::ItemContainer::Inventory,
+            action_family: api::snapshot::ItemActionFamily::Held,
+            slot: 0,
+            count: 1000,
+            actions: vec![Some("Drop".into())],
+            component_id: -1,
+        }];
+        if feathers > 0 {
+            items.push(api::snapshot::ItemView {
+                def: api::ItemDefView {
+                    id: 314,
+                    name: Some("Feather".into()),
+                    stackable: false,
+                    members: false,
+                    base_value: 1,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: api::snapshot::ItemContainer::Inventory,
+                action_family: api::snapshot::ItemActionFamily::Held,
+                slot: 1,
+                count: feathers,
+                actions: Vec::new(),
+                component_id: -1,
+            });
+        }
+        items
+    }
+
+    fn dispatch_r289_packet(client: &mut Client, ptype: i32, bytes: Vec<u8>) {
+        client.psize = bytes.len() as i32;
+        let mut packet = client::io::Packet::new(bytes);
+        client.handle_packet(ptype, &mut packet);
+        assert_eq!(packet.pos, packet.length());
+    }
+
+    fn accept_probe_interaction(
+        slot: &mut script::SlotScript,
+        action: &script::native::HostAction,
+        run: RunKey,
+        tick: u64,
+    ) -> u64 {
+        assert_eq!(action.run(), run);
+        let authority = action.authority();
+        assert!(authority.live());
+        assert_eq!(authority.run(), run);
+        let request_id = authority.request_id().get();
+        slot.complete_native_interaction(
+            &authority,
+            script::native::InteractionReceipt {
+                request_id,
+                evidence: EvidenceStamp {
+                    run,
+                    tick,
+                    sequence: tick,
+                },
+                accepted: true,
+                chat_since: 0,
+            },
+        );
+        request_id
+    }
+
+    struct SlotProbeRig {
+        fixture: Fixture,
+        trace: Arc<Mutex<ProbeTrace>>,
+        slot: script::SlotScript,
+        client: Client,
+        snapshot: GameSnapshot,
+        run: RunKey,
+        keeper_type: usize,
+    }
+
+    impl SlotProbeRig {
+        fn new(batch_index: usize, batch: BatchPlan) -> Self {
+            let fixture = gerrant_fixture();
+            let trace = Arc::new(Mutex::new(ProbeTrace::default()));
+            let probe = BuyReplyProbeScript::for_batch(
+                "alice".into(),
+                fixture.clone(),
+                Arc::clone(&trace),
+                batch_index,
+                batch,
+            );
+            let mut slot = script::SlotScript::new();
+            slot.start_test_script(Box::new(OwnedProbeScript::new(probe)), None)
+                .expect("install the real buy-reply probe in SlotScript");
+            let run = slot.native_run().expect("owned probe run");
+
+            let mut client = Client::from_shared_with_revision(
+                client::client::ClientConfig {
+                    host: "127.0.0.1".into(),
+                    port: 0,
+                    cache_dir: String::new(),
+                    members: false,
+                    lowmem: true,
+                },
+                Arc::new(client::config::Cache::default()),
+                Arc::new(Vec::new()),
+                Vec::new(),
+                client::io::ClientRevision::R289,
+            );
+            client.ingame = true;
+            client.scene_state = 2;
+            client.map_build_base_x = PROBE_TEST_BASE_X;
+            client.map_build_base_z = PROBE_TEST_BASE_Z;
+            client.map_build_centre_zone_x = PROBE_TEST_BASE_X / 8 + 6;
+            client.map_build_centre_zone_z = PROBE_TEST_BASE_Z / 8 + 6;
+            client.minusedlevel = 0;
+            client.build_minusedlevel = 0;
+            client.main_modal_id = -1;
+            client.side_modal_id = -1;
+            let keeper_type = fixture.keeper.id as usize;
+            {
+                let cache = Arc::get_mut(&mut client.cache).expect("sole test cache owner");
+                for (id, name) in [(314, "Feather"), (995, "Coins")] {
+                    let index = id as usize;
+                    if cache.objs.len() <= index {
+                        cache
+                            .objs
+                            .resize(index + 1, client::config::ObjType::default());
+                    }
+                    cache.objs[index] = client::config::ObjType {
+                        id,
+                        name: name.into(),
+                        ..Default::default()
+                    };
+                }
+                cache
+                    .npcs
+                    .resize_with(keeper_type + 1, client::config::NpcType::default);
+                cache.npcs[keeper_type] = client::config::NpcType {
+                    id: fixture.keeper.id,
+                    name: "Gerrant".into(),
+                    op: vec![Some("Trade".into())],
+                    ..Default::default()
+                };
+            }
+
+            let mut npc = client::client::ClientNpc::at(
+                fixture.keeper.tile.x - PROBE_TEST_BASE_X,
+                fixture.keeper.tile.z - PROBE_TEST_BASE_Z,
+            );
+            npc.r#type = Some(keeper_type);
+            client.npc[PROBE_TEST_KEEPER_INDEX] = Some(Box::new(npc));
+            client.npc_ids[0] = PROBE_TEST_KEEPER_INDEX as i32;
+            client.npc_count = 1;
+            client.local_player = Some(client::dash3d::ClientPlayer::at(
+                fixture.stand.x - PROBE_TEST_BASE_X,
+                fixture.stand.z - PROBE_TEST_BASE_Z,
+            ));
+
+            client.set_iface(
+                3824,
+                client::config::IfType {
+                    id: 3824,
+                    layer_id: 3824,
+                    r#type: client::config::if_type::ComponentType::TYPE_LAYER,
+                    ..Default::default()
+                },
+            );
+            client.set_iface(
+                3900,
+                client::config::IfType {
+                    id: 3900,
+                    layer_id: 3824,
+                    r#type: client::config::if_type::ComponentType::TYPE_INV,
+                    iop: [
+                        Some("Value".into()),
+                        Some("Buy 1".into()),
+                        Some("Buy 5".into()),
+                        Some("Buy 10".into()),
+                        None,
+                    ],
+                    ..Default::default()
+                },
+            );
+            client.set_iface_mut(
+                3900,
+                client::config::IfTypeMut {
+                    link_obj_type: Some(vec![315, 0]),
+                    link_obj_number: Some(vec![100, 0]),
+                    ..Default::default()
+                },
+            );
+
+            let mut snapshot = GameSnapshot::new();
+            snapshot.seed_ingame(2);
+            snapshot.seed_world(api::snapshot::WorldStateView {
+                map_base_x: PROBE_TEST_BASE_X,
+                map_base_z: PROBE_TEST_BASE_Z,
+                level: 0,
+                ..Default::default()
+            });
+            client.gens.player += 1;
+            client.gens.player_info += 1;
+            assert!(snapshot.rebuild_family(&client, api::snapshot::Family::Player));
+            client.gens.npc += 1;
+            client.gens.npc_info += 1;
+            assert!(snapshot.rebuild_family(&client, api::snapshot::Family::Npc));
+            snapshot.seed_inventory(probe_inventory(0), 28);
+            client.gens.inv += 1;
+            assert!(snapshot.rebuild_family(&client, api::snapshot::Family::Shop));
+            assert!(!snapshot.shop().open);
+
+            Self {
+                fixture,
+                trace,
+                slot,
+                client,
+                snapshot,
+                run,
+                keeper_type,
+            }
+        }
+
+        fn publish_player(&mut self, tick: u64, tile: WorldTile) {
+            self.client.local_player = Some(client::dash3d::ClientPlayer::at(
+                tile.x - PROBE_TEST_BASE_X,
+                tile.z - PROBE_TEST_BASE_Z,
+            ));
+            self.client.gens.player += 1;
+            self.client.gens.player_info += 1;
+            assert!(self
+                .snapshot
+                .rebuild_family(&self.client, api::snapshot::Family::Player));
+            self.snapshot
+                .seed_tick(u32::try_from(tick).expect("test tick fits snapshot clock"));
+        }
+
+        fn run_tick(&mut self, tick: u64, tile: WorldTile) {
+            self.slot.on_game_tick(&mut script::ScriptCtx {
+                driver: &mut self.client,
+                tick,
+                here: Some((tile.x, tile.z, tile.level)),
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: Some(&self.snapshot),
+                obj_names: None,
+                compiled: script::CompiledTick::default(),
+            });
+        }
+
+        fn tick(&mut self, tick: u64, tile: WorldTile) {
+            self.publish_player(tick, tile);
+            self.run_tick(tick, tile);
+        }
+
+        fn accept_trade(&mut self, tick: u64, tile: WorldTile) -> u64 {
+            self.tick(tick, tile);
+            let trade = self
+                .slot
+                .take_native_action()
+                .expect("the real probe dispatches Gerrant Trade");
+            assert!(matches!(
+                &trade.effect,
+                script::native::HostEffect::Interaction(InteractReq::Npc {
+                    name,
+                    action,
+                    index,
+                }) if name == "Gerrant" && action == "Trade" && *index == Some(434)
+            ));
+            accept_probe_interaction(&mut self.slot, &trade, self.run, tick)
+        }
+
+        fn accept_first_buy(&mut self, tick: u64, tile: WorldTile) -> u64 {
+            self.tick(tick, tile);
+            let buy = self
+                .slot
+                .take_native_action()
+                .expect("the first measured buy is a real native action");
+            assert!(matches!(
+                &buy.effect,
+                script::native::HostEffect::Interaction(InteractReq::ShopButton {
+                    kind,
+                    name,
+                    id,
+                    slot,
+                    component,
+                    chunk,
+                }) if kind == "buy"
+                    && name == "Feather"
+                    && *id == 314
+                    && *slot == 0
+                    && *component == 3900
+                    && *chunk == 1
+            ));
+            accept_probe_interaction(&mut self.slot, &buy, self.run, tick)
+        }
+
+        fn apply_same_scene_rebuild(&mut self) {
+            let zone_x = u16::try_from(self.client.map_build_centre_zone_x)
+                .expect("test scene center fits the R289 packet");
+            let zone_z = u16::try_from(self.client.map_build_centre_zone_z)
+                .expect("test scene center fits the R289 packet");
+            let invalidations = self.client.gens.invalidations;
+            let mut payload = Vec::with_capacity(4);
+            payload.extend_from_slice(&zone_x.to_be_bytes());
+            payload.extend_from_slice(&zone_z.to_be_bytes());
+            dispatch_r289_packet(
+                &mut self.client,
+                client::io::ServerProt289::REBUILD_NORMAL,
+                payload,
+            );
+            assert_eq!(self.client.gens.invalidations, invalidations + 1);
+            assert_eq!(self.client.scene_state, 2);
+            assert_eq!(self.client.map_build_base_x, PROBE_TEST_BASE_X);
+            assert_eq!(self.client.map_build_base_z, PROBE_TEST_BASE_Z);
+        }
+
+        fn apply_new_map_build(&mut self, tick: u64, tile: WorldTile) {
+            let zone_x = u16::try_from(self.client.map_build_centre_zone_x + 1)
+                .expect("new test scene center fits the R289 packet");
+            let zone_z = u16::try_from(self.client.map_build_centre_zone_z)
+                .expect("test scene center fits the R289 packet");
+            let invalidations = self.client.gens.invalidations;
+            let mut payload = Vec::with_capacity(4);
+            payload.extend_from_slice(&zone_x.to_be_bytes());
+            payload.extend_from_slice(&zone_z.to_be_bytes());
+            dispatch_r289_packet(
+                &mut self.client,
+                client::io::ServerProt289::REBUILD_NORMAL,
+                payload,
+            );
+            assert_eq!(self.client.gens.invalidations, invalidations + 1);
+            assert_eq!(self.client.scene_state, 1);
+            assert_eq!(self.client.map_build_base_x, PROBE_TEST_BASE_X + 8);
+            assert_eq!(self.client.map_build_base_z, PROBE_TEST_BASE_Z);
+
+            self.client.scene_state = 2;
+            self.client.local_player = Some(client::dash3d::ClientPlayer::at(
+                tile.x - self.client.map_build_base_x,
+                tile.z - self.client.map_build_base_z,
+            ));
+            assert!(self
+                .snapshot
+                .rebuild_family(&self.client, api::snapshot::Family::World));
+            assert!(self
+                .snapshot
+                .rebuild_family(&self.client, api::snapshot::Family::Player));
+            self.snapshot
+                .seed_tick(u32::try_from(tick).expect("test tick fits snapshot clock"));
+            self.run_tick(tick, tile);
+        }
+
+        fn apply_local_teleport(&mut self, tick: u64, tile: WorldTile) {
+            self.client.local_player_teleport_watermark = self
+                .client
+                .local_player_teleport_watermark
+                .saturating_add(1);
+            self.tick(tick, tile);
+        }
+
+        fn refresh_keeper_generation(&mut self) {
+            let mut npc = client::client::ClientNpc::at(
+                self.fixture.keeper.tile.x - PROBE_TEST_BASE_X,
+                self.fixture.keeper.tile.z - PROBE_TEST_BASE_Z,
+            );
+            npc.r#type = Some(self.keeper_type);
+            self.client.npc[PROBE_TEST_KEEPER_INDEX] = Some(Box::new(npc));
+            self.client.gens.npc += 1;
+            self.client.gens.npc_info += 1;
+            assert!(self
+                .snapshot
+                .rebuild_family(&self.client, api::snapshot::Family::Npc));
+        }
+
+        fn set_stock(&mut self, count: i32) {
+            self.client.set_iface_mut(
+                3900,
+                client::config::IfTypeMut {
+                    link_obj_type: Some(vec![315, 0]),
+                    link_obj_number: Some(vec![count, 0]),
+                    ..Default::default()
+                },
+            );
+            self.client.gens.inv += 1;
+            assert!(self
+                .snapshot
+                .rebuild_family(&self.client, api::snapshot::Family::Shop));
+        }
+
+        fn open_shop(&mut self, stock: i32) {
+            dispatch_r289_packet(
+                &mut self.client,
+                client::io::ServerProt289::IF_OPENMAIN,
+                3824u16.to_be_bytes().to_vec(),
+            );
+            self.set_stock(stock);
+            assert!(self.snapshot.shop().open);
+        }
+
+        fn close_shop(&mut self) {
+            dispatch_r289_packet(
+                &mut self.client,
+                client::io::ServerProt289::IF_CLOSE,
+                Vec::new(),
+            );
+            self.client.gens.inv += 1;
+            assert!(self
+                .snapshot
+                .rebuild_family(&self.client, api::snapshot::Family::Shop));
+            let shop = self.snapshot.shop();
+            assert!(!shop.open);
+            assert_eq!(shop.server_closes, 1);
+        }
+
+        fn set_inventory(&mut self, feathers: i32) {
+            self.snapshot.seed_inventory(probe_inventory(feathers), 28);
+        }
+
+        fn terminal_context_json(&self) -> Value {
+            let trace = self.trace.lock();
+            terminal_context(
+                "alice",
+                &self.fixture,
+                &trace,
+                TerminalObservation {
+                    snapshot: &self.snapshot,
+                    client_session_generation: self.client.gens.session,
+                    player_info_generation: self.client.gens.player_info,
+                    npc_info_generation: self.client.gens.npc_info,
+                    native_status: None,
+                },
+            )
+        }
+    }
+
+    #[test]
+    fn owned_probe_survives_trade_approach_and_settles_first_real_buy() {
+        let mut rig = SlotProbeRig::new(0, BATCH_SCHEDULE[0]);
+        let run = rig.run;
+        let start = rig.fixture.stand;
+
+        rig.accept_trade(1, start);
+
+        let movement_tiles = [
+            WorldTile {
+                x: 3014,
+                z: 3225,
+                level: 0,
+            },
+            WorldTile {
+                x: 3014,
+                z: 3224,
+                level: 0,
+            },
+            WorldTile {
+                x: 3012,
+                z: 3224,
+                level: 0,
+            },
+        ];
+        for (tick, tile) in (2..=4).zip(movement_tiles) {
+            rig.tick(tick, tile);
+            let failure = rig.trace.lock().failure.clone();
+            assert!(
+                failure.is_none(),
+                "ordinary same-scene movement failed at tick {tick}: {failure:?}"
+            );
+            assert!(
+                !rig.snapshot.shop().open,
+                "the shop remains closed during approach"
+            );
+            assert_eq!(rig.slot.native_run(), Some(run));
+            assert!(rig.slot.take_native_action().is_none());
+        }
+
+        rig.open_shop(100);
+        let admitted_tile = *movement_tiles.last().expect("three approach deltas");
+        rig.tick(5, admitted_tile);
+        assert!(rig.trace.lock().failure.is_none());
+        assert_eq!(rig.slot.native_run(), Some(run));
+        assert!(rig.slot.take_native_action().is_none());
+
+        let buy_request_id = rig.accept_first_buy(6, admitted_tile);
+        rig.set_stock(99);
+        rig.set_inventory(1);
+        rig.tick(7, admitted_tile);
+
+        let terminal = rig.terminal_context_json();
+        let trace = rig.trace.lock();
+        assert!(trace.failure.is_none(), "{:?}", trace.failure);
+        assert_eq!(trace.samples.len(), 1);
+        let sample = &trace.samples[0];
+        assert_eq!(sample.request_id, buy_request_id);
+        assert_eq!(sample.dispatch_tick, Some(6));
+        assert_eq!(sample.dispatch_accepted, Some(true));
+        assert_eq!(sample.held_before, Some(0));
+        assert_eq!(sample.held_after, Some(1));
+        assert_eq!(sample.stock_before, Some(100));
+        assert_eq!(sample.stock_after, Some(99));
+        assert_eq!(sample.status, SampleStatus::Replied);
+        assert_eq!(
+            terminal["player_scene"]["baseline_evidence_tick"].as_u64(),
+            Some(5)
+        );
+        drop(trace);
+        rig.slot.stop();
+    }
+
+    #[test]
+    fn owned_probe_preserves_scene_fence_through_modal_close_and_reopen() {
+        let mut rig = SlotProbeRig::new(4, BATCH_SCHEDULE[4]);
+        let run = rig.run;
+        let start = rig.fixture.stand;
+        rig.accept_trade(1, start);
+
+        rig.open_shop(100);
+        rig.tick(2, start);
+        assert!(rig.trace.lock().failure.is_none());
+        assert!(rig.slot.take_native_action().is_none());
+
+        rig.tick(3, start);
+        let close = rig
+            .slot
+            .take_native_action()
+            .expect("the close series dispatches CloseModal");
+        assert!(matches!(
+            &close.effect,
+            script::native::HostEffect::Interaction(InteractReq::CloseModal)
+        ));
+        let close_request_id = accept_probe_interaction(&mut rig.slot, &close, run, 3);
+        rig.close_shop();
+        rig.tick(4, start);
+        let terminal = rig.terminal_context_json();
+        let trace = rig.trace.lock();
+        assert!(trace.failure.is_none(), "{:?}", trace.failure);
+        assert_eq!(trace.samples.len(), 1);
+        assert_eq!(trace.samples[0].request_id, close_request_id);
+        assert_eq!(trace.samples[0].dispatch_tick, Some(3));
+        assert_eq!(trace.samples[0].status, SampleStatus::Replied);
+        assert_eq!(
+            terminal["player_scene"]["baseline_evidence_tick"].as_u64(),
+            Some(2)
+        );
+        drop(trace);
+
+        let reopened_step = WorldTile {
+            x: 3012,
+            z: 3224,
+            level: 0,
+        };
+        rig.publish_player(5, reopened_step);
+        rig.refresh_keeper_generation();
+        rig.run_tick(5, reopened_step);
+        assert!(rig.trace.lock().failure.is_none());
+        assert_eq!(rig.slot.native_run(), Some(run));
+        let reopen_trade = rig
+            .slot
+            .take_native_action()
+            .expect("a new actor generation remains available for Trade");
+        assert!(matches!(
+            &reopen_trade.effect,
+            script::native::HostEffect::Interaction(InteractReq::Npc {
+                name,
+                action,
+                index,
+            }) if name == "Gerrant" && action == "Trade" && *index == Some(434)
+        ));
+        accept_probe_interaction(&mut rig.slot, &reopen_trade, run, 5);
+
+        rig.publish_player(6, reopened_step);
+        rig.refresh_keeper_generation();
+        rig.run_tick(6, reopened_step);
+        assert!(rig.trace.lock().failure.is_none());
+        assert_eq!(rig.slot.native_run(), Some(run));
+        assert!(rig.slot.take_native_action().is_none());
+
+        rig.open_shop(100);
+        rig.publish_player(7, reopened_step);
+        rig.refresh_keeper_generation();
+        rig.run_tick(7, reopened_step);
+        let terminal = rig.terminal_context_json();
+        let trace = rig.trace.lock();
+        assert!(trace.failure.is_none(), "{:?}", trace.failure);
+        assert_eq!(trace.samples.len(), 1);
+        assert_eq!(trace.samples[0].status, SampleStatus::Replied);
+        assert_eq!(
+            terminal["player_scene"]["baseline_evidence_tick"].as_u64(),
+            Some(2)
+        );
+        drop(trace);
+        assert!(rig.slot.take_native_action().is_none());
+        rig.slot.stop();
+    }
+
+    #[test]
+    fn owned_probe_rejects_post_dispatch_scene_and_teleport_witnesses() {
+        #[derive(Clone, Copy)]
+        enum Witness {
+            LocalTeleport,
+            SameSceneRebuild,
+            NewMapBuild,
+        }
+        for (witness, failure, event) in [
+            (
+                "one-tile local-player Teleport",
+                "local player Teleport applied",
+                Witness::LocalTeleport,
+            ),
+            (
+                "same-scene R289 REBUILD_NORMAL",
+                "client rebuild invalidation changed",
+                Witness::SameSceneRebuild,
+            ),
+            (
+                "new-map R289 REBUILD_NORMAL",
+                "client rebuild invalidation changed",
+                Witness::NewMapBuild,
+            ),
+        ] {
+            let mut rig = SlotProbeRig::new(0, BATCH_SCHEDULE[0]);
+            let start = rig.fixture.stand;
+            assert_eq!((start.x, start.z, start.level), (3012, 3225, 0));
+            rig.accept_trade(1, start);
+            rig.open_shop(100);
+            rig.tick(2, start);
+            assert!(rig.trace.lock().failure.is_none(), "{witness}");
+            assert!(rig.slot.take_native_action().is_none(), "{witness}");
+
+            let request_id = rig.accept_first_buy(3, start);
+            rig.tick(4, start);
+            assert!(rig.trace.lock().failure.is_none(), "{witness}");
+            assert_eq!(rig.slot.native_run(), Some(rig.run), "{witness}");
+            assert!(rig.slot.take_native_action().is_none(), "{witness}");
+            {
+                let trace = rig.trace.lock();
+                assert_eq!(trace.samples.len(), 1, "{witness}");
+                assert_eq!(trace.samples[0].dispatch_tick, Some(3), "{witness}");
+                assert_eq!(trace.samples[0].dispatch_accepted, Some(true), "{witness}");
+                assert_eq!(trace.samples[0].status, SampleStatus::Pending, "{witness}");
+            }
+            rig.set_stock(99);
+            rig.set_inventory(1);
+            match event {
+                Witness::LocalTeleport => rig.apply_local_teleport(
+                    5,
+                    WorldTile {
+                        x: start.x + 1,
+                        z: start.z,
+                        level: start.level,
+                    },
+                ),
+                Witness::SameSceneRebuild => {
+                    rig.apply_same_scene_rebuild();
+                    rig.tick(5, start);
+                }
+                Witness::NewMapBuild => rig.apply_new_map_build(5, start),
+            }
+            let expected_map_base_x = if matches!(event, Witness::NewMapBuild) {
+                PROBE_TEST_BASE_X + 8
+            } else {
+                PROBE_TEST_BASE_X
+            };
+            assert_eq!(
+                (rig.client.map_build_base_x, rig.client.map_build_base_z),
+                (expected_map_base_x, PROBE_TEST_BASE_Z),
+                "{witness} produced an unexpected map build",
+            );
+
+            let trace = rig.trace.lock();
+            assert!(
+                trace
+                    .failure
+                    .as_deref()
+                    .is_some_and(|message| message.contains(failure)),
+                "{witness}: {:?}",
+                trace.failure,
+            );
+            assert_eq!(trace.samples.len(), 1, "{witness}");
+            let sample = &trace.samples[0];
+            assert_eq!(sample.request_id, request_id, "{witness}");
+            assert_eq!(sample.dispatch_tick, Some(3), "{witness}");
+            assert_eq!(sample.dispatch_accepted, Some(true), "{witness}");
+            assert_eq!(sample.status, SampleStatus::Error, "{witness}");
+            assert_eq!(trace.settled_replies, 0, "{witness}");
+            drop(trace);
+            rig.slot.stop();
         }
     }
 }
