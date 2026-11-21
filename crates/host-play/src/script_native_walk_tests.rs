@@ -139,7 +139,44 @@ struct Rig {
     snapshot: GameSnapshot,
 }
 
+const SYNTHETIC_GAME_DATA: &[u8] = br#"{
+  "schema_version": 5,
+  "revision": 289,
+  "items": [],
+  "consumption": [],
+  "pickpocket": [],
+  "npc_names": {
+    "combat_facts_version": 2,
+    "rows": []
+  }
+}"#;
+
+fn synthetic_selected_data() -> Arc<api::game_data::SelectedGameData> {
+    static SELECTED: std::sync::LazyLock<Arc<api::game_data::SelectedGameData>> =
+        std::sync::LazyLock::new(|| {
+            api::game_data::decode_game_data(
+                SYNTHETIC_GAME_DATA,
+                api::selected::ClientRevision::R289,
+                std::path::Path::new("synthetic-host-play-game-data.json"),
+            )
+            .expect("synthetic game-data fixture decodes")
+        });
+    Arc::clone(&SELECTED)
+}
+
 fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
+    rig_with_selected_data(world, blocked, None)
+}
+
+fn synthetic_rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
+    rig_with_selected_data(world, blocked, Some(synthetic_selected_data()))
+}
+
+fn rig_with_selected_data(
+    world: Option<Arc<NavWorld>>,
+    blocked: bool,
+    selected: Option<Arc<api::game_data::SelectedGameData>>,
+) -> Rig {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let shared = Arc::new(parking_lot::Mutex::new(Walker {
         blocked,
@@ -157,7 +194,7 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
                 shared: Arc::clone(&shared),
                 handle: None,
             }),
-            None,
+            selected,
         )
         .unwrap();
     }
@@ -258,12 +295,12 @@ fn real_scorpcatcher_no_key_route_job_publishes_no_path_before_native_deadline()
 fn open_rig(blocked: bool) -> Rig {
     rig(Some(Arc::new(open_world(40, 1))), blocked)
 }
+fn synthetic_open_rig(blocked: bool) -> Rig {
+    synthetic_rig(Some(Arc::new(open_world(40, 1))), blocked)
+}
 #[test]
 fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let mut rig = open_rig(false);
+    let mut rig = synthetic_open_rig(false);
     let target = WorldTile {
         x: 20,
         z: 0,
@@ -351,10 +388,7 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
 
 #[test]
 fn stale_route_terminal_cannot_complete_a_native_walk_with_the_same_request_id() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let mut rig = open_rig(false);
+    let mut rig = synthetic_open_rig(false);
     rig.observe(1);
     rig.wait_routed();
     {
@@ -389,10 +423,7 @@ fn stale_route_terminal_cannot_complete_a_native_walk_with_the_same_request_id()
 
 #[test]
 fn candidate_walk_returns_and_settles_the_chosen_goal() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let mut rig = rig(Some(Arc::new(open_world(40, 40))), false);
+    let mut rig = synthetic_rig(Some(Arc::new(open_world(40, 40))), false);
     // Client scene borders are blocked. Use an actual interior Area stand.
     let tile = |x| WorldTile { x, z: 4, level: 0 };
     {
@@ -418,15 +449,12 @@ fn candidate_walk_returns_and_settles_the_chosen_goal() {
 
 #[test]
 fn candidate_walk_keeps_preferred_stand_and_reports_its_tier() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
     let tile = |x| WorldTile { x, z: 4, level: 0 };
     for (preferred, goal, tier) in [
         (tile(8), tile(8), "candidate_goal_tier=preferred"),
         (tile(44), tile(4), "candidate_goal_tier=fallback"),
     ] {
-        let mut rig = rig(Some(Arc::new(open_world(40, 40))), false);
+        let mut rig = synthetic_rig(Some(Arc::new(open_world(40, 40))), false);
         {
             let mut shared = rig.shared.lock();
             shared.target = Some(tile(20));
@@ -462,10 +490,7 @@ fn candidate_walk_keeps_preferred_stand_and_reports_its_tier() {
 
 #[test]
 fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let mut rig = open_rig(false);
+    let mut rig = synthetic_open_rig(false);
     {
         let mut shared = rig.shared.lock();
         shared.radius = 1;
@@ -495,9 +520,6 @@ fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
 
 #[test]
 fn native_follow_failure_preserves_hop_detail_in_receipt() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
     for (why, expected, name) in [
         (
             nav_executor::HopFailure::Expired,
@@ -510,7 +532,7 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
             "Dropped",
         ),
     ] {
-        let mut rig = open_rig(false);
+        let mut rig = synthetic_open_rig(false);
         rig.observe(1);
         rig.wait_routed();
         let failure = nav_executor::TravelOutcome::Stalled {
@@ -563,10 +585,7 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
 
 #[test]
 fn native_follow_failure_names_the_last_crossing_refusal_in_the_receipt() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let mut rig = open_rig(false);
+    let mut rig = synthetic_open_rig(false);
     rig.observe(1);
     rig.wait_routed();
     let at = WorldTile {
@@ -617,10 +636,7 @@ fn native_follow_failure_names_the_last_crossing_refusal_in_the_receipt() {
 
 #[test]
 fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
-    let mut rig = open_rig(false);
+    let mut rig = synthetic_open_rig(false);
     rig.observe(1);
     rig.wait_routed();
     let at = WorldTile {
@@ -663,9 +679,6 @@ fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
 
 #[test]
 fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
     let failure = || nav_executor::TravelOutcome::Stalled {
         at: WorldTile {
             x: 0,
@@ -682,7 +695,7 @@ fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
         last_refusal: None,
     };
 
-    let mut rig = open_rig(false);
+    let mut rig = synthetic_open_rig(false);
     rig.observe(1);
     rig.wait_routed();
     {
