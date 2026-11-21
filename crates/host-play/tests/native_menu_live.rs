@@ -5,19 +5,28 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use api::interact::{self, ActionSpec, Interactions, OpTarget, SendResult, WireCommand};
-use api::snapshot::GameSnapshot;
+use api::query::SceneQuery;
+use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientRevision};
 use client::config::if_type::ButtonType;
 use host::Pump;
 use host_play::{ProfileOptions, SharedClientTemplate};
 use serde_json::json;
 
-// Engine A source: `content/maps/m51_47.jm2:5030` places the captain at this tile;
-// `content/scripts/quests/quest_desertrescue/configs/desertrescue.constant:3,33`
-// defines stage 3 and spoke-bit 6. The talk/choice order is in
-// `content/scripts/quests/quest_desertrescue/scripts/mercenary_captain.rs2:13-19,29-43`.
-// Client op and button packet paths are `vendor/fr-client-rust/crates/client/src/client/client.rs:4288-4333,8644-8700`.
-const DESERT_CAPTAIN_TILE: (i32, i32, i32) = (3270, 3029, 0);
+// Engine A `content/maps/m51_47.jm2:5030` places the captain at this home.
+// `quest_desertrescue/configs/desertrescue.npc:252-285` gives it wander range 3.
+// Stand outside that footprint: engine PathingEntity.ts:426-429 rejects approach
+// from underneath an NPC. Quest stages and dialogue order come from
+// `quest_desertrescue/configs/desertrescue.constant:3,33` and
+// `quest_desertrescue/scripts/mercenary_captain.rs2:13-19,29-43`.
+// Client packet paths are `client/client.rs:4288-4333,8644-8700`.
+const DESERT_CAPTAIN_HOME: (i32, i32, i32) = (3270, 3029, 0);
+const DESERT_CAPTAIN_WANDER_RANGE: i32 = 3;
+const DESERT_CAPTAIN_STAND: (i32, i32, i32) = (
+    DESERT_CAPTAIN_HOME.0 + DESERT_CAPTAIN_WANDER_RANGE + 1,
+    DESERT_CAPTAIN_HOME.1,
+    DESERT_CAPTAIN_HOME.2,
+);
 const TALK_TO: &str = "Talk-to";
 const FIRST_MENU_OPTION: &str = "Wow! A real captain!";
 const SECOND_MENU_FIRST_OPTION: &str = "That's rude, I ought to teach you some manners.";
@@ -73,13 +82,24 @@ fn wait_for(
         }
         assert!(
             Instant::now() < deadline,
-            "timed out waiting for {phase}: ingame={}, attached={}, scene_state={}, tile={:?}, continue={}, choices={:?}",
+            "timed out waiting for {phase}: ingame={}, attached={}, scene_state={}, tile={:?}, continue={}, choices={:?}, outgoing_bytes={}, chat={:?}, npcs={:?}",
             snapshot.ingame(),
             snapshot.attached(),
             snapshot.scene_state(),
             snapshot.tile(),
             snapshot.chat_continue_component_id(),
             option_texts(snapshot),
+            client.out.pos,
+            snapshot
+                .chat_lines()
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            snapshot
+                .npcs()
+                .iter()
+                .map(|npc| (npc.index, npc.r#type, npc.tile, npc.distance))
+                .collect::<Vec<_>>(),
         );
         // Match GameShell's 20 ms cycle (client/game_shell.rs:3,64).
         std::thread::sleep(Duration::from_millis(20));
@@ -194,9 +214,9 @@ fn live_engine_a_native_menu_talk_continue_choice() {
 
     interact::seed_at(
         &mut client,
-        DESERT_CAPTAIN_TILE.2,
-        DESERT_CAPTAIN_TILE.0,
-        DESERT_CAPTAIN_TILE.1,
+        DESERT_CAPTAIN_STAND.2,
+        DESERT_CAPTAIN_STAND.0,
+        DESERT_CAPTAIN_STAND.1,
     );
     wait_for(
         &mut client,
@@ -206,12 +226,21 @@ fn live_engine_a_native_menu_talk_continue_choice() {
         |_, state| {
             state.ingame()
                 && state.scene_state() == 2
-                && state.tile() == Some(DESERT_CAPTAIN_TILE)
+                && state.tile() == Some(DESERT_CAPTAIN_STAND)
                 && state.npcs().iter().any(|npc| {
                     npc.r#type == Some(captain_type)
                         && npc.actions.first().and_then(Option::as_deref) == Some(TALK_TO)
                 })
         },
+    );
+    let stand = WorldTile {
+        x: DESERT_CAPTAIN_STAND.0,
+        z: DESERT_CAPTAIN_STAND.1,
+        level: DESERT_CAPTAIN_STAND.2,
+    };
+    assert!(
+        SceneQuery::new(snapshot.scene(), None).walkable(stand),
+        "the account-only fixture stand must be walkable"
     );
     let (captain_slot, captain_tile, talk_result_record) = {
         let captain = snapshot
@@ -227,6 +256,10 @@ fn live_engine_a_native_menu_talk_continue_choice() {
             })
             .min_by_key(|npc| npc.distance)
             .expect("Mercenary Captain with Talk-to in the live scene");
+        assert_ne!(
+            captain.tile, stand,
+            "the account-only fixture must not stand underneath the Captain"
+        );
         let talk_result = Interactions::new(&snapshot, &mut client)
             .interact(OpTarget::Npc(captain), ActionSpec::Label(TALK_TO.into()));
         assert!(
@@ -238,6 +271,12 @@ fn live_engine_a_native_menu_talk_continue_choice() {
                 }
             ),
             "native Talk-to was refused: {talk_result:?}"
+        );
+        eprintln!(
+            "native-menu Talk-to account={account} player={:?} npc_slot={} npc_tile={:?} result={talk_result:?}",
+            snapshot.tile(),
+            captain.index,
+            captain.tile,
         );
         (captain.index, captain.tile, format!("{talk_result:?}"))
     };
@@ -366,7 +405,9 @@ fn live_engine_a_native_menu_talk_continue_choice() {
             "seed": {
                 "desertrescue": 3,
                 "desertrescue_map_mechanisms": 0,
-                "tile": DESERT_CAPTAIN_TILE,
+                "tile": DESERT_CAPTAIN_STAND,
+                "captain_home": DESERT_CAPTAIN_HOME,
+                "captain_wander_range": DESERT_CAPTAIN_WANDER_RANGE,
             },
             "target": {
                 "npc_config": "desertminingcaptain",
