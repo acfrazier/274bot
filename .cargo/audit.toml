@@ -6,6 +6,5 @@
 # `formatting` compile, and the resolved graph selects neither.
 # `crates/tui/tests/audit_exception.rs` fails if any workspace resolution
 # selects either one, so a later reachable use cannot hide behind this ignore.
-# Lift it with the runtime track (docs/known-issues.toml,
-# runtime-serialization-upgrade-held).
+# Lift it with the runtime track.
 ignore = ["RUSTSEC-2026-0009"]

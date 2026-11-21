@@ -133,8 +133,8 @@ Next time, open the app, type your passphrase, click **Unlock vault** and click
 | WalkTo shows "no nav pack — run nav-pack" | The `nav` folder is missing next to the app. | Unpack the package again and keep its folders together. |
 | A bot refuses to walk, or says no bank is reachable, near dangerous monsters | Danger routing may be **Never**, or **When survivable** may reject a risky route. | Open **Nav config**. **Always** crosses without a survival check; use it only if the account can handle the monsters. Set **Never** to avoid dangerous routes by default; script requests remain subject to the 1% death bound. |
 
-More problems are listed under "Known issues" in the
-[CHANGELOG](https://github.com/acfrazier/274bot/blob/main/CHANGELOG.md).
+More problems are listed in [GitHub issues](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue)
+under the `known-issue` label.
 
 ## Terminal app
 
