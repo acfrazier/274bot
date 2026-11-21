@@ -1096,8 +1096,196 @@ mod tests {
                 .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display())),
         )
     }
+    /// Authored schema-4 input for hosted tests; it does not depend on extracted game data.
+    const SYNTHETIC_FAMILY: &str = r#"
+    {
+      "schema": 4,
+      "facts": {
+        "entities": [
+          "loc 9001 synthetic_tree 3 1",
+          "loc 9002 synthetic_ore_a 1 1",
+          "loc 9003 synthetic_ore_b 1 1",
+          "loc 9004 synthetic_unknown 1 1",
+          "npc 9005 synthetic_fish_spot",
+          "npc 9006 synthetic_hazard",
+          "obj 9100 synthetic_output",
+          "obj 9101 synthetic_bonus",
+          "obj 9102 synthetic_tool_a",
+          "obj 9103 synthetic_tool_b",
+          "obj 9104 synthetic_tool_c"
+        ],
+        "hazard_npcs": [9006],
+        "incidental_gem_ids": [9101],
+        "methods": [
+          {
+            "id": "mining.synthetic_a",
+            "skill": "mining",
+            "resources": ["synthetic_ore_a"],
+            "op": {"slot": 1, "label": "CollectA"},
+            "targets": {"state": "known", "value": [
+              {"kind": "loc", "id": 9002, "op": 1, "class": "resource",
+               "respawn": {"state": "known", "value": null}}
+            ]},
+            "products": {"state": "known", "value": [{"item": 9100, "level": 1}]},
+            "tools": {"state": "known", "value": [
+              {"item": 9102, "use_gate": null, "wield_gate": null},
+              {"item": 9103, "use_gate": null, "wield_gate": null}
+            ]},
+            "tick_arm": {
+              "kind": "continuing", "roll_signal": "always", "delay_drop": false,
+              "depletes": false, "native_arm": 1, "act_min_d": 0, "act_silent": false,
+              "no_gain": null, "skill_anim": 90001, "roll_anim": null, "cast_anim": null,
+              "fletch_anim": 90001,
+              "tool_facts": [
+                {"item": 9102, "native_arm": 1, "no_gain": false, "skill_anim": 90001},
+                {"item": 9103, "native_arm": 2, "no_gain": false, "skill_anim": 90002}
+              ]
+            },
+            "consumes": {"state": "known", "value": []},
+            "requirements": {"state": "known", "value": []},
+            "spots": {"state": "known", "value": null},
+            "forbidden_states": [],
+            "sources": []
+          },
+          {
+            "id": "mining.synthetic_b",
+            "skill": "mining",
+            "resources": ["synthetic_ore_b"],
+            "op": {"slot": 1, "label": "CollectB"},
+            "targets": {"state": "known", "value": [
+              {"kind": "loc", "id": 9003, "op": 1, "class": "depleted",
+               "respawn": {"state": "known", "value": null}}
+            ]},
+            "products": {"state": "known", "value": [{"item": 9100, "level": 1}]},
+            "tools": {"state": "known", "value": [
+              {"item": 9102, "use_gate": null, "wield_gate": null}
+            ]},
+            "tick_arm": {
+              "kind": "continuing", "roll_signal": "always", "delay_drop": false,
+              "depletes": false, "native_arm": 1, "act_min_d": 0, "act_silent": false,
+              "no_gain": null, "skill_anim": 90002, "roll_anim": null, "cast_anim": null,
+              "fletch_anim": 90002,
+              "tool_facts": [
+                {"item": 9102, "native_arm": 1, "no_gain": false, "skill_anim": 90002}
+              ]
+            },
+            "consumes": {"state": "known", "value": []},
+            "requirements": {"state": "known", "value": []},
+            "spots": {"state": "known", "value": null},
+            "forbidden_states": [],
+            "sources": []
+          },
+          {
+            "id": "woodcutting.synthetic_tree",
+            "skill": "woodcutting",
+            "resources": ["synthetic_tree"],
+            "op": {"slot": 1, "label": "Harvest"},
+            "targets": {"state": "known", "value": [
+              {"kind": "loc", "id": 9001, "op": 1, "class": "resource",
+               "respawn": {"state": "known", "value": null}}
+            ]},
+            "products": {"state": "known", "value": [{"item": 9100, "level": 1}]},
+            "tools": {"state": "known", "value": [
+              {"item": 9104, "use_gate": null, "wield_gate": null}
+            ]},
+            "tick_arm": {
+              "kind": "continuing", "roll_signal": "always", "delay_drop": false,
+              "depletes": false, "native_arm": 1, "act_min_d": 0, "act_silent": false,
+              "no_gain": null, "skill_anim": 90003, "roll_anim": null, "cast_anim": null,
+              "fletch_anim": 90003,
+              "tool_facts": [
+                {"item": 9104, "native_arm": 1, "no_gain": false, "skill_anim": 90003}
+              ]
+            },
+            "consumes": {"state": "known", "value": []},
+            "requirements": {"state": "known", "value": [
+              {"id": "synthetic-level", "source": "synthetic-skill:1-1", "kind": "skill",
+               "skill": 8, "level": 15}
+            ]},
+            "spots": {"state": "known", "value": null},
+            "forbidden_states": [],
+            "sources": []
+          },
+          {
+            "id": "fishing.synthetic_spot.op1",
+            "skill": "fishing",
+            "resources": ["synthetic_fish"],
+            "op": {"slot": 1, "label": "Catch"},
+            "targets": {"state": "known", "value": [
+              {"kind": "npc", "id": 9005, "op": 1, "class": "resource",
+               "respawn": {"state": "known", "value": null}}
+            ]},
+            "products": {"state": "known", "value": [{"item": 9100, "level": 1}]},
+            "tools": {"state": "known", "value": []},
+            "tick_arm": {
+              "kind": "continuing", "roll_signal": "sometimes", "delay_drop": false,
+              "depletes": false, "native_arm": null, "act_min_d": 0, "act_silent": false,
+              "no_gain": null, "skill_anim": 90004, "roll_anim": null, "cast_anim": null,
+              "fletch_anim": 90004, "tool_facts": []
+            },
+            "consumes": {"state": "known", "value": []},
+            "requirements": {"state": "known", "value": []},
+            "spots": {"state": "known", "value": null},
+            "forbidden_states": [],
+            "sources": []
+          },
+          {
+            "id": "woodcutting.synthetic_unknown",
+            "skill": "woodcutting",
+            "resources": ["synthetic_unknown"],
+            "op": null,
+            "targets": {"state": "unknown",
+              "gap": {"code": "no-resource-target", "sources": ["synthetic-gathering:1-1"]}},
+            "products": {"state": "unknown",
+              "gap": {"code": "no-resource-target", "sources": ["synthetic-gathering:1-1"]}},
+            "tools": {"state": "unknown",
+              "gap": {"code": "no-tool-fact", "sources": ["synthetic-gathering:1-1"]}},
+            "tick_arm": {
+              "kind": "none", "roll_signal": "never", "delay_drop": false,
+              "depletes": false, "native_arm": null, "act_min_d": 0, "act_silent": false,
+              "no_gain": null, "skill_anim": null, "roll_anim": null, "cast_anim": null,
+              "fletch_anim": 90005, "tool_facts": []
+            },
+            "consumes": {"state": "known", "value": []},
+            "requirements": {"state": "known", "value": []},
+            "spots": {"state": "unknown",
+              "gap": {"code": "no-resource-target", "sources": ["synthetic-gathering:1-1"]}},
+            "forbidden_states": [],
+            "sources": []
+          }
+        ],
+        "loose": [
+          {"skill": "mining", "kind": "loc", "id": 9004, "class": "unclassified",
+           "gap": {"code": "custom-handler", "sources": ["synthetic-handler:1-1"]}}
+        ],
+        "zones": [
+          {"methods": ["woodcutting.synthetic_tree"], "level": 0, "min_x": 1, "min_z": 1,
+           "max_x": 7, "max_z": 1, "effect": "state-gated",
+           "sources": ["synthetic-map:1-1"]}
+        ],
+        "movements": [
+          {"npc": 9005, "region": {"state": "known", "value": {
+            "min_x": 1, "min_z": 1, "max_x": 13, "max_z": 13, "level": 0
+          }}}
+        ],
+        "placements": [
+          {"file": "maps/m0_0.jm2", "rows": [
+            "1 0 1 1 l9001 0",
+            "2 0 4 1 l9001 0",
+            "3 0 7 1 l9001 0",
+            "4 0 10 1 l9002 0",
+            "5 0 13 1 n9005 0"
+          ]}
+        ]
+      }
+    }
+    "#;
 
-    /// The real 289 family with `edit` applied to its parsed JSON.
+    fn synthetic_family() -> Vec<u8> {
+        SYNTHETIC_FAMILY.as_bytes().to_vec()
+    }
+
+    /// Apply `edit` to a parsed family before decoding it.
     fn decode_edited(
         real: &[u8],
         edit: impl FnOnce(&mut Value),
@@ -1128,34 +1316,32 @@ mod tests {
 
     #[test]
     fn tick_arm_is_required_and_rejects_unknown_or_duplicate_tool_facts() {
-        let Some(real) = real() else {
-            return;
-        };
-        let missing = decode_edited(&real, |family| {
-            method_mut(family, "mining.copper")
+        let fixture = synthetic_family();
+        let missing = decode_edited(&fixture, |family| {
+            method_mut(family, "mining.synthetic_a")
                 .as_object_mut()
                 .unwrap()
                 .remove("tick_arm");
         });
         assert!(missing.is_err(), "every method requires its tick arm");
 
-        let unknown_kind = decode_edited(&real, |family| {
-            method_mut(family, "mining.copper")["tick_arm"]["kind"] = json!("unknown");
+        let unknown_kind = decode_edited(&fixture, |family| {
+            method_mut(family, "mining.synthetic_a")["tick_arm"]["kind"] = json!("unknown");
         });
         assert!(unknown_kind.is_err(), "tick arm kinds are a closed set");
 
-        let unknown_field = decode_edited(&real, |family| {
-            method_mut(family, "mining.copper")["tick_arm"]["unreviewed"] = json!(true);
+        let unknown_field = decode_edited(&fixture, |family| {
+            method_mut(family, "mining.synthetic_a")["tick_arm"]["unreviewed"] = json!(true);
         });
         assert!(unknown_field.is_err(), "tick arm wire objects are strict");
 
-        let duplicate_tool = decode_edited(&real, |family| {
-            let tools = method_mut(family, "mining.copper")["tick_arm"]["tool_facts"]
+        let duplicate_tool = decode_edited(&fixture, |family| {
+            let tools = method_mut(family, "mining.synthetic_a")["tick_arm"]["tool_facts"]
                 .as_array_mut()
                 .unwrap();
             assert!(
                 tools.len() > 1,
-                "mining methods retain their per-pickaxe facts"
+                "the synthetic method has two tool fact rows"
             );
             tools[1] = tools[0].clone();
         });
@@ -1187,19 +1373,17 @@ mod tests {
 
     #[test]
     fn partial_placement_coverage_keeps_its_rows_but_no_query_answers_from_it() {
-        let Some(real) = real() else {
-            return;
-        };
-        let catalog = decode_edited(&real, |family| {
-            method_mut(family, "mining.copper")["spots"] = json!({
+        let fixture = synthetic_family();
+        let catalog = decode_edited(&fixture, |family| {
+            method_mut(family, "mining.synthetic_a")["spots"] = json!({
                 "state": "partial",
                 "value": null,
-                "gaps": [{ "code": "map-scan-cut", "sources": ["maps/m38_50.jm2:1-2"] }],
+                "gaps": [{ "code": "map-scan-cut", "sources": ["synthetic-map:1-2"] }],
             });
         })
         .unwrap();
-        let copper = catalog.method("mining.copper").unwrap();
-        let Knowledge::Partial { known, gaps } = &copper.spots else {
+        let ore = catalog.method("mining.synthetic_a").unwrap();
+        let Knowledge::Partial { known, gaps } = &ore.spots else {
             panic!("partial placements decode as partial")
         };
         assert!(
@@ -1207,16 +1391,16 @@ mod tests {
             "the rows found are kept for callers that accept partial data"
         );
         assert_eq!(&*gaps[0].code, "map-scan-cut");
-        let world = region(-1000, -1000, 20_000, 20_000);
+        let world = region(0, 0, 20, 20);
         let from = WorldTile {
-            x: 2470,
-            z: 3255,
+            x: 12,
+            z: 12,
             level: 0,
         };
-        assert!(catalog.spots(copper, &world).is_err());
-        assert!(catalog.page(copper, &world, None, 5).is_err());
+        assert!(catalog.spots(ore, &world).is_err());
+        assert!(catalog.page(ore, &world, None, 5).is_err());
         assert!(catalog
-            .nearest(copper, from, None, AccessPolicy::Any, 3)
+            .nearest(ore, from, None, AccessPolicy::Any, 3)
             .is_err());
     }
 
@@ -1305,9 +1489,7 @@ mod tests {
 
     #[test]
     fn a_family_that_contradicts_itself_is_refused_not_repaired() {
-        let Some(real) = real() else {
-            return;
-        };
+        let fixture = synthetic_family();
         type Edit = Box<dyn Fn(&mut Value)>;
         let cases: Vec<(&str, Edit)> = vec![
             (
@@ -1340,7 +1522,7 @@ mod tests {
                     family["facts"]["placements"][0]["rows"]
                         .as_array_mut()
                         .unwrap()
-                        .push(json!("1 0 1 1 l1281 7"));
+                        .push(json!("1 0 1 1 l9001 7"));
                 }),
             ),
             (
@@ -1349,7 +1531,7 @@ mod tests {
                     family["facts"]["placements"][0]["rows"]
                         .as_array_mut()
                         .unwrap()
-                        .push(json!("1 0 1 1 l1281"));
+                        .push(json!("1 0 1 1 l9001"));
                 }),
             ),
             (
@@ -1367,27 +1549,27 @@ mod tests {
             (
                 "a partial fact with no gap",
                 Box::new(|family| {
-                    method_mut(family, "mining.copper")["products"] =
+                    method_mut(family, "mining.synthetic_a")["products"] =
                         json!({ "state": "partial", "value": [], "gaps": [] });
                 }),
             ),
             (
                 "a gap with no code",
                 Box::new(|family| {
-                    method_mut(family, "mining.copper")["products"] =
+                    method_mut(family, "mining.synthetic_a")["products"] =
                         json!({ "state": "unknown", "gap": { "code": "", "sources": [] } });
                 }),
             ),
             (
                 "a source that is not file:first-last",
                 Box::new(|family| {
-                    method_mut(family, "mining.copper")["requirements"] = json!({ "state": "unknown", "gap": { "code": "x", "sources": ["nowhere"] } });
+                    method_mut(family, "mining.synthetic_a")["requirements"] = json!({ "state": "unknown", "gap": { "code": "x", "sources": ["nowhere"] } });
                 }),
             ),
             (
                 "two methods with one id",
                 Box::new(|family| {
-                    let copy = method_mut(family, "mining.copper").clone();
+                    let copy = method_mut(family, "mining.synthetic_a").clone();
                     family["facts"]["methods"]
                         .as_array_mut()
                         .unwrap()
@@ -1397,7 +1579,7 @@ mod tests {
             (
                 "an unknown field is not ignored",
                 Box::new(|family| {
-                    method_mut(family, "mining.copper")["surprise"] = json!(true);
+                    method_mut(family, "mining.synthetic_a")["surprise"] = json!(true);
                 }),
             ),
             (
@@ -1475,28 +1657,22 @@ mod tests {
             (
                 "a product that names no known item",
                 Box::new(|family| {
-                    method_mut(family, "mining.copper")["products"] =
+                    method_mut(family, "mining.synthetic_a")["products"] =
                         json!({ "state": "known", "value": [{ "item": 999999, "level": 1 }] });
                 }),
             ),
             (
                 "placements for a method whose targets are unknown",
                 Box::new(|family| {
-                    method_mut(family, "mining.copper")["targets"] =
+                    method_mut(family, "mining.synthetic_a")["targets"] =
                         json!({ "state": "unknown", "gap": { "code": "x", "sources": [] } });
                 }),
             ),
             (
                 "one rock loc in two classes",
                 Box::new(|family| {
-                    let tin = method_mut(family, "mining.tin");
-                    let stage = tin["targets"]["value"]
-                        .as_array_mut()
-                        .unwrap()
-                        .iter_mut()
-                        .find(|t| t["id"] == 450)
-                        .unwrap();
-                    stage["class"] = json!("resource");
+                    let other_ore = method_mut(family, "mining.synthetic_b");
+                    other_ore["targets"]["value"][0]["id"] = json!(9002);
                 }),
             ),
             (
@@ -1513,7 +1689,7 @@ mod tests {
             (
                 "a requirement that is not a skill or members",
                 Box::new(|family| {
-                    method_mut(family, "woodcutting.oak")["requirements"] = json!({
+                    method_mut(family, "woodcutting.synthetic_tree")["requirements"] = json!({
                         "state": "known",
                         "value": [{ "id": "r", "source": "a.dbrow:1-1", "kind": "skill" }],
                     });
@@ -1521,7 +1697,7 @@ mod tests {
             ),
         ];
         for (name, edit) in cases {
-            let mut family: Value = serde_json::from_slice(&real).unwrap();
+            let mut family: Value = serde_json::from_slice(&fixture).unwrap();
             edit(&mut family);
             let bytes = serde_json::to_vec(&family).unwrap();
             assert!(
@@ -1529,5 +1705,166 @@ mod tests {
                 "{name}: must be refused as Invalid"
             );
         }
+    }
+    #[test]
+    fn synthetic_unknown_placements_are_errors_never_empty() {
+        let catalog = decode(&synthetic_family()).unwrap();
+        let missing = catalog.method("woodcutting.synthetic_unknown").unwrap();
+        match &missing.spots {
+            Knowledge::Unknown(gap) => {
+                assert_eq!(&*gap.code, "no-resource-target");
+                assert!(!gap.sources.is_empty());
+            }
+            other => panic!("missing placements remain explicitly unknown: {other:?}"),
+        }
+
+        let world = region(0, 0, 20, 20);
+        assert!(matches!(
+            catalog.spots(missing, &world),
+            Err(FactError::Invalid { .. })
+        ));
+        assert!(matches!(
+            catalog.page(missing, &world, None, 10),
+            Err(FactError::Invalid { .. })
+        ));
+        assert!(matches!(
+            catalog.nearest(
+                missing,
+                WorldTile {
+                    x: 12,
+                    z: 12,
+                    level: 0,
+                },
+                None,
+                AccessPolicy::Any,
+                3
+            ),
+            Err(FactError::Invalid { .. })
+        ));
+        assert!(matches!(missing.targets, Knowledge::Unknown(_)));
+        assert!(matches!(missing.products, Knowledge::Unknown(_)));
+        assert!(matches!(
+            catalog.method("no.such.method"),
+            Err(FactError::UnknownKey(_))
+        ));
+    }
+
+    #[test]
+    fn synthetic_pages_are_bounded_and_resume_at_the_cursor() {
+        let catalog = decode(&synthetic_family()).unwrap();
+        let tree = catalog.method("woodcutting.synthetic_tree").unwrap();
+        let world = region(0, 0, 20, 20);
+        let all: Vec<SpotId> = catalog
+            .spots(tree, &world)
+            .unwrap()
+            .map(|spot| spot.id)
+            .collect();
+        assert_eq!(
+            all.len(),
+            3,
+            "the fixture has three synthetic tree placements"
+        );
+
+        let first = catalog.page(tree, &world, None, 2).unwrap();
+        assert_eq!(
+            first.spots.iter().map(|spot| spot.id).collect::<Vec<_>>(),
+            all[..2]
+        );
+        assert!(first.truncated);
+        assert_eq!(first.next, Some(all[1]));
+
+        let second = catalog.page(tree, &world, first.next, 2).unwrap();
+        assert_eq!(
+            second.spots.iter().map(|spot| spot.id).collect::<Vec<_>>(),
+            vec![all[2]]
+        );
+        assert!(!second.truncated);
+        assert_eq!(second.next, None);
+
+        let exact = catalog.page(tree, &world, None, all.len()).unwrap();
+        assert_eq!(
+            exact.spots.iter().map(|spot| spot.id).collect::<Vec<_>>(),
+            all
+        );
+        assert!(!exact.truncated);
+        assert_eq!(exact.next, None);
+        assert!(
+            catalog
+                .page(tree, &world, None, all.len() - 1)
+                .unwrap()
+                .truncated
+        );
+
+        let other_level = SceneRegionInput { level: 3, ..world };
+        let empty = catalog.page(tree, &other_level, None, 5).unwrap();
+        assert!(empty.spots.is_empty() && !empty.truncated && empty.next.is_none());
+        assert!(matches!(
+            catalog.page(tree, &world, None, 0),
+            Err(FactError::Invalid { .. })
+        ));
+    }
+
+    #[test]
+    fn synthetic_nearest_searches_the_complete_domain_and_respects_bounds() {
+        let catalog = decode(&synthetic_family()).unwrap();
+        let tree = catalog.method("woodcutting.synthetic_tree").unwrap();
+        let world = region(0, 0, 20, 20);
+        let all = catalog.spots(tree, &world).unwrap().collect::<Vec<_>>();
+        assert_eq!(all.len(), 3);
+
+        let first_page = catalog.page(tree, &world, None, 1).unwrap();
+        assert!(first_page.truncated);
+        let from = WorldTile {
+            x: 9,
+            z: 1,
+            level: 0,
+        };
+        let nearest = catalog
+            .nearest(tree, from, None, AccessPolicy::Any, 2)
+            .unwrap();
+        assert_eq!(
+            nearest
+                .iter()
+                .map(|near| (near.distance_sq, near.spot.id))
+                .collect::<Vec<_>>(),
+            vec![(4, all[2].id), (25, all[1].id)]
+        );
+        assert_ne!(nearest[0].spot.id, first_page.spots[0].id);
+
+        let bound = region(4, 1, 7, 1);
+        let bounded = catalog
+            .nearest(
+                tree,
+                WorldTile {
+                    x: 2,
+                    z: 1,
+                    level: 0,
+                },
+                Some(&bound),
+                AccessPolicy::Any,
+                3,
+            )
+            .unwrap();
+        assert_eq!(
+            bounded.iter().map(|near| near.spot.id).collect::<Vec<_>>(),
+            vec![all[1].id, all[2].id]
+        );
+        assert!(bounded
+            .iter()
+            .all(|near| (bound.min_x..=bound.max_x).contains(&near.spot.origin.x)));
+        assert!(catalog
+            .nearest(
+                tree,
+                WorldTile { level: 3, ..from },
+                None,
+                AccessPolicy::Any,
+                3
+            )
+            .unwrap()
+            .is_empty());
+        assert!(catalog
+            .nearest(tree, from, None, AccessPolicy::Any, 0)
+            .unwrap()
+            .is_empty());
     }
 }
