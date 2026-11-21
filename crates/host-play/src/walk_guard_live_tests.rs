@@ -1690,6 +1690,9 @@ struct LiveState {
     poison_tile: Option<WorldTile>,
     /// The walk-out seed: the newest chat sequence when the poison was sent.
     poison_chat_since: Option<i32>,
+    /// The walk-out seed: the tile where the Quester's walk step was first
+    /// seen running.
+    walk_from: Option<WorldTile>,
 }
 
 /// The Quester's D8 poison stop as the frames show it: the first tick and
@@ -1788,16 +1791,31 @@ impl LiveState {
         };
         let seed = &mut self.crossing_seed;
         if plan.poison_first {
-            // The walk-out arm: the poison lands once the walk is under way
-            // inside the zone (the player has left its start tile), and the
-            // drain once the poison line is seen.
+            // The walk-out arm: the poison lands once the Path's walk step
+            // is under way inside the zone (the Quester shows `walking`,
+            // not a provisioning `banking` walk, and the player has left the
+            // tile where the step began), and the drain once the poison
+            // line is seen. Only a running walk step declares the zone the
+            // stop judges (quester/poison_stop.rs `DangerArea`).
             let here = self
                 .last_tile
                 .map(|(x, z, level)| WorldTile { x, z, level });
-            let moved = here.is_some_and(|here| here != self.start);
+            let walking = self
+                .capture
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .statuses
+                .last()
+                .is_some_and(|status| status["fields"]["action_state"] == "walking");
+            if !walking {
+                self.walk_from = None;
+            } else if self.walk_from.is_none() {
+                self.walk_from = here;
+            }
+            let moved = here.is_some_and(|here| self.walk_from.is_some_and(|from| from != here));
             let chat = self.snapshot.chat_lines();
             match (seed.poison, seed.drain, seed.drained_tick) {
-                (None, _, _) if inside && moved => {
+                (None, _, _) if inside && walking && moved => {
                     self.poison_chat_since = chat.iter().map(|line| line.sequence).max();
                     seed.poison = Some(SentCheat {
                         tick,
@@ -3602,6 +3620,7 @@ fn run_live_w1(mode: W1Mode, arm: Option<SeedArm>) {
         stop: StopSeen::default(),
         poison_tile: None,
         poison_chat_since: None,
+        walk_from: None,
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
