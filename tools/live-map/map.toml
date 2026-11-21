@@ -60,6 +60,14 @@ cells = [
   "script.seat-slot-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib slot::",
 ]
 
+# The V2 fixture calls selectedLoadout through this API module's mapped shim; the adopted corpus includes CP-006's blank Start.
+[[cover]]
+globs = ["crates/script-js/src/shim/loadout_setting.js"]
+cells = [
+  "host.loadout-provision-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip LOADOUT_REVISION=289 LOADOUT_NAV_PACK=${NAV_PACK_289:?} LOADOUT_NAV_FLAGS=${NAV_FLAGS_289:?} LOADOUT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features test-support,js --test loadout_provision_live -- --ignored --exact loadout_provision_live --nocapture --test-threads=1|--locked -p host-play --features test-support,js --test loadout_provision_live -- --ignored --exact loadout_provision_live",
+  "host.upstream-e2e-adopted|LIVE=1 BOT_CPU=1 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 UEP_CASES=${UEP_CASES:?} UEP_UPSTREAM=${UEP_UPSTREAM:?} UEP_OUTPUT=${UEP_OUTPUT:?} UEP_HOST_COMMIT=${UEP_HOST_COMMIT:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture|--locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture",
+]
+
 # The named walk destinations are planner data exposed to the compatibility walk through the
 # nav contract facade; the walking witness and the contract tests read them.
 [[cover]]

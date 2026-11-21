@@ -78,7 +78,9 @@ impl HuntRun {
         obs.hunt.available = true;
         obs.hunt.acts = ledger.published();
         watch.observe("catalogtest", obs.clone(), false);
-        watch.begin_start("catalogtest")?;
+        watch
+            .begin_start("catalogtest")
+            .map_err(|error| error.to_string())?;
         Ok(Self {
             cell,
             watch,

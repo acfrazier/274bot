@@ -359,7 +359,7 @@ impl ScriptStartHandle {
         &self,
         name: &str,
         request: impl FnOnce() -> StartRequest<'a>,
-        before_start: impl FnOnce() -> Result<(), String>,
+        before_start: impl FnOnce() -> Result<(), script::StartLoadError>,
     ) -> Result<(), script::StartLoadError> {
         use script::StartLoadError::{NoLoadouts, Refused, Waiting};
         let hold = self
@@ -369,7 +369,7 @@ impl ScriptStartHandle {
         if let Some(reason) = hold.upgrade() {
             return Err(Waiting(format!("{name}: blocked, {reason}")));
         }
-        before_start().map_err(Refused)?;
+        before_start()?;
         let request = request();
         host_log!(
             Category::ScriptLifecycle,
@@ -384,7 +384,7 @@ impl ScriptStartHandle {
             StartRequest::Luau { .. } => script_slot_or_insert(&self.scripts, name),
             StartRequest::Compiled { .. } | StartRequest::WalkHandover { .. } => {
                 script_slot(&self.scripts, name)
-                    .ok_or_else(|| Refused(format!("no slot: {name}")))?
+                    .ok_or_else(|| Waiting(format!("no slot: {name}")))?
             }
         };
         let mut slot = slot
@@ -489,7 +489,7 @@ impl ScriptStartHandle {
                         None => self.operator_loadouts(name).map(Arc::from),
                     });
                 match resolved_loadouts {
-                    Ok(loadouts) => slot.start_surface_with_settings(
+                    Ok(loadouts) => slot.start_compat_surface_with_settings(
                         script_runtime::js_surface_start_with_wilderness_rules(
                             script_runtime::js_start_card(name, source, checked, siblings),
                             bag.map(Arc::new),

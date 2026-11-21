@@ -1659,12 +1659,11 @@ vault bag.
 Missing catalog/file sources stay visible with `unavailable` rather than
 silently dropping the assignment.
 
-A Load script whose settings carry a `loadout` key is checked against the saved
-Loadouts at Start: an exact name wins, a blank value selects the first loadout,
-and any other value must match exactly one loadout after trimming and ignoring
-ASCII case. An unknown or ambiguous name (or a blank one when no loadouts exist)
-refuses the Start with a message listing the matching and available loadouts,
-rather than running the script without its gear. Quester Path loadouts keep
+A JavaScript Load script checks its `loadout` setting at Start. A blank or null
+setting selects the first saved loadout. If no saved loadout exists, the script
+uses its own defaults. A named value must match exactly one saved loadout after
+trimming and ignoring ASCII case. An unknown or ambiguous name refuses Start
+and lists the matching and available loadouts. Quester Path loadouts keep
 their exact-name lookup.
 
 Native settings use the same per-account map, under `compiled_identity_key`,

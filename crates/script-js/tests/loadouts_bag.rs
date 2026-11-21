@@ -167,6 +167,49 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// An empty operator store makes the blank compat selection null, so callers
+// continue with their own food and weapon defaults.
+#[test]
+fn selected_loadout_is_null_without_saved_rows_and_helpers_use_defaults() {
+    if !crate::local_game_data::local_game_data_available(274) {
+        return;
+    }
+
+    let src = r#"
+import { selectedLoadout } from '../../api/loadout/loadoutSetting.js';
+import { gearOf, scriptFood, suppliesOf, weaponOf } from '../../api/loadout/loadoutPlan.js';
+export default class T extends LoopingBot {
+    loop() {
+        const loadout = selectedLoadout(this.settings);
+        globalThis.__selected = loadout;
+        globalThis.__food = scriptFood(this.settings, 'Trout');
+        globalThis.__weapon = weaponOf(loadout, 'Bronze scimitar');
+        globalThis.__gear = gearOf(loadout);
+        globalThis.__supplies = suppliesOf(loadout);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
+    )
+    .expect("spawn empty-loadout accessors");
+    iso.post_loadouts(&[]);
+    let mut bag = serde_json::Map::new();
+    bag.insert("loadout".into(), serde_json::json!(""));
+    iso.post_settings_bag(&bag);
+    iso.on_game_tick(1);
+
+    assert_eq!(iso.probe("__selected").unwrap(), serde_json::Value::Null);
+    assert_eq!(iso.probe("__food").unwrap(), "Trout");
+    assert_eq!(iso.probe("__weapon").unwrap(), "Bronze scimitar");
+    assert_eq!(iso.probe("__gear").unwrap(), serde_json::json!([]));
+    assert_eq!(iso.probe("__supplies").unwrap(), serde_json::json!([]));
+    iso.join();
+}
+
 #[test]
 fn isolate_provision_composes_fresh_bank_withdraw_and_wear() {
     if !crate::local_game_data::local_game_data_available(274) {

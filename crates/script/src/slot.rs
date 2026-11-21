@@ -362,7 +362,7 @@ const CUT_RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
 /// Failure at initial loaded-script Start, distinct from an operational refusal.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StartLoadError {
-    /// The caller must retain this Start until an operator hold is resolved.
+    /// The caller must retain this Start until its blocking condition clears.
     #[error("{0}")]
     Waiting(String),
     #[error("{0}")]
@@ -2310,16 +2310,42 @@ impl SlotScript {
         &mut self,
         start: SurfaceStart,
     ) -> Result<(), StartLoadError> {
+        self.start_surface_with_loadout_policy(start, false)
+    }
+
+    /// Start a compat JS surface with its blank default treated as no
+    /// selection when the operator has no saved loadout rows.
+    pub fn start_compat_surface_with_settings(
+        &mut self,
+        start: SurfaceStart,
+    ) -> Result<(), StartLoadError> {
+        self.start_surface_with_loadout_policy(start, true)
+    }
+
+    fn start_surface_with_loadout_policy(
+        &mut self,
+        start: SurfaceStart,
+        compat_js: bool,
+    ) -> Result<(), StartLoadError> {
         if let Some(bag) = start.settings_bag.as_deref() {
-            let wanted = bag.get("loadout").map(|value| value.as_str().unwrap_or(""));
-            crate::loadouts_store::resolve_script_loadout_setting(&start.loadouts, wanted)
-                .map(|_| ())
-                .map_err(|error| match error {
-                    error @ crate::loadouts_store::LoadoutResolutionError::NoLoadouts { .. } => {
-                        StartLoadError::NoLoadouts(error.to_string())
-                    }
-                    other => StartLoadError::Refused(other.to_string()),
-                })?;
+            let wanted = match bag.get("loadout") {
+                None => None,
+                Some(value) => Some(value.as_str().unwrap_or("")),
+            };
+            let resolved = if compat_js {
+                crate::loadouts_store::resolve_compat_script_loadout_setting(
+                    &start.loadouts,
+                    wanted,
+                )
+            } else {
+                crate::loadouts_store::resolve_script_loadout_setting(&start.loadouts, wanted)
+            };
+            resolved.map(|_| ()).map_err(|error| match error {
+                error @ crate::loadouts_store::LoadoutResolutionError::NoLoadouts { .. } => {
+                    StartLoadError::NoLoadouts(error.to_string())
+                }
+                other => StartLoadError::Refused(other.to_string()),
+            })?;
         }
         self.start_surface(start)
     }

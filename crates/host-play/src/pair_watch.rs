@@ -175,7 +175,15 @@ impl PairWatch {
         }
     }
 
-    pub fn begin_shared_start(&self, account_a: &str, account_b: &str) -> Result<(), String> {
+    /// Missing publication and case readiness remain retryable; identity and
+    /// settings mismatches refuse Start.
+    pub fn begin_shared_start(
+        &self,
+        account_a: &str,
+        account_b: &str,
+    ) -> Result<(), script::StartLoadError> {
+        use script::StartLoadError::Refused;
+
         let mut state = self.inner.lock().unwrap();
         let current = std::mem::take(&mut *state);
         match current {
@@ -209,11 +217,11 @@ impl PairWatch {
                     a.account, b.account
                 );
                 *state = PairWatchState::Ready { case, a, b };
-                Err(error)
+                Err(Refused(error))
             }
             other => {
                 *state = other;
-                Err("pair core Start was armed more than once".into())
+                Err(Refused("pair core Start was armed more than once".into()))
             }
         }
     }
@@ -516,22 +524,49 @@ fn slot_prepared(case: PairCase, first: bool, slot: &SlotReady) -> bool {
     }
 }
 
-fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRuntimeWitness, String> {
+fn freeze_pair(
+    case: PairCase,
+    a: &SlotReady,
+    b: &SlotReady,
+) -> Result<PairRuntimeWitness, script::StartLoadError> {
+    use script::StartLoadError::{Refused, Waiting};
     if a.settings.is_empty() != b.settings.is_empty() {
-        return Err("pair settings must be prepared for both slots or neither".into());
+        return Err(Refused(
+            "pair settings must be prepared for both slots or neither".into(),
+        ));
     }
-    let a_settings = freeze_slot_settings(case, a, &b.account)?;
-    let b_settings = freeze_slot_settings(case, b, &a.account)?;
+    let a_settings = freeze_slot_settings(case, a, &b.account).map_err(Refused)?;
+    let b_settings = freeze_slot_settings(case, b, &a.account).map_err(Refused)?;
     match case {
         PairCase::Air => {
             let Some(a_obs) = a.latest_air.clone() else {
-                return Err("pair core has no published pre-Start observation".into());
+                return Err(Waiting(
+                    "pair core has no published pre-Start observation".into(),
+                ));
             };
             let Some(b_obs) = b.latest_air.clone() else {
-                return Err("pair core has no published pre-Start observation".into());
+                return Err(Waiting(
+                    "pair core has no published pre-Start observation".into(),
+                ));
             };
-            air_prepared_current(AirRole::Master, &a.account, &a_obs)?;
-            air_prepared_current(AirRole::Runner, &b.account, &b_obs)?;
+            validate_pair_start_context(
+                &a.account,
+                a_obs.ingame,
+                a_obs.scene_state,
+                a_obs.inventory_tab_available,
+                a_obs.player.as_deref(),
+                &a_obs,
+            )?;
+            validate_pair_start_context(
+                &b.account,
+                b_obs.ingame,
+                b_obs.scene_state,
+                b_obs.inventory_tab_available,
+                b_obs.player.as_deref(),
+                &b_obs,
+            )?;
+            air_prepared_current(AirRole::Master, &a.account, &a_obs).map_err(Waiting)?;
+            air_prepared_current(AirRole::Runner, &b.account, &b_obs).map_err(Waiting)?;
             Ok(PairRuntimeWitness::Air(Box::new(AirPairWitness {
                 master: AirSlotRecord::new(
                     AirRole::Master,
@@ -553,13 +588,33 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
         }
         PairCase::Mule => {
             let Some(a_obs) = a.latest_air.clone() else {
-                return Err("pair core has no published pre-Start observation".into());
+                return Err(Waiting(
+                    "pair core has no published pre-Start observation".into(),
+                ));
             };
             let Some(b_obs) = b.latest_air.clone() else {
-                return Err("pair core has no published pre-Start observation".into());
+                return Err(Waiting(
+                    "pair core has no published pre-Start observation".into(),
+                ));
             };
-            mule_prepared_current(MuleRole::Crafter, &a.account, &a_obs)?;
-            mule_prepared_current(MuleRole::Mule, &b.account, &b_obs)?;
+            validate_pair_start_context(
+                &a.account,
+                a_obs.ingame,
+                a_obs.scene_state,
+                a_obs.inventory_tab_available,
+                a_obs.player.as_deref(),
+                &a_obs,
+            )?;
+            validate_pair_start_context(
+                &b.account,
+                b_obs.ingame,
+                b_obs.scene_state,
+                b_obs.inventory_tab_available,
+                b_obs.player.as_deref(),
+                &b_obs,
+            )?;
+            mule_prepared_current(MuleRole::Crafter, &a.account, &a_obs).map_err(Waiting)?;
+            mule_prepared_current(MuleRole::Mule, &b.account, &b_obs).map_err(Waiting)?;
             Ok(PairRuntimeWitness::Mule(Box::new(MulePairWitness {
                 crafter: MuleSlotRecord::new(
                     MuleRole::Crafter,
@@ -581,13 +636,33 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
         }
         PairCase::Flax => {
             let Some(a_obs) = a.latest_flax.clone() else {
-                return Err("pair core has no published pre-Start observation".into());
+                return Err(Waiting(
+                    "pair core has no published pre-Start observation".into(),
+                ));
             };
             let Some(b_obs) = b.latest_flax.clone() else {
-                return Err("pair core has no published pre-Start observation".into());
+                return Err(Waiting(
+                    "pair core has no published pre-Start observation".into(),
+                ));
             };
-            flax_prepared_current(FlaxRole::Runner, &a.account, &a_obs)?;
-            flax_prepared_current(FlaxRole::Spinner, &b.account, &b_obs)?;
+            validate_pair_start_context(
+                &a.account,
+                a_obs.ingame,
+                a_obs.scene_state,
+                a_obs.inventory_tab_available,
+                a_obs.player.as_deref(),
+                &a_obs,
+            )?;
+            validate_pair_start_context(
+                &b.account,
+                b_obs.ingame,
+                b_obs.scene_state,
+                b_obs.inventory_tab_available,
+                b_obs.player.as_deref(),
+                &b_obs,
+            )?;
+            flax_prepared_current(FlaxRole::Runner, &a.account, &a_obs).map_err(Waiting)?;
+            flax_prepared_current(FlaxRole::Spinner, &b.account, &b_obs).map_err(Waiting)?;
             Ok(PairRuntimeWitness::Flax(Box::new(FlaxPairWitness {
                 runner: FlaxSlotRecord::new(
                     FlaxRole::Runner,
@@ -609,13 +684,33 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
         }
         PairCase::Duel => {
             let Some(a_obs) = a.latest_duel.clone() else {
-                return Err("pair core has no published pre-Start observation".into());
+                return Err(Waiting(
+                    "pair core has no published pre-Start observation".into(),
+                ));
             };
             let Some(b_obs) = b.latest_duel.clone() else {
-                return Err("pair core has no published pre-Start observation".into());
+                return Err(Waiting(
+                    "pair core has no published pre-Start observation".into(),
+                ));
             };
-            duel_prepared_current(&a.account, &a_obs)?;
-            duel_prepared_current(&b.account, &b_obs)?;
+            validate_pair_start_context(
+                &a.account,
+                a_obs.ingame,
+                a_obs.scene_state,
+                a_obs.inventory_tab_available,
+                a_obs.player.as_deref(),
+                &a_obs,
+            )?;
+            validate_pair_start_context(
+                &b.account,
+                b_obs.ingame,
+                b_obs.scene_state,
+                b_obs.inventory_tab_available,
+                b_obs.player.as_deref(),
+                &b_obs,
+            )?;
+            duel_prepared_current(&a.account, &a_obs).map_err(Waiting)?;
+            duel_prepared_current(&b.account, &b_obs).map_err(Waiting)?;
             Ok(PairRuntimeWitness::Duel(Box::new(DuelPairWitness {
                 a: DuelSlotRecord::new(
                     a.account.clone(),
@@ -634,6 +729,35 @@ fn freeze_pair(case: PairCase, a: &SlotReady, b: &SlotReady) -> Result<PairRunti
             })))
         }
     }
+}
+
+fn validate_pair_start_context(
+    expected_player: &str,
+    ingame: bool,
+    scene_state: i32,
+    inventory_tab_available: bool,
+    player: Option<&str>,
+    observation: &impl std::fmt::Debug,
+) -> Result<(), script::StartLoadError> {
+    use script::StartLoadError::{Refused, Waiting};
+
+    if !ingame || scene_state != 2 {
+        return Err(Waiting(format!(
+            "Start baseline is not attached ingame scene2: {observation:?}"
+        )));
+    }
+    if !inventory_tab_available {
+        return Err(Waiting(
+            "Start baseline inventory tab is not bound after relog".into(),
+        ));
+    }
+    let player = player.ok_or_else(|| Waiting("Start baseline has no local player".into()))?;
+    if !account_identity_eq(player, expected_player) {
+        return Err(Refused(format!(
+            "Start baseline player {player:?} is not fresh account {expected_player:?}"
+        )));
+    }
+    Ok(())
 }
 
 fn freeze_slot_settings(

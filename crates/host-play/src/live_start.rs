@@ -225,7 +225,7 @@ pub struct StartArming {
 fn start_stashed_catalog_card(
     handle: &ScriptStartHandle,
     card: &PendingCatalogStart,
-    before_start: impl FnOnce() -> Result<(), String>,
+    before_start: impl FnOnce() -> Result<(), script::StartLoadError>,
 ) -> Result<(), script::StartLoadError> {
     use crate::play_scripts::StartRequest;
     #[cfg(feature = "js")]
@@ -349,15 +349,17 @@ pub fn fire_pending_catalog_start(
     };
     if let Some(pair) = arming.pair.as_ref().filter(|pair| pair.configured()) {
         if pending.len() != 2 {
-            pair.fail_start("pair core requires actual scripts on both visible slots");
-            return StartScriptPump::Hold;
+            let reason = "pair core requires actual scripts on both visible slots";
+            pair.fail_start(reason);
+            return StartScriptPump::Failed(format!("start failed: {reason}"));
         }
         if pending.iter().all(|card| !card.started) {
             match pair.barrier() {
                 StartBarrier::Wait => return StartScriptPump::Hold,
                 StartBarrier::RejectStartedWhileUnready => {
-                    pair.fail_start("pair core Start while the counterpart is unready");
-                    return StartScriptPump::Hold;
+                    let reason = "pair core Start while the counterpart is unready";
+                    pair.fail_start(reason);
+                    return StartScriptPump::Failed(format!("start failed: {reason}"));
                 }
                 StartBarrier::StartBoth => {}
             }
@@ -374,19 +376,17 @@ pub fn fire_pending_catalog_start(
                 }
             }) {
                 match error {
-                    script::StartLoadError::Waiting(reason) => pending[index].waiting(reason),
-                    script::StartLoadError::NoLoadouts(reason) => {
+                    script::StartLoadError::Waiting(reason) => {
+                        pair.retry_start();
+                        pending[index].waiting(reason);
+                        return StartScriptPump::Hold;
+                    }
+                    error => {
+                        let reason = error.to_string();
                         pair.fail_start(reason.clone());
                         return StartScriptPump::Failed(format!("start failed: {reason}"));
                     }
-                    other => {
-                        if pending.iter().all(|card| !card.started) {
-                            pair.retry_start();
-                        }
-                        pending[index].waiting(other.to_string());
-                    }
                 }
-                return StartScriptPump::Hold;
             }
             pending[index].started = true;
             pending[index].waiting_reason = None;
@@ -406,17 +406,14 @@ pub fn fire_pending_catalog_start(
         {
             match error {
                 script::StartLoadError::Waiting(reason) => {
+                    watch.retry_start(&card.slot);
                     card.waiting(reason);
                     return StartScriptPump::Hold;
                 }
-                script::StartLoadError::NoLoadouts(reason) => {
+                error => {
+                    let reason = error.to_string();
                     watch.fail_start(&card.slot, reason.clone());
                     return StartScriptPump::Failed(format!("start failed: {reason}"));
-                }
-                other => {
-                    watch.retry_start(&card.slot);
-                    card.waiting(other.to_string());
-                    return StartScriptPump::Hold;
                 }
             }
         }

@@ -34,9 +34,11 @@ impl CoreWatch {
     }
 
     /// Mark the exact instant immediately before the catalog isolate is started.
-    /// The most recent observation from the production publisher becomes the
-    /// immutable Start baseline; a later snapshot may already contain script work.
-    pub fn begin_start(&self, account: &str) -> Result<(), String> {
+    /// The most recent production observation becomes the immutable Start
+    /// baseline; a later snapshot may already contain script work. Missing
+    /// publication or preparation is retryable; a wrong account or case-baseline
+    /// mismatch refuses Start.
+    pub fn begin_start(&self, account: &str) -> Result<(), script::StartLoadError> {
         let mut state = self.inner.lock().unwrap();
         let current = std::mem::take(&mut *state);
         match current {
@@ -57,7 +59,9 @@ impl CoreWatch {
                         latest: None,
                         start_preparation,
                     };
-                    Err("catalog core has no published pre-Start observation".into())
+                    Err(script::StartLoadError::Waiting(
+                        "catalog core has no published pre-Start observation".into(),
+                    ))
                 }
                 Some(observation) => {
                     let preparation = if case == CoreCase::HerbCleanerEmptyBank {
@@ -110,11 +114,13 @@ impl CoreWatch {
                     latest,
                     start_preparation,
                 };
-                Err(error)
+                Err(script::StartLoadError::Refused(error))
             }
             other => {
                 *state = other;
-                Err("catalog core Start was armed more than once".into())
+                Err(script::StartLoadError::Refused(
+                    "catalog core Start was armed more than once".into(),
+                ))
             }
         }
     }
@@ -495,29 +501,31 @@ fn validate_start_baseline(
     account: &str,
     observation: &Observation,
     start_preparation: Option<&HerbCleanerStartPreparationReceipt>,
-) -> Result<(), String> {
+) -> Result<(), script::StartLoadError> {
+    use script::StartLoadError::{Refused, Waiting};
+
     if !observation.ingame || observation.scene_state != 2 {
-        return Err(format!(
+        return Err(Waiting(format!(
             "Start baseline is not attached ingame scene2: {observation:?}"
-        ));
+        )));
     }
     let player = observation
         .player
         .as_deref()
-        .ok_or_else(|| "Start baseline has no local player".to_string())?;
+        .ok_or_else(|| Waiting("Start baseline has no local player".into()))?;
     let expected = client::util::jstring::JString::to_screen_name(account);
     if !player.eq_ignore_ascii_case(&expected) {
-        return Err(format!(
+        return Err(Refused(format!(
             "Start baseline player {player:?} is not fresh account {account:?}"
-        ));
+        )));
     }
     if case == CoreCase::HerbCleanerEmptyBank && start_preparation.is_none() {
-        return Err(format!(
+        return Err(Waiting(format!(
             "{} Start baseline lacks this run's loaded-bank preparation receipt before closed-bank Start: {observation:?}",
             case.scenario_name()
-        ));
+        )));
     }
-    validate_case_baseline_with_preparation(case, observation, start_preparation)
+    validate_case_baseline_with_preparation(case, observation, start_preparation).map_err(Refused)
 }
 #[derive(Debug, Default)]
 enum CoreWatchState {

@@ -75,6 +75,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   substitutes another nearby Talk-to NPC.
 - A revision-377 live menu cell checks real trade and duel requests, a packed
   loc Examine target, and a world player's slot through the read-only observer.
+- A refused Start now fails the scenario instead of holding the runner. A Start
+  request waits while its script slot is missing.
 
 ### Breaking changes
 
@@ -402,6 +404,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 - An ordinary hit observed while a main or chat modal is open keeps poison
   risk active through the pause until the next poison mark.
+
+#### Scripts
+
+- A blank or null loadout in a JavaScript script uses the script's defaults
+  when there are no saved loadouts; otherwise, it uses the first saved
+  loadout. A named loadout must match exactly one saved entry.
 
 ## [0.2.9.1] — 2026-11-14 — Beta 2 patch
 
