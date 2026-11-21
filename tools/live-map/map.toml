@@ -230,6 +230,13 @@ globs = [
   "crates/host-play/src/script_bank_harness.rs",
   "crates/script/src/native/server_ordered.rs",
   "crates/script-js/host-js/index.d.ts",
+  # These client paths contain only test-isolation changes in this revision.
+  # client/mod.rs:33 and lib.rs:18 gate the helper modules with #[cfg(test)].
+  # Product changes in these files need live coverage instead.
+  "vendor/fr-client-rust/crates/client/src/client/mod.rs",
+  "vendor/fr-client-rust/crates/client/src/client/test_support.rs",
+  "vendor/fr-client-rust/crates/client/src/lib.rs",
+  "vendor/fr-client-rust/crates/client/src/test_support.rs",
   # Approved merge ancestry: workspace version/lint declarations and a test-only
   # terminal benchmark seam (the remaining memory.rs change is comment-only).
   "Cargo.toml",
@@ -2383,12 +2390,14 @@ cells = [
   "host.public-worlds-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib public_worlds:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib public_worlds:: --",
 ]
 
-# PairWatch's Rust proof is controlled; this paired TUI cell separately runs
-# the registered Duel Arena scenario with two real accounts and the pair gate.
+# PairWatch's controlled proofs include paired_core_watch::shared_start_rejects_one_sided_and_stale_sessions
+# and live_start::tests::no_slot_pair_start_restores_the_prepared_pair_for_retry.
+# The paired TUI cell runs the registered Duel Arena scenario with two real accounts and the pair gate.
 [[cover]]
-globs = ["crates/host-play/src/pair_duel.rs"]
+globs = ["crates/host-play/src/pair_duel.rs", "crates/host-play/src/pair_watch.rs"]
 cells = [
   "host.paired-core-watch-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test paired_core_watch -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --test paired_core_watch",
+  "host.catalog-start-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib live_start::tests:: -- --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib live_start::tests:: --",
   "tui.live-duel-arena-pair-core|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --pair-core --live script_duel_arena|--locked -p tui --lib bin::tests::pair_gate_stashes_both_slots_with_complementary_role_bags --",
 ]
 
