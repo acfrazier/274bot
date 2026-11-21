@@ -26616,6 +26616,7 @@ fn spawned_scriptless_worker_reconnects_after_a_connection_reset() {
     ));
     reset_tx.send(()).unwrap();
     let reconnect = attempt_rx.recv_timeout(Duration::from_secs(30));
+    let login_latch = arm.login_latch_reason();
     // Stop the worker before judging, and free the fake server if the
     // reconnect never came, so a failure ends at once and leaves no thread.
     arm.stop.store(true, Ordering::Relaxed);
@@ -26633,8 +26634,7 @@ fn spawned_scriptless_worker_reconnects_after_a_connection_reset() {
     );
     server_result.unwrap();
     assert_eq!(
-        arm.login_latch_reason(),
-        None,
+        login_latch, None,
         "no park or latch holds the bot logged out"
     );
 }
@@ -26694,6 +26694,8 @@ fn spawned_scriptless_worker_never_idles_out_past_4500_cycles() {
         "the worker runs well past the 4500-cycle threshold"
     );
     let started_idle_logout = idle_logout_started.load(Ordering::Relaxed);
+    // Stop can set the operator logout latch during teardown.
+    let login_latch = arm.login_latch_reason();
 
     arm.stop.store(true, Ordering::Relaxed);
     release_tx.send(()).unwrap();
@@ -26703,7 +26705,7 @@ fn spawned_scriptless_worker_never_idles_out_past_4500_cycles() {
         !started_idle_logout,
         "a bot with no script sends no idle logout request"
     );
-    assert_eq!(arm.login_latch_reason(), None);
+    assert_eq!(login_latch, None);
 }
 
 #[test]
