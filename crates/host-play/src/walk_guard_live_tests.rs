@@ -337,14 +337,16 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
     .unwrap();
     let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
-    let compiled = script::quester::compile::prepare_for_test(|cap| {
+    let compile_world = Arc::clone(&world);
+    let compiled = script::quester::compile::prepare_for_test(move |cap| {
+        let lease = nav_planner::contract::NavLease::wrap(compile_world).unwrap();
         compile_path(
             path_json(destination).as_bytes(),
             &selected,
             &quests,
             cap,
             &script::local_state::OperatorLoadouts::absent(),
-            Some(zones),
+            lease.zones(),
         )
     })
     .unwrap();
