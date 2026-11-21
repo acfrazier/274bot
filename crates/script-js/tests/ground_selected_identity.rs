@@ -218,6 +218,15 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+fn collect_heap_after_background_compilation(iso: &LoadIsolate) -> usize {
+    // V8 waits for and installs pending TurboFan and Maglev code here.
+    // A low-memory notification alone does not wait for active compilation.
+    iso.probe("%FinalizeOptimization(); 0")
+        .expect("settle V8 background compilation");
+    iso.collected_heap_bytes_for_test()
+        .expect("collect V8 heap after background compilation")
+}
+
 fn input_take_obj_requests_bound_collected_v8_heap_growth() {
     const REQUESTS: usize = 256;
     const WARM_TICKS: usize = 256;
@@ -279,9 +288,7 @@ export default class T extends LoopingBot {
         serde_json::json!(0),
         "discard the warm-up request before the baseline"
     );
-    let baseline = iso
-        .collected_heap_bytes_for_test()
-        .expect("collect the warmed isolate heap before materializing requests");
+    let baseline = collect_heap_after_background_compilation(&iso);
     assert_eq!(
         iso.probe(&format!("globalThis.__request_count = {REQUESTS}"))
             .expect("start retained Input.takeObj measurement"),
@@ -308,9 +315,7 @@ export default class T extends LoopingBot {
         serde_json::json!(REQUESTS),
         "Input.takeObj retains every materialized request"
     );
-    let after = iso
-        .collected_heap_bytes_for_test()
-        .expect("collect the retained request heap");
+    let after = collect_heap_after_background_compilation(&iso);
     let growth = after.saturating_sub(baseline);
     println!(
         "Input.takeObj collected V8 heap: requests={REQUESTS} baseline={baseline} \
@@ -447,7 +452,7 @@ fn object_id_round_trips_as_some_and_none_and_defaults_when_omitted() {
     );
 }
 fn main() {
-    // V8 must enable native syntax before process-main bootstrap for `%HasFastProperties`.
+    // V8 must enable native syntax before bootstrap for the heap and shape probes.
     v8::V8::set_flags_from_string("--allow-natives-syntax");
     script_js::bootstrap_v8_platform().expect("process-main V8 bootstrap");
 
