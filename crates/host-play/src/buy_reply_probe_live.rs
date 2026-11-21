@@ -3202,6 +3202,19 @@ mod network_coords_tests {
             baseline_unit_price: 1,
         }
     }
+    fn test_selected_game_data() -> Arc<api::game_data::SelectedGameData> {
+        let selected = serde_json::from_str(
+            r#"{
+                "schema_version": 5,
+                "revision": 289,
+                "items": [],
+                "consumption": [],
+                "pickpocket": []
+            }"#,
+        )
+        .expect("deserialize synthetic R289 game data");
+        Arc::new(selected)
+    }
 
     fn record_fixture_reply(
         probe: &BuyReplyProbeScript,
@@ -3253,8 +3266,11 @@ mod network_coords_tests {
         let mut probe = BuyReplyProbeScript::new("alice".into(), fixture, Arc::clone(&trace));
         probe.phase = phase;
         let mut slot = script::SlotScript::new();
-        slot.start_test_script(Box::new(OwnedProbeScript::new(probe)), None)
-            .expect("install the real buy-reply probe in SlotScript");
+        slot.start_test_script(
+            Box::new(OwnedProbeScript::new(probe)),
+            Some(test_selected_game_data()),
+        )
+        .expect("install the real buy-reply probe in SlotScript");
         let run = slot.native_run().expect("fenced probe run");
         let session = SessionIdentity::from(run);
         {
@@ -3417,7 +3433,7 @@ mod network_coords_tests {
         let mut slot = script::SlotScript::new();
         slot.start_test_script(
             Box::new(OwnedProbeScript::progress_fixture(Arc::clone(&trace))),
-            None,
+            Some(test_selected_game_data()),
         )
         .expect("install the actual owned probe adapter");
         let run = slot.native_run().expect("owned probe run");
@@ -3482,7 +3498,7 @@ mod network_coords_tests {
         empty_slot
             .start_test_script(
                 Box::new(OwnedProbeScript::progress_fixture(Arc::clone(&empty_trace))),
-                None,
+                Some(test_selected_game_data()),
             )
             .expect("install the no-reply owned probe adapter");
         let empty_run = empty_slot.native_run().expect("no-reply probe run");
@@ -4049,8 +4065,11 @@ mod network_coords_tests {
                 batch,
             );
             let mut slot = script::SlotScript::new();
-            slot.start_test_script(Box::new(OwnedProbeScript::new(probe)), None)
-                .expect("install the real buy-reply probe in SlotScript");
+            slot.start_test_script(
+                Box::new(OwnedProbeScript::new(probe)),
+                Some(test_selected_game_data()),
+            )
+            .expect("install the real buy-reply probe in SlotScript");
             let run = slot.native_run().expect("owned probe run");
 
             let mut client = Client::from_shared_with_revision(
