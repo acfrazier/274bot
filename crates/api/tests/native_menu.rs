@@ -933,7 +933,7 @@ fn native_menu_scope_refreshes_without_rewriting_reset_watermark() {
                 &snapshot,
                 NativeMenuTarget::NpcTalk(npc),
             ),
-            Ok(true),
+            Ok(()),
             "{revision:?}",
         );
     }
