@@ -50,6 +50,22 @@ pub(super) fn native_pick_action(
     explicit: Option<&str>,
     allow_air_fallback: bool,
 ) -> (script::SlotScript, script::native::HostAction) {
+    native_pick_action_with_selected_data(
+        banks,
+        from,
+        explicit,
+        allow_air_fallback,
+        script::native::minimal_selected_data_for_test(),
+    )
+}
+
+pub(super) fn native_pick_action_with_selected_data(
+    banks: Vec<NamedBank>,
+    from: WorldTile,
+    explicit: Option<&str>,
+    allow_air_fallback: bool,
+    selected: Arc<api::game_data::SelectedGameData>,
+) -> (script::SlotScript, script::native::HostAction) {
     use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
     use script::native_bank::{Select, SelectArgs};
 
@@ -84,7 +100,7 @@ pub(super) fn native_pick_action(
             }),
             handle: None,
         }),
-        None,
+        Some(selected),
     )
     .unwrap();
     let mut snapshot = GameSnapshot::new();

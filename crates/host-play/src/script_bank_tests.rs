@@ -1,4 +1,4 @@
-use super::harness::{native_pick_action, HeldDriver};
+use super::harness::{native_pick_action, native_pick_action_with_selected_data, HeldDriver};
 use super::*;
 use api::named_banks::NamedBank;
 use client::dash3d::CollisionFlag;
@@ -720,10 +720,15 @@ fn native_bank_selection_captures_quest_rows_before_search_and_keeps_the_view_im
         return;
     }
     let banks = vec![bank("bank", 12, 12)];
-    let (mut slot, action) = native_pick_action(banks.clone(), tile(0, 0), None, false);
-    let selected = slot
-        .compiled_game_data()
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
         .expect("real native selected data");
+    let (mut slot, action) = native_pick_action_with_selected_data(
+        banks.clone(),
+        tile(0, 0),
+        None,
+        false,
+        Arc::clone(&selected),
+    );
     let worker_data = Arc::clone(&selected);
     let input = script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024)
         .expect("quest preparation budget");
@@ -1824,16 +1829,14 @@ mod bank_pick_capture {
         );
 
         let loaded = NavWorld::load_pack(&pack).unwrap();
-        loaded
-            .bind_named_bank_facts(
-                &api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
-            )
-            .unwrap();
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        loaded.bind_named_bank_facts(&selected).unwrap();
         let world = Arc::new(loaded);
         let banks = world.named_bank_facts().unwrap().banks().to_vec();
         let start = tile(3080, 3472);
         let return_to = start;
-        let (_slot, action) = native_pick_action(banks, start, Some("Edgeville"), false);
+        let (_slot, action) =
+            native_pick_action_with_selected_data(banks, start, Some("Edgeville"), false, selected);
         let authority = action.authority();
         let script::native::HostEffect::BankPick(mut native_request) = action.effect else {
             panic!("the proof must use the production native Select request");
