@@ -95,6 +95,24 @@ impl<'a> SnapshotView<'a> {
     pub fn world_members(&self) -> Truth {
         self.world_members
     }
+    /// The latest applied local-player Teleport watermark observed by this frame.
+    pub fn local_player_teleport_watermark(&self) -> Option<Observed<u64>> {
+        let snapshot = self.snapshot?;
+        Some(Observed {
+            value: snapshot.local_player_teleport_watermark,
+            stamp: self.stamp,
+        })
+    }
+
+    /// The latest client all-family invalidation watermark observed by this frame.
+    /// A session change also advances it, so check the session fence first.
+    pub fn rebuild_invalidation_watermark(&self) -> Option<Observed<u64>> {
+        let snapshot = self.snapshot?;
+        Some(Observed {
+            value: snapshot.gens.invalidations,
+            stamp: self.stamp,
+        })
+    }
 
     /// The local player's server tile in a fully loaded, in-game scene.
     pub fn here(&self) -> Option<Observed<super::WorldTile>> {
@@ -835,6 +853,27 @@ mod tests {
         let rows = view.main_make().unwrap();
         assert!(std::ptr::eq(rows.value, snapshot.main_make()));
         assert_eq!(rows.stamp, stamp);
+    }
+
+    #[test]
+    fn current_invalidation_watermark_does_not_change_session_generations() {
+        let stamp = EvidenceStamp {
+            run: RunKey {
+                slot: 2,
+                run: 3,
+                session: 4,
+            },
+            tick: 7,
+            sequence: 8,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.gens.invalidations = 11;
+        snapshot.session_start = Some(snapshot.gens);
+        snapshot.gens.invalidations = 12;
+
+        let view = SnapshotView::new(Some(&snapshot), stamp);
+        assert_eq!(snapshot.gens().invalidations, 11);
+        assert_eq!(view.rebuild_invalidation_watermark().unwrap().value, 12,);
     }
 
     #[test]
