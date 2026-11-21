@@ -524,7 +524,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$JS/compat/reach_entity.rs:579-587,622-635",
+        "$JS/compat/reach_entity.rs:562-566,654-673",
     ),
     hook(
         &["reach-loc-op"],
