@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use api::interact::{self, ActionSpec, Interactions, OpTarget, SendResult, WireCommand};
+use api::interact::{
+    self, ActionSpec, Driver, Interactions, OpTarget, PacketCheckpoint, SendResult, WireCommand,
+};
 use api::query::SceneQuery;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientRevision};
@@ -260,8 +262,18 @@ fn live_engine_a_native_menu_talk_continue_choice() {
             captain.tile, stand,
             "the account-only fixture must not stand underneath the Captain"
         );
+        let checkpoint = PacketCheckpoint::capture(&client);
+        let local_route = client
+            .local_player
+            .as_ref()
+            .map(|player| (player.route_x[0], player.route_z[0]));
         let talk_result = Interactions::new(&snapshot, &mut client)
             .interact(OpTarget::Npc(captain), ActionSpec::Label(TALK_TO.into()));
+        let mut opcodes = Vec::new();
+        assert!(
+            client.trace_packets(checkpoint, &mut |opcode| opcodes.push(opcode)),
+            "the emitted Talk-to frames must be complete"
+        );
         assert!(
             matches!(
                 &talk_result,
@@ -273,10 +285,15 @@ fn live_engine_a_native_menu_talk_continue_choice() {
             "native Talk-to was refused: {talk_result:?}"
         );
         eprintln!(
-            "native-menu Talk-to account={account} player={:?} npc_slot={} npc_tile={:?} result={talk_result:?}",
+            "native-menu Talk-to account={account} player={:?} npc_slot={} npc_tile={:?} result={talk_result:?} opcodes={opcodes:?} local_route={local_route:?} path={:?} flag=({},{}) map_base=({},{})",
             snapshot.tile(),
             captain.index,
             captain.tile,
+            client.try_move_path,
+            client.minimap_flag_x,
+            client.minimap_flag_z,
+            client.map_build_base_x,
+            client.map_build_base_z,
         );
         (captain.index, captain.tile, format!("{talk_result:?}"))
     };
