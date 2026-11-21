@@ -56,7 +56,7 @@ headings to jump to the part you need.
 | Read the Rust API for reading and acting | [Reference pages in `docs/api`](api/README.md) |
 | Run the end-to-end suite | [e2e suite](dev/e2e-suite.md) |
 | Check which saved formats load | [Saved data in 0.2.9](upgrade-0.2.0.md#saved-data-in-029) |
-| See the open and deferred issues | [`known-issues.toml`](known-issues.toml) |
+| See open known issues | [GitHub issues](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue) |
 | Write or edit a doc | [Writing docs](dev/writing-docs.md) |
 
 Credits and licenses: [NOTICE.md](../NOTICE.md).

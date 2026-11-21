@@ -177,13 +177,11 @@ the app: what they see and what they do differently. Do not name crates, types,
 tests or commits. [Writing 274bot docs](docs/dev/writing-docs.md#changelog-entries)
 has the rules.
 
-The "Known issues" and "Not in this release" lists are generated. Add or change
-an item in [`docs/known-issues.toml`](docs/known-issues.toml), then preview the
-lists with `python3 tools/known-issues/known_issues.py render --release <next>`,
-where `<next>` is the release being developed. The `check` command compares the
-lists with a release section of the CHANGELOG, so it only works once that
-section exists, when a release is cut.
-Never edit those lists by hand.
+Open known issues and deferred user-visible work are tracked as GitHub
+issues in [acfrazier/274bot](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue)
+with the `known-issue` label. Do not maintain a repository ledger. When a
+release section is cut, list each relevant issue in the release notes and link
+it directly to its GitHub issue. Include the workaround for known defects.
 
 ## More developer pages
 

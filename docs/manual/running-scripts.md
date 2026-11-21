@@ -98,7 +98,7 @@ any running file script or catalog script. It also pauses a built-in script
 while that script walks or acts, for example when it fights or gathers. Click
 **Resume** to continue. With the setting off, your click still cancels the walk
 of the script, but some scripts that act in place carry on. The
-[known issues](../known-issues.toml) name the scripts this affects.
+[known issues](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue) name the scripts this affects.
 
 To take over by hand, click **Pause** before you move the bot, then click
 **Resume**.
@@ -201,4 +201,4 @@ Quester. The terminal app shows the same words, with the reason on its own line.
 | `stopped (blocked)` | The script could not go on. | Read the reason. Fix it, then click **Start**. |
 
 For scripts that do not work yet, see the
-[known issues](../known-issues.toml).
+[known issues](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue).

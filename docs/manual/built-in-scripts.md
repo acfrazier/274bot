@@ -34,7 +34,8 @@ reads your quest list in the game to see how far each quest has gone.
 
 This release supports **The Restless Ghost**. The other authored guides are
 drafts. Release builds offer only guides that passed live qualification.
-See the [known issues](../known-issues.toml) for the unsupported draft quests.
+See the [known issues](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue)
+for the unsupported draft quests.
 
 A saved draft choice shows why it cannot start and names the guide. To run draft
 guides anyway, tick **Allow unqualified guides** in **Script prefs** with the
@@ -281,4 +282,4 @@ before it closes the bank and drinks a needed cure.
 | --- | --- |
 | Start, pause and stop a script | [Run scripts on your bots](running-scripts.md) |
 | Write a quest guide for the Quester | [Quest guides](../scripting/quest-guides.md) |
-| See what does not work yet | [Known issues](../known-issues.toml) |
+| See what does not work yet | [Known issues](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue) |

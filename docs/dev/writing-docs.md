@@ -73,8 +73,10 @@ the same change that explains it, never to hide a new violation.
 CHANGELOG entries follow the same rules. Write what changed for the person
 who runs the app: what they see, and what they do differently. Do not name
 crates, types, tests, commit ids or test counts. Say where a known problem has
-a workaround. Deferred work and known defects go in `docs/known-issues.toml`,
-not in the Unreleased section.
+a workaround. Open known issues and deferred user-visible work live as GitHub
+issues in [acfrazier/274bot](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue)
+with the `known-issue` label, not in the Unreleased section. When a release
+section is cut, list the relevant issues and link each entry to its issue.
 
 ## Open choices
 

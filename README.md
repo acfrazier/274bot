@@ -117,7 +117,9 @@ full generation sequence and revision details.
   that is not supported stops the script with a `not impl` message.
 - The Quester has routes for 20 of the 68 quests. More are planned.
 
-The full list of known problems is in the [CHANGELOG](CHANGELOG.md).
+Open known issues are tracked in
+[GitHub issues](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue)
+under the `known-issue` label.
 
 ## What 274bot is not
 

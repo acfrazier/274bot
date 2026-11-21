@@ -66,4 +66,4 @@ the checkbox. The file lives under `~/.274bot/logs/`.
 | --- | --- | --- |
 | **Log in** or **Log out** stays dimmed | The vault is locked or no profile is focused. **Log out** also needs the focused bot connected, queued or guard-parked. | Unlock the vault and focus a profile. |
 | The map reads `terrain not baked · catalogue only` | The ground pictures are not baked yet. | Click **Bake terrain**. |
-| The panel closes at once on Linux with "importing the supplied dmabufs failed" | The computer has two graphics chips. | Start it with `WGPU_POWER_PREF=high ./panel-play`. See the [known issues](../known-issues.toml). |
+| The panel closes at once on Linux with "importing the supplied dmabufs failed" | The computer has two graphics chips. | Start it with `WGPU_POWER_PREF=high ./panel-play`. See the [known issues](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue). |
