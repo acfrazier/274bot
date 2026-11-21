@@ -907,3 +907,34 @@ fn native_377_npc_morph_resolves_talk_and_refuses_changed_or_inactive_forms() {
         }
     }
 }
+
+#[test]
+fn native_menu_scope_refreshes_without_rewriting_reset_watermark() {
+    for revision in [ClientRevision::R289, ClientRevision::R377] {
+        let mut scene = scene(revision);
+        plant_npc(&mut scene.client);
+        let start = scene.client.gens;
+        let mut snapshot = GameSnapshot::new();
+        snapshot.reset_session(start);
+        // One invalidation and one received actor update follow the reset.
+        scene.client.gens.invalidations += 1;
+        scene.client.gens.scene += 1;
+        scene.client.gens.npc += 2;
+        scene.client.gens.npc_info += 1;
+        scene.client.gens.player += 2;
+        scene.client.gens.player_info += 1;
+        snapshot.rebuild(&scene.client);
+        assert_eq!(snapshot.gens().session, start.session);
+        assert_eq!(snapshot.gens().invalidations, start.invalidations);
+        let npc = snapshot.npcs().first().expect("new actor update is published");
+        assert_eq!(
+            Driver::dispatch_native_menu(
+                &mut scene.client,
+                &snapshot,
+                NativeMenuTarget::NpcTalk(npc),
+            ),
+            Ok(true),
+            "{revision:?}",
+        );
+    }
+}
