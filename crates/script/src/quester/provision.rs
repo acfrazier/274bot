@@ -667,7 +667,17 @@ impl Provisioner {
             .as_ref()
             .is_none_or(|state| !state.is_current(&key))
         {
-            self.survival_stage = usize::MAX;
+            // A new or discarded route changes food sizing. The route-free
+            // walking fallback does not restart a bank trip already refused.
+            if destination.is_some()
+                || self
+                    .preparation
+                    .food
+                    .as_ref()
+                    .is_some_and(|state| state.key.destination.is_some())
+            {
+                self.survival_stage = usize::MAX;
+            }
             if let Some(previous) = self.preparation.food.take() {
                 cx.tick.cx.cancel_request(previous.request_id);
             }
@@ -3475,6 +3485,82 @@ mod tests {
         assert!(provisioner.preparation.unmet_logged[0]
             .item
             .contains(rows[0].def.name.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn targetless_food_fallback_keeps_a_completed_bank_refusal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, snapshot) = survival_fixture(true);
+        let plan = &path.provisioning;
+        let (_, _, banks) = openable_bank_fixture();
+        let memory = BankMemory::default();
+        let unknown = ready_snapshot(Vec::new());
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        with_tick_bank(&unknown, Some(&memory), &mut ledger, 1, |native| {
+            let required_after = native.cx.evidence();
+            let mut cx = StepContext {
+                tick: native,
+                quests: &quests,
+                progress: &[],
+                required_after,
+                banks: &banks,
+                choices: &crate::quester::choices::QuestChoices::default(),
+            };
+            provisioner.start_bank(
+                &mut cx,
+                plan,
+                BankAction::Scan,
+                ProvisionPhase::Scanning,
+                Some(Arc::from("survival supplies")),
+                1,
+                0,
+                None,
+            );
+            provisioner.require_survival_return(&cx, None);
+        });
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            2,
+            plan,
+            None,
+            Some(&plan.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert!(provisioner.bank_run.is_none());
+        assert_eq!(provisioner.survival_stage, 0);
+        assert!(provisioner.preparation.food.is_none());
+        assert!(matches!(
+            &provisioner.preparation.unmet_logged[0].cause,
+            UnmetCause::NoReachableBank { .. }
+        ));
+        assert!(matches!(
+            poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                3,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Ready))
+        ));
+        assert_eq!(provisioner.survival_stage, 0);
+        assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
     }
 
     #[test]
