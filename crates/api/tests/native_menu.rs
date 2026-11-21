@@ -926,7 +926,10 @@ fn native_menu_scope_refreshes_without_rewriting_reset_watermark() {
         snapshot.rebuild(&scene.client);
         assert_eq!(snapshot.gens().session, start.session);
         assert_eq!(snapshot.gens().invalidations, start.invalidations);
-        let npc = snapshot.npcs().first().expect("new actor update is published");
+        let npc = snapshot
+            .npcs()
+            .first()
+            .expect("new actor update is published");
         assert_eq!(
             Driver::dispatch_native_menu(
                 &mut scene.client,
