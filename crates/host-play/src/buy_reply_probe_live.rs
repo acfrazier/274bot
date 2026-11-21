@@ -1,11 +1,10 @@
-//! PROBE-BUY-REPLY on Engine L. This ignored live cell measures native
+//! PROBE-BUY-REPLY on Engine A. This ignored live cell measures native
 //! interaction dispatches against Gerrant's real R289 shop. It does not use
 //! a script timer or a local modal clear as a reply.
 //!
-//! One fresh, owned account runs all three series. It receives coins through
-//! the account-only scenario seed, buys 300 real feathers one at a time, drops
-//! its own coin stack, requests 100 deterministic zero-coin refusals, then
-//! measures 100 `CloseModal` requests through `ShopView.server_closes`.
+//! Five fresh, owned accounts run independently fenced batches: three 100-buy
+//! batches, one 100-refusal batch, and one 100-close batch. Their exact replies
+//! aggregate to the unchanged 300/100/100 acceptance oracle.
 //!
 //! Main registers this module in `lib.rs` under `cfg(all(test,
 //! feature="live-harness", feature="test-support"))`. Run the ignored test
@@ -20,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::game_data::{self, SelectedGameData};
 use api::interact::Driver;
+use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, RunKey};
 use api::service_pick::ShopKeeperFacts;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -43,7 +43,7 @@ use super::combat_proof::{
     MAX_DRIVER_PACKETS_PER_TICK,
 };
 use super::gather_bait_live::PlayerInfoClock;
-use super::{run_with_template, ProfileOptions, ScriptStartHandle};
+use super::{run_with_template, ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 
 const KEEPER_CONFIG: &str = "gerrant";
 const ITEM_ALIAS: &str = "feather";
@@ -59,9 +59,54 @@ const SAMPLE_REPLY_LIMIT_TICKS: u64 = 32;
 const REFUSAL_PACK_OBSERVE_TICKS: u64 = 2;
 const PREPARATION_DEADLINE: Duration = Duration::from_secs(600);
 const CELL_DEADLINE: Duration = Duration::from_secs(3_600);
+const RUNNER_COMPLETE_DEADLINE: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_CAPTURE_ROWS: usize = 100_000;
 const SEED_ITEMS: &[(&str, i32)] = &[(COINS_ALIAS, SEED_COINS)];
+const HELD_BATCH_SAMPLES: usize = 100;
+/// Engine macro events start 500 game ticks after login (`login_logout/login.rs2:39-48`).
+const MAX_BATCH_LOGIN_TICKS: u64 = 500;
+/// Setup, dispatches and settlement all count against the login-relative limit.
+const BATCH_SCHEDULE: [BatchPlan; 5] = [
+    BatchPlan {
+        series: Series::Held,
+        first_ordinal: 1,
+        samples: HELD_BATCH_SAMPLES,
+    },
+    BatchPlan {
+        series: Series::Held,
+        first_ordinal: HELD_BATCH_SAMPLES + 1,
+        samples: HELD_BATCH_SAMPLES,
+    },
+    BatchPlan {
+        series: Series::Held,
+        first_ordinal: HELD_BATCH_SAMPLES * 2 + 1,
+        samples: HELD_BATCH_SAMPLES,
+    },
+    BatchPlan {
+        series: Series::Refusal,
+        first_ordinal: 1,
+        samples: REFUSAL_SAMPLES,
+    },
+    BatchPlan {
+        series: Series::Close,
+        first_ordinal: 1,
+        samples: CLOSE_SAMPLES,
+    },
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+struct BatchPlan {
+    series: Series,
+    first_ordinal: usize,
+    samples: usize,
+}
+
+impl BatchPlan {
+    fn ordinal(self, next: usize) -> usize {
+        self.first_ordinal + next
+    }
+}
 
 #[derive(Clone)]
 struct ItemFact {
@@ -131,7 +176,7 @@ enum SampleStatus {
     Error,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 struct SessionIdentity {
     slot: u64,
     run: u64,
@@ -150,6 +195,7 @@ impl From<RunKey> for SessionIdentity {
 
 #[derive(Debug, Clone, serde::Serialize)]
 struct Sample {
+    batch_index: usize,
     series: Series,
     ordinal: usize,
     account: String,
@@ -189,6 +235,7 @@ struct Sample {
 
 impl Sample {
     fn new(
+        batch_index: usize,
         series: Series,
         ordinal: usize,
         account: &str,
@@ -197,6 +244,7 @@ impl Sample {
         request_tick: u64,
     ) -> Self {
         Self {
+            batch_index,
             series,
             ordinal,
             account: account.to_owned(),
@@ -254,12 +302,164 @@ impl Sample {
     }
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+struct LastReply {
+    batch_index: usize,
+    series: Series,
+    ordinal: usize,
+    tick: u64,
+    session: SessionIdentity,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct BatchAdmission {
+    plan: BatchPlan,
+    account: String,
+    session: SessionIdentity,
+    login_player_info_ticks: u64,
+}
+
+fn validate_batch_admission(samples: &[Sample], batches: &[BatchAdmission]) -> Result<(), String> {
+    if batches.len() != BATCH_SCHEDULE.len() {
+        return Err(format!(
+            "received {} login batches, expected {}",
+            batches.len(),
+            BATCH_SCHEDULE.len()
+        ));
+    }
+    let mut accounts = std::collections::BTreeSet::new();
+    for (batch_index, (batch, expected)) in batches.iter().zip(BATCH_SCHEDULE).enumerate() {
+        if batch.plan != expected {
+            return Err(format!(
+                "batch {batch_index} does not match the required schedule"
+            ));
+        }
+        if !accounts.insert(batch.account.as_str()) {
+            return Err(format!(
+                "batch {batch_index} reused account {}",
+                batch.account
+            ));
+        }
+        if batch.login_player_info_ticks > MAX_BATCH_LOGIN_TICKS {
+            return Err(format!(
+                "batch {batch_index} ended at login-relative tick {}, above {MAX_BATCH_LOGIN_TICKS}",
+                batch.login_player_info_ticks
+            ));
+        }
+        let rows = samples
+            .iter()
+            .filter(|sample| sample.batch_index == batch_index)
+            .collect::<Vec<_>>();
+        if rows.len() != expected.samples {
+            return Err(format!(
+                "batch {batch_index} has {} samples, expected {}",
+                rows.len(),
+                expected.samples
+            ));
+        }
+        for ordinal in expected.first_ordinal..expected.first_ordinal + expected.samples {
+            let matches = rows
+                .iter()
+                .filter(|sample| sample.ordinal == ordinal)
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return Err(format!(
+                    "batch {batch_index} has {} samples for {:?} ordinal {ordinal}, expected exactly one",
+                    matches.len(),
+                    expected.series
+                ));
+            }
+            let sample = matches[0];
+            if sample.series != expected.series {
+                return Err(format!(
+                    "batch {batch_index} ordinal {ordinal} belongs to {:?}, expected {:?}",
+                    sample.series, expected.series
+                ));
+            }
+            if sample.account != batch.account || sample.session != batch.session {
+                return Err(format!(
+                    "batch {batch_index} ordinal {ordinal} crossed its account or run/session fence"
+                ));
+            }
+            if sample.status != SampleStatus::Replied {
+                return Err(format!(
+                    "batch {batch_index} ordinal {ordinal} did not receive its exact reply"
+                ));
+            }
+        }
+    }
+    if samples
+        .iter()
+        .any(|sample| sample.batch_index >= batches.len())
+    {
+        return Err("a sample names no admitted login batch".into());
+    }
+    Ok(())
+}
+fn scene_change_reason(expected: WorldTile, observed: Option<WorldTile>) -> Option<String> {
+    match observed {
+        Some(observed) if observed == expected => None,
+        Some(observed) => Some(format!(
+            "player scene changed: expected network tile {expected:?}, observed {observed:?}"
+        )),
+        None => Some("player network tile unavailable while probe is active".into()),
+    }
+}
+
+fn validate_context_observation(
+    trace: &mut ProbeTrace,
+    session: SessionIdentity,
+    tile: Option<WorldTile>,
+    active_sample: Option<usize>,
+) -> Option<String> {
+    let error = match trace.session {
+        Some(expected) if expected != session => Some(format!(
+            "session changed during probe: expected {expected:?}, observed {session:?}"
+        )),
+        None => {
+            trace.session = Some(session);
+            None
+        }
+        Some(_) => None,
+    }
+    .or_else(|| match trace.scene_tile {
+        Some(expected) => scene_change_reason(expected, tile),
+        None => tile.map_or_else(
+            || Some("player network tile unavailable before scene baseline".into()),
+            |observed| {
+                trace.scene_tile = Some(observed);
+                None
+            },
+        ),
+    });
+    if let Some(reason) = error.as_ref() {
+        if let Some(row) = active_sample.and_then(|index| trace.samples.get_mut(index)) {
+            row.mark_error(reason.clone());
+        }
+        trace.fail(reason.clone());
+    }
+    error
+}
+/// The script-start key can precede host session alignment. Establish the
+/// measurement fence from the first native context instead, before dispatch.
+fn record_script_start(trace: &mut ProbeTrace, tick: u64, run: RunKey) {
+    trace.started = true;
+    trace.start_tick = Some(tick);
+    trace.script_run = Some(format!("{run:?}"));
+}
+
 #[derive(Default)]
 struct ProbeTrace {
     started: bool,
     start_tick: Option<u64>,
     session: Option<SessionIdentity>,
     script_run: Option<String>,
+    phase: Option<&'static str>,
+    scene_tile: Option<WorldTile>,
+    login_player_info_ticks: Option<u64>,
+    settled_replies: usize,
+    last_reply: Option<LastReply>,
+    terminal_context: Option<Value>,
     complete_tick: Option<u64>,
     completed: bool,
     failure: Option<String>,
@@ -392,7 +592,7 @@ fn profile_options(scratch: &Path) -> Result<ProfileOptions, String> {
 }
 fn probe_scenario(stand: WorldTile, trace: Arc<Mutex<ProbeTrace>>) -> Scenario {
     let mut scenario = scenario::quester_stage(
-        "buy_reply_probe_engine_l",
+        "buy_reply_probe_engine_a",
         "Cook's Assistant",
         "cook",
         0,
@@ -479,6 +679,8 @@ struct BuyReplyProbeScript {
     account: String,
     fixture: Fixture,
     trace: Arc<Mutex<ProbeTrace>>,
+    batch_index: usize,
+    batch: BatchPlan,
     phase: Phase,
     last_emit_tick: Option<u64>,
     open: OpenCore,
@@ -510,10 +712,22 @@ fn keeper_candidate<'a>(
 }
 impl BuyReplyProbeScript {
     fn new(account: String, fixture: Fixture, trace: Arc<Mutex<ProbeTrace>>) -> Self {
+        Self::for_batch(account, fixture, trace, 0, BATCH_SCHEDULE[0])
+    }
+
+    fn for_batch(
+        account: String,
+        fixture: Fixture,
+        trace: Arc<Mutex<ProbeTrace>>,
+        batch_index: usize,
+        batch: BatchPlan,
+    ) -> Self {
         Self {
             account,
             fixture,
             trace,
+            batch_index,
+            batch,
             phase: Phase::OpenShop,
             last_emit_tick: None,
             open: OpenCore::default(),
@@ -552,6 +766,7 @@ impl BuyReplyProbeScript {
     ) -> usize {
         let mut trace = self.trace.lock();
         trace.samples.push(Sample::new(
+            self.batch_index,
             series,
             ordinal,
             &self.account,
@@ -568,6 +783,65 @@ impl BuyReplyProbeScript {
 
     fn mark_sample_error(&self, index: usize, reason: impl Into<String>) {
         self.trace.lock().samples[index].mark_error(reason);
+    }
+
+    fn active_sample(&self) -> Option<usize> {
+        match self.phase {
+            Phase::AwaitHeld { sample }
+            | Phase::AwaitRefusal { sample }
+            | Phase::RefusalObserve { sample, .. }
+            | Phase::AwaitClose { sample } => Some(sample),
+            _ => None,
+        }
+    }
+
+    fn settle_reply(&self, index: usize, tick: u64) -> Result<(), String> {
+        let mut trace = self.trace.lock();
+        let last_reply = {
+            let sample = trace
+                .samples
+                .get_mut(index)
+                .ok_or_else(|| format!("reply names missing sample {index}"))?;
+            if sample.status != SampleStatus::Pending {
+                return Err(format!(
+                    "reply cannot settle sample {index} in state {:?}",
+                    sample.status
+                ));
+            }
+            sample.mark_reply(tick)?;
+            LastReply {
+                batch_index: sample.batch_index,
+                series: sample.series,
+                ordinal: sample.ordinal,
+                tick,
+                session: sample.session,
+            }
+        };
+        trace.settled_replies = trace
+            .settled_replies
+            .checked_add(1)
+            .expect("settled reply count is bounded by admitted samples");
+        trace.last_reply = Some(last_reply);
+        Ok(())
+    }
+    fn complete_batch(&mut self, tick: u64) -> ScriptFlow {
+        let mut trace = self.trace.lock();
+        trace.completed = true;
+        trace.complete_tick = Some(tick);
+        drop(trace);
+        self.phase = Phase::Done;
+        ScriptFlow::Complete
+    }
+
+    fn validate_context(&self, cx: &ActionContext<'_>) -> Option<String> {
+        let session = SessionIdentity::from(cx.run());
+        let tile = cx
+            .snapshot()
+            .local_player()
+            .map(|row| row.value.player.network);
+        let active_sample = self.active_sample();
+        let mut trace = self.trace.lock();
+        validate_context_observation(&mut trace, session, tile, active_sample)
     }
 
     fn fail(&self, reason: impl Into<String>, sample: Option<usize>) -> ScriptFlow {
@@ -643,6 +917,7 @@ impl BuyReplyProbeScript {
         });
         let signature = serde_json::to_string(&row).unwrap_or_default();
         let mut trace = self.trace.lock();
+        trace.phase = Some(phase);
         if trace.last_observation_signature.as_deref() != Some(signature.as_str())
             && trace.observations.len() < MAX_CAPTURE_ROWS
         {
@@ -921,7 +1196,20 @@ impl BuyReplyProbeScript {
             trace.start_tick = Some(now);
             trace.session = Some(SessionIdentity::from(cx.run()));
         }
-
+        if self
+            .trace
+            .lock()
+            .login_player_info_ticks
+            .is_some_and(|ticks| ticks > MAX_BATCH_LOGIN_TICKS)
+        {
+            return Ok(self.fail(
+                format!("batch exceeded the first {MAX_BATCH_LOGIN_TICKS} login ticks"),
+                self.active_sample(),
+            ));
+        }
+        if let Some(reason) = self.validate_context(cx) {
+            return Ok(self.fail(reason, self.active_sample()));
+        }
         let flow = match self.phase {
             Phase::OpenShop => {
                 if !self.open_seen_trade
@@ -938,7 +1226,11 @@ impl BuyReplyProbeScript {
                             self.phase = if self.reopening_after_coin_drop {
                                 Phase::Refusal { next: 0 }
                             } else {
-                                Phase::Held { next: 0 }
+                                match self.batch.series {
+                                    Series::Held => Phase::Held { next: 0 },
+                                    Series::Refusal => Phase::DropCoins,
+                                    Series::Close => Phase::Close { next: 0 },
+                                }
                             };
                             ScriptFlow::Continue
                         }
@@ -948,9 +1240,8 @@ impl BuyReplyProbeScript {
                 }
             }
             Phase::Held { next } => {
-                if next >= HELD_SAMPLES {
-                    self.phase = Phase::DropCoins;
-                    ScriptFlow::Continue
+                if next >= self.batch.samples {
+                    self.complete_batch(now)
                 } else {
                     let shop_open = cx.snapshot().shop().is_some_and(|shop| shop.value.open);
                     let held = held_count(cx, self.fixture.feather.id);
@@ -960,34 +1251,37 @@ impl BuyReplyProbeScript {
                             self.fail("Gerrant's real feather stock row is unavailable", None)
                         );
                     };
+                    let remaining = self.batch.samples - next;
                     if !shop_open {
                         self.fail("shop page closed during the held-change series", None)
-                    } else if stock < (HELD_SAMPLES - next + 1) as i32 {
+                    } else if stock < remaining as i32 {
                         self.fail(
                             format!(
-                                "Gerrant has {stock} feather stock for {} remaining held buys plus one zero-coin refusal",
-                                HELD_SAMPLES - next
+                                "Gerrant has {stock} feather stock for {remaining} remaining held buys in this login batch"
                             ),
                             None,
                         )
                     } else if held != Some(next as i32) {
                         self.fail(
                             format!(
-                                "held series expected {next} feathers before sample {}, observed {held:?}",
+                                "held series expected {next} feathers before batch sample {}, observed {held:?}",
                                 next + 1
                             ),
                             None,
                         )
                     } else if coins.is_none_or(|count| count <= 0) {
                         self.fail(
-                            "account coin seed was exhausted before 300 held samples",
+                            format!(
+                                "account coin seed was exhausted before {} held samples",
+                                self.batch.samples
+                            ),
                             None,
                         )
                     } else {
                         match self.begin_sample(
                             cx,
                             Series::Held,
-                            next + 1,
+                            self.batch.ordinal(next),
                             now,
                             SampleBaseline {
                                 held,
@@ -1038,11 +1332,12 @@ impl BuyReplyProbeScript {
                                 let row = &mut trace.samples[sample];
                                 row.held_after = Some(held_after);
                                 row.stock_after = self.stock_row(cx).map(|(_, _, stock)| stock);
-                                if let Err(error) = row.mark_reply(now) {
-                                    drop(trace);
+                                let next = row.ordinal - self.batch.first_ordinal + 1;
+                                drop(trace);
+                                if let Err(error) = self.settle_reply(sample, now) {
                                     self.sample_error_flow(sample, error)
                                 } else {
-                                    self.phase = Phase::Held { next: row.ordinal };
+                                    self.phase = Phase::Held { next };
                                     ScriptFlow::Continue
                                 }
                             }
@@ -1173,9 +1468,8 @@ impl BuyReplyProbeScript {
                 }
             },
             Phase::Refusal { next } => {
-                if next >= REFUSAL_SAMPLES {
-                    self.phase = Phase::Close { next: 0 };
-                    ScriptFlow::Continue
+                if next >= self.batch.samples {
+                    self.complete_batch(now)
                 } else {
                     let shop_open = cx.snapshot().shop().is_some_and(|shop| shop.value.open);
                     let held = held_count(cx, self.fixture.feather.id);
@@ -1202,7 +1496,7 @@ impl BuyReplyProbeScript {
                         match self.begin_sample(
                             cx,
                             Series::Refusal,
-                            next + 1,
+                            self.batch.ordinal(next),
                             now,
                             SampleBaseline {
                                 held,
@@ -1271,15 +1565,13 @@ impl BuyReplyProbeScript {
                                         "zero-coin fixture did not produce the coins refusal",
                                         Some(sample),
                                     )
-                                } else if let Err(error) = row.mark_reply(now) {
-                                    row.mark_error(error.clone());
-                                    drop(trace);
-                                    self.fail(error, Some(sample))
                                 } else {
+                                    let held_before = row.held_before.unwrap_or_default();
+                                    drop(trace);
                                     self.phase = Phase::RefusalObserve {
                                         sample,
                                         line_tick: now,
-                                        held_before: row.held_before.unwrap_or_default(),
+                                        held_before,
                                     };
                                     ScriptFlow::Continue
                                 }
@@ -1328,22 +1620,24 @@ impl BuyReplyProbeScript {
                         Some(sample),
                     )
                 } else if now.saturating_sub(line_tick) >= REFUSAL_PACK_OBSERVE_TICKS {
-                    self.trace.lock().samples[sample].refusal_pack_observed_through_tick =
-                        Some(now);
-                    let next = self.sample(sample).ordinal;
-                    self.phase = Phase::Refusal { next };
-                    ScriptFlow::Continue
+                    let mut trace = self.trace.lock();
+                    let row = &mut trace.samples[sample];
+                    row.refusal_pack_observed_through_tick = Some(now);
+                    let local_next = row.ordinal - self.batch.first_ordinal + 1;
+                    drop(trace);
+                    if let Err(error) = self.settle_reply(sample, line_tick) {
+                        self.sample_error_flow(sample, error)
+                    } else {
+                        self.phase = Phase::Refusal { next: local_next };
+                        ScriptFlow::Continue
+                    }
                 } else {
                     ScriptFlow::Continue
                 }
             }
             Phase::Close { next } => {
-                if next >= CLOSE_SAMPLES {
-                    let mut trace = self.trace.lock();
-                    trace.completed = true;
-                    trace.complete_tick = Some(now);
-                    self.phase = Phase::Done;
-                    ScriptFlow::Complete
+                if next >= self.batch.samples {
+                    self.complete_batch(now)
                 } else {
                     let snapshot = cx.snapshot();
                     let shop = snapshot.shop();
@@ -1362,7 +1656,7 @@ impl BuyReplyProbeScript {
                         match self.begin_sample(
                             cx,
                             Series::Close,
-                            next + 1,
+                            self.batch.ordinal(next),
                             now,
                             SampleBaseline {
                                 coins: coins_before,
@@ -1404,11 +1698,7 @@ impl BuyReplyProbeScript {
                             row.server_closes_after = Some(after);
                             row.server_close_tick = Some(now);
                             let count = after.saturating_sub(before);
-                            if let Err(error) = row.mark_reply(now) {
-                                row.mark_error(error.clone());
-                                drop(trace);
-                                self.fail(error, Some(sample))
-                            } else if count != 1 {
+                            if count != 1 {
                                 row.mark_error(format!(
                                     "one CloseModal produced {count} server close packets"
                                 ));
@@ -1420,17 +1710,22 @@ impl BuyReplyProbeScript {
                             } else {
                                 let ordinal = row.ordinal;
                                 drop(trace);
-                                self.reset_open();
-                                self.phase = if ordinal == CLOSE_SAMPLES {
-                                    Phase::Close { next: ordinal }
+                                if let Err(error) = self.settle_reply(sample, now) {
+                                    self.sample_error_flow(sample, error)
                                 } else {
-                                    Phase::Reopen {
-                                        next: ordinal,
-                                        close_tick: now,
-                                        closes_after: after,
-                                    }
-                                };
-                                ScriptFlow::Continue
+                                    let next = ordinal - self.batch.first_ordinal + 1;
+                                    self.reset_open();
+                                    self.phase = if next == self.batch.samples {
+                                        Phase::Close { next }
+                                    } else {
+                                        Phase::Reopen {
+                                            next,
+                                            close_tick: now,
+                                            closes_after: after,
+                                        }
+                                    };
+                                    ScriptFlow::Continue
+                                }
                             }
                         } else if self
                             .fail_on_tick_limit(
@@ -1512,29 +1807,38 @@ struct OwnedProbeScript {
     pending: Option<BuyReplyProbeScript>,
     action: Option<ActionHandle<BuyReplyProbeScript>>,
     trace: Arc<Mutex<ProbeTrace>>,
+    noted_settled_replies: usize,
+    #[cfg(test)]
+    progress_only: bool,
 }
 
 impl OwnedProbeScript {
     fn new(probe: BuyReplyProbeScript) -> Self {
+        let trace = Arc::clone(&probe.trace);
+        let noted_settled_replies = trace.lock().settled_replies;
         Self {
-            trace: Arc::clone(&probe.trace),
+            trace,
             pending: Some(probe),
             action: None,
+            noted_settled_replies,
+            #[cfg(test)]
+            progress_only: false,
         }
     }
 
-    fn failure(&self, error: ActionError) -> ScriptFailure {
-        let message = format!("owned probe action failed: {error}");
-        self.trace.lock().fail(message.clone());
-        ScriptFailure {
-            code: "buy-reply-probe".into(),
-            message: message.into(),
+    #[cfg(test)]
+    fn progress_fixture(trace: Arc<Mutex<ProbeTrace>>) -> Self {
+        let noted_settled_replies = trace.lock().settled_replies;
+        Self {
+            pending: None,
+            action: None,
+            trace,
+            noted_settled_replies,
+            progress_only: true,
         }
     }
-}
 
-impl Script for OwnedProbeScript {
-    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+    fn poll_action(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
         if self.action.is_none() {
             let probe = self.pending.take().expect("probe begins once");
             self.action = Some(
@@ -1553,6 +1857,35 @@ impl Script for OwnedProbeScript {
                 result.map_err(|error| self.failure(error))
             }
         }
+    }
+
+    fn note_settled_progress(&mut self, tick: &mut NativeTick<'_>) {
+        let settled = self.trace.lock().settled_replies;
+        for _ in self.noted_settled_replies..settled {
+            tick.note_progress();
+        }
+        self.noted_settled_replies = settled;
+    }
+    fn failure(&self, error: ActionError) -> ScriptFailure {
+        let message = format!("owned probe action failed: {error}");
+        self.trace.lock().fail(message.clone());
+        ScriptFailure {
+            code: "buy-reply-probe".into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl Script for OwnedProbeScript {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        #[cfg(test)]
+        if self.progress_only {
+            self.note_settled_progress(tick);
+            return Ok(ScriptFlow::Continue);
+        }
+        let flow = self.poll_action(tick)?;
+        self.note_settled_progress(tick);
+        Ok(flow)
     }
 }
 
@@ -1585,21 +1918,175 @@ fn held_count(cx: &ActionContext<'_>, item_id: i32) -> Option<i32> {
     )
 }
 
+struct TerminalObservation<'a> {
+    snapshot: &'a GameSnapshot,
+    client_session_generation: u64,
+    player_info_generation: u64,
+    npc_info_generation: u64,
+    native_status: Option<&'a str>,
+}
+
+fn terminal_context(
+    account: &str,
+    fixture: &Fixture,
+    trace: &ProbeTrace,
+    observation: TerminalObservation<'_>,
+) -> Value {
+    let TerminalObservation {
+        snapshot,
+        client_session_generation,
+        player_info_generation,
+        npc_info_generation,
+        native_status,
+    } = observation;
+    let run = trace.session.map_or(
+        RunKey {
+            slot: 0,
+            run: 0,
+            session: 0,
+        },
+        |identity| RunKey {
+            slot: identity.slot,
+            run: identity.run,
+            session: identity.session,
+        },
+    );
+    let view = api::snapshot::SnapshotView::new(
+        Some(snapshot),
+        EvidenceStamp {
+            run,
+            tick: u64::from(snapshot.tick()),
+            sequence: 0,
+        },
+    );
+    let player_tile = view.local_player().map(|row| row.value.player.network);
+    let player_scene = match player_tile {
+        Some(tile) if tile == fixture.stand => "at_fixture_access_tile",
+        Some(_) => "displaced",
+        None => "unavailable",
+    };
+    let npc_view = view.npcs();
+    let npc_info_state = match npc_view {
+        None => "unavailable",
+        Some(rows) if rows.value.is_empty() => "coherent_empty",
+        Some(_) => "coherent_rows",
+    };
+    let keeper_type = usize::try_from(fixture.keeper.id).ok();
+    let matching_npc_rows = npc_view
+        .map(|rows| {
+            rows.value
+                .iter()
+                .filter(|npc| {
+                    npc.r#type == keeper_type
+                        || npc.name.as_deref().is_some_and(|name| {
+                            name.eq_ignore_ascii_case(fixture.keeper.name.as_ref())
+                        })
+                })
+                .map(|npc| {
+                    json!({
+                        "index": npc.index,
+                        "type": npc.r#type,
+                        "name": npc.name,
+                        "network_tile": npc.network,
+                        "rendered_tile": npc.tile,
+                        "actions": npc.actions,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let keeper_state = if npc_view.is_none() {
+        "npc_view_unavailable"
+    } else if !matching_npc_rows.is_empty() {
+        "matching_keeper_rows_present"
+    } else if npc_info_state == "coherent_empty" {
+        "coherent_empty_view"
+    } else {
+        "absent_from_coherent_view"
+    };
+    json!({
+        "account": account,
+        "phase": trace.phase,
+        "last_reply": trace.last_reply,
+        "run_session": trace.session,
+        "client_session_generation": client_session_generation,
+        "player_info_generation": player_info_generation,
+        "npc_info_generation": npc_info_generation,
+        "player_network_tile": player_tile,
+        "player_scene": {
+            "state": player_scene,
+            "expected_tile": fixture.stand,
+            "observed_tile": player_tile,
+        },
+        "npc_info_state": npc_info_state,
+        "keeper_state": keeper_state,
+        "matching_npc_rows": matching_npc_rows,
+        "native_status": native_status,
+        "terminal_reason": trace.failure,
+    })
+}
+
 struct LiveState {
     account: String,
     fixture: Fixture,
     selected: Arc<SelectedGameData>,
+    batch_index: usize,
+    batch: BatchPlan,
     runner: ScenarioRunner,
     snapshot: GameSnapshot,
     pump: Pump,
     start_context: Option<ScriptStartHandle>,
     trace: Arc<Mutex<ProbeTrace>>,
     started_at: Option<Instant>,
+    login_client_session: Option<u64>,
+    login_start_tick: Option<u64>,
     started: bool,
     packet_counts: DriverPacketCounts,
 }
 
 impl LiveState {
+    fn observe_login_clock(&mut self, client: &Client) {
+        if self.login_client_session != Some(client.gens.session) {
+            if self.started && self.login_client_session.is_some() {
+                self.trace.lock().fail(format!(
+                    "client session changed during batch: expected {:?}, observed {}",
+                    self.login_client_session, client.gens.session
+                ));
+            }
+            self.login_client_session = Some(client.gens.session);
+            self.login_start_tick = None;
+        }
+        if client.ingame && client.scene_state == 2 {
+            let tick = u64::from(self.snapshot.tick());
+            let start = *self.login_start_tick.get_or_insert(tick);
+            let login_ticks = tick.saturating_sub(start).saturating_add(1);
+            let mut trace = self.trace.lock();
+            trace.login_player_info_ticks = Some(login_ticks);
+            if self.started && login_ticks > MAX_BATCH_LOGIN_TICKS {
+                trace.fail(format!(
+                    "batch exceeded the first {MAX_BATCH_LOGIN_TICKS} login ticks"
+                ));
+            }
+        }
+    }
+
+    fn update_terminal_context(&self, client: &Client, native_status: Option<&str>) {
+        let mut trace = self.trace.lock();
+        let context = terminal_context(
+            &self.account,
+            &self.fixture,
+            &trace,
+            TerminalObservation {
+                snapshot: &self.snapshot,
+                client_session_generation: client.gens.session,
+                player_info_generation: client.gens.player_info,
+                npc_info_generation: client.gens.npc_info,
+                native_status,
+            },
+        );
+        trace.terminal_context = Some(context);
+    }
+
     fn start_error(&self) -> Option<String> {
         if !self.snapshot.ingame() || self.snapshot.scene_state() != 2 {
             return Some("StartScript arrived before ingame scene_state=2".into());
@@ -1636,6 +2123,8 @@ impl LiveState {
         Driver::finish_pending_packet(client);
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
+        self.observe_login_clock(client);
+        self.update_terminal_context(client, None);
         if self.started {
             self.packet_counts.observe(client, self.snapshot.tick());
         }
@@ -1658,7 +2147,7 @@ impl LiveState {
             if !clock_accepted {
                 if median.is_some() {
                     self.trace.lock().fail(format!(
-                        "Engine L PLAYER_INFO median {median:?} ms is outside 600 ms +/-30 ms; no probe Start was sent"
+                        "Engine A PLAYER_INFO median {median:?} ms is outside 600 ms +/-30 ms; no probe Start was sent"
                     ));
                 }
                 return;
@@ -1673,10 +2162,12 @@ impl LiveState {
                     .fail("StartScript reached before native script context was installed");
                 return;
             };
-            let script = BuyReplyProbeScript::new(
+            let script = BuyReplyProbeScript::for_batch(
                 self.account.clone(),
                 self.fixture.clone(),
                 Arc::clone(&self.trace),
+                self.batch_index,
+                self.batch,
             );
             match handle.start_test_script(
                 &self.account,
@@ -1686,10 +2177,7 @@ impl LiveState {
                 Ok(run) => {
                     {
                         let mut trace = self.trace.lock();
-                        trace.started = true;
-                        trace.start_tick = Some(u64::from(self.snapshot.tick()));
-                        trace.session = Some(SessionIdentity::from(run));
-                        trace.script_run = Some(format!("{run:?}"));
+                        record_script_start(&mut trace, u64::from(self.snapshot.tick()), run);
                     }
                     self.started = true;
                     self.started_at = Some(Instant::now());
@@ -1708,12 +2196,14 @@ impl LiveState {
             self.runner.status(),
             RunnerStatus::Passed | RunnerStatus::Failed(_)
         ) {
+            self.update_terminal_context(client, None);
             return;
         }
         self.runner.tick_with_hold(client, hold);
         if self.started {
             self.packet_counts.observe(client, self.snapshot.tick());
         }
+        self.update_terminal_context(client, None);
     }
 }
 
@@ -1968,66 +2458,44 @@ fn mark_unfinished_samples(samples: &mut [Sample], reason: &str) {
     }
 }
 
-fn run_live_probe() {
-    assert_eq!(
-        std::env::var("LIVE").as_deref(),
-        Ok("1"),
-        "probe requires LIVE=1"
-    );
-    assert_eq!(
-        std::env::var("BOT_CPU").as_deref(),
-        Ok("1"),
-        "Engine L probe requires BOT_CPU=1"
-    );
-    let (account, password) = mint_account();
-    let evidence_root = std::env::var_os("LIVE_EVIDENCE_DIR")
-        .map(PathBuf::from)
-        .expect("buy reply probe requires LIVE_EVIDENCE_DIR");
-    let epoch = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_secs();
-    let evidence = evidence_root.join(format!("buy-reply-probe-engine-l-{account}-{epoch}"));
-    let scratch = evidence.join("scratch");
-    std::fs::create_dir_all(&scratch).expect("create per-account probe evidence directory");
+struct BatchOutcome {
+    admission: Option<BatchAdmission>,
+    samples: Vec<Sample>,
+    observations: Vec<Value>,
+    actions: Vec<Value>,
+    interaction_packets: Value,
+    driver_packets: Value,
+    max_packets: usize,
+    packet_trace_complete: bool,
+    capture_failures: Vec<String>,
+    terminal_error: Option<String>,
+    script: Value,
+}
 
-    let options = profile_options(&scratch)
-        .unwrap_or_else(|error| panic!("buy reply probe prerequisites: {error}"));
-    let engine_game_port = options
-        .port
-        .expect("profile options require WORLD_GAME_PORT");
-    let engine_http_port = options
-        .http_port
-        .expect("profile options require WORLD_HTTP_PORT");
-    let nav_pack = options.nav_pack.clone().expect("selected navigation pack");
-    let nav_flags = options
-        .nav_flags
-        .clone()
-        .expect("selected navigation flags");
-    let template = options
-        .resolve(None)
-        .expect("resolve Engine L R289 profile")
-        .prepare_template()
-        .expect("prepare isolated Engine L R289 client template");
-    let selected = game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
-    let nav_world = template.world().expect("selected R289 navigation world");
-    if nav_world.named_bank_facts().is_none() {
-        nav_world
-            .bind_named_bank_facts(&selected)
-            .expect("bind selected R289 service facts before Play starts");
-    }
-    if nav_world.shop_keeper_facts().is_none() {
-        nav_world
-            .bind_shop_keeper_facts(&selected)
-            .expect("bind selected R289 shop facts before fixture lookup");
-    }
-    let keepers = Arc::clone(
-        nav_world
-            .shop_keeper_facts()
-            .expect("selected R289 world binds shop keeper facts"),
-    );
-    let fixture = fixture(&selected, &keepers)
-        .unwrap_or_else(|error| panic!("buy reply probe content fixture: {error}"));
+struct BatchRunConfig {
+    batch_index: usize,
+    batch: BatchPlan,
+    account: String,
+    password: String,
+    uid: i32,
+    engine_name: &'static str,
+    template: Arc<SharedClientTemplate>,
+    selected: Arc<SelectedGameData>,
+    fixture: Fixture,
+}
+
+fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
+    let BatchRunConfig {
+        batch_index,
+        batch,
+        account,
+        password,
+        uid,
+        engine_name,
+        template,
+        selected,
+        fixture,
+    } = config;
     let trace = Arc::new(Mutex::new(ProbeTrace::default()));
     let capture = Arc::new(StdMutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
@@ -2035,26 +2503,28 @@ fn run_live_probe() {
         probe_scenario(fixture.stand, Arc::clone(&trace)),
         template.world(),
     );
-    let names = vec![account.clone()];
-    runner.set_live_names(&names);
+    runner.set_live_names(std::slice::from_ref(&account));
     runner.set_shot_sink(Box::new(|_, _| {}));
     let frame = FrameBuf::new();
     let frame_state = Arc::new(Mutex::new(LiveState {
         account: account.clone(),
         fixture: fixture.clone(),
-        selected: Arc::clone(&selected),
+        selected,
+        batch_index,
+        batch,
         runner,
         snapshot: GameSnapshot::new(),
         pump: Pump::new(),
         start_context: None,
         trace: Arc::clone(&trace),
         started_at: None,
+        login_client_session: None,
+        login_start_tick: None,
         started: false,
         packet_counts: DriverPacketCounts::new(),
     }));
     let state = Arc::clone(&frame_state);
     let frame_account = account.clone();
-    let uid = (u128::from(epoch) % i32::MAX as u128) as i32;
     let profile = Profile {
         username: account.clone(),
         password: password.into(),
@@ -2076,7 +2546,7 @@ fn run_live_probe() {
             }
         },
     )
-    .expect("connect to forwarded Engine L");
+    .unwrap_or_else(|error| panic!("connect to forwarded Engine {engine_name}: {error}"));
     let start_context = play.script_start_handle();
     {
         let mut state = frame_state.lock();
@@ -2097,19 +2567,20 @@ fn run_live_probe() {
 
     let preparation_deadline = Instant::now() + PREPARATION_DEADLINE;
     let mut terminal_error = None;
+    let mut last_native_status = None;
+    let mut completion_seen_at = None;
     loop {
-        // The fixture's own relog logs the bot out. The Login below is a real
-        // one-shot command, needed only where that relog consumed the login; an
-        // unlatched slot with auto-login reconnects by itself.
         if let Some(arm) = play.arm(&account) {
             if frame_state.lock().runner.take_relog_login() {
                 arm.arm_explicit_login();
             }
         }
-        if let Some(status) = play.script_native_status(&account) {
-            combat_proof::record_status(&account, &status, None);
+        let native_status = play.script_native_status(&account);
+        if let Some(status) = native_status.as_ref() {
+            combat_proof::record_status(&account, status, None);
+            last_native_status = Some(format!("{status:?}"));
         }
-        let (status, started_at, completed, failure) = {
+        let (runner_status, started_at, completed, failure, complete_tick, current_tick) = {
             let state = frame_state.lock();
             let trace = trace.lock();
             (
@@ -2117,29 +2588,44 @@ fn run_live_probe() {
                 state.started_at,
                 trace.completed,
                 trace.failure.clone(),
+                trace.complete_tick,
+                u64::from(state.snapshot.tick()),
             )
         };
         if let Some(reason) = failure {
             terminal_error = Some(reason);
             break;
         }
-        if completed {
-            if status == "Passed" {
+        if let Some(status) = native_status.as_ref() {
+            if status.phase == script::native::NativePhase::Blocked {
+                terminal_error = Some(status.failure.as_ref().map_or_else(
+                    || "native probe entered terminal Blocked status".to_owned(),
+                    |failure| format!("native probe entered Blocked status: {}", failure.message),
+                ));
                 break;
             }
-            if let Some(started_at) = started_at {
-                if started_at.elapsed() >= CELL_DEADLINE {
-                    terminal_error = Some(format!(
-                        "probe did not pass its scenario completion gate within {} seconds",
-                        CELL_DEADLINE.as_secs()
-                    ));
-                    break;
-                }
+            if status.phase == script::native::NativePhase::Complete && !completed {
+                terminal_error =
+                    Some("native probe became terminal before its reply trace completed".into());
+                break;
+            }
+        }
+        if completed {
+            if runner_status == "Passed" {
+                break;
+            }
+            let complete_seen_at = completion_seen_at.get_or_insert_with(Instant::now);
+            let complete_ticks = complete_tick.map_or(0, |tick| current_tick.saturating_sub(tick));
+            if complete_ticks >= 2 || complete_seen_at.elapsed() >= RUNNER_COMPLETE_DEADLINE {
+                terminal_error = Some(format!(
+                    "native probe completed but ScenarioRunner remained {runner_status} after {complete_ticks} game ticks"
+                ));
+                break;
             }
         } else if let Some(started_at) = started_at {
             if started_at.elapsed() >= CELL_DEADLINE {
                 terminal_error = Some(format!(
-                    "probe exceeded its {} second harness safety deadline",
+                    "batch exceeded its {} second harness safety deadline",
                     CELL_DEADLINE.as_secs()
                 ));
                 break;
@@ -2151,35 +2637,64 @@ fn run_live_probe() {
             ));
             break;
         }
-        if status.starts_with("Failed") {
-            terminal_error = Some(format!("ScenarioRunner ended with {status}"));
+        if runner_status.starts_with("Failed") {
+            terminal_error = Some(format!("ScenarioRunner ended with {runner_status}"));
             break;
         }
         thread::sleep(POLL_INTERVAL);
     }
-    play.script_stop(&account);
 
-    let (mut samples, observations, script_trace) = {
+    {
         let mut trace = trace.lock();
         if let Some(error) = terminal_error.as_deref() {
             trace.fail(error.to_owned());
         }
+        let observed_context = trace.terminal_context.clone().unwrap_or_else(|| json!({}));
+        trace.terminal_context = Some(json!({
+            "frame": observed_context,
+            "phase": trace.phase,
+            "last_reply": trace.last_reply,
+            "run_session": trace.session,
+            "native_status": last_native_status,
+            "terminal_reason": trace.failure,
+        }));
+    }
+    play.script_stop(&account);
+
+    let (mut samples, observations, script, admission) = {
+        let trace = trace.lock();
         let mut samples = trace.samples.clone();
         mark_unfinished_samples(
             &mut samples,
             "harness ended before this dispatch produced a reply",
         );
-        let script_trace = json!({
+        let admission = trace.session.zip(trace.login_player_info_ticks).map(
+            |(session, login_player_info_ticks)| BatchAdmission {
+                plan: batch,
+                account: account.clone(),
+                session,
+                login_player_info_ticks,
+            },
+        );
+        let script = json!({
+            "batch_index": batch_index,
+            "plan": batch,
+            "account": account,
             "started": trace.started,
             "start_tick": trace.start_tick,
             "session": trace.session,
             "script_run": trace.script_run,
+            "phase": trace.phase,
+            "settled_replies": trace.settled_replies,
+            "last_reply": trace.last_reply,
+            "login_player_info_ticks": trace.login_player_info_ticks,
             "complete_tick": trace.complete_tick,
             "completed": trace.completed,
             "failure": trace.failure,
+            "terminal_context": trace.terminal_context,
             "player_info_clock": trace.player_info_clock,
         });
-        (samples, trace.observations.clone(), script_trace)
+        (samples, trace.observations.clone(), script, admission)
     };
     let actions = capture
         .lock()
@@ -2187,9 +2702,9 @@ fn run_live_probe() {
         .actions
         .clone();
     let interactions = DriverPacketTrace::from_actions(&actions);
-    let (interaction_packet_rows, _, _) = interactions.value();
+    let (interaction_packets, _, _) = interactions.value();
     let state = frame_state.lock();
-    let (packet_rows, max_packets, packet_trace_complete) = state.packet_counts.value();
+    let (driver_packets, max_packets, packet_trace_complete) = state.packet_counts.value();
     let interactions_counted = state.packet_counts.includes_interactions(&interactions);
     drop(state);
     let mut capture_failures = record_capture_evidence(&mut samples, &actions);
@@ -2204,6 +2719,154 @@ fn run_live_probe() {
             "observed {max_packets} Driver packets in one PLAYER_INFO tick, above the limit of {MAX_DRIVER_PACKETS_PER_TICK}"
         ));
     }
+    BatchOutcome {
+        admission,
+        samples,
+        observations,
+        actions,
+        interaction_packets,
+        driver_packets,
+        max_packets,
+        packet_trace_complete,
+        capture_failures,
+        terminal_error,
+        script,
+    }
+}
+
+fn run_live_probe() {
+    assert_eq!(
+        std::env::var("LIVE").as_deref(),
+        Ok("1"),
+        "probe requires LIVE=1"
+    );
+    assert_eq!(
+        std::env::var("BOT_CPU").as_deref(),
+        Ok("1"),
+        "Engine A probe requires BOT_CPU=1"
+    );
+    let evidence_root = std::env::var_os("LIVE_EVIDENCE_DIR")
+        .map(PathBuf::from)
+        .expect("buy reply probe requires LIVE_EVIDENCE_DIR");
+    let epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock after epoch")
+        .as_secs();
+    let evidence = evidence_root.join(format!("buy-reply-probe-engine-a-{epoch}"));
+    let scratch = evidence.join("scratch");
+    std::fs::create_dir_all(&scratch).expect("create per-run probe evidence directory");
+
+    let options = profile_options(&scratch)
+        .unwrap_or_else(|error| panic!("buy reply probe prerequisites: {error}"));
+    let engine_game_port = options
+        .port
+        .expect("profile options require WORLD_GAME_PORT");
+    let engine_http_port = options
+        .http_port
+        .expect("profile options require WORLD_HTTP_PORT");
+    let nav_pack = options.nav_pack.clone().expect("selected navigation pack");
+    let nav_flags = options
+        .nav_flags
+        .clone()
+        .expect("selected navigation flags");
+    let template = Arc::new(
+        options
+            .resolve(None)
+            .expect("resolve Engine A R289 profile")
+            .prepare_template()
+            .expect("prepare isolated Engine A R289 client template"),
+    );
+    let selected = game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
+    let nav_world = template.world().expect("selected R289 navigation world");
+    if nav_world.named_bank_facts().is_none() {
+        nav_world
+            .bind_named_bank_facts(&selected)
+            .expect("bind selected R289 service facts before Play starts");
+    }
+    if nav_world.shop_keeper_facts().is_none() {
+        nav_world
+            .bind_shop_keeper_facts(&selected)
+            .expect("bind selected R289 shop facts before fixture lookup");
+    }
+    let keepers = Arc::clone(
+        nav_world
+            .shop_keeper_facts()
+            .expect("selected R289 world binds shop keeper facts"),
+    );
+    let fixture = fixture(&selected, &keepers)
+        .unwrap_or_else(|error| panic!("buy reply probe content fixture: {error}"));
+
+    let mut samples = Vec::new();
+    let mut observations = Vec::new();
+    let mut actions = Vec::new();
+    let mut interaction_packets = Vec::new();
+    let mut driver_packets = Vec::new();
+    let mut batch_scripts = Vec::new();
+    let mut admissions = Vec::new();
+    let mut capture_failures = Vec::new();
+    let mut terminal_errors = Vec::new();
+    let mut max_packets = 0;
+    let mut packet_trace_complete = true;
+
+    for (batch_index, batch) in BATCH_SCHEDULE.into_iter().enumerate() {
+        let (account, password) = mint_account();
+        let uid = ((u128::from(epoch) + batch_index as u128) % i32::MAX as u128) as i32;
+        let outcome = run_live_batch(BatchRunConfig {
+            batch_index,
+            batch,
+            account: account.clone(),
+            password,
+            uid,
+            engine_name: "A",
+            template: Arc::clone(&template),
+            selected: Arc::clone(&selected),
+            fixture: fixture.clone(),
+        });
+        if let Some(error) = outcome.terminal_error.as_ref() {
+            terminal_errors.push(format!("batch {batch_index}: {error}"));
+        }
+        if let Some(admission) = outcome.admission {
+            admissions.push(admission);
+        } else {
+            terminal_errors.push(format!(
+                "batch {batch_index} did not establish its login session fence"
+            ));
+        }
+        capture_failures.extend(
+            outcome
+                .capture_failures
+                .into_iter()
+                .map(|failure| format!("batch {batch_index}: {failure}")),
+        );
+        max_packets = max_packets.max(outcome.max_packets);
+        packet_trace_complete &= outcome.packet_trace_complete;
+        samples.extend(outcome.samples);
+        observations.push(json!({
+            "batch_index": batch_index,
+            "account": account,
+            "observations": outcome.observations,
+        }));
+        actions.push(json!({
+            "batch_index": batch_index,
+            "account": account,
+            "actions": outcome.actions,
+        }));
+        interaction_packets.push(json!({
+            "batch_index": batch_index,
+            "account": account,
+            "packets": outcome.interaction_packets,
+        }));
+        driver_packets.push(json!({
+            "batch_index": batch_index,
+            "account": account,
+            "packets": outcome.driver_packets,
+        }));
+        batch_scripts.push(outcome.script);
+    }
+    if let Err(error) = validate_batch_admission(&samples, &admissions) {
+        terminal_errors.push(format!("batch admission failed: {error}"));
+    }
+    let terminal_error = (!terminal_errors.is_empty()).then(|| terminal_errors.join("; "));
     let (k, candidate_ticks, latency_verdict) = proposed_verdict(&samples);
     let counts_complete = [Series::Held, Series::Refusal, Series::Close]
         .into_iter()
@@ -2218,9 +2881,16 @@ fn run_live_probe() {
         .iter()
         .filter(|sample| sample.status == SampleStatus::Error)
         .count();
+    let started = batch_scripts.iter().all(|batch| batch["started"] == true);
+    let completed = batch_scripts.len() == BATCH_SCHEDULE.len()
+        && batch_scripts.iter().all(|batch| batch["completed"] == true);
+    let player_info_clocks = batch_scripts
+        .iter()
+        .map(|batch| batch["player_info_clock"].clone())
+        .collect::<Vec<_>>();
     let passed = terminal_error.is_none()
-        && script_trace["started"] == true
-        && script_trace["completed"] == true
+        && started
+        && completed
         && counts_complete
         && sample_errors == 0
         && capture_failures.is_empty()
@@ -2231,23 +2901,23 @@ fn run_live_probe() {
     let verdict = if passed {
         latency_verdict
     } else {
-        "NO VERDICT: the complete probe acceptance gate failed; inspect sample errors, capture failures, packet trace, and terminal status".into()
+        "NO VERDICT: the complete probe acceptance gate failed; inspect sample errors, capture failures, batch admissions, packet trace, and terminal status".into()
     };
     let receipt = json!({
-        "schema": "gatherer-shop-buy-reply-engine-l-r1",
+        "schema": "gatherer-shop-buy-reply-engine-a-r1",
         "request": "PROBE-BUY-REPLY",
         "model": "openai-codex/gpt-6-luna",
         "engine": {
-            "name": "L",
+            "name": "A",
             "host": "127.0.0.1",
             "game_port": engine_game_port,
             "http_port": engine_http_port,
             "tick_ms": 600,
-            "measured_player_info_clock": script_trace["player_info_clock"],
+            "measured_player_info_clock": player_info_clocks,
             "selected_revision": "R289",
         },
-        "account": account,
-        "session": script_trace["session"],
+        "accounts": admissions.iter().map(|batch| &batch.account).collect::<Vec<_>>(),
+        "sessions": admissions.iter().map(|batch| batch.session).collect::<Vec<_>>(),
         "navigation": {"pack": nav_pack, "flags": nav_flags},
         "fixture": {
             "keeper_config": fixture.keeper.config.as_ref(),
@@ -2261,8 +2931,10 @@ fn run_live_probe() {
             "baseline_stock": fixture.baseline_stock,
             "baseline_unit_price_gp": fixture.baseline_unit_price,
             "seed": {"account_coins": SEED_COINS, "item_stack": 0},
-            "refusal_method": "Drop the same fresh account's seeded coin stack, then buy one real feather at 0 gp",
+            "refusal_method": "Drop each fresh account's seeded coin stack, then buy one real feather at 0 gp",
         },
+        "batch_schedule": BATCH_SCHEDULE,
+        "batch_login_tick_limit": MAX_BATCH_LOGIN_TICKS,
         "sample_requirements": {
             "dispatch_to_held_change": HELD_SAMPLES,
             "dispatch_to_fresh_refusal": REFUSAL_SAMPLES,
@@ -2282,9 +2954,13 @@ fn run_live_probe() {
         "max_driver_packets_per_PLAYER_INFO_tick": max_packets,
         "driver_packet_limit": MAX_DRIVER_PACKETS_PER_TICK,
         "driver_packet_trace_complete": packet_trace_complete,
-        "decoded_interaction_packets": interaction_packet_rows,
+        "decoded_interaction_packets": interaction_packets,
         "terminal_error": terminal_error,
-        "script": script_trace,
+        "script": {
+            "started": started,
+            "completed": completed,
+            "batches": batch_scripts,
+        },
         "passed": passed,
         "evidence_files": {
             "receipt": evidence.join("receipt.json").display().to_string(),
@@ -2311,7 +2987,7 @@ fn run_live_probe() {
     .expect("write actual host actions");
     std::fs::write(
         evidence.join("driver-packets.json"),
-        serde_json::to_vec_pretty(&packet_rows).expect("serialize actual Driver packet trace"),
+        serde_json::to_vec_pretty(&driver_packets).expect("serialize actual Driver packet trace"),
     )
     .expect("write actual Driver packet trace");
     let receipt_path = evidence.join("receipt.json");
@@ -2337,6 +3013,432 @@ fn live_buy_reply_probe_engine_l() {
 #[cfg(test)]
 mod network_coords_tests {
     use super::*;
+
+    fn test_fixture() -> Fixture {
+        let stand = WorldTile {
+            x: 10,
+            z: 10,
+            level: 0,
+        };
+        Fixture {
+            feather: ItemFact {
+                id: 314,
+                name: "Feather".into(),
+            },
+            coins: ItemFact {
+                id: 995,
+                name: "Coins".into(),
+            },
+            keeper: KeeperFact {
+                config: "keeper".into(),
+                name: "Keeper".into(),
+                id: 1,
+                tile: stand,
+                access: vec![stand],
+            },
+            stand,
+            baseline_stock: 100,
+            baseline_unit_price: 1,
+        }
+    }
+
+    fn record_fixture_reply(
+        probe: &BuyReplyProbeScript,
+        session: SessionIdentity,
+        ordinal: usize,
+        reply_tick: u64,
+    ) {
+        let sample = probe.add_sample(
+            Series::Held,
+            ordinal,
+            ordinal as u64,
+            reply_tick.saturating_sub(1),
+            session,
+        );
+        probe.trace.lock().samples[sample].dispatch_tick = Some(reply_tick.saturating_sub(1));
+        probe
+            .settle_reply(sample, reply_tick)
+            .expect("fixture reply passes the production reply oracle");
+    }
+
+    fn drive_progress_script(
+        slot: &mut script::SlotScript,
+        client: &mut Client,
+        snapshot: &GameSnapshot,
+        tick: u64,
+        here: WorldTile,
+    ) {
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: client,
+            tick,
+            here: Some((here.x, here.z, here.level)),
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(snapshot),
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+    }
+
+    #[test]
+    fn first_native_context_establishes_session_fence_after_start_rekey() {
+        let start_run = RunKey {
+            slot: 1,
+            run: 1,
+            session: 130,
+        };
+        let native_session = SessionIdentity {
+            slot: 1,
+            run: 1,
+            session: 2,
+        };
+        let stand = WorldTile {
+            x: 10,
+            z: 10,
+            level: 0,
+        };
+        let mut trace = ProbeTrace::default();
+
+        let start_run_label = format!("{start_run:?}");
+        record_script_start(&mut trace, 12, start_run);
+        assert_eq!(trace.session, None);
+        assert_eq!(trace.script_run.as_deref(), Some(start_run_label.as_str()));
+        assert_eq!(
+            validate_context_observation(&mut trace, native_session, Some(stand), None),
+            None,
+            "session alignment before the first native context is not a sampled boundary"
+        );
+        assert_eq!(trace.session, Some(native_session));
+        assert_eq!(trace.scene_tile, Some(stand));
+
+        trace.samples.push(Sample::new(
+            0,
+            Series::Held,
+            1,
+            "alice",
+            native_session,
+            1,
+            13,
+        ));
+        let changed_session = SessionIdentity {
+            session: native_session.session + 1,
+            ..native_session
+        };
+        let error = validate_context_observation(&mut trace, changed_session, Some(stand), Some(0))
+            .expect("a post-baseline session change invalidates the active sample");
+        assert!(error.contains("session changed during probe"));
+        assert_eq!(trace.samples[0].status, SampleStatus::Error);
+    }
+
+    #[test]
+    fn accepted_fixture_replies_keep_watchdog_alive_across_wedge() {
+        let fixture = test_fixture();
+        let trace = Arc::new(Mutex::new(ProbeTrace::default()));
+        let probe = BuyReplyProbeScript::new("alice".into(), fixture.clone(), Arc::clone(&trace));
+        let mut slot = script::SlotScript::new();
+        slot.start_test_script(
+            Box::new(OwnedProbeScript::progress_fixture(Arc::clone(&trace))),
+            None,
+        )
+        .expect("install the actual owned probe adapter");
+        let run = slot.native_run().expect("owned probe run");
+        let session = SessionIdentity::from(run);
+        {
+            let mut trace = trace.lock();
+            trace.started = true;
+            trace.session = Some(session);
+            trace.scene_tile = Some(fixture.stand);
+        }
+
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            cache_dir: String::new(),
+            members: false,
+            lowmem: true,
+        });
+        let tile = (fixture.stand.x, fixture.stand.z, fixture.stand.level);
+        let xp = [17, 23];
+        let started = Instant::now();
+        assert_eq!(
+            slot.feed_watchdog(started, Some(tile), &xp, false, true, &[]),
+            script::watchdog::WatchdogAction::None
+        );
+
+        record_fixture_reply(&probe, session, 1, 2);
+        let before_wedge = started + script::watchdog::WEDGE - Duration::from_secs(1);
+        drive_progress_script(&mut slot, &mut client, &snapshot, 1, fixture.stand);
+        slot.note_game_packet_tick(before_wedge);
+        assert_eq!(
+            slot.feed_watchdog(before_wedge, Some(tile), &xp, false, true, &[]),
+            script::watchdog::WatchdogAction::None
+        );
+
+        record_fixture_reply(&probe, session, 2, 3);
+        let after_wedge = started + script::watchdog::WEDGE + Duration::from_secs(1);
+        drive_progress_script(&mut slot, &mut client, &snapshot, 2, fixture.stand);
+        slot.note_game_packet_tick(after_wedge);
+        assert_eq!(
+            slot.feed_watchdog(after_wedge, Some(tile), &xp, false, true, &[]),
+            script::watchdog::WatchdogAction::None,
+            "the second accepted reply refreshes progress after the original wedge boundary"
+        );
+        assert_eq!(trace.lock().settled_replies, 2);
+        assert_eq!(
+            trace
+                .lock()
+                .samples
+                .iter()
+                .filter(|sample| sample.status == SampleStatus::Replied)
+                .count(),
+            2,
+            "the next fixture sample is accepted on the same native run"
+        );
+        assert_eq!(slot.native_run(), Some(run));
+        slot.stop();
+
+        let empty_trace = Arc::new(Mutex::new(ProbeTrace::default()));
+        let mut empty_slot = script::SlotScript::new();
+        empty_slot
+            .start_test_script(
+                Box::new(OwnedProbeScript::progress_fixture(Arc::clone(&empty_trace))),
+                None,
+            )
+            .expect("install the no-reply owned probe adapter");
+        let empty_run = empty_slot.native_run().expect("no-reply probe run");
+        let mut empty_client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            cache_dir: String::new(),
+            members: false,
+            lowmem: true,
+        });
+        let empty_started = Instant::now();
+        assert_eq!(
+            empty_slot.feed_watchdog(empty_started, Some(tile), &xp, false, true, &[]),
+            script::watchdog::WatchdogAction::None
+        );
+        drive_progress_script(
+            &mut empty_slot,
+            &mut empty_client,
+            &snapshot,
+            1,
+            fixture.stand,
+        );
+        let empty_wedge = empty_started + script::watchdog::WEDGE + Duration::from_secs(1);
+        empty_slot.note_game_packet_tick(empty_wedge);
+        assert_eq!(
+            empty_slot.feed_watchdog(empty_wedge, Some(tile), &xp, false, true, &[]),
+            script::watchdog::WatchdogAction::Restart {
+                reason: script::watchdog::RestartReason::Wedge,
+            },
+            "missing valid replies must not refresh the gameplay watchdog"
+        );
+        assert_eq!(empty_slot.native_run(), Some(empty_run));
+        empty_slot.stop();
+    }
+
+    #[test]
+    fn batch_schedule_admission_and_displacement_replay() {
+        // The first measured dispatch was at login-relative tick 31 (StartScript
+        // was tick 12); setup must include the ticks before StartScript.
+        let setup_ticks = 31_u64;
+        let settlement_ticks = REFUSAL_PACK_OBSERVE_TICKS;
+        // The archived Engine A series measured 191/199/199 ticks for 100
+        // held samples, 310 for refusal, and 398 for close.
+        let measured_series_ticks = [191_u64, 199, 199, 310, 398];
+        let mut admissions = Vec::new();
+        let mut samples = Vec::new();
+        for (batch_index, plan) in BATCH_SCHEDULE.into_iter().enumerate() {
+            let account = format!("alice{batch_index}");
+            let session = SessionIdentity {
+                slot: 1,
+                run: 1,
+                session: batch_index as u64 + 1,
+            };
+            let series_ticks = measured_series_ticks[batch_index];
+            let login_player_info_ticks = setup_ticks + series_ticks + settlement_ticks;
+            assert!(
+                login_player_info_ticks <= MAX_BATCH_LOGIN_TICKS,
+                "batch {batch_index} includes setup and settlement within the login bound"
+            );
+            admissions.push(BatchAdmission {
+                plan,
+                account: account.clone(),
+                session,
+                login_player_info_ticks,
+            });
+            for offset in 0..plan.samples {
+                let dispatch_tick =
+                    setup_ticks + series_ticks * offset as u64 / plan.samples as u64;
+                let reply_tick =
+                    setup_ticks + series_ticks * (offset as u64 + 1) / plan.samples as u64;
+                let ordinal = plan.ordinal(offset);
+                let mut sample = Sample::new(
+                    batch_index,
+                    plan.series,
+                    ordinal,
+                    &account,
+                    session,
+                    ordinal as u64,
+                    dispatch_tick,
+                );
+                sample.dispatch_tick = Some(dispatch_tick);
+                sample.dispatch_accepted = Some(true);
+                sample
+                    .mark_reply(reply_tick)
+                    .expect("measured reply follows its dispatch");
+                samples.push(sample);
+            }
+        }
+
+        let old_one_session_ticks = setup_ticks + 591 + 310 + 398 + settlement_ticks;
+        assert!(
+            old_one_session_ticks > MAX_BATCH_LOGIN_TICKS,
+            "the old continuous run crosses the first macro-event timer"
+        );
+        assert_eq!(
+            samples.len(),
+            HELD_SAMPLES + REFUSAL_SAMPLES + CLOSE_SAMPLES
+        );
+        assert!(validate_batch_admission(&samples, &admissions).is_ok());
+
+        let mut missing = samples.clone();
+        missing.retain(|sample| !(sample.batch_index == 0 && sample.ordinal == 1));
+        assert!(validate_batch_admission(&missing, &admissions)
+            .unwrap_err()
+            .contains("has 99 samples"));
+
+        let mut duplicate = samples.clone();
+        duplicate
+            .iter_mut()
+            .find(|sample| sample.batch_index == 0 && sample.ordinal == 2)
+            .expect("second held reply")
+            .ordinal = 1;
+        assert!(validate_batch_admission(&duplicate, &admissions)
+            .unwrap_err()
+            .contains("has 2 samples"));
+
+        let mut crossed = samples.clone();
+        crossed[0].session = admissions[1].session;
+        assert!(validate_batch_admission(&crossed, &admissions)
+            .unwrap_err()
+            .contains("crossed its account or run/session fence"));
+
+        let fixture = test_fixture();
+        let displaced = WorldTile {
+            x: fixture.stand.x + 20,
+            z: fixture.stand.z + 20,
+            level: fixture.stand.level,
+        };
+        let trace = Arc::new(Mutex::new(ProbeTrace::default()));
+        let mut probe = BuyReplyProbeScript::for_batch(
+            "alice4".into(),
+            fixture.clone(),
+            Arc::clone(&trace),
+            4,
+            BATCH_SCHEDULE[4],
+        );
+        probe.phase = Phase::Reopen {
+            next: 1,
+            close_tick: 1,
+            closes_after: 1,
+        };
+        let mut slot = script::SlotScript::new();
+        slot.start_test_script(Box::new(OwnedProbeScript::new(probe)), None)
+            .expect("install the actual fixture for a displacement replay");
+        let run = slot.native_run().expect("displacement replay run");
+        {
+            let mut trace = trace.lock();
+            trace.started = true;
+            trace.session = Some(SessionIdentity::from(run));
+            trace.scene_tile = Some(fixture.stand);
+        }
+
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            cache_dir: String::new(),
+            members: false,
+            lowmem: true,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.local_player = Some(client::dash3d::ClientPlayer::at(displaced.x, displaced.z));
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        client.bump_gens(client::io::ServerProt::PLAYER_INFO);
+        client.bump_gens(client::io::ServerProt::NPC_INFO);
+        assert!(snapshot.rebuild_family(&client, api::snapshot::Family::Player));
+        assert!(snapshot.rebuild_family(&client, api::snapshot::Family::Npc));
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut client,
+            tick: 1,
+            here: Some((displaced.x, displaced.z, displaced.level)),
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&snapshot),
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        let displacement = trace
+            .lock()
+            .failure
+            .clone()
+            .expect("Trade-to-reopen displacement invalidates the fixture");
+        assert!(
+            displacement.contains("player scene changed"),
+            "unexpected displacement failure: {displacement}"
+        );
+        let context = terminal_context(
+            "alice4",
+            &fixture,
+            &trace.lock(),
+            TerminalObservation {
+                snapshot: &snapshot,
+                client_session_generation: client.gens.session,
+                player_info_generation: client.gens.player_info,
+                npc_info_generation: client.gens.npc_info,
+                native_status: None,
+            },
+        );
+        assert_eq!(context["player_scene"]["state"], "displaced");
+        assert_eq!(context["keeper_state"], "coherent_empty_view");
+        assert_eq!(
+            context["terminal_reason"].as_str(),
+            Some(displacement.as_str())
+        );
+        slot.stop();
+
+        let old_facts = script::shop_open::Facts::new(
+            Some(1),
+            script::shop_open::Session::new(1, 1),
+            0,
+            0,
+            false,
+            false,
+        );
+        let old_reopen = script::shop_open::OpenCore::default().tick(&old_facts, || None);
+        match old_reopen {
+            script::shop_open::Decision::Failed(reason) => {
+                assert_eq!(reason.as_ref(), "the keeper is gone")
+            }
+            other => panic!("undisplaced old fixture unexpectedly returned {other:?}"),
+        }
+
+        let incomplete = samples
+            .iter()
+            .filter(|sample| sample.batch_index != 4 || sample.ordinal == 1)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(validate_batch_admission(&incomplete, &admissions)
+            .unwrap_err()
+            .contains("batch 4 has 1 samples"));
+    }
 
     #[test]
     fn keeper_candidate_uses_network_coords_without_size_fallback() {
