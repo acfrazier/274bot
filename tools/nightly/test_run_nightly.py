@@ -22,6 +22,7 @@ Run on Linux or Windows with the standard library only:
   python3 -B tools/nightly/test_run_nightly.py
 """
 
+import contextlib
 import json
 import io
 import hashlib
@@ -945,6 +946,19 @@ class LaneEnvironmentTests(unittest.TestCase):
         self.assertNotIn("T5W_INSPECT_CAPTURE_BASELINE", env)
         self.assertEqual(env["NAV_PACK"], str(rn.NAV_FIXTURE))
 
+    def test_test_lanes_receive_staged_catalog_and_multiway_inputs(self):
+        configured = {
+            "NIGHTLY_FROZEN_CATALOG": "/guest/input/frozen-catalog",
+            "NIGHTLY_CATALOGS_ROOT": "/guest/input/catalogs",
+            "NIGHTLY_MULTIWAY_CSV": "/guest/input/multiway.csv",
+            "RS2B0T": "/host/catalog-must-not-win",
+        }
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, configured):
+            env = self.asset_env(Path(tmp), snapshot=False, baseline=False)
+        self.assertEqual(env["RS2B0T"], configured["NIGHTLY_FROZEN_CATALOG"])
+        self.assertEqual(env["RS2B0T_CATALOGS_ROOT"], configured["NIGHTLY_CATALOGS_ROOT"])
+        self.assertEqual(env["BOT_NAV_CONTENT_DIR_MULTIWAY_CSV"], configured["NIGHTLY_MULTIWAY_CSV"])
+
 
     def test_post_adr_test_lanes_use_the_tree_pack_for_each_revision(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1791,6 +1805,107 @@ class PurgedGameDataRestoreTests(unittest.TestCase):
             self.assertIn(str(archive_dir / "README.md"), str(error.exception))
 
 
+class ConfiguredInputTests(unittest.TestCase):
+    def test_missing_inputs_write_complete_unavailable_verdicts_without_running(self):
+        cases = (
+            ("NIGHTLY_NAV_SNAPSHOT", "decoded", False),
+            ("NIGHTLY_NAV_SNAPSHOT", "decoded", True),
+            ("NIGHTLY_NAV_FIXTURE", "reference.navpack", False),
+            ("NIGHTLY_NAV_FIXTURE", "reference.navpack", True),
+            ("NIGHTLY_MULTIWAY_CSV", "multiway.csv", False),
+            ("NIGHTLY_FROZEN_CATALOG", "frozen-catalog", False),
+            ("NIGHTLY_CATALOGS_ROOT", "catalogs", False),
+            ("NIGHTLY_INPUT_UNAVAILABLE", "host source", False),
+        )
+        for setting, relative, partial in cases:
+            with self.subTest(setting=setting, partial=partial), \
+                    tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / relative
+                if partial:
+                    if setting == "NIGHTLY_NAV_SNAPSHOT":
+                        source.mkdir()
+                    else:
+                        source.write_bytes(b"pack without flags")
+                value = (f"missing configured input NIGHTLY_MAC_MULTIWAY_CSV: {source}"
+                         if setting == "NIGHTLY_INPUT_UNAVAILABLE" else str(source))
+                patches = [
+                    mock.patch.dict(os.environ, {setting: value}),
+                    mock.patch.object(rn, "ROOT", root),
+                    mock.patch.object(rn, "NAV_SNAPSHOT", root / "decoded"),
+                    mock.patch.object(rn, "NAV_FIXTURE", root / "reference.navpack"),
+                    mock.patch.object(rn, "CATALOG", root / "catalog"),
+                    mock.patch.object(rn, "JOB", "main"),
+                    mock.patch.object(rn, "LATENCY_BRANCH", "dev"),
+                    mock.patch.object(rn, "STEPS", ["lanes", "panel", "tui"]),
+                    mock.patch.object(rn, "FRESH_TREES", False),
+                    mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+                    mock.patch.object(rn, "ENGINE_MODE", "remote"),
+                    mock.patch.object(rn, "guard_disk", return_value=None),
+                    mock.patch.object(rn, "update_tree", return_value=("a" * 40, "a" * 9)),
+                    mock.patch.object(rn, "catalog_cells", return_value=["walk"]),
+                    mock.patch.object(rn, "read_skips", return_value={}),
+                    mock.patch.object(rn, "note_quiet_lock", return_value=None),
+                    mock.patch.object(rn, "lane_list",
+                                      return_value=[("test-workspace", ["test"], {})]),
+                    mock.patch.object(rn, "check_rs2b0t_api_drift",
+                                      return_value={"status": "unavailable", "reason": "test"}),
+                    mock.patch.object(rn, "log"),
+                ]
+                with contextlib.ExitStack() as stack:
+                    for patch in patches:
+                        stack.enter_context(patch)
+                    actions = {
+                        name: stack.enter_context(mock.patch.object(
+                            rn, name, side_effect=AssertionError(
+                                f"{name} ran with a missing configured input")))
+                        for name in ("find_unchanged_run", "prepare_nightly_data", "build",
+                                     "bootstrap_nav_snapshot", "engine_start", "run_lanes", "run_cells")
+                    }
+                    run_dir = rn.run_branch("dev", 1, None, None,
+                                            latency_bands=[50], latency_cells=["walk"])
+                for action in actions.values():
+                    action.assert_not_called()
+                missing = (source.with_suffix(".navflags")
+                           if partial and setting == "NIGHTLY_NAV_FIXTURE" else source)
+                summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+                self.assertIn(str(missing), summary["unavailable"])
+                self.assertIn(setting if setting != "NIGHTLY_INPUT_UNAVAILABLE"
+                              else "NIGHTLY_MAC_MULTIWAY_CSV", summary["unavailable"])
+                self.assertFalse(summary["build"]["ran"])
+                for section in ("lanes", "panel_cells", "cells", "latency_cells"):
+                    self.assertTrue(summary[section], section)
+                    for row in summary[section]:
+                        self.assertEqual(row["result"], "UNAVAILABLE")
+                        self.assertIn(str(missing), row["reason"])
+                for relative_result in ("lanes/test-workspace", "panel-cells/walk",
+                                        "cells/walk", "cells-latency/rtt50/walk"):
+                    verdict = json.loads((run_dir / relative_result / "result.json").read_text())
+                    self.assertEqual(verdict["result"], "UNAVAILABLE")
+                    self.assertIn(str(missing), verdict["reason"])
+                self.assertTrue((run_dir / "DONE").is_file())
+                self.assertTrue((run_dir / "SHA256SUMS").is_file())
+                self.assertIn("UNAVAILABLE", (run_dir / "summary.md").read_text())
+
+    def test_configured_snapshot_is_never_bootstrapped_or_refreshed(self):
+        for ready in (False, True):
+            with self.subTest(ready=ready), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                snapshot = root / "configured-cache"
+                build_log = root / "build.log"
+                build_log.write_text("decoded navigation cache is stale\n", encoding="utf-8")
+                with mock.patch.dict(os.environ, {"NIGHTLY_NAV_SNAPSHOT": str(snapshot)}), \
+                        mock.patch.object(rn, "NAV_SNAPSHOT", snapshot), \
+                        mock.patch.object(rn, "snapshot_ready", return_value=ready), \
+                        mock.patch.object(rn, "prepare_nightly_data"), \
+                        mock.patch.object(rn, "bootstrap_nav_snapshot") as bootstrap, \
+                        mock.patch.object(rn, "cargo_frontends",
+                                          side_effect=subprocess.CalledProcessError(1, ["cargo"])):
+                    with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
+                        rn.build(root / "tree", root / "target", root / "run", build_log)
+                bootstrap.assert_not_called()
+
+
 class BuildFailureTests(unittest.TestCase):
     def test_a_failed_build_writes_summary_and_done_without_starting_the_engine(self):
         tmp = tempfile.TemporaryDirectory()
@@ -1935,6 +2050,7 @@ class QuestJobTests(unittest.TestCase):
 
             self.assertEqual(env["ISOHOME_ROOT"], str(root / "isohome"))
             self.assertEqual(env["ISOHOME_DIR"], str(root / "home"))
+            self.assertEqual(env["BOT_NAV_SNAPSHOT_ROOT"], str(rn.NAV_SNAPSHOT))
             self.assertNotIn("UNRELATED_SECRET", env)
 
     def test_only_the_non_windows_quest_cell_environment_gets_300_ms(self):

@@ -668,6 +668,191 @@ class NightlyOrchestrationTests(unittest.TestCase):
         (run / "DONE").write_text("completed\n", encoding="utf-8")
         return run
 
+    def test_stages_readonly_lab_inputs_and_an_independent_frozen_worktree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.make_settings(root)
+            settings.nav_snapshot = root / "decoded"
+            snapshot = settings.nav_snapshot / "37214163f1e6ceca/versionlist"
+            snapshot.parent.mkdir(parents=True)
+            snapshot.write_bytes(b"decoded versionlist")
+            settings.nav_fixture = root / "reference.navpack"
+            settings.nav_fixture.write_bytes(b"pack")
+            settings.nav_fixture.with_suffix(".navflags").write_bytes(b"flags")
+            settings.multiway_csv = root / "multiway.csv"
+            settings.multiway_csv.write_text("1,2,3,4\n", encoding="utf-8")
+            settings.catalogs_root = root / "frozen-catalogs"
+            settings.catalogs_root.mkdir()
+            (settings.catalogs_root / "fixture.json").write_text("{}\n", encoding="utf-8")
+            settings.frozen_catalog = root / "frozen-worktree"
+            git("-C", settings.source_repo, "worktree", "add", "--detach",
+                str(settings.frozen_catalog), "HEAD")
+            frozen_head = git("-C", str(settings.frozen_catalog), "rev-parse", "HEAD")
+            settings.validate()
+
+            share = root / "share"
+            share.mkdir()
+            vm = FakeVM(settings, lambda: 1000)
+            vm.session = {"id": "fixtures", "share": str(share), "guest_home": "/guest"}
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=lambda *_: vm)
+            try:
+                with mock.patch.object(controller, "check_disk", return_value=1000):
+                    controller.stage_inputs()
+                staged = controller.input_root
+                for relative, expected in (
+                    ("nav-snapshot/37214163f1e6ceca/versionlist", b"decoded versionlist"),
+                    ("fixtures/nav-fixture.navpack", b"pack"),
+                    ("fixtures/nav-fixture.navflags", b"flags"),
+                    ("multiway.csv", b"1,2,3,4\n"),
+                    ("catalogs/fixture.json", b"{}\n"),
+                ):
+                    path = staged / relative
+                    self.assertEqual(path.read_bytes(), expected)
+                    self.assertEqual(path.stat().st_mode & 0o222, 0)
+                frozen = staged / "frozen-catalog"
+                self.assertTrue((frozen / ".git").is_dir())
+                self.assertEqual(git("-C", str(frozen), "rev-parse", "HEAD"), frozen_head)
+                self.assertFalse((frozen / ".git/objects/info/alternates").exists())
+                self.assertEqual((frozen / ".git/HEAD").stat().st_mode & 0o222, 0)
+                tools = dict.fromkeys(
+                    ("home", "tmp", "node_bin", "cargo_home", "rustup_home", "isohome",
+                     "python", "typescript_runner"), "/guest/tool"
+                )
+                environment = controller.job_environment("dev", "main", tools)
+                for key, relative in (
+                    ("NIGHTLY_FROZEN_CATALOG", "frozen-catalog"),
+                    ("NIGHTLY_CATALOGS_ROOT", "catalogs"),
+                    ("NIGHTLY_MULTIWAY_CSV", "multiway.csv"),
+                    ("NIGHTLY_NAV_FIXTURE", "fixtures/nav-fixture.navpack"),
+                ):
+                    self.assertEqual(environment[key], f"{nightly.GUEST_SHARE}/input/{relative}")
+                self.assertEqual(environment["NIGHTLY_NAV_SNAPSHOT"], "/guest/nightly/nav-snapshot")
+                self.assertEqual(snapshot.stat().st_mode & 0o200, 0o200)
+            finally:
+                nightly.make_writable_and_remove(share / "input")
+                nightly.make_writable_and_remove(share / "control")
+
+    def test_missing_configured_inputs_complete_the_controller_with_named_reasons(self):
+        for name in ("NIGHTLY_MAC_NAV_SNAPSHOT", "NIGHTLY_MAC_MULTIWAY_CSV",
+                     "NIGHTLY_MAC_NAV_FIXTURE", "NIGHTLY_MAC_FROZEN_CATALOG",
+                     "NIGHTLY_MAC_CATALOGS_ROOT"):
+            with self.subTest(setting=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                missing = root / "missing"
+                settings = self.make_settings(root, {name: str(missing)})
+                vm = FakeVM(settings, lambda: 1000)
+                controller = nightly.NightlyOrchestrator(
+                    settings, ["dev"], vm_factory=lambda *_: vm
+                )
+                self.assertEqual(controller.run(), 0)
+                self.assertEqual([key for _command, key in vm.run_calls],
+                                 ["bootstrap", "dev-main", "dev-quest"])
+                for command, key in vm.run_calls[1:]:
+                    environment = dict(item.split("=", 1) for item in command[1:] if "=" in item)
+                    reason = environment["NIGHTLY_INPUT_UNAVAILABLE"]
+                    self.assertIn(name, reason)
+                    self.assertIn(str(missing), reason)
+                self.assertEqual(vm.stop_calls, 1)
+                self.assertFalse(settings.lock_dir.exists())
+                self.assertTrue(list(settings.runs.glob("*/summary.json")))
+
+    def test_missing_configured_nav_flags_reach_the_runner_as_unavailable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pack = root / "reference.navpack"
+            pack.write_bytes(b"pack")
+            settings = self.make_settings(root, {"NIGHTLY_MAC_NAV_FIXTURE": str(pack)})
+            vm = FakeVM(settings, lambda: 1000)
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=lambda *_: vm)
+            self.assertEqual(controller.run(), 0)
+            environment = dict(
+                item.split("=", 1) for item in vm.run_calls[1][0][1:] if "=" in item
+            )
+            self.assertIn("NIGHTLY_MAC_NAV_FIXTURE flags",
+                          environment["NIGHTLY_INPUT_UNAVAILABLE"])
+            self.assertIn(str(pack.with_suffix(".navflags")),
+                          environment["NIGHTLY_INPUT_UNAVAILABLE"])
+
+    def test_controller_publishes_real_unavailable_summaries_for_both_jobs(self):
+        import run_nightly as runner
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            missing = root / "missing-decoded-cache"
+            settings = self.make_settings(root, {"NIGHTLY_MAC_NAV_SNAPSHOT": str(missing)})
+
+            class VerdictVM(FakeVM):
+                def run_supervised(vm, command, key, progress):
+                    if key == "bootstrap":
+                        return super().run_supervised(command, key, progress)
+                    vm.run_calls.append((list(command), key))
+                    environment = dict(item.split("=", 1) for item in command[1:] if "=" in item)
+                    guest_root = Path(vm.session["guest_home"]) / "nightly"
+                    job = environment["NIGHTLY_JOB"]
+                    patches = [
+                        mock.patch.dict(os.environ, environment),
+                        mock.patch.object(runner, "ROOT", guest_root),
+                        mock.patch.object(runner, "RUNS_ROOT_OVERRIDE", None),
+                        mock.patch.object(runner, "RUN_SUFFIX", environment["NIGHTLY_RUN_SUFFIX"]),
+                        mock.patch.object(runner, "JOB", job),
+                        mock.patch.object(runner, "STEPS", ["tui"]),
+                        mock.patch.object(runner, "FRESH_TREES", False),
+                        mock.patch.object(runner, "REQUIRE_CONSOLE", False),
+                        mock.patch.object(runner, "ENGINE_MODE", "remote"),
+                        mock.patch.object(runner, "CATALOG", settings.catalog),
+                        mock.patch.object(runner, "update_tree",
+                                          return_value=("a" * 40, "a" * 9)),
+                        mock.patch.object(runner, "catalog_cells",
+                                          return_value=["walk", "quester_path"]),
+                        mock.patch.object(runner, "read_skips", return_value={}),
+                        mock.patch.object(runner, "guard_disk", return_value=None),
+                        mock.patch.object(runner, "note_quiet_lock", return_value=None),
+                        mock.patch.object(runner, "check_rs2b0t_api_drift",
+                                          return_value={"status": "unavailable", "reason": "test"}),
+                        mock.patch.object(runner, "log"),
+                    ]
+                    with contextlib.ExitStack() as stack:
+                        for patch in patches:
+                            stack.enter_context(patch)
+                        for name in ("build", "engine_start", "bootstrap_nav_snapshot", "run_cells"):
+                            stack.enter_context(mock.patch.object(
+                                runner, name, side_effect=AssertionError(f"unexpected {name}")))
+                        runner.run_branch("dev", 1, None, None, latency_bands=[])
+                    return 0
+
+            vm = VerdictVM(settings, lambda: 1000)
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=lambda *_: vm)
+            self.assertEqual(controller.run(), 0)
+            summaries = [
+                (path.parent, json.loads(path.read_text(encoding="utf-8")))
+                for path in settings.runs.glob("*/summary.json")
+            ]
+            summaries = [(run, summary) for run, summary in summaries if "job" in summary]
+            self.assertEqual({summary["job"] for _run, summary in summaries}, {"main", "quest"})
+            self.assertEqual(len(summaries), 2)
+            for run, summary in summaries:
+                self.assertIn("NIGHTLY_MAC_NAV_SNAPSHOT", summary["unavailable"])
+                self.assertIn(str(missing), summary["unavailable"])
+                self.assertEqual(len(summary["cells"]), 1)
+                self.assertEqual(summary["cells"][0]["result"], "UNAVAILABLE")
+                cell = summary["cells"][0]["cell"]
+                verdict = json.loads((run / "cells" / cell / "result.json").read_text())
+                self.assertEqual(verdict["reason"], summary["unavailable"])
+                self.assertTrue((run / "DONE").is_file())
+            self.assertEqual(vm.stop_calls, 1)
+            self.assertFalse(settings.lock_dir.exists())
+
+    def test_manual_cell_selection_reaches_the_guest_runner(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(Path(temporary), {
+                "NIGHTLY_MAC_JOBS": "main", "NIGHTLY_MAC_STEPS": "tui",
+                "NIGHTLY_MAC_CELLS": "walk,inventory",
+            })
+            vm = FakeVM(settings, lambda: 1000)
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=lambda *_: vm)
+            self.assertEqual(controller.run(), 0)
+            self.assertEqual(vm.run_calls[1][0][-2:], ["--cells", "walk,inventory"])
+
 
     def test_stages_purged_data_and_configured_274_inputs_into_the_guest(self):
         with tempfile.TemporaryDirectory() as temporary:

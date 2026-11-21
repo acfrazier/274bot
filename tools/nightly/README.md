@@ -74,9 +74,11 @@ Jobs run sequentially and share the runner's lock and build tree:
   `maxConnected=1`. Main connects to host Engine A through `mac_vm.py`'s
   loopback forward on `44594/1080`; quest starts private Engine Q in the guest.
   The runner and TUI run inside the clone; `panel-play` uses its Aqua session.
-  A hand run can set `NIGHTLY_MAC_JOBS`, `NIGHTLY_MAC_STEPS` and
-  `NIGHTLY_MAC_LANES`. Set them to `main`, `lanes` and `build` for one build
-  lane. Omit them for the scheduled run.
+  A hand run can set `NIGHTLY_MAC_JOBS`, `NIGHTLY_MAC_STEPS`,
+  `NIGHTLY_MAC_LANES` and `NIGHTLY_MAC_CELLS`. Set the first three to `main`,
+  `lanes` and `build` for one build lane. For a small live proof, set jobs to
+  `main`, steps to `tui` and cells to a comma-separated cell list. Omit these
+  overrides for the scheduled run.
   The base includes the needed privacy grants. The host checks the 120 GiB
   free-space floor before and during the run. After stopping the clone, it
   verifies `SHA256SUMS` and publishes completed run folders to `NIGHTLY/`.
@@ -666,6 +668,26 @@ If two guests already run, the nightly refuses to clone.
    `.navflags` sidecar available for pre-ADR tests. The guest stages the whole
    fixtures directory read-only; post-ADR trees use their generated local-data
    navpack and do not fall back to this fixture.
+   Set `NIGHTLY_MAC_NAV_SNAPSHOT` to the decoded cache root; it defaults to
+   `<NIGHTLY_MAC_ROOT>/nav-snapshot`. The controller stages a read-only copy and
+   gives each isolated live cell the private guest snapshot path explicitly.
+   Set `NIGHTLY_MAC_NAV_FIXTURE` to use another navpack and its `.navflags`
+   sidecar for pre-ADR tests.
+
+   Set `NIGHTLY_MAC_MULTIWAY_CSV` to the pinned multiway CSV,
+   `NIGHTLY_MAC_FROZEN_CATALOG` to the frozen import-graph catalog checkout,
+   and `NIGHTLY_MAC_CATALOGS_ROOT` to the directory of catalog fixtures.
+   These inputs are copied read-only and passed to the test lanes. The frozen
+   import-graph checkout is cloned with independent Git metadata, so a host
+   worktree's `.git` pointer cannot escape into the guest. Live cells still use
+   `NIGHTLY_MAC_CATALOG`, not the frozen test catalog.
+   If one of these configured inputs is missing, the runner records
+   `UNAVAILABLE` with its setting name and source path. This also applies to
+   a missing navpack sidecar or decoded cache. The controller continues through
+   the required jobs and publishes their summaries. It does not replace a
+   configured decoded cache with a bootstrapped snapshot. Snapshot bootstrap
+   remains available only when `NIGHTLY_NAV_SNAPSHOT` is not configured.
+
 
    Keep a dedicated rs2b0t checkout at the catalog path, pinned to the same
    revision as the other nightlies. Do not use the operator's working copy.
@@ -703,6 +725,11 @@ If two guests already run, the nightly refuses to clone.
    NIGHTLY_MAC_CATALOG=$NIGHTLY_MAC_CATALOG
    NIGHTLY_MAC_ENGINE_A=$NIGHTLY_MAC_ENGINE_A
    NIGHTLY_MAC_ENGINE_Q=$NIGHTLY_MAC_ENGINE_Q
+   NIGHTLY_MAC_NAV_SNAPSHOT=${NIGHTLY_MAC_NAV_SNAPSHOT:-}
+   NIGHTLY_MAC_NAV_FIXTURE=${NIGHTLY_MAC_NAV_FIXTURE:-}
+   NIGHTLY_MAC_MULTIWAY_CSV=${NIGHTLY_MAC_MULTIWAY_CSV:-}
+   NIGHTLY_MAC_FROZEN_CATALOG=${NIGHTLY_MAC_FROZEN_CATALOG:-}
+   NIGHTLY_MAC_CATALOGS_ROOT=${NIGHTLY_MAC_CATALOGS_ROOT:-}
    NIGHTLY_MAC_QUIET_LOCK=$NIGHTLY_MAC_QUIET_LOCK
    NIGHTLY_MAC_ISOHOME=$NIGHTLY_MAC_ISOHOME
    NIGHTLY_MAC_PYTHON=$NIGHTLY_MAC_PYTHON
