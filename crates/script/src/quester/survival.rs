@@ -814,13 +814,19 @@ impl StageSurvival {
         route: Option<&'a FoodRoute>,
         run: bool,
     ) -> impl Iterator<Item = SupplyExposure> + 'a {
+        let mut crossing = None;
+        let mut crossing_route = None;
         self.exposures
             .iter()
             .enumerate()
             .map(move |(index, exposure)| {
                 let mut exposure = *exposure;
                 if let Some(zone) = self.food_zones.iter().find(|zone| zone.exposure == index) {
-                    exposure.ticks = zone.ticks(route, run);
+                    if crossing != Some(zone.crossing) {
+                        crossing = Some(zone.crossing);
+                        crossing_route = self.route_for_crossing(route, zone.crossing);
+                    }
+                    exposure.ticks = zone.ticks(crossing_route, run);
                 }
                 exposure
             })
@@ -830,15 +836,32 @@ impl StageSurvival {
         let mut duration = self.duration_ticks;
         let mut crossing = None;
         let mut longest = 0;
+        let mut crossing_route = None;
         for zone in self.food_zones.iter() {
             if crossing != Some(zone.crossing) {
                 duration += u64::from(longest);
                 longest = 0;
                 crossing = Some(zone.crossing);
+                crossing_route = self.route_for_crossing(route, zone.crossing);
             }
-            longest = longest.max(zone.ticks(route, run));
+            longest = longest.max(zone.ticks(crossing_route, run));
         }
         duration + u64::from(longest)
+    }
+
+    fn route_for_crossing<'a>(
+        &self,
+        route: Option<&'a FoodRoute>,
+        crossing: usize,
+    ) -> Option<&'a FoodRoute> {
+        // The assessment ends at the selected step's anchor. It does not
+        // measure a later, separate crossing declared by the same stage.
+        route.filter(|route| {
+            self.food_zones.iter().any(|zone| {
+                zone.crossing == crossing
+                    && route.ticks(zone.zone, false).is_some_and(|ticks| ticks > 0)
+            })
+        })
     }
 }
 
@@ -1127,6 +1150,16 @@ mod food_sizing_tests {
             walking.div_ceil(2)
         );
         assert_eq!(stage.food_exposures(None, true).next().unwrap().ticks, 100);
+        assert_eq!(
+            stage
+                .food_exposures(Some(&unvisited), true)
+                .next()
+                .unwrap()
+                .ticks,
+            100,
+            "a route that does not reach this crossing retains the walking fallback"
+        );
+        assert_eq!(stage.food_duration(Some(&unvisited), true), 100);
         assert_eq!(stage.exposures[0].ticks, 100);
         assert_eq!(
             risk::supply_bound(&stage.exposures, &input, &tables, food).map(|bound| bound.bound),
