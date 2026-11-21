@@ -242,9 +242,11 @@ including on a macOS worker over SSH where `python3` may be Apple's 3.9.
 
 ### Known issues in release notes
 
-Open known issues and deferred user-visible work live in GitHub issues
-under the `known-issue` label. At release cut, add a concise entry for each
-issue that affects the release and link it directly to the GitHub issue.
+Open known issues and deferred user-visible work live as GitHub issues in
+[acfrazier/274bot](https://github.com/acfrazier/274bot/issues?q=label%3Aknown-issue)
+with the `known-issue` label. At release cut, list each relevant issue in the
+release notes, link its entry to the GitHub issue, and state the known
+workaround or that none is known.
 
 ### Retry and cleanup
 

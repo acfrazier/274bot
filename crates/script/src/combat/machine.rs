@@ -3054,8 +3054,8 @@ impl Combat {
                 return Ok(plan);
             }
         }
-        // KI:54 records a client frame with the weapon in neither inventory nor
-        // equipment while its separate updates are applied.
+        // The client can briefly show a moved weapon in neither inventory nor equipment
+        // while it applies the separate inventory and equipment updates.
         if matches!(self.phase, Phase::Prep | Phase::Engage) {
             let weapon = self.desired(3, frame);
             let missing = self.request.allow.equipment
