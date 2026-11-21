@@ -57,7 +57,7 @@ count-dialog) → target identity (`still_present`) → label/opcode resolve
 - `WireCommand` has 13 kinds: `Op`, `UseItem`, `UseWidget`, `Button`,
   `Continue`, `Close`, `Count`, `Walk`, `WalkNearest`, `DoorStep`,
   `SideTab`, `Login`, `ClearLocalModal`.
-- `SendReason` has 21 refusal reasons (`NotAttached` … `DriverRejected`).
+- `SendReason` distinguishes admission, identity, menu eligibility and driver refusals.
 - `ActionResolution::operation_of`/`offers_operation` scan the target's
   actions for a label (trimmed, case-insensitive) or a 1..5 operation
   number. `TargetIdentity::still_present` checks per-kind identity (npc by
@@ -65,6 +65,37 @@ count-dialog) → target identity (`still_present`) → label/opcode resolve
   by id+tile, item by id+slot+component within its container).
 - `close_modal`/`clear_local_modal` dispatch via `CLOSE_BUTTON` do_action so
   the client's local modal state is cleared (not just the wire write).
+
+## Current native menu rows
+
+NPC operation one uses native menu dispatch when its received label is
+`Talk-to`. Buttons in `snapshot.chat_options()` use it only when their IDs
+are absent from every product's `snapshot.make_products()` buttons.
+Typed Continue uses the same dispatcher. Native and JavaScript callers
+use this path through `Interactions`.
+
+The chat-options decoder also records Make-X `BUTTON_OK` controls
+(`crates/api/src/snapshot/decode.rs:1127-1137,1177-1182`).
+The product-button exclusion keeps those controls on the synthetic path.
+
+The slot owner checks the observation's session and scene before building.
+NPC checks include the published slot, placed type, received varps, current
+resolved form and network position. Component checks include the current
+open root, ancestor path, clipping, button kind and duplicate-Continue latch.
+The dispatcher calls the client's ordinary menu builders without a renderer.
+It selects exactly one row by action and all three parameters, then calls
+`doAction` with that row's actual index.
+
+`MenuUnavailable`, `MenuAmbiguous` and `MenuIneligible` refuse without a
+synthetic fallback. `StaleSession`, `StaleScene` and `StaleTarget` distinguish
+expired observations. Menu construction restores the previous menu and
+temporary hover state on refusal. It does not create mouse-click telemetry.
+A sent gameplay frame does not prove that the server advanced the dialogue.
+
+Other NPC operations, player, loc, ground-item and inventory operations,
+item/widget targeting, non-dialogue buttons and local close actions still
+use the synthetic menu path. Walk, transport, count, fixture and control
+operations retain their separate mechanisms.
 
 ## Server-ordered input dispatch
 

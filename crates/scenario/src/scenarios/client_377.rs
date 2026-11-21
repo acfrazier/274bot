@@ -228,6 +228,7 @@ mod tests {
         if cache.npcs.is_empty() {
             cache.npcs.push(NpcType::default());
         }
+        cache.npcs[0].id = HANS_ID as i32;
         cache.npcs[0].name = "Hans".into();
         cache.npcs[0].op = vec![Some("Talk-to".into()), None, None, None, None];
         // A 377 menu exists only when its selected current form is interactive.

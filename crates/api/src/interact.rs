@@ -15,6 +15,8 @@ use crate::snapshot::{
 
 mod driver;
 pub use driver::*;
+mod native_menu;
+pub use native_menu::NativeMenuTarget;
 
 /// Selected, source-proven facts for named server-ordered content operations.
 pub mod server_ordered;
@@ -123,6 +125,16 @@ pub enum SendReason {
     InvalidTab,
     AlreadyIngame,
     DriverRejected,
+    /// The client did not build the requested action and target row.
+    MenuUnavailable,
+    /// More than one current row matches the requested identity.
+    MenuAmbiguous,
+    /// Current selection, visibility, or input state excludes the action.
+    MenuIneligible,
+    /// The observation belongs to another client connection.
+    StaleSession,
+    /// The observation belongs to another scene.
+    StaleScene,
 }
 
 /// The outcome of a wire interaction: the command was accepted and sent at
@@ -1214,6 +1226,81 @@ impl<'a> Interactions<'a> {
         tick: u64,
         rejected_reason: SendReason,
     ) -> SendResult<'t> {
+        let native_target = match &command {
+            WireCommand::Op {
+                target: OpTarget::Npc(npc),
+                operation: 1,
+            } if npc
+                .actions
+                .first()
+                .and_then(Option::as_deref)
+                .is_some_and(|action| action.eq_ignore_ascii_case("Talk-to"))
+                || self.snapshot.npcs().iter().any(|live| {
+                    live.index == npc.index
+                        && live
+                            .actions
+                            .first()
+                            .and_then(Option::as_deref)
+                            .is_some_and(|action| action.eq_ignore_ascii_case("Talk-to"))
+                }) =>
+            {
+                Some(NativeMenuTarget::NpcTalk(npc))
+            }
+            WireCommand::Button {
+                component_id,
+                button_type,
+            } => self
+                .snapshot
+                .widgets()
+                .iter()
+                .find(|widget| {
+                    // Chat options also contain Make-X controls. Keep those on the legacy path.
+                    // See snapshot/decode.rs:1127-1137,1177-1182.
+                    widget.component_id == *component_id
+                        && self
+                            .snapshot
+                            .chat_options()
+                            .iter()
+                            .any(|option| option.component_id == *component_id)
+                        && !self.snapshot.make_products().iter().any(|product| {
+                            product
+                                .buttons
+                                .iter()
+                                .any(|button| button.component_id == *component_id)
+                        })
+                })
+                .and_then(|widget| {
+                    button_opcode(*button_type)
+                        .map(|action| NativeMenuTarget::Component { widget, action })
+                }),
+            WireCommand::Continue { component_id } => {
+                let Some(widget) = self
+                    .snapshot
+                    .widgets()
+                    .iter()
+                    .find(|widget| widget.component_id == *component_id)
+                else {
+                    return SendResult::Refused {
+                        tick,
+                        reason: SendReason::StaleTarget,
+                    };
+                };
+                Some(NativeMenuTarget::Component {
+                    widget,
+                    action: MiniMenuAction::PAUSE_BUTTON,
+                })
+            }
+            _ => None,
+        };
+        if let Some(target) = native_target {
+            return match self.driver.dispatch_native_menu(self.snapshot, target) {
+                Ok(()) => {
+                    self.driver.note_input_activity();
+                    SendResult::Sent { tick, command }
+                }
+                Err(reason) => SendResult::Refused { tick, reason },
+            };
+        }
         let accepted = self.send_command(&command);
         if accepted {
             if counts_as_input_activity(&command) {
@@ -1278,9 +1365,8 @@ impl<'a> Interactions<'a> {
                 };
                 self.menu_action(opcode, 0, 0, *component_id)
             }
-            WireCommand::Continue { component_id } => {
-                self.menu_action(MiniMenuAction::PAUSE_BUTTON, 0, 0, *component_id)
-            }
+            // Continuations are dispatched only through current native rows.
+            WireCommand::Continue { .. } => false,
             // The m8aq `close`/`clear-local-modal` arms dispatch
             // CLOSE_BUTTON, so `Client::close_modal()` runs — it clears
             // the client's local modal ids AND writes CLOSE_MODAL.

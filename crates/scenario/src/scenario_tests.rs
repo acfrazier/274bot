@@ -12209,7 +12209,7 @@ fn valid_chat_receipt_passes_after_dirty_snapshots() {
 /// every other chat dialog, with the new question's texts and the
 /// `IF_OPENCHAT` iface generation the snapshot's option gate tracks.
 fn set_chat_dialog(client: &mut Client, options: &[&str]) {
-    use client::config::if_type::{ButtonType, IfType, IfTypeMut};
+    use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
     use client::io::ServerProt;
 
     for (i, text) in options.iter().enumerate() {
@@ -12219,6 +12219,10 @@ fn set_chat_dialog(client: &mut Client, options: &[&str]) {
             IfType {
                 id: id as i32,
                 layer_id: 100,
+                r#type: ComponentType::TYPE_TEXT,
+                width: 400,
+                height: 16,
+                button_text: (*text).into(),
                 ..Default::default()
             },
         );
@@ -12236,7 +12240,12 @@ fn set_chat_dialog(client: &mut Client, options: &[&str]) {
         IfType {
             id: 100,
             layer_id: 100,
+            r#type: ComponentType::TYPE_LAYER,
+            width: 479,
+            height: 96,
             children: Some((0..options.len() as i32).map(|i| 101 + i).collect()),
+            child_x: Some(vec![12; options.len()]),
+            child_y: Some((0..options.len() as i32).map(|i| 4 + i * 16).collect()),
             ..Default::default()
         },
     );
@@ -14040,6 +14049,7 @@ fn plant_named_banker(client: &mut Client, name: &str, local_x: i32, local_z: i3
     if cache.npcs.is_empty() {
         cache.npcs.push(NpcType::default());
     }
+    cache.npcs[0].id = 0;
     cache.npcs[0].name = name.into();
     cache.npcs[0].op = vec![Some("Talk-to".into()), None, None, None, None];
     let mut npc = ClientNpc {
@@ -14056,14 +14066,19 @@ fn plant_named_banker(client: &mut Client, name: &str, local_x: i32, local_z: i3
 }
 
 fn plant_latched_continue_chat(client: &mut Client) {
-    use client::config::if_type::{ButtonType, IfType, IfTypeMut};
+    use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
     use client::io::ServerProt;
     client.set_iface(
         968,
         IfType {
             id: 968,
             layer_id: 968,
+            r#type: ComponentType::TYPE_LAYER,
+            width: 479,
+            height: 96,
             children: Some(vec![972]),
+            child_x: Some(vec![12]),
+            child_y: Some(vec![4]),
             ..Default::default()
         },
     );
@@ -14072,6 +14087,10 @@ fn plant_latched_continue_chat(client: &mut Client) {
         IfType {
             id: 972,
             layer_id: 968,
+            r#type: ComponentType::TYPE_TEXT,
+            width: 400,
+            height: 16,
+            button_text: "Continue".into(),
             ..Default::default()
         },
     );

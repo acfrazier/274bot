@@ -701,7 +701,7 @@ impl Out for NoopOut {
     fn pjstr(&mut self, _s: &str) {}
 }
 
-/// Recording driver: captures every `set_menu`/`do_action`/`try_move`
+/// Recording driver: captures requested menu rows, dispatches and walks
 /// instead of sending, so the guardian's sends are asserted directly.
 /// `route_origin` is `(0,0)` and `build_base` `(0,0)`, so absolute
 /// world tiles equal the recorded `try_move` target.
@@ -746,6 +746,23 @@ impl Driver for FakeDriver {
     fn do_action(&mut self, slot: i32) -> bool {
         self.actions.push(slot);
         true
+    }
+    fn dispatch_native_menu(
+        &mut self,
+        _snapshot: &GameSnapshot,
+        target: api::interact::NativeMenuTarget<'_>,
+    ) -> Result<(), api::interact::SendReason> {
+        let (action, a, c) = match target {
+            api::interact::NativeMenuTarget::NpcTalk(npc) => {
+                (MiniMenuAction::OP_NPC1, npc.index as i32, 0)
+            }
+            api::interact::NativeMenuTarget::Component { widget, action } => {
+                (action, 0, widget.component_id)
+            }
+        };
+        self.set_menu(0, action, a, 0, c);
+        self.do_action(0);
+        Ok(())
     }
     fn try_move(
         &mut self,
@@ -881,6 +898,99 @@ fn guardian_talks_to_old_man_then_continues_open_chat() {
         "an open chat continues"
     );
     assert_eq!(drv.actions, vec![0]);
+}
+
+#[test]
+fn guardian_real_client_sends_native_talk_and_continue() {
+    use api::interact::PacketCheckpoint;
+    use client::io::ClientProt;
+
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Alice", 0, 0);
+    plant_npc(
+        &mut c,
+        7,
+        "Mysterious old man",
+        -1,
+        Some("Greetings Alice!"),
+    );
+    let mut guardian = Guardian::new();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let checkpoint = PacketCheckpoint::capture(&c);
+    let status = guardian.tick(&mut c, &snap, &settings, 0, None);
+    assert!(status.handling);
+    assert!(guardian.in_flight());
+    let mut packets = Vec::new();
+    assert!(c.trace_packets(checkpoint, &mut |opcode| {
+        packets.push(
+            api::prot::packet_metadata(c.revision(), opcode)
+                .expect("the traced guardian packet has revision metadata")
+                .named,
+        );
+    }));
+    assert_eq!(packets, [ClientProt::MOVE_OPCLICK, ClientProt::OPNPC1]);
+    assert_eq!(
+        &c.out.data()[c.out.pos - 2..c.out.pos],
+        &7_u16.to_be_bytes()
+    );
+
+    c.set_iface(
+        CHAT_ROOT as usize,
+        IfType {
+            id: CHAT_ROOT,
+            layer_id: CHAT_ROOT,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![CHAT_CONTINUE]),
+            child_x: Some(vec![24]),
+            child_y: Some(vec![20]),
+            width: 400,
+            height: 100,
+            ..Default::default()
+        },
+    );
+    c.set_iface(
+        CHAT_CONTINUE as usize,
+        IfType {
+            id: CHAT_CONTINUE,
+            layer_id: CHAT_ROOT,
+            r#type: ComponentType::TYPE_TEXT,
+            button_text: "Continue".into(),
+            width: 140,
+            height: 24,
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        CHAT_CONTINUE as usize,
+        IfTypeMut {
+            button_type: ButtonType::BUTTON_CONTINUE,
+            ..Default::default()
+        },
+    );
+    c.chat_modal_id = CHAT_ROOT;
+    tick_at(&mut c, &mut snap);
+    assert_eq!(snap.chat_continue_component_id(), CHAT_CONTINUE);
+    let checkpoint = PacketCheckpoint::capture(&c);
+    let status = guardian.tick(&mut c, &snap, &settings, 0, None);
+    assert!(status.handling);
+    assert!(c.resumed_pause_button);
+    packets.clear();
+    assert!(c.trace_packets(checkpoint, &mut |opcode| {
+        packets.push(
+            api::prot::packet_metadata(c.revision(), opcode)
+                .expect("the traced guardian packet has revision metadata")
+                .named,
+        );
+    }));
+    assert_eq!(packets, [ClientProt::RESUME_PAUSEBUTTON]);
+    assert_eq!(
+        &c.out.data()[c.out.pos - 2..c.out.pos],
+        &(CHAT_CONTINUE as u16).to_be_bytes()
+    );
 }
 
 #[test]

@@ -102,6 +102,15 @@ pub trait Driver {
     /// Dispatch the menu option at `slot`. Returns true iff the driver
     /// accepted the action.
     fn do_action(&mut self, slot: i32) -> bool;
+    /// Build and immediately dispatch one exact current client row.
+    /// Drivers without native menu construction refuse without a send.
+    fn dispatch_native_menu(
+        &mut self,
+        _snapshot: &GameSnapshot,
+        _target: NativeMenuTarget<'_>,
+    ) -> Result<(), SendReason> {
+        Err(SendReason::MenuUnavailable)
+    }
     /// Queue a walk (the `tryMove` path). Returns true iff a route exists.
     #[allow(clippy::too_many_arguments)] // mirrors the client tryMove signature
     fn try_move(
@@ -250,6 +259,13 @@ impl Driver for Client {
             self.doAction(slot);
             true
         }
+    }
+    fn dispatch_native_menu(
+        &mut self,
+        snapshot: &GameSnapshot,
+        target: NativeMenuTarget<'_>,
+    ) -> Result<(), SendReason> {
+        native_menu::dispatch(self, snapshot, target)
     }
 
     fn try_move(

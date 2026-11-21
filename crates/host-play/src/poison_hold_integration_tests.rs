@@ -37,6 +37,28 @@ impl Driver for HoldDriver {
         true
     }
 
+    fn dispatch_native_menu(
+        &mut self,
+        snapshot: &GameSnapshot,
+        target: api::interact::NativeMenuTarget<'_>,
+    ) -> Result<(), api::interact::SendReason> {
+        let (action, a, b, c) = match target {
+            api::interact::NativeMenuTarget::NpcTalk(npc) => (
+                client::client::MiniMenuAction::OP_NPC1,
+                npc.index as i32,
+                npc.network.x - snapshot.scene().base_x,
+                npc.network.z - snapshot.scene().base_z,
+            ),
+            api::interact::NativeMenuTarget::Component { widget, action } => {
+                (action, 0, 0, widget.component_id)
+            }
+        };
+        self.set_menu(0, action, a, b, c);
+        self.do_action(0)
+            .then_some(())
+            .ok_or(api::interact::SendReason::DriverRejected)
+    }
+
     fn try_move(
         &mut self,
         _src_x: i32,

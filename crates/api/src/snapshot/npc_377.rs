@@ -3,7 +3,7 @@
 use client::client::Client;
 use client::config::NpcType;
 
-pub(super) fn menu_form(client: &Client, placed: usize) -> Option<&NpcType> {
+pub(crate) fn menu_form(client: &Client, placed: usize) -> Option<&NpcType> {
     let cache = &client.cache;
     if client.revision() != client::io::ClientRevision::R377 {
         return cache.npcs.get(placed);

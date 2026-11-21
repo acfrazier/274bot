@@ -3506,6 +3506,107 @@ fn follow_npc_edge_blocks_when_the_driver_is_out_of_scene() {
 }
 
 #[test]
+fn follow_real_client_dispatches_continue_and_fare_choice_through_native_rows() {
+    use api::interact::PacketCheckpoint;
+    use client::io::ClientProt;
+
+    let mut c = scene_client();
+    plant_driver_npc(&mut c, 7, 1, 1);
+    let mut snapshot = snap_at(&mut c, 1, 2);
+    let edge = cart_edge();
+    let route = Route {
+        dest: edge.to,
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        ticks: 1.0,
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions::default();
+    assert!(traveller
+        .follow(&mut c, &snapshot, route.clone(), &mut options)
+        .is_none());
+
+    for (button_type, text, expected) in [
+        (
+            ButtonType::BUTTON_CONTINUE,
+            "Click here to continue",
+            ClientProt::RESUME_PAUSEBUTTON,
+        ),
+        (
+            ButtonType::BUTTON_OK,
+            "Yes please, I'd like to go to Brimhaven.",
+            ClientProt::IF_BUTTON,
+        ),
+    ] {
+        // Unlike the logical recorder fixtures, the real menu builder needs
+        // a visible layer and positioned child, as drawn by the client.
+        c.set_iface(
+            100,
+            IfType {
+                id: 100,
+                layer_id: 100,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![101]),
+                child_x: Some(vec![24]),
+                child_y: Some(vec![20]),
+                width: 400,
+                height: 100,
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            101,
+            IfType {
+                id: 101,
+                layer_id: 100,
+                r#type: ComponentType::TYPE_TEXT,
+                button_text: text.into(),
+                width: 300,
+                height: 24,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            101,
+            IfTypeMut {
+                button_type,
+                text: text.into(),
+                ..Default::default()
+            },
+        );
+        c.chat_modal_id = 100;
+        c.bump_gens(ServerProt::IF_OPENCHAT);
+        bump_rebuild(&mut c, &mut snapshot);
+        let checkpoint = PacketCheckpoint::capture(&c);
+        assert!(traveller
+            .follow(&mut c, &snapshot, route.clone(), &mut options)
+            .is_none());
+        let mut packets = Vec::new();
+        assert!(c.trace_packets(checkpoint, &mut |opcode| {
+            packets.push(
+                api::prot::packet_metadata(c.revision(), opcode)
+                    .expect("the traced traveller packet has revision metadata")
+                    .named,
+            );
+        }));
+        assert_eq!(packets, [expected]);
+        assert_eq!(
+            &c.out.data()[c.out.pos - 2..c.out.pos],
+            &101_u16.to_be_bytes()
+        );
+    }
+
+    c.chat_modal_id = -1;
+    plant_player(&mut c, 100, 0);
+    bump_rebuild(&mut c, &mut snapshot);
+    assert!(matches!(
+        traveller.follow(&mut c, &snapshot, route, &mut options),
+        Some(TravelOutcome::Arrived { .. })
+    ));
+}
+
+#[test]
 fn follow_npc_edge_answers_the_fare_dialog_before_arriving() {
     // The live cart drivers' `opnpc1` opens a chat dialog instead of
     // riding immediately: a "Hello!" page with a Continue button, then
@@ -8213,6 +8314,28 @@ impl Driver for FollowRec {
 
     fn do_action(&mut self, _slot: i32) -> bool {
         true
+    }
+
+    fn dispatch_native_menu(
+        &mut self,
+        snapshot: &GameSnapshot,
+        target: api::interact::NativeMenuTarget<'_>,
+    ) -> Result<(), SendReason> {
+        let (action, a, b, c) = match target {
+            api::interact::NativeMenuTarget::NpcTalk(npc) => (
+                MiniMenuAction::OP_NPC1,
+                npc.index as i32,
+                npc.network.x - snapshot.scene().base_x,
+                npc.network.z - snapshot.scene().base_z,
+            ),
+            api::interact::NativeMenuTarget::Component { widget, action } => {
+                (action, 0, 0, widget.component_id)
+            }
+        };
+        self.set_menu(0, action, a, b, c);
+        self.do_action(0)
+            .then_some(())
+            .ok_or(SendReason::DriverRejected)
     }
 
     fn try_move(

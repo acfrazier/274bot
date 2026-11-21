@@ -74,6 +74,7 @@ pub fn actor_observation(
 #[path = "npc_377.rs"]
 mod npc_377;
 use client::client::MiniMenuAction;
+pub(crate) use npc_377::menu_form as npc_menu_form;
 
 /// Borrow the current minimenu's structured operation and target identities.
 /// This reads only the published entry prefix and retains no per-tick state.

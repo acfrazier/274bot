@@ -32,6 +32,7 @@ pub use decode::{
     PLAYER_FACE_BASE,
 };
 mod varbit;
+pub(crate) use decode::npc_menu_form;
 use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIfaceGate};
 use login_quest_colours::LoginQuestColours;
 pub use varbit::{varbit_value, VarbitObservation, VarbitUnavailable, VarbitValue};
@@ -56,6 +57,10 @@ pub struct GameSnapshot {
     /// World generations the snapshot has been rebuilt up to.
     #[serde(skip)]
     gens: ClientGens,
+    /// Whether a full rebuild has published current connection counters in `gens`.
+    /// `session_start` retains the reset watermarks returned by `gens()`.
+    #[serde(skip)]
+    native_menu_scope_published: bool,
     npc: Vec<NpcView>,
     player: Option<LocalPlayerView>,
     /// The local actor's native overhead text. This is refreshed on every
@@ -365,6 +370,7 @@ impl Default for GameSnapshot {
     fn default() -> Self {
         GameSnapshot {
             gens: ClientGens::default(),
+            native_menu_scope_published: false,
             npc: Vec::new(),
             player: None,
             local_overhead_text: None,
@@ -801,7 +807,20 @@ impl GameSnapshot {
     /// rebuilt views. Actor-packet counters follow the latest drain, while
     /// `session` and `invalidations` retain the last session-reset watermark.
     pub fn gens(&self) -> ClientGens {
-        self.gens
+        let (session, invalidations) = self
+            .session_start
+            .as_ref()
+            .map_or((0, 0), |start| (start.session, start.invalidations));
+        ClientGens {
+            session,
+            invalidations,
+            ..self.gens
+        }
+    }
+
+    pub(crate) fn native_menu_scope(&self) -> Option<(u64, u64)> {
+        self.native_menu_scope_published
+            .then_some((self.gens.session, self.gens.invalidations))
     }
 
     /// Scene-family generation this snapshot last rebuilt the collision grid at.
@@ -981,6 +1000,9 @@ impl GameSnapshot {
         self.gens.player_info = client.gens.player_info;
         // Backstop: rebuild_npcs already publishes this with the NPC family.
         self.gens.npc_info = client.gens.npc_info;
+        self.gens.session = client.gens.session;
+        self.gens.invalidations = client.gens.invalidations;
+        self.native_menu_scope_published = true;
         dirty
     }
 
