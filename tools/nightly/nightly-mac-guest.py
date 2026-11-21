@@ -826,21 +826,26 @@ class Settings:
         for path, setting in (
             (self.game_data_274_engine, "NIGHTLY_MAC_GAME_DATA_274_ENGINE"),
             (self.game_data_274_content, "NIGHTLY_MAC_GAME_DATA_274_CONTENT"),
-            (self.frozen_catalog, "NIGHTLY_MAC_FROZEN_CATALOG"),
-            (self.catalogs_root, "NIGHTLY_MAC_CATALOGS_ROOT"),
         ):
             if path is not None and not path.is_dir():
                 raise NightlyError(f"{setting} is not a directory: {path}")
-        if self.nav_snapshot.exists() and not self.nav_snapshot.is_dir():
-            raise NightlyError(f"nav snapshot is not a directory: {self.nav_snapshot}")
-        for path, setting in (
-            (self.multiway_csv, "NIGHTLY_MAC_MULTIWAY_CSV"),
-            (self.nav_fixture, "NIGHTLY_MAC_NAV_FIXTURE"),
+
+    def unavailable_inputs(self) -> Optional[str]:
+        inputs = [
+            (self.nav_snapshot, "NIGHTLY_MAC_NAV_SNAPSHOT", "directory"),
+            (self.frozen_catalog, "NIGHTLY_MAC_FROZEN_CATALOG", "directory"),
+            (self.catalogs_root, "NIGHTLY_MAC_CATALOGS_ROOT", "directory"),
+            (self.multiway_csv, "NIGHTLY_MAC_MULTIWAY_CSV", "file"),
+            (self.nav_fixture, "NIGHTLY_MAC_NAV_FIXTURE", "file"),
             (self.nav_fixture.with_suffix(".navflags") if self.nav_fixture else None,
-             "NIGHTLY_MAC_NAV_FIXTURE flags"),
-        ):
-            if path is not None and not path.is_file():
-                raise NightlyError(f"{setting} is not a file: {path}")
+             "NIGHTLY_MAC_NAV_FIXTURE flags", "file"),
+        ]
+        missing = [
+            f"missing configured input {setting}: {path} (expected {kind})"
+            for path, setting, kind in inputs
+            if path is not None and not (path.is_dir() if kind == "directory" else path.is_file())
+        ]
+        return "; ".join(missing) or None
 
 
 class TartVM:
@@ -1476,6 +1481,7 @@ class NightlyOrchestrator:
         self.control_root: Optional[Path] = None
         self.pins: Dict[str, str] = {}
         self.previous_runs_root: Optional[Path] = None
+        self.input_unavailable: Optional[str] = None
         self.owned_lock = False
         self.quiet_stopped = False
         self.published_ok = False
@@ -1553,6 +1559,7 @@ class NightlyOrchestrator:
         self.control_root = share / "control"
         self.input_root.mkdir(parents=True, exist_ok=False)
         self.control_root.mkdir(parents=True, exist_ok=False)
+        self.input_unavailable = self.settings.unavailable_inputs()
         copy_tree(self.settings.runner, self.input_root / "runner", kind="runner")
         copy_tree(self.settings.catalog, self.input_root / "catalog", kind="catalog")
         copy_tree(self.settings.engine_a, self.input_root / "engine-a", kind="engine")
@@ -1569,17 +1576,19 @@ class NightlyOrchestrator:
         fixture_root = self.settings.root / "fixtures"
         copy_tree(fixture_root, self.input_root / "fixtures", kind="fixtures")
         if self.settings.nav_fixture is not None:
-            shutil.copy2(str(self.settings.nav_fixture),
-                         str(self.input_root / "fixtures/nav-fixture.navpack"))
-            shutil.copy2(str(self.settings.nav_fixture.with_suffix(".navflags")),
-                         str(self.input_root / "fixtures/nav-fixture.navflags"))
+            for source, name in (
+                (self.settings.nav_fixture, "nav-fixture.navpack"),
+                (self.settings.nav_fixture.with_suffix(".navflags"), "nav-fixture.navflags"),
+            ):
+                if source.is_file():
+                    shutil.copy2(str(source), str(self.input_root / "fixtures" / name))
         if self.settings.nav_snapshot.is_dir():
             copy_tree(self.settings.nav_snapshot, self.input_root / "nav-snapshot", kind="snapshot")
-        if self.settings.multiway_csv is not None:
+        if self.settings.multiway_csv is not None and self.settings.multiway_csv.is_file():
             shutil.copy2(str(self.settings.multiway_csv), str(self.input_root / "multiway.csv"))
-        if self.settings.catalogs_root is not None:
+        if self.settings.catalogs_root is not None and self.settings.catalogs_root.is_dir():
             copy_tree(self.settings.catalogs_root, self.input_root / "catalogs", kind="catalog")
-        if self.settings.frozen_catalog is not None:
+        if self.settings.frozen_catalog is not None and self.settings.frozen_catalog.is_dir():
             # A worktree's .git file points outside the share. Fetch an independent
             # shallow checkout so guest tests can verify its frozen HEAD.
             frozen = self.input_root / "frozen-catalog"
@@ -1813,6 +1822,8 @@ class NightlyOrchestrator:
             env["NIGHTLY_SELF_UPDATE_INFO"] = json.dumps(
                 self.self_update_info, sort_keys=True
             )
+        if self.input_unavailable:
+            env["NIGHTLY_INPUT_UNAVAILABLE"] = self.input_unavailable
         if self.settings.game_data_274_engine is not None:
             env["NIGHTLY_GAME_DATA_274_ENGINE"] = paths["game_data_274_engine"]
         if self.settings.game_data_274_content is not None:

@@ -1558,6 +1558,32 @@ def snapshot_ready() -> bool:
     return any(NAV_SNAPSHOT.glob("*/versionlist"))
 
 
+def configured_input_unavailable() -> str | None:
+    host_reason = os.environ.get("NIGHTLY_INPUT_UNAVAILABLE")
+    if host_reason:
+        return host_reason
+    missing = []
+    if os.environ.get("NIGHTLY_NAV_SNAPSHOT") and not snapshot_ready():
+        missing.append(f"missing configured input NIGHTLY_NAV_SNAPSHOT: {NAV_SNAPSHOT} "
+                       "(no decoded versionlist)")
+    inputs = [
+        ("NIGHTLY_FROZEN_CATALOG", "directory"),
+        ("NIGHTLY_CATALOGS_ROOT", "directory"),
+        ("NIGHTLY_MULTIWAY_CSV", "file"),
+    ]
+    for setting, kind in inputs:
+        value = os.environ.get(setting)
+        if value:
+            path = Path(value)
+            if not (path.is_dir() if kind == "directory" else path.is_file()):
+                missing.append(f"missing configured input {setting}: {path} (expected {kind})")
+    if os.environ.get("NIGHTLY_NAV_FIXTURE"):
+        for path in (NAV_FIXTURE, NAV_FIXTURE.with_suffix(".navflags")):
+            if not path.is_file():
+                missing.append(f"missing configured input NIGHTLY_NAV_FIXTURE: {path} (expected file)")
+    return "; ".join(missing) or None
+
+
 def bootstrap_nav_snapshot(tree: Path, run_dir: Path, build_log: Path, timeout: float | None) -> None:
     """Create the decoded client-cache snapshot the navigation bake reads.
 
@@ -2025,12 +2051,16 @@ def build(tree: Path, target: Path, run_dir: Path, build_log: Path, *,
         prepare_nightly_data(tree, target, build_log, remaining())
     bins = frontend_bins()
     if not snapshot_ready():
+        if os.environ.get("NIGHTLY_NAV_SNAPSHOT"):
+            raise RuntimeError(f"missing configured input NIGHTLY_NAV_SNAPSHOT: {NAV_SNAPSHOT} "
+                               "(no decoded versionlist)")
         bootstrap_nav_snapshot(tree, run_dir, build_log, remaining())
     try:
         cargo_frontends(tree, build_env(target), build_log, bins, remaining())
     except subprocess.CalledProcessError:
         # A changed engine cache invalidates the snapshot; refresh it once and retry.
-        if "decoded navigation cache" not in rtext(build_log)[-20000:]:
+        if (os.environ.get("NIGHTLY_NAV_SNAPSHOT")
+                or "decoded navigation cache" not in rtext(build_log)[-20000:]):
             raise
         bootstrap_nav_snapshot(tree, run_dir, build_log, remaining())
         cargo_frontends(tree, build_env(target), build_log, bins, remaining())
@@ -3875,6 +3905,9 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     steps: dict[str, dict] = {name: {"status": "not started", "deadline_s": STEP_DEADLINE_S[name]}
                               for name in STEPS}
     session = None
+    input_unavailable = configured_input_unavailable()
+    if unavailable is None:
+        unavailable = input_unavailable
     if REQUIRE_CONSOLE and unavailable is None:
         ok, detail, facts = console_session()
         session = {"status": detail, **facts}
@@ -3981,7 +4014,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     if "lanes" in STEPS:
         lane_names = [name for name, _, _ in lane_list(tree, require_generated=False)
                       if not only_lanes or name in only_lanes]
-    if build_ok and tree is not None and cells and cell_steps:
+    if not input_unavailable and build_ok and tree is not None and cells and cell_steps:
         previous = find_unchanged_run(
             expected, cells, cell_steps, step_deadlines, lane_names,
             latency_names if latency_active else [],

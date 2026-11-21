@@ -681,6 +681,12 @@ If two guests already run, the nightly refuses to clone.
    import-graph checkout is cloned with independent Git metadata, so a host
    worktree's `.git` pointer cannot escape into the guest. Live cells still use
    `NIGHTLY_MAC_CATALOG`, not the frozen test catalog.
+   If one of these configured inputs is missing, the runner records
+   `UNAVAILABLE` with its setting name and source path. This also applies to
+   a missing navpack sidecar or decoded cache. The controller continues through
+   the required jobs and publishes their summaries. It does not replace a
+   configured decoded cache with a bootstrapped snapshot. Snapshot bootstrap
+   remains available only when `NIGHTLY_NAV_SNAPSHOT` is not configured.
 
 
    Keep a dedicated rs2b0t checkout at the catalog path, pinned to the same
