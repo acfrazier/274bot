@@ -26305,6 +26305,7 @@ fn spawned_scriptless_worker_reconnects_after_a_connection_reset() {
     ));
     reset_tx.send(()).unwrap();
     let reconnect = attempt_rx.recv_timeout(Duration::from_secs(30));
+    let login_latch = arm.login_latch_reason();
     // Stop the worker before judging, and free the fake server if the
     // reconnect never came, so a failure ends at once and leaves no thread.
     arm.stop.store(true, Ordering::Relaxed);
@@ -26322,8 +26323,7 @@ fn spawned_scriptless_worker_reconnects_after_a_connection_reset() {
     );
     server_result.unwrap();
     assert_eq!(
-        arm.login_latch_reason(),
-        None,
+        login_latch, None,
         "no park or latch holds the bot logged out"
     );
 }
