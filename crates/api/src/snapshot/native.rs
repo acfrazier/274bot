@@ -95,6 +95,24 @@ impl<'a> SnapshotView<'a> {
     pub fn world_members(&self) -> Truth {
         self.world_members
     }
+    /// The latest applied local-player Teleport watermark observed by this frame.
+    pub fn local_player_teleport_watermark(&self) -> Option<Observed<u64>> {
+        let value = self.snapshot?.local_player_teleport_watermark?;
+        Some(Observed {
+            value,
+            stamp: self.stamp,
+        })
+    }
+
+    /// The latest client all-family invalidation watermark observed by this frame.
+    /// A session change also advances it, so check the session fence first.
+    pub fn rebuild_invalidation_watermark(&self) -> Option<Observed<u64>> {
+        let value = self.snapshot?.rebuild_invalidation_watermark?;
+        Some(Observed {
+            value,
+            stamp: self.stamp,
+        })
+    }
 
     /// The local player's server tile in a fully loaded, in-game scene.
     pub fn here(&self) -> Option<Observed<super::WorldTile>> {

@@ -396,20 +396,83 @@ fn validate_batch_admission(samples: &[Sample], batches: &[BatchAdmission]) -> R
     }
     Ok(())
 }
-fn scene_change_reason(expected: WorldTile, observed: Option<WorldTile>) -> Option<String> {
-    match observed {
-        Some(observed) if observed == expected => None,
-        Some(observed) => Some(format!(
-            "player scene changed: expected network tile {expected:?}, observed {observed:?}"
-        )),
-        None => Some("player network tile unavailable while probe is active".into()),
+// Tile movement is diagnostic. Client watermarks identify scene invalidations
+// and applied local-player Teleport events.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SceneIdentity {
+    map_base_x: i32,
+    map_base_z: i32,
+    level: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SceneObservation {
+    identity: SceneIdentity,
+    player_tile: WorldTile,
+    local_player_teleport_watermark: u64,
+    rebuild_invalidation_watermark: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SceneFence {
+    identity: SceneIdentity,
+    baseline_player_tile: WorldTile,
+    last_player_tile: WorldTile,
+    local_player_teleport_watermark: u64,
+    rebuild_invalidation_watermark: u64,
+}
+
+impl SceneFence {
+    fn new(observation: SceneObservation) -> Self {
+        Self {
+            identity: observation.identity,
+            baseline_player_tile: observation.player_tile,
+            last_player_tile: observation.player_tile,
+            local_player_teleport_watermark: observation.local_player_teleport_watermark,
+            rebuild_invalidation_watermark: observation.rebuild_invalidation_watermark,
+        }
     }
+}
+
+fn scene_observation(cx: &ActionContext<'_>) -> Option<SceneObservation> {
+    let view = cx.snapshot();
+    let world = view.world()?;
+    let player = view.local_player()?;
+    let local_player_teleport_watermark = view.local_player_teleport_watermark()?.value;
+    let rebuild_invalidation_watermark = view.rebuild_invalidation_watermark()?.value;
+    let mut player_tile = player.value.player.network;
+    player_tile.level = world.value.level;
+    Some(SceneObservation {
+        identity: SceneIdentity {
+            map_base_x: world.value.map_base_x,
+            map_base_z: world.value.map_base_z,
+            level: world.value.level,
+        },
+        player_tile,
+        local_player_teleport_watermark,
+        rebuild_invalidation_watermark,
+    })
+}
+
+fn record_scene_baseline(
+    trace: &mut ProbeTrace,
+    observation: Option<SceneObservation>,
+) -> Result<(), String> {
+    if trace.scene_fence.is_some() {
+        return Ok(());
+    }
+    let observation = observation.ok_or_else(|| {
+        "player scene observation unavailable when Gerrant's shop opened".to_owned()
+    })?;
+    trace.scene_fence = Some(SceneFence::new(observation));
+    Ok(())
 }
 
 fn validate_context_observation(
     trace: &mut ProbeTrace,
     session: SessionIdentity,
-    tile: Option<WorldTile>,
+    observation: Option<SceneObservation>,
     active_sample: Option<usize>,
 ) -> Option<String> {
     let error = match trace.session {
@@ -422,15 +485,36 @@ fn validate_context_observation(
         }
         Some(_) => None,
     }
-    .or_else(|| match trace.scene_tile {
-        Some(expected) => scene_change_reason(expected, tile),
-        None => tile.map_or_else(
-            || Some("player network tile unavailable before scene baseline".into()),
-            |observed| {
-                trace.scene_tile = Some(observed);
-                None
-            },
-        ),
+    .or_else(|| {
+        let fence = trace.scene_fence.as_mut()?;
+        let Some(observation) = observation else {
+            return Some("player scene observation unavailable while probe is active".into());
+        };
+        if fence.rebuild_invalidation_watermark != observation.rebuild_invalidation_watermark {
+            return Some(format!(
+                "client rebuild invalidation changed during probe: expected watermark {}, observed {}",
+                fence.rebuild_invalidation_watermark, observation.rebuild_invalidation_watermark
+            ));
+        }
+        if fence.identity != observation.identity {
+            return Some(format!(
+                "player scene changed: expected {:?}, observed {:?}",
+                fence.identity, observation.identity
+            ));
+        }
+        if fence.local_player_teleport_watermark
+            != observation.local_player_teleport_watermark
+        {
+            return Some(format!(
+                "local player Teleport applied after shop admission: expected watermark {}, observed {} (baseline tile {:?}, observed tile {:?})",
+                fence.local_player_teleport_watermark,
+                observation.local_player_teleport_watermark,
+                fence.baseline_player_tile,
+                observation.player_tile
+            ));
+        }
+        fence.last_player_tile = observation.player_tile;
+        None
     });
     if let Some(reason) = error.as_ref() {
         if let Some(row) = active_sample.and_then(|index| trace.samples.get_mut(index)) {
@@ -441,7 +525,8 @@ fn validate_context_observation(
     error
 }
 /// The script-start key can precede host session alignment. Establish the
-/// measurement fence from the first native context instead, before dispatch.
+/// measurement session from the first native context; admit a scene only
+/// after the Trade opens a usable shop page.
 fn record_script_start(trace: &mut ProbeTrace, tick: u64, run: RunKey) {
     trace.started = true;
     trace.start_tick = Some(tick);
@@ -455,7 +540,7 @@ struct ProbeTrace {
     session: Option<SessionIdentity>,
     script_run: Option<String>,
     phase: Option<&'static str>,
-    scene_tile: Option<WorldTile>,
+    scene_fence: Option<SceneFence>,
     login_player_info_ticks: Option<u64>,
     settled_replies: usize,
     last_reply: Option<LastReply>,
@@ -835,13 +920,11 @@ impl BuyReplyProbeScript {
 
     fn validate_context(&self, cx: &ActionContext<'_>) -> Option<String> {
         let session = SessionIdentity::from(cx.run());
-        let tile = cx
-            .snapshot()
-            .local_player()
-            .map(|row| row.value.player.network);
+        let needs_scene = self.trace.lock().scene_fence.is_some();
+        let observation = needs_scene.then(|| scene_observation(cx)).flatten();
         let active_sample = self.active_sample();
         let mut trace = self.trace.lock();
-        validate_context_observation(&mut trace, session, tile, active_sample)
+        validate_context_observation(&mut trace, session, observation, active_sample)
     }
 
     fn fail(&self, reason: impl Into<String>, sample: Option<usize>) -> ScriptFlow {
@@ -1026,7 +1109,12 @@ impl BuyReplyProbeScript {
         };
         match decision {
             Decision::Wait => Ok(false),
-            Decision::Opened => Ok(true),
+            Decision::Opened => {
+                let observation = scene_observation(cx);
+                let mut trace = self.trace.lock();
+                record_scene_baseline(&mut trace, observation)?;
+                Ok(true)
+            }
             Decision::Failed(reason) => Err(format!("shared Gerrant shop opener failed: {reason}")),
             Decision::Trade(keeper) => {
                 let request = InteractReq::Npc {
@@ -1959,11 +2047,68 @@ fn terminal_context(
             sequence: 0,
         },
     );
-    let player_tile = view.local_player().map(|row| row.value.player.network);
-    let player_scene = match player_tile {
-        Some(tile) if tile == fixture.stand => "at_fixture_access_tile",
-        Some(_) => "displaced",
-        None => "unavailable",
+    let observed_world = view.world().map(|world| world.value);
+    let player_tile = view.local_player().map(|row| {
+        let mut tile = row.value.player.network;
+        if let Some(world) = observed_world {
+            tile.level = world.level;
+        }
+        tile
+    });
+    let observed_identity = observed_world.map(|world| SceneIdentity {
+        map_base_x: world.map_base_x,
+        map_base_z: world.map_base_z,
+        level: world.level,
+    });
+    let local_player_teleport_watermark = view
+        .local_player_teleport_watermark()
+        .map(|watermark| watermark.value);
+    let rebuild_invalidation_watermark = view
+        .rebuild_invalidation_watermark()
+        .map(|watermark| watermark.value);
+    let expected_scene = trace.scene_fence.map(|fence| {
+        json!({
+            "map_base_x": fence.identity.map_base_x,
+            "map_base_z": fence.identity.map_base_z,
+            "level": fence.identity.level,
+        })
+    });
+    let observed_scene = observed_identity.map(|identity| {
+        json!({
+            "map_base_x": identity.map_base_x,
+            "map_base_z": identity.map_base_z,
+            "level": identity.level,
+        })
+    });
+    let player_scene = match (
+        trace.scene_fence,
+        observed_identity,
+        player_tile,
+        rebuild_invalidation_watermark,
+        local_player_teleport_watermark,
+    ) {
+        (Some(fence), Some(identity), _, _, _) if fence.identity != identity => "scene_changed",
+        (Some(fence), _, _, Some(watermark), _)
+            if fence.rebuild_invalidation_watermark != watermark =>
+        {
+            "rebuild_invalidated"
+        }
+        (Some(fence), _, _, Some(_), Some(watermark))
+            if fence.local_player_teleport_watermark != watermark =>
+        {
+            "local_player_teleported"
+        }
+        (Some(fence), Some(identity), Some(tile), Some(_), Some(_))
+            if fence.identity == identity && fence.last_player_tile == tile =>
+        {
+            "within_admitted_scene"
+        }
+        (Some(fence), Some(identity), Some(_), Some(_), Some(_)) if fence.identity == identity => {
+            "player_moved_since_last_script_tick"
+        }
+        (Some(_), _, _, _, _) => "scene_evidence_unavailable",
+        (None, _, Some(_), _, _) => "before_shop_admission",
+        (None, _, _, _, _) => "unavailable",
     };
     let npc_view = view.npcs();
     let npc_info_state = match npc_view {
@@ -2015,8 +2160,19 @@ fn terminal_context(
         "player_network_tile": player_tile,
         "player_scene": {
             "state": player_scene,
-            "expected_tile": fixture.stand,
+            "expected_scene": expected_scene,
+            "observed_scene": observed_scene,
+            "baseline_tile": trace.scene_fence.map(|fence| fence.baseline_player_tile),
+            "last_observed_tile": trace.scene_fence.map(|fence| fence.last_player_tile),
             "observed_tile": player_tile,
+            "expected_rebuild_invalidation_watermark": trace
+                .scene_fence
+                .map(|fence| fence.rebuild_invalidation_watermark),
+            "observed_rebuild_invalidation_watermark": rebuild_invalidation_watermark,
+            "expected_local_player_teleport_watermark": trace
+                .scene_fence
+                .map(|fence| fence.local_player_teleport_watermark),
+            "observed_local_player_teleport_watermark": local_player_teleport_watermark,
         },
         "npc_info_state": npc_info_state,
         "keeper_state": keeper_state,
@@ -3081,8 +3237,98 @@ mod network_coords_tests {
         });
     }
 
+    fn run_fenced_observation(
+        baseline: SceneObservation,
+        observed: SceneObservation,
+        phase: Phase,
+        session_changed: bool,
+    ) -> (Option<String>, SampleStatus) {
+        let fixture = test_fixture();
+        let trace = Arc::new(Mutex::new(ProbeTrace::default()));
+        let mut probe = BuyReplyProbeScript::new("alice".into(), fixture, Arc::clone(&trace));
+        probe.phase = phase;
+        let mut slot = script::SlotScript::new();
+        slot.start_test_script(Box::new(OwnedProbeScript::new(probe)), None)
+            .expect("install the real buy-reply probe in SlotScript");
+        let run = slot.native_run().expect("fenced probe run");
+        let session = SessionIdentity::from(run);
+        {
+            let mut trace = trace.lock();
+            let expected_session = if session_changed {
+                SessionIdentity {
+                    session: session.session + 1,
+                    ..session
+                }
+            } else {
+                session
+            };
+            trace.started = true;
+            trace.session = Some(expected_session);
+            trace.scene_fence = Some(SceneFence::new(baseline));
+            trace.samples.push(Sample::new(
+                0,
+                Series::Held,
+                1,
+                "alice",
+                expected_session,
+                1,
+                1,
+            ));
+        }
+
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            cache_dir: String::new(),
+            members: false,
+            lowmem: true,
+        });
+        client.ingame = true;
+        client.local_player_teleport_watermark = observed.local_player_teleport_watermark;
+        client.gens.invalidations = observed.rebuild_invalidation_watermark;
+        client.scene_state = 2;
+        client.map_build_base_x = observed.identity.map_base_x;
+        client.map_build_base_z = observed.identity.map_base_z;
+        client.minusedlevel = observed.identity.level;
+        client.build_minusedlevel = observed.identity.level;
+        client.local_player = Some(client::dash3d::ClientPlayer::at(
+            observed.player_tile.x - observed.identity.map_base_x,
+            observed.player_tile.z - observed.identity.map_base_z,
+        ));
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(api::snapshot::WorldStateView {
+            map_base_x: observed.identity.map_base_x,
+            map_base_z: observed.identity.map_base_z,
+            level: observed.identity.level,
+            ..Default::default()
+        });
+        client.bump_gens(client::io::ServerProt::PLAYER_INFO);
+        assert!(snapshot.rebuild_family(&client, api::snapshot::Family::Player));
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut client,
+            tick: 2,
+            here: Some((
+                observed.player_tile.x,
+                observed.player_tile.z,
+                observed.identity.level,
+            )),
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: Some(&snapshot),
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        let trace = trace.lock();
+        let result = (trace.failure.clone(), trace.samples[0].status);
+        drop(trace);
+        slot.stop();
+        result
+    }
+
     #[test]
-    fn first_native_context_establishes_session_fence_after_start_rekey() {
+    fn scene_fence_is_deferred_until_shop_admission() {
         let start_run = RunKey {
             slot: 1,
             run: 1,
@@ -3093,10 +3339,27 @@ mod network_coords_tests {
             run: 1,
             session: 2,
         };
-        let stand = WorldTile {
-            x: 10,
-            z: 10,
+        let identity = SceneIdentity {
+            map_base_x: 3200,
+            map_base_z: 3400,
             level: 0,
+        };
+        let stand = SceneObservation {
+            identity,
+            player_tile: WorldTile {
+                x: 3210,
+                z: 3410,
+                level: 0,
+            },
+            local_player_teleport_watermark: 0,
+            rebuild_invalidation_watermark: 0,
+        };
+        let approach = SceneObservation {
+            player_tile: WorldTile {
+                x: stand.player_tile.x + 1,
+                ..stand.player_tile
+            },
+            ..stand
         };
         let mut trace = ProbeTrace::default();
 
@@ -3110,7 +3373,15 @@ mod network_coords_tests {
             "session alignment before the first native context is not a sampled boundary"
         );
         assert_eq!(trace.session, Some(native_session));
-        assert_eq!(trace.scene_tile, Some(stand));
+        assert_eq!(trace.scene_fence, None);
+        assert_eq!(
+            validate_context_observation(&mut trace, native_session, Some(approach), None),
+            None,
+            "approach movement before an opened shop must not establish the scene fence"
+        );
+        record_scene_baseline(&mut trace, Some(approach))
+            .expect("the first usable shop page supplies the scene baseline");
+        assert_eq!(trace.scene_fence, Some(SceneFence::new(approach)));
 
         trace.samples.push(Sample::new(
             0,
@@ -3125,8 +3396,9 @@ mod network_coords_tests {
             session: native_session.session + 1,
             ..native_session
         };
-        let error = validate_context_observation(&mut trace, changed_session, Some(stand), Some(0))
-            .expect("a post-baseline session change invalidates the active sample");
+        let error =
+            validate_context_observation(&mut trace, changed_session, Some(approach), Some(0))
+                .expect("a post-baseline session change invalidates the active sample");
         assert!(error.contains("session changed during probe"));
         assert_eq!(trace.samples[0].status, SampleStatus::Error);
     }
@@ -3148,7 +3420,6 @@ mod network_coords_tests {
             let mut trace = trace.lock();
             trace.started = true;
             trace.session = Some(session);
-            trace.scene_tile = Some(fixture.stand);
         }
 
         let mut snapshot = GameSnapshot::new();
@@ -3242,7 +3513,7 @@ mod network_coords_tests {
     }
 
     #[test]
-    fn batch_schedule_admission_and_displacement_replay() {
+    fn batch_schedule_and_player_scene_fence_replay() {
         // The first measured dispatch was at login-relative tick 31 (StartScript
         // was tick 12); setup must include the ticks before StartScript.
         let setup_ticks = 31_u64;
@@ -3328,107 +3599,129 @@ mod network_coords_tests {
             .unwrap_err()
             .contains("crossed its account or run/session fence"));
 
-        let fixture = test_fixture();
-        let displaced = WorldTile {
-            x: fixture.stand.x + 20,
-            z: fixture.stand.z + 20,
-            level: fixture.stand.level,
+        let identity = SceneIdentity {
+            map_base_x: 3200,
+            map_base_z: 3400,
+            level: 0,
         };
-        let trace = Arc::new(Mutex::new(ProbeTrace::default()));
-        let mut probe = BuyReplyProbeScript::for_batch(
-            "alice4".into(),
-            fixture.clone(),
-            Arc::clone(&trace),
-            4,
-            BATCH_SCHEDULE[4],
-        );
-        probe.phase = Phase::Reopen {
-            next: 1,
-            close_tick: 1,
-            closes_after: 1,
-        };
-        let mut slot = script::SlotScript::new();
-        slot.start_test_script(Box::new(OwnedProbeScript::new(probe)), None)
-            .expect("install the actual fixture for a displacement replay");
-        let run = slot.native_run().expect("displacement replay run");
-        {
-            let mut trace = trace.lock();
-            trace.started = true;
-            trace.session = Some(SessionIdentity::from(run));
-            trace.scene_tile = Some(fixture.stand);
-        }
-
-        let mut client = Client::new(client::client::ClientConfig {
-            host: "127.0.0.1".into(),
-            port: 0,
-            cache_dir: String::new(),
-            members: false,
-            lowmem: true,
-        });
-        client.ingame = true;
-        client.scene_state = 2;
-        client.local_player = Some(client::dash3d::ClientPlayer::at(displaced.x, displaced.z));
-        let mut snapshot = GameSnapshot::new();
-        snapshot.seed_ingame(2);
-        client.bump_gens(client::io::ServerProt::PLAYER_INFO);
-        client.bump_gens(client::io::ServerProt::NPC_INFO);
-        assert!(snapshot.rebuild_family(&client, api::snapshot::Family::Player));
-        assert!(snapshot.rebuild_family(&client, api::snapshot::Family::Npc));
-        slot.on_game_tick(&mut script::ScriptCtx {
-            driver: &mut client,
-            tick: 1,
-            here: Some((displaced.x, displaced.z, displaced.level)),
-            walk: None,
-            walk_with: None,
-            inv: None,
-            snapshot: Some(&snapshot),
-            obj_names: None,
-            compiled: script::CompiledTick::default(),
-        });
-        let displacement = trace
-            .lock()
-            .failure
-            .clone()
-            .expect("Trade-to-reopen displacement invalidates the fixture");
-        assert!(
-            displacement.contains("player scene changed"),
-            "unexpected displacement failure: {displacement}"
-        );
-        let context = terminal_context(
-            "alice4",
-            &fixture,
-            &trace.lock(),
-            TerminalObservation {
-                snapshot: &snapshot,
-                client_session_generation: client.gens.session,
-                player_info_generation: client.gens.player_info,
-                npc_info_generation: client.gens.npc_info,
-                native_status: None,
+        let baseline = SceneObservation {
+            identity,
+            player_tile: WorldTile {
+                x: 3210,
+                z: 3410,
+                level: 0,
             },
-        );
-        assert_eq!(context["player_scene"]["state"], "displaced");
-        assert_eq!(context["keeper_state"], "coherent_empty_view");
-        assert_eq!(
-            context["terminal_reason"].as_str(),
-            Some(displacement.as_str())
-        );
-        slot.stop();
-
-        let old_facts = script::shop_open::Facts::new(
-            Some(1),
-            script::shop_open::Session::new(1, 1),
-            0,
-            0,
-            false,
-            false,
-        );
-        let old_reopen = script::shop_open::OpenCore::default().tick(&old_facts, || None);
-        match old_reopen {
-            script::shop_open::Decision::Failed(reason) => {
-                assert_eq!(reason.as_ref(), "the keeper is gone")
+            local_player_teleport_watermark: 0,
+            rebuild_invalidation_watermark: 0,
+        };
+        let cases = [
+            (
+                "one-tile walk",
+                SceneObservation {
+                    player_tile: WorldTile {
+                        x: baseline.player_tile.x + 1,
+                        ..baseline.player_tile
+                    },
+                    ..baseline
+                },
+                None,
+            ),
+            (
+                "two-tile run on each axis",
+                SceneObservation {
+                    player_tile: WorldTile {
+                        x: baseline.player_tile.x + 2,
+                        z: baseline.player_tile.z + 2,
+                        ..baseline.player_tile
+                    },
+                    ..baseline
+                },
+                None,
+            ),
+            (
+                "one-tile local-player teleport",
+                SceneObservation {
+                    player_tile: WorldTile {
+                        x: baseline.player_tile.x + 1,
+                        ..baseline.player_tile
+                    },
+                    local_player_teleport_watermark: baseline.local_player_teleport_watermark + 1,
+                    ..baseline
+                },
+                Some("local player Teleport applied"),
+            ),
+            (
+                "same-scene map rebuild invalidation",
+                SceneObservation {
+                    rebuild_invalidation_watermark: baseline.rebuild_invalidation_watermark + 1,
+                    ..baseline
+                },
+                Some("client rebuild invalidation changed"),
+            ),
+            (
+                "scene base change",
+                SceneObservation {
+                    identity: SceneIdentity {
+                        map_base_x: identity.map_base_x + 8,
+                        ..identity
+                    },
+                    ..baseline
+                },
+                Some("player scene changed"),
+            ),
+            (
+                "plane change",
+                SceneObservation {
+                    identity: SceneIdentity {
+                        level: 1,
+                        ..identity
+                    },
+                    player_tile: WorldTile {
+                        level: 1,
+                        ..baseline.player_tile
+                    },
+                    ..baseline
+                },
+                Some("player scene changed"),
+            ),
+        ];
+        for (label, observed, expected_failure) in cases {
+            let (failure, status) =
+                run_fenced_observation(baseline, observed, Phase::AwaitHeld { sample: 0 }, false);
+            if let Some(expected) = expected_failure {
+                let reason = failure
+                    .unwrap_or_else(|| panic!("{label} should invalidate the active sample"));
+                assert!(
+                    reason.contains(expected),
+                    "{label} had unexpected failure: {reason}"
+                );
+                assert_eq!(status, SampleStatus::Error, "{label} sample status");
+            } else {
+                assert!(
+                    failure.is_none(),
+                    "{label} unexpectedly failed: {failure:?}"
+                );
+                assert_eq!(status, SampleStatus::Pending, "{label} sample status");
             }
-            other => panic!("undisplaced old fixture unexpectedly returned {other:?}"),
         }
+        let (session_failure, session_status) =
+            run_fenced_observation(baseline, baseline, Phase::AwaitHeld { sample: 0 }, true);
+        let session_failure = session_failure.expect("session changes invalidate the probe");
+        assert!(session_failure.contains("session changed during probe"));
+        assert_eq!(session_status, SampleStatus::Error);
+
+        let (reopen_failure, _) = run_fenced_observation(
+            baseline,
+            cases[0].1,
+            Phase::Reopen {
+                next: 1,
+                close_tick: 1,
+                closes_after: 0,
+            },
+            false,
+        );
+        let reopen_failure = reopen_failure.expect("the fixture has no keeper for a reopened shop");
+        assert!(reopen_failure.contains("the keeper is gone"));
 
         let incomplete = samples
             .iter()

@@ -77,6 +77,12 @@ pub struct GameSnapshot {
     last_scene_rebuild_tick: Option<u32>,
     #[serde(skip)]
     last_server_movement_tick: Option<u32>,
+    /// The applied local-player Teleport watermark from the latest client drain.
+    #[serde(skip)]
+    local_player_teleport_watermark: Option<u64>,
+    /// The latest client all-family invalidation watermark.
+    #[serde(skip)]
+    rebuild_invalidation_watermark: Option<u64>,
     players: Vec<PlayerView>,
     /// Whether the player family has posted at least once in this session.
     #[serde(skip)]
@@ -373,6 +379,8 @@ impl Default for GameSnapshot {
             thieving_stun_stamp: None,
             last_scene_rebuild_tick: None,
             last_server_movement_tick: None,
+            local_player_teleport_watermark: None,
+            rebuild_invalidation_watermark: None,
             players: Vec::new(),
             players_available: false,
             projectiles: Vec::with_capacity(MAX_PROJECTILES_PER_SNAPSHOT),
@@ -797,6 +805,10 @@ impl GameSnapshot {
         };
     }
 
+    fn refresh_event_watermarks(&mut self, client: &Client) {
+        self.local_player_teleport_watermark = Some(client.local_player_teleport_watermark);
+        self.rebuild_invalidation_watermark = Some(client.gens.invalidations);
+    }
     /// The published generation counters. Family counters describe their
     /// rebuilt views. Actor-packet counters follow the latest drain, while
     /// `session` and `invalidations` retain the last session-reset watermark.
@@ -827,6 +839,7 @@ impl GameSnapshot {
     /// borrowed immutably (the ground-item lists iterate through the
     /// `LinkList`'s shared iterator).
     pub fn rebuild_family(&mut self, client: &Client, family: Family) -> bool {
+        self.refresh_event_watermarks(client);
         if !self.family_observed(client, family) {
             return false;
         }
@@ -925,6 +938,7 @@ impl GameSnapshot {
     /// `session` and `invalidations` remain the [`Self::reset_session`]
     /// watermark; the host handles session changes before this rebuild.
     pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
+        self.refresh_event_watermarks(client);
         client_adapter_cache::publish(&client.cache);
         // The first PLAYER_INFO follows the login script's quest-colour refresh.
         // A new observer that missed it cannot recover login-colour history.
