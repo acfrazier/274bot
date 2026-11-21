@@ -1189,7 +1189,7 @@ fn damage_food_count(twice_damage: u64, max_hit: u64, hp_max: u8, heal: i32) -> 
         .checked_mul(3)?
         .div_ceil(4)
         .checked_add(max_hit)?;
-    Some(damage.div_ceil(heal).clamp(1, 28) as u8)
+    Some(damage.div_ceil(heal).min(28) as u8)
 }
 
 fn unknown_kind() -> risk::KindRisk {
@@ -1519,7 +1519,7 @@ mod food_sizing_tests {
             .unwrap();
         assert_eq!(
             need.as_ref().map(|(item, count)| (item.id, *count)),
-            Some((379, 1)),
+            Some((379, 0)),
             "food sizing must not replace a measured zero exposure with the admission bound"
         );
         assert_eq!(stage.exposures[0].ticks, 100);
@@ -1544,6 +1544,7 @@ mod food_sizing_tests {
 
     #[test]
     fn damage_budget_rounds_up_and_keeps_the_opening_hit_margin() {
+        assert_eq!(damage_food_count(0, 0, 40, 20), Some(0));
         // Twenty-five throws, each uniform on 0..=7, need 139 HP of healing.
         assert_eq!(damage_food_count(175, 7, 40, 12), Some(12));
         assert_eq!(damage_food_count(175, 7, 40, 20), Some(7));
@@ -1567,6 +1568,18 @@ mod food_sizing_tests {
         }
         let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let tables = CombatTables::build(selected).unwrap();
+        let empty = [SupplyExposure {
+            ident: -1,
+            kind: unknown_kind(),
+            ticks: 0,
+        }];
+        let mut input = RiskInput::default();
+        input.hp_max = 40;
+        assert_eq!(
+            estimated_food_count(empty, &tables, &input, 0, 20, None),
+            0,
+            "unknown combat and poison facts do not create exposure on a measured clear route"
+        );
         let kind = risk::KindRisk::new(
             2,
             4,

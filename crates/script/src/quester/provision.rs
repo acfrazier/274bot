@@ -290,6 +290,8 @@ struct StagePreparation {
     food: Option<FoodAssessment>,
     food_plan: Option<Arc<dyn StepPlan>>,
     food_plan_revision: u64,
+    /// An unavailable optional bank is final for this stage, not this route.
+    survival_refused_stage: usize,
     gear_stage: usize,
     gear_run: Option<Box<dyn StepRun>>,
 }
@@ -348,6 +350,7 @@ impl Provisioner {
                 food: None,
                 food_plan: None,
                 food_plan_revision: 0,
+                survival_refused_stage: usize::MAX,
                 gear_stage: usize::MAX,
                 gear_run: None,
             }),
@@ -507,6 +510,7 @@ impl Provisioner {
         }
         self.preparation.gear_stage = usize::MAX;
         self.survival_stage = usize::MAX;
+        self.preparation.survival_refused_stage = usize::MAX;
         self.preparation.food = None;
         self.survival_bank = false;
         self.closer.cancel();
@@ -676,7 +680,11 @@ impl Provisioner {
                     .as_ref()
                     .is_some_and(|state| state.key.destination.is_some())
             {
-                self.survival_stage = usize::MAX;
+                self.survival_stage = if self.preparation.survival_refused_stage == stage {
+                    stage
+                } else {
+                    usize::MAX
+                };
             }
             if let Some(previous) = self.preparation.food.take() {
                 cx.tick.cx.cancel_request(previous.request_id);
@@ -1574,6 +1582,7 @@ impl Provisioner {
                     };
                     self.log_unmet(plan, &[unmet]);
                     self.survival_stage = stage;
+                    self.preparation.survival_refused_stage = stage;
                     return Poll::Pending;
                 }
                 Poll::Ready(Err(error))

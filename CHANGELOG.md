@@ -12,6 +12,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   reserve. Food withdrawals preserve space for quest items.
   Crossing estimates use planned hunt-zone exposure at walking speed unless
   running is observed. Missing route measurements retain the walking bound.
+  Measured routes without exposure request no extra food. An unavailable
+  optional bank reports its shortfall instead of repeating the same trip.
 
 ### Revision 377 login
 

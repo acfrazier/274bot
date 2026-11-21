@@ -376,6 +376,7 @@ A planner error is also informational. Preparation continues to admission.
 For unsupported stages, preparation estimates damage when content supplies a
 maximum hit and attack interval. Each random hit receives its full hit chance.
 The reserve covers 150% of expected damage plus one maximum opening hit.
+A measured route with no exposure needs no extra food.
 Poison receives its full pulse throughout the estimated stage. Food receives
 no more healing credit than the account's maximum Hitpoints.
 Concurrent attackers share one poison clock for that stage.
@@ -394,6 +395,8 @@ The remaining route uses walking speed. Energy recovery receives no credit.
 Each selected step uses its own crossing permissions and arrival radius.
 A changed origin, selected plan, or energy budget requires a new assessment.
 A bank trip therefore cannot retain a route from the old origin.
+An active supply trip retains the selected step instead of replacing it with
+a temporary missing plan. A refused optional trip does not restart that stage.
 
 A route that never enters a hunt zone does not engage that attacker.
 An attacker displaced before this route can still attack outside its spawn zone.

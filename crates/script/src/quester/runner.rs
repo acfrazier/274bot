@@ -1121,7 +1121,11 @@ impl Quester {
         let return_to = food_plan
             .as_ref()
             .and_then(|plan| plan.provisioning_anchor());
-        self.provisioner.set_food_plan(food_plan);
+        if !self.provisioner.has_run() {
+            // A bank or acquisition run temporarily hides the selected step.
+            // It does not replace that step's immutable food route plan.
+            self.provisioner.set_food_plan(food_plan);
+        }
         let mut cx = StepContext {
             tick,
             quests: &self.quests,
@@ -8483,6 +8487,143 @@ mod tests {
             true,
         );
         (script, snapshot, memory, bank_item)
+    }
+
+    #[test]
+    fn optional_food_bank_refusal_survives_runner_replanning() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use super::super::path::{PredicateDocument, RequiredZoneDocument, SequenceOrder};
+        use crate::native::HostEffect;
+
+        let (mut script, mut snapshot, _, _) = provisioning_survival_fixture();
+        let (lease, zone) = crate::combat::risk::provisioning_cross_fixture();
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut document = super::super::compile::decode_cook().unwrap();
+        let header = document.quest.as_mut().unwrap();
+        header.items.clear();
+        header.tools.clear();
+        header.coin_float = 0;
+        header.loadouts.clear();
+        header.owns_inventory = false;
+        let sequence = &mut document.roles[0].sequences[0];
+        sequence.order = SequenceOrder::Ordered;
+        sequence.cross = vec![RequiredZoneDocument {
+            id: zone,
+            name: "Ice warrior crossing".into(),
+            reason: "Exercise optional food provisioning through the runner.".into(),
+        }];
+        sequence.steps.truncate(1);
+        let step = &mut sequence.steps[0];
+        step.kind = "walk".into();
+        step.args = serde_json::json!({
+            "tile": [3220, 3220, 0], "source": "optional food refusal fixture"
+        });
+        step.skip_if = PredicateDocument::Any(vec![]);
+        step.settle = PredicateDocument::Any(vec![]);
+        let mut next = step.clone();
+        next.id = FactKey::new("next_walk");
+        next.args = serde_json::json!({
+            "tile": [3225, 3220, 0], "source": "changed optional food anchor"
+        });
+        sequence.steps.push(next);
+        script.path = super::super::compile::compile_uncached_for_test_with_zones(
+            &document,
+            &data,
+            &script.quests,
+            lease.zones().unwrap(),
+        )
+        .unwrap();
+        Arc::get_mut(&mut script.path).unwrap().provisioning.bank = None;
+        script.seq_index =
+            sequence_for_stage(&script.path, script.stage.as_ref().unwrap().0.as_ref()).unwrap();
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_bank_observation(-1, 0, None, Vec::new());
+        snapshot.seed_main_modal(-1, Vec::new());
+        let memory = api::bank_memory::BankMemory::default();
+        let mut ledger = None;
+        let mut assessments = 0;
+        let mut bank_picks = 0;
+        for (pass, (x, cursor)) in [(3210, 0), (3211, 0), (3211, 1)].into_iter().enumerate() {
+            script.cursor = cursor;
+            snapshot.seed_local_player(super::super::families::tests::local_player(
+                api::WorldTile {
+                    x,
+                    z: 3210,
+                    level: 0,
+                },
+            ));
+            let mut ready = false;
+            for observed in (pass as u64 * 12 + 1)..=(pass as u64 * 12 + 12) {
+                ready = super::super::families::tests::with_tick_bank(
+                    &snapshot,
+                    Some(&memory),
+                    &mut ledger,
+                    observed,
+                    |tick| matches!(script.poll_provision_once(tick), Provisioned::Ready),
+                );
+                if ready {
+                    break;
+                }
+                let ledger = ledger.as_mut().expect("preparation queued a host request");
+                for action in std::mem::take(&mut ledger.outbox) {
+                    let authority = action.authority();
+                    let evidence = api::quest_progress::EvidenceStamp {
+                        run: authority.run(),
+                        tick: observed,
+                        sequence: observed,
+                    };
+                    match action.effect {
+                        HostEffect::AssessWalk(_) => {
+                            assessments += 1;
+                            ledger.complete_assess_walk(
+                                &authority,
+                                crate::native::AssessReceipt {
+                                    request_id: authority.request_id().get(),
+                                    evidence,
+                                    assessment: None,
+                                    refusal: None,
+                                    detail: None,
+                                    route_ticks: 0,
+                                    food_route: None,
+                                },
+                            );
+                        }
+                        HostEffect::BankPick(_) => {
+                            bank_picks += 1;
+                            ledger.complete_bank_pick(
+                                &authority,
+                                crate::bank::BankPickReceipt {
+                                    request_id: authority.request_id().get(),
+                                    evidence,
+                                    outcome: crate::bank::BankPickOutcome::NoCandidate {
+                                        detail: Arc::from("no bank can supply the crossing"),
+                                    },
+                                },
+                            );
+                        }
+                        _ => panic!("unexpected food preparation request"),
+                    }
+                }
+            }
+            assert!(
+                ready,
+                "optional food provisioning retried {} bank trips instead of reporting the shortfall",
+                script.provisioner.bank_starts(),
+            );
+            assert_eq!(script.provisioner.bank_starts(), 1);
+            assert_eq!(bank_picks, 1, "one real bank-pick refusal is final");
+            assert_eq!(
+                assessments,
+                pass + 1,
+                "real route changes still refresh geometry"
+            );
+            let status = script.provisioner.status();
+            assert!(status.need > status.pack);
+            assert!(status.item.is_some_and(|item| item.contains("[stage ")));
+            assert!(ledger.as_ref().unwrap().outbox.is_empty());
+        }
     }
 
     #[test]
