@@ -82,8 +82,8 @@ const CROSSING_BITE_WINDOW: u32 = 3;
 /// stat and inventory are seen one tick later. The cell keeps its documented
 /// four-tick window (docs/dev/harness.md).
 const EAT_HEAL_WINDOW: u32 = 4;
-/// The walking crossing reserve is 22 lobsters: 147 expected throw damage
-/// plus two 11-HP poison pulses, 50% headroom, and a 7-HP opening hit.
+/// The cell holds 22 lobsters, below a full pack. The assessed route avoids
+/// spawn-centred hunt zones, so these supplies cover the deterministic seeds.
 /// The oracle checks a bite and continuation, never a random damage total.
 const CROSSING_LOBSTERS: i32 = 22;
 
@@ -287,13 +287,102 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
     )
     .unwrap();
     let covered: Vec<_> = zones.covered_zones(key).unwrap().collect();
+    // The engine sight check confirms zero exposure for throwers at spawn.
+    // A chase can displace a thrower, so this is not a guarantee afterward.
+    assert_eq!(
+        food.crossing_ticks(covered.iter().map(|zone| zone.key()), false),
+        Some(0),
+        "this plan bypasses the hunt zones; no measurement is not the same as zero exposure"
+    );
+    let destination = WorldTile {
+        x: 2871,
+        z: 3602,
+        level: 0,
+    };
+    assert!(world.collision.standable(destination));
+    assert!(zones.containing(destination).any(|zone| {
+        let (x0, z0, x1, z1) = zone.bounds();
+        covered.iter().any(|member| member.key() == zone.key())
+            && destination.x > x0
+            && destination.x < x1
+            && destination.z > z0
+            && destination.z < z1
+    }));
+    let route = nav_planner::router::find_with(
+        &world.collision,
+        &world.graph,
+        WorldTile {
+            x: 2838,
+            z: 3601,
+            level: 0,
+        },
+        destination,
+        opts,
+        &state,
+    )
+    .expect("the real standable target is reachable through the throwers' interior");
+    let walk_tiles: usize = route
+        .legs
+        .iter()
+        .filter_map(|leg| match leg {
+            nav_planner::router::Leg::Walk { tiles } => Some(tiles.len()),
+            _ => None,
+        })
+        .sum();
+    println!("positive food route destination={destination:?} walk_tiles={walk_tiles}");
+    let food = script::quester::FoodRoute::measure(
+        nav_planner::producer::route_view(&lease, &route).unwrap(),
+        zones,
+    )
+    .unwrap();
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
+    let compiled = script::quester::compile::prepare_for_test(|cap| {
+        compile_path(
+            path_json(destination).as_bytes(),
+            &selected,
+            &quests,
+            cap,
+            &script::local_state::OperatorLoadouts::absent(),
+            Some(zones),
+        )
+    })
+    .unwrap();
+    let model = compiled.provisioning.survival.as_ref().unwrap();
+    let pack = [api::snapshot::ItemView {
+        def: api::obj_names::ItemDefView {
+            id: 379,
+            name: Some("Lobster".into()),
+            stackable: false,
+            members: false,
+            base_value: 0,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        container: api::snapshot::ItemContainer::Inventory,
+        action_family: api::snapshot::ItemActionFamily::Held,
+        slot: 0,
+        count: CROSSING_LOBSTERS,
+        actions: Vec::new(),
+        component_id: 0,
+    }];
+    let stock = api::stock::Stock {
+        pack: Some(&pack),
+        capacity: Some(28),
+        worn: Some(&[]),
+        bank: None,
+    };
     let mut counts = Vec::new();
     for run in [false, true] {
         let ticks: Vec<_> = covered
             .iter()
             .map(|zone| food.ticks(zone.key(), run).unwrap())
             .collect();
-        let duration = u64::from(*ticks.iter().max().unwrap());
+        let duration = u64::from(
+            food.crossing_ticks(covered.iter().map(|zone| zone.key()), run)
+                .expect("the planned crossing must enter a thrower hunt zone"),
+        );
         let twice_hits: u64 = ticks
             .iter()
             .map(|&ticks| u64::from(ticks).div_ceil(7) * 7)
@@ -303,13 +392,22 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
             .div_ceil(4)
             .saturating_add(7)
             .div_ceil(12);
+        let mut input = script::combat::risk::RiskInput::default();
+        input.hp = 20;
+        input.hp_max = 40;
+        input.set_run(run);
+        let need = model
+            .plan(0, stock, input, Some(&compiled.provisioning), Some(&food))
+            .unwrap();
+        assert_eq!(need.food.as_ref().map(|(item, _)| item.id), Some(379));
+        assert_eq!(need.food.unwrap().1, i32::try_from(count).unwrap());
+        assert_eq!(need.bound, 1.0, "food sizing does not admit the crossing");
         println!(
             "thrower food run={run} zone_ticks={ticks:?} poison_ticks={duration} lobsters={count}"
         );
         counts.push(count);
     }
-    assert!(counts[0] > counts[1]);
-    assert!(u64::try_from(CROSSING_LOBSTERS).unwrap() >= counts[0]);
+    assert_eq!(counts, [9, 7]);
 }
 
 fn throwers_route_context(

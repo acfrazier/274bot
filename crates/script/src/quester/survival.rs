@@ -21,6 +21,10 @@ struct FoodZoneTime {
     tiles: u32,
     run_ticks: u32,
     holds: u32,
+    first_walk: u32,
+    last_walk: u32,
+    first_run: u32,
+    last_run: u32,
 }
 
 impl FoodRoute {
@@ -30,6 +34,8 @@ impl FoodRoute {
             return None;
         }
         let mut times: Vec<FoodZoneTime> = Vec::new();
+        let mut walk_clock = 0u32;
+        let mut run_clock = 0u32;
         for leg in route.legs() {
             let (tiles, hold) = match leg {
                 LegView::Walk(tiles) => (tiles, None),
@@ -41,6 +47,20 @@ impl FoodRoute {
                 .map(|(index, &tile)| (tile, None, index))
                 .chain(hold.map(|(tile, ticks)| (tile, Some(ticks), 0)))
             {
+                let hold = ticks.map(u32::try_from).transpose().ok()?;
+                let walk_delta = hold.unwrap_or(1);
+                if walk_delta == 0 {
+                    continue;
+                }
+                let run_delta = hold.unwrap_or(u32::from(tile_index % 2 == 0));
+                walk_clock = walk_clock.checked_add(walk_delta)?;
+                run_clock = run_clock.checked_add(run_delta)?;
+                let first_walk = walk_clock - walk_delta + 1;
+                let first_run = if hold.is_some() {
+                    run_clock - run_delta + 1
+                } else {
+                    run_clock
+                };
                 for zone in zones.containing(tile) {
                     let index = if let Some(index) =
                         times.iter().position(|time| time.zone == zone.key())
@@ -52,12 +72,18 @@ impl FoodRoute {
                             tiles: 0,
                             run_ticks: 0,
                             holds: 0,
+                            first_walk,
+                            last_walk: walk_clock,
+                            first_run,
+                            last_run: run_clock,
                         });
                         times.len() - 1
                     };
                     let time = &mut times[index];
-                    if let Some(ticks) = ticks {
-                        time.holds = time.holds.checked_add(u32::try_from(ticks).ok()?)?;
+                    time.last_walk = walk_clock;
+                    time.last_run = run_clock;
+                    if let Some(ticks) = hold {
+                        time.holds = time.holds.checked_add(ticks)?;
                     } else {
                         // One running tick can visit either tile of a pair.
                         // Pairing restarts after each transport, not across legs.
@@ -87,6 +113,35 @@ impl FoodRoute {
         // PathingEntity.processMovement: one step, then a second only for RUN.
         // Each takeStep changes each coordinate by at most one tile.
         u16::try_from((if run { time.run_ticks } else { time.tiles }).checked_add(time.holds)?).ok()
+    }
+
+    /// One poison clock from first entry to last exit, including gaps and holds.
+    pub fn crossing_ticks(
+        &self,
+        zones: impl IntoIterator<Item = BoundZoneKey>,
+        run: bool,
+    ) -> Option<u16> {
+        let mut first = u32::MAX;
+        let mut last = 0;
+        for zone in zones {
+            if zone.pack() != self.pack {
+                return None;
+            }
+            let Some(time) = self.zones.iter().find(|time| time.zone == zone) else {
+                continue;
+            };
+            let (start, end) = if run {
+                (time.first_run, time.last_run)
+            } else {
+                (time.first_walk, time.last_walk)
+            };
+            first = first.min(start);
+            last = last.max(end);
+        }
+        if first == u32::MAX {
+            return Some(0);
+        }
+        u16::try_from(last.checked_sub(first)?.checked_add(1)?).ok()
     }
 }
 
@@ -814,19 +869,13 @@ impl StageSurvival {
         route: Option<&'a FoodRoute>,
         run: bool,
     ) -> impl Iterator<Item = SupplyExposure> + 'a {
-        let mut crossing = None;
-        let mut crossing_route = None;
         self.exposures
             .iter()
             .enumerate()
             .map(move |(index, exposure)| {
                 let mut exposure = *exposure;
                 if let Some(zone) = self.food_zones.iter().find(|zone| zone.exposure == index) {
-                    if crossing != Some(zone.crossing) {
-                        crossing = Some(zone.crossing);
-                        crossing_route = self.route_for_crossing(route, zone.crossing);
-                    }
-                    exposure.ticks = zone.ticks(crossing_route, run);
+                    exposure.ticks = zone.ticks(route, run);
                 }
                 exposure
             })
@@ -840,28 +889,22 @@ impl StageSurvival {
         for zone in self.food_zones.iter() {
             if crossing != Some(zone.crossing) {
                 duration += u64::from(longest);
-                longest = 0;
                 crossing = Some(zone.crossing);
-                crossing_route = self.route_for_crossing(route, zone.crossing);
+                let span = route.and_then(|route| {
+                    route.crossing_ticks(
+                        self.food_zones
+                            .iter()
+                            .filter(|member| member.crossing == zone.crossing)
+                            .map(|member| member.zone),
+                        run,
+                    )
+                });
+                longest = span.unwrap_or(0);
+                crossing_route = span.and(route);
             }
             longest = longest.max(zone.ticks(crossing_route, run));
         }
         duration + u64::from(longest)
-    }
-
-    fn route_for_crossing<'a>(
-        &self,
-        route: Option<&'a FoodRoute>,
-        crossing: usize,
-    ) -> Option<&'a FoodRoute> {
-        // The assessment ends at the selected step's anchor. It does not
-        // measure a later, separate crossing declared by the same stage.
-        route.filter(|route| {
-            self.food_zones.iter().any(|zone| {
-                zone.crossing == crossing
-                    && route.ticks(zone.zone, false).is_some_and(|ticks| ticks > 0)
-            })
-        })
     }
 }
 
@@ -1052,11 +1095,15 @@ mod food_sizing_tests {
         let provisioner = std::mem::size_of::<super::super::provision::Provisioner>();
         let quester = std::mem::size_of::<super::super::runner::Quester>();
         eprintln!(
-            "food geometry layouts Provisioner={provisioner} Quester={quester} StageSurvival={}",
-            std::mem::size_of::<StageSurvival>()
+            "food geometry layouts Provisioner={provisioner} Quester={quester} StageSurvival={} Ledger={}",
+            std::mem::size_of::<StageSurvival>(),
+            std::mem::size_of::<crate::native::ledger::Ledger>(),
         );
         assert!(provisioner <= 1184);
-        assert!(quester <= 4000);
+        assert!(
+            quester + 64 <= 4000,
+            "the route cache must retain 64 bytes of Quester headroom"
+        );
     }
 
     #[test]
@@ -1077,11 +1124,24 @@ mod food_sizing_tests {
                 tiles: u32::from(walking),
                 run_ticks: u32::from(walking.div_ceil(2)),
                 holds: 0,
+                first_walk: 1,
+                last_walk: u32::from(walking) + 10,
+                first_run: 1,
+                last_run: u32::from(walking.div_ceil(2)) + 5,
             }]
             .into_boxed_slice(),
         };
         assert_eq!(measured.ticks(key, false), Some(walking));
         assert_eq!(measured.ticks(key, true), Some(walking.div_ceil(2)));
+        assert_eq!(
+            measured.crossing_ticks([key], false),
+            Some(walking + 10),
+            "poison includes gaps between zone visits"
+        );
+        assert_eq!(
+            measured.crossing_ticks([key], true),
+            Some(walking.div_ceil(2) + 5)
+        );
         let unvisited = FoodRoute {
             pack: zones.pack(),
             zones: Box::new([]),
@@ -1156,10 +1216,18 @@ mod food_sizing_tests {
                 .next()
                 .unwrap()
                 .ticks,
-            100,
-            "a route that does not reach this crossing retains the walking fallback"
+            0,
+            "an assessed route outside the hunt zones has no crossing exposure"
         );
-        assert_eq!(stage.food_duration(Some(&unvisited), true), 100);
+        assert_eq!(stage.food_duration(Some(&unvisited), true), 0);
+        assert_eq!(
+            stage.food_duration(Some(&measured), false),
+            u64::from(walking + 10)
+        );
+        assert_eq!(
+            stage.food_duration(Some(&measured), true),
+            u64::from(walking.div_ceil(2) + 5)
+        );
         assert_eq!(stage.exposures[0].ticks, 100);
         assert_eq!(
             risk::supply_bound(&stage.exposures, &input, &tables, food).map(|bound| bound.bound),

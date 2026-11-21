@@ -460,14 +460,18 @@ mod tests {
         // for the hold (F2 of the hold model) adds one `Instant` (16 B) to
         // its record: each click renews it, and the begin's time cannot move.
         // The typed bank selection outcome adds 8 B to its inline receipt, and
-        // the typed service pick (its own outcome and request identity) adds 8 B
-        // more: 1,024 B on 64-bit targets.
+        // the typed service pick (its own outcome and request identity) adds 8 B.
+        // The advisory receipt retains an 8 B pointer to boxed food-route
+        // counters until the requester consumes its correlated result.
+        // These counters cannot use the separate risk-assessment allocation.
+        // The ledger is 1,032 B on 64-bit targets.
         assert_eq!(
             std::mem::size_of::<Ledger>(),
             944 + 2 * std::mem::size_of::<Option<(NonZeroU64, crate::native::WaitDeadline)>>()
                 + std::mem::size_of::<std::time::Instant>()
                 + 8
                 + 8
+                + std::mem::size_of::<Option<std::sync::Arc<crate::quester::FoodRoute>>>()
         );
         let mut frame = Frame::new();
         assert!(frame.ledger.as_ref().unwrap().server_ordered.is_none());

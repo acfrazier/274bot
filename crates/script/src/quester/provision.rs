@@ -262,20 +262,30 @@ impl BankCloser {
 
 struct FoodAssessment {
     stage: usize,
+    destination: Option<WorldTile>,
     request_id: u64,
     complete: bool,
     route: Option<Arc<super::survival::FoodRoute>>,
 }
 
+impl FoodAssessment {
+    fn is_current(&self, stage: usize, destination: Option<WorldTile>) -> bool {
+        self.stage == stage
+            && destination.is_none_or(|destination| self.destination == Some(destination))
+    }
+}
+
 /// Cold stage preparation shares one allocation instead of growing Quester.
 struct StagePreparation {
+    path: Option<api::selected::FactKey>,
+    /// Optional needs already logged as unmet since the last path reset.
+    unmet_logged: Vec<UnmetNeed>,
     food: Option<FoodAssessment>,
     gear_stage: usize,
     gear_run: Option<Box<dyn StepRun>>,
 }
 
 pub struct Provisioner {
-    path: Option<api::selected::FactKey>,
     bank_run: Option<AcquireRun>,
     acquire_run: Option<Box<dyn StepRun>>,
     acquire_finished: bool,
@@ -301,8 +311,6 @@ pub struct Provisioner {
     /// The bank this provisioner's trips opened, once a frame showed it open.
     lease: Option<BankLease>,
     closer: BankCloser,
-    /// Optional needs already logged as unmet since the last path reset.
-    unmet_logged: Vec<UnmetNeed>,
 }
 
 // Keep the original 1,184 B ceiling. Cold preparation state is boxed so
@@ -318,7 +326,6 @@ impl Default for Provisioner {
 impl Provisioner {
     pub fn new() -> Self {
         Self {
-            path: None,
             bank_run: None,
             acquire_run: None,
             acquire_finished: false,
@@ -327,6 +334,8 @@ impl Provisioner {
             carry_drawn: 0,
             survival_stage: usize::MAX,
             preparation: Box::new(StagePreparation {
+                path: None,
+                unmet_logged: Vec::new(),
                 food: None,
                 gear_stage: usize::MAX,
                 gear_run: None,
@@ -339,7 +348,6 @@ impl Provisioner {
             opening: false,
             lease: None,
             closer: BankCloser::default(),
-            unmet_logged: Vec::new(),
         }
     }
 
@@ -379,11 +387,16 @@ impl Provisioner {
             self.acquire_run = None;
             self.acquire_finished = false;
         }
-        if self.path.as_ref().is_some_and(|path| path != &plan.path) {
+        if self
+            .preparation
+            .path
+            .as_ref()
+            .is_some_and(|path| path != &plan.path)
+        {
             self.reset(cx.tick.actions);
         }
-        if self.path.is_none() {
-            self.path = Some(plan.path.clone());
+        if self.preparation.path.is_none() {
+            self.preparation.path = Some(plan.path.clone());
             self.set_coin_drawn(plan.coin_float <= 0);
         }
 
@@ -476,11 +489,11 @@ impl Provisioner {
         self.in_session = false;
         self.opening = false;
         self.acquire_finished = false;
-        self.path = None;
+        self.preparation.path = None;
         self.set_coin_drawn(false);
         self.set_carry_drawn(0);
         self.attempts = 0;
-        self.unmet_logged.clear();
+        self.preparation.unmet_logged.clear();
         self.set_status(ProvisionPhase::Idle, None, 0, 0, None, false);
     }
 
@@ -617,8 +630,11 @@ impl Provisioner {
             .preparation
             .food
             .as_ref()
-            .is_none_or(|state| state.stage != stage)
+            .is_none_or(|state| !state.is_current(stage, destination))
         {
+            if destination.is_some() {
+                self.survival_stage = usize::MAX;
+            }
             if let Some(previous) = self.preparation.food.take() {
                 cx.tick.cx.cancel_request(previous.request_id);
             }
@@ -629,6 +645,7 @@ impl Provisioner {
             });
             self.preparation.food = Some(FoodAssessment {
                 stage,
+                destination,
                 request_id: request_id.unwrap_or(0),
                 complete: request_id.is_none(),
                 route: None,
@@ -690,10 +707,7 @@ impl Provisioner {
             return Poll::Ready(Ok(ProvisionEvent::Ready));
         }
         if let Some((model, stage)) = plan.survival.as_ref().zip(current) {
-            if self.survival_stage != stage
-                && model.stage_has_crossing(stage)
-                && !self.poll_food_assessment(cx, stage, return_to)
-            {
+            if model.stage_has_crossing(stage) && !self.poll_food_assessment(cx, stage, return_to) {
                 self.set_status(ProvisionPhase::Scanning, None, 0, 0, None, bank_known(cx));
                 return Poll::Pending;
             }
@@ -1410,7 +1424,7 @@ impl Provisioner {
             }
             self.survival_stage = current.unwrap_or(usize::MAX);
         }
-        let shortfall = self.unmet_logged.first().cloned();
+        let shortfall = self.preparation.unmet_logged.first().cloned();
         self.set_status(
             ProvisionPhase::Ready,
             shortfall.as_ref().map(|need| Arc::clone(&need.item)),
@@ -1643,11 +1657,11 @@ impl Provisioner {
     /// One `info` line for each optional need that provisioning leaves unmet
     /// while it returns `Ready`. A repeat of the same shortfall logs nothing.
     fn log_unmet(&mut self, plan: &CompiledProvisioning, unmet: &[UnmetNeed]) {
-        if self.unmet_logged.as_slice() == unmet {
+        if self.preparation.unmet_logged.as_slice() == unmet {
             return;
         }
         for need in unmet {
-            if self.unmet_logged.contains(need) {
+            if self.preparation.unmet_logged.contains(need) {
                 continue;
             }
             if need.cause == UnmetCause::AssessmentUnavailable && need.need == 0 {
@@ -1672,7 +1686,7 @@ impl Provisioner {
                 need.cause
             );
         }
-        self.unmet_logged = unmet.to_vec();
+        self.preparation.unmet_logged = unmet.to_vec();
     }
 
     fn set_coin_drawn(&mut self, drawn: bool) {
@@ -2030,6 +2044,29 @@ mod ownership_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn food_assessment_is_reused_only_for_the_stage_and_selected_step_anchor() {
+        let tile = WorldTile {
+            x: 100,
+            z: 200,
+            level: 0,
+        };
+        let assessment = FoodAssessment {
+            stage: 1,
+            destination: Some(tile),
+            request_id: 1,
+            complete: true,
+            route: None,
+        };
+        assert!(assessment.is_current(1, Some(tile)));
+        assert!(
+            assessment.is_current(1, None),
+            "bank travel keeps the selected step's route"
+        );
+        assert!(!assessment.is_current(2, Some(tile)));
+        assert!(!assessment.is_current(1, Some(WorldTile { x: 101, ..tile })));
+    }
     use crate::native::ledger;
     use crate::native::{HostEffect, NativeTick};
     use crate::native_bank::BankPickRequest;
@@ -2481,8 +2518,8 @@ mod tests {
                 Poll::Ready(Ok(ProvisionEvent::Ready))
             ));
         }
-        assert_eq!(provisioner.unmet_logged.len(), 1);
-        let unmet = &provisioner.unmet_logged[0];
+        assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
+        let unmet = &provisioner.preparation.unmet_logged[0];
         assert_eq!(unmet.cause, UnmetCause::AssessmentUnavailable);
         assert!(unmet.item.contains("stage "));
         assert!(unmet.item.contains("Jail guard"));
@@ -3205,7 +3242,7 @@ mod tests {
             Poll::Ready(Ok(ProvisionEvent::Ready))
         ));
         assert_eq!(provisioner.bank_starts(), 0);
-        assert!(provisioner.unmet_logged.is_empty());
+        assert!(provisioner.preparation.unmet_logged.is_empty());
         assert_eq!(memory.count(food.id), None);
         assert!(ledger.is_none());
     }
@@ -3370,8 +3407,8 @@ mod tests {
             assert!(ledger.as_ref().unwrap().outbox.is_empty());
         }
         assert_eq!(provisioner.bank_starts(), 1);
-        assert_eq!(provisioner.unmet_logged.len(), 1);
-        assert!(provisioner.unmet_logged[0]
+        assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
+        assert!(provisioner.preparation.unmet_logged[0]
             .item
             .contains(rows[0].def.name.as_deref().unwrap()));
     }
@@ -3432,7 +3469,7 @@ mod tests {
             assert!(ledger
                 .as_ref()
                 .is_none_or(|ledger| ledger.outbox.is_empty()));
-            assert_eq!(provisioner.unmet_logged.len(), 1);
+            assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
             assert!(matches!(
                 poll_once_at(
                     &mut provisioner,
@@ -3497,13 +3534,13 @@ mod tests {
                 &quests,
             )
             .is_pending());
-            assert_eq!(provisioner.unmet_logged.len(), 1);
+            assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
             assert!(
-                format!("{:?}", provisioner.unmet_logged[0].cause).contains(detail),
+                format!("{:?}", provisioner.preparation.unmet_logged[0].cause).contains(detail),
                 "the shortfall record must keep the typed refusal detail: {detail}"
             );
             assert!(
-                provisioner.unmet_logged[0]
+                provisioner.preparation.unmet_logged[0]
                     .cause
                     .to_string()
                     .contains(detail),
@@ -3551,27 +3588,51 @@ mod tests {
         };
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        assert!(
-            with_tick_bank(&snapshot, Some(&memory), &mut ledger, 1, |native| {
-                let required_after = native.cx.evidence();
-                let mut cx = StepContext {
-                    tick: native,
-                    quests: &quests,
-                    progress: &[],
-                    required_after,
-                    banks: &banks,
-                    choices: &crate::quester::choices::QuestChoices::default(),
-                };
-                provisioner.poll(
-                    &mut cx,
-                    &path.provisioning,
-                    None,
-                    Some(&path.provisioning.stages[0]),
-                    Some(target),
-                )
-            })
-            .is_pending()
-        );
+        for tick in 1..=2 {
+            assert!(
+                with_tick_bank(&snapshot, Some(&memory), &mut ledger, tick, |native| {
+                    let required_after = native.cx.evidence();
+                    let mut cx = StepContext {
+                        tick: native,
+                        quests: &quests,
+                        progress: &[],
+                        required_after,
+                        banks: &banks,
+                        choices: &crate::quester::choices::QuestChoices::default(),
+                    };
+                    provisioner.poll(
+                        &mut cx,
+                        &path.provisioning,
+                        None,
+                        Some(&path.provisioning.stages[0]),
+                        Some(target),
+                    )
+                })
+                .is_pending()
+            );
+            if tick == 1 {
+                let ledger = ledger.as_mut().unwrap();
+                let action = ledger.outbox.remove(0);
+                assert!(matches!(&action.effect, HostEffect::AssessWalk(_)));
+                let authority = action.authority();
+                ledger.complete_assess_walk(
+                    &authority,
+                    crate::native::AssessReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        assessment: None,
+                        refusal: None,
+                        detail: None,
+                        route_ticks: 0,
+                        food_route: None,
+                    },
+                );
+            }
+        }
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox[0].effect,
             HostEffect::BankPick(request)
@@ -3640,8 +3701,8 @@ mod tests {
             ));
         }
         assert_eq!(provisioner.bank_starts(), 1);
-        assert_eq!(provisioner.unmet_logged.len(), 1);
-        let unmet = &provisioner.unmet_logged[0];
+        assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
+        let unmet = &provisioner.preparation.unmet_logged[0];
         assert!(matches!(
             &unmet.cause,
             UnmetCause::NoReachableBank { detail }
@@ -3703,7 +3764,7 @@ mod tests {
                 if reason.as_ref() == "no eligible bank"
         ));
         assert_eq!(provisioner.survival_stage, usize::MAX);
-        assert!(provisioner.unmet_logged.is_empty());
+        assert!(provisioner.preparation.unmet_logged.is_empty());
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
@@ -3834,7 +3895,7 @@ mod tests {
             Poll::Ready(Err(ActionError::Cancelled))
         ));
         assert_eq!(provisioner.survival_stage, usize::MAX);
-        assert!(provisioner.unmet_logged.is_empty());
+        assert!(provisioner.preparation.unmet_logged.is_empty());
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 

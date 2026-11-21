@@ -347,11 +347,16 @@ fn owned_inventory_protects_managed_pack_items_but_can_deposit_unrelated_cargo()
             ),
             if unrelated { 27 } else { 28 }
         );
-        assert!(observed.provisioner.unmet_logged.iter().any(|need| {
-            matches!(need.cause, UnmetCause::NoRoom)
-                && need.need > need.have
-                && need.have == i32::from(unrelated)
-        }));
+        assert!(observed
+            .provisioner
+            .preparation
+            .unmet_logged
+            .iter()
+            .any(|need| {
+                matches!(need.cause, UnmetCause::NoRoom)
+                    && need.need > need.have
+                    && need.have == i32::from(unrelated)
+            }));
         assert_eq!(observed.provisioner.status().phase, ProvisionPhase::Ready);
     }
 }
@@ -554,7 +559,7 @@ fn owned_inventory_leaves_missing_quest_items_and_authored_carry_to_the_path() {
     });
     let observed = prepare(&path, &quests, &mut snapshot, bank_items(false));
     assert!(food_count(&observed) > 0);
-    assert!(observed.provisioner.unmet_logged.is_empty());
+    assert!(observed.provisioner.preparation.unmet_logged.is_empty());
     let lobster = item("lobster", 0, ItemContainer::Inventory).def.id;
     assert!(observed.withdrawn.iter().all(|&(id, _)| id == lobster));
 }
@@ -671,11 +676,11 @@ fn owned_quest_food_stays_carried_while_bank_survival_food_is_withdrawn() {
         1
     );
     assert_eq!(
-        observed.provisioner.unmet_logged.len(),
+        observed.provisioner.preparation.unmet_logged.len(),
         usize::from(target > 8)
     );
     if target > 8 {
-        let need = &observed.provisioner.unmet_logged[0];
+        let need = &observed.provisioner.preparation.unmet_logged[0];
         assert_eq!(need.cause, UnmetCause::NoSupply);
         assert_eq!((need.need, need.have), (target, 8));
     }

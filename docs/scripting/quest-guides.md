@@ -376,8 +376,12 @@ Concurrent attackers share one poison clock for that stage.
 
 Crossing estimates count planned route tiles inside each baked hunt zone.
 Walking costs one tick per tile. Running costs one tick per two tiles only
-when the account's run setting is observed. A missing route or zone measurement
-uses the full walking hunt-range bound and reports the fallback.
+when the account's run setting is observed. Each selected step anchor has its
+own route assessment. A route outside a zone has no exposure there.
+Spawn-centred zones do not guarantee safety after a chase moves an attacker.
+The poison clock includes gaps from the first zone entry to the last zone exit.
+An unavailable or unusable route uses the full walking hunt-range bound and
+reports the fallback.
 These food-only exposures do not change the route or supply death bound.
 If no damage figure is available, the reserve is four ordinary bites.
 Underground Pass uses eight because repeated obstacle failures have no fixed
