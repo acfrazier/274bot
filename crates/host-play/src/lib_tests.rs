@@ -26383,6 +26383,8 @@ fn spawned_scriptless_worker_never_idles_out_past_4500_cycles() {
         "the worker runs well past the 4500-cycle threshold"
     );
     let started_idle_logout = idle_logout_started.load(Ordering::Relaxed);
+    // Stop can set the operator logout latch during teardown.
+    let login_latch = arm.login_latch_reason();
 
     arm.stop.store(true, Ordering::Relaxed);
     release_tx.send(()).unwrap();
@@ -26392,7 +26394,7 @@ fn spawned_scriptless_worker_never_idles_out_past_4500_cycles() {
         !started_idle_logout,
         "a bot with no script sends no idle logout request"
     );
-    assert_eq!(arm.login_latch_reason(), None);
+    assert_eq!(login_latch, None);
 }
 
 #[test]
