@@ -362,7 +362,7 @@ const CUT_RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
 /// Failure at initial loaded-script Start, distinct from an operational refusal.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StartLoadError {
-    /// The caller must retain this Start until an operator hold is resolved.
+    /// The caller must retain this Start until its blocking condition clears.
     #[error("{0}")]
     Waiting(String),
     #[error("{0}")]
@@ -2330,9 +2330,6 @@ impl SlotScript {
         if let Some(bag) = start.settings_bag.as_deref() {
             let wanted = match bag.get("loadout") {
                 None => None,
-                Some(value) if compat_js => Some(value.as_str().ok_or_else(|| {
-                    StartLoadError::Refused("loadout setting must be a string".into())
-                })?),
                 Some(value) => Some(value.as_str().unwrap_or("")),
             };
             let resolved = if compat_js {

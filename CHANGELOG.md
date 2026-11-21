@@ -396,6 +396,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - A blank compat JS loadout setting with no saved rows now uses the script's
   own defaults. A blank setting still selects the first saved row, and unknown
   or ambiguous named selections still refuse.
+- A script with a saved loadout name that no longer exists now shows an error
+  instead of waiting.
 
 ## [0.2.9.1] — 2026-11-14 — Beta 2 patch
 

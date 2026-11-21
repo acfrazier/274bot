@@ -374,19 +374,16 @@ pub fn fire_pending_catalog_start(
                 }
             }) {
                 match error {
-                    script::StartLoadError::Waiting(reason) => pending[index].waiting(reason),
-                    script::StartLoadError::NoLoadouts(reason) => {
+                    script::StartLoadError::Waiting(reason) => {
+                        pending[index].waiting(reason);
+                        return StartScriptPump::Hold;
+                    }
+                    error => {
+                        let reason = error.to_string();
                         pair.fail_start(reason.clone());
                         return StartScriptPump::Failed(format!("start failed: {reason}"));
                     }
-                    other => {
-                        if pending.iter().all(|card| !card.started) {
-                            pair.retry_start();
-                        }
-                        pending[index].waiting(other.to_string());
-                    }
                 }
-                return StartScriptPump::Hold;
             }
             pending[index].started = true;
             pending[index].waiting_reason = None;
@@ -409,14 +406,10 @@ pub fn fire_pending_catalog_start(
                     card.waiting(reason);
                     return StartScriptPump::Hold;
                 }
-                script::StartLoadError::NoLoadouts(reason) => {
+                error => {
+                    let reason = error.to_string();
                     watch.fail_start(&card.slot, reason.clone());
                     return StartScriptPump::Failed(format!("start failed: {reason}"));
-                }
-                other => {
-                    watch.retry_start(&card.slot);
-                    card.waiting(other.to_string());
-                    return StartScriptPump::Hold;
                 }
             }
         }

@@ -134,7 +134,7 @@ fn blank_loadout_without_saved_rows_starts_script() {
 
 #[cfg(feature = "js")]
 #[test]
-fn non_string_loadout_setting_is_not_treated_as_blank() {
+fn null_loadout_setting_uses_upstream_blank_default() {
     let play = empty_play();
     let watch = CoreWatch::default();
     watch.configure(CoreCase::Thiever, "catalogtest");
@@ -157,15 +157,19 @@ fn non_string_loadout_setting_is_not_treated_as_blank() {
         vec![],
     )];
 
-    let pump = fire_pending_catalog_start(&mut pending, true, false, arming);
-    let StartScriptPump::Failed(error) = pump else {
-        panic!("expected a Failed pump, got {pump:?}");
-    };
-    assert!(
-        error.contains("loadout setting must be a string"),
-        "{error}"
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Continue,
     );
-    assert!(!pending[0].started);
+    assert!(pending[0].started);
+    assert_eq!(watch.evidence()["phase"], "running");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while handle.run_state("catalogtest") != script::RunState::Running {
+        handle.poll_start("catalogtest");
+        assert!(Instant::now() < deadline, "script Start did not settle");
+        std::thread::yield_now();
+    }
+    handle.stop("catalogtest").unwrap();
 }
 
 #[test]
@@ -206,9 +210,8 @@ fn no_slot_scenario_start_holds_and_retries_the_armed_core() {
 
 #[cfg(feature = "js")]
 #[test]
-fn unknown_loadout_refusal_holds_and_retries() {
-    // Unknown and ambiguous selections are ordinary refusals; only an empty
-    // saved-loadout store is a missing prerequisite.
+fn unknown_loadout_refusal_fails_start() {
+    // Unknown and ambiguous selections are refusals, not missing prerequisites.
     let play = empty_play();
     let watch = CoreWatch::default();
     watch.configure(CoreCase::Thiever, "catalogtest");
@@ -230,16 +233,13 @@ fn unknown_loadout_refusal_holds_and_retries() {
         vec![],
         vec![api::loadout::Loadout::new("First")],
     )];
-    for _ in 0..2 {
-        assert_eq!(
-            fire_pending_catalog_start(&mut pending, true, false, arming),
-            StartScriptPump::Hold,
-        );
-        assert!(!pending[0].started);
-        assert!(pending[0].waiting_reason.is_some());
-        assert_eq!(watch.evidence()["phase"], "ready");
-        assert!(watch.failure().is_none());
-    }
+    let pump = fire_pending_catalog_start(&mut pending, true, false, arming);
+    let StartScriptPump::Failed(error) = pump else {
+        panic!("expected a Failed pump, got {pump:?}");
+    };
+    assert!(error.contains("loadout"), "{error}");
+    assert!(watch.failure().is_some(), "{:?}", watch.failure());
+    assert!(!pending[0].started);
 }
 
 #[cfg(feature = "js")]

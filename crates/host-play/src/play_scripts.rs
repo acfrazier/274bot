@@ -384,7 +384,7 @@ impl ScriptStartHandle {
             StartRequest::Luau { .. } => script_slot_or_insert(&self.scripts, name),
             StartRequest::Compiled { .. } | StartRequest::WalkHandover { .. } => {
                 script_slot(&self.scripts, name)
-                    .ok_or_else(|| Refused(format!("no slot: {name}")))?
+                    .ok_or_else(|| Waiting(format!("no slot: {name}")))?
             }
         };
         let mut slot = slot
