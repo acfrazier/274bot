@@ -608,6 +608,7 @@ mod tests {
         client.ingame = true;
         client.scene_state = super::super::SCENE_READY;
         let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(&client);
         snapshot.seed_ingame(super::super::SCENE_READY);
         snapshot.seed_scene(crate::snapshot::SceneView {
             available: true,
