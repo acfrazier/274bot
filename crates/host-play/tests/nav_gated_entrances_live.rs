@@ -11,8 +11,9 @@ use api::game_data::{self, GameItem};
 use api::gather_methods::{AccessPolicy, GatherCatalog, GatherSkill, GatherSpot};
 use api::identity::Deadline;
 use api::interact::{self, Interactions, SendResult};
-use api::quest_progress::{self, EvidenceStamp, QuestListEvidenceProvider};
-use api::selected::{QuestGate, RunKey, Truth};
+use api::prereq_knowledge::Observation;
+use api::quest_progress::{self, EvidenceProvider, EvidenceStamp, QuestListEvidenceProvider};
+use api::selected::{InclusiveRange, QuestGate, RunKey, Truth};
 use api::snapshot::{GameSnapshot, QuestListStatus, ReadContext, SnapshotView, WorldTile};
 use api::work::{PreparationPhase, SharedCancellation, SliceBudget, StepContext, SystemClock};
 use client::client::Client;
@@ -500,6 +501,61 @@ fn quest_evidence(
     QuestEvidence::new(provider, stamp)
 }
 
+fn quest_evidence_with_observed_varp(
+    quests: &api::quest_facts::QuestCatalog,
+    snapshot: &GameSnapshot,
+    quest_id: &str,
+    observed: (i32, EvidenceStamp),
+) -> QuestEvidence {
+    let facts = quests
+        .quest(quest_id)
+        .unwrap_or_else(|_| panic!("quest facts are missing for {quest_id}"));
+    let stamp = evidence_stamp(snapshot);
+    let ordinary =
+        QuestListEvidenceProvider::from_snapshot(quests, SnapshotView::new(Some(snapshot), stamp));
+    let provider = QuestListAndObservedVarp {
+        ordinary,
+        quest: facts.id.clone(),
+        signal: facts.varp.clone(),
+        value: observed.0,
+        observed: observed.1,
+    };
+    QuestEvidence::new(Arc::new(provider), observed.1)
+}
+
+#[derive(Clone)]
+struct QuestListAndObservedVarp {
+    ordinary: QuestListEvidenceProvider,
+    quest: api::selected::FactKey,
+    signal: api::selected::FactKey,
+    value: i32,
+    observed: EvidenceStamp,
+}
+
+impl EvidenceProvider for QuestListAndObservedVarp {
+    fn observe_gate(&self, gate: &QuestGate, required_after: EvidenceStamp) -> Option<Observation> {
+        if let QuestGate::Window(window) = gate {
+            if window.quest.0.as_ref() == self.quest.0.as_ref()
+                && window.signal.0.as_ref() == self.signal.0.as_ref()
+            {
+                let truth = if self.observed.meets(required_after) {
+                    window.values.test(&InclusiveRange {
+                        min: Some(self.value),
+                        max: Some(self.value),
+                    })
+                } else {
+                    Truth::Unknown
+                };
+                return Some(Observation {
+                    truth,
+                    observed: Some(self.observed),
+                });
+            }
+        }
+        self.ordinary.observe_gate(gate, required_after)
+    }
+}
+
 fn quest_status(
     quests: &api::quest_facts::QuestCatalog,
     quest_id: &str,
@@ -559,24 +615,56 @@ fn wear_item(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump, 
     );
 }
 
+fn parse_quest_varp_response(text: &str, name: &str) -> Option<i32> {
+    let (command, value) = text.split_once(':')?;
+    if !command.trim().eq_ignore_ascii_case(&format!("get {name}")) {
+        return None;
+    }
+    value.split_whitespace().next()?.parse().ok()
+}
+
+fn read_quest_varp(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
+    name: &str,
+) -> Option<(i32, EvidenceStamp)> {
+    let after = snapshot
+        .chat_lines()
+        .iter()
+        .map(|line| line.sequence)
+        .max()
+        .unwrap_or(0);
+    if !interact::cheat(client, &format!("getvar {name}")).is_sent() {
+        return None;
+    }
+    let found = wait_for(client, snapshot, pump, SETUP_TIMEOUT, |s| {
+        s.chat_lines().iter().any(|line| {
+            line.sequence > after && parse_quest_varp_response(&line.text, name).is_some()
+        })
+    });
+    if !found {
+        return None;
+    }
+    snapshot
+        .chat_lines()
+        .iter()
+        .filter(|line| line.sequence > after)
+        .find_map(|line| parse_quest_varp_response(&line.text, name))
+        .map(|value| (value, evidence_stamp(snapshot)))
+}
+
 fn set_quest_varp(
     client: &mut Client,
     snapshot: &mut GameSnapshot,
     pump: &mut Pump,
     name: &str,
     value: i32,
-) -> bool {
-    if !interact::cheat(client, &format!("setvar {name} {value}")).is_sent()
-        || !interact::cheat(client, &format!("getvar {name}")).is_sent()
-    {
-        return false;
+) -> Option<(i32, EvidenceStamp)> {
+    if !interact::cheat(client, &format!("setvar {name} {value}")).is_sent() {
+        return None;
     }
-    let expected = format!("get {name}: {value}").to_ascii_lowercase();
-    wait_for(client, snapshot, pump, SETUP_TIMEOUT, |s| {
-        s.chat_lines()
-            .iter()
-            .any(|line| line.text.to_ascii_lowercase().contains(&expected))
-    })
+    read_quest_varp(client, snapshot, pump, name)
 }
 
 fn seed_at(
@@ -1249,37 +1337,70 @@ fn run_case(case: EntranceCase) {
     }
 
     let pre_quest_evidence = quest_evidence(&quests, &snapshot);
+    let mut grand_tree_gate: Option<&QuestGate> = None;
+    let mut observed_quest_varp: Option<(&'static str, (i32, EvidenceStamp))> = None;
     if case == EntranceCase::GrandTreeMine {
         let grand_tree = quests
             .by_display("The Grand Tree")
             .expect("R289 quest catalog contains The Grand Tree");
+        let pre_varp = read_quest_varp(&mut client, &mut snapshot, &mut pump, "grandtree")
+            .expect("Engine A did not report the fresh Grand Tree quest varp");
+        assert_ne!(
+            pre_varp.0, 160,
+            "fresh account already has the Grand Tree completion stage"
+        );
         let gate = edges
             .iter()
             .flat_map(|(_, edge)| edge.quest_gates.iter())
             .flat_map(|gates| gates.gates())
-            .find(|gate| matches!(gate, QuestGate::Complete(id) if id == &grand_tree.id))
-            .expect("Grand Tree entrance has a typed completion gate");
-        let verdict = pre_quest_evidence.test(gate);
+            .find(|gate| {
+                matches!(
+                    gate,
+                    QuestGate::Window(window)
+                        if window.quest.0.as_ref() == grand_tree.id.0.as_ref()
+                            && window.signal.0.as_ref() == "grandtree"
+                            && window.values.min == Some(160)
+                            && window.values.max == Some(160)
+                )
+            })
+            .expect("Grand Tree entrance has the exact 160..160 varp stage window");
+        let QuestGate::Window(window) = gate else {
+            unreachable!("the selector only returns the Grand Tree stage window");
+        };
+        let pre_evidence =
+            quest_evidence_with_observed_varp(&quests, &snapshot, "grandtree", pre_varp);
+        let verdict = pre_evidence.test(gate);
         receipt["pre_completion_gate"] = json!({
-            "quest": grand_tree.id.0,
-            "display": grand_tree.display,
+            "quest": window.quest.0,
+            "signal": window.signal.0,
+            "values": {"min": window.values.min, "max": window.values.max},
+            "observed_varp": pre_varp.0,
             "verdict": format!("{verdict:?}"),
         });
         write_receipt(&receipt_path, &receipt);
         assert_eq!(
             verdict,
             Truth::False,
-            "fresh account did not disprove Grand Tree completion"
+            "fresh account varp disproved the Grand Tree completion stage"
         );
+        grand_tree_gate = Some(gate);
+        observed_quest_varp = Some(("grandtree", pre_varp));
     }
 
     let quest_varp = if let Some((name, value)) = case.quest_varp() {
         let observed = set_quest_varp(&mut client, &mut snapshot, &mut pump, name, value);
-        receipt["quest_varp"] = json!({"name":name, "value":value, "observed":observed});
+        let observed_value = observed.map(|(actual, _)| actual);
+        let matched = observed_value == Some(value);
+        receipt["quest_varp"] = json!({
+            "name": name,
+            "value": value,
+            "observed": matched,
+            "observed_value": observed_value,
+        });
         write_receipt(&receipt_path, &receipt);
         assert!(
-            observed,
-            "account-local {name}={value} quest varp was not observed"
+            matched,
+            "account-local {name}={value} quest varp was not observed: {observed_value:?}"
         );
         assert!(
             logout_and_wait(&mut client, &mut snapshot, &mut pump),
@@ -1302,8 +1423,16 @@ fn run_case(case: EntranceCase) {
             }),
             "relog did not publish actual Complete quest-list evidence for {name}"
         );
+        let observed_after_relog = read_quest_varp(&mut client, &mut snapshot, &mut pump, name)
+            .unwrap_or_else(|| panic!("Engine A did not report {name} after relog"));
+        assert_eq!(
+            observed_after_relog.0, value,
+            "quest varp changed across the relog"
+        );
+        observed_quest_varp = Some((name, observed_after_relog));
         receipt["quest_varp"]["observed_status_after_relog"] =
             json!(format!("{:?}", quest_status(&quests, name, &snapshot)));
+        receipt["quest_varp"]["observed_value_after_relog"] = json!(observed_after_relog.0);
         write_receipt(&receipt_path, &receipt);
         Some(json!({"name":name,"value":value}))
     } else {
@@ -1331,19 +1460,43 @@ fn run_case(case: EntranceCase) {
     });
     write_receipt(&receipt_path, &receipt);
 
-    let positive_evidence = quest_evidence(&quests, &snapshot);
+    let positive_observed_quest_varp = observed_quest_varp.map(|(name, (expected, _))| {
+        let observed = read_quest_varp(&mut client, &mut snapshot, &mut pump, name)
+            .unwrap_or_else(|| panic!("Engine A did not report {name} before route planning"));
+        assert_eq!(
+            observed.0, expected,
+            "quest varp changed before route planning"
+        );
+        (name, observed)
+    });
+    observed_quest_varp = positive_observed_quest_varp;
+    if let Some((_, (value, _))) = positive_observed_quest_varp {
+        receipt["quest_varp"]["observed_value_before_route"] = json!(value);
+    }
+    let positive_list_evidence = quest_evidence(&quests, &snapshot);
+    let positive_evidence = positive_observed_quest_varp.map_or_else(
+        || positive_list_evidence.clone(),
+        |(name, observed)| quest_evidence_with_observed_varp(&quests, &snapshot, name, observed),
+    );
     for (_, edge) in &edges {
         if let Some(gates) = &edge.quest_gates {
             for gate in gates.gates() {
                 if matches!(gate, QuestGate::Window(_)) {
                     assert_eq!(
-                        positive_evidence.test(gate),
+                        positive_list_evidence.test(gate),
                         Truth::Unknown,
                         "the quest-list observation must not prove stage windows"
                     );
                 }
             }
         }
+    }
+    if let Some(gate) = grand_tree_gate {
+        assert_eq!(
+            positive_evidence.test(gate),
+            Truth::True,
+            "the exact observed Grand Tree stage must satisfy the 160..160 gate"
+        );
     }
     let state = state_from_snapshot(&snapshot, profile.map_members(), positive_evidence.clone());
     receipt["route_state"] = json!({
@@ -1396,7 +1549,30 @@ fn run_case(case: EntranceCase) {
         "could not place account at the selected approach tile {:?}",
         planned.start
     );
-    let final_evidence = quest_evidence(&quests, &snapshot);
+    let final_observed_quest_varp = observed_quest_varp.map(|(name, (expected, _))| {
+        let observed = read_quest_varp(&mut client, &mut snapshot, &mut pump, name)
+            .unwrap_or_else(|| panic!("Engine A did not report {name} at the route approach"));
+        assert_eq!(
+            observed.0, expected,
+            "quest varp changed at the route approach"
+        );
+        (name, observed)
+    });
+    if let Some((_, (value, _))) = final_observed_quest_varp {
+        receipt["quest_varp"]["observed_value_at_approach"] = json!(value);
+    }
+    let final_list_evidence = quest_evidence(&quests, &snapshot);
+    let final_evidence = final_observed_quest_varp.map_or_else(
+        || final_list_evidence.clone(),
+        |(name, observed)| quest_evidence_with_observed_varp(&quests, &snapshot, name, observed),
+    );
+    if let Some(gate) = grand_tree_gate {
+        assert_eq!(
+            final_evidence.test(gate),
+            Truth::True,
+            "the exact observed Grand Tree stage must still satisfy the 160..160 gate"
+        );
+    }
     let final_state = state_from_snapshot(&snapshot, profile.map_members(), final_evidence.clone());
     let route = find_route(&world, planned.start, target.stand, options, &final_state)
         .unwrap_or_else(|error| {
@@ -1437,7 +1613,11 @@ fn run_case(case: EntranceCase) {
     if let Some(gates) = &edge.quest_gates {
         for gate in gates.gates() {
             if matches!(gate, QuestGate::Window(_)) {
-                assert_eq!(final_evidence.test(gate), Truth::Unknown);
+                assert_eq!(
+                    final_list_evidence.test(gate),
+                    Truth::Unknown,
+                    "ordinary quest-list evidence cannot prove a stage window"
+                );
             }
         }
     }
