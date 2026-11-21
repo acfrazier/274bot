@@ -335,6 +335,8 @@ The existing loadout run withdraws and wears gear first, one piece at a time.
 Worn gear uses no inventory slots. Required quest items reserve their space
 next. Food then fills the remaining space, up to the model's target.
 
+#### Food quantities
+
 The food calculation uses the live food guard's threshold and content timing.
 For each declared `must_have` item, the required quantity is excluded from
 survival credit and automatic eating. Surplus of the same food remains edible:
@@ -346,6 +348,8 @@ the declared `must_have` quantity is the conservative reservation.
 The current sizing model supports one ordinary food kind. A mixture reports a
 specific model limit, not missing combat facts.
 There is no prayer, regeneration, or escape credit.
+
+#### Supply limits
 
 A supply shortfall does not itself stop preparation. Status and the unmet-need
 log name the item, target quantity, and quantity obtained. Actual route
@@ -367,6 +371,8 @@ If combat facts, food timing, or a future attacker are unknown, preparation
 does not claim a passing target. It reports the stage, NPCs, and actual cause.
 A planner error is also informational. Preparation continues to admission.
 
+#### Food reserve estimates
+
 For unsupported stages, preparation estimates damage when content supplies a
 maximum hit and attack interval. Each random hit receives its full hit chance.
 The reserve covers 150% of expected damage plus one maximum opening hit.
@@ -374,24 +380,33 @@ Poison receives its full pulse throughout the estimated stage. Food receives
 no more healing credit than the account's maximum Hitpoints.
 Concurrent attackers share one poison clock for that stage.
 
+#### Crossing estimates
+
 Crossing estimates begin engagement only inside a baked hunt zone.
 They then include possible pursuit within the NPC's spawn range.
 The pursuit estimate permits one NPC walking step per tick.
 Declared combat work adds time at an anchor where pursuit remains possible.
+
 Walking costs one tick per tile. Running costs one tick per two tiles only
 while observed energy covers the content's weight-dependent drain.
 The remaining route uses walking speed. Energy recovery receives no credit.
+
 Each selected step uses its own crossing permissions and arrival radius.
 A changed origin, selected plan, or energy budget requires a new assessment.
 A bank trip therefore cannot retain a route from the old origin.
+
 A route that never enters a hunt zone does not engage that attacker.
 An attacker displaced before this route can still attack outside its spawn zone.
 The poison clock includes gaps from the first exposure to the last exposure.
+
 An unavailable or unusable route uses the full walking hunt-range bound and
 reports the fallback.
+
 When no step remains, the Quester does not start a new supply trip.
 It still completes a supply trip that is already active.
+
 These food-only exposures do not change the route or supply death bound.
+
 If no damage figure is available, the reserve is four ordinary bites.
 Underground Pass uses eight because repeated obstacle failures have no fixed
 total. These fallback counts are policy reserves, not safety guarantees.
