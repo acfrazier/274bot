@@ -87,14 +87,30 @@ fn shared_start_rejects_one_sided_and_stale_sessions() {
     watch.configure(PairCase::Air, "master", "runner");
     watch.observe_air("master", air_ready("master", AirRole::Master), false);
     assert_eq!(watch.barrier(), StartBarrier::Wait);
-    assert!(watch.begin_shared_start("master", "runner").is_err());
+    let error = watch
+        .begin_shared_start("master", "runner")
+        .expect_err("missing runner observation should remain retryable");
+    assert!(
+        matches!(&error, script::StartLoadError::Waiting(_)),
+        "{error:?}"
+    );
+    let error = watch
+        .begin_shared_start("intruder", "runner")
+        .expect_err("wrong configured account should refuse Start");
+    assert!(
+        matches!(&error, script::StartLoadError::Refused(_)),
+        "{error:?}"
+    );
 
     watch.observe_air("runner", air_ready("runner", AirRole::Runner), false);
     assert_eq!(watch.barrier(), StartBarrier::StartBoth);
     watch.observe_air("runner", AirObservation::default(), true);
+    let error = watch
+        .begin_shared_start("master", "runner")
+        .expect_err("pre-Start session boundary must invalidate the candidate");
     assert!(
-        watch.begin_shared_start("master", "runner").is_err(),
-        "pre-Start session boundary must invalidate the candidate"
+        matches!(&error, script::StartLoadError::Waiting(_)),
+        "{error:?}"
     );
     watch.observe_air("runner", air_ready("runner", AirRole::Runner), false);
     watch.begin_shared_start("master", "runner").unwrap();
@@ -149,7 +165,10 @@ fn flax_spinner_requires_ten_crafting_but_runner_keeps_low_stat() {
     spinner.crafting = 9;
     watch.observe_flax("spinner", spinner, false);
     assert_eq!(watch.barrier(), StartBarrier::Wait);
-    assert!(watch.begin_shared_start("runner", "spinner").is_err());
+    assert!(matches!(
+        watch.begin_shared_start("runner", "spinner"),
+        Err(script::StartLoadError::Waiting(_))
+    ));
 
     watch.observe_flax("spinner", flax_ready("spinner", FlaxRole::Spinner), false);
     assert_eq!(watch.barrier(), StartBarrier::StartBoth);
@@ -168,14 +187,26 @@ fn flax_pair_waits_for_both_scene2_observations_before_start() {
     spinner_offline.ingame = false;
     watch.observe_flax("spinner", spinner_offline, false);
     assert_eq!(watch.barrier(), StartBarrier::Wait);
-    assert!(watch.begin_shared_start("runner", "spinner").is_err());
+    let error = watch
+        .begin_shared_start("runner", "spinner")
+        .expect_err("offline spinner should remain retryable");
+    assert!(
+        matches!(&error, script::StartLoadError::Waiting(_)),
+        "{error:?}"
+    );
 
     let mut runner_loading_scene = flax_ready("runner", FlaxRole::Runner);
     runner_loading_scene.scene_state = 1;
     watch.observe_flax("runner", runner_loading_scene, false);
     watch.observe_flax("spinner", flax_ready("spinner", FlaxRole::Spinner), false);
     assert_eq!(watch.barrier(), StartBarrier::Wait);
-    assert!(watch.begin_shared_start("runner", "spinner").is_err());
+    let error = watch
+        .begin_shared_start("runner", "spinner")
+        .expect_err("loading runner scene should remain retryable");
+    assert!(
+        matches!(&error, script::StartLoadError::Waiting(_)),
+        "{error:?}"
+    );
 
     watch.observe_flax("runner", flax_ready("runner", FlaxRole::Runner), false);
     assert_eq!(watch.barrier(), StartBarrier::StartBoth);

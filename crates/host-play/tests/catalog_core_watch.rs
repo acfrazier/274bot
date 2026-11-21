@@ -52,7 +52,11 @@ fn headed_watch_rejects_wrong_and_invalidates_pre_start_session_baselines() {
     let error = watch
         .begin_start("catalogtest")
         .expect_err("wrong account must refuse Start");
-    assert!(error.contains("fresh account"), "{error}");
+    assert!(
+        matches!(&error, script::StartLoadError::Refused(_)),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("fresh account"), "{error}");
     assert_eq!(watch.status(), CoreWatchStatus::Ready);
     assert!(
         watch.failure().is_none(),
@@ -70,9 +74,12 @@ fn headed_watch_rejects_wrong_and_invalidates_pre_start_session_baselines() {
         watch.failure().is_none(),
         "initial login is allowed before Start"
     );
+    let error = watch
+        .begin_start("catalogtest")
+        .expect_err("the prior-session candidate baseline was invalidated");
     assert!(
-        watch.begin_start("catalogtest").is_err(),
-        "the prior-session candidate baseline was invalidated"
+        matches!(&error, script::StartLoadError::Waiting(_)),
+        "{error:?}"
     );
     watch.observe("catalogtest", thiever_observation(), false);
     watch.begin_start("catalogtest").unwrap();
@@ -82,6 +89,23 @@ fn headed_watch_rejects_wrong_and_invalidates_pre_start_session_baselines() {
         .failure()
         .expect("a post-Start boundary is terminal")
         .contains("session boundary after Start"));
+}
+
+#[test]
+fn invalid_case_baseline_refuses_start() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::Thiever, "catalogtest");
+    let mut invalid = thiever_observation();
+    invalid.tile = Some((0, 0, 0));
+    watch.observe("catalogtest", invalid, false);
+
+    let error = watch
+        .begin_start("catalogtest")
+        .expect_err("a mismatched case baseline refuses Start");
+    assert!(
+        matches!(&error, script::StartLoadError::Refused(_)),
+        "{error:?}"
+    );
 }
 
 #[test]
@@ -194,7 +218,10 @@ fn herb_cleaner_start_requires_loaded_seed_then_closed_bank_in_the_same_run() {
     let missing_seed = CoreWatch::default();
     missing_seed.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
     missing_seed.observe("catalogtest", closed.clone(), false);
-    assert!(missing_seed.begin_start("catalogtest").is_err());
+    assert!(matches!(
+        missing_seed.begin_start("catalogtest"),
+        Err(script::StartLoadError::Waiting(_))
+    ));
 
     let unloaded = CoreWatch::default();
     unloaded.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
@@ -204,7 +231,10 @@ fn herb_cleaner_start_requires_loaded_seed_then_closed_bank_in_the_same_run() {
         .insert(r289_item_id("unidentified_guam"), 20);
     unloaded.observe("catalogtest", unacknowledged, false);
     unloaded.observe("catalogtest", closed.clone(), false);
-    assert!(unloaded.begin_start("catalogtest").is_err());
+    assert!(matches!(
+        unloaded.begin_start("catalogtest"),
+        Err(script::StartLoadError::Waiting(_))
+    ));
 
     let wrong_seed = CoreWatch::default();
     wrong_seed.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
@@ -214,13 +244,19 @@ fn herb_cleaner_start_requires_loaded_seed_then_closed_bank_in_the_same_run() {
         .insert(r289_item_id("unidentified_guam"), 19);
     wrong_seed.observe("catalogtest", nineteen_guam, false);
     wrong_seed.observe("catalogtest", closed.clone(), false);
-    assert!(wrong_seed.begin_start("catalogtest").is_err());
+    assert!(matches!(
+        wrong_seed.begin_start("catalogtest"),
+        Err(script::StartLoadError::Waiting(_))
+    ));
 
     let wrong_order = CoreWatch::default();
     wrong_order.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
     wrong_order.observe("catalogtest", closed.clone(), false);
     wrong_order.observe("catalogtest", herb_empty_observation(3, true, true), false);
-    assert!(wrong_order.begin_start("catalogtest").is_err());
+    assert!(matches!(
+        wrong_order.begin_start("catalogtest"),
+        Err(script::StartLoadError::Waiting(_))
+    ));
 
     let stale_run = CoreWatch::default();
     stale_run.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
@@ -228,7 +264,10 @@ fn herb_cleaner_start_requires_loaded_seed_then_closed_bank_in_the_same_run() {
     stale_run.observe("catalogtest", closed.clone(), false);
     stale_run.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
     stale_run.observe("catalogtest", closed, false);
-    assert!(stale_run.begin_start("catalogtest").is_err());
+    assert!(matches!(
+        stale_run.begin_start("catalogtest"),
+        Err(script::StartLoadError::Waiting(_))
+    ));
 
     let stale_session = CoreWatch::default();
     stale_session.configure(CoreCase::HerbCleanerEmptyBank, "catalogtest");
@@ -239,7 +278,10 @@ fn herb_cleaner_start_requires_loaded_seed_then_closed_bank_in_the_same_run() {
         herb_empty_observation(2, false, false),
         false,
     );
-    assert!(stale_session.begin_start("catalogtest").is_err());
+    assert!(matches!(
+        stale_session.begin_start("catalogtest"),
+        Err(script::StartLoadError::Waiting(_))
+    ));
 }
 
 fn fire_observation(tick: u32, logs: i32, xp: i32, bank_open: bool) -> Observation {

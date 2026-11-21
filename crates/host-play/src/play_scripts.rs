@@ -359,7 +359,7 @@ impl ScriptStartHandle {
         &self,
         name: &str,
         request: impl FnOnce() -> StartRequest<'a>,
-        before_start: impl FnOnce() -> Result<(), String>,
+        before_start: impl FnOnce() -> Result<(), script::StartLoadError>,
     ) -> Result<(), script::StartLoadError> {
         use script::StartLoadError::{NoLoadouts, Refused, Waiting};
         let hold = self
@@ -369,7 +369,7 @@ impl ScriptStartHandle {
         if let Some(reason) = hold.upgrade() {
             return Err(Waiting(format!("{name}: blocked, {reason}")));
         }
-        before_start().map_err(Refused)?;
+        before_start()?;
         let request = request();
         host_log!(
             Category::ScriptLifecycle,

@@ -225,7 +225,7 @@ pub struct StartArming {
 fn start_stashed_catalog_card(
     handle: &ScriptStartHandle,
     card: &PendingCatalogStart,
-    before_start: impl FnOnce() -> Result<(), String>,
+    before_start: impl FnOnce() -> Result<(), script::StartLoadError>,
 ) -> Result<(), script::StartLoadError> {
     use crate::play_scripts::StartRequest;
     #[cfg(feature = "js")]
@@ -349,15 +349,17 @@ pub fn fire_pending_catalog_start(
     };
     if let Some(pair) = arming.pair.as_ref().filter(|pair| pair.configured()) {
         if pending.len() != 2 {
-            pair.fail_start("pair core requires actual scripts on both visible slots");
-            return StartScriptPump::Hold;
+            let reason = "pair core requires actual scripts on both visible slots";
+            pair.fail_start(reason);
+            return StartScriptPump::Failed(format!("start failed: {reason}"));
         }
         if pending.iter().all(|card| !card.started) {
             match pair.barrier() {
                 StartBarrier::Wait => return StartScriptPump::Hold,
                 StartBarrier::RejectStartedWhileUnready => {
-                    pair.fail_start("pair core Start while the counterpart is unready");
-                    return StartScriptPump::Hold;
+                    let reason = "pair core Start while the counterpart is unready";
+                    pair.fail_start(reason);
+                    return StartScriptPump::Failed(format!("start failed: {reason}"));
                 }
                 StartBarrier::StartBoth => {}
             }

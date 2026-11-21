@@ -210,6 +210,204 @@ fn no_slot_scenario_start_holds_and_retries_the_armed_core() {
 
 #[cfg(feature = "js")]
 #[test]
+fn catalog_start_waits_for_pre_start_publication() {
+    let _iso = script::IsolatedEnv::enter("catalog-start-publication");
+    let play = empty_play();
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::Thiever, "catalogtest");
+    let handle = play.script_start_handle();
+    let arming = || StartArming {
+        handle: Some(handle.clone()),
+        catalog: Some(watch.clone()),
+        ..Default::default()
+    };
+    let (js, checked) = prepared_native("export function tick() {}");
+    let mut pending = vec![PendingCatalogStart::load(
+        "catalogtest",
+        js,
+        checked,
+        None,
+        vec![],
+        vec![],
+    )];
+
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Hold
+    );
+    assert!(
+        pending[0]
+            .waiting_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("no published pre-Start observation"))
+    );
+    assert_eq!(watch.evidence()["phase"], "ready");
+
+    watch.observe("catalogtest", Observation::default(), false);
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Hold
+    );
+    assert!(
+        pending[0]
+            .waiting_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("not attached ingame scene2"))
+    );
+    assert_eq!(watch.evidence()["phase"], "ready");
+
+    watch.observe("catalogtest", prepared_thiever(), false);
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Continue
+    );
+    assert!(pending[0].started);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while handle.run_state("catalogtest") != script::RunState::Running {
+        handle.poll_start("catalogtest");
+        assert!(Instant::now() < deadline, "scenario Start did not settle");
+        std::thread::yield_now();
+    }
+    handle.stop("catalogtest").unwrap();
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalog_start_refuses_wrong_account_baseline() {
+    let _iso = script::IsolatedEnv::enter("catalog-start-wrong-account");
+    let play = empty_play();
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::Thiever, "catalogtest");
+    let mut wrong = prepared_thiever();
+    wrong.player = Some("other".into());
+    watch.observe("catalogtest", wrong, false);
+    let handle = play.script_start_handle();
+    let arming = || StartArming {
+        handle: Some(handle.clone()),
+        catalog: Some(watch.clone()),
+        ..Default::default()
+    };
+    let (js, checked) = prepared_native("export function tick() {}");
+    let mut pending = vec![PendingCatalogStart::load(
+        "catalogtest",
+        js,
+        checked,
+        None,
+        vec![],
+        vec![],
+    )];
+
+    let pump = fire_pending_catalog_start(&mut pending, true, false, arming);
+    let StartScriptPump::Failed(error) = pump else {
+        panic!("expected a Failed pump, got {pump:?}");
+    };
+    assert!(error.contains("fresh account"), "{error}");
+    assert!(!pending[0].started);
+}
+
+#[test]
+fn no_slot_pair_start_restores_the_prepared_pair_for_retry() {
+    let play = empty_play();
+    let pair = PairWatch::default();
+    pair.configure(crate::paired_core::PairCase::Flax, "runner", "spinner");
+    pair.observe_flax(
+        "runner",
+        crate::paired_core::FlaxObservation {
+            ingame: true,
+            scene_state: 2,
+            inventory_tab_available: true,
+            player: Some("runner".into()),
+            tile: Some(crate::paired_core::FLAX_FIELD),
+            crafting: 1,
+            ..Default::default()
+        },
+        false,
+    );
+    pair.observe_flax(
+        "spinner",
+        crate::paired_core::FlaxObservation {
+            ingame: true,
+            scene_state: 2,
+            inventory_tab_available: true,
+            player: Some("spinner".into()),
+            tile: Some(crate::paired_core::FLAX_MEET),
+            crafting: 10,
+            ..Default::default()
+        },
+        false,
+    );
+    assert_eq!(
+        pair.barrier(),
+        crate::paired_core::StartBarrier::StartBoth
+    );
+
+    let handle = play.script_start_handle();
+    let arming = || StartArming {
+        handle: Some(handle.clone()),
+        pair: Some(pair.clone()),
+        ..Default::default()
+    };
+    let id = if cfg!(feature = "js") {
+        "Sherlock"
+    } else {
+        "Gatherer"
+    };
+    let mut pending = vec![
+        PendingCatalogStart::compiled("runner", script::CompiledId(id), Map::new()),
+        PendingCatalogStart::compiled("spinner", script::CompiledId(id), Map::new()),
+    ];
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Hold
+    );
+    assert!(!pending[0].started);
+    assert!(
+        pending[0]
+            .waiting_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("no slot")),
+        "{:?}",
+        pending[0].waiting_reason
+    );
+    assert_eq!(pair.evidence()["phase"], "ready");
+    assert_eq!(pair.barrier(), crate::paired_core::StartBarrier::StartBoth);
+    assert!(pair.failure().is_none());
+}
+
+#[test]
+fn pair_start_without_both_cards_fails_instead_of_holding() {
+    let play = empty_play();
+    let pair = PairWatch::default();
+    pair.configure(crate::paired_core::PairCase::Flax, "runner", "spinner");
+    let handle = play.script_start_handle();
+    let arming = || StartArming {
+        handle: Some(handle.clone()),
+        pair: Some(pair.clone()),
+        ..Default::default()
+    };
+    let id = if cfg!(feature = "js") {
+        "Sherlock"
+    } else {
+        "Gatherer"
+    };
+    let mut pending = vec![PendingCatalogStart::compiled(
+        "runner",
+        script::CompiledId(id),
+        Map::new(),
+    )];
+
+    let pump = fire_pending_catalog_start(&mut pending, true, false, arming);
+    let StartScriptPump::Failed(error) = pump else {
+        panic!("expected a Failed pump, got {pump:?}");
+    };
+    assert!(error.contains("actual scripts on both visible slots"), "{error}");
+    assert!(pair.failure().is_some(), "{:?}", pair.failure());
+    assert!(!pending[0].started);
+}
+
+
+#[cfg(feature = "js")]
+#[test]
 fn unknown_loadout_refusal_fails_start() {
     // Unknown and ambiguous selections are refusals, not missing prerequisites.
     let play = empty_play();
