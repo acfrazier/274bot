@@ -230,12 +230,9 @@ globs = [
   "crates/host-play/src/script_bank_harness.rs",
   "crates/script/src/native/server_ordered.rs",
   "crates/script-js/host-js/index.d.ts",
-  # These client paths contain only test-isolation changes in this revision.
-  # client/mod.rs:33 and lib.rs:18 gate the helper modules with #[cfg(test)].
-  # Product changes in these files need live coverage instead.
-  "vendor/fr-client-rust/crates/client/src/client/mod.rs",
+  # These helper files are gated by cfg(test) declarations in client/mod.rs:33 and lib.rs:18.
+  # The declarations stay live so future product changes remain visible.
   "vendor/fr-client-rust/crates/client/src/client/test_support.rs",
-  "vendor/fr-client-rust/crates/client/src/lib.rs",
   "vendor/fr-client-rust/crates/client/src/test_support.rs",
   # Approved merge ancestry: workspace version/lint declarations and a test-only
   # terminal benchmark seam (the remaining memory.rs change is comment-only).
