@@ -2214,16 +2214,8 @@ fn step_bank_action<D: Driver>(
             .progress
             .flight
             .as_ref()
-            .and_then(|flight| match &flight.target {
-                FlightTarget::Obj {
-                    id: target_id,
-                    carried,
-                    ..
-                } if target_id == id => Some(*carried),
-                _ => None,
-            })
-            .is_some_and(|carried| backpack_count(snapshot, *id) >= carried.saturating_add(*count))
-            .then_some("observed requested inventory increase"),
+            .is_some_and(|flight| bank_withdrawal_landed(snapshot, flight, *id, *count))
+            .then_some("observed bank debit and requested inventory increase"),
         BankStep::WithdrawX { .. } => (pending.progress.flight.is_some()
             && snapshot.count_dialog_open())
         .then_some("amount dialog opened"),
@@ -2284,9 +2276,8 @@ fn step_bank_action<D: Driver>(
             return (false, StepEnd::Rewritten);
         }
     }
-    // Open also waits while a bank component is up but not yet loaded.
-    // Once Withdraw-X answered, keep it latched until its inventory delta
-    // arrives; never submit the same count twice.
+    // Open waits while a bank component is up but not yet loaded.
+    // A withdrawal stays latched until its bank debit and pack credit arrive.
     // Wear's own bank close is not progress: keep it latched until its obj
     // state changes or the bounded step wait expires.
     let in_flight = pending
@@ -2331,6 +2322,32 @@ fn step_bank_action<D: Driver>(
         );
     }
     (wrote, StepEnd::Waiting)
+}
+
+fn bank_withdrawal_landed(
+    snapshot: &GameSnapshot,
+    flight: &BankFetchFlight,
+    id: i32,
+    count: i32,
+) -> bool {
+    let FlightTarget::Obj {
+        id: target_id,
+        carried,
+        banked,
+        bank_packet_generation: Some(sent_bank_packet),
+    } = &flight.target
+    else {
+        return false;
+    };
+    *target_id == id
+        && snapshot.bank_loaded()
+        && flight.bank_gen == snapshot.bank_session_generation()
+        && flight.bank_com == snapshot.bank_component_id()
+        && snapshot
+            .bank_snapshot_generation()
+            .is_some_and(|generation| generation > *sent_bank_packet)
+        && bank_count(snapshot, id) < *banked
+        && backpack_count(snapshot, id) >= (*carried).saturating_add(count)
 }
 
 /// Whether the open bank's `id` stack gives exactly `count` only through the
@@ -2498,7 +2515,7 @@ fn arm_access_fallback(
 }
 
 impl BankFetchFlight {
-    /// The target and, except for Wear, the bank session a send is judged against.
+    /// Capture the bank session and target facts that a send uses to track progress.
     fn of(snapshot: &GameSnapshot, step: &BankStep) -> Self {
         let target = match *step {
             BankStep::Withdraw { id, .. }
@@ -2506,7 +2523,8 @@ impl BankFetchFlight {
             | BankStep::WithdrawXAmount { id, .. } => FlightTarget::Obj {
                 id,
                 carried: backpack_count(snapshot, id),
-                worn: wearing(snapshot, id),
+                banked: bank_count(snapshot, id),
+                bank_packet_generation: snapshot.bank_snapshot_generation(),
             },
             BankStep::Wear { id } => FlightTarget::Wear {
                 id,
@@ -2522,9 +2540,9 @@ impl BankFetchFlight {
         }
     }
 
-    /// Whether `snapshot` still shows this send's target. Wear ignores the
-    /// bank-session change caused by its own close. Compares in place,
-    /// without a per-pump copy.
+    /// Whether the send remains in flight. A withdrawal stays latched in the same
+    /// bank session. Wear tracks its inventory target because its own close changes
+    /// that session. This comparison makes no per-pump copy.
     fn matches(&self, snapshot: &GameSnapshot) -> bool {
         let bank_matches = matches!(&self.target, FlightTarget::Wear { .. })
             || (self.bank_gen == snapshot.bank_session_generation()
@@ -2532,9 +2550,7 @@ impl BankFetchFlight {
         bank_matches
             && match &self.target {
                 FlightTarget::Bank => true,
-                FlightTarget::Obj { id, carried, worn } => {
-                    backpack_count(snapshot, *id) == *carried && wearing(snapshot, *id) == *worn
-                }
+                FlightTarget::Obj { .. } => true,
                 FlightTarget::Wear { id, carried, worn } => {
                     inventory_count(snapshot, *id) == *carried && wearing(snapshot, *id) == *worn
                 }
@@ -2584,11 +2600,16 @@ fn worn(snapshot: &GameSnapshot) -> impl Iterator<Item = i32> + '_ {
         .map(|item| item.def.id)
 }
 
-fn bank_holds(snapshot: &GameSnapshot, id: i32) -> bool {
+fn bank_count(snapshot: &GameSnapshot, id: i32) -> i32 {
     snapshot
         .bank()
         .iter()
-        .any(|item| item.def.id == id && item.count >= 1)
+        .filter(|item| item.def.id == id)
+        .fold(0, |total, item| total.saturating_add(item.count))
+}
+
+fn bank_holds(snapshot: &GameSnapshot, id: i32) -> bool {
+    bank_count(snapshot, id) >= 1
 }
 
 fn wearing(snapshot: &GameSnapshot, id: i32) -> bool {

@@ -384,6 +384,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   bank trips, and skips trips it cannot return from. Bank-selection timeouts
   respect the caller's fallback policy.
 
+### Fixed
+
+#### Banking
+
+- A bank trip now waits for withdrawn items to arrive in your pack before it ends.
+
 ### Fixed during development
 
 #### Survival
