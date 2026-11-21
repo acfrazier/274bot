@@ -8,8 +8,11 @@ use client::client::{
     Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision, MiniMenuAction,
 };
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
-use client::config::NpcType;
-use client::io::{ClientProt, ClientStream, Isaac, ServerProt};
+use client::config::runtime_377::{
+    CacheFields377, InterfaceFields377, MorphTable377, NpcFields377,
+};
+use client::config::{Cache, CacheRevision377, NpcType};
+use client::io::{ClientProt, ClientStream, Isaac};
 use std::net::TcpListener;
 use std::sync::Arc;
 
@@ -25,7 +28,7 @@ fn config() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
-        cache_dir: "/tmp".into(),
+        cache_dir: String::new(),
         members: true,
         lowmem: false,
     }
@@ -35,12 +38,27 @@ struct Scene {
     _listener: TcpListener,
     client: Client,
 }
+fn npc_fields(morph: Option<MorphTable377>) -> NpcFields377 {
+    NpcFields377 {
+        field_1451: -1,
+        field_1430: -1,
+        field_1440: -1,
+        field_1434: true,
+        morph,
+    }
+}
 
 fn scene(revision: ClientRevision) -> Scene {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind local test socket");
     let addr = listener.local_addr().expect("local socket address");
     let stream = ClientStream::connect(&addr.ip().to_string(), addr.port()).expect("connect");
-    let mut client = Client::new_with_revision(config(), revision);
+    let mut client = Client::from_shared_with_revision(
+        config(),
+        Arc::new(Cache::default()),
+        Arc::new(Vec::new()),
+        Arc::new(Vec::new()),
+        revision,
+    );
     client.ingame = true;
     client.scene_state = SCENE_READY;
     client.map_build_base_x = 3200;
@@ -48,6 +66,27 @@ fn scene(revision: ClientRevision) -> Scene {
     client.stream = Some(stream);
     client.out.random = Some(Isaac::new(&ISAAC_SEED));
     client.local_player = Some(ClientPlayer::at(50, 50));
+    client.shell.mouse_x = 120;
+    client.shell.mouse_y = 240;
+    client.shell.mouse_click_x = 23;
+    client.shell.mouse_click_y = 45;
+    client.shell.mouse_click_time = 6789;
+    if revision == ClientRevision::R377 {
+        Arc::get_mut(&mut client.cache)
+            .expect("test owns the client cache")
+            .revision_377 = Some(Box::new(CacheRevision377 {
+            config: CacheFields377 {
+                npcs: (0..=NPC_TYPE).map(|_| npc_fields(None)).collect(),
+                ..Default::default()
+            },
+            interfaces: InterfaceFields377 {
+                client_code_layers: Default::default(),
+                type1_fields: Vec::new(),
+                null_string_masks: Vec::new(),
+                initial_overlays: Vec::new(),
+            },
+        }));
+    }
     Scene {
         _listener: listener,
         client,
@@ -55,7 +94,11 @@ fn scene(revision: ClientRevision) -> Scene {
 }
 
 fn rebuild(client: &mut Client) -> GameSnapshot {
-    client.bump_gens(ServerProt::REBUILD_NORMAL);
+    // Publish the received scene, actor and interface fixture together.
+    client.gens.scene += 1;
+    client.gens.npc += 1;
+    client.gens.npc_info += 1;
+    client.gens.iface += 1;
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(client);
     snapshot
@@ -86,10 +129,8 @@ fn plant_npc(client: &mut Client) {
     client.npc_ids = vec![NPC_SLOT as i32];
     client.npc_count = 1;
     client.pick_count = 1;
-    client.pick_typecodes[0] = (1 << 29)
-        | (((NPC_SLOT as i32) & 0x7fff) << 14)
-        | ((50 & 0x7f) << 7)
-        | (53 & 0x7f);
+    client.pick_typecodes[0] =
+        (1 << 29) | (((NPC_SLOT as i32) & 0x7fff) << 14) | ((50 & 0x7f) << 7) | (53 & 0x7f);
 }
 
 fn plant_chat(client: &mut Client, buttons: &[(usize, i32, &str)], children: Option<Vec<usize>>) {
@@ -162,7 +203,9 @@ fn frames(client: &Client) -> Vec<Frame> {
             -2 => {
                 let length = u16::from_be_bytes([
                     *bytes.get(offset).expect("two-byte packet length high byte"),
-                    *bytes.get(offset + 1).expect("two-byte packet length low byte"),
+                    *bytes
+                        .get(offset + 1)
+                        .expect("two-byte packet length low byte"),
                 ]);
                 offset += 2;
                 usize::from(length)
@@ -170,7 +213,10 @@ fn frames(client: &Client) -> Vec<Frame> {
             length => panic!("unsupported packet length {length}"),
         };
         let end = offset.checked_add(body_len).expect("packet end");
-        let body = bytes.get(offset..end).expect("complete outbound packet").to_vec();
+        let body = bytes
+            .get(offset..end)
+            .expect("complete outbound packet")
+            .to_vec();
         offset = end;
         result.push(Frame {
             protocol: metadata.named,
@@ -183,7 +229,9 @@ fn frames(client: &Client) -> Vec<Frame> {
 fn assert_packet(client: &Client, protocol: ClientProt, body: &[u8]) {
     let output = frames(client);
     assert!(
-        output.iter().any(|frame| frame.protocol == protocol && frame.body == body),
+        output
+            .iter()
+            .any(|frame| frame.protocol == protocol && frame.body == body),
         "missing {protocol:?} {body:02x?} in {output:?}"
     );
     assert!(
@@ -194,28 +242,41 @@ fn assert_packet(client: &Client, protocol: ClientProt, body: &[u8]) {
     );
 }
 
+fn mouse_state(client: &Client) -> (i32, i32, i32, i32, i32, i32, i64) {
+    (
+        client.shell.mouse_x,
+        client.shell.mouse_y,
+        client.shell.mouse_button,
+        client.shell.mouse_click_button,
+        client.shell.mouse_click_x,
+        client.shell.mouse_click_y,
+        client.shell.mouse_click_time,
+    )
+}
+
 fn run_native_npc_talk(revision: ClientRevision) -> Client {
     let mut scene = scene(revision);
     plant_npc(&mut scene.client);
     let snapshot = rebuild(&mut scene.client);
+    let before_mouse = mouse_state(&scene.client);
     let npc = snapshot
         .npcs()
         .iter()
-        .find(|npc| {
-            npc.actions
-                .first()
-                .and_then(|action| action.as_deref())
-                == Some("Talk-to")
-        })
+        .find(|npc| npc.actions.first().and_then(|action| action.as_deref()) == Some("Talk-to"))
         .expect("planted NPC in snapshot");
-    let result = Interactions::new(&snapshot, &mut scene.client).interact(
-        OpTarget::Npc(npc),
-        ActionSpec::Label("Talk-to".into()),
-    );
+    let result = Interactions::new(&snapshot, &mut scene.client)
+        .interact(OpTarget::Npc(npc), ActionSpec::Label("Talk-to".into()));
     assert!(
-        matches!(&result, SendResult::Sent { command: WireCommand::Op { operation: 1, .. }, .. }),
+        matches!(
+            &result,
+            SendResult::Sent {
+                command: WireCommand::Op { operation: 1, .. },
+                ..
+            }
+        ),
         "Talk-to was not dispatched: {result:?}"
     );
+    assert_eq!(mouse_state(&scene.client), before_mouse);
     scene.client
 }
 
@@ -262,20 +323,22 @@ fn continue_scene(revision: ClientRevision) -> (Scene, GameSnapshot) {
 
 fn run_native_choice(revision: ClientRevision) -> Client {
     let (mut scene, snapshot) = choice_scene(revision);
+    let before_mouse = mouse_state(&scene.client);
     let result = Interactions::new(&snapshot, &mut scene.client).answer_choice(1);
     assert!(
         matches!(
             &result,
             SendResult::Sent {
                 command: WireCommand::Button {
-                    component_id: CHOICE_ONE as i32,
+                    component_id,
                     button_type: ButtonType::BUTTON_OK,
                 },
                 ..
-            }
+            } if *component_id == CHOICE_ONE as i32
         ),
         "first choice was not dispatched: {result:?}"
     );
+    assert_eq!(mouse_state(&scene.client), before_mouse);
     scene.client
 }
 
@@ -295,19 +358,21 @@ fn run_synthetic_choice(revision: ClientRevision) -> Client {
 
 fn run_native_continue(revision: ClientRevision) -> Client {
     let (mut scene, snapshot) = continue_scene(revision);
+    let before_mouse = mouse_state(&scene.client);
     let result = Interactions::new(&snapshot, &mut scene.client).continue_dialog(None);
     assert!(
         matches!(
             &result,
             SendResult::Sent {
                 command: WireCommand::Continue {
-                    component_id: CONTINUE_BUTTON as i32,
+                    component_id,
                 },
                 ..
-            }
+            } if *component_id == CONTINUE_BUTTON as i32
         ),
         "Continue was not dispatched: {result:?}"
     );
+    assert_eq!(mouse_state(&scene.client), before_mouse);
     scene.client
 }
 
@@ -333,7 +398,7 @@ fn native_npc_talk_wire_matches_synthetic_menu_on_r289_and_r377() {
         let native_frames = frames(&native);
         assert_eq!(native_frames, frames(&synthetic));
         let body = match revision {
-            ClientRevision::R289 => [0, NPC_SLOT as u8],
+            ClientRevision::R274 | ClientRevision::R289 => [0, NPC_SLOT as u8],
             ClientRevision::R377 => [NPC_SLOT as u8, 0],
         };
         assert_packet(&native, ClientProt::OPNPC1, &body);
@@ -493,8 +558,16 @@ fn assert_native_refusal_unchanged(
         ),
         Err(expected)
     );
-    assert_eq!(ui_state(client), before_ui, "refusal changed menu or selection");
-    assert_eq!(wire_state(client), before_wire, "refusal changed output or cipher");
+    assert_eq!(
+        ui_state(client),
+        before_ui,
+        "refusal changed menu or selection"
+    );
+    assert_eq!(
+        wire_state(client),
+        before_wire,
+        "refusal changed output or cipher"
+    );
 }
 
 #[test]
@@ -502,10 +575,72 @@ fn native_component_refusals_preserve_menu_selection_and_cipher() {
     for revision in [ClientRevision::R289, ClientRevision::R377] {
         for button_type in [ButtonType::BUTTON_OK, ButtonType::BUTTON_CONTINUE] {
             let mut scene = scene(revision);
+            plant_chat(
+                &mut scene.client,
+                &[(CHOICE_ONE, button_type, "Action")],
+                None,
+            );
+            seed_menu_sentinel(&mut scene.client);
+            let snapshot = rebuild(&mut scene.client);
+            let widget = snapshot
+                .widgets()
+                .iter()
+                .find(|widget| widget.component_id == CHOICE_ONE as i32)
+                .expect("planted chat button");
+            let expected_action = if button_type == ButtonType::BUTTON_OK {
+                MiniMenuAction::PAUSE_BUTTON
+            } else {
+                MiniMenuAction::IF_BUTTON
+            };
+            assert_native_refusal_unchanged(
+                &mut scene.client,
+                &snapshot,
+                widget,
+                expected_action,
+                SendReason::MenuIneligible,
+            );
+
+            let before_ui = ui_state(&scene.client);
+            let before_wire = wire_state(&scene.client);
+            let missing =
+                Interactions::new(&snapshot, &mut scene.client).continue_dialog(Some(9999));
+            assert!(matches!(
+                missing,
+                SendResult::Refused {
+                    reason: SendReason::StaleTarget,
+                    ..
+                }
+            ));
+            assert_eq!(ui_state(&scene.client), before_ui);
+            assert_eq!(wire_state(&scene.client), before_wire);
+
+            if button_type == ButtonType::BUTTON_OK {
+                let before_ui = ui_state(&scene.client);
+                let before_wire = wire_state(&scene.client);
+                let ineligible = Interactions::new(&snapshot, &mut scene.client)
+                    .continue_dialog(Some(CHOICE_ONE as i32));
+                assert!(matches!(
+                    ineligible,
+                    SendResult::Refused {
+                        reason: SendReason::InvalidAction,
+                        ..
+                    }
+                ));
+                assert_eq!(ui_state(&scene.client), before_ui);
+                assert_eq!(wire_state(&scene.client), before_wire);
+            }
+        }
+    }
+}
+
+#[test]
+fn duplicate_native_component_row_is_ambiguous_without_mutation() {
+    for revision in [ClientRevision::R289, ClientRevision::R377] {
+        let mut scene = scene(revision);
         plant_chat(
             &mut scene.client,
-            &[(CHOICE_ONE, button_type, "Action")],
-            None,
+            &[(CHOICE_ONE, ButtonType::BUTTON_OK, "Action")],
+            Some(vec![CHOICE_ONE, CHOICE_ONE]),
         );
         seed_menu_sentinel(&mut scene.client);
         let snapshot = rebuild(&mut scene.client);
@@ -514,76 +649,15 @@ fn native_component_refusals_preserve_menu_selection_and_cipher() {
             .iter()
             .find(|widget| widget.component_id == CHOICE_ONE as i32)
             .expect("planted chat button");
-        let expected_action = if button_type == ButtonType::BUTTON_OK {
-            MiniMenuAction::PAUSE_BUTTON
-        } else {
-            MiniMenuAction::IF_BUTTON
-        };
         assert_native_refusal_unchanged(
             &mut scene.client,
             &snapshot,
             widget,
-            expected_action,
-            SendReason::MenuIneligible,
+            MiniMenuAction::IF_BUTTON,
+            SendReason::MenuAmbiguous,
         );
-
-        let before_ui = ui_state(&scene.client);
-        let before_wire = wire_state(&scene.client);
-        let missing = Interactions::new(&snapshot, &mut scene.client).continue_dialog(Some(9999));
-        assert!(matches!(
-            missing,
-            SendResult::Refused {
-                reason: SendReason::StaleTarget,
-                ..
-            }
-        ));
-        assert_eq!(ui_state(&scene.client), before_ui);
-        assert_eq!(wire_state(&scene.client), before_wire);
-
-        if button_type == ButtonType::BUTTON_OK {
-            let before_ui = ui_state(&scene.client);
-            let before_wire = wire_state(&scene.client);
-            let ineligible =
-                Interactions::new(&snapshot, &mut scene.client).continue_dialog(Some(CHOICE_ONE as i32));
-            assert!(matches!(
-                ineligible,
-                SendResult::Refused {
-                    reason: SendReason::InvalidAction,
-                    ..
-                }
-            ));
-            assert_eq!(ui_state(&scene.client), before_ui);
-            assert_eq!(wire_state(&scene.client), before_wire);
-        }
-    }
     }
 }
-
-#[test]
-fn duplicate_native_component_row_is_ambiguous_without_mutation() {
-    for revision in [ClientRevision::R289, ClientRevision::R377] {
-        let mut scene = scene(revision);
-    plant_chat(
-        &mut scene.client,
-        &[(CHOICE_ONE, ButtonType::BUTTON_OK, "Action")],
-        Some(vec![CHOICE_ONE, CHOICE_ONE]),
-    );
-    seed_menu_sentinel(&mut scene.client);
-    let snapshot = rebuild(&mut scene.client);
-    let widget = snapshot
-        .widgets()
-        .iter()
-        .find(|widget| widget.component_id == CHOICE_ONE as i32)
-        .expect("planted chat button");
-    assert_native_refusal_unchanged(
-        &mut scene.client,
-        &snapshot,
-        widget,
-        MiniMenuAction::IF_BUTTON,
-        SendReason::MenuAmbiguous,
-    );
-}
-    }
 
 #[test]
 fn stale_native_component_scope_refuses_without_mutation() {
@@ -629,13 +703,13 @@ fn repeated_continue_refuses_after_one_wire_send_without_further_mutation() {
         {
             let first = Interactions::new(&snapshot, &mut scene.client).continue_dialog(None);
             assert!(matches!(
-                first,
+                &first,
                 SendResult::Sent {
                     command: WireCommand::Continue {
-                        component_id: CONTINUE_BUTTON as i32,
+                        component_id,
                     },
                     ..
-                }
+                } if *component_id == CONTINUE_BUTTON as i32
             ));
         }
 
@@ -663,5 +737,164 @@ fn repeated_continue_refuses_after_one_wire_send_without_further_mutation() {
                 .count(),
             1
         );
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NpcChange {
+    Session,
+    Scene,
+    Removed,
+    Unpublished,
+    Reused,
+    WrongKind,
+    Moved,
+    ReceivedNpcInfo,
+    Ineligible,
+    MenuOpen,
+}
+
+#[test]
+fn stale_and_ineligible_npc_rows_refuse_without_mutation() {
+    for revision in [ClientRevision::R289, ClientRevision::R377] {
+        for (change, expected) in [
+            (NpcChange::Session, SendReason::StaleSession),
+            (NpcChange::Scene, SendReason::StaleScene),
+            (NpcChange::Removed, SendReason::StaleTarget),
+            (NpcChange::Unpublished, SendReason::StaleTarget),
+            (NpcChange::Reused, SendReason::StaleTarget),
+            (NpcChange::WrongKind, SendReason::StaleTarget),
+            (NpcChange::Moved, SendReason::StaleTarget),
+            (NpcChange::ReceivedNpcInfo, SendReason::StaleTarget),
+            (NpcChange::Ineligible, SendReason::MenuIneligible),
+            (NpcChange::MenuOpen, SendReason::MenuIneligible),
+        ] {
+            let mut scene = scene(revision);
+            plant_npc(&mut scene.client);
+            if matches!(change, NpcChange::Ineligible) {
+                Arc::get_mut(&mut scene.client.cache)
+                    .expect("test owns the unpublished cache")
+                    .npcs[NPC_TYPE as usize]
+                    .op[0] = Some("Attack".into());
+            }
+            seed_menu_sentinel(&mut scene.client);
+            scene.client.use_mode = 0;
+            scene.client.target_mode = 0;
+            let snapshot = rebuild(&mut scene.client);
+            let npc = snapshot.npcs().first().expect("published NPC");
+            match change {
+                NpcChange::Session => scene.client.gens.session += 1,
+                NpcChange::Scene => scene.client.gens.scene += 1,
+                NpcChange::Removed => scene.client.npc[NPC_SLOT] = None,
+                NpcChange::Unpublished => scene.client.npc_count = 0,
+                NpcChange::Reused => {
+                    scene.client.npc[NPC_SLOT].as_mut().unwrap().r#type =
+                        Some(NPC_TYPE as usize + 1);
+                }
+                NpcChange::WrongKind => {
+                    scene.client.npc[NPC_SLOT] = None;
+                    scene.client.players[NPC_SLOT] = Some(Box::new(ClientPlayer::at(53, 50)));
+                }
+                NpcChange::Moved => {
+                    scene.client.npc[NPC_SLOT].as_mut().unwrap().route_x[0] += 1;
+                }
+                NpcChange::ReceivedNpcInfo => scene.client.gens.npc_info += 1,
+                NpcChange::Ineligible => {
+                    assert_eq!(npc.actions[0].as_deref(), Some("Attack"));
+                }
+                NpcChange::MenuOpen => scene.client.is_menu_open = true,
+            }
+            let before_ui = ui_state(&scene.client);
+            let before_wire = wire_state(&scene.client);
+            assert_eq!(
+                Driver::dispatch_native_menu(
+                    &mut scene.client,
+                    &snapshot,
+                    NativeMenuTarget::NpcTalk(npc),
+                ),
+                Err(expected),
+                "{revision:?} {change:?}",
+            );
+            assert_eq!(
+                ui_state(&scene.client),
+                before_ui,
+                "{revision:?} {change:?}"
+            );
+            assert_eq!(
+                wire_state(&scene.client),
+                before_wire,
+                "{revision:?} {change:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_377_npc_morph_resolves_talk_and_refuses_changed_or_inactive_forms() {
+    for change in [None, Some(false), Some(true)] {
+        let mut scene = scene(ClientRevision::R377);
+        plant_npc(&mut scene.client);
+        let cache = Arc::get_mut(&mut scene.client.cache).expect("test owns the client cache");
+        let form_id = cache.npcs.len();
+        cache.npcs.push(NpcType {
+            id: form_id as i32,
+            name: "Current form".into(),
+            op: vec![Some("Talk-to".into())],
+            ..Default::default()
+        });
+        let fields = &mut cache.revision_377.as_mut().unwrap().config.npcs;
+        fields.push(npc_fields(None));
+        fields[form_id].field_1434 = change != Some(false);
+        fields[NPC_TYPE as usize].morph = Some(MorphTable377 {
+            varbit: -1,
+            varp: 0,
+            targets: vec![form_id as i32, -1],
+        });
+        scene.client.var = vec![0];
+        let snapshot = rebuild(&mut scene.client);
+        let npc = snapshot.npcs().first().expect("published morph NPC");
+        assert_eq!(npc.r#type, Some(NPC_TYPE as usize));
+        assert_eq!(
+            npc.name.as_deref(),
+            if change == Some(false) {
+                None
+            } else {
+                Some("Current form")
+            }
+        );
+        match change {
+            None => {
+                assert_eq!(
+                    Driver::dispatch_native_menu(
+                        &mut scene.client,
+                        &snapshot,
+                        NativeMenuTarget::NpcTalk(npc),
+                    ),
+                    Ok(()),
+                );
+                assert_packet(&scene.client, ClientProt::OPNPC1, &[NPC_SLOT as u8, 0]);
+            }
+            Some(changed_varp) => {
+                let expected = if changed_varp {
+                    scene.client.var[0] = 1;
+                    scene.client.gens.varp += 1;
+                    SendReason::StaleTarget
+                } else {
+                    SendReason::MenuIneligible
+                };
+                let before_ui = ui_state(&scene.client);
+                let before_wire = wire_state(&scene.client);
+                assert_eq!(
+                    Driver::dispatch_native_menu(
+                        &mut scene.client,
+                        &snapshot,
+                        NativeMenuTarget::NpcTalk(npc),
+                    ),
+                    Err(expected),
+                );
+                assert_eq!(ui_state(&scene.client), before_ui);
+                assert_eq!(wire_state(&scene.client), before_wire);
+            }
+        }
     }
 }

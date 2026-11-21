@@ -21749,6 +21749,7 @@ fn observe_script_inv_reads_only_the_current_snapshot_on_running_ticks() {
 struct GuardRec {
     menus: Vec<(i32, i32, i32, i32, i32)>,
     actions: Vec<i32>,
+    native_rows: Vec<(i32, i32)>,
     walks: Vec<(i32, i32)>,
     sink: Sink,
 }
@@ -21760,6 +21761,22 @@ impl Driver for GuardRec {
     fn do_action(&mut self, slot: i32) -> bool {
         self.actions.push(slot);
         true
+    }
+    fn dispatch_native_menu(
+        &mut self,
+        _snapshot: &GameSnapshot,
+        target: api::interact::NativeMenuTarget<'_>,
+    ) -> Result<(), api::interact::SendReason> {
+        let row = match target {
+            api::interact::NativeMenuTarget::NpcTalk(npc) => {
+                (MiniMenuAction::OP_NPC1, npc.index as i32)
+            }
+            api::interact::NativeMenuTarget::Component { widget, action } => {
+                (action, widget.component_id)
+            }
+        };
+        self.native_rows.push(row);
+        Ok(())
     }
     fn try_move(
         &mut self,
@@ -27208,7 +27225,10 @@ fn load_ignored_randoms_decline_only_listed_events() {
         "an ignored event does not safety-hold the slot"
     );
     assert!(
-        drv.walks.is_empty() && drv.menus.is_empty() && drv.actions.is_empty(),
+        drv.walks.is_empty()
+            && drv.menus.is_empty()
+            && drv.actions.is_empty()
+            && drv.native_rows.is_empty(),
         "the guardian emits no action for an ignored event"
     );
 
@@ -27222,10 +27242,12 @@ fn load_ignored_randoms_decline_only_listed_events() {
     let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock));
     assert_eq!(status.name.as_deref(), Some("genie"));
     assert_eq!(status.claim, RandomClaim::Host);
-    assert!(
-        !drv.menus.is_empty(),
-        "the guardian still handles unlisted events"
+    assert_eq!(
+        drv.native_rows,
+        [(MiniMenuAction::OP_NPC1, 0)],
+        "the guardian still handles unlisted events through the native row"
     );
+    assert!(drv.menus.is_empty() && drv.actions.is_empty());
 
     // A non-ignored Load slot keeps the guardian's trapped-Maze hold.
     let mut c = guardian_client();
@@ -27652,12 +27674,14 @@ fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
     let status = g.tick(&mut drv, &snap, &settings, 0, None);
     assert!(status.handling);
     assert!(status.hold);
-    assert_eq!(drv.actions, vec![0]);
+    assert_eq!(drv.native_rows, [(MiniMenuAction::OP_NPC1, 0)]);
+    assert!(drv.menus.is_empty() && drv.actions.is_empty());
 
     // Tick 2: the genie is gone and the lamp sits in the inventory:
     // the handle lifts and the lamp is inert XP — no hold.
     drv.menus.clear();
     drv.actions.clear();
+    drv.native_rows.clear();
     c.npc[0] = None;
     c.npc_count = 0;
     plant_inv_item(&mut c, 2528); // Lamp (the genie lamp) obj id
@@ -27671,7 +27695,10 @@ fn after_genie_gone_lamp_auto_off_in_inv_detects_without_hold() {
         "lamp auto off: leftover lamp must not latch EventSignal.pending via ours"
     );
     assert!(!status.handling, "inert lamp must not latch the handler");
-    assert!(drv.menus.is_empty(), "a lamp is never talked to");
+    assert!(
+        drv.menus.is_empty() && drv.native_rows.is_empty(),
+        "a lamp is never talked to"
+    );
 }
 
 #[test]
@@ -27857,6 +27884,25 @@ impl Driver for NavRec {
     }
     fn do_action(&mut self, _slot: i32) -> bool {
         true
+    }
+    fn dispatch_native_menu(
+        &mut self,
+        _snapshot: &GameSnapshot,
+        target: api::interact::NativeMenuTarget<'_>,
+    ) -> Result<(), api::interact::SendReason> {
+        match target {
+            api::interact::NativeMenuTarget::NpcTalk(_) => {
+                self.npc_ops += 1;
+                self.menu_order.push((MiniMenuAction::OP_NPC1, 0));
+            }
+            api::interact::NativeMenuTarget::Component { widget, action } => {
+                self.menu_order.push((action, widget.component_id));
+                if action == MiniMenuAction::IF_BUTTON {
+                    self.if_button_components.push(widget.component_id);
+                }
+            }
+        }
+        Ok(())
     }
     fn try_move(
         &mut self,

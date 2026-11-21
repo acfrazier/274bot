@@ -49,10 +49,8 @@ fn select_row(client: &Client, wanted: Row) -> Result<i32, SendReason> {
             b: client.menu_param_b[index],
             c: client.menu_param_c[index],
         };
-        if row == wanted {
-            if selected.replace(index as i32).is_some() {
-                return Err(SendReason::MenuAmbiguous);
-            }
+        if row == wanted && selected.replace(index as i32).is_some() {
+            return Err(SendReason::MenuAmbiguous);
         }
     }
     selected.ok_or(SendReason::MenuUnavailable)

@@ -1353,9 +1353,8 @@ impl<'a> Interactions<'a> {
                 };
                 self.menu_action(opcode, 0, 0, *component_id)
             }
-            WireCommand::Continue { component_id } => {
-                self.menu_action(MiniMenuAction::PAUSE_BUTTON, 0, 0, *component_id)
-            }
+            // Continuations are dispatched only through current native rows.
+            WireCommand::Continue { .. } => false,
             // The m8aq `close`/`clear-local-modal` arms dispatch
             // CLOSE_BUTTON, so `Client::close_modal()` runs — it clears
             // the client's local modal ids AND writes CLOSE_MODAL.
