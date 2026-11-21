@@ -10,6 +10,8 @@ use std::sync::Arc;
 
 pub struct StageSurvival {
     exposures: Arc<[SupplyExposure]>,
+    /// One poison clock for the stage, including concurrent zone attackers.
+    duration_ticks: u64,
     /// Every combat machine may put on its opening kit during this stage.
     kits: Arc<[Arc<CompiledKit>]>,
     inventory: super::compile::StageInventory,
@@ -31,7 +33,7 @@ pub struct SurvivalNeed {
     pub unknown: Option<UnknownWhy>,
 }
 
-const _: () = assert!(std::mem::size_of::<StageSurvival>() == 56);
+const _: () = assert!(std::mem::size_of::<StageSurvival>() == 64);
 const _: () = assert!(std::mem::size_of::<CompiledSurvival>() <= 48);
 const _: () = assert!(std::mem::size_of::<SurvivalNeed>() <= 88);
 
@@ -95,6 +97,7 @@ impl CompiledSurvival {
         let mut stages = Vec::with_capacity(sequences.len());
         for (sequence, authored) in sequences.iter().zip(&role.sequences) {
             let mut exposures = Vec::new();
+            let mut duration_ticks = 0u64;
             let mut kits = Vec::new();
             let mut crossings = sequence.cross.to_vec();
             for step in authored.steps.iter().chain(&role.prelude) {
@@ -108,6 +111,9 @@ impl CompiledSurvival {
                 let Some(request) = step.plan.combat_request() else {
                     continue;
                 };
+                duration_ticks = duration_ticks
+                    .checked_add(u64::from(request.budget_ticks))
+                    .ok_or_else(|| CompileError::code("survival-exposure-overflow"))?;
                 if let Target::Npc { types, .. } = &request.target {
                     for &ident in types.iter() {
                         let kind = risks.npc(ident).copied().unwrap_or_else(unknown_kind);
@@ -152,6 +158,7 @@ impl CompiledSurvival {
                     let key = zones
                         .resolve(&name)
                         .ok_or_else(|| CompileError::code("unknown-cross-zone"))?;
+                    let mut crossing_ticks = 0;
                     for zone in zones
                         .covered_zones(key)
                         .map_err(|_| CompileError::code("unknown-cross-zone"))?
@@ -169,16 +176,31 @@ impl CompiledSurvival {
                             .and_then(|span| span.checked_add(4))
                             .and_then(|ticks| u16::try_from(ticks).ok())
                             .ok_or_else(|| CompileError::code("survival-exposure-overflow"))?;
+                        // Engine-A crossing measurements took 29 ticks, including
+                        // approach and exit. Round to 30, then add damage headroom
+                        // in estimated_food_count. This is not route admission.
+                        let ticks = if cx.selected.revision() == 289
+                            && name.as_ref() == "death-plateau-throwers"
+                        {
+                            ticks.min(30)
+                        } else {
+                            ticks
+                        };
+                        crossing_ticks = crossing_ticks.max(ticks);
                         exposures.push(SupplyExposure {
                             ident: zone.kind().npc_id().unwrap_or(-1),
                             kind,
                             ticks,
                         });
                     }
+                    duration_ticks = duration_ticks
+                        .checked_add(u64::from(crossing_ticks))
+                        .ok_or_else(|| CompileError::code("survival-exposure-overflow"))?;
                 }
             }
             stages.push(StageSurvival {
                 exposures: exposures.into(),
+                duration_ticks,
                 kits: kits.into(),
                 inventory: super::compile::stage_inventory(
                     authored.steps.iter().chain(&role.prelude),
@@ -462,7 +484,15 @@ impl CompiledSurvival {
             return Ok(None);
         }
         let count = if unknown {
-            maximum
+            estimated_food_count(
+                &stage.exposures,
+                &self.tables,
+                input,
+                stage.duration_ticks,
+                heal,
+                owner.map(|owner| owner.path.0.as_ref()),
+            )
+            .min(maximum)
         } else {
             self.food_count(stage, input, id, heal, maximum)?
                 .unwrap_or(maximum)
@@ -720,6 +750,107 @@ fn supply_score(result: Result<risk::odds::DeathBound, UnknownWhy>) -> (f64, Opt
     }
 }
 
+/// A policy reserve, not an admission bound. Four ordinary bites replace the
+/// old full-pack guess. Underground Pass has repeatable, unbounded failures
+/// (quest-guides.md, "Damage from a step"), so retain two such reserves there.
+const UNKNOWN_FOOD_DEFAULT: u8 = 4;
+const UNKNOWN_FOOD_OVERRIDES: &[(&str, u8)] = &[("upass", 8)];
+
+fn fallback_food_count(quest: Option<&str>) -> u8 {
+    UNKNOWN_FOOD_OVERRIDES
+        .iter()
+        .find(|(id, _)| Some(*id) == quest)
+        .map_or(UNKNOWN_FOOD_DEFAULT, |(_, count)| *count)
+}
+
+fn estimated_food_count(
+    exposures: &[SupplyExposure],
+    tables: &CombatTables,
+    input: &RiskInput,
+    duration_ticks: u64,
+    heal: i32,
+    quest: Option<&str>,
+) -> u8 {
+    let Some((twice_damage, max_hit, poison)) = expected_damage(exposures, tables) else {
+        return fallback_food_count(quest);
+    };
+    let poison = match input.poison {
+        api::condition::PoisonState::Clear | api::condition::PoisonState::Immune { .. } => poison,
+        api::condition::PoisonState::Poisoned { per_tick, .. }
+        | api::condition::PoisonState::Onset {
+            q: Some(per_tick), ..
+        } => poison.max(u64::from(per_tick)),
+        _ => poison.max(u64::from(tables.unknown_poison_pulse())),
+    };
+    let twice_damage = twice_damage + 2 * poison * duration_ticks.div_ceil(30);
+    damage_food_count(twice_damage, max_hit, input.hp_max, heal)
+        .unwrap_or_else(|| fallback_food_count(quest))
+}
+
+/// Uniform randominc(max_hit) has mean max_hit / 2. Charge every attack as a
+/// hit, with no defence or prayer credit.
+fn expected_damage(exposures: &[SupplyExposure], tables: &CombatTables) -> Option<(u64, u64, u64)> {
+    let (mut twice_damage, mut max_hit, mut poison) = (0u64, 0, 0);
+    for exposure in exposures {
+        let kind = exposure.kind;
+        let hit = if kind.unknown_for().is_none() {
+            u64::from(kind.max_hit)
+        } else {
+            let row = tables.npc(exposure.ident)?;
+            // death_troll_thrower.rs2:20-32 calls npc_ranged_maxhit and
+            // randominc, without an accuracy roll or a poison operation.
+            if kind.unknown != risk::UnknownKind::Bespoke
+                || !matches!(
+                    row.config.as_str(),
+                    "death_troll_thrower1"
+                        | "death_troll_thrower2"
+                        | "death_troll_thrower3"
+                        | "death_troll_thrower4"
+                        | "death_troll_thrower5"
+                )
+            {
+                return None;
+            }
+            let ranged = u64::try_from(row.ranged?).ok()?;
+            let bonus = u64::try_from(row.rangebonus?.checked_add(64)?).ok()?;
+            // npc_combat_ranged.rs2:7-13 and combat.rs2:7-12.
+            u64::from(u8::try_from(((ranged + 9) * bonus + 320) / 640).ok()?)
+        };
+        let rate = u64::from(kind.rate);
+        if rate == 0 || exposure.ticks == 0 {
+            return None;
+        }
+        twice_damage += if kind.hazard() || kind.unknown_for().is_none() && !kind.shared_attack() {
+            2 * hit
+                * if kind.hazard() {
+                    1
+                } else {
+                    u64::from(exposure.ticks).div_ceil(rate)
+                }
+        } else {
+            u64::from(exposure.ticks).div_ceil(rate) * hit
+        };
+        max_hit = max_hit.max(hit);
+        poison = poison.max(u64::from(kind.poison));
+    }
+    Some((twice_damage, max_hit, poison))
+}
+
+fn damage_food_count(twice_damage: u64, max_hit: u64, hp_max: u8, heal: i32) -> Option<u8> {
+    let heal = u64::try_from(heal).ok()?.min(u64::from(hp_max));
+    if heal == 0 {
+        return None;
+    }
+    // 50% above the expected damage, plus one full opening hit. The latter
+    // covers an already-due projectile before a bite heals (supplies.rs:7-10).
+    // This reserve makes no claim about the probability of death.
+    let damage = twice_damage
+        .checked_mul(3)?
+        .div_ceil(4)
+        .checked_add(max_hit)?;
+    Some(damage.div_ceil(heal).clamp(1, 28) as u8)
+}
+
 fn unknown_kind() -> risk::KindRisk {
     risk::KindRisk::new(
         0,
@@ -735,4 +866,117 @@ fn unknown_kind() -> risk::KindRisk {
         false,
         false,
     )
+}
+
+#[cfg(test)]
+mod food_sizing_tests {
+    use super::*;
+
+    #[test]
+    fn damage_budget_rounds_up_and_keeps_the_opening_hit_margin() {
+        // Twenty-five throws, each uniform on 0..=7, need 139 HP of healing.
+        assert_eq!(damage_food_count(175, 7, 40, 12), Some(12));
+        assert_eq!(damage_food_count(175, 7, 40, 20), Some(7));
+        // A small HP cap cannot use the food's full advertised heal.
+        assert_eq!(damage_food_count(16, 1, 4, 12), Some(4));
+        assert_eq!(damage_food_count(100_000, 70, 99, 12), Some(28));
+        assert_eq!(damage_food_count(20, 7, 40, 0), None);
+    }
+
+    #[test]
+    fn unknown_stage_uses_the_default_or_the_quest_override() {
+        assert_eq!(fallback_food_count(None), 4);
+        assert_eq!(fallback_food_count(Some("imp")), 4);
+        assert_eq!(fallback_food_count(Some("upass")), 8);
+    }
+
+    #[test]
+    fn estimated_supply_includes_poison_without_claiming_admission() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let tables = CombatTables::build(selected).unwrap();
+        let kind = risk::KindRisk::new(
+            2,
+            4,
+            1,
+            1,
+            risk::Style::Melee,
+            risk::UnknownKind::Known,
+            3,
+            1000,
+            true,
+            false,
+            false,
+            false,
+        );
+        let exposures = [SupplyExposure {
+            ident: -1,
+            kind,
+            ticks: 31,
+        }];
+        let mut input = RiskInput::default();
+        input.hp_max = 40;
+        input.poison = api::condition::PoisonState::Clear;
+        // Eight attacks average 8 damage. Two poison pulses add 6.
+        assert_eq!(
+            estimated_food_count(&exposures, &tables, &input, 31, 12, None),
+            2
+        );
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 0,
+            hit_since_mark: false,
+        };
+        assert_eq!(
+            estimated_food_count(&exposures, &tables, &input, 31, 12, None),
+            3
+        );
+        let unknown = [SupplyExposure {
+            kind: unknown_kind(),
+            ..exposures[0]
+        }];
+        assert_eq!(
+            estimated_food_count(&unknown, &tables, &input, 31, 12, None),
+            4
+        );
+        assert_eq!(
+            estimated_food_count(&unknown, &tables, &input, 31, 12, Some("upass")),
+            8
+        );
+    }
+
+    #[test]
+    fn concurrent_throwers_share_one_poison_clock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let tables = CombatTables::build(selected).unwrap();
+        let risks = RiskTables::build(&tables);
+        // The plateau has six placements across five NPC types.
+        let exposures = [1105, 1101, 1102, 1103, 1104, 1105].map(|ident| SupplyExposure {
+            ident,
+            kind: *risks.npc(ident).unwrap(),
+            ticks: 30,
+        });
+        let mut input = RiskInput::default();
+        input.hp_max = 40;
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 11,
+            last_mark: 0,
+            hit_since_mark: false,
+        };
+        assert_eq!(expected_damage(&exposures, &tables), Some((210, 7, 0)));
+        assert_eq!(
+            estimated_food_count(&exposures, &tables, &input, 30, 12, None),
+            16
+        );
+        // Six sequential exposures do allow six poison pulses.
+        assert_eq!(
+            estimated_food_count(&exposures, &tables, &input, 180, 12, None),
+            22
+        );
+    }
 }

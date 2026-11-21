@@ -1005,7 +1005,7 @@ impl Provisioner {
                 if fits > 0 || stock.banked(item.id).is_none() {
                     // Draw the attainable target. Record one shortfall below,
                     // rather than a second target from Planner::require.
-                    let attainable = stock.total(item.id).map_or(*count, |have| fits.min(have));
+                    let attainable = stock.total(item.id).map_or(fits, |have| fits.min(have));
                     needs.require(&bank_need(
                         item.id,
                         &item.name,
@@ -2283,6 +2283,48 @@ mod tests {
             api::condition::PoisonState::Clear,
             false,
         )
+    }
+
+    #[test]
+    fn bespoke_thrower_stage_sizes_food_from_ranged_damage_instead_of_a_full_pack() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, _, mut snapshot) = survival_fixture_document(false, true, |document| {
+            let fight = &mut document.roles[0].sequences[0].steps[0];
+            fight.args["target"]["npc"] = serde_json::json!("death_troll_thrower1");
+            fight.args["kill_budget_ticks"] = serde_json::json!(30);
+        });
+        let model = path.provisioning.survival.as_ref().unwrap();
+        let food = model.tables().selected().item_by_alias("lobster").unwrap();
+        snapshot.seed_inventory(
+            vec![item_view(
+                food.id,
+                food.name.as_deref().unwrap(),
+                3,
+                ItemContainer::Inventory,
+            )],
+            28,
+        );
+        let target = model
+            .plan(
+                0,
+                snapshot_view(&snapshot, 1).stock(),
+                survival_input(&snapshot, model),
+                Some(&path.provisioning),
+            )
+            .unwrap();
+        assert_eq!(
+            target.unknown,
+            Some(crate::combat::risk::UnknownWhy::Kind(
+                crate::combat::risk::UnknownKind::Bespoke,
+            ))
+        );
+        assert_eq!(target.food.unwrap().1, 3);
+        assert_eq!(
+            target.bound, 1.0,
+            "a supply estimate must not grant route admission"
+        );
     }
 
     #[test]

@@ -82,14 +82,10 @@ const CROSSING_BITE_WINDOW: u32 = 3;
 /// stat and inventory are seen one tick later. The cell keeps its documented
 /// four-tick window (docs/dev/harness.md).
 const EAT_HEAL_WINDOW: u32 = 4;
-/// The cell tests the crossing Eat, not provisioning. The Quester's
-/// stage-survival provisioner sizes `imp:0` food at the 28-slot maximum
-/// (quester/survival.rs:450-469; status `provision_need 28` in
-/// EAT-CROSSING-1120 map pass 3). With fewer lobsters held and the bank
-/// unread it scans the bank before the walk (provision.rs:971-1010,1097-1117;
-/// acquire/plan.rs:198-207), which happened in 1 of 10 runs with 4 lobsters.
-/// Holding 28 makes the held count meet that target, so no trip can start.
-const CROSSING_LOBSTERS: i32 = 28;
+/// Covers six concurrent throwers: 105 expected HP of damage plus one
+/// worst-source poison pulse (11 HP), then 50% headroom and a 7-HP opening
+/// hit. The resulting 181 HP of healing needs 16 lobsters.
+const CROSSING_LOBSTERS: i32 = 16;
 
 fn in_throwers_zone(tile: WorldTile) -> bool {
     tile.level == 0
@@ -1908,6 +1904,9 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
         }
         return W1GateDecision::Pass;
     }
+    if !crossing_supply_stayed_held(&capture.statuses) {
+        return gate_fail("product: crossing food sizing requested a bank trip or a full pack");
+    }
     let eats: Vec<EatClick> = capture
         .actions
         .iter()
@@ -1930,6 +1929,39 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
         return gate_fail("arrival lacks a ready in-game scene");
     }
     decision
+}
+
+fn crossing_supply_stayed_held(statuses: &[serde_json::Value]) -> bool {
+    let mut observed = false;
+    for status in statuses {
+        let fields = &status["fields"];
+        if let (Some(attempts), Some(need)) = (
+            fields["provision_attempts"].as_u64(),
+            fields["provision_need"].as_i64(),
+        ) {
+            observed = true;
+            if attempts > 0 || need >= 28 {
+                return false;
+            }
+        }
+    }
+    observed
+}
+
+#[test]
+fn crossing_supply_oracle_rejects_a_bank_attempt_or_full_pack_target() {
+    assert!(!crossing_supply_stayed_held(&[]));
+    assert!(!crossing_supply_stayed_held(&[json!({"fields": {}})]));
+    assert!(crossing_supply_stayed_held(&[
+        json!({"fields": {"provision_need": 16, "provision_attempts": 0}}),
+        json!({"fields": {"provision_need": 0, "provision_attempts": 0}}),
+    ]));
+    assert!(!crossing_supply_stayed_held(&[
+        json!({"fields": {"provision_need": 16, "provision_attempts": 1}}),
+    ]));
+    assert!(!crossing_supply_stayed_held(&[
+        json!({"fields": {"provision_need": 28, "provision_attempts": 0}}),
+    ]));
 }
 
 /// A guard Eat click tick, with its `eat_heal` result (heal tick, HP, lobsters).

@@ -392,6 +392,48 @@ fn owned_food_reserves_future_withdrawals_without_executing_them() {
 }
 
 #[test]
+fn unread_bank_scan_preserves_room_for_future_quest_items() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (path, quests, snapshot) = survival_fixture_document(true, false, |document| {
+        owned(document);
+        extra_step(
+            document,
+            "bank",
+            serde_json::json!({
+                "op": "withdraw", "items": [{"obj": "bucket_empty", "qty": 27}]
+            }),
+        );
+    });
+    let mut provisioner = Provisioner::new();
+    let mut ledger = None;
+    let memory = BankMemory::default();
+    let (_, _, banks) = openable_bank_fixture();
+    assert!(matches!(
+        poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &path.provisioning,
+            None,
+            Some(&path.provisioning.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        ),
+        Poll::Pending
+    ));
+    assert_eq!(provisioner.status().phase, ProvisionPhase::Scanning);
+    assert_eq!(
+        provisioner.status().need,
+        1,
+        "27 quest slots leave one food slot"
+    );
+}
+
+#[test]
 fn owned_gear_respects_authored_slots_and_carried_item_use() {
     if !api::test_support::game_data_available() {
         return;

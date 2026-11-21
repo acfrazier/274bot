@@ -5,6 +5,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
+### Quester
+
+- Unsupported combat stages size food from available damage facts instead of
+  requesting a full backpack. Unknown damage uses a smaller quest-specific
+  reserve. Food withdrawals preserve space for quest items.
+
 ### Revision 377 login
 
 - Revision 377 login failures show clearer messages. An outdated-client

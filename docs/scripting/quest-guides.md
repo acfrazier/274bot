@@ -367,6 +367,21 @@ If combat facts, food timing, or a future attacker are unknown, preparation
 does not claim a passing target. It reports the stage, NPCs, and actual cause.
 A planner error is also informational. Preparation continues to admission.
 
+For unsupported stages, preparation estimates damage when content supplies a
+maximum hit and attack interval. Each random hit receives its full hit chance.
+The reserve covers 150% of expected damage plus one maximum opening hit.
+Poison receives its full pulse throughout the estimated stage. Food receives
+no more healing credit than the account's maximum Hitpoints.
+Concurrent attackers share one poison clock for that stage.
+
+Death Plateau throwers use their ranged stats and the measured 30-tick crossing
+budget, rounded above the observed 29 ticks. Other crossings retain the
+rectangle-based duration. These estimates do not replace the route death bound.
+If no damage figure is available, the reserve is four ordinary bites.
+Underground Pass uses eight because repeated obstacle failures have no fixed
+total. These fallback counts are policy reserves, not safety guarantees.
+Quest-item reservations still limit every food withdrawal, including a bank scan.
+
 
 ## Rules of thumb
 
