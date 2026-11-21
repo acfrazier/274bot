@@ -1759,7 +1759,11 @@ mod tests {
             .unwrap()
             .map(|spot| spot.id)
             .collect();
-        assert_eq!(all.len(), 3, "the fixture has three synthetic tree placements");
+        assert_eq!(
+            all.len(),
+            3,
+            "the fixture has three synthetic tree placements"
+        );
 
         let first = catalog.page(tree, &world, None, 2).unwrap();
         assert_eq!(
