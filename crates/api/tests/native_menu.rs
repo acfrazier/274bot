@@ -115,9 +115,11 @@ fn plant_npc(client: &mut Client) {
         op: vec![Some("Talk-to".into())],
         ..Default::default()
     };
-    let mut entity = client::dash3d::ClientEntity::default();
-    entity.x = 53 * 128;
-    entity.z = 50 * 128;
+    let mut entity = client::dash3d::ClientEntity {
+        x: 53 * 128,
+        z: 50 * 128,
+        ..Default::default()
+    };
     entity.route_x[0] = 53;
     entity.route_z[0] = 50;
     let npc = ClientNpc {
