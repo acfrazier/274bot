@@ -211,9 +211,9 @@ pub struct StepProgress {
     pub(crate) flight: Option<Box<BankFetchFlight>>,
 }
 
-/// The snapshot facts a BankBudget send latched, so the next pump does
-/// not re-send until the step's target changes. Wear ignores bank identity
-/// because the bank close is part of its own interaction.
+/// The snapshot facts that a BankBudget send captured. A withdrawal stays
+/// in flight for its bank session until the bank debit and pack credit arrive.
+/// Wear ignores bank identity because its bank close belongs to the interaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BankFetchFlight {
     pub(crate) bank_gen: u64,
@@ -221,15 +221,18 @@ pub(crate) struct BankFetchFlight {
     pub(crate) target: FlightTarget,
 }
 
-/// What a sent step moves, as the snapshot showed it at the send. A change
-/// anywhere else (another backpack row, another worn obj) is not this
-/// send's acknowledgement.
+/// What a sent step moves, based on the snapshot at send time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum FlightTarget {
     /// Open / Close: the bank session alone.
     Bank,
-    /// Withdraw / Withdraw-X: the obj's backpack total and whether it is worn.
-    Obj { id: i32, carried: i32, worn: bool },
+    /// Withdraw / Withdraw-X: source count, bank packet generation and carried total.
+    Obj {
+        id: i32,
+        carried: i32,
+        banked: i32,
+        bank_packet_generation: Option<u64>,
+    },
     /// Wear: the inventory rows targeted by `Interactions::wear` and worn
     /// state, independent of the bank session it closes.
     Wear { id: i32, carried: i32, worn: bool },

@@ -386,6 +386,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Fixed during development
 
+#### Banking
+
+- Bank trips wait for the bank's withdrawal update before they close the bank. This keeps the session coin count correct.
+
 #### Survival
 
 - An ordinary hit observed while a main or chat modal is open keeps poison

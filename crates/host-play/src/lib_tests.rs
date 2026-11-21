@@ -16267,6 +16267,32 @@ fn bank_fetch_client() -> Client {
     c
 }
 
+fn bank_fetch_update_partial(
+    client: &mut Client,
+    component: u16,
+    slot: u8,
+    stored_obj: u16,
+    count: u8,
+) {
+    let [component_hi, component_lo] = component.to_be_bytes();
+    let [obj_hi, obj_lo] = stored_obj.to_be_bytes();
+    let mut payload = Packet::new(vec![
+        component_hi,
+        component_lo,
+        slot,
+        obj_hi,
+        obj_lo,
+        count,
+    ]);
+    client.handle_packet(ServerProt::UPDATE_INV_PARTIAL, &mut payload);
+}
+
+fn bank_fetch_credit_coins(client: &mut Client, count: u8) {
+    for component in [500, 701] {
+        bank_fetch_update_partial(client, component, 1, 3, count);
+    }
+}
+
 #[test]
 fn player_here_tile_uses_minusedlevel_not_hardcoded_zero() {
     let mut c = bank_fetch_client();
@@ -16858,9 +16884,7 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
     assert_eq!(post.inv.get(&2), Some(&60));
 }
 
-#[test]
-fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending() {
-    use nav_planner::bank_fetch::BankStep;
+fn bank_fetch_withdraw_fixture(count: i32) -> (Client, GameSnapshot, NavWorld, NavBot) {
     let mut client = bank_fetch_client();
     {
         let cache = Arc::get_mut(&mut client.cache).unwrap();
@@ -16872,7 +16896,7 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
     let state = WorldState::from_snapshot(&snapshot);
     let mut world = knife_nav_world(2);
     world.graph.edges[0].worn_req.clear();
-    world.graph.edges[0].consumed_req = vec![(2, 7)];
+    world.graph.edges[0].consumed_req = vec![(2, count)];
     let origin = WorldTile {
         x: 0,
         z: 3,
@@ -16884,7 +16908,7 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         level: 0,
     };
     let plan = nav_planner::bank_fetch::plan_bank_fetch(
-        &[nav_planner::router::MissingReq::Carry { id: 2, count: 7 }],
+        &[nav_planner::router::MissingReq::Carry { id: 2, count }],
         &state,
         &[(2, 20)],
         world.banks(),
@@ -16895,10 +16919,6 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         &[],
     )
     .unwrap();
-    assert!(plan.steps.contains(&BankStep::WithdrawX { id: 2 }));
-    assert!(plan
-        .steps
-        .contains(&BankStep::WithdrawXAmount { id: 2, count: 7 }));
     let final_route = find_with(
         &world.collision,
         &world.graph,
@@ -16908,7 +16928,7 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         &plan.state,
     )
     .unwrap();
-    let mut bot = NavBot {
+    let bot = NavBot {
         bank_fetch: Some(PendingBankFetch {
             steps: plan.steps.into(),
             dest: destination,
@@ -16919,6 +16939,29 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         }),
         ..NavBot::default()
     };
+    (client, snapshot, world, bot)
+}
+
+fn bank_fetch_bank_count(snapshot: &GameSnapshot, id: i32) -> i32 {
+    snapshot
+        .bank()
+        .iter()
+        .find(|item| item.def.id == id)
+        .map_or(0, |item| item.count)
+}
+
+#[test]
+fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending() {
+    use nav_planner::bank_fetch::BankStep;
+    let (mut client, mut snapshot, world, mut bot) = bank_fetch_withdraw_fixture(7);
+    let amount = BankStep::WithdrawXAmount { id: 2, count: 7 };
+    assert!(bot
+        .bank_fetch
+        .as_ref()
+        .unwrap()
+        .steps
+        .contains(&BankStep::WithdrawX { id: 2 }));
+    assert!(bot.bank_fetch.as_ref().unwrap().steps.contains(&amount));
     let before = client.out.pos;
     for _ in 0..3 {
         step_bank_fetch_on_bot(
@@ -16945,15 +16988,14 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
     );
     assert_eq!(
         bot.bank_fetch.as_ref().unwrap().steps.front(),
-        Some(&BankStep::WithdrawXAmount { id: 2, count: 7 })
+        Some(&amount)
     );
     assert_eq!(
         count_packet(&client),
         Some(7),
         "the exact shortage is sent in the Withdraw-X acknowledgement pump"
     );
-    let sent = client.out.pos;
-    assert!(sent > 0, "the count effect reached the driver");
+    assert!(client.out.pos > 0, "the count effect must reach the driver");
     client.out.pos = 0;
     step_bank_fetch_on_bot(
         &mut client,
@@ -16968,29 +17010,19 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         "an unchanged snapshot does not resend the in-flight amount"
     );
     assert_eq!(count_packet(&client), None);
-    client.out.pos = 0;
+
     client.dialog_input_open = false;
-    client.set_iface_mut(
-        601,
-        IfTypeMut {
-            link_obj_type: Some(vec![3, 0]),
-            link_obj_number: Some(vec![13, 0]),
-            ..Default::default()
-        },
-    );
-    for received in [0, 6, 7] {
-        for component in [500, 701] {
-            client.set_iface_mut(
-                component,
-                IfTypeMut {
-                    link_obj_type: Some(vec![2, 3]),
-                    link_obj_number: Some(vec![3, received]),
-                    ..Default::default()
-                },
-            );
-        }
-        client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let bank_packet = snapshot
+        .bank_snapshot_generation()
+        .expect("the loaded bank has an inventory packet generation");
+    let bank_session = snapshot.bank_session_generation();
+    let bank_component = snapshot.bank_component_id();
+    assert_eq!(bank_fetch_bank_count(&snapshot, 2), 20);
+
+    for received in [6, 7] {
+        bank_fetch_credit_coins(&mut client, received);
         snapshot.rebuild(&client);
+        assert_eq!(snapshot.bank_snapshot_generation(), Some(bank_packet));
         let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
         step_bank_fetch_on_bot(
             &mut client,
@@ -17001,32 +17033,263 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
             false,
         );
         assert_eq!(count_packet(&client), None, "a sent amount is not repeated");
-        if received < 7 {
-            assert_eq!(client.out.pos, 0, "an incomplete withdrawal still waits");
-        } else {
-            let mut packets = Vec::new();
-            assert!(api::interact::Driver::trace_packets(
-                &client,
-                *checkpoint,
-                &mut |opcode| packets.push(opcode),
-            ));
-            assert_eq!(
-                packets,
-                [client::io::ClientProt::CLOSE_MODAL.id as u8],
-                "the landed withdrawal closes in this pump"
-            );
-        }
-        let expected = if received == 7 {
-            BankStep::Close
-        } else {
-            BankStep::WithdrawXAmount { id: 2, count: 7 }
-        };
+        assert_eq!(
+            client.out.pos, 0,
+            "pack credit alone cannot settle or close the withdrawal"
+        );
         assert_eq!(
             bot.bank_fetch.as_ref().unwrap().steps.front(),
-            Some(&expected)
+            Some(&amount),
+            "the amount step waits for a bank debit"
         );
+        assert_eq!(bank_fetch_bank_count(&snapshot, 2), 20);
         assert_eq!(WorldState::from_snapshot(&snapshot).inv.get(&1), Some(&3));
+        assert!(api::interact::Driver::trace_packets(
+            &client,
+            *checkpoint,
+            &mut |_| {},
+        ));
     }
+
+    bank_fetch_update_partial(&mut client, 601, 1, 2, 1);
+    snapshot.rebuild(&client);
+    let unrelated_bank_packet = snapshot
+        .bank_snapshot_generation()
+        .expect("the open bank keeps its inventory packet generation");
+    assert!(unrelated_bank_packet > bank_packet);
+    assert_eq!(snapshot.bank_session_generation(), bank_session);
+    assert_eq!(snapshot.bank_component_id(), bank_component);
+    assert_eq!(bank_fetch_bank_count(&snapshot, 2), 20);
+    let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
+    step_bank_fetch_on_bot(
+        &mut client,
+        &snapshot,
+        &mut bot,
+        Some(&world),
+        Some((0, 3, 0)),
+        false,
+    );
+    assert_eq!(
+        client.out.pos, 0,
+        "an unrelated bank update does not settle or resend the withdrawal"
+    );
+    assert_eq!(
+        bot.bank_fetch.as_ref().unwrap().steps.front(),
+        Some(&amount)
+    );
+    assert!(api::interact::Driver::trace_packets(
+        &client,
+        *checkpoint,
+        &mut |_| {},
+    ));
+
+    bank_fetch_update_partial(&mut client, 601, 0, 3, 13);
+    snapshot.rebuild(&client);
+    let settled_bank_packet = snapshot
+        .bank_snapshot_generation()
+        .expect("the bank debit advances its packet generation");
+    assert!(settled_bank_packet > unrelated_bank_packet);
+    assert_eq!(snapshot.bank_session_generation(), bank_session);
+    assert_eq!(snapshot.bank_component_id(), bank_component);
+    assert_eq!(bank_fetch_bank_count(&snapshot, 2), 13);
+    let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
+    step_bank_fetch_on_bot(
+        &mut client,
+        &snapshot,
+        &mut bot,
+        Some(&world),
+        Some((0, 3, 0)),
+        false,
+    );
+    let mut packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &client,
+        *checkpoint,
+        &mut |opcode| packets.push(opcode),
+    ));
+    assert_eq!(
+        packets,
+        [client::io::ClientProt::CLOSE_MODAL.id as u8],
+        "the withdrawal closes only after the bank debit"
+    );
+    assert_eq!(
+        bot.bank_fetch.as_ref().unwrap().steps.front(),
+        Some(&BankStep::Close)
+    );
+}
+
+#[test]
+fn bank_fetch_fixed_withdraw_waits_for_bank_debit_after_pack_credit() {
+    use nav_planner::bank_fetch::BankStep;
+    let (mut client, mut snapshot, world, mut bot) = bank_fetch_withdraw_fixture(5);
+    let withdraw = BankStep::Withdraw { id: 2, count: 5 };
+    assert!(bot.bank_fetch.as_ref().unwrap().steps.contains(&withdraw));
+    let before = client.out.pos;
+    for _ in 0..3 {
+        step_bank_fetch_on_bot(
+            &mut client,
+            &snapshot,
+            &mut bot,
+            Some(&world),
+            Some((0, 3, 0)),
+            false,
+        );
+    }
+    assert!(
+        client.out.pos > before,
+        "the fixed-count withdrawal must reach the driver"
+    );
+    client.out.pos = 0;
+    let bank_packet = snapshot
+        .bank_snapshot_generation()
+        .expect("the loaded bank has an inventory packet generation");
+    let bank_session = snapshot.bank_session_generation();
+    let bank_component = snapshot.bank_component_id();
+
+    bank_fetch_credit_coins(&mut client, 5);
+    snapshot.rebuild(&client);
+    assert_eq!(snapshot.bank_snapshot_generation(), Some(bank_packet));
+    let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
+    step_bank_fetch_on_bot(
+        &mut client,
+        &snapshot,
+        &mut bot,
+        Some(&world),
+        Some((0, 3, 0)),
+        false,
+    );
+    assert_eq!(
+        client.out.pos, 0,
+        "pack credit does not close the bank before its debit"
+    );
+    assert_eq!(
+        bot.bank_fetch.as_ref().unwrap().steps.front(),
+        Some(&withdraw)
+    );
+    assert_eq!(bank_fetch_bank_count(&snapshot, 2), 20);
+    assert!(api::interact::Driver::trace_packets(
+        &client,
+        *checkpoint,
+        &mut |_| {},
+    ));
+
+    bank_fetch_update_partial(&mut client, 601, 1, 2, 1);
+    snapshot.rebuild(&client);
+    let unrelated_bank_packet = snapshot
+        .bank_snapshot_generation()
+        .expect("the open bank keeps its inventory packet generation");
+    assert!(unrelated_bank_packet > bank_packet);
+    assert_eq!(snapshot.bank_session_generation(), bank_session);
+    assert_eq!(snapshot.bank_component_id(), bank_component);
+    assert_eq!(bank_fetch_bank_count(&snapshot, 2), 20);
+    let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
+    step_bank_fetch_on_bot(
+        &mut client,
+        &snapshot,
+        &mut bot,
+        Some(&world),
+        Some((0, 3, 0)),
+        false,
+    );
+    assert_eq!(
+        client.out.pos, 0,
+        "an unrelated packet does not close the bank"
+    );
+    assert_eq!(
+        bot.bank_fetch.as_ref().unwrap().steps.front(),
+        Some(&withdraw)
+    );
+    assert!(api::interact::Driver::trace_packets(
+        &client,
+        *checkpoint,
+        &mut |_| {},
+    ));
+
+    bank_fetch_update_partial(&mut client, 601, 0, 3, 15);
+    snapshot.rebuild(&client);
+    let settled_bank_packet = snapshot
+        .bank_snapshot_generation()
+        .expect("the bank debit advances its packet generation");
+    assert!(settled_bank_packet > unrelated_bank_packet);
+    assert_eq!(snapshot.bank_session_generation(), bank_session);
+    assert_eq!(snapshot.bank_component_id(), bank_component);
+    assert_eq!(bank_fetch_bank_count(&snapshot, 2), 15);
+    let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
+    step_bank_fetch_on_bot(
+        &mut client,
+        &snapshot,
+        &mut bot,
+        Some(&world),
+        Some((0, 3, 0)),
+        false,
+    );
+    let mut packets = Vec::new();
+    assert!(api::interact::Driver::trace_packets(
+        &client,
+        *checkpoint,
+        &mut |opcode| packets.push(opcode),
+    ));
+    assert_eq!(
+        packets,
+        [client::io::ClientProt::CLOSE_MODAL.id as u8],
+        "the fixed withdrawal closes only after the bank debit"
+    );
+    assert_eq!(
+        bot.bank_fetch.as_ref().unwrap().steps.front(),
+        Some(&BankStep::Close)
+    );
+}
+
+#[test]
+fn bank_fetch_fixed_withdraw_does_not_resend_after_partial_pack_credit() {
+    use nav_planner::bank_fetch::BankStep;
+    let (mut client, mut snapshot, world, mut bot) = bank_fetch_withdraw_fixture(5);
+    let withdraw = BankStep::Withdraw { id: 2, count: 5 };
+    assert!(bot.bank_fetch.as_ref().unwrap().steps.contains(&withdraw));
+    for _ in 0..3 {
+        step_bank_fetch_on_bot(
+            &mut client,
+            &snapshot,
+            &mut bot,
+            Some(&world),
+            Some((0, 3, 0)),
+            false,
+        );
+    }
+    assert!(
+        client.out.pos > 0,
+        "the fixed withdrawal must reach the driver"
+    );
+    client.out.pos = 0;
+    let bank_packet = snapshot
+        .bank_snapshot_generation()
+        .expect("the loaded bank has an inventory packet generation");
+    bank_fetch_credit_coins(&mut client, 4);
+    snapshot.rebuild(&client);
+    assert_eq!(snapshot.bank_snapshot_generation(), Some(bank_packet));
+    let checkpoint = api::interact::Driver::packet_checkpoint(&client).unwrap();
+    step_bank_fetch_on_bot(
+        &mut client,
+        &snapshot,
+        &mut bot,
+        Some(&world),
+        Some((0, 3, 0)),
+        false,
+    );
+    assert_eq!(
+        client.out.pos, 0,
+        "partial pack credit does not resend the fixed-count withdrawal"
+    );
+    assert_eq!(
+        bot.bank_fetch.as_ref().unwrap().steps.front(),
+        Some(&withdraw)
+    );
+    assert_eq!(bank_fetch_bank_count(&snapshot, 2), 20);
+    assert!(api::interact::Driver::trace_packets(
+        &client,
+        *checkpoint,
+        &mut |_| {},
+    ));
 }
 
 /// Fix round 2 — BankBudget Walk from off the stand must poll
@@ -17859,9 +18122,18 @@ fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
         },
     );
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut bank_full = Packet::new(vec![2, 89, 2, 0, 2, 2, 0, 0, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     assert!(snap.bank_component_id() >= 0, "the bank is open");
+    assert!(
+        snap.bank_loaded(),
+        "the full bank packet is loaded before sending"
+    );
+    let bank_packet = snap
+        .bank_snapshot_generation()
+        .expect("the loaded bank has an inventory packet generation");
     assert!(snap.bank_side().is_empty(), "the pack is empty");
     assert!(snap.inventory().is_empty(), "no inv tab is bound");
     assert!(snap.inv().is_empty(), "inv() never reads the bank's rows");
@@ -17901,10 +18173,41 @@ fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
     );
     c.bump_gens(ServerProt::UPDATE_INV_FULL);
     snap.rebuild(&c);
+    let before_debit = c.out.pos;
+    step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
+    assert!(
+        bot.bank_fetch.is_some(),
+        "the pack credit alone does not settle the withdrawal"
+    );
+    assert_eq!(
+        c.out.pos, before_debit,
+        "the in-flight withdrawal is not resent"
+    );
+    bank_fetch_update_partial(&mut c, 601, 0, 2, 0);
+    snap.rebuild(&c);
+    assert!(
+        snap.bank_loaded(),
+        "the current bank packet leaves the bank loaded"
+    );
+    assert!(
+        snap.bank_snapshot_generation()
+            .is_some_and(|generation| generation > bank_packet),
+        "the bank debit is newer than the withdrawal send"
+    );
+    assert_eq!(
+        snap.bank_side()
+            .iter()
+            .filter(|item| item.def.id == 1)
+            .map(|item| item.count)
+            .sum::<i32>(),
+        2,
+        "both one-count bones are carried"
+    );
+    assert_eq!(bank_fetch_bank_count(&snap, 1), 0);
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, Some((0, 4, 0)), false);
     assert!(
         bot.bank_fetch.is_none(),
-        "the pack's slots add up to the withdrawn count"
+        "the pack credit and bank debit settle the withdrawal"
     );
 }
 
@@ -17958,7 +18261,7 @@ fn bank_fetch_waits_through_the_gap_after_a_sent_move() {
     let before = c.out.pos;
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
     assert!(c.out.pos > before, "Withdraw is sent");
-    set_rows(&mut c, 601, vec![0, 0], vec![0, 0]);
+    bank_fetch_update_partial(&mut c, 601, 0, 3, 0);
     snap.rebuild(&c);
     assert!(!bank_holds_for_test(&snap, 2), "the bank row is gone");
     step_bank_fetch_on_bot(&mut c, &snap, &mut bot, None, here, false);
@@ -18225,12 +18528,20 @@ fn bank_fetch_withdraw_ignores_an_unrelated_backpack_change() {
             (false, Some(withdraw.clone())),
             "an unrelated row change does not resend (walk_arm={walk_arm})"
         );
-        set_side(&mut c, vec![2, 3], vec![4, 1]);
+        bank_fetch_update_partial(&mut c, 601, 0, 3, 19);
+        snap.rebuild(&c);
+        assert_eq!(bank_fetch_bank_count(&snap, 2), 19);
+        assert_eq!(
+            pump(&mut c, &snap),
+            (false, Some(withdraw.clone())),
+            "the bank debit alone does not settle the withdrawal (walk_arm={walk_arm})"
+        );
+        bank_fetch_update_partial(&mut c, 701, 1, 3, 1);
         snap.rebuild(&c);
         assert_eq!(
             pump(&mut c, &snap),
             (false, None),
-            "the knife in the pack lands the Withdraw (walk_arm={walk_arm})"
+            "the pack credit settles after the bank debit (walk_arm={walk_arm})"
         );
     }
 }
