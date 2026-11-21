@@ -139,6 +139,8 @@ struct Rig {
     snapshot: GameSnapshot,
 }
 
+// Keep this fixture independent of shipped content while satisfying the
+// decoder's requirement that a present NPC family contain at least one row.
 const SYNTHETIC_GAME_DATA: &[u8] = br#"{
   "schema_version": 5,
   "revision": 289,
@@ -147,7 +149,30 @@ const SYNTHETIC_GAME_DATA: &[u8] = br#"{
   "pickpocket": [],
   "npc_names": {
     "combat_facts_version": 2,
-    "rows": []
+    "rows": [{
+      "id": 99001,
+      "config": "synthetic_walk_probe",
+      "ops": [],
+      "size": 1,
+      "wanderrange": 5,
+      "maxrange": 7,
+      "attackrange": 0,
+      "huntrange": 0,
+      "vislevel": 0,
+      "hitpoints": 1,
+      "attack": 1,
+      "defence": 1,
+      "magic": 1,
+      "attackbonus": 0,
+      "rangeattack": 0,
+      "magicattack": 0,
+      "stabdefence": 0,
+      "slashdefence": 0,
+      "crushdefence": 0,
+      "magicdefence": 0,
+      "rangedefence": 0,
+      "max_dealt": 1000
+    }]
   }
 }"#;
 
@@ -169,7 +194,11 @@ fn rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
 }
 
 fn synthetic_rig(world: Option<Arc<NavWorld>>, blocked: bool) -> Rig {
-    rig_with_selected_data(world, blocked, Some(synthetic_selected_data()))
+    let rig = rig_with_selected_data(world, blocked, Some(synthetic_selected_data()));
+    // These fixtures cover route behavior, not combat admission. Disallowing
+    // food avoids pulling production-only combat tables into synthetic routes.
+    rig.shared.lock().disallow_food = true;
+    rig
 }
 
 fn rig_with_selected_data(
