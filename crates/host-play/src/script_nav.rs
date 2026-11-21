@@ -4308,6 +4308,13 @@ fn apply_route_output(
             let route_ticks = lease
                 .zip(output.outcome.current_route())
                 .map_or(0, |(lease, route)| compact_route_ticks(lease, route));
+            let food_route = lease
+                .zip(output.outcome.current_route())
+                .and_then(|(lease, route)| {
+                    let view = nav_planner::producer::compact_route_view(lease, route).ok()?;
+                    script::quester::FoodRoute::measure(view, lease.zones()?)
+                })
+                .map(Arc::new);
             let no_path = matches!(output.outcome, RouteJobOutcome::NoPath);
             let detail = output
                 .assessment
@@ -4325,6 +4332,15 @@ fn apply_route_output(
                 }
                 (None, detail) => detail,
             };
+            let detail = Some(Arc::from(format!(
+                "{}; food exposure: {}",
+                detail.as_deref().unwrap_or("route assessment"),
+                if food_route.is_some() {
+                    "planned route"
+                } else {
+                    "walking hunt-range fallback (no assessed route)"
+                },
+            )));
             let refusal = output.refusal.take().or_else(|| {
                 no_path.then_some(script::native::WalkRefusal::NoRouteWithinBounds {
                     tried: 0,
@@ -4338,6 +4354,7 @@ fn apply_route_output(
                 refusal,
                 detail,
                 route_ticks,
+                food_route,
             };
             let mut all = navs.lock().expect("navigation state mutex is not poisoned");
             if let Some(bot) = all.get_mut(name) {
@@ -5546,11 +5563,14 @@ impl ScriptWalkArm {
                 evidence,
                 assessment: None,
                 route_ticks: 0,
+                food_route: None,
                 refusal: Some(script::native::WalkRefusal::NoRouteWithinBounds {
                     tried: 0,
                     last: None,
                 }),
-                detail: Some(Arc::from(detail)),
+                detail: Some(Arc::from(format!(
+                    "{detail}; food exposure: walking hunt-range fallback"
+                ))),
             };
             let displaced = {
                 let mut navs = self
@@ -7177,8 +7197,11 @@ fn advisory_refusal(
             tried: 0,
             last: None,
         }),
-        detail: Some(Arc::from(detail)),
+        detail: Some(Arc::from(format!(
+            "{detail}; food exposure: walking hunt-range fallback"
+        ))),
         route_ticks: 0,
+        food_route: None,
     }
 }
 

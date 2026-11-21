@@ -82,10 +82,10 @@ const CROSSING_BITE_WINDOW: u32 = 3;
 /// stat and inventory are seen one tick later. The cell keeps its documented
 /// four-tick window (docs/dev/harness.md).
 const EAT_HEAL_WINDOW: u32 = 4;
-/// Covers six concurrent throwers: 105 expected HP of damage plus one
-/// worst-source poison pulse (11 HP), then 50% headroom and a 7-HP opening
-/// hit. The resulting 181 HP of healing needs 16 lobsters.
-const CROSSING_LOBSTERS: i32 = 16;
+/// The walking crossing reserve is 22 lobsters: 147 expected throw damage
+/// plus two 11-HP poison pulses, 50% headroom, and a 7-HP opening hit.
+/// The oracle checks a bite and continuation, never a random damage total.
+const CROSSING_LOBSTERS: i32 = 22;
 
 fn in_throwers_zone(tile: WorldTile) -> bool {
     tile.level == 0
@@ -243,6 +243,73 @@ fn throwers_crossing_path_compiles_with_current_schema() {
         )
     })
     .expect("the live crossing fixture must compile before launching a client");
+}
+
+#[test]
+fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let default_pack = default_nav_pack_path();
+    let Some(pack) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        &default_pack.to_string_lossy(),
+        "R289 throwers navigation catalog",
+    ) else {
+        return;
+    };
+    let world =
+        Arc::new(nav_planner::world::NavWorld::from_bytes(&std::fs::read(pack).unwrap()).unwrap());
+    let lease = nav_planner::contract::NavLease::wrap(Arc::clone(&world)).unwrap();
+    let zones = lease.zones().unwrap();
+    let key = zones.resolve(ZONE).unwrap();
+    let (opts, state) = throwers_route_context(&world);
+    let route = nav_planner::router::find_with(
+        &world.collision,
+        &world.graph,
+        WorldTile {
+            x: 2838,
+            z: 3601,
+            level: 0,
+        },
+        WorldTile {
+            x: 2880,
+            z: 3596,
+            level: 0,
+        },
+        opts,
+        &state,
+    )
+    .unwrap();
+    let food = script::quester::FoodRoute::measure(
+        nav_planner::producer::route_view(&lease, &route).unwrap(),
+        zones,
+    )
+    .unwrap();
+    let covered: Vec<_> = zones.covered_zones(key).unwrap().collect();
+    let mut counts = Vec::new();
+    for run in [false, true] {
+        let ticks: Vec<_> = covered
+            .iter()
+            .map(|zone| food.ticks(zone.key(), run).unwrap())
+            .collect();
+        let duration = u64::from(*ticks.iter().max().unwrap());
+        let twice_hits: u64 = ticks
+            .iter()
+            .map(|&ticks| u64::from(ticks).div_ceil(7) * 7)
+            .sum();
+        let poison = 11 * duration.div_ceil(30);
+        let count = ((twice_hits + 2 * poison) * 3)
+            .div_ceil(4)
+            .saturating_add(7)
+            .div_ceil(12);
+        println!(
+            "thrower food run={run} zone_ticks={ticks:?} poison_ticks={duration} lobsters={count}"
+        );
+        counts.push(count);
+    }
+    assert!(counts[0] > counts[1]);
+    assert!(u64::try_from(CROSSING_LOBSTERS).unwrap() >= counts[0]);
 }
 
 fn throwers_route_context(

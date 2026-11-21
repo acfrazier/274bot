@@ -301,6 +301,7 @@ fn owned_inventory_still_withdraws_food_and_passes_the_bound() {
             },
             survival_input(&snapshot, survival),
             Some(&path.provisioning),
+            None,
         )
         .unwrap();
     assert!(need.bound <= crate::combat::risk::consts::DEATH_BOUND);
@@ -651,6 +652,7 @@ fn owned_quest_food_stays_carried_while_bank_survival_food_is_withdrawn() {
             },
             survival_input(&snapshot, model),
             Some(&path.provisioning),
+            None,
         )
         .unwrap();
     assert!(
@@ -714,6 +716,7 @@ fn must_have_food_reserves_only_the_declared_quantity_in_survival_targets() {
                 snapshot_view(&snapshot, 0).stock(),
                 survival_input(&snapshot, model),
                 Some(&path.provisioning),
+                None,
             )
             .unwrap();
         assert!(need.unknown.is_none());
@@ -759,6 +762,7 @@ fn two_held_ordinary_food_kinds_report_the_existing_model_limit() {
             },
             survival_input(&snapshot, model),
             Some(&path.provisioning),
+            None,
         )
         .unwrap();
     assert_eq!(
@@ -792,6 +796,7 @@ fn held_message_delay_food_reports_the_existing_timing_limit() {
             },
             survival_input(&snapshot, model),
             Some(&path.provisioning),
+            None,
         )
         .unwrap();
     assert_eq!(

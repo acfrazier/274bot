@@ -26,6 +26,7 @@ pub mod watchdog;
 
 pub use card::CARD;
 pub use runner::Quester;
+pub use survival::FoodRoute;
 
 /// Slot-owned run memory, using the same retention lifecycle as Gatherer.
 /// Server quest evidence is reread after recreation; a local cursor is not

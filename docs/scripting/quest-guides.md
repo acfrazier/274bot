@@ -374,9 +374,11 @@ Poison receives its full pulse throughout the estimated stage. Food receives
 no more healing credit than the account's maximum Hitpoints.
 Concurrent attackers share one poison clock for that stage.
 
-Death Plateau throwers use their ranged stats and the measured 30-tick crossing
-budget, rounded above the observed 29 ticks. Other crossings retain the
-rectangle-based duration. These estimates do not replace the route death bound.
+Crossing estimates count planned route tiles inside each baked hunt zone.
+Walking costs one tick per tile. Running costs one tick per two tiles only
+when the account's run setting is observed. A missing route or zone measurement
+uses the full walking hunt-range bound and reports the fallback.
+These food-only exposures do not change the route or supply death bound.
 If no damage figure is available, the reserve is four ordinary bites.
 Underground Pass uses eight because repeated obstacle failures have no fixed
 total. These fallback counts are policy reserves, not safety guarantees.

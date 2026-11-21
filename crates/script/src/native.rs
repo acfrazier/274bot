@@ -1284,6 +1284,8 @@ pub struct AssessReceipt {
     pub refusal: Option<WalkRefusal>,
     pub detail: Option<Arc<str>>,
     pub route_ticks: u32,
+    /// None explicitly means the walking hunt-range fallback, never zero exposure.
+    pub food_route: Option<Arc<crate::quester::FoodRoute>>,
 }
 
 /// Native walk failure classification, independent of Traveller internals.

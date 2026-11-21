@@ -10,6 +10,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Unsupported combat stages size food from available damage facts instead of
   requesting a full backpack. Unknown damage uses a smaller quest-specific
   reserve. Food withdrawals preserve space for quest items.
+  Crossing estimates use planned hunt-zone exposure at walking speed unless
+  running is observed. Missing route measurements retain the walking bound.
 
 ### Revision 377 login
 
