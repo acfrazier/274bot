@@ -1108,6 +1108,12 @@ impl Quester {
     }
 
     fn poll_provision_once(&mut self, tick: &mut NativeTick<'_>) -> Provisioned {
+        let food_plan = self.provisioning_step_plan(tick);
+        if food_plan.is_none() && !self.provisioner.has_run() && !self.provisioner.session_open() {
+            // Exhaustion leaves no step to supply. Existing trips still settle,
+            // but a completed crossing must not become a new route-free demand.
+            return Provisioned::Ready;
+        }
         let required_after = tick.cx.evidence();
         let bank_phase = self.provisioner.bank_phase();
         let bank_starts = self.provisioner.bank_starts();
