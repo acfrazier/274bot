@@ -692,6 +692,7 @@ The caller must not replace the gather tile, Path, seeds file, or Engine L ports
 | `WORLD_GAME_PORT` | The map fixes the no-route cell to Engine L's game port, `47594`. |
 | `WORLD_HTTP_PORT` | The map fixes the no-route cell to Engine L's HTTP port, `3080`. |
 | `NAV_SNAPSHOT_ROOT_289` | Set to the read-only decoded snapshot that `isohome` exposes as `BOT_NAV_SNAPSHOT_ROOT`; there is no home-directory fallback. See `AGENTS.md:149`. |
+| `NAV_PREREQ_RUNNER` | Caller-provided path to the navigation-prerequisite runner script, required by the `host.prereq-*` cells. |
 | `BOT_CACHE_DIR` | Make a fresh copy of the selected engine's `data/pack/client` at `<LIVE_EVIDENCE_DIR>/cache-289`. The Quester helper copies this source into its isolated run cache. |
 | `CATALOG_ROOT` | Set to the local `rs2b0t` checkout root through `--catalog-root` or local `lab.env`; there is no host-specific default. |
 | `RS2B0T_CATALOGS_ROOT` | Parent directory containing the frozen `rs2b0t-<commit>` checkouts used by the ignored catalog-schema tests. Set from local `lab.env`; there is no repository-relative fallback. |
