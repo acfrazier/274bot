@@ -91,6 +91,83 @@ fn catalog_start_waits_without_arming_or_failing_current_session_witness() {
     handle.stop("catalogtest").unwrap();
 }
 
+#[cfg(feature = "js")]
+#[test]
+fn blank_loadout_without_saved_rows_starts_script() {
+    let _iso = script::IsolatedEnv::enter("catalog-blank-loadout");
+    let play = empty_play();
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::Thiever, "catalogtest");
+    watch.observe("catalogtest", prepared_thiever(), false);
+    let handle = play.script_start_handle();
+    let arming = || StartArming {
+        handle: Some(handle.clone()),
+        catalog: Some(watch.clone()),
+        ..Default::default()
+    };
+    let mut bag = Map::new();
+    bag.insert("loadout".into(), Value::String(String::new()));
+    let (js, checked) = prepared_native("export function tick() {}");
+    let mut pending = vec![PendingCatalogStart::load(
+        "catalogtest",
+        js,
+        checked,
+        Some(bag),
+        vec![],
+        vec![],
+    )];
+
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Continue,
+    );
+    assert!(pending[0].started);
+    assert_eq!(watch.evidence()["phase"], "running");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while handle.run_state("catalogtest") != script::RunState::Running {
+        handle.poll_start("catalogtest");
+        assert!(Instant::now() < deadline, "script Start did not settle");
+        std::thread::yield_now();
+    }
+    handle.stop("catalogtest").unwrap();
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn non_string_loadout_setting_is_not_treated_as_blank() {
+    let play = empty_play();
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::Thiever, "catalogtest");
+    watch.observe("catalogtest", prepared_thiever(), false);
+    let handle = play.script_start_handle();
+    let arming = || StartArming {
+        handle: Some(handle.clone()),
+        catalog: Some(watch.clone()),
+        ..Default::default()
+    };
+    let mut bag = Map::new();
+    bag.insert("loadout".into(), Value::Null);
+    let (js, checked) = prepared_native("export function tick() {}");
+    let mut pending = vec![PendingCatalogStart::load(
+        "catalogtest",
+        js,
+        checked,
+        Some(bag),
+        vec![],
+        vec![],
+    )];
+
+    let pump = fire_pending_catalog_start(&mut pending, true, false, arming);
+    let StartScriptPump::Failed(error) = pump else {
+        panic!("expected a Failed pump, got {pump:?}");
+    };
+    assert!(
+        error.contains("loadout setting must be a string"),
+        "{error}"
+    );
+    assert!(!pending[0].started);
+}
+
 #[test]
 fn no_slot_scenario_start_holds_and_retries_the_armed_core() {
     let play = empty_play();

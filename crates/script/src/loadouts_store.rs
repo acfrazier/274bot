@@ -840,6 +840,18 @@ pub fn resolve_script_loadout_setting<'a>(
         .map(|wanted| resolve_script_loadout(rows, wanted))
         .transpose()
 }
+/// Resolve the compat JS loadout setting. A blank setting keeps the first
+/// saved row when one exists, but an empty store means no selection so the
+/// script can use its own defaults. Explicit names retain strict resolution.
+pub fn resolve_compat_script_loadout_setting<'a>(
+    rows: &'a [Loadout],
+    wanted: Option<&str>,
+) -> Result<Option<&'a Loadout>, LoadoutResolutionError> {
+    if rows.is_empty() && wanted.is_some_and(|wanted| wanted.trim().is_empty()) {
+        return Ok(None);
+    }
+    resolve_script_loadout_setting(rows, wanted)
+}
 
 /// Exact case-sensitive lookup for Quester Path loadout names.
 pub(crate) fn select_loadout<'a>(
@@ -2139,5 +2151,45 @@ mod compatibility_tests {
         );
         assert!(gear_of(&serde_json::Value::Null).is_empty());
         assert!(supplies_of(&serde_json::Value::Null).is_empty());
+    }
+
+    #[test]
+    fn compat_blank_setting_uses_first_row_or_none_when_store_empty() {
+        let empty: [Loadout; 0] = [];
+        assert!(resolve_compat_script_loadout_setting(&empty, Some(""))
+            .unwrap()
+            .is_none());
+
+        let rows = [Loadout::new("First")];
+        assert_eq!(
+            resolve_compat_script_loadout_setting(&rows, Some(""))
+                .unwrap()
+                .unwrap()
+                .name,
+            "First"
+        );
+    }
+
+    #[test]
+    fn compat_missing_loadout_setting_needs_no_saved_rows() {
+        let empty: [Loadout; 0] = [];
+        assert!(resolve_compat_script_loadout_setting(&empty, None)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn compat_invalid_named_loadout_still_refuses() {
+        let rows = [Loadout::new("First")];
+        assert!(matches!(
+            resolve_compat_script_loadout_setting(&rows, Some("missing")),
+            Err(LoadoutResolutionError::Unknown { .. })
+        ));
+
+        let empty: [Loadout; 0] = [];
+        assert!(matches!(
+            resolve_compat_script_loadout_setting(&empty, Some("missing")),
+            Err(LoadoutResolutionError::NoLoadouts { .. })
+        ));
     }
 }

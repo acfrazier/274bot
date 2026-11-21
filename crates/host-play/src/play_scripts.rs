@@ -489,7 +489,7 @@ impl ScriptStartHandle {
                         None => self.operator_loadouts(name).map(Arc::from),
                     });
                 match resolved_loadouts {
-                    Ok(loadouts) => slot.start_surface_with_settings(
+                    Ok(loadouts) => slot.start_compat_surface_with_settings(
                         script_runtime::js_surface_start_with_wilderness_rules(
                             script_runtime::js_start_card(name, source, checked, siblings),
                             bag.map(Arc::new),

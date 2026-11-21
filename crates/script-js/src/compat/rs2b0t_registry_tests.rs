@@ -750,18 +750,15 @@ export const SETTINGS: SettingsSchema = {
     assert_eq!(
         bag.get("loadout"),
         Some(&serde_json::json!("")),
-        "default bag must carry loadout='' so pre-Start loadout validation runs"
+        "default bag retains the blank loadout selection"
     );
     let empty_loadouts: [api::loadout::Loadout; 0] = [];
-    let err = script::loadouts_store::resolve_script_loadout_setting(
+    let selection = script::loadouts_store::resolve_compat_script_loadout_setting(
         &empty_loadouts,
         bag.get("loadout").and_then(|v| v.as_str()),
     )
-    .expect_err("empty loadouts store must refuse before Start");
-    assert!(
-        err.to_string().contains("no loadouts exist"),
-        "unexpected error: {err}"
-    );
+    .expect("blank default with no saved rows means no selection");
+    assert!(selection.is_none());
 }
 #[test]
 fn nested_metadata_cannot_supply_outer_setting_fields() {

@@ -2827,8 +2827,8 @@ export const LOADOUT_SETTING: {
     "label": SettingDef["label"];
     "help": SettingDef["help"];
 };
-/** Exact names win; a blank setting selects the first loadout. Otherwise a unique trimmed, ASCII case-insensitive match is required, or the function throws with the available loadout names. */
-export function selectedLoadout(bag: SettingsBag): Loadout;
+/** Exact names win; a blank setting selects the first loadout when saved rows exist, otherwise returns null. Otherwise a unique trimmed, ASCII case-insensitive match is required, or the function throws with the available loadout names. */
+export function selectedLoadout(bag: SettingsBag): Loadout | null;
 
 }
 

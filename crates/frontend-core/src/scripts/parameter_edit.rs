@@ -2455,12 +2455,10 @@ export const SETTINGS: SettingsSchema = {
                 Some(""),
                 "{name}: loadout default reaches admission"
             );
-            let refusal = script::loadouts_store::resolve_script_loadout_setting(&[], wanted)
-                .expect_err("empty loadout store must refuse before Start");
-            assert!(
-                refusal.to_string().contains("no loadouts exist"),
-                "{name}: {refusal}"
-            );
+            let selection =
+                script::loadouts_store::resolve_compat_script_loadout_setting(&[], wanted)
+                    .expect("blank default with no saved rows means no selection");
+            assert!(selection.is_none(), "{name}: {selection:?}");
             let options =
                 resolve_parameter_options(SettingView::new(def), &bag, &loadouts, None).unwrap();
             assert_eq!(
