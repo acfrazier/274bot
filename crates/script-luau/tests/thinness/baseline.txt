@@ -1,0 +1,4 @@
+# Size baseline of rule T10. A rise needs a new line here with its reason.
+mean_binding_lines = 4
+convert_lines = 452
+prelude_lines = 706

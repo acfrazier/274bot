@@ -1607,7 +1607,9 @@ cells = [
 
 # A real R289 Luau run crosses Play Start, the slot's lent tick,
 # pause/resume, Stop, and physical VM retirement. The slot and seat client
-# mappings are shared by the Luau and JS runs.
+# mappings are shared by the Luau and JS runs. The walk cell crosses the L4a
+# bindings: status reads of the lent frame and two awaited walks admitted
+# through the slot's seat and the host route job.
 [[cover]]
 globs = [
   "crates/script-luau/src/**",
@@ -1621,6 +1623,7 @@ globs = [
 ]
 cells = [
   "host.luau-lifecycle|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,luau --test script_api_live -- --ignored --exact luau_lifecycle --nocapture --test-threads=1",
+  "host.luau-walk|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,luau --test script_api_live -- --ignored --exact luau_walk --nocapture --test-threads=1",
 ]
 
 # Compatibility-family imports and the host runtime wiring they cross. The

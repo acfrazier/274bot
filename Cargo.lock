@@ -4442,6 +4442,7 @@ dependencies = [
 name = "script-luau"
 version = "0.2.9"
 dependencies = [
+ "allocation-counter",
  "api",
  "mlua",
  "script",
