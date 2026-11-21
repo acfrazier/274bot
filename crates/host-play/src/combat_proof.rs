@@ -597,6 +597,9 @@ fn interaction_value(request: &InteractReq, snapshot: &GameSnapshot) -> Value {
         }),
         InteractReq::Wear { name } => json!({"op": "wear", "name": name}),
         InteractReq::SetRetaliate { on } => json!({"op": "set-retaliate", "on": on}),
+        InteractReq::WalkTo { x, z, level } => {
+            json!({"op": "walk-to", "x": x, "z": z, "level": level})
+        }
         _ => json!({"debug": format!("{request:?}")}),
     }
 }

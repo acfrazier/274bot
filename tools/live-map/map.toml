@@ -1430,6 +1430,29 @@ cells = [
   "host.walk-guard-eat-crossing|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_NAV_PACK=${NAV_PACK_289:?} BOT_COMBAT_CACHE_SNAPSHOT=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib walk_guard_live_tests::live_walk_guard_eat_crossing -- --ignored --exact --nocapture --test-threads=1",
 ]
 
+# D8 (operator 2026-11-21): the Quester poisoned at low HP with no food. With
+# an antipoison the walk guard drinks it first; without one the Quester walks
+# out of the stage's danger area, stands still there with a server-visible
+# stand click, stops with its reason, and resumes when the poison can no
+# longer kill (quester/poison_stop.rs, runner.rs survival poll). Same thrower
+# crossing and seed shape as GUARD-EAT-1; see walk_guard_live_tests.rs
+# POISON_CROSSING. The walk out has no live cell: Mountain Trolls share the
+# thrower zone and Protect from Missiles stops only the rocks
+# (death_troll_thrower.rs2:26-32); poison_stop_runner_tests.rs covers it.
+[[cover]]
+globs = [
+  "crates/host-play/src/walk_guard_live_tests.rs",
+  "crates/script/src/quester/poison_stop.rs",
+  "crates/script/src/quester/poison_stop_runner_tests.rs",
+  "crates/script/src/quester/runner.rs",
+  "crates/script/src/quester/families/mod.rs",
+  "crates/script/src/survival/cure.rs",
+]
+cells = [
+  "host.walk-guard-poison-no-food-stop|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_NAV_PACK=${NAV_PACK_289:?} BOT_COMBAT_CACHE_SNAPSHOT=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib walk_guard_live_tests::live_walk_guard_poison_no_food_stop -- --ignored --exact --nocapture --test-threads=1",
+  "host.walk-guard-poison-no-food-cure|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_NAV_PACK=${NAV_PACK_289:?} BOT_COMBAT_CACHE_SNAPSHOT=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib walk_guard_live_tests::live_walk_guard_poison_no_food_cure -- --ignored --exact --nocapture --test-threads=1",
+]
+
 [[cover]]
 globs = ["crates/host-play/src/script_bank.rs"]
 cells = [

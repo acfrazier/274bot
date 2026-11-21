@@ -102,8 +102,92 @@ fn in_throwers_zone(tile: WorldTile) -> bool {
 /// verified start baseline and the drain a few ticks later: HP 8 or 9. Both
 /// are at the emergency line once poison onset is read.
 fn crossing_drained(hp: i32) -> bool {
-    (1..=CROSSING_HP + 1).contains(&hp)
+    EAT_CROSSING.drained(hp)
 }
+
+/// Which seeded real-content crossing a cell runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SeedArm {
+    /// GUARD-EAT-1: lobsters held; HP 8 and poison on the crossing.
+    Eat,
+    /// D8 without a cure: no food and no antipoison. The seed lands outside
+    /// the zones; the Quester stands still where it is, stops with the
+    /// reason, and resumes.
+    PoisonStop,
+    /// D8 with a cure: one `Antipoison(4)` and no food. The cure comes first.
+    PoisonCure,
+}
+
+/// A crossing seed: the drain cheat, the HP it leaves, and the poison cheat.
+#[derive(Clone, Copy, Debug)]
+struct CrossingPlan {
+    drain: &'static str,
+    hp: i32,
+    poison: &'static str,
+}
+
+impl CrossingPlan {
+    /// HP after the drain. One `health_regen` point can land between the
+    /// verified start baseline and the drain (`crossing_drained`).
+    fn drained(self, hp: i32) -> bool {
+        (1..=self.hp + 1).contains(&hp)
+    }
+}
+
+const EAT_CROSSING: CrossingPlan = CrossingPlan {
+    drain: CROSSING_DRAIN,
+    hp: CROSSING_HP,
+    poison: CROSSING_POISON,
+};
+
+/// D8 seed (operator decision D8, 2026-11-21). Engine and content references
+/// are the Engine-A 289 sources (engine 574f10f, content a608090).
+///
+/// `~stat_drain hitpoints 9 0` takes the verified HP 20/40 to 11 (12 with one
+/// regeneration point, `crossing_drained`). `~poison 7` queues
+/// `poison_player` (cheat_other.rs2:1-3), which sets `%poison` to 7
+/// (poison.rs2:6-17). Each fire of the 30-tick `poison` timer queues
+/// `(%poison + 4) / 5` damage and lowers `%poison` by one (poison.rs2:20-30,
+/// 72-75): 2, 2, 1, 1, 1, 1, 1, so 9 damage in all. HP 11 or 12 ends at 2
+/// or 3: the seed cannot kill, and no step waits on a chance outcome.
+///
+/// At onset the slot reads poison of unknown strength, priced at the
+/// largest R289 pulse `(55 + 4) / 5 = 11` (risk/facts.rs:334-340), so the
+/// emergency line at zero danger is `1 + 11 = 12` (combat/select.rs:227-236,
+/// 213-222). HP 11 or 12 is then the survival need `Cure { Emergency }`
+/// (survival/math.rs:149-160) and the cure reason `Emergency`
+/// (survival/cure.rs:147), which no onset wait delays. After the first fire
+/// (pulse 2) the worst remaining damage is the series sum to severity 9,
+/// 13 (api/src/condition.rs:580-584), at least HP 9 or 10: `Lethal`.
+/// After the second fire it is still 13 against HP 7 or 8. After the third
+/// fire (pulse 1) it is 4, below HP 6 or 7 and above the line `1 + 1`, so
+/// the need ends there: the stop holds from onset to the third fire, at
+/// least 61 ticks (the first fire lands at most 30 ticks after onset,
+/// poison.rs2:72-75), and then resumes.
+const POISON_CROSSING: CrossingPlan = CrossingPlan {
+    drain: "~stat_drain hitpoints 9 0",
+    hp: 11,
+    poison: "~poison 7",
+};
+/// The status text prefix of the Quester's D8 stop
+/// (script quester/poison_stop.rs `StopText`).
+const POISON_STOP_PREFIX: &str = "poisoned at low HP with no food and no antipoison: stopped at ";
+const POISON_STOP_SAFE: &str = " outside the danger area";
+/// The poison cheat is read in the next server tick, the onset line one tick
+/// later; the stop's survival poll decides in that frame. The stop must be
+/// shown before the need can end: the third fire lands at most
+/// `1 + 30 + 60` ticks after the send (poison.rs2:72-75).
+const POISON_STOP_BOUND: u32 = 91;
+/// The need ends with the third fire; its hitmark updates the condition in
+/// the next observed tick. Nine ticks of slack for the un-park poll.
+const POISON_STOP_END_BOUND: u32 = 100;
+/// The antipoison sets `%poison` to at most -5 and the timer's negative
+/// branch only counts it up (anti_poison.rs2:5-6, poison.rs2:25-27), so no
+/// fire deals damage after it. It does not clear a `poison_damage` already
+/// queued (poison.rs2:29,32-40), which lands in the next tick. One full
+/// 30-tick timer period after the dose drop without an HP drop proves the
+/// cure.
+const POISON_CURE_WATCH: u32 = 31;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SentCheat {
@@ -1459,12 +1543,55 @@ struct LiveState {
     tiles_by_tick: std::collections::VecDeque<(u32, WorldTile)>,
     health: Vec<(u32, i32, i32)>,
     real_content: bool,
-    /// The eat-crossing cell seeds HP and poison on the crossing.
-    seed_crossing: bool,
+    /// The crossing seed a real-content cell sends inside the zone.
+    crossing: Option<CrossingPlan>,
     crossing_seed: CrossingSeed,
     /// First observed tick whose Quester status is the `no step for stage`
     /// block (quester/runner.rs:3651-3691).
     park_tick: Option<u32>,
+    /// D8 poison cells: the first tick that shows `Antipoison(3)`, the drink's
+    /// dose drop from the seeded `Antipoison(4)`.
+    cure_tick: Option<u32>,
+    /// D8 poison cells: the Quester's `survival_stop` status as observed.
+    stop: StopSeen,
+    /// D8 poison cells: the network tile when the poison cheat was sent.
+    poison_tile: Option<WorldTile>,
+}
+
+/// The Quester's D8 poison stop as the frames show it: the first tick and
+/// reason of the `survival_stop` status field, the first later tick without
+/// it, and every network tile observed while it was shown.
+#[derive(Debug, Default)]
+struct StopSeen {
+    first: Option<(u32, String)>,
+    end: Option<u32>,
+    tiles: Vec<(u32, WorldTile)>,
+}
+
+impl StopSeen {
+    fn observe(&mut self, tick: u32, reason: Option<&str>, tile: Option<WorldTile>) {
+        match (reason, self.first.is_some(), self.end) {
+            (Some(reason), false, _) => self.first = Some((tick, reason.to_owned())),
+            (None, true, None) => self.end = Some(tick),
+            _ => {}
+        }
+        if self.first.is_some() && self.end.is_none() {
+            if let Some(tile) =
+                tile.filter(|tile| self.tiles.last().is_none_or(|row| row.1 != *tile))
+            {
+                self.tiles.push((tick, tile));
+            }
+        }
+    }
+
+    fn json(&self) -> serde_json::Value {
+        json!({
+            "first_tick": self.first.as_ref().map(|(tick, _)| tick),
+            "reason": self.first.as_ref().map(|(_, reason)| reason),
+            "end_tick": self.end,
+            "tiles": self.tiles.iter().map(|(tick, tile)| json!([tick, tile.x, tile.z, tile.level])).collect::<Vec<_>>(),
+        })
+    }
 }
 
 impl LiveState {
@@ -1522,20 +1649,26 @@ impl LiveState {
         let inside = self
             .last_tile
             .is_some_and(|(x, z, level)| in_throwers_zone(WorldTile { x, z, level }));
+        let Some(plan) = self.crossing else {
+            return;
+        };
         let seed = &mut self.crossing_seed;
         match (seed.drain, seed.drained_tick) {
             (None, _) if inside => {
                 seed.drain = Some(SentCheat {
                     tick,
-                    accepted: send_cheat(client, CROSSING_DRAIN),
+                    accepted: send_cheat(client, plan.drain),
                 });
             }
-            (Some(drain), None) if drain.accepted && hp.is_some_and(crossing_drained) => {
+            (Some(drain), None) if drain.accepted && hp.is_some_and(|hp| plan.drained(hp)) => {
                 seed.drained_tick = Some(tick);
                 seed.poison = Some(SentCheat {
                     tick,
-                    accepted: send_cheat(client, CROSSING_POISON),
+                    accepted: send_cheat(client, plan.poison),
                 });
+                self.poison_tile = self
+                    .last_tile
+                    .map(|(x, z, level)| WorldTile { x, z, level });
             }
             _ => {}
         }
@@ -1644,19 +1777,40 @@ impl LiveState {
             self.arrival_tick.get_or_insert(tick);
             self.arrived = true;
         }
-        if self.seed_crossing {
+        if self.crossing.is_some() {
             self.step_crossing_seed(client, tick);
         }
-        if self.real_content && self.started && self.park_tick.is_none() {
-            let parked = self
+        if self.real_content && self.started {
+            let status = self
                 .capture
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .statuses
                 .last()
-                .is_some_and(|status| status["fields"]["block_reason"] == "no step for stage");
-            if parked {
+                .map(|status| {
+                    (
+                        status["fields"]["block_reason"] == "no step for stage",
+                        status["fields"]["survival_stop"]
+                            .as_str()
+                            .map(str::to_owned),
+                    )
+                });
+            let (parked, stop) = status.unwrap_or((false, None));
+            if parked && self.park_tick.is_none() {
                 self.park_tick = Some(tick);
+            }
+            let here = self
+                .last_tile
+                .map(|(x, z, level)| WorldTile { x, z, level });
+            self.stop.observe(tick, stop.as_deref(), here);
+            if self.cure_tick.is_none()
+                && self
+                    .snapshot
+                    .inventory()
+                    .iter()
+                    .any(|item| item.def.name.as_deref() == Some("Antipoison(3)"))
+            {
+                self.cure_tick = Some(tick);
             }
         }
         if self.arrived && !prayers_active(&self.snapshot) {
@@ -1731,7 +1885,7 @@ impl LiveState {
 fn scenario_for(
     capture: Arc<Mutex<CombatCapture>>,
     start: WorldTile,
-    food: Option<bool>,
+    arm: Option<SeedArm>,
 ) -> Scenario {
     let mut scenario =
         scenario::quester_stage("walk_guard_throwers", "Imp Catcher", "imp", 0, &[], start);
@@ -1740,7 +1894,7 @@ fn scenario_for(
         .iter()
         .position(|step| step.name == "stand at the quest start")
         .expect("stand step");
-    let extra = if let Some(food) = food {
+    let extra = if let Some(arm) = arm {
         let mut steps = vec![
             cheat_step(
                 "seed Prayer 37",
@@ -1758,15 +1912,24 @@ fn scenario_for(
                 Proof::Stat { id: 3, min: 20 },
             ),
         ];
-        if food {
-            steps.push(cheat_step(
+        match arm {
+            SeedArm::Eat => steps.push(cheat_step(
                 "seed required lobster supply",
                 format!("give lobster {CROSSING_LOBSTERS}"),
                 Proof::Item {
                     name: "Lobster",
                     count: CROSSING_LOBSTERS,
                 },
-            ));
+            )),
+            SeedArm::PoisonCure => steps.push(cheat_step(
+                "seed one antipoison",
+                "give 4doseantipoison 1".to_owned(),
+                Proof::Item {
+                    name: "Antipoison(4)",
+                    count: 1,
+                },
+            )),
+            SeedArm::PoisonStop => {}
         }
         steps
     } else {
@@ -1820,14 +1983,36 @@ fn live_walk_guard_w1_stop_mid_crossing() {
 #[test]
 #[ignore = "requires LIVE=1 and the local R289 engine"]
 fn live_walk_guard_eat_crossing() {
-    run_live_w1(W1Mode::Crossing, Some(true));
+    run_live_w1(W1Mode::Crossing, Some(SeedArm::Eat));
 }
 
+/// D8 without a cure: poisoned at HP 11 or 12 of 40 with no food and no
+/// antipoison on the thrower crossing. Pass: the Quester stands still where
+/// the poison finds it (the seed lands outside the pack's thrower zones),
+/// stops with its reason, the stop ends when the poison can no longer kill,
+/// and the walk then arrives ([`poison_arm_decision`]).
 #[test]
 #[ignore = "requires LIVE=1 and the local R289 engine"]
-fn live_walk_guard_eat_no_food_control() {
-    run_live_w1(W1Mode::Crossing, Some(false));
+fn live_walk_guard_poison_no_food_stop() {
+    run_live_w1(W1Mode::Crossing, Some(SeedArm::PoisonStop));
 }
+
+/// D8 with a cure: the same seed with one `Antipoison(4)`. Pass: the walk
+/// guard drinks it at onset, no poison damage follows, no stop is shown,
+/// and the walk arrives ([`poison_arm_decision`]).
+#[test]
+#[ignore = "requires LIVE=1 and the local R289 engine"]
+fn live_walk_guard_poison_no_food_cure() {
+    run_live_w1(W1Mode::Crossing, Some(SeedArm::PoisonCure));
+}
+
+// The D8 walk out (`StopPlan::KeepWalking` and `StopPlan::Retreat`) has no
+// live cell. Inside the pack's thrower zone the account meets Mountain Trolls
+// as well as Thrower Trolls; Protect from Missiles zeroes only the throwers'
+// rocks (death_troll_thrower.rs2:26-32), so trolls' melee hits would make the
+// cell gate on chance (QUESTER-POISON-NO-FOOD r2 walkout-try7: HP 40 -> 0 two
+// ticks after the walk-out decision). The runner tests in
+// quester/poison_stop_runner_tests.rs cover the walk out.
 
 fn eat_heal(row: &serde_json::Value, health: &[(u32, i32, i32)]) -> Option<(u32, i32, i32)> {
     let tick = row["tick"].as_u64()?;
@@ -1898,15 +2083,6 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
     }
     if state.health.iter().any(|(_, hp, _)| *hp <= 0) {
         return gate_fail("death during throwers crossing");
-    }
-    if !food {
-        if !state.arrived {
-            return W1GateDecision::Pending;
-        }
-        if !state.snapshot.ingame() || state.snapshot.scene_state() != 2 {
-            return gate_fail("arrival lacks a ready in-game scene");
-        }
-        return W1GateDecision::Pass;
     }
     let eats: Vec<EatClick> = capture
         .actions
@@ -2184,7 +2360,731 @@ fn crossing_drain_accepts_one_regeneration_point() {
     }));
 }
 
-fn run_live_w1(mode: W1Mode, food: Option<bool>) {
+/// The tile a D8 stop reason names, when the reason says it is outside the
+/// danger area.
+fn stop_reason_tile(reason: &str) -> Option<WorldTile> {
+    let rest = reason
+        .strip_prefix(POISON_STOP_PREFIX)?
+        .strip_suffix(POISON_STOP_SAFE)?;
+    let mut parts = rest.split(',').map(|part| part.parse::<i32>().ok());
+    let tile = WorldTile {
+        x: parts.next()??,
+        z: parts.next()??,
+        level: parts.next()??,
+    };
+    parts.next().is_none().then_some(tile)
+}
+
+/// Every accepted stand click (`walk-to` interaction) the host dispatched,
+/// as `(snapshot tick, tile)`. The row's `tick` is the host's own counter;
+/// `snapshot_tick` is the observed game tick the oracle's other events use.
+fn stand_clicks(actions: &[serde_json::Value]) -> Vec<(u32, WorldTile)> {
+    actions
+        .iter()
+        .filter(|row| {
+            row["kind"] == "interaction"
+                && row["request"]["op"] == "walk-to"
+                && row["accepted"] == true
+        })
+        .filter_map(|row| {
+            let int = |value: &serde_json::Value| i32::try_from(value.as_i64()?).ok();
+            Some((
+                u32::try_from(row["snapshot_tick"].as_u64()?).ok()?,
+                WorldTile {
+                    x: int(&row["request"]["x"])?,
+                    z: int(&row["request"]["z"])?,
+                    level: int(&row["request"]["level"])?,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Everything the D8 oracle judges, read from the live state and capture.
+struct PoisonArmInput<'a> {
+    arm: SeedArm,
+    seed: CrossingSeed,
+    current_tick: u32,
+    arrival_tick: Option<u32>,
+    /// First `no step for stage` block (the stage's end).
+    park_tick: Option<u32>,
+    died: bool,
+    /// First tick and reason of the `survival_stop` status.
+    stop: Option<(u32, &'a str)>,
+    stop_end: Option<u32>,
+    /// The tile a safe stop's reason names.
+    stop_tile: Option<WorldTile>,
+    /// Whether that tile is inside the danger area.
+    stop_tile_inside: Option<bool>,
+    /// Whether any tile observed while the stop was shown is inside it.
+    stop_tiles_inside: bool,
+    /// Whether any tile observed while the stop was shown differs from the
+    /// stop tile.
+    stop_tiles_moved: bool,
+    /// Accepted stand clicks, `(tick, tile)`.
+    stand_clicks: &'a [(u32, WorldTile)],
+    /// Every Drink click (walk guard or Quester), in capture order.
+    drinks: &'a [u32],
+    /// First tick that shows the dose drop to `Antipoison(3)`.
+    cure_tick: Option<u32>,
+    /// Ticks whose observed HP is below the previous observation.
+    hp_drops: &'a [u32],
+    /// Ticks of seeded poison fires after the poison ([`poison_fires`]).
+    poison_fires: &'a [u32],
+}
+
+/// The seeded poison fires that end the survival need (`POISON_CROSSING`:
+/// the need holds until the third fire is seen).
+const POISON_NEED_FIRES: usize = 3;
+
+/// D8 oracle (operator decision D8, 2026-11-21). Shared: a refused or unseen
+/// seed is a fixture failure, death is a product failure. Every deadline
+/// also rejects an event that is seen, but late.
+///
+/// `PoisonStop` passes when the Quester shows its stop at most
+/// [`POISON_STOP_BOUND`] ticks after the poison, before arrival and before
+/// the stage ends; the reason names a tile outside the danger area; the last
+/// accepted stand click before the stop is on that tile; every tile seen
+/// while stopped is that tile; the stop ends at most
+/// [`POISON_STOP_END_BOUND`] ticks after the poison, and not before the
+/// [`POISON_NEED_FIRES`]th poison HP drop (the need is gone); and the walk
+/// then arrives.
+///
+/// `PoisonCure` passes when the first Drink comes within
+/// [`CROSSING_BITE_WINDOW`] ticks of the poison, the dose drop within
+/// [`EAT_HEAL_WINDOW`] ticks of it, no HP drop after the tick after the dose
+/// drop for [`POISON_CURE_WATCH`] ticks, no stop is shown, and the walk
+/// arrives before the stage ends.
+fn poison_arm_decision(input: &PoisonArmInput<'_>) -> W1GateDecision {
+    let seed = input.seed;
+    for (name, sent) in [("drain", seed.drain), ("poison", seed.poison)] {
+        if let Some(sent) = sent.filter(|sent| !sent.accepted) {
+            return gate_fail(format!(
+                "fixture: the {name} cheat was refused at tick {}",
+                sent.tick
+            ));
+        }
+    }
+    if let (Some(drain), None) = (seed.drain, seed.drained_tick) {
+        if input.current_tick > drain.tick.saturating_add(CROSSING_SEED_WINDOW) {
+            return gate_fail(format!(
+                "fixture: HP {} was not observed within {CROSSING_SEED_WINDOW} ticks of the drain at tick {}",
+                POISON_CROSSING.hp, drain.tick
+            ));
+        }
+    }
+    if input.died {
+        return gate_fail("product: death during the poisoned crossing");
+    }
+    let Some(poison) = seed.poison.map(|sent| sent.tick) else {
+        return match input.arrival_tick {
+            Some(arrival) => gate_fail(format!(
+                "fixture: arrival at tick {arrival} before the crossing seed completed"
+            )),
+            None => W1GateDecision::Pending,
+        };
+    };
+    if let Some((tick, _)) = input.stop.filter(|(tick, _)| *tick < poison) {
+        return gate_fail(format!(
+            "interference: a poison stop at tick {tick} before the seeded poison"
+        ));
+    }
+    match input.arm {
+        SeedArm::PoisonCure => cure_arm_decision(input, poison),
+        SeedArm::PoisonStop => stop_arm_decision(input, poison),
+        SeedArm::Eat => gate_fail("fixture: the eat arm has its own oracle"),
+    }
+}
+
+fn cure_arm_decision(input: &PoisonArmInput<'_>, poison: u32) -> W1GateDecision {
+    if let Some((tick, reason)) = input.stop {
+        return gate_fail(format!(
+            "product: the Quester stopped at tick {tick} although it held an antipoison: {reason}"
+        ));
+    }
+    if let Some(park) = input.park_tick {
+        if input.arrival_tick.is_none_or(|arrival| park < arrival) {
+            return gate_fail(format!(
+                "product: Quester parked `no step for stage` at tick {park} before arrival"
+            ));
+        }
+    }
+    let Some(&drink) = input.drinks.first() else {
+        if input.current_tick > poison.saturating_add(CROSSING_BITE_WINDOW) {
+            return gate_fail(format!(
+                "product: no Drink within {CROSSING_BITE_WINDOW} ticks of the poison at tick {poison}"
+            ));
+        }
+        return W1GateDecision::Pending;
+    };
+    if drink > poison.saturating_add(CROSSING_BITE_WINDOW) {
+        return gate_fail(format!(
+            "product: the first Drink at tick {drink} is more than {CROSSING_BITE_WINDOW} ticks after the poison at tick {poison}"
+        ));
+    }
+    let Some(cure) = input.cure_tick else {
+        if input.current_tick > drink.saturating_add(EAT_HEAL_WINDOW) {
+            return gate_fail(format!(
+                "product: the Drink at tick {drink} was not followed within {EAT_HEAL_WINDOW} ticks by the dose drop"
+            ));
+        }
+        return W1GateDecision::Pending;
+    };
+    if cure > drink.saturating_add(EAT_HEAL_WINDOW) {
+        return gate_fail(format!(
+            "product: the dose drop at tick {cure} is more than {EAT_HEAL_WINDOW} ticks after the Drink at tick {drink}"
+        ));
+    }
+    if let Some(drop) = input
+        .hp_drops
+        .iter()
+        .find(|drop| **drop > cure.saturating_add(1))
+    {
+        return gate_fail(format!(
+            "product: HP fell at tick {drop} after the cure at tick {cure}"
+        ));
+    }
+    if input.current_tick < cure.saturating_add(POISON_CURE_WATCH) || input.arrival_tick.is_none() {
+        return W1GateDecision::Pending;
+    }
+    W1GateDecision::Pass
+}
+
+fn stop_arm_decision(input: &PoisonArmInput<'_>, poison: u32) -> W1GateDecision {
+    let stop_deadline = poison.saturating_add(POISON_STOP_BOUND);
+    let Some((stop, reason)) = input.stop else {
+        if let Some(park) = input.park_tick {
+            return gate_fail(format!(
+                "product: Quester ended the stage at tick {park} without the poison stop"
+            ));
+        }
+        if input.current_tick > stop_deadline {
+            return gate_fail(format!(
+                "product: no poison stop within {POISON_STOP_BOUND} ticks of the poison at tick {poison}"
+            ));
+        }
+        return W1GateDecision::Pending;
+    };
+    if stop > stop_deadline {
+        return gate_fail(format!(
+            "product: the poison stop at tick {stop} is more than {POISON_STOP_BOUND} ticks after the poison at tick {poison}"
+        ));
+    }
+    if let Some(arrival) = input.arrival_tick.filter(|arrival| *arrival < stop) {
+        return gate_fail(format!(
+            "product: arrival at tick {arrival} before the poison stop at tick {stop}"
+        ));
+    }
+    let Some(tile) = input.stop_tile.filter(|_| input.stop_tile_inside.is_some()) else {
+        return gate_fail(format!(
+            "product: the stop reason names no tile outside the danger area: {reason}"
+        ));
+    };
+    if input.stop_tile_inside == Some(true) {
+        return gate_fail(format!(
+            "product: the stop tile is inside the danger area: {reason}"
+        ));
+    }
+    let Some(&(click_tick, click)) = input
+        .stand_clicks
+        .iter()
+        .rfind(|(tick, _)| *tick >= poison && *tick <= stop)
+    else {
+        return gate_fail(format!(
+            "product: no stand click between the poison at tick {poison} and the stop at tick {stop}"
+        ));
+    };
+    if click != tile {
+        return gate_fail(format!(
+            "product: the stop tile {},{},{} is not the stand click tile {},{},{} (tick {click_tick})",
+            tile.x, tile.z, tile.level, click.x, click.z, click.level
+        ));
+    }
+    if input.stop_tiles_inside {
+        return gate_fail("product: a tile inside the danger area was seen while stopped");
+    }
+    if input.stop_tiles_moved {
+        return gate_fail("product: the player moved while the stop was shown");
+    }
+    let end_deadline = poison.saturating_add(POISON_STOP_END_BOUND);
+    let Some(end) = input.stop_end else {
+        if input.current_tick > end_deadline {
+            return gate_fail(format!(
+                "product: the stop did not end within {POISON_STOP_END_BOUND} ticks of the poison at tick {poison}"
+            ));
+        }
+        return W1GateDecision::Pending;
+    };
+    if end > end_deadline {
+        return gate_fail(format!(
+            "product: the stop ended at tick {end}, more than {POISON_STOP_END_BOUND} ticks after the poison at tick {poison}"
+        ));
+    }
+    let need_end = input.poison_fires.get(POISON_NEED_FIRES - 1);
+    if need_end.is_none_or(|need_end| end < *need_end) {
+        return gate_fail(format!(
+            "product: the stop ended at tick {end} while the survival need was present (poison fire {POISON_NEED_FIRES} seen at {need_end:?})"
+        ));
+    }
+    if let Some(park) = input.park_tick.filter(|park| *park < end) {
+        return gate_fail(format!(
+            "product: Quester ended the stage at tick {park} during the poison stop"
+        ));
+    }
+    match input.arrival_tick {
+        Some(arrival) if arrival > end => W1GateDecision::Pass,
+        _ => W1GateDecision::Pending,
+    }
+}
+
+/// Ticks of the seeded poison's fires: HP drops after the poison send (the
+/// drain comes before it).
+fn poison_fires(health: &[(u32, i32, i32)], seed: CrossingSeed) -> Vec<u32> {
+    let Some(poison) = seed.poison.map(|sent| sent.tick) else {
+        return Vec::new();
+    };
+    health
+        .windows(2)
+        .filter(|rows| rows[1].0 > poison && rows[1].1 < rows[0].1)
+        .map(|rows| rows[1].0)
+        .collect()
+}
+
+#[test]
+fn poison_fires_are_the_drops_after_the_poison() {
+    let seed = CrossingSeed {
+        drain: Some(SentCheat {
+            tick: 30,
+            accepted: true,
+        }),
+        drained_tick: Some(32),
+        poison: Some(SentCheat {
+            tick: 32,
+            accepted: true,
+        }),
+    };
+    let health = [
+        (29, 20, 0),
+        (32, 11, 0),
+        (40, 12, 0),
+        (50, 10, 0),
+        (80, 8, 0),
+        (110, 7, 0),
+    ];
+    assert_eq!(poison_fires(&health, seed), [50, 80, 110]);
+}
+
+/// Read the D8 oracle input from the live state. `inside` says whether a
+/// tile is in a `death-plateau-throwers` zone of the selected pack.
+fn evaluate_poison_arm(
+    state: &LiveState,
+    capture: &CombatCapture,
+    arm: SeedArm,
+    inside: &dyn Fn(WorldTile) -> bool,
+) -> W1GateDecision {
+    let Some(baseline) = capture.start_baseline.as_ref() else {
+        return W1GateDecision::Pending;
+    };
+    if let Err(reason) = poison_baseline(baseline, arm) {
+        return gate_fail(format!("fixture: {reason}"));
+    }
+    let drinks: Vec<u32> = capture
+        .actions
+        .iter()
+        .filter(|row| {
+            (row["kind"] == "guard" && row["op"] == "drink")
+                || (row["kind"] == "interaction"
+                    && row["request"]["op"] == "held"
+                    && row["request"]["action"] == "Drink")
+        })
+        .filter_map(|row| u32::try_from(row["tick"].as_u64()?).ok())
+        .collect();
+    let hp_drops: Vec<u32> = state
+        .health
+        .windows(2)
+        .filter(|rows| rows[1].1 < rows[0].1)
+        .map(|rows| rows[1].0)
+        .collect();
+    let fires = poison_fires(&state.health, state.crossing_seed);
+    let clicks = stand_clicks(&capture.actions);
+    let stop = state
+        .stop
+        .first
+        .as_ref()
+        .map(|(tick, reason)| (*tick, reason.as_str()));
+    let stop_tile = stop.and_then(|(_, reason)| stop_reason_tile(reason));
+    let decision = poison_arm_decision(&PoisonArmInput {
+        arm,
+        seed: state.crossing_seed,
+        current_tick: state.snapshot.tick(),
+        arrival_tick: state.arrival_tick,
+        park_tick: state.park_tick,
+        died: state.health.iter().any(|(_, hp, _)| *hp <= 0),
+        stop,
+        stop_end: state.stop.end,
+        stop_tile,
+        stop_tile_inside: stop_tile.map(inside),
+        stop_tiles_inside: state.stop.tiles.iter().any(|(_, tile)| inside(*tile)),
+        stop_tiles_moved: stop_tile
+            .is_some_and(|stood| state.stop.tiles.iter().any(|(_, tile)| *tile != stood)),
+        stand_clicks: &clicks,
+        drinks: &drinks,
+        cure_tick: state.cure_tick,
+        hp_drops: &hp_drops,
+        poison_fires: &fires,
+    });
+    if decision == W1GateDecision::Pass
+        && (!state.snapshot.ingame() || state.snapshot.scene_state() != 2)
+    {
+        return gate_fail("arrival lacks a ready in-game scene");
+    }
+    decision
+}
+
+/// The D8 start seed: Prayer 37, HP 20 of 40, no food, and one
+/// `Antipoison(4)` only in the cure arm.
+fn poison_baseline(baseline: &serde_json::Value, arm: SeedArm) -> Result<(), String> {
+    let stat = |index, field: &str| {
+        baseline["stats"]
+            .as_array()
+            .and_then(|stats| stats.iter().find(|stat| stat["index"] == index))
+            .and_then(|stat| stat[field].as_i64())
+    };
+    if stat(5, "base") != Some(37)
+        || stat(3, "base") != Some(40)
+        || stat(3, "effective") != Some(20)
+    {
+        return Err("D8 seed differs from Prayer 37 and HP 20/40".to_owned());
+    }
+    let tables = script::combat::guard::shared_tables()
+        .map_err(|error| format!("combat tables: {error:?}"))?;
+    let dose = api::game_data::for_revision(ClientRevision::R289)
+        .ok()
+        .and_then(|data| data.item_by_alias("4doseantipoison").map(|item| item.id))
+        .ok_or("no Antipoison(4) in the selected data")?;
+    let mut doses = 0;
+    for item in baseline["inventory"].as_array().into_iter().flatten() {
+        let id = item["id"].as_i64().and_then(|id| i32::try_from(id).ok());
+        if id.is_some_and(|id| tables.food(id).is_some()) {
+            return Err(format!("D8 seed holds food: {item}"));
+        }
+        if id == Some(dose) {
+            doses += item["count"].as_i64().unwrap_or(0);
+        }
+    }
+    let expected = i64::from(arm == SeedArm::PoisonCure);
+    if doses != expected {
+        return Err(format!(
+            "D8 seed holds {doses} Antipoison(4), expected {expected}"
+        ));
+    }
+    Ok(())
+}
+
+fn poisoned_crossing() -> CrossingSeed {
+    CrossingSeed {
+        drain: Some(SentCheat {
+            tick: 30,
+            accepted: true,
+        }),
+        drained_tick: Some(32),
+        poison: Some(SentCheat {
+            tick: 32,
+            accepted: true,
+        }),
+    }
+}
+
+const SAFE_REASON: &str =
+    "poisoned at low HP with no food and no antipoison: stopped at 2880,3600,0 outside the danger area";
+const SAFE_TILE: WorldTile = WorldTile {
+    x: 2880,
+    z: 3600,
+    level: 0,
+};
+const SAFE_CLICK: [(u32, WorldTile); 1] = [(36, SAFE_TILE)];
+
+fn stop_receipt() -> PoisonArmInput<'static> {
+    PoisonArmInput {
+        arm: SeedArm::PoisonStop,
+        seed: poisoned_crossing(),
+        current_tick: 150,
+        arrival_tick: Some(140),
+        park_tick: Some(142),
+        died: false,
+        stop: Some((40, SAFE_REASON)),
+        stop_end: Some(110),
+        stop_tile: Some(SAFE_TILE),
+        stop_tile_inside: Some(false),
+        stop_tiles_inside: false,
+        stop_tiles_moved: false,
+        stand_clicks: &SAFE_CLICK,
+        drinks: &[],
+        cure_tick: None,
+        hp_drops: &[50, 80, 110],
+        poison_fires: &[50, 80, 110],
+    }
+}
+
+fn cure_receipt() -> PoisonArmInput<'static> {
+    PoisonArmInput {
+        arm: SeedArm::PoisonCure,
+        seed: poisoned_crossing(),
+        current_tick: 80,
+        arrival_tick: Some(60),
+        park_tick: Some(62),
+        died: false,
+        stop: None,
+        stop_end: None,
+        stop_tile: None,
+        stop_tile_inside: None,
+        stop_tiles_inside: false,
+        stop_tiles_moved: false,
+        stand_clicks: &[],
+        drinks: &[34],
+        cure_tick: Some(36),
+        hp_drops: &[37],
+        poison_fires: &[],
+    }
+}
+
+#[test]
+fn poison_stop_oracle_passes_a_safe_stop_that_resumes_and_rejects_each_bad_behaviour() {
+    assert_eq!(poison_arm_decision(&stop_receipt()), W1GateDecision::Pass);
+    // The walk after the stop has not arrived yet.
+    let mut walking = stop_receipt();
+    walking.arrival_tick = None;
+    walking.park_tick = None;
+    assert_eq!(poison_arm_decision(&walking), W1GateDecision::Pending);
+    let mut missing = stop_receipt();
+    missing.stop = None;
+    missing.stop_end = None;
+    missing.arrival_tick = None;
+    missing.park_tick = None;
+    missing.current_tick = 32 + POISON_STOP_BOUND;
+    assert_eq!(poison_arm_decision(&missing), W1GateDecision::Pending);
+    missing.current_tick += 1;
+    assert!(fails_with(
+        poison_arm_decision(&missing),
+        "product: no poison stop within"
+    ));
+    // A stop first seen after its deadline, in the same observation that
+    // shows it at all.
+    let mut late_stop = stop_receipt();
+    late_stop.stop = Some((32 + POISON_STOP_BOUND + 1, SAFE_REASON));
+    late_stop.stand_clicks = &[(32 + POISON_STOP_BOUND, SAFE_TILE)];
+    assert!(fails_with(
+        poison_arm_decision(&late_stop),
+        "product: the poison stop at tick 124 is more than"
+    ));
+    let mut continued = stop_receipt();
+    continued.stop = None;
+    continued.stop_end = None;
+    assert!(fails_with(
+        poison_arm_decision(&continued),
+        "product: Quester ended the stage at tick 142 without the poison stop"
+    ));
+    let mut late = stop_receipt();
+    late.arrival_tick = Some(39);
+    assert!(fails_with(
+        poison_arm_decision(&late),
+        "product: arrival at tick 39"
+    ));
+    let mut inside = stop_receipt();
+    inside.stop_tile_inside = Some(true);
+    assert!(fails_with(
+        poison_arm_decision(&inside),
+        "product: the stop tile is inside"
+    ));
+    let mut unnamed = stop_receipt();
+    unnamed.stop_tile = None;
+    unnamed.stop_tile_inside = None;
+    assert!(fails_with(
+        poison_arm_decision(&unnamed),
+        "product: the stop reason names no tile"
+    ));
+    let mut unclicked = stop_receipt();
+    unclicked.stand_clicks = &[];
+    assert!(fails_with(
+        poison_arm_decision(&unclicked),
+        "product: no stand click between"
+    ));
+    let mut elsewhere = stop_receipt();
+    elsewhere.stand_clicks = &[(
+        36,
+        WorldTile {
+            x: 2878,
+            z: 3600,
+            level: 0,
+        },
+    )];
+    assert!(fails_with(
+        poison_arm_decision(&elsewhere),
+        "product: the stop tile 2880,3600,0 is not the stand click tile 2878,3600,0"
+    ));
+    let mut wandered = stop_receipt();
+    wandered.stop_tiles_inside = true;
+    assert!(fails_with(
+        poison_arm_decision(&wandered),
+        "product: a tile inside"
+    ));
+    let mut drifted = stop_receipt();
+    drifted.stop_tiles_moved = true;
+    assert!(fails_with(
+        poison_arm_decision(&drifted),
+        "product: the player moved while the stop was shown"
+    ));
+    let mut held = stop_receipt();
+    held.stop_end = None;
+    held.arrival_tick = None;
+    held.park_tick = None;
+    held.current_tick = 32 + POISON_STOP_END_BOUND + 1;
+    assert!(fails_with(
+        poison_arm_decision(&held),
+        "product: the stop did not end"
+    ));
+    // An end first seen after its deadline.
+    let mut late_end = stop_receipt();
+    late_end.stop_end = Some(32 + POISON_STOP_END_BOUND + 1);
+    late_end.arrival_tick = Some(140);
+    assert!(fails_with(
+        poison_arm_decision(&late_end),
+        "product: the stop ended at tick 133, more than"
+    ));
+    // A resume while the third poison fire has not come.
+    let mut early_end = stop_receipt();
+    early_end.stop_end = Some(100);
+    assert!(fails_with(
+        poison_arm_decision(&early_end),
+        "product: the stop ended at tick 100 while the survival need was present"
+    ));
+    let mut unfired = stop_receipt();
+    unfired.poison_fires = &[50, 80];
+    assert!(fails_with(
+        poison_arm_decision(&unfired),
+        "product: the stop ended at tick 110 while the survival need was present"
+    ));
+    let mut ended = stop_receipt();
+    ended.park_tick = Some(100);
+    ended.stop_end = Some(110);
+    assert!(fails_with(
+        poison_arm_decision(&ended),
+        "product: Quester ended the stage at tick 100 during"
+    ));
+    let mut dead = stop_receipt();
+    dead.died = true;
+    assert!(fails_with(poison_arm_decision(&dead), "product: death"));
+    let mut early = stop_receipt();
+    early.stop = Some((31, SAFE_REASON));
+    assert!(fails_with(poison_arm_decision(&early), "interference:"));
+    let mut refused = stop_receipt();
+    refused.seed.poison = Some(SentCheat {
+        tick: 32,
+        accepted: false,
+    });
+    assert!(fails_with(
+        poison_arm_decision(&refused),
+        "fixture: the poison cheat was refused"
+    ));
+}
+
+#[test]
+fn poison_cure_oracle_passes_a_prompt_cure_and_rejects_each_bad_behaviour() {
+    assert_eq!(poison_arm_decision(&cure_receipt()), W1GateDecision::Pass);
+    let mut watching = cure_receipt();
+    watching.current_tick = 36 + POISON_CURE_WATCH - 1;
+    assert_eq!(poison_arm_decision(&watching), W1GateDecision::Pending);
+    let mut stopped = cure_receipt();
+    stopped.stop = Some((40, SAFE_REASON));
+    assert!(fails_with(
+        poison_arm_decision(&stopped),
+        "product: the Quester stopped"
+    ));
+    let mut none = cure_receipt();
+    none.drinks = &[];
+    none.cure_tick = None;
+    none.current_tick = 32 + CROSSING_BITE_WINDOW;
+    assert_eq!(poison_arm_decision(&none), W1GateDecision::Pending);
+    none.current_tick += 1;
+    assert!(fails_with(
+        poison_arm_decision(&none),
+        "product: no Drink within"
+    ));
+    let mut slow = cure_receipt();
+    slow.drinks = &[36];
+    assert!(fails_with(
+        poison_arm_decision(&slow),
+        "product: the first Drink at tick 36"
+    ));
+    let mut dropped = cure_receipt();
+    dropped.cure_tick = None;
+    assert!(fails_with(
+        poison_arm_decision(&dropped),
+        "product: the Drink at tick 34 was not followed"
+    ));
+    // A dose drop first seen after its deadline.
+    let mut late_cure = cure_receipt();
+    late_cure.cure_tick = Some(34 + EAT_HEAL_WINDOW + 1);
+    late_cure.hp_drops = &[];
+    late_cure.current_tick = 120;
+    assert!(fails_with(
+        poison_arm_decision(&late_cure),
+        "product: the dose drop at tick 39 is more than"
+    ));
+    let mut poisoned = cure_receipt();
+    poisoned.hp_drops = &[37, 66];
+    assert!(fails_with(
+        poison_arm_decision(&poisoned),
+        "product: HP fell at tick 66"
+    ));
+    let mut parked = cure_receipt();
+    parked.park_tick = Some(50);
+    assert!(fails_with(
+        poison_arm_decision(&parked),
+        "product: Quester parked"
+    ));
+    let mut dead = cure_receipt();
+    dead.died = true;
+    assert!(fails_with(poison_arm_decision(&dead), "product: death"));
+}
+
+#[test]
+fn stop_reason_tile_reads_only_a_safe_stop() {
+    assert_eq!(stop_reason_tile(SAFE_REASON), Some(SAFE_TILE));
+    assert_eq!(
+        stop_reason_tile(
+            "poisoned at low HP with no food and no antipoison: stopped at 2860,3600,0 inside the danger area (no safe tile seen in this danger area)"
+        ),
+        None
+    );
+    assert_eq!(
+        stop_reason_tile(
+            "poisoned at low HP with no food and no antipoison: stopped at 2860,3600,0, but the player was not seen standing still (the player still moved)"
+        ),
+        None
+    );
+    assert_eq!(
+        stop_reason_tile(
+            "poisoned at low HP with no food and no antipoison: stopped outside the danger area"
+        ),
+        None
+    );
+}
+
+#[test]
+fn stand_clicks_reads_accepted_walk_to_rows() {
+    let rows = [
+        json!({"kind": "interaction", "tick": 49, "snapshot_tick": 36, "accepted": true,
+            "request": {"op": "walk-to", "x": 2880, "z": 3600, "level": 0}}),
+        json!({"kind": "interaction", "tick": 50, "snapshot_tick": 37, "accepted": false,
+            "request": {"op": "walk-to", "x": 2881, "z": 3600, "level": 0}}),
+        json!({"kind": "interaction", "tick": 51, "snapshot_tick": 38, "accepted": true,
+            "request": {"op": "held", "name": "Antipoison(4)", "action": "Drink"}}),
+    ];
+    assert_eq!(stand_clicks(&rows), [(36, SAFE_TILE)]);
+}
+
+fn run_live_w1(mode: W1Mode, arm: Option<SeedArm>) {
     assert_eq!(
         std::env::var("LIVE").as_deref(),
         Ok("1"),
@@ -2192,7 +3092,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     );
     let evidence = evidence_dir().expect("W1 live prerequisites");
     std::fs::create_dir_all(&evidence).expect("create W1 lifecycle evidence directory");
-    let home = food
+    let home = arm
         .is_none()
         .then(ThrowawayHome::enter)
         .transpose()
@@ -2209,7 +3109,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         |home| home.path.clone(),
     );
     let mut options = profile_options(&home_path).expect("W1 live prerequisites");
-    if food.is_some() {
+    if arm.is_some() {
         options.port = Some(crate::live_ports::game_port());
         options.http_port = Some(crate::live_ports::http_port());
     }
@@ -2219,9 +3119,22 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         .prepare_template()
         .expect("prepare isolated local-289 template");
     let world = template.world().expect("selected navigation world");
+    let nav = nav_planner::producer::lease(&world).expect("selected navigation catalog");
+    // The D8 oracle judges tiles against the pack's own throwers zones.
+    let zone_lease = nav_planner::producer::lease(&world).expect("selected navigation catalog");
+    let danger_group = zone_lease
+        .zones()
+        .and_then(|zones| zones.resolve(ZONE))
+        .expect("the pack names death-plateau-throwers");
+    let inside_danger = |tile: WorldTile| {
+        zone_lease.zones().is_some_and(|zones| {
+            zones
+                .containing(tile)
+                .any(|zone| zone.key() == danger_group || zone.group() == Some(danger_group))
+        })
+    };
     // Start outside the Throwers' hunt radius so Quester walks into the threat.
     let (start, dest) = pick_crossing(world.as_ref());
-    let nav = nav_planner::producer::lease(&world).expect("selected navigation catalog");
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("selected R289 data");
     let quests = Arc::new(
         QuestCatalog::from_identity(selected.quest_identity()).expect("selected quest catalog"),
@@ -2250,7 +3163,7 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         .expect("mint local W1 password");
     let capture = Arc::new(Mutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
-    let scenario = scenario_for(Arc::clone(&capture), start, food);
+    let scenario = scenario_for(Arc::clone(&capture), start, arm);
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_map_members(true);
     runner.set_live_names(&names);
@@ -2289,10 +3202,17 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         second_attacker_staged: false,
         tiles_by_tick: std::collections::VecDeque::new(),
         health: Vec::new(),
-        real_content: food.is_some(),
-        seed_crossing: food == Some(true),
+        real_content: arm.is_some(),
+        crossing: match arm {
+            Some(SeedArm::Eat) => Some(EAT_CROSSING),
+            Some(SeedArm::PoisonStop | SeedArm::PoisonCure) => Some(POISON_CROSSING),
+            None => None,
+        },
         crossing_seed: CrossingSeed::default(),
         park_tick: None,
+        cure_tick: None,
+        stop: StopSeen::default(),
+        poison_tile: None,
     }));
     let frame_state = Arc::clone(&state);
     let frame_buffer = FrameBuf::new();
@@ -2418,10 +3338,10 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
             stop_off_tick: current.stop_off_tick,
             stop_error: current.stop_error.as_deref(),
         };
-        let decision = if let Some(food) = food {
-            evaluate_eat_crossing(&current, &capture_snapshot, food)
-        } else {
-            evaluate_w1_gate(mode, &gate_input)
+        let decision = match arm {
+            Some(SeedArm::Eat) => evaluate_eat_crossing(&current, &capture_snapshot, true),
+            Some(arm) => evaluate_poison_arm(&current, &capture_snapshot, arm, &inside_danger),
+            None => evaluate_w1_gate(mode, &gate_input),
         };
         let runner_failed = matches!(current.runner.status(), RunnerStatus::Failed(_))
             && !(mode == W1Mode::StopMidCrossing && current.stop_requested);
@@ -2476,23 +3396,35 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
     let attack_emitted = capture_snapshot.actions.iter().any(|action| {
         action["request"]["op"] == json!("npc") && action["request"]["action"] == json!("Attack")
     });
-    let mode_name = match (food, mode) {
-        (Some(true), _) => "eat_crossing",
-        (Some(false), _) => "no_food_control",
+    let mode_name = match (arm, mode) {
+        (Some(SeedArm::Eat), _) => "eat_crossing",
+        (Some(SeedArm::PoisonStop), _) => "poison_no_food_stop",
+        (Some(SeedArm::PoisonCure), _) => "poison_no_food_cure",
         (None, W1Mode::Crossing) => "crossing",
         (None, W1Mode::StopMidCrossing) => "stop_mid_crossing",
     };
-    let proof_name = if food.is_some() {
-        "GUARD-EAT-1"
-    } else {
-        "WALK-GUARD-LIFECYCLE-1_R2"
+    let proof_name = match arm {
+        Some(SeedArm::Eat) => "GUARD-EAT-1",
+        Some(SeedArm::PoisonStop | SeedArm::PoisonCure) => "QUESTER-POISON-D8",
+        None => "WALK-GUARD-LIFECYCLE-1_R2",
     };
     let receipt = json!({
         "proof": proof_name,
         "case": "W1",
         "mode": mode_name,
         "outcome": outcome,
-        "food": food,
+        "food": arm == Some(SeedArm::Eat),
+        "poison_stop": snapshot.stop.json(),
+        "poison_tile": snapshot.poison_tile.map(|tile| [tile.x, tile.z, tile.level]),
+        "stand_clicks": stand_clicks(&capture_snapshot.actions)
+            .iter()
+            .map(|(tick, tile)| json!([tick, tile.x, tile.z, tile.level]))
+            .collect::<Vec<_>>(),
+        "cure_tick": snapshot.cure_tick,
+        "drinks": capture_snapshot.actions.iter()
+            .filter(|row| row["op"] == "drink" || row["request"]["action"] == "Drink")
+            .cloned()
+            .collect::<Vec<_>>(),
         "health": snapshot.health,
         "eat_heals": capture_snapshot.actions.iter()
             .filter(|row| row["kind"] == "guard" && row["op"] == "eat")
@@ -3346,7 +4278,12 @@ fn walk_guard_fixture_seeds_between_relog_and_stand() {
         z: 3266,
         level: 0,
     };
-    for food in [None, Some(true), Some(false)] {
+    for food in [
+        None,
+        Some(SeedArm::Eat),
+        Some(SeedArm::PoisonStop),
+        Some(SeedArm::PoisonCure),
+    ] {
         let capture = Arc::new(Mutex::new(CombatCapture::default()));
         let scenario = scenario_for(capture, start, food);
         let relog = scenario
@@ -3406,15 +4343,20 @@ fn walk_guard_fixture_seeds_between_relog_and_stand() {
                 absent("seed HP near eat line");
                 absent("seed required lobster supply");
             }
-            Some(feed) => {
+            Some(arm) => {
                 between("seed Prayer 37");
                 between("seed Hitpoints 40");
                 between("seed HP near eat line");
                 absent("seed Prayer 43");
-                if feed {
+                if arm == SeedArm::Eat {
                     between("seed required lobster supply");
                 } else {
                     absent("seed required lobster supply");
+                }
+                if arm == SeedArm::PoisonCure {
+                    between("seed one antipoison");
+                } else {
+                    absent("seed one antipoison");
                 }
             }
         }
