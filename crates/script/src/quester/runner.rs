@@ -1112,7 +1112,6 @@ impl Quester {
         let bank_phase = self.provisioner.bank_phase();
         let bank_starts = self.provisioner.bank_starts();
         let revision = self.provisioner.status_revision();
-        let food_plan = self.provisioning_step_plan(tick);
         let return_to = food_plan
             .as_ref()
             .and_then(|plan| plan.provisioning_anchor());
@@ -8478,6 +8477,68 @@ mod tests {
             true,
         );
         (script, snapshot, memory, bank_item)
+    }
+
+    #[test]
+    fn exhausted_sequence_does_not_start_a_new_provisioning_trip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut script, snapshot, memory, _) = provisioning_survival_fixture();
+        Arc::get_mut(&mut script.path)
+            .expect("the fixture owns its uncached path")
+            .sequences[script.seq_index]
+            .order = super::super::path::SequenceOrder::Ordered;
+        script.cursor = script.path.sequences[script.seq_index].steps.len();
+        let mut ledger = None;
+        super::super::families::tests::with_tick_bank(
+            &snapshot,
+            Some(&memory),
+            &mut ledger,
+            1,
+            |tick| {
+                assert!(script.provisioning_step_plan(tick).is_none());
+                assert!(matches!(
+                    script.poll_provision_once(tick),
+                    Provisioned::Ready
+                ));
+            },
+        );
+        assert_eq!(script.provisioner.bank_starts(), 0);
+        assert!(!script.provisioner.has_run());
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
+    }
+
+    #[test]
+    fn exhausted_sequence_still_polls_an_existing_provisioning_trip() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (mut script, snapshot, memory, _) = provisioning_survival_fixture();
+        let mut ledger = None;
+        for tick_number in 1..=2 {
+            super::super::families::tests::with_tick_bank(
+                &snapshot,
+                Some(&memory),
+                &mut ledger,
+                tick_number,
+                |tick| {
+                    assert!(!matches!(
+                        script.poll_provision_once(tick),
+                        Provisioned::Ready
+                    ));
+                },
+            );
+            assert!(script.provisioner.has_run());
+            Arc::get_mut(&mut script.path)
+                .expect("the fixture owns its uncached path")
+                .sequences[script.seq_index]
+                .order = super::super::path::SequenceOrder::Ordered;
+            script.cursor = script.path.sequences[script.seq_index].steps.len();
+        }
+        assert_eq!(script.provisioner.bank_starts(), 1);
     }
 
     #[test]

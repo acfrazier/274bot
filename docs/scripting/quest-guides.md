@@ -389,6 +389,8 @@ An attacker displaced before this route can still attack outside its spawn zone.
 The poison clock includes gaps from the first exposure to the last exposure.
 An unavailable or unusable route uses the full walking hunt-range bound and
 reports the fallback.
+When no step remains, the Quester does not start a new supply trip.
+It still completes a supply trip that is already active.
 These food-only exposures do not change the route or supply death bound.
 If no damage figure is available, the reserve is four ordinary bites.
 Underground Pass uses eight because repeated obstacle failures have no fixed
