@@ -7520,6 +7520,26 @@ mod tests {
         }
     }
 
+    /// The D8 stop parks only after a server-visible stand-still
+    /// (`poison_stop::StandStill`): the host answers the one stand click
+    /// queued at `tick`, and `observe` runs the Quester two and three ticks
+    /// later, when the player is seen on the same tile. Returns the next
+    /// free tick.
+    pub(super) fn stand_still(
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        tick: u64,
+        mut observe: impl FnMut(&mut Option<Box<crate::native::ledger::Ledger>>, u64),
+    ) -> u64 {
+        assert_eq!(
+            super::poison_stop_tests::answer_stand_clicks(ledger, tick, true).len(),
+            1,
+            "one stand click"
+        );
+        observe(ledger, tick + 2);
+        observe(ledger, tick + 3);
+        tick + 4
+    }
+
     /// A Quester on the Cook path whose first step is a never-settling `kind`
     /// step, with HP 5 of 99, one held antipoison dose and a complete frame.
     pub(super) fn survival_step_fixture(
@@ -7872,6 +7892,13 @@ mod tests {
         script.settling = true;
         script.settle_deadline = Duration::from_secs(1);
         script.needs_read = false;
+        snapshot.seed_local_player(super::super::families::tests::local_player(
+            api::WorldTile {
+                x: 3220,
+                z: 3218,
+                level: 0,
+            },
+        ));
         super::super::families::tests::with_tick(&snapshot, &mut ledger, 2, |tick| {
             tick.cx.condition = Some(survival_condition(
                 PoisonState::Onset {
@@ -7885,13 +7912,28 @@ mod tests {
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             script.tick(tick).unwrap();
         });
+        let next = stand_still(&mut ledger, 2, |ledger, at| {
+            super::super::families::tests::with_tick(&snapshot, ledger, at, |tick| {
+                tick.cx.condition = Some(survival_condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                script.tick(tick).unwrap();
+            });
+        });
         assert!(script.survival.parked().is_some());
         assert!(!script.settling, "the park ends the settle wait");
         assert_eq!(script.settle_deadline, Duration::ZERO);
         assert!(script.needs_read);
 
         script.needs_read = false;
-        super::super::families::tests::with_tick(&snapshot, &mut ledger, 3, |tick| {
+        super::super::families::tests::with_tick(&snapshot, &mut ledger, next, |tick| {
             tick.cx.condition = Some(survival_condition(
                 PoisonState::Immune { until_lower: 80 },
                 60,
@@ -9147,6 +9189,13 @@ mod tests {
             },
         );
         assert!(script.provisioner.has_run());
+        snapshot.seed_local_player(super::super::families::tests::local_player(
+            api::WorldTile {
+                x: 3220,
+                z: 3218,
+                level: 0,
+            },
+        ));
 
         super::super::families::tests::with_tick_bank(
             &snapshot,
@@ -9167,6 +9216,27 @@ mod tests {
                 script.tick(tick).unwrap();
             },
         );
+        let next = stand_still(&mut ledger, 2, |ledger, at| {
+            super::super::families::tests::with_tick_bank(
+                &snapshot,
+                Some(&memory),
+                ledger,
+                at,
+                |tick| {
+                    tick.cx.condition = Some(condition(
+                        PoisonState::Onset {
+                            since: 20,
+                            q: Some(11),
+                            hit_since_line: false,
+                        },
+                        5,
+                    ));
+                    tick.cx.poison_unknown_pulse = 11;
+                    tick.cx.cure_poison = CurePoison::WhenNeeded;
+                    script.tick(tick).unwrap();
+                },
+            );
+        });
         assert!(!script.provisioner.has_run());
         assert!(script.survival.parked().is_some());
         assert_eq!(
@@ -9181,7 +9251,7 @@ mod tests {
             &snapshot,
             Some(&memory),
             &mut ledger,
-            3,
+            next,
             |tick| {
                 tick.cx.condition = Some(condition(
                     PoisonState::Onset {
@@ -9221,7 +9291,7 @@ mod tests {
             &snapshot,
             Some(&memory),
             &mut ledger,
-            4,
+            next + 1,
             |tick| {
                 tick.cx.condition = Some(condition(PoisonState::Immune { until_lower: 80 }, 5));
                 tick.cx.cure_poison = CurePoison::WhenNeeded;
@@ -9659,6 +9729,13 @@ mod tests {
             cures: CureDoses::default(),
         };
         let mut ledger = None;
+        snapshot.seed_local_player(super::super::families::tests::local_player(
+            api::WorldTile {
+                x: 3220,
+                z: 3218,
+                level: 0,
+            },
+        ));
 
         with_tick(&snapshot, &mut ledger, 1, |tick| {
             tick.cx.condition = Some(condition(
@@ -9673,6 +9750,22 @@ mod tests {
             tick.cx.poison_unknown_pulse = 11;
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+        let next = stand_still(&mut ledger, 1, |ledger, at| {
+            with_tick(&snapshot, ledger, at, |tick| {
+                tick.cx.condition = Some(condition(
+                    PoisonState::Onset {
+                        since: 20,
+                        q: Some(11),
+                        hit_since_line: false,
+                    },
+                    5,
+                    FoodSummary::default(),
+                ));
+                tick.cx.poison_unknown_pulse = 11;
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
+            });
         });
         assert!(script.survival.parked().is_some());
 
@@ -9689,7 +9782,7 @@ mod tests {
             28,
         );
         set_hp(&mut snapshot, 5);
-        with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_tick(&snapshot, &mut ledger, next, |tick| {
             tick.cx.condition = Some(condition(
                 PoisonState::Onset {
                     since: 20,
@@ -9721,7 +9814,7 @@ mod tests {
         assert!(script.survival.parked().is_some());
 
         snapshot.seed_inventory(Vec::new(), 28);
-        with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_tick(&snapshot, &mut ledger, next + 1, |tick| {
             tick.cx.condition = Some(condition(
                 PoisonState::Immune { until_lower: 80 },
                 17,
@@ -9766,10 +9859,24 @@ mod tests {
         let mut ledger = None;
         let mut output = StatusCapture::default();
 
+        snapshot.seed_local_player(super::super::families::tests::local_player(
+            api::WorldTile {
+                x: 3220,
+                z: 3218,
+                level: 0,
+            },
+        ));
         with_tick_output(&snapshot, &mut ledger, 1, &mut output, |tick| {
             tick.cx.condition = Some(condition);
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
+        });
+        let next = stand_still(&mut ledger, 1, |ledger, at| {
+            with_tick_output(&snapshot, ledger, at, &mut output, |tick| {
+                tick.cx.condition = Some(condition);
+                tick.cx.cure_poison = CurePoison::WhenNeeded;
+                assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));
+            });
         });
         assert!(script.waits_for_evidence());
         assert!(script.survival.parked().is_some());
@@ -9782,7 +9889,7 @@ mod tests {
         script.interrupt(Interrupt::Resume);
         assert!(script.survival.parked().is_some());
 
-        with_tick_output(&snapshot, &mut ledger, 2, &mut output, |tick| {
+        with_tick_output(&snapshot, &mut ledger, next, &mut output, |tick| {
             tick.cx.condition = Some(condition);
             tick.cx.cure_poison = CurePoison::WhenNeeded;
             assert!(matches!(script.tick(tick).unwrap(), ScriptFlow::Continue));

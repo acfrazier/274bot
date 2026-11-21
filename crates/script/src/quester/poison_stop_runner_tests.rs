@@ -237,35 +237,7 @@ impl Run {
     /// The host takes every queued stand click and answers it at `tick`.
     /// Other queued work stays. Returns the clicked tiles.
     fn send_clicks(&mut self, tick: u64, accepted: bool) -> Vec<WorldTile> {
-        let clicks = self.queued_clicks();
-        let ledger = self.ledger.as_mut().expect("native ledger");
-        let (taken, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut ledger.outbox)
-            .into_iter()
-            .partition(|action| {
-                matches!(
-                    &action.effect,
-                    HostEffect::Interaction(InteractReq::WalkTo { .. })
-                )
-            });
-        ledger.outbox = rest;
-        for mut action in taken {
-            action.release_custody();
-            let authority = action.authority();
-            ledger.complete_interaction(
-                &authority,
-                InteractionReceipt {
-                    request_id: authority.request_id().get(),
-                    evidence: api::quest_progress::EvidenceStamp {
-                        run: authority.run(),
-                        tick,
-                        sequence: tick,
-                    },
-                    accepted,
-                    chat_since: 0,
-                },
-            );
-        }
-        clicks
+        answer_stand_clicks(&mut self.ledger, tick, accepted)
     }
 
     /// Every queued walk request's target, oldest first.
@@ -276,6 +248,52 @@ impl Run {
     fn post_walk(&mut self, tick: u64, end: WalkEnd, detail: Option<&str>) {
         super::super::families::tests::post_walk_receipt(&mut self.ledger, tick, end, detail);
     }
+}
+
+/// The host takes every queued stand click (`WalkTo`) and answers it at
+/// `tick`. Other queued work stays. Returns the clicked tiles.
+pub(super) fn answer_stand_clicks(
+    ledger: &mut TestLedger,
+    tick: u64,
+    accepted: bool,
+) -> Vec<WorldTile> {
+    let ledger = ledger.as_mut().expect("native ledger");
+    let (taken, rest): (Vec<_>, Vec<_>) =
+        std::mem::take(&mut ledger.outbox)
+            .into_iter()
+            .partition(|action| {
+                matches!(
+                    &action.effect,
+                    HostEffect::Interaction(InteractReq::WalkTo { .. })
+                )
+            });
+    ledger.outbox = rest;
+    let mut clicks = Vec::with_capacity(taken.len());
+    for mut action in taken {
+        if let HostEffect::Interaction(InteractReq::WalkTo { x, z, level }) = &action.effect {
+            clicks.push(WorldTile {
+                x: *x,
+                z: *z,
+                level: *level,
+            });
+        }
+        action.release_custody();
+        let authority = action.authority();
+        ledger.complete_interaction(
+            &authority,
+            InteractionReceipt {
+                request_id: authority.request_id().get(),
+                evidence: api::quest_progress::EvidenceStamp {
+                    run: authority.run(),
+                    tick,
+                    sequence: tick,
+                },
+                accepted,
+                chat_since: 0,
+            },
+        );
+    }
+    clicks
 }
 
 fn run(target: WorldTile, zones: &[TestZone<'_>]) -> (Run, Arc<SurvivalTestCounts>) {
