@@ -11,6 +11,7 @@ use api::query::SceneQuery;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientRevision};
 use client::config::if_type::ButtonType;
+use client::io::{client_prot_289::map_client_prot, ClientProt};
 use host::Pump;
 use host_play::{ProfileOptions, SharedClientTemplate};
 use serde_json::json;
@@ -278,6 +279,14 @@ fn live_engine_a_native_menu_talk_continue_choice() {
                 }
             ),
             "native Talk-to was refused: {talk_result:?}"
+        );
+        let expected_opcode =
+            u8::try_from(map_client_prot(client.revision(), ClientProt::OPNPC1).id)
+                .expect("OPNPC1 is a one-byte opcode in the active revision");
+        assert_eq!(
+            opcodes,
+            [expected_opcode],
+            "Talk-to must emit only OPNPC1 at the banker's authored range"
         );
         eprintln!(
             "native-menu Talk-to account={account} player={:?} npc_slot={} npc_tile={:?} result={talk_result:?} opcodes={opcodes:?} local_route={local_route:?} path={:?} flag=({},{}) map_base=({},{})",

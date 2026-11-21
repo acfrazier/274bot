@@ -1254,8 +1254,20 @@ impl<'a> Interactions<'a> {
                 .widgets()
                 .iter()
                 .find(|widget| {
+                    // Chat options also contain Make-X controls. Keep those on the legacy path.
+                    // See snapshot/decode.rs:1127-1137,1177-1182.
                     widget.component_id == *component_id
-                        && (widget.root == crate::snapshot::WidgetRoot::Chat || *button_type == 6)
+                        && self
+                            .snapshot
+                            .chat_options()
+                            .iter()
+                            .any(|option| option.component_id == *component_id)
+                        && !self.snapshot.make_products().iter().any(|product| {
+                            product
+                                .buttons
+                                .iter()
+                                .any(|button| button.component_id == *component_id)
+                        })
                 })
                 .and_then(|widget| {
                     button_opcode(*button_type)

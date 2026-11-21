@@ -434,6 +434,167 @@ fn native_choice_and_continue_wire_matches_synthetic_menu_on_r289_and_r377() {
     }
 }
 
+fn make_choice_scene(revision: ClientRevision) -> (Scene, GameSnapshot) {
+    let mut scene = scene(revision);
+    plant_chat(
+        &mut scene.client,
+        &[
+            (204, ButtonType::BUTTON_OK, "Make X"),
+            (205, ButtonType::BUTTON_OK, "Make 10"),
+            (206, ButtonType::BUTTON_OK, "Make 5"),
+            (207, ButtonType::BUTTON_OK, "Make 1"),
+            (CHOICE_ONE, ButtonType::BUTTON_OK, "First choice"),
+        ],
+        Some(vec![208, 204, 205, 206, 207, CHOICE_ONE]),
+    );
+    scene.client.set_iface(
+        208,
+        IfType {
+            id: 208,
+            layer_id: CHAT_ROOT as i32,
+            r#type: ComponentType::TYPE_MODEL,
+            ..Default::default()
+        },
+    );
+    scene.client.set_iface_mut(
+        208,
+        IfTypeMut {
+            model1_type: 4,
+            model1_id: 800,
+            ..Default::default()
+        },
+    );
+    let snapshot = rebuild(&mut scene.client);
+    (scene, snapshot)
+}
+
+#[test]
+fn chat_make_x_stays_legacy_while_dialogue_choice_uses_native_rows() {
+    for revision in [ClientRevision::R289, ClientRevision::R377] {
+        for force_if_button in [false, true] {
+            let (mut actual, snapshot) = make_choice_scene(revision);
+            let make_x = snapshot
+                .widgets()
+                .iter()
+                .find(|widget| widget.component_id == 204)
+                .expect("Make X button in the open chat panel");
+            assert!(snapshot
+                .chat_options()
+                .iter()
+                .any(|option| option.component_id == make_x.component_id));
+            assert!(snapshot.make_products().iter().any(|product| product
+                .buttons
+                .iter()
+                .any(|button| button.component_id == make_x.component_id)));
+            let mut interactions = Interactions::new(&snapshot, &mut actual.client);
+            let result = if force_if_button {
+                interactions.if_button(make_x)
+            } else {
+                interactions.press(make_x)
+            };
+            assert!(matches!(result, SendResult::Sent { .. }), "{result:?}");
+
+            let (mut legacy, _) = make_choice_scene(revision);
+            Driver::set_menu(
+                &mut legacy.client,
+                0,
+                MiniMenuAction::IF_BUTTON,
+                0,
+                0,
+                make_x.component_id,
+            );
+            assert!(Driver::do_action(&mut legacy.client, 0));
+            assert_eq!(wire_state(&actual.client), wire_state(&legacy.client));
+            assert_eq!(ui_state(&actual.client), ui_state(&legacy.client));
+            assert_packet(
+                &actual.client,
+                ClientProt::IF_BUTTON,
+                &(make_x.component_id as u16).to_be_bytes(),
+            );
+        }
+
+        let (mut actual, snapshot) = make_choice_scene(revision);
+        let choice = snapshot
+            .widgets()
+            .iter()
+            .find(|widget| widget.component_id == CHOICE_ONE as i32)
+            .expect("dialogue choice in the same open chat panel");
+        let before = ui_state(&actual.client);
+        let result = Interactions::new(&snapshot, &mut actual.client).press(choice);
+        assert!(matches!(result, SendResult::Sent { .. }), "{result:?}");
+        assert_eq!(ui_state(&actual.client), before);
+        assert_eq!(
+            wire_state(&actual.client),
+            wire_state(&run_synthetic_choice(revision))
+        );
+    }
+}
+
+#[test]
+fn chat_non_ok_press_and_if_button_keep_legacy_actions_and_bytes() {
+    for revision in [ClientRevision::R289, ClientRevision::R377] {
+        for (button_type, action) in [
+            (ButtonType::BUTTON_CLOSE, MiniMenuAction::CLOSE_BUTTON),
+            (ButtonType::BUTTON_TOGGLE, MiniMenuAction::TOGGLE_BUTTON),
+            (ButtonType::BUTTON_SELECT, MiniMenuAction::SELECT_BUTTON),
+            (ButtonType::BUTTON_CONTINUE, MiniMenuAction::PAUSE_BUTTON),
+        ] {
+            for force_if_button in [false, true] {
+                let mut actual = scene(revision);
+                plant_chat(
+                    &mut actual.client,
+                    &[(CHOICE_ONE, button_type, "Control")],
+                    None,
+                );
+                let snapshot = rebuild(&mut actual.client);
+                assert!(snapshot.chat_options().is_empty());
+                let widget = snapshot
+                    .widgets()
+                    .iter()
+                    .find(|widget| widget.component_id == CHOICE_ONE as i32)
+                    .expect("non-OK button in the open chat panel");
+                let mut interactions = Interactions::new(&snapshot, &mut actual.client);
+                let result = if force_if_button {
+                    interactions.if_button(widget)
+                } else {
+                    interactions.press(widget)
+                };
+                assert!(matches!(result, SendResult::Sent { .. }), "{result:?}");
+
+                let mut legacy = scene(revision);
+                plant_chat(
+                    &mut legacy.client,
+                    &[(CHOICE_ONE, button_type, "Control")],
+                    None,
+                );
+                let _snapshot = rebuild(&mut legacy.client);
+                Driver::set_menu(
+                    &mut legacy.client,
+                    0,
+                    if force_if_button {
+                        MiniMenuAction::IF_BUTTON
+                    } else {
+                        action
+                    },
+                    0,
+                    0,
+                    widget.component_id,
+                );
+                assert!(Driver::do_action(&mut legacy.client, 0));
+                assert_eq!(wire_state(&actual.client), wire_state(&legacy.client));
+                assert_eq!(ui_state(&actual.client), ui_state(&legacy.client));
+                if force_if_button {
+                    assert_packet(
+                        &actual.client,
+                        ClientProt::IF_BUTTON,
+                        &(widget.component_id as u16).to_be_bytes(),
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UiState {
     menu_num_entries: i32,

@@ -69,8 +69,14 @@ count-dialog) → target identity (`still_present`) → label/opcode resolve
 ## Current native menu rows
 
 NPC operation one uses native menu dispatch when its received label is
-`Talk-to`. Chat-root buttons and every typed Continue use the same dispatcher.
-Native and JavaScript callers use this path through `Interactions`.
+`Talk-to`. Buttons in `snapshot.chat_options()` use it only when their IDs
+are absent from every product's `snapshot.make_products()` buttons.
+Typed Continue uses the same dispatcher. Native and JavaScript callers
+use this path through `Interactions`.
+
+The chat-options decoder also records Make-X `BUTTON_OK` controls
+(`crates/api/src/snapshot/decode.rs:1127-1137,1177-1182`).
+The product-button exclusion keeps those controls on the synthetic path.
 
 The slot owner checks the observation's session and scene before building.
 NPC checks include the published slot, placed type, received varps, current
