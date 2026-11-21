@@ -514,6 +514,8 @@ pub struct Quester {
     park_page_ticks: u8,
     park_page_seen: bool,
     park_bound_hp: i32,
+    /// D8 poison stop: the walk out of the danger area and the stop.
+    poison_stop: super::poison_stop::PoisonStop,
     /// Freshness boundary for the active step; overwritten at each successful begin.
     step_after: EvidenceStamp,
     failed_acquisition_child: Option<(Arc<str>, Arc<str>)>,
@@ -863,6 +865,7 @@ impl Quester {
             park_page_ticks: 0,
             park_page_seen: false,
             park_bound_hp: 0,
+            poison_stop: super::poison_stop::PoisonStop::default(),
             step_after: api::quest_progress::EvidenceStamp {
                 run,
                 tick: 0,
@@ -1819,6 +1822,17 @@ impl Quester {
                 value: StatusValue::Text(self.blocked_failure().message),
             });
         }
+        if let Some(stopped) = self
+            .poison_stop
+            .stopped()
+            .filter(|_| self.survival.parked().is_some())
+        {
+            fields.push(StatusField {
+                key: "survival_stop",
+                label: "Stopped",
+                value: StatusValue::Text(Arc::clone(&stopped.reason)),
+            });
+        }
         output.status(ScriptStatus {
             run: self.run,
             card: CompiledId("Quester"),
@@ -1998,6 +2012,10 @@ impl Quester {
     fn poll_survival(&mut self, tick: &mut NativeTick<'_>) {
         let before = self.survival.report();
         let was_parked = self.survival.parked().is_some();
+        let (here, here_inside, _) = self.danger_sides(tick);
+        if here_inside == Some(false) {
+            self.poison_stop.last_safe = here;
+        }
         let want = self.survival.want(
             &tick.cx,
             crate::survival::step::Upkeep {
@@ -2012,6 +2030,16 @@ impl Quester {
             self.needs_read = true;
             self.park_page_ticks = 0;
             self.park_page_seen = false;
+            if let Some(stopped) = self.poison_stop.end_stop() {
+                tick.output.log(
+                    api::hostlog::Level::Info,
+                    &format!(
+                        "quester poison stop ended: the poison can no longer kill; resuming ({})",
+                        stopped.reason
+                    ),
+                );
+                self.dirty = true;
+            }
         }
         self.apply_survival_want(want, tick);
         if self.survival.report() != before {
@@ -2027,6 +2055,7 @@ impl Quester {
         if self.survival_action.is_none() {
             match want {
                 crate::survival::step::SurvivalWant::Nothing => {
+                    self.poison_stop.need_gone();
                     if !self.survival_interrupting {
                         self.survival_deferred = false;
                     }
@@ -2046,28 +2075,206 @@ impl Quester {
                         self.begin_survival_click(args, tick);
                     }
                 }
+                crate::survival::step::SurvivalWant::Need(_)
+                    if self.poison_stop.retreat().is_some() => {}
                 crate::survival::step::SurvivalWant::Need(need) => {
-                    if self.guarded_survival_step() {
+                    if let Some(plan) = self.poison_stop_plan(need, tick) {
+                        self.apply_poison_stop(plan, need, tick);
+                    } else if self.guarded_survival_step() {
                         self.survival_deferred = true;
                     } else if self.survival_transfer_in_flight() {
                         self.interrupt_survival_transfer(tick);
                         self.survival.defer();
                         self.survival_deferred = true;
                     } else {
-                        self.cancel_prayer_clear_for_survival(tick);
-                        self.cancel_work_for_survival(tick, true);
-                        self.survival.park(need, &tick.cx);
-                        self.park_page_ticks = 0;
-                        self.park_page_seen = false;
-                        self.park_bound_hp = tick
-                            .cx
-                            .condition()
-                            .map_or(0, |condition| i32::from(condition.hp));
-                        self.log_hazard_park_bound("edge", tick);
+                        self.park_for_survival(need, None, tick);
                     }
                 }
             }
         }
+    }
+
+    /// Park on a survival need. A D8 poison stop also records where it
+    /// stopped and logs the reason once.
+    fn park_for_survival(
+        &mut self,
+        need: crate::survival::math::SurvivalNeed,
+        stopped: Option<super::poison_stop::Stopped>,
+        tick: &mut NativeTick<'_>,
+    ) {
+        self.cancel_prayer_clear_for_survival(tick);
+        self.cancel_work_for_survival(tick, true);
+        self.survival.park(need, &tick.cx);
+        self.park_page_ticks = 0;
+        self.park_page_seen = false;
+        self.park_bound_hp = tick
+            .cx
+            .condition()
+            .map_or(0, |condition| i32::from(condition.hp));
+        self.log_hazard_park_bound("edge", tick);
+        if let Some(stopped) = stopped {
+            tick.output.log(
+                api::hostlog::Level::Warn,
+                &format!("quester poison stop: {}", stopped.reason),
+            );
+            self.poison_stop.stop(stopped);
+            self.dirty = true;
+        }
+    }
+
+    /// The player's tile, whether it is inside the stage's danger area, and
+    /// whether the running walk step's target is (D8, `poison_stop`).
+    fn danger_sides(
+        &self,
+        tick: &NativeTick<'_>,
+    ) -> (Option<api::WorldTile>, Option<bool>, Option<bool>) {
+        let (stage, walk) = self.danger_cross();
+        let area = super::poison_stop::DangerArea {
+            stage,
+            step: walk.map_or(&[][..], |(_, cross)| cross),
+        };
+        let zones = tick.frame().compiled().nav.and_then(|nav| nav.zones());
+        let here = tick.cx.snapshot().here().map(|here| here.value);
+        let here_inside = here.and_then(|here| area.contains(zones, here));
+        let target_inside = walk.and_then(|(target, _)| area.contains(zones, target));
+        (here, here_inside, target_inside)
+    }
+
+    /// The stage `cross` ids, and the running walk step's target and `cross`.
+    fn danger_cross(&self) -> (&[Arc<str>], Option<(api::WorldTile, &[Arc<str>])>) {
+        let stage = self
+            .stage
+            .as_ref()
+            .and_then(|stage| sequence_for_stage(&self.path, &stage.0))
+            .map_or(&[][..], |index| &self.path.sequences[index].cross[..]);
+        let walk = self
+            .step
+            .as_ref()
+            .and(self.current_step())
+            .and_then(|step| step.plan.walk_target());
+        (stage, walk)
+    }
+
+    /// The D8 response to a survival need, or `None` when the need is not
+    /// the D8 state or another owner handles it: a fight's combat machine
+    /// owns its own no-food stop, and a bank transfer is interrupted first.
+    fn poison_stop_plan(
+        &self,
+        need: crate::survival::math::SurvivalNeed,
+        tick: &NativeTick<'_>,
+    ) -> Option<super::poison_stop::StopPlan> {
+        let food = tick.cx.condition()?.food;
+        if !super::poison_stop::stranded(need, &food)
+            || self.survival_transfer_in_flight()
+            || (self.step.is_some()
+                && self
+                    .current_step()
+                    .is_some_and(|step| step.kind.as_ref() == "combat"))
+        {
+            return None;
+        }
+        let (_, here_inside, target_inside) = self.danger_sides(tick);
+        Some(super::poison_stop::plan(
+            here_inside,
+            target_inside,
+            self.poison_stop.last_safe,
+        ))
+    }
+
+    fn apply_poison_stop(
+        &mut self,
+        plan: super::poison_stop::StopPlan,
+        need: crate::survival::math::SurvivalNeed,
+        tick: &mut NativeTick<'_>,
+    ) {
+        use super::poison_stop::{InDanger, StopPlan, Stopped};
+        let here = tick.cx.snapshot().here().map(|here| here.value);
+        match plan {
+            StopPlan::KeepWalking => {
+                self.survival_deferred = true;
+                if self.poison_stop.walk_out() {
+                    tick.output.log(
+                        api::hostlog::Level::Warn,
+                        "quester poison stop: poisoned at low HP with no food and no antipoison; the current walk leaves the danger area, stopping outside it",
+                    );
+                }
+            }
+            StopPlan::Park => self.park_for_survival(need, Some(Stopped::new(here, None)), tick),
+            StopPlan::ParkInDanger(why) => {
+                self.park_for_survival(need, Some(Stopped::new(here, Some(why))), tick)
+            }
+            StopPlan::Retreat(safe) => {
+                let cross: Box<[Arc<str>]> = {
+                    let (stage, walk) = self.danger_cross();
+                    let step = walk.map_or(&[][..], |(_, cross)| cross);
+                    stage.iter().chain(step).cloned().collect()
+                };
+                self.cancel_prayer_clear_for_survival(tick);
+                self.cancel_work_for_survival(tick, true);
+                let mut request =
+                    super::families::reach::walk_request(safe, 0, None, tick.cx.evidence());
+                request.cross = cross;
+                match tick
+                    .actions
+                    .begin::<crate::native::walk::Walk>(request, &mut tick.cx)
+                {
+                    Ok(handle) => {
+                        tick.output.log(
+                            api::hostlog::Level::Warn,
+                            &format!(
+                                "quester poison stop: poisoned at low HP with no food and no antipoison; walking out of the danger area to {},{},{}",
+                                safe.x, safe.z, safe.level
+                            ),
+                        );
+                        self.poison_stop.start_retreat(handle, need);
+                        self.dirty = true;
+                    }
+                    Err(
+                        ActionError::Busy
+                        | ActionError::Held
+                        | ActionError::Stale
+                        | ActionError::Cancelled
+                        | ActionError::BudgetExhausted,
+                    ) => self.survival_deferred = true,
+                    Err(_) => self.park_for_survival(
+                        need,
+                        Some(Stopped::new(here, Some(InDanger::WalkOutFailed))),
+                        tick,
+                    ),
+                }
+            }
+        }
+    }
+
+    /// Poll the D8 walk out. Returns true while it runs or when it ended
+    /// this tick and the runner parked, so the caller ends the tick.
+    fn poll_poison_retreat(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        use super::poison_stop::{InDanger, Stopped};
+        let Some(retreat) = self.poison_stop.retreat() else {
+            return false;
+        };
+        let result = match tick.actions.poll(retreat, &mut tick.cx) {
+            Poll::Pending => return true,
+            Poll::Ready(result) => result,
+        };
+        let Some(need) = self.poison_stop.end_retreat() else {
+            return false;
+        };
+        let here = tick.cx.snapshot().here().map(|here| here.value);
+        match result.and_then(|receipt| receipt.into_arrival()) {
+            Ok(_) => self.park_for_survival(need, Some(Stopped::new(here, None)), tick),
+            // The operator took the walk over: the next survival poll plans again.
+            Err(ActionError::UserInput | ActionError::Cancelled) => {
+                self.dirty = true;
+                return false;
+            }
+            Err(_) => self.park_for_survival(
+                need,
+                Some(Stopped::new(here, Some(InDanger::WalkOutFailed))),
+                tick,
+            ),
+        }
+        true
     }
 
     fn warn_undeclared_hazard(&mut self, tick: &mut NativeTick<'_>) {
@@ -4182,6 +4389,7 @@ impl Script for Quester {
             self.cancel_step(tick);
             self.survival = crate::survival::SurvivalStep::default();
             self.survival_action = None;
+            self.poison_stop = super::poison_stop::PoisonStop::default();
             self.survival_deferred = false;
             self.survival_interrupting = false;
             self.selected_hazard.clear();
@@ -4234,6 +4442,7 @@ impl Script for Quester {
             self.cancel_step(tick);
             self.survival = crate::survival::SurvivalStep::default();
             self.survival_action = None;
+            self.poison_stop = super::poison_stop::PoisonStop::default();
             self.survival_deferred = false;
             self.survival_interrupting = false;
             self.selected_hazard.clear();
@@ -4277,8 +4486,16 @@ impl Script for Quester {
         // of losing a tick (design A6.5 drink bound: tick 0 close, tick 1 drink).
         let survival_op_live = self.poll_survival_action(tick);
         if !self.parked {
+            if self.poll_poison_retreat(tick) {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
             self.poll_survival(tick);
             self.reconcile_park_page(tick);
+            if self.poison_stop.retreat().is_some() {
+                self.publish(tick.output);
+                return Ok(ScriptFlow::Continue);
+            }
         }
         if self.parked && self.survival.parked().is_some() {
             self.publish(tick.output);
@@ -4442,7 +4659,9 @@ impl Script for Quester {
                 );
                 if !preserve_survival_park {
                     self.survival = crate::survival::SurvivalStep::default();
+                    self.poison_stop.clear();
                 }
+                self.poison_stop.end_retreat();
                 self.survival_action = None;
                 self.survival_deferred = false;
                 self.survival_interrupting = false;
@@ -4476,6 +4695,7 @@ impl Script for Quester {
                 );
                 self.survival = crate::survival::SurvivalStep::default();
                 self.survival_action = None;
+                self.poison_stop.clear();
                 self.survival_deferred = false;
                 self.survival_interrupting = false;
                 self.selected_hazard.clear();
@@ -4572,6 +4792,7 @@ impl Script for Quester {
         self.last_outcome = None;
         self.last_combat = None;
         self.survival_action = None;
+        self.poison_stop.clear();
         self.survival_deferred = false;
         self.survival_interrupting = false;
     }
@@ -7344,6 +7565,371 @@ mod tests {
         // old settle deadline.
         assert_eq!(counts.began.load(std::sync::atomic::Ordering::Relaxed), 2);
         assert!(script.step.is_some());
+    }
+
+    /// D8 fixture: the survival fixture with its first step a pending walk to
+    /// `target` that declares the `throwers` crossing, an empty inventory, and
+    /// a pack whose `throwers` zone covers 3196..=3204 on both axes.
+    fn poison_stop_fixture(
+        target: api::WorldTile,
+    ) -> (
+        Quester,
+        api::snapshot::GameSnapshot,
+        Arc<SurvivalTestCounts>,
+        nav_planner::contract::NavLease,
+    ) {
+        use std::sync::atomic::Ordering;
+
+        struct WalkTargetPlan {
+            counts: Arc<SurvivalTestCounts>,
+            target: api::WorldTile,
+            cross: Arc<[Arc<str>]>,
+        }
+        impl super::super::compile::StepPlan for WalkTargetPlan {
+            fn begin(&self, _: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
+                self.counts.began.fetch_add(1, Ordering::Relaxed);
+                Ok(Box::new(CountedPendingRun(Arc::clone(&self.counts))))
+            }
+            fn walk_target(&self) -> Option<(api::WorldTile, &[Arc<str>])> {
+                Some((self.target, &self.cross))
+            }
+        }
+        struct CountedPendingRun(Arc<SurvivalTestCounts>);
+        impl StepRun for CountedPendingRun {
+            fn poll(
+                &mut self,
+                _: &mut StepContext<'_, '_>,
+            ) -> Poll<Result<StepOutcome, ActionError>> {
+                Poll::Pending
+            }
+            fn cancel(&mut self, _: &mut crate::native::NativeActions) {
+                self.0.cancelled.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let (mut script, mut snapshot, counts) = survival_step_fixture("walk");
+        snapshot.seed_inventory(vec![], 28);
+        let index = script.seq_index;
+        let path = Arc::get_mut(&mut script.path).expect("unshared compiled path");
+        path.sequences[index].steps[0].plan = Arc::new(WalkTargetPlan {
+            counts: Arc::clone(&counts),
+            target,
+            cross: Arc::from([Arc::from("throwers")]),
+        });
+        let lease = super::super::poison_stop::tests::danger_lease(
+            &["throwers"],
+            nav_planner::router::AvoidRect {
+                min_x: 3196,
+                max_x: 3204,
+                min_z: 3196,
+                max_z: 3204,
+                level: Some(0),
+            },
+            api::WorldTile {
+                x: 3192,
+                z: 3192,
+                level: 0,
+            },
+        );
+        (script, snapshot, counts, lease)
+    }
+
+    fn at(x: i32) -> api::WorldTile {
+        api::WorldTile {
+            x,
+            z: 3200,
+            level: 0,
+        }
+    }
+
+    /// Poison onset at HP 5 of 99 with no food: the emergency line under the
+    /// strongest unknown pulse is 1 + 11 (`select::lines`, `with_poison`).
+    fn stranded_onset() -> api::condition::BotCondition {
+        survival_condition(
+            api::condition::PoisonState::Onset {
+                since: 20,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            5,
+        )
+    }
+
+    fn poison_tick(
+        script: &mut Quester,
+        snapshot: &mut api::snapshot::GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        output: &mut TraceCapture,
+        lease: Option<&nav_planner::contract::NavLease>,
+        (observed, here): (u64, api::WorldTile),
+        condition: api::condition::BotCondition,
+    ) {
+        snapshot.seed_tick(u32::try_from(20 + observed).unwrap());
+        snapshot.seed_local_player(super::super::families::tests::local_player(here));
+        use super::super::families::tests::with_tick_output_nav;
+        with_tick_output_nav(snapshot, ledger, observed, output, lease, |tick| {
+            tick.cx.condition = Some(condition);
+            tick.cx.poison_unknown_pulse = 11;
+            tick.cx.cure_poison = crate::survival::CurePoison::WhenNeeded;
+            script.tick(tick).unwrap();
+        });
+    }
+
+    fn last_stop_field(output: &TraceCapture) -> Option<String> {
+        output.statuses.last().and_then(|status| {
+            status
+                .fields
+                .iter()
+                .find(|field| field.key == "survival_stop")
+                .map(|field| match &field.value {
+                    StatusValue::Text(text) => text.to_string(),
+                    other => panic!("survival_stop is not text: {other:?}"),
+                })
+        })
+    }
+
+    /// D8: a walk out of the danger area is kept while the player is inside
+    /// it; the runner stops on the first tile outside, shows the reason, and
+    /// resumes once the poison can no longer kill.
+    #[test]
+    fn poison_stop_keeps_a_walk_out_then_stops_outside_and_resumes() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use std::sync::atomic::Ordering;
+        let (mut script, mut snapshot, counts, lease) = poison_stop_fixture(at(3210));
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        let clear = survival_condition(api::condition::PoisonState::Clear, 60);
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            Some(&lease),
+            (1, at(3200)),
+            clear,
+        );
+        assert_eq!(counts.began.load(Ordering::Relaxed), 1);
+
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            Some(&lease),
+            (2, at(3202)),
+            stranded_onset(),
+        );
+        assert_eq!(
+            counts.cancelled.load(Ordering::Relaxed),
+            0,
+            "the walk out is kept"
+        );
+        assert!(script.step.is_some());
+        assert!(script.survival.parked().is_none());
+        assert!(script.survival_deferred);
+        assert!(output
+            .logs
+            .iter()
+            .any(|(_, line)| line.contains("the current walk leaves the danger area")));
+
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            Some(&lease),
+            (3, at(3205)),
+            stranded_onset(),
+        );
+        assert_eq!(
+            counts.cancelled.load(Ordering::Relaxed),
+            1,
+            "stopped outside"
+        );
+        assert!(script.step.is_none());
+        assert!(script.survival.parked().is_some());
+        let reason = "poisoned at low HP with no food and no antipoison: stopped at 3205,3200,0 outside the danger area";
+        assert_eq!(last_stop_field(&output).as_deref(), Some(reason));
+        assert!(output
+            .logs
+            .iter()
+            .any(|(_, line)| line == &format!("quester poison stop: {reason}")));
+
+        let immune =
+            survival_condition(api::condition::PoisonState::Immune { until_lower: 80 }, 60);
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            Some(&lease),
+            (4, at(3205)),
+            immune,
+        );
+        assert!(script.survival.parked().is_none(), "the stop ends");
+        assert!(script.poison_stop.stopped().is_none());
+        assert_eq!(last_stop_field(&output), None);
+        assert!(output
+            .logs
+            .iter()
+            .any(|(_, line)| line.starts_with("quester poison stop ended")));
+        assert_eq!(counts.began.load(Ordering::Relaxed), 2, "the quest resumes");
+    }
+
+    /// D8: a walk whose target is inside the danger area is replaced by a
+    /// walk back to the last safe tile; the runner stops on arrival.
+    #[test]
+    fn poison_stop_retreats_to_the_last_safe_tile_when_the_walk_stays_inside() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use std::sync::atomic::Ordering;
+        let (mut script, mut snapshot, counts, lease) = poison_stop_fixture(at(3202));
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        let clear = survival_condition(api::condition::PoisonState::Clear, 60);
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            Some(&lease),
+            (1, at(3194)),
+            clear,
+        );
+        assert_eq!(script.poison_stop.last_safe, Some(at(3194)));
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            Some(&lease),
+            (2, at(3200)),
+            clear,
+        );
+        assert_eq!(
+            script.poison_stop.last_safe,
+            Some(at(3194)),
+            "inside is not safe"
+        );
+
+        for observed in 3..=5 {
+            poison_tick(
+                &mut script,
+                &mut snapshot,
+                &mut ledger,
+                &mut output,
+                Some(&lease),
+                (observed, at(3200)),
+                stranded_onset(),
+            );
+            if script.poison_stop.retreat().is_some() {
+                break;
+            }
+        }
+        assert!(script.poison_stop.retreat().is_some(), "the walk out began");
+        assert_eq!(counts.cancelled.load(Ordering::Relaxed), 1);
+        assert!(script.survival.parked().is_none());
+        let walk = ledger
+            .as_ref()
+            .unwrap()
+            .outbox
+            .iter()
+            .rev()
+            .find_map(|action| match &action.effect {
+                crate::native::HostEffect::Walk(request) => Some(request.clone()),
+                _ => None,
+            })
+            .expect("the walk out is queued");
+        assert_eq!(walk.target, at(3194));
+        assert_eq!(walk.cross.as_ref(), [Arc::<str>::from("throwers")]);
+        let began = counts.began.load(Ordering::Relaxed);
+
+        super::super::families::tests::post_walk_receipt(
+            &mut ledger,
+            26,
+            crate::native::WalkEnd::Arrived,
+            None,
+        );
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            Some(&lease),
+            (6, at(3194)),
+            stranded_onset(),
+        );
+        assert!(script.poison_stop.retreat().is_none());
+        assert!(script.survival.parked().is_some());
+        assert_eq!(
+            last_stop_field(&output).as_deref(),
+            Some("poisoned at low HP with no food and no antipoison: stopped at 3194,3200,0 outside the danger area")
+        );
+        assert_eq!(
+            counts.began.load(Ordering::Relaxed),
+            began,
+            "no step during the walk out"
+        );
+    }
+
+    /// Held food keeps the guarded walk's own eater in charge (no D8 stop),
+    /// and an unknown danger area stops in place with that reason.
+    #[test]
+    fn poison_stop_needs_no_food_and_names_an_unknown_area() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use std::sync::atomic::Ordering;
+        let (mut script, mut snapshot, counts, lease) = poison_stop_fixture(at(3210));
+        let mut ledger = None;
+        let mut output = TraceCapture::default();
+        let clear = survival_condition(api::condition::PoisonState::Clear, 60);
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            Some(&lease),
+            (1, at(3200)),
+            clear,
+        );
+        let mut fed = stranded_onset();
+        fed.food.ordinary_count = 1;
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            Some(&lease),
+            (2, at(3205)),
+            fed,
+        );
+        assert!(
+            script.survival.parked().is_none(),
+            "the walk guard owns the bite"
+        );
+        assert!(script.step.is_some());
+        assert!(script.survival_deferred);
+        assert!(!script.poison_stop.walking_out());
+
+        poison_tick(
+            &mut script,
+            &mut snapshot,
+            &mut ledger,
+            &mut output,
+            None,
+            (3, at(3200)),
+            stranded_onset(),
+        );
+        assert_eq!(counts.cancelled.load(Ordering::Relaxed), 1);
+        assert!(script.survival.parked().is_some());
+        assert_eq!(
+            last_stop_field(&output).as_deref(),
+            Some("poisoned at low HP with no food and no antipoison: stopped at 3200,3200,0 where the danger area is unknown (no zone table or tile)")
+        );
     }
 
     #[test]

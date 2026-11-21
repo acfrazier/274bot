@@ -1287,6 +1287,9 @@ impl StepPlan for WalkPlan {
     fn provisioning_anchor(&self) -> Option<WorldTile> {
         Some(self.tile)
     }
+    fn walk_target(&self) -> Option<(WorldTile, &[Arc<str>])> {
+        Some((self.tile, &self.cross))
+    }
 }
 struct WalkRun {
     plan: WalkPlan,

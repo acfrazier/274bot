@@ -366,6 +366,7 @@ fn with_tick_output_reach<R>(
             world_members,
             next_snapshot,
             collision,
+            nav: None,
             selected: Some(selected),
         },
         ledger,
@@ -377,17 +378,48 @@ fn with_tick_output_reach<R>(
     )
 }
 
-struct TickReachInputs<'snapshot, 'reach, 'next_snapshot, 'collision> {
+/// One tick whose host frame borrows `nav`, a test pack's zones and
+/// collision (`CompiledTick::nav`).
+pub(crate) fn with_tick_output_nav<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    tick: u64,
+    output: &mut dyn NativeOutput,
+    nav: Option<&nav_planner::contract::NavLease>,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    with_tick_output_reach_selected(
+        TickReachInputs {
+            snapshot,
+            reach: None,
+            world_members: Truth::Unknown,
+            next_snapshot: snapshot,
+            collision: None,
+            nav,
+            selected: Some(selected),
+        },
+        ledger,
+        tick,
+        output,
+        None,
+        None,
+        |native, _, _| f(native),
+    )
+}
+
+struct TickReachInputs<'snapshot, 'reach, 'next_snapshot, 'collision, 'nav> {
     snapshot: &'snapshot GameSnapshot,
     reach: Option<&'reach api::query::ReachQueryView>,
     world_members: Truth,
     next_snapshot: &'next_snapshot GameSnapshot,
     collision: Option<nav_planner::contract::CollisionView<'collision>>,
+    nav: Option<&'nav nav_planner::contract::NavLease>,
     selected: Option<Arc<api::game_data::SelectedGameData>>,
 }
 
 fn with_tick_output_reach_selected<R>(
-    inputs: TickReachInputs<'_, '_, '_, '_>,
+    inputs: TickReachInputs<'_, '_, '_, '_, '_>,
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
     output: &mut dyn NativeOutput,
@@ -401,6 +433,7 @@ fn with_tick_output_reach_selected<R>(
         world_members,
         next_snapshot,
         collision,
+        nav,
         selected,
     } = inputs;
     let evidence = api::quest_progress::EvidenceStamp {
@@ -456,7 +489,7 @@ fn with_tick_output_reach_selected<R>(
             snapshot: Some(snapshot),
             obj_names: None,
             compiled: crate::CompiledTick {
-                nav: None,
+                nav,
                 condition: None,
                 poison_unknown_pulse: None,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
@@ -496,6 +529,7 @@ pub(crate) fn with_tick_without_selected_game_data<R>(
             world_members: Truth::Unknown,
             next_snapshot: snapshot,
             collision: None,
+            nav: None,
             selected: None,
         },
         ledger,

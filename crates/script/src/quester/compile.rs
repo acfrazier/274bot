@@ -435,6 +435,12 @@ pub trait StepPlan: Send + Sync {
     fn with_goal(&self, _goal: StepGoal) -> Option<Arc<dyn StepPlan>> {
         None
     }
+    /// A walk step's target and its declared `cross` zones. The D8 poison
+    /// stop (`super::poison_stop`) reads them to tell whether the walk leaves
+    /// the stage's danger area. Every other family returns `None`.
+    fn walk_target(&self) -> Option<(api::WorldTile, &[Arc<str>])> {
+        None
+    }
 }
 /// A step's compiled `skip_if` and `settle`, plus the authored settle
 /// summary, handed to the plan by [`StepPlan::with_goal`].
