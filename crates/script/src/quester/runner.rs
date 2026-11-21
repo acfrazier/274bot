@@ -1,7 +1,7 @@
 //! §3.2 tick loop with colour-first, boundary-triggered journal evidence.
 use super::compile::{
     AcquisitionTraceOutcome, CompiledPath, CompiledStep, PredicateContext, StepAttemptBudget,
-    StepAttemptReceipt, StepContext, StepOutcome, StepRun, StepTraceEvent,
+    StepAttemptReceipt, StepContext, StepOutcome, StepPlan, StepRun, StepTraceEvent,
 };
 use super::families::combat::CombatReceipt;
 use super::families::dialogue::{
@@ -1079,14 +1079,12 @@ impl Quester {
         false
     }
 
-    fn provisioning_return_target(&self, tick: &NativeTick<'_>) -> Option<api::WorldTile> {
+    fn provisioning_step_plan(&self, tick: &NativeTick<'_>) -> Option<Arc<dyn StepPlan>> {
         if self.provisioner.has_run() {
             return None;
         }
         if self.step.is_some() {
-            return self
-                .current_step()
-                .and_then(|step| step.plan.provisioning_anchor());
+            return self.current_step().map(|step| Arc::clone(&step.plan));
         }
         let pred = PredicateContext {
             cx: &tick.cx,
@@ -1103,7 +1101,7 @@ impl Quester {
         };
         match select(&self.path, self.seq_index, self.cursor, &pred) {
             SelectionDecision::Selected(selected) | SelectionDecision::Unknown(selected) => {
-                selected.step.plan.provisioning_anchor()
+                Some(Arc::clone(&selected.step.plan))
             }
             SelectionDecision::Exhausted => None,
         }
@@ -1114,7 +1112,11 @@ impl Quester {
         let bank_phase = self.provisioner.bank_phase();
         let bank_starts = self.provisioner.bank_starts();
         let revision = self.provisioner.status_revision();
-        let return_to = self.provisioning_return_target(tick);
+        let food_plan = self.provisioning_step_plan(tick);
+        let return_to = food_plan
+            .as_ref()
+            .and_then(|plan| plan.provisioning_anchor());
+        self.provisioner.set_food_plan(food_plan);
         let mut cx = StepContext {
             tick,
             quests: &self.quests,
@@ -8156,7 +8158,9 @@ mod tests {
         let mut ledger = None;
         with_tick(&snapshot, &mut ledger, 1, |native| {
             assert_eq!(
-                script.provisioning_return_target(native),
+                script
+                    .provisioning_step_plan(native)
+                    .and_then(|plan| plan.provisioning_anchor()),
                 Some(api::WorldTile {
                     x: 2840,
                     z: 3605,

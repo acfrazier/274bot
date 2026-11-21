@@ -18,82 +18,153 @@ pub struct FoodRoute {
 #[derive(Debug)]
 struct FoodZoneTime {
     zone: BoundZoneKey,
-    tiles: u32,
-    run_ticks: u32,
-    holds: u32,
-    first_walk: u32,
-    last_walk: u32,
-    first_run: u32,
-    last_run: u32,
+    walk: FoodTime,
+    run: FoodTime,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct FoodTime {
+    ticks: u32,
+    first: u32,
+    last: u32,
+    at_anchor: bool,
+}
+
+#[derive(Default)]
+struct FoodTrack {
+    time: FoodTime,
+    clock: u32,
+    engaged: Option<u32>,
+}
+
+impl FoodTrack {
+    fn visit(
+        &mut self,
+        tile: api::WorldTile,
+        delta: u32,
+        zone: nav_planner::contract::ZoneView<'_>,
+        kind: risk::KindRisk,
+    ) -> Option<()> {
+        self.clock = self.clock.checked_add(delta)?;
+        let (x, z) = zone.spawn();
+        let distance = tile.x.abs_diff(x).max(tile.z.abs_diff(z));
+        let inside = zone.contains(tile);
+        // Npc.ts:670-674 retains a target within maxrange + attackrange.
+        // Npc.ts:420-422,904-948 follows at WALK, at most one tile/tick.
+        // The expanding reach ball permits every such NPC path. It ignores
+        // obstacles and attack pauses, so it cannot remove a possible throw.
+        // quest_death.npc:1498,1505,1507 gives 20 + 8, hunt 8. These
+        // values come from selected facts, not the zone or fixture name.
+        if tile.level != i32::from(zone.plane()) || (!inside && distance > u32::from(kind.r)) {
+            self.engaged = None;
+        } else if inside && self.engaged.is_none() {
+            self.engaged = Some(if delta == 0 {
+                self.clock
+            } else {
+                self.clock.saturating_sub(delta).saturating_add(1)
+            });
+        }
+        self.time.at_anchor = self.engaged.is_some();
+        let Some(engaged) = self.engaged else {
+            return Some(());
+        };
+        let reachable = engaged.checked_add(distance.saturating_sub(u32::from(kind.reach)))?;
+        let first = if delta == 0 {
+            self.clock
+        } else {
+            self.clock.saturating_sub(delta).saturating_add(1)
+        }
+        .max(reachable)
+        .max(self.time.last.saturating_add(1));
+        if first <= self.clock {
+            self.time.ticks = self.time.ticks.checked_add(self.clock - first + 1)?;
+            if self.time.first == 0 {
+                self.time.first = first;
+            }
+            self.time.last = self.clock;
+        }
+        Some(())
+    }
 }
 
 impl FoodRoute {
-    /// Borrow the planned route; retain counters, never a copied tile sequence.
-    pub fn measure(route: RouteView<'_>, zones: ZoneTableView<'_>) -> Option<Self> {
+    /// Borrow the planned route. Retain counters, never a copied tile sequence.
+    /// The observed run prefix ends when its energy budget is exhausted.
+    pub fn measure(
+        route: RouteView<'_>,
+        zones: ZoneTableView<'_>,
+        tables: &RiskTables,
+        run_ticks: u16,
+    ) -> Option<Self> {
         if route.pack() != zones.pack() {
             return None;
         }
         let mut times: Vec<FoodZoneTime> = Vec::new();
-        let mut walk_clock = 0u32;
-        let mut run_clock = 0u32;
-        for leg in route.legs() {
+        let destination = [route.destination()];
+        for leg in route
+            .legs()
+            .chain(std::iter::once(LegView::Walk(&destination)))
+        {
             let (tiles, hold) = match leg {
                 LegView::Walk(tiles) => (tiles, None),
-                LegView::Transport(hop) => (&[][..], Some((hop.effective_takeoff(), hop.ticks()))),
+                LegView::Transport(hop) => (&[][..], Some(hop.effective_takeoff())),
             };
-            for (tile, ticks, tile_index) in tiles
-                .iter()
-                .enumerate()
-                .map(|(index, &tile)| (tile, None, index))
-                .chain(hold.map(|(tile, ticks)| (tile, Some(ticks), 0)))
-            {
-                let hold = ticks.map(u32::try_from).transpose().ok()?;
-                let walk_delta = hold.unwrap_or(1);
-                if walk_delta == 0 {
-                    continue;
-                }
-                let run_delta = hold.unwrap_or(u32::from(tile_index % 2 == 0));
-                walk_clock = walk_clock.checked_add(walk_delta)?;
-                run_clock = run_clock.checked_add(run_delta)?;
-                let first_walk = walk_clock - walk_delta + 1;
-                let first_run = if hold.is_some() {
-                    run_clock - run_delta + 1
-                } else {
-                    run_clock
-                };
+            for tile in tiles.iter().copied().chain(hold) {
                 for zone in zones.containing(tile) {
-                    let index = if let Some(index) =
-                        times.iter().position(|time| time.zone == zone.key())
-                    {
-                        index
-                    } else {
+                    if !times.iter().any(|time| time.zone == zone.key()) {
                         times.push(FoodZoneTime {
                             zone: zone.key(),
-                            tiles: 0,
-                            run_ticks: 0,
-                            holds: 0,
-                            first_walk,
-                            last_walk: walk_clock,
-                            first_run,
-                            last_run: run_clock,
+                            walk: FoodTime::default(),
+                            run: FoodTime::default(),
                         });
-                        times.len() - 1
-                    };
-                    let time = &mut times[index];
-                    time.last_walk = walk_clock;
-                    time.last_run = run_clock;
-                    if let Some(ticks) = hold {
-                        time.holds = time.holds.checked_add(ticks)?;
-                    } else {
-                        // One running tick can visit either tile of a pair.
-                        // Pairing restarts after each transport, not across legs.
-                        if tile_index % 2 == 0 || !zone.contains(tiles[tile_index - 1]) {
-                            time.run_ticks = time.run_ticks.checked_add(1)?;
-                        }
-                        time.tiles = time.tiles.checked_add(1)?;
                     }
                 }
             }
+        }
+        for time in &mut times {
+            let zone = zones.zone(time.zone).ok()?;
+            let kind = tables.zone_kind(zone.kind());
+            let mut walk = FoodTrack::default();
+            let mut run = FoodTrack::default();
+            let mut remaining = run_ticks;
+            for leg in route.legs() {
+                match leg {
+                    LegView::Walk(tiles) => {
+                        let mut second = false;
+                        for &tile in tiles {
+                            walk.visit(tile, 1, zone, kind)?;
+                            if run_ticks != 0 {
+                                let delta = if second {
+                                    second = false;
+                                    0
+                                } else if remaining != 0 {
+                                    remaining -= 1;
+                                    second = true;
+                                    1
+                                } else {
+                                    1
+                                };
+                                run.visit(tile, delta, zone, kind)?;
+                            }
+                        }
+                    }
+                    LegView::Transport(hop) => {
+                        let ticks = u32::try_from(hop.ticks()).ok()?;
+                        walk.visit(hop.effective_takeoff(), ticks, zone, kind)?;
+                        walk.visit(hop.landing(), 0, zone, kind)?;
+                        if run_ticks != 0 {
+                            run.visit(hop.effective_takeoff(), ticks, zone, kind)?;
+                            run.visit(hop.landing(), 0, zone, kind)?;
+                        }
+                    }
+                }
+            }
+            walk.visit(route.destination(), 0, zone, kind)?;
+            if run_ticks != 0 {
+                run.visit(route.destination(), 0, zone, kind)?;
+            }
+            time.walk = walk.time;
+            time.run = if run_ticks == 0 { walk.time } else { run.time };
         }
         Some(Self {
             pack: zones.pack(),
@@ -110,9 +181,7 @@ impl FoodRoute {
         let Some(time) = self.zones.iter().find(|time| time.zone == zone) else {
             return Some(0);
         };
-        // PathingEntity.processMovement: one step, then a second only for RUN.
-        // Each takeStep changes each coordinate by at most one tile.
-        u16::try_from((if run { time.run_ticks } else { time.tiles }).checked_add(time.holds)?).ok()
+        u16::try_from(if run { time.run.ticks } else { time.walk.ticks }).ok()
     }
 
     /// One poison clock from first entry to last exit, including gaps and holds.
@@ -130,18 +199,27 @@ impl FoodRoute {
             let Some(time) = self.zones.iter().find(|time| time.zone == zone) else {
                 continue;
             };
-            let (start, end) = if run {
-                (time.first_run, time.last_run)
-            } else {
-                (time.first_walk, time.last_walk)
-            };
-            first = first.min(start);
-            last = last.max(end);
+            let time = if run { &time.run } else { &time.walk };
+            if time.ticks != 0 {
+                first = first.min(time.first);
+                last = last.max(time.last);
+            }
         }
         if first == u32::MAX {
             return Some(0);
         }
         u16::try_from(last.checked_sub(first)?.checked_add(1)?).ok()
+    }
+
+    fn at_anchor(&self, zone: BoundZoneKey, run: bool) -> bool {
+        self.zones.iter().any(|time| {
+            time.zone == zone
+                && if run {
+                    time.run.at_anchor
+                } else {
+                    time.walk.at_anchor
+                }
+        })
     }
 }
 
@@ -876,6 +954,13 @@ impl StageSurvival {
                 let mut exposure = *exposure;
                 if let Some(zone) = self.food_zones.iter().find(|zone| zone.exposure == index) {
                     exposure.ticks = zone.ticks(route, run);
+                    if route.is_some_and(|route| route.at_anchor(zone.zone, run)) {
+                        // Declared combat work is stage time at the anchor.
+                        // death_troll_thrower.rs2:8-11 keeps applayer2 between throws.
+                        exposure.ticks = exposure
+                            .ticks
+                            .saturating_add(u16::try_from(self.duration_ticks).unwrap_or(u16::MAX));
+                    }
                 }
                 exposure
             })
@@ -1091,6 +1176,69 @@ mod food_sizing_tests {
     use super::*;
 
     #[test]
+    fn energy_budget_uses_the_engine_drain_and_no_recovery_credit() {
+        assert_eq!(RiskInput::available_run_ticks(0, 0), 0);
+        assert_eq!(RiskInput::available_run_ticks(1, 8), 1);
+        assert_eq!(RiskInput::available_run_ticks(100, 64), 10000 / 134);
+        assert_eq!(RiskInput::available_run_ticks(50, 8), 5000 / 76);
+        assert_eq!(RiskInput::available_run_ticks(100, -5), 10000 / 67);
+    }
+
+    #[test]
+    fn engaged_attacker_follows_beyond_the_hunt_zone_at_walk_speed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (lease, name) = risk::provisioning_cross_fixture();
+        let zones = lease.zones().unwrap();
+        let zone = zones.zone(zones.resolve(&name).unwrap()).unwrap();
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let tables = CombatTables::build(selected).unwrap();
+        let mut kind = RiskTables::build(&tables).zone_kind(zone.kind());
+        kind.r = 28;
+        kind.reach = 8;
+        let (x, z) = zone.spawn();
+        let start = api::WorldTile {
+            x,
+            z,
+            level: i32::from(zone.plane()),
+        };
+        assert!(zone.contains(start));
+        let mut walk = FoodTrack::default();
+        let mut run = FoodTrack::default();
+        walk.visit(start, 1, zone, kind).unwrap();
+        run.visit(start, 1, zone, kind).unwrap();
+        let mut in_zone = 1;
+        for step in 1..=28 {
+            let tile = api::WorldTile {
+                x: x + step,
+                ..start
+            };
+            in_zone += u32::from(zone.contains(tile));
+            walk.visit(tile, 1, zone, kind).unwrap();
+            run.visit(tile, u32::from(step % 2 == 1), zone, kind)
+                .unwrap();
+        }
+        assert_eq!(walk.time.ticks, 29);
+        assert!(
+            walk.time.ticks > in_zone,
+            "zone-only counting loses pursuit"
+        );
+        assert!(
+            run.time.ticks < walk.time.ticks,
+            "a walker cannot follow a runner at run speed"
+        );
+        assert!(walk.time.at_anchor);
+        walk.visit(api::WorldTile { x: x + 29, ..start }, 1, zone, kind)
+            .unwrap();
+        assert_eq!(
+            walk.time.ticks, 29,
+            "the spawn pursuit radius ends engagement"
+        );
+        assert!(!walk.time.at_anchor);
+    }
+
+    #[test]
     fn food_geometry_keeps_the_per_bot_layout_budget() {
         let provisioner = std::mem::size_of::<super::super::provision::Provisioner>();
         let quester = std::mem::size_of::<super::super::runner::Quester>();
@@ -1117,17 +1265,22 @@ mod food_sizing_tests {
         let zone = zones.zone(key).unwrap();
         let (x0, _, x1, _) = zone.bounds();
         let walking = u16::try_from(x1 - x0 + 1).unwrap();
-        let measured = FoodRoute {
+        let mut measured = FoodRoute {
             pack: zones.pack(),
             zones: vec![FoodZoneTime {
                 zone: key,
-                tiles: u32::from(walking),
-                run_ticks: u32::from(walking.div_ceil(2)),
-                holds: 0,
-                first_walk: 1,
-                last_walk: u32::from(walking) + 10,
-                first_run: 1,
-                last_run: u32::from(walking.div_ceil(2)) + 5,
+                walk: FoodTime {
+                    ticks: u32::from(walking),
+                    first: 1,
+                    last: u32::from(walking) + 10,
+                    at_anchor: false,
+                },
+                run: FoodTime {
+                    ticks: u32::from(walking.div_ceil(2)),
+                    first: 1,
+                    last: u32::from(walking.div_ceil(2)) + 5,
+                    at_anchor: false,
+                },
             }]
             .into_boxed_slice(),
         };
@@ -1175,7 +1328,7 @@ mod food_sizing_tests {
             kind: RiskTables::build(&tables).zone_kind(zone.kind()),
             ticks: 100,
         };
-        let stage = StageSurvival {
+        let mut stage = StageSurvival {
             exposures: Arc::from([exposure]),
             duration_ticks: 0,
             food_zones: Arc::from([fallback]),
@@ -1233,6 +1386,21 @@ mod food_sizing_tests {
             risk::supply_bound(&stage.exposures, &input, &tables, food).map(|bound| bound.bound),
             original,
             "food-only exposure cannot replace supply_bound's retained exposure",
+        );
+        stage.duration_ticks = 30;
+        measured.zones[0].walk.at_anchor = true;
+        assert_eq!(
+            stage
+                .food_exposures(Some(&measured), false)
+                .next()
+                .unwrap()
+                .ticks,
+            walking + 30,
+            "an engaged attacker remains a food exposure during anchor work",
+        );
+        assert_eq!(
+            stage.food_duration(Some(&measured), false),
+            u64::from(walking + 40)
         );
     }
 

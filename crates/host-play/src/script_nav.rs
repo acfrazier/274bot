@@ -2721,6 +2721,21 @@ impl RouteJob {
                 self.request.radius
             ));
         }
+        let food_route = if matches!(self.kind, Some(RouteDemandKind::Advisory { .. })) {
+            outcome
+                .current_route()
+                .and_then(|route| {
+                    crate::admission::measure_food_route(
+                        &self.request.world,
+                        nav_planner::producer::compact_route_view(&self.lease, route).ok()?,
+                        self.lease.zones()?,
+                        self.request.admission.input.run_ticks,
+                    )
+                })
+                .map(Arc::new)
+        } else {
+            None
+        };
         RouteJobOutput {
             candidate_goals: self.request.candidate_goals.is_some(),
             kind: self.kind.take().expect("route demand kind is present"),
@@ -2741,6 +2756,7 @@ impl RouteJob {
             outcome,
             search_result,
             assessment: self.assessment.take(),
+            food_route,
             refusal: self.refusal.take(),
             blocked: std::mem::take(&mut self.blocked),
             native_failure: self.native_failure.take(),
@@ -3298,6 +3314,7 @@ pub(crate) struct RouteJobOutput {
     outcome: RouteJobOutcome,
     search_result: Option<RouteSearchResultKind>,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
+    food_route: Option<Arc<script::quester::FoodRoute>>,
     refusal: Option<script::native::WalkRefusal>,
     blocked: Box<[ZoneKey]>,
     native_failure: Option<script::native::WalkEnd>,
@@ -4308,13 +4325,7 @@ fn apply_route_output(
             let route_ticks = lease
                 .zip(output.outcome.current_route())
                 .map_or(0, |(lease, route)| compact_route_ticks(lease, route));
-            let food_route = lease
-                .zip(output.outcome.current_route())
-                .and_then(|(lease, route)| {
-                    let view = nav_planner::producer::compact_route_view(lease, route).ok()?;
-                    script::quester::FoodRoute::measure(view, lease.zones()?)
-                })
-                .map(Arc::new);
+            let food_route = output.food_route.take();
             let no_path = matches!(output.outcome, RouteJobOutcome::NoPath);
             let detail = output
                 .assessment

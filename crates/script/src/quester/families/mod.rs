@@ -1259,8 +1259,8 @@ struct WalkPlan {
     protect: bool,
 }
 impl WalkPlan {
-    fn request(&self, cx: &StepContext<'_, '_>) -> crate::native::WalkRequest {
-        let mut request = reach::walk_request(self.tile, self.radius, None, cx.required_after);
+    fn request(&self, evidence: api::quest_progress::EvidenceStamp) -> crate::native::WalkRequest {
+        let mut request = reach::walk_request(self.tile, self.radius, None, evidence);
         request.cross = self
             .cross
             .iter()
@@ -1287,6 +1287,12 @@ impl StepPlan for WalkPlan {
     fn provisioning_anchor(&self) -> Option<WorldTile> {
         Some(self.tile)
     }
+    fn provisioning_walk_request(
+        &self,
+        evidence: api::quest_progress::EvidenceStamp,
+    ) -> Option<crate::native::WalkRequest> {
+        Some(self.request(evidence))
+    }
 }
 struct WalkRun {
     plan: WalkPlan,
@@ -1297,7 +1303,7 @@ struct WalkRun {
 }
 impl WalkRun {
     fn begin_walk(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
-        let request = self.plan.request(cx);
+        let request = self.plan.request(cx.required_after);
         let handle = PrereqWalk::begin(request, cx.tick.actions, &mut cx.tick.cx)?;
         self.handle = Some(handle);
         self.retry.action_submitted();

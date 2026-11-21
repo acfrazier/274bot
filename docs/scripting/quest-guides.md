@@ -374,12 +374,19 @@ Poison receives its full pulse throughout the estimated stage. Food receives
 no more healing credit than the account's maximum Hitpoints.
 Concurrent attackers share one poison clock for that stage.
 
-Crossing estimates count planned route tiles inside each baked hunt zone.
+Crossing estimates begin engagement only inside a baked hunt zone.
+They then include possible pursuit within the NPC's spawn range.
+The pursuit estimate permits one NPC walking step per tick.
+Declared combat work adds time at an anchor where pursuit remains possible.
 Walking costs one tick per tile. Running costs one tick per two tiles only
-when the account's run setting is observed. Each selected step anchor has its
-own route assessment. A route outside a zone has no exposure there.
-Spawn-centred zones do not guarantee safety after a chase moves an attacker.
-The poison clock includes gaps from the first zone entry to the last zone exit.
+while observed energy covers the content's weight-dependent drain.
+The remaining route uses walking speed. Energy recovery receives no credit.
+Each selected step uses its own crossing permissions and arrival radius.
+A changed origin, selected plan, or energy budget requires a new assessment.
+A bank trip therefore cannot retain a route from the old origin.
+A route that never enters a hunt zone does not engage that attacker.
+An attacker displaced before this route can still attack outside its spawn zone.
+The poison clock includes gaps from the first exposure to the last exposure.
 An unavailable or unusable route uses the full walking hunt-range bound and
 reports the fallback.
 These food-only exposures do not change the route or supply death bound.

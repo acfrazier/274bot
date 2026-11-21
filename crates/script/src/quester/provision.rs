@@ -260,18 +260,25 @@ impl BankCloser {
     }
 }
 
-struct FoodAssessment {
+#[derive(Debug, PartialEq, Eq)]
+struct FoodAssessmentKey {
     stage: usize,
+    origin: Option<WorldTile>,
     destination: Option<WorldTile>,
+    run_ticks: u16,
+    plan_revision: u64,
+}
+
+struct FoodAssessment {
+    key: FoodAssessmentKey,
     request_id: u64,
     complete: bool,
     route: Option<Arc<super::survival::FoodRoute>>,
 }
 
 impl FoodAssessment {
-    fn is_current(&self, stage: usize, destination: Option<WorldTile>) -> bool {
-        self.stage == stage
-            && destination.is_none_or(|destination| self.destination == Some(destination))
+    fn is_current(&self, key: &FoodAssessmentKey) -> bool {
+        self.key == *key
     }
 }
 
@@ -281,6 +288,8 @@ struct StagePreparation {
     /// Optional needs already logged as unmet since the last path reset.
     unmet_logged: Vec<UnmetNeed>,
     food: Option<FoodAssessment>,
+    food_plan: Option<Arc<dyn StepPlan>>,
+    food_plan_revision: u64,
     gear_stage: usize,
     gear_run: Option<Box<dyn StepRun>>,
 }
@@ -337,6 +346,8 @@ impl Provisioner {
                 path: None,
                 unmet_logged: Vec::new(),
                 food: None,
+                food_plan: None,
+                food_plan_revision: 0,
                 gear_stage: usize::MAX,
                 gear_run: None,
             }),
@@ -348,6 +359,19 @@ impl Provisioner {
             opening: false,
             lease: None,
             closer: BankCloser::default(),
+        }
+    }
+
+    pub(super) fn set_food_plan(&mut self, plan: Option<Arc<dyn StepPlan>>) {
+        let unchanged = match (&self.preparation.food_plan, &plan) {
+            (Some(previous), Some(next)) => Arc::ptr_eq(previous, next),
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
+            self.preparation.food_plan = plan;
+            self.preparation.food_plan_revision =
+                self.preparation.food_plan_revision.wrapping_add(1);
         }
     }
 
@@ -626,26 +650,40 @@ impl Provisioner {
         stage: usize,
         destination: Option<WorldTile>,
     ) -> bool {
+        let snapshot = cx.tick.cx.snapshot();
+        let key = FoodAssessmentKey {
+            stage,
+            origin: snapshot.here().map(|here| here.value),
+            destination,
+            run_ticks: crate::combat::frame::Frame::borrow(snapshot).map_or(0, |frame| {
+                crate::combat::risk::RiskInput::observed_run_ticks(&frame)
+            }),
+            // The selected immutable plan includes cross, radius and options.
+            plan_revision: self.preparation.food_plan_revision,
+        };
         if self
             .preparation
             .food
             .as_ref()
-            .is_none_or(|state| !state.is_current(stage, destination))
+            .is_none_or(|state| !state.is_current(&key))
         {
-            if destination.is_some() {
-                self.survival_stage = usize::MAX;
-            }
+            self.survival_stage = usize::MAX;
             if let Some(previous) = self.preparation.food.take() {
                 cx.tick.cx.cancel_request(previous.request_id);
             }
             let request_id = destination.and_then(|tile| {
-                let request =
-                    super::families::reach::walk_request(tile, 0, None, cx.tick.cx.evidence());
+                let request = self
+                    .preparation
+                    .food_plan
+                    .as_ref()
+                    .and_then(|plan| plan.provisioning_walk_request(cx.tick.cx.evidence()))
+                    .unwrap_or_else(|| {
+                        super::families::reach::walk_request(tile, 0, None, cx.tick.cx.evidence())
+                    });
                 cx.tick.cx.assess_walk(request).ok()
             });
             self.preparation.food = Some(FoodAssessment {
-                stage,
-                destination,
+                key,
                 request_id: request_id.unwrap_or(0),
                 complete: request_id.is_none(),
                 route: None,
@@ -2046,26 +2084,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn food_assessment_is_reused_only_for_the_stage_and_selected_step_anchor() {
+    fn food_assessment_resizes_from_the_bank_and_on_changed_route_inputs() {
         let tile = WorldTile {
             x: 100,
             z: 200,
             level: 0,
         };
         let assessment = FoodAssessment {
-            stage: 1,
-            destination: Some(tile),
+            key: FoodAssessmentKey {
+                stage: 1,
+                origin: Some(tile),
+                destination: Some(tile),
+                run_ticks: 10,
+                plan_revision: 3,
+            },
             request_id: 1,
             complete: true,
             route: None,
         };
-        assert!(assessment.is_current(1, Some(tile)));
+        let mut key = FoodAssessmentKey { ..assessment.key };
+        assert!(assessment.is_current(&key));
+        key.origin = Some(WorldTile { x: 101, ..tile });
         assert!(
-            assessment.is_current(1, None),
-            "bank travel keeps the selected step's route"
+            !assessment.is_current(&key),
+            "bank origin must replace the old route"
         );
-        assert!(!assessment.is_current(2, Some(tile)));
-        assert!(!assessment.is_current(1, Some(WorldTile { x: 101, ..tile })));
+        key.origin = Some(tile);
+        key.destination = None;
+        assert!(
+            !assessment.is_current(&key),
+            "a step without an anchor cannot reuse a route"
+        );
+        key.destination = Some(tile);
+        key.run_ticks = 1;
+        assert!(
+            !assessment.is_current(&key),
+            "energy changes invalidate mixed-speed timing"
+        );
+        key.run_ticks = 10;
+        key.plan_revision = 4;
+        assert!(
+            !assessment.is_current(&key),
+            "cross, radius and options belong to the plan"
+        );
+        key.plan_revision = 3;
+        key.stage = 2;
+        assert!(!assessment.is_current(&key));
     }
     use crate::native::ledger;
     use crate::native::{HostEffect, NativeTick};
@@ -3570,6 +3634,82 @@ mod tests {
                     detail: Arc::from(detail),
                 },
             },
+        );
+    }
+
+    #[test]
+    fn food_route_is_reassessed_from_the_bank_before_the_same_step_starts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (_, quests, mut snapshot) = survival_fixture(true);
+        let (_, _, banks) = openable_bank_fixture();
+        let memory = BankMemory::default();
+        let old_start = tile(3210, 3210);
+        let bank_start = tile(3215, 3210);
+        let target = tile(3220, 3220);
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut requests = Vec::new();
+        for (tick, origin, queues) in [
+            (1, old_start, true),
+            (2, old_start, false),
+            (3, bank_start, true),
+        ] {
+            snapshot.seed_tile(origin);
+            let mut local = snapshot.local_player().unwrap().clone();
+            local.player.network = origin;
+            snapshot.seed_local_player(local);
+            let complete = with_tick_bank(&snapshot, Some(&memory), &mut ledger, tick, |native| {
+                let required_after = native.cx.evidence();
+                let mut cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after,
+                    banks: &banks,
+                    choices: &crate::quester::choices::QuestChoices::default(),
+                };
+                provisioner.poll_food_assessment(&mut cx, 0, Some(target))
+            });
+            assert_eq!(complete, !queues);
+            assert_eq!(
+                provisioner.preparation.food.as_ref().unwrap().key.origin,
+                Some(origin)
+            );
+            if !queues {
+                provisioner.survival_stage = 0;
+                continue;
+            }
+            assert_eq!(provisioner.survival_stage, usize::MAX);
+            let ledger = ledger.as_mut().unwrap();
+            let action = ledger.outbox.remove(0);
+            assert!(
+                matches!(&action.effect, HostEffect::AssessWalk(request) if request.target == target)
+            );
+            let authority = action.authority();
+            requests.push(authority.request_id().get());
+            ledger.complete_assess_walk(
+                &authority,
+                crate::native::AssessReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run: authority.run(),
+                        tick,
+                        sequence: tick,
+                    },
+                    assessment: None,
+                    refusal: None,
+                    detail: None,
+                    route_ticks: 0,
+                    food_route: None,
+                },
+            );
+        }
+        assert_eq!(requests.len(), 2);
+        assert_ne!(
+            requests[0], requests[1],
+            "bank travel must obtain a new route"
         );
     }
 

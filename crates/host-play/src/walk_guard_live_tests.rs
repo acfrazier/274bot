@@ -263,6 +263,9 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
     let lease = nav_planner::contract::NavLease::wrap(Arc::clone(&world)).unwrap();
     let zones = lease.zones().unwrap();
     let key = zones.resolve(ZONE).unwrap();
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let tables = script::combat::tables::CombatTables::build(Arc::clone(&selected)).unwrap();
+    let risks = script::combat::risk::RiskTables::build(&tables);
     let (opts, state) = throwers_route_context(&world);
     let route = nav_planner::router::find_with(
         &world.collision,
@@ -284,6 +287,8 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
     let food = script::quester::FoodRoute::measure(
         nav_planner::producer::route_view(&lease, &route).unwrap(),
         zones,
+        &risks,
+        script::combat::risk::RiskInput::available_run_ticks(100, 8),
     )
     .unwrap();
     let covered: Vec<_> = zones.covered_zones(key).unwrap().collect();
@@ -308,34 +313,6 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
             && destination.z > z0
             && destination.z < z1
     }));
-    let route = nav_planner::router::find_with(
-        &world.collision,
-        &world.graph,
-        WorldTile {
-            x: 2838,
-            z: 3601,
-            level: 0,
-        },
-        destination,
-        opts,
-        &state,
-    )
-    .expect("the real standable target is reachable through the throwers' interior");
-    let walk_tiles: usize = route
-        .legs
-        .iter()
-        .filter_map(|leg| match leg {
-            nav_planner::router::Leg::Walk { tiles } => Some(tiles.len()),
-            _ => None,
-        })
-        .sum();
-    println!("positive food route destination={destination:?} walk_tiles={walk_tiles}");
-    let food = script::quester::FoodRoute::measure(
-        nav_planner::producer::route_view(&lease, &route).unwrap(),
-        zones,
-    )
-    .unwrap();
-    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let quests = QuestCatalog::from_identity(selected.quest_identity()).unwrap();
     let compile_world = Arc::clone(&world);
     let compiled = script::quester::compile::prepare_for_test(move |cap| {
@@ -350,6 +327,75 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
         )
     })
     .unwrap();
+    let request = compiled.sequences[0].steps[0]
+        .plan
+        .provisioning_walk_request(api::quest_progress::EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        })
+        .unwrap();
+    assert_eq!(
+        request.radius, 1,
+        "food must use the authored arrival radius"
+    );
+    assert_eq!(request.cross.as_ref(), &[Arc::<str>::from(ZONE)]);
+    assert!(request.protect);
+    let table = world.graph.zones.as_ref().unwrap();
+    let crossing: Vec<_> = request
+        .cross
+        .iter()
+        .map(|name| table.resolve(name).unwrap())
+        .collect();
+    let opts = nav_planner::router::FindOptions {
+        zones: nav_planner::zones::ZoneExempt::named(&crossing).unwrap(),
+        ..opts
+    };
+    let radius = i32::from(request.radius);
+    let mut targets = Vec::new();
+    for z in request.target.z - radius..=request.target.z + radius {
+        for x in request.target.x - radius..=request.target.x + radius {
+            let tile = WorldTile {
+                x,
+                z,
+                level: request.target.level,
+            };
+            if world.collision.standable(tile) {
+                targets.push(tile);
+            }
+        }
+    }
+    let route = nav_planner::router::find_first_with(
+        &world.collision,
+        &world.graph,
+        WorldTile {
+            x: 2838,
+            z: 3601,
+            level: 0,
+        },
+        &targets,
+        opts,
+        &state,
+    )
+    .into_route()
+    .expect("the production food request reaches the throwers' interior");
+    let walk_tiles: usize = route
+        .legs
+        .iter()
+        .filter_map(|leg| match leg {
+            nav_planner::router::Leg::Walk { tiles } => Some(tiles.len()),
+            _ => None,
+        })
+        .sum();
+    println!("positive production food route walk_tiles={walk_tiles}");
+    assert_eq!(
+        walk_tiles, 137,
+        "the authored radius removes the final exact-target tile"
+    );
     let model = compiled.provisioning.survival.as_ref().unwrap();
     let pack = [api::snapshot::ItemView {
         def: api::obj_names::ItemDefView {
@@ -376,7 +422,23 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
         bank: None,
     };
     let mut counts = Vec::new();
-    for run in [false, true] {
+    for (run, energy, expected_ticks, expected_duration) in [
+        (false, 0, [29, 26, 21, 17, 13, 10], 29),
+        (true, 100, [15, 14, 11, 9, 7, 6], 15),
+        (true, 1, [29, 26, 21, 17, 13, 10], 29),
+    ] {
+        let run_ticks = if run {
+            script::combat::risk::RiskInput::available_run_ticks(energy, 8)
+        } else {
+            0
+        };
+        let food = script::quester::FoodRoute::measure(
+            nav_planner::producer::route_view(&lease, &route).unwrap(),
+            zones,
+            &risks,
+            run_ticks,
+        )
+        .unwrap();
         let ticks: Vec<_> = covered
             .iter()
             .map(|zone| food.ticks(zone.key(), run).unwrap())
@@ -385,6 +447,8 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
             food.crossing_ticks(covered.iter().map(|zone| zone.key()), run)
                 .expect("the planned crossing must enter a thrower hunt zone"),
         );
+        assert_eq!(ticks, expected_ticks);
+        assert_eq!(duration, expected_duration);
         let twice_hits: u64 = ticks
             .iter()
             .map(|&ticks| u64::from(ticks).div_ceil(7) * 7)
@@ -398,6 +462,7 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
         input.hp = 20;
         input.hp_max = 40;
         input.set_run(run);
+        input.run_ticks = run_ticks;
         let need = model
             .plan(0, stock, input, Some(&compiled.provisioning), Some(&food))
             .unwrap();
@@ -405,11 +470,19 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
         assert_eq!(need.food.unwrap().1, i32::try_from(count).unwrap());
         assert_eq!(need.bound, 1.0, "food sizing does not admit the crossing");
         println!(
-            "thrower food run={run} zone_ticks={ticks:?} poison_ticks={duration} lobsters={count}"
+            "thrower food run={run} energy={energy} run_prefix={run_ticks} zone_ticks={ticks:?} poison_ticks={duration} lobsters={count}"
         );
         counts.push(count);
     }
-    assert_eq!(counts, [9, 7]);
+    assert!(
+        counts[1] < counts[0],
+        "energy-backed running must reduce this crossing"
+    );
+    assert_eq!(
+        counts[2], counts[0],
+        "low energy walks the exposed remainder"
+    );
+    assert_eq!(counts, [11, 7, 11]);
 }
 
 fn throwers_route_context(
