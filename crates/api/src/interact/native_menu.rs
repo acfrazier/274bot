@@ -61,7 +61,7 @@ fn check_scene(client: &Client, snapshot: &GameSnapshot) -> Result<(), SendReaso
         return Err(SendReason::NotIngame);
     }
     let gens = snapshot.gens();
-    if gens.session != client.gens.session || gens.invalidations != client.gens.invalidations {
+    if snapshot.native_menu_scope() != Some((client.gens.session, client.gens.invalidations)) {
         return Err(SendReason::StaleSession);
     }
     let scene = snapshot.scene();

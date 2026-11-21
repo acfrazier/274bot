@@ -61,6 +61,10 @@ fn scene(revision: ClientRevision) -> Scene {
     );
     client.ingame = true;
     client.scene_state = SCENE_READY;
+    // A live client does not start in session zero. These counters are not
+    // copied into the snapshot's session-reset watermark by ordinary rebuilds.
+    client.gens.session = 7;
+    client.gens.invalidations = 11;
     client.map_build_base_x = 3200;
     client.map_build_base_z = 3200;
     client.stream = Some(stream);
@@ -745,6 +749,7 @@ fn repeated_continue_refuses_after_one_wire_send_without_further_mutation() {
 #[derive(Clone, Copy, Debug)]
 enum NpcChange {
     Session,
+    Invalidation,
     Scene,
     Removed,
     Unpublished,
@@ -761,6 +766,7 @@ fn stale_and_ineligible_npc_rows_refuse_without_mutation() {
     for revision in [ClientRevision::R289, ClientRevision::R377] {
         for (change, expected) in [
             (NpcChange::Session, SendReason::StaleSession),
+            (NpcChange::Invalidation, SendReason::StaleSession),
             (NpcChange::Scene, SendReason::StaleScene),
             (NpcChange::Removed, SendReason::StaleTarget),
             (NpcChange::Unpublished, SendReason::StaleTarget),
@@ -786,6 +792,7 @@ fn stale_and_ineligible_npc_rows_refuse_without_mutation() {
             let npc = snapshot.npcs().first().expect("published NPC");
             match change {
                 NpcChange::Session => scene.client.gens.session += 1,
+                NpcChange::Invalidation => scene.client.gens.invalidations += 1,
                 NpcChange::Scene => scene.client.gens.scene += 1,
                 NpcChange::Removed => scene.client.npc[NPC_SLOT] = None,
                 NpcChange::Unpublished => scene.client.npc_count = 0,

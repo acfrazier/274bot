@@ -57,6 +57,10 @@ pub struct GameSnapshot {
     /// World generations the snapshot has been rebuilt up to.
     #[serde(skip)]
     gens: ClientGens,
+    /// Connection and invalidation counters observed by the last full rebuild.
+    /// `gens` keeps the host's session-reset watermark for those counters.
+    #[serde(skip)]
+    native_menu_scope: Option<(u64, u64)>,
     npc: Vec<NpcView>,
     player: Option<LocalPlayerView>,
     /// The local actor's native overhead text. This is refreshed on every
@@ -366,6 +370,7 @@ impl Default for GameSnapshot {
     fn default() -> Self {
         GameSnapshot {
             gens: ClientGens::default(),
+            native_menu_scope: None,
             npc: Vec::new(),
             player: None,
             local_overhead_text: None,
@@ -805,6 +810,10 @@ impl GameSnapshot {
         self.gens
     }
 
+    pub(crate) fn native_menu_scope(&self) -> Option<(u64, u64)> {
+        self.native_menu_scope
+    }
+
     /// Scene-family generation this snapshot last rebuilt the collision grid at.
     pub fn scene_generation(&self) -> u64 {
         self.gens.scene
@@ -982,6 +991,7 @@ impl GameSnapshot {
         self.gens.player_info = client.gens.player_info;
         // Backstop: rebuild_npcs already publishes this with the NPC family.
         self.gens.npc_info = client.gens.npc_info;
+        self.native_menu_scope = Some((client.gens.session, client.gens.invalidations));
         dirty
     }
 
