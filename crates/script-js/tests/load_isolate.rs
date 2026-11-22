@@ -4888,7 +4888,7 @@ export default class T extends LoopingBot {
 // Banking opening preserves the exact nearest-booth identity posted in the
 // snapshot so dispatch cannot retarget between observation and action.
 #[test]
-fn isolate_banking_open_queues_open_booth_without_walk() {
+fn isolate_banking_open_logs_local_route_and_queues_open_booth_without_walk() {
     if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
@@ -4897,7 +4897,13 @@ fn isolate_banking_open_queues_open_booth_without_walk() {
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
     async loop() {
-        globalThis.__rs_ok = await Banking.open();
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__routes = [];
+        globalThis.__rs_ok = await Banking.open({
+            stand: { x: 300, z: 100, level: 0 },
+            log: message => globalThis.__routes.push(message),
+        });
     }
 }
 "#;
@@ -4924,6 +4930,11 @@ export default class T extends LoopingBot {
     let mut snapshot = api::snapshot::GameSnapshot::new();
     tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
     let actions = slot.take_actions();
+    assert_eq!(
+        slot.probe("__routes[0] ?? null").unwrap(),
+        serde_json::json!("bank: booth within 14 — opening here (skip long walk)"),
+        "the selected local route must reach the caller before the booth opens"
+    );
     assert_eq!(
         actions.len(),
         1,

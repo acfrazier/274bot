@@ -1987,7 +1987,7 @@ impl BankingOpen {
         loop {
             let phase = std::mem::replace(&mut self.phase, BankingPhase::Choose);
             match phase {
-                BankingPhase::Choose => match self.choose(cx, facts) {
+                BankingPhase::Choose => match self.choose(cx, facts, log, log_enabled) {
                     Poll::Pending => return Poll::Pending,
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(())) => continue,
@@ -2106,6 +2106,8 @@ impl BankingOpen {
         &mut self,
         cx: &mut ActionContext<'_>,
         facts: &Arc<NamedBankFacts>,
+        log: &mut LogCall,
+        log_enabled: bool,
     ) -> Poll<Result<(), ActionError>> {
         let (open, loaded, _) = bank_state(cx);
         if open {
@@ -2124,6 +2126,16 @@ impl BankingOpen {
             && scene_booth.is_some_and(|distance| f64::from(distance) <= self.nearby_radius)
         {
             self.phase = BankingPhase::Access(self.default_access());
+            if log_enabled {
+                log.queue(
+                    format!(
+                        "bank: booth within {} — opening here (skip long walk)",
+                        self.nearby_radius
+                    ),
+                    true,
+                );
+                return Poll::Pending;
+            }
         } else if let Some(bank) = nearest.filter(|bank| {
             self.prefer_nearby
                 && here.is_some_and(|here| {
@@ -2139,6 +2151,16 @@ impl BankingOpen {
                 4,
                 WorldTarget::Access(Some(AccessSpec::from_bank(bank))),
             );
+            if log_enabled {
+                log.queue(
+                    format!(
+                        "bank: local {} bank — using it instead of distant preset",
+                        bank.name
+                    ),
+                    true,
+                );
+                return Poll::Pending;
+            }
         } else if let Some(stand) = self.stand {
             // Caller obstacles (`door`, `gate`) need no separate opener: the
             // native walk opens every door edge on its packed route
