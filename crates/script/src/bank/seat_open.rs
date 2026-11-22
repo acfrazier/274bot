@@ -134,12 +134,11 @@ impl NativeMachine for Opening {
                 })
             }
             BankSeatOperation::Select => {
-                let preferences = effective_preferences(&args.request, args.preferences);
                 match SelectorCore::begin(
                     Arc::clone(&args.facts),
-                    preferences,
+                    args.preferences,
                     args.request.stand,
-                    args.request.allow_wilderness,
+                    args.request.allow_wilderness || args.preferences.use_mage_bank,
                     true,
                     cx,
                 )? {
@@ -324,15 +323,6 @@ impl TickBound {
 
     fn reached(self, cx: &ActionContext<'_>) -> bool {
         cx.evidence().tick >= self.tick_deadline && cx.active_now() >= self.active_deadline
-    }
-}
-
-fn effective_preferences(request: &BankSeatArgs, defaults: BankPreferences) -> BankPreferences {
-    BankPreferences {
-        use_mage_bank: request.use_mage_bank.unwrap_or(defaults.use_mage_bank),
-        use_zanaris_bank: request
-            .use_zanaris_bank
-            .unwrap_or(defaults.use_zanaris_bank),
     }
 }
 

@@ -5354,12 +5354,29 @@ fn in_place_load_rig() -> Rig {
 
 #[cfg(feature = "js")]
 #[test]
-fn bank_trip_options_capture_the_existing_script_bank_preferences() {
+fn bank_trip_options_capture_derived_account_eligibility() {
     if !api::test_support::game_data_available() {
         return;
     }
     for (mage, zanaris) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut rig = open_rig(false);
+        rig.snapshot.seed_quest_statuses(
+            vec![api::snapshot::QuestStatusView {
+                component_id: -1,
+                name: "Lost City".into(),
+                colour: if zanaris { 0x00F800 } else { 0xF80000 },
+            }],
+            true,
+        );
+        rig.navs
+            .lock()
+            .unwrap()
+            .get_mut("alice")
+            .unwrap()
+            .walk_globals = Some(Arc::new(Mutex::new(WalkGlobals {
+            allow_wilderness: mage,
+            ..WalkGlobals::default()
+        })));
         rig.slot().lock().unwrap().stop();
         let prepared = crate::script_runtime::prepared_test_start_card(
             &script_js::native_fixture("export function tick(api) {}"),
@@ -5369,7 +5386,7 @@ fn bank_trip_options_capture_the_existing_script_bank_preferences() {
         .expect("native bank preference fixture prepares");
         let start = crate::script_runtime::js_surface_start(
             prepared,
-            serde_json::json!({"useMageBank": mage, "useZanarisBank": zanaris})
+            serde_json::json!({"useMageBank": !mage, "useZanarisBank": !zanaris})
                 .as_object()
                 .cloned()
                 .map(Arc::new),

@@ -635,7 +635,6 @@ impl AcquireShopScript {
                 bank: None,
                 explicit: None,
                 required: false,
-                preferences: Default::default(),
             },
             stage: BankStage::Planned,
             partial_ok: false,

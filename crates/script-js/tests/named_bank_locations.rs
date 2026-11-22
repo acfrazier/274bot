@@ -109,6 +109,11 @@ fn spawn(src: &str, facts: NamedBankFacts) -> BankSlot {
 
 const PROBE: &str = r#"
 import { nearestBank, nearestBanks, nearestUsableBank } from '../../api/bank/BankLocations.js';
+import { SettingsStore } from '../../runtime/Settings.js';
+globalThis.bankOptions = () => [
+    SettingsStore.globalBag().bool('useMageBank'),
+    SettingsStore.globalBag().bool('useZanarisBank'),
+];
 globalThis.pick = (x, z, level = 0) => nearestBank({x, z, level})?.name ?? null;
 globalThis.ranked = (x, z, level = 0) => nearestBanks({x, z, level}).map(bank => bank.name);
 globalThis.custom = (x, z, name) => nearestUsableBank({x, z, level: 0}, bank => bank.name === name)?.name ?? null;
@@ -138,6 +143,24 @@ fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) 
     }];
     let mut snapshot = base_snapshot();
     snapshot.stats = &stats;
+    let mut account = api::snapshot::GameSnapshot::new();
+    account.seed_ingame(2);
+    account.seed_quest_statuses(
+        quests
+            .iter()
+            .map(|quest| api::snapshot::QuestStatusView {
+                component_id: -1,
+                name: quest.name.into(),
+                colour: match quest.status {
+                    "complete" => 0x00F800,
+                    "inProgress" => 0xF8F800,
+                    _ => 0,
+                },
+            })
+            .collect(),
+        true,
+    );
+    iso.slot.refresh_bank_preferences(Some(&account), false);
     iso.post_snapshot(
         &snapshot,
         &NativeFactsInput {
@@ -149,7 +172,7 @@ fn post(iso: &mut BankSlot, fishing_base: i32, quests: &[QuestStatusInput<'_>]) 
 }
 
 #[test]
-fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
+fn account_gates_use_base_level_and_require_lost_city_completion() {
     if !crate::local_bank_catalog::local_bank_catalog_available()
         || !crate::local_game_data::local_game_data_available(289)
     {
@@ -168,6 +191,20 @@ fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
         false
     );
     assert_ne!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
+    let mut incomplete = [QuestStatusInput {
+        name: "Lost City",
+        status: "inProgress",
+        component_id: None,
+    }];
+    for status in ["inProgress", "unknown"] {
+        incomplete[0].status = status;
+        post(&mut iso, 67, &incomplete);
+        assert_ne!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
+        assert_eq!(
+            iso.probe("bankOptions()").unwrap(),
+            serde_json::json!([false, false])
+        );
+    }
     let quests = [
         QuestStatusInput {
             name: "Shilo Village",
@@ -183,11 +220,15 @@ fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
     post(&mut iso, 68, &quests);
     assert_eq!(iso.probe("pick(2586,3420)").unwrap(), "Fishing Guild");
     assert_eq!(iso.probe("pick(2852,2954)").unwrap(), "Shilo Village");
-    assert_ne!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
+    assert_eq!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
     iso.slot.post_settings_bag(
-        serde_json::json!({"useZanarisBank":true})
+        serde_json::json!({"useMageBank":true,"useZanarisBank":false})
             .as_object()
             .unwrap(),
+    );
+    assert_eq!(
+        iso.probe("bankOptions()").unwrap(),
+        serde_json::json!([false, true])
     );
     assert_eq!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
     post(&mut iso, 68, &[]);
@@ -209,9 +250,14 @@ fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
         iso.probe("custom(3091,3958,'Mage Arena')").unwrap(),
         "Mage Arena"
     );
-    iso.slot
-        .post_settings_bag(serde_json::json!({"useMageBank":true}).as_object().unwrap());
+    iso.slot.refresh_bank_preferences(None, true);
     assert_eq!(iso.probe("pick(3091,3958)").unwrap(), "Mage Arena");
+    assert_eq!(
+        iso.probe("bankOptions()").unwrap(),
+        serde_json::json!([true, false])
+    );
+    iso.slot.refresh_bank_preferences(None, false);
+    assert_ne!(iso.probe("pick(3091,3958)").unwrap(), "Mage Arena");
     iso.stop();
 }
 

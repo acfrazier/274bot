@@ -168,6 +168,7 @@ impl Driver {
             let cx = ActionContext {
                 stage_cross: None,
                 protected_items: None,
+                bank_preferences: Default::default(),
                 walk_prereq: Default::default(),
                 condition: None,
                 poison_unknown_pulse: u8::MAX,
@@ -212,6 +213,7 @@ impl Driver {
                         cure_poison: crate::survival::CurePoison::WhenNeeded,
                         walk_danger: None,
                         wilderness: None,
+                        bank_preferences: Default::default(),
                         pvp_globals: None,
                         selected: Some(&selected),
                         reach: None,

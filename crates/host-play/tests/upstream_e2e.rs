@@ -14,7 +14,6 @@ use vault::{Profile, ProfileSettings};
 
 const FACADE: &str = include_str!("upstream_e2e/facade.js");
 const CASES: &str = include_str!("../../../tools/live-map/upstream-cases.json");
-const ZANARIS_BANK: &str = "useZanarisBank";
 const OBSERVER: &str = "import { LoopingBot } from '#/bot/api/bot/Bot.js';\nexport default class E2EObserver extends LoopingBot { async loop() { return 1000; } }";
 type Reply = Result<Value, String>;
 type FrameAction = Box<dyn FnOnce(&mut client::client::Client) -> Reply + Send>;
@@ -209,17 +208,6 @@ impl Session {
                         .map_err(|error| format!("Loadouts.sets: {error}"))?;
                     continue;
                 }
-                ("Global", ZANARIS_BANK) => Value::Bool(match value {
-                    Value::Bool(enabled) => *enabled,
-                    Value::Number(number) => number.as_f64() == Some(1.0),
-                    Value::String(raw) => {
-                        let raw = raw.trim();
-                        raw == "1"
-                            || raw.eq_ignore_ascii_case("true")
-                            || raw.eq_ignore_ascii_case("yes")
-                    }
-                    _ => return Err(format!("Global.{ZANARIS_BANK} must be a scalar setting")),
-                }),
                 _ => value.clone(),
             };
             self.settings
@@ -231,14 +219,7 @@ impl Session {
 
     fn start_settings(&self, name: &str, schema: &[script::SettingDef]) -> Map<String, Value> {
         let source = script::ScriptSource::Catalog;
-        let mut overrides = self.settings.overrides(source, name);
-        // Native named banks read the card's run bag, not an account-wide toggle.
-        if !overrides.contains_key(ZANARIS_BANK) {
-            let mut global = self.settings.overrides(source, "Global");
-            if let Some(opt_in) = global.swap_remove(ZANARIS_BANK) {
-                overrides.insert(ZANARIS_BANK.into(), opt_in);
-            }
-        }
+        let overrides = self.settings.overrides(source, name);
         script::merge_bag(schema, &overrides, None)
     }
 }
@@ -929,7 +910,7 @@ fn fixture_settings_supply_named_operator_loadout_at_start() {
 }
 
 #[test]
-fn fixture_settings_supply_zanaris_preference_at_start() {
+fn fixture_bank_settings_do_not_override_account_facts_at_start() {
     let _home = script::IsolatedEnv::enter("upstream-zanaris-fixture");
     let mut session = Session::new("alice".into(), &script::bot_home()).unwrap();
     session
@@ -947,46 +928,9 @@ fn fixture_settings_supply_zanaris_preference_at_start() {
         )
         .unwrap();
     let settings = session.start_settings("CookBot", &[]);
-    assert_eq!(settings.get("useZanarisBank"), Some(&Value::Bool(true)));
+    assert!(!settings.contains_key("useZanarisBank"));
     assert_eq!(settings["location"], "Zanaris");
     assert!(!settings.contains_key("useMageBank"));
-
-    assert!(session
-        .set_settings(
-            "Global",
-            json!({"useZanarisBank":null}).as_object().unwrap()
-        )
-        .is_err());
-    for (raw, enabled) in [
-        (json!(1), true),
-        (json!(" Yes "), true),
-        (json!(false), false),
-    ] {
-        session
-            .set_settings("Global", json!({"useZanarisBank":raw}).as_object().unwrap())
-            .unwrap();
-        assert_eq!(
-            session.start_settings("CookBot", &[])["useZanarisBank"],
-            enabled
-        );
-    }
-    session
-        .set_settings(
-            "Global",
-            json!({"useZanarisBank":true}).as_object().unwrap(),
-        )
-        .unwrap();
-
-    session
-        .set_settings(
-            "CookBot",
-            json!({"useZanarisBank":false}).as_object().unwrap(),
-        )
-        .unwrap();
-    assert_eq!(
-        session.start_settings("CookBot", &[])["useZanarisBank"],
-        false
-    );
 }
 
 #[test]

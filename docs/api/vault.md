@@ -172,7 +172,8 @@ from it, whatever its size claimed.
 | Global `lampSkill` | genie lamp skill |
 | Global `clueDuelPartner` | clue duel partner |
 | `rendererEnabled` | `0` sets the profile's display to Off; `1` turns an Off display back on |
-| Global `bankCommonJunk`, `useZanarisBank`, `useMageBank` | not imported: in rs2b0t they are the account-wide default for scripts that have the same parameter; 274bot has no account-wide default, so set them in each script's parameters (the Gatherer has its own bank choices) |
+| Global `bankCommonJunk` | not imported: 274bot has no account-wide default for this parameter |
+| Global `useZanarisBank`, `useMageBank` | not imported: Zanaris requires Lost City completion, and Mage Arena follows wilderness permission |
 | Global `runAuto`, `runEnergyMin` | not imported: 274bot turns run back on by itself at 20% energy (scripts may change that); there is no per-account setting |
 | Global `navTeleports` | not imported: one app-wide switch in Nav config |
 | Global `navPathStallTicks`, `navPathDeviation` | not imported: no such setting |

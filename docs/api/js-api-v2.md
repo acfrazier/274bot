@@ -51,10 +51,11 @@ Generated types live in `crates/script/host-js/index.d.ts` (`NativeApi`,
 - `bankNearestReachable({from?, allow_wilderness?, use_mage_bank?, use_zanaris_bank?})`
   — awaited select-only `HelperResult<BankLocation | null>`, retaining object
   or NPC access metadata. Omitted input is `{}`. The origin defaults to the
-  observed player; native wilderness admission defaults to false. Mage Arena
-  and Zanaris require their explicit opt-ins (or the captured boolean
-  settings), defaulting to false. Base Fishing level and completed quests gate
-  the full stable 20-bank catalog. A same-plane
+  observed player. `allow_wilderness` can allow the route to cross the wilderness.
+  Mage Arena requires wilderness permission in the existing navigation settings.
+  Zanaris requires observed Lost City completion. The legacy `use_mage_bank` and
+  `use_zanaris_bank` inputs do not override these conditions. Base Fishing level
+  and completed quests gate the full stable 20-bank catalog. A same-plane
   air-nearest stand within four tiles bypasses routing. Otherwise one
   off-thread native search ranks resolved candidates by walk cost, with
   stable air-order ties. No route, budget exhaustion without a winner, or

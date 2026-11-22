@@ -344,6 +344,7 @@ fn with_tick<R>(
         cx: crate::native::ActionContext {
             stage_cross: None,
             protected_items: None,
+            bank_preferences: Default::default(),
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -382,6 +383,7 @@ fn with_tick<R>(
                 reach: None,
                 reach_flood: None,
                 bank_memory: None,
+                bank_preferences: Default::default(),
                 shop_keepers: None,
                 collision: None,
                 hold: world.held,

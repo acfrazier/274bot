@@ -497,6 +497,7 @@ pub(crate) fn frame_context<'a>(
             .with_reach(ctx.compiled.reach)
             .with_bank_memory(ctx.compiled.bank_memory)
             .with_world_members(ctx.compiled.world_members),
+        bank_preferences: ctx.compiled.bank_preferences,
         stage_cross: None,
         condition: ctx.compiled.condition.filter(|fact| {
             fact.session == api::condition::SessionMark::Live
@@ -650,6 +651,7 @@ impl CompiledRun {
                         reach: ctx.compiled.reach,
                         reach_flood: ctx.compiled.reach_flood,
                         bank_memory: ctx.compiled.bank_memory,
+                        bank_preferences: ctx.compiled.bank_preferences,
                         condition: ctx.compiled.condition,
                         poison_unknown_pulse: ctx.compiled.poison_unknown_pulse,
                         cure_poison: ctx.compiled.cure_poison,

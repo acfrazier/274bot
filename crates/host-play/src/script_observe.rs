@@ -1025,6 +1025,15 @@ where
         walk_permissions = slot
             .api_gather_walk_permissions()
             .or_else(|| slot.native_walk_permissions());
+        if wake != ObserveWake::None && (slot.surface_active() || slot.native_run().is_some()) {
+            let globals = {
+                let navs = navs.lock().unwrap();
+                super::walk_permissions::globals_for(navs.get(name))
+            };
+            let allow_wilderness = globals.allow_wilderness
+                || walk_permissions.is_some_and(|bits| bits.allow_wilderness);
+            slot.refresh_bank_preferences(snapshot.read(), allow_wilderness);
+        }
         if wake != ObserveWake::None && slot.state() == script::RunState::Running {
             // Task 9b: post the FlatBuffer snapshot blob on every tick
             // edge — held or not — so the isolate's
@@ -1362,6 +1371,7 @@ where
                         reach: packed.as_ref().map(|packed| packed.view.as_ref()),
                         reach_flood: packed.as_ref().and_then(|packed| packed.flood.as_deref()),
                         bank_memory: bank_memory.as_deref(),
+                        bank_preferences: slot.bank_preferences(),
                         condition,
                         poison_unknown_pulse,
                         cure_poison,

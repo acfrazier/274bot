@@ -14,7 +14,7 @@ use crate::native::{ActionError, WalkOptions};
 use crate::native_bank::{BankAction, BankReceipt, Withdrawal};
 use api::bank_memory::Origin;
 use api::game_data::SelectedGameData;
-use api::named_banks::{BankPreferences, NamedBank};
+use api::named_banks::NamedBank;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{ItemView, WorldTile};
 use std::sync::Arc;
@@ -109,7 +109,6 @@ pub struct BankChoice {
     pub bank: Option<NamedBank>,
     pub explicit: Option<Arc<str>>,
     pub required: bool,
-    pub preferences: BankPreferences,
 }
 
 #[non_exhaustive]
@@ -168,7 +167,6 @@ impl AcquireRequest {
                 bank,
                 explicit: None,
                 required,
-                preferences: BankPreferences::default(),
             },
             stage: BankStage::Authored(actions),
             partial_ok,

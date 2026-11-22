@@ -1249,6 +1249,7 @@ mod tests {
         let mut cx = ActionContext {
             stage_cross: None,
             protected_items: None,
+            bank_preferences: Default::default(),
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,
@@ -1765,6 +1766,7 @@ mod tests {
         let mut cx = ActionContext {
             stage_cross: None,
             protected_items: None,
+            bank_preferences: Default::default(),
             walk_prereq: Default::default(),
             condition: None,
             poison_unknown_pulse: u8::MAX,

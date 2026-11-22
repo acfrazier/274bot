@@ -490,7 +490,6 @@ impl Gatherer {
                 explicit: (!self.settings().bank.eq_ignore_ascii_case("Nearest"))
                     .then(|| Arc::from(self.settings().bank.as_str())),
                 required: false,
-                preferences: self.settings().bank_preferences(),
             },
             stage: BankStage::Planned,
             partial_ok: true,
@@ -1109,9 +1108,7 @@ impl Gatherer {
         }
         let next = self.pending.as_ref()?.get::<Arc<Prepared>>()?;
         let current = self.settings();
-        let changed_bank = current.bank != next.settings.bank
-            || current.use_mage_bank != next.settings.use_mage_bank
-            || current.use_zanaris_bank != next.settings.use_zanaris_bank;
+        let changed_bank = current.bank != next.settings.bank;
         // A bag is atomic: a disposition+bank edit is admitted together at
         // the disposal boundary that starts (or disables) the next bank trip.
         let next_disposal = disposal_due

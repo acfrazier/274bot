@@ -41,6 +41,8 @@ pub struct CompiledTick<'a> {
     /// this tick (design-bank-snapshot §1.2): `None` in a bare ctx or when
     /// the host has no memory for the slot.
     pub bank_memory: Option<&'a api::bank_memory::BankMemory>,
+    /// The same account conditions that gate the catalog's bank choices.
+    pub bank_preferences: api::named_banks::BankPreferences,
     /// This frame's complete, live condition. Never posted into an isolate.
     pub condition: Option<api::condition::BotCondition>,
     /// Strongest selected NPC poison pulse. `None` fails closed at the reader.

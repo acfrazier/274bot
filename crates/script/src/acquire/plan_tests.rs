@@ -124,7 +124,6 @@ fn request(needs: Vec<Need>) -> AcquireRequest {
             bank: None,
             explicit: None,
             required: false,
-            preferences: BankPreferences::default(),
         },
         stage: BankStage::Planned,
         partial_ok: false,

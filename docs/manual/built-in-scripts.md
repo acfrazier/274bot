@@ -187,13 +187,15 @@ The four places for `location`:
 | --- | --- | --- |
 | `disposition` | Bank | **Bank** carries the haul to a bank and deposits it. **Power** drops it. |
 | Bank: Nearest (default), or always use the bank you pick | Nearest | **Nearest** uses the nearest bank the bot can reach. A bank you pick is always used. |
-| `useMageBank`, `useZanarisBank` | off | Allow those two banks when `disposition` is **Bank**. |
 | `baitTarget` | 100 | For Fishing: the bait to carry, from 1 to 10,000. |
 | `food`, `foodTarget`, `eatBelow` | none, 0, 0 | The food to carry, how many, and the hit points at which to eat. 0 for `eatBelow` means half your maximum hit points. |
 | `coinTarget` | 0 | The coins to top up to during a bank trip. A coin shortage never starts a trip. |
 | `reserveTeleport`, `reserveCasts` | `Off`, 0 | A teleport spell and the casts to keep runes for. This does not allow teleports; `allowTeleports` does. |
 | `deathPolicy`, `maxDeaths` | **Recover**, 2 | **Recover** walks back to the work place after a death. **Stop** ends the run, and so does the third death. |
 | `allowTeleports`, `allowWilderness`, `allowDangerZones` | off | Walk permissions for this script. |
+
+The Zanaris bank requires Lost City completion. The Mage Arena bank requires
+wilderness permission.
 
 A change of skill, resource or place applies at the next start. Other changes
 apply to the running script at a safe moment.

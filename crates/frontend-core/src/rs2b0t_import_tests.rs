@@ -1162,6 +1162,11 @@ fn maps_every_item_or_reports_why_not() {
         future.reason().contains("not a Global setting"),
         "{future:?}"
     );
+    let mage_bank = &bob.skipped()[2];
+    assert!(
+        mage_bank.reason().contains("wilderness routing"),
+        "{mage_bank:?}"
+    );
 
     let file_items: Vec<&str> = plan.file_skipped().iter().map(Skipped::item).collect();
     assert_eq!(

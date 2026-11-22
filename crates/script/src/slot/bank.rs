@@ -28,6 +28,19 @@ use std::sync::Mutex;
 use std::task::Poll;
 use std::time::Duration;
 
+pub(super) fn bank_run_settings(
+    bag: Option<&crate::native::SettingsBag>,
+    preferences: BankPreferences,
+) -> crate::native::SettingsBag {
+    let mut bag = bag.cloned().unwrap_or_default();
+    bag.insert("useMageBank".into(), Value::Bool(preferences.use_mage_bank));
+    bag.insert(
+        "useZanarisBank".into(),
+        Value::Bool(preferences.use_zanaris_bank),
+    );
+    bag
+}
+
 /// Which bank rows one poll visits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BankPoll {
@@ -1206,21 +1219,32 @@ impl SlotScript {
             })
     }
 
-    /// The existing per-script opt-ins shared by bank selection and bank trips.
+    /// The account's current bank eligibility, shared by bank selection and trips.
     pub fn bank_preferences(&self) -> BankPreferences {
-        let bag = self
-            .surface_start
-            .as_ref()
-            .and_then(|start| start.settings_bag.as_deref());
-        BankPreferences {
-            use_mage_bank: bag
-                .and_then(|bag| bag.get("useMageBank"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            use_zanaris_bank: bag
-                .and_then(|bag| bag.get("useZanarisBank"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+        self.bank_preferences
+    }
+
+    /// Publish settings only when an observed account condition changes.
+    pub fn refresh_bank_preferences(
+        &mut self,
+        snapshot: Option<&api::snapshot::GameSnapshot>,
+        allow_wilderness: bool,
+    ) {
+        self.update_bank_preferences(BankPreferences::for_account(snapshot, allow_wilderness));
+    }
+
+    pub(super) fn update_bank_preferences(&mut self, preferences: BankPreferences) {
+        if self.bank_preferences == preferences {
+            return;
+        }
+        self.bank_preferences = preferences;
+        if let (Some(surface), Some(start)) = (&self.surface, &self.surface_start) {
+            if start.card.kind() == SurfaceKind::Js {
+                surface.post_settings_bag(&bank_run_settings(
+                    start.settings_bag.as_deref(),
+                    preferences,
+                ));
+            }
         }
     }
 

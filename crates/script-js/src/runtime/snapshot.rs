@@ -1125,6 +1125,12 @@ pub(super) fn materialize_settings_bag(
             json_value(&mut scope, partner).map_err(|e| format!("global settings bag: {e}"))?;
         set(&mut scope, globals, script::CLUE_DUEL_PARTNER, partner)?;
     }
+    for key in ["useMageBank", "useZanarisBank"] {
+        if let Some(enabled) = bag.get(key).and_then(serde_json::Value::as_bool) {
+            let value = v8::Boolean::new(&mut scope, enabled);
+            set(&mut scope, globals, key, value.into())?;
+        }
+    }
     set(&mut scope, host, "globalSettingsBag", globals.into())
 }
 

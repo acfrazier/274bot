@@ -1031,6 +1031,7 @@ fn a_held_tick_sends_no_close() {
         nav: None,
         reach_flood: None,
         bank_memory: None,
+        bank_preferences: Default::default(),
         collision: None,
         // The host holds the account: a user takeover or a survival hold.
         hold: true,

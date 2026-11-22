@@ -1702,6 +1702,7 @@ mod tests {
                     reach: None,
                     reach_flood: self.reach_flood.as_ref(),
                     bank_memory: None,
+                    bank_preferences: Default::default(),
                     shop_keepers: None,
                     collision: None,
                     nav: None,

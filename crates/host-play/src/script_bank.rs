@@ -2742,7 +2742,7 @@ pub(super) fn queue_native_service_pick_scoped(
     );
 }
 
-/// The raw native walk-nearest-bank verb keeps native option defaults.
+/// The raw native bank walk uses the slot's observed bank eligibility.
 #[expect(
     clippy::too_many_arguments,
     reason = "bank walking captures the gating state and the current quest observation"
@@ -2838,6 +2838,12 @@ fn queue_bank(
     } else if native.is_none() && (request_id == 0 || request_id <= bot.bank_pick.last_id) {
         return false;
     }
+    let preferences = if walking {
+        opts.allow_wilderness = bot.bank_preferences.use_mage_bank;
+        bot.bank_preferences
+    } else {
+        preferences
+    };
     let service_exclusions = service
         .as_ref()
         .and_then(|_| bot.requested_exclusions.clone());

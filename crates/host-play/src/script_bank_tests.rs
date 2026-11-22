@@ -42,7 +42,7 @@ fn bank(name: &'static str, x: i32, z: i32) -> NamedBank {
 
 #[cfg(feature = "js")]
 #[test]
-fn bank_pick_v2_explicit_opt_ins_control_the_returned_bank_over_settings_defaults() {
+fn bank_pick_v2_uses_account_conditions_over_legacy_options() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -62,50 +62,35 @@ fn bank_pick_v2_explicit_opt_ins_control_the_returned_bank_over_settings_default
     };
     let required_quests = ["Lost City", canifis.definition.unwrap().quest.unwrap()];
     let public_banks = [mage, zanaris, bank("Public", 3093, 3958)];
-    for (banks, defaults, options, expected) in [
-        (
-            public_banks.to_vec(),
-            false,
-            "use_mage_bank: true, use_zanaris_bank: false",
-            "Mage Arena",
-        ),
-        (
-            public_banks.to_vec(),
-            false,
-            "use_mage_bank: false, use_zanaris_bank: true",
-            "Zanaris",
-        ),
-        (
-            public_banks.to_vec(),
-            true,
-            "use_mage_bank: false, use_zanaris_bank: false",
-            "Public",
-        ),
-        (public_banks.to_vec(), true, "", "Mage Arena"),
-        (vec![canifis], false, "", "Canifis"),
+    for (banks, wilderness, lost_city_colour, expected) in [
+        (public_banks.to_vec(), true, 0x00F800, "Mage Arena"),
+        (public_banks.to_vec(), false, 0x00F800, "Zanaris"),
+        (public_banks.to_vec(), false, 0xF8F800, "Public"),
+        (public_banks.to_vec(), false, 0, "Public"),
+        (vec![canifis], false, 0, "Canifis"),
     ] {
-        let source = format!(
-            r#"
+        let source = r#"
 let started = false;
-export async function tick(api) {{
+export async function tick(api) {
   if (started) return;
   started = true;
-  globalThis.result = await api.bankNearestReachable({{ from: {{x:3091,z:3958,level:0}}, {options} }});
-}}
-"#
-        );
+  globalThis.result = await api.bankNearestReachable({
+    from: {x:3091,z:3958,level:0}, use_mage_bank: true, use_zanaris_bank: false
+  });
+}
+"#;
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(1);
         slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
         let prepared = crate::script_runtime::prepared_test_start_card(
-            &script_js::native_fixture(&source),
+            &script_js::native_fixture(source),
             script_js::LoadShape::NativeTick,
             vec![],
         )
         .expect("native bank fixture prepares");
         let mut settings = script::native::SettingsBag::new();
-        settings.insert("useMageBank".into(), serde_json::Value::Bool(defaults));
-        settings.insert("useZanarisBank".into(), serde_json::Value::Bool(defaults));
+        settings.insert("useMageBank".into(), serde_json::Value::Bool(!wilderness));
+        settings.insert("useZanarisBank".into(), serde_json::Value::Bool(false));
         let start = crate::script_runtime::js_surface_start(
             prepared,
             Some(Arc::new(settings)),
@@ -125,13 +110,6 @@ export async function tick(api) {{
                 other => panic!("Load start failed: {other:?}"),
             }
         }
-        assert_eq!(
-            slot.bank_preferences(),
-            api::named_banks::BankPreferences {
-                use_mage_bank: defaults,
-                use_zanaris_bank: defaults,
-            }
-        );
         slot.on_is_up(true);
         let navs = navs(banks);
         let world = Some(world(false));
@@ -148,11 +126,16 @@ export async function tick(api) {{
                 .map(|name| api::snapshot::QuestStatusView {
                     component_id: -1,
                     name: (*name).into(),
-                    colour: 0x00F800,
+                    colour: if *name == "Lost City" {
+                        lost_city_colour
+                    } else {
+                        0x00F800
+                    },
                 })
                 .collect(),
             true,
         );
+        slot.refresh_bank_preferences(Some(&snapshot), wilderness);
         let post = |slot: &mut script::SlotScript, game_tick: bool| {
             let bank_selection = slot.bank_selection_input();
             super::super::with_script_snapshot_input_shorts(
@@ -288,6 +271,11 @@ export async function tick(api) {{
 #[test]
 fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
     let navs = navs(vec![bank("bank", 12, 12)]);
+    navs.lock()
+        .unwrap()
+        .get_mut("test")
+        .unwrap()
+        .bank_preferences = BankPreferences::for_account(None, true);
     let world = Some(world(false));
     let mut frame_a = WorldState::empty();
     frame_a.quests.insert("Frame A".into());
@@ -327,6 +315,7 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
         .expect("a far routable bank queues selection work");
     assert!(Arc::ptr_eq(&active.job.request.state, &frame_a));
     assert_eq!(active.job.request.state.quests, frame_a.quests);
+    assert!(active.job.request.opts.allow_wilderness);
 }
 
 #[test]

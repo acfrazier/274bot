@@ -316,6 +316,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Scripts
 
+- Scripts can use the Zanaris bank after the account completes Lost City.
+  The Mage Arena bank follows the existing wilderness permission. Neither
+  bank needs a separate setting.
+
 - The catalog script AccountLeveler now loads. It imports four rs2b0t modules
   that 274bot did not provide, so its card showed **failed import**.
   - The Dragon Slayer journal reader returns the quest stage, which the host
