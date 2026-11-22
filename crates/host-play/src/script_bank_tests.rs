@@ -158,7 +158,7 @@ fn bank_pick_v2_uses_account_conditions_over_legacy_options() {
 
 #[cfg(feature = "js")]
 #[test]
-fn compat_banking_open_considers_wilderness_when_js_v2_does_not() {
+fn compat_banking_open_walks_through_wilderness_when_js_v2_does_not() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -318,10 +318,10 @@ export async function tick(api) {
             true,
         );
         slot.refresh_bank_preferences(Some(&snapshot), wilderness);
-        let post = |slot: &mut script::SlotScript, game_tick: bool| {
+        let post = |slot: &mut script::SlotScript, tick, game_tick: bool| {
             let bank_selection = slot.bank_selection_input();
             super::super::with_script_snapshot_input_shorts(
-                1,
+                tick,
                 Some((from.x, from.z, from.level)),
                 true,
                 None,
@@ -353,7 +353,7 @@ export async function tick(api) {
             assert!(legacy.is_empty(), "bank pick uses the typed native seat");
             let mut cx = script::ScriptCtx {
                 driver: &mut HeldDriver,
-                tick: 1,
+                tick,
                 here: Some((from.x, from.z, from.level)),
                 walk: None,
                 walk_with: None,
@@ -369,10 +369,10 @@ export async function tick(api) {
             }
             slot.probe("true").unwrap();
         };
-        post(&mut slot, true);
+        post(&mut slot, 1, true);
         let action = (0..8)
             .find_map(|_| {
-                post(&mut slot, false);
+                post(&mut slot, 1, false);
                 slot.take_native_action()
             })
             .unwrap_or_else(|| {
@@ -448,11 +448,60 @@ export async function tick(api) {
         }
         slot.complete_native_bank_pick(&authority, receipt);
         if compat {
+            // The pick used the first tick's action budget. The next tick
+            // can dispatch the walk owned by Banking.open.
+            post(&mut slot, 2, true);
+            let action = (0..8)
+                .find_map(|_| {
+                    post(&mut slot, 2, false);
+                    slot.take_native_action()
+                })
+                .expect("Banking.open walks to the selected bank");
+            let authority = action.authority();
+            let script::native::HostEffect::Walk(request) = action.effect else {
+                panic!("Banking.open must emit a Walk action");
+            };
+            assert_eq!(request.target, tile(12, 0));
+            {
+                let mut all = navs.lock().unwrap();
+                let bot = all.get_mut("test").unwrap();
+                bot.work_scope = slot.work_scope();
+                bot.compat_v1 = true;
+                bot.walk_globals = Some(Arc::new(Mutex::new(
+                    crate::walk_permissions::WalkGlobals::fail_closed(),
+                )));
+            }
+            let arm = super::super::ScriptWalkArm {
+                here: Some((from.x, from.z, from.level)),
+                world,
+                navs: Arc::clone(&navs),
+                name: "test".into(),
+                state: Some(state),
+                bank: Default::default(),
+            };
+            assert!(arm.queue_native_route(&snapshot, request, authority, None, None));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                super::super::pump_route_work(&navs, "test");
+                let all = navs.lock().unwrap();
+                let bot = &all["test"];
+                if !bot.route_work_pending() {
+                    assert!(
+                        bot.route_destination().is_some_and(|dest| dest.x > 7),
+                        "the compatibility walk must be admitted across wilderness: {:?}",
+                        bot.walk_outcome_detail
+                    );
+                    break;
+                }
+                assert!(Instant::now() < deadline, "native walk planner stalled");
+                drop(all);
+                std::thread::yield_now();
+            }
             slot.stop();
             continue;
         }
         for _ in 0..8 {
-            post(&mut slot, false);
+            post(&mut slot, 1, false);
         }
         assert_eq!(
             slot.probe("globalThis.result.ok && globalThis.result.value.name")

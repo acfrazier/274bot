@@ -403,15 +403,6 @@ fn access_walk_options() -> WalkOptions {
     }
 }
 
-fn world_walk_options() -> WalkOptions {
-    WalkOptions {
-        allow_teleports: WalkBit::Forbid,
-        allow_wilderness: WalkBit::Inherit,
-        allow_danger_zones: WalkBit::Inherit,
-        ..WalkOptions::default()
-    }
-}
-
 fn current_tile(cx: &ActionContext<'_>) -> Option<WorldTile> {
     cx.snapshot().here().map(|here| here.value)
 }
@@ -2009,7 +2000,7 @@ impl BankingOpen {
                         self.open_target(next);
                         continue;
                     }
-                    match cx.walk(walk_request(cx, target, radius, world_walk_options())) {
+                    match cx.walk(walk_request(cx, target, radius, access_walk_options())) {
                         Ok(request_id) => {
                             self.phase = BankingPhase::Walk(WorldWalk {
                                 follow: OpeningWalk::new(cx, request_id),
@@ -2051,7 +2042,7 @@ impl BankingOpen {
                     }
                     if let Err(error) =
                         walk.follow
-                            .resume(cx, walk.target, walk.radius, world_walk_options())
+                            .resume(cx, walk.target, walk.radius, access_walk_options())
                     {
                         if error != ActionError::BudgetExhausted {
                             return Poll::Ready(Err(error));

@@ -173,7 +173,7 @@ from it, whatever its size claimed.
 | Global `clueDuelPartner` | clue duel partner |
 | `rendererEnabled` | `0` sets the profile's display to Off; `1` turns an Off display back on |
 | Global `bankCommonJunk` | not imported: 274bot has no account-wide default for this parameter |
-| Global `useZanarisBank`, `useMageBank` | not imported: Zanaris requires Lost City completion, and eligibility for Mage Arena follows the account's wilderness permission. Compatibility `Banking.open` still allows wilderness routes to eligible banks. |
+| Global `useZanarisBank`, `useMageBank` | not imported: Zanaris requires Lost City completion, and eligibility for Mage Arena follows the account's wilderness permission. Compatibility `Banking.open` can select and walk to an eligible bank through wilderness even when the account setting is off. |
 | Global `runAuto`, `runEnergyMin` | not imported: 274bot turns run back on by itself at 20% energy (scripts may change that); there is no per-account setting |
 | Global `navTeleports` | not imported: one app-wide switch in Nav config |
 | Global `navPathStallTicks`, `navPathDeviation` | not imported: no such setting |

@@ -321,7 +321,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   permission. Neither bank needs a separate setting. Native, JS v2, and
   Luau bank selection avoids wilderness routes by default except for Mage
   Arena when the account permits it. The rs2b0t-compatible `Banking.open`
-  still allows wilderness routes.
+  allows wilderness both when choosing an eligible bank and when walking to
+  it, even when the account's wilderness setting is off.
 
 - The catalog script AccountLeveler now loads. It imports four rs2b0t modules
   that 274bot did not provide, so its card showed **failed import**.
