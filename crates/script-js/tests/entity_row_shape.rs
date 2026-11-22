@@ -7,7 +7,9 @@
 
 use script_js::{LoadIsolate, LoadShape};
 use {
-    script::native::snapshot_source::{SceneEntityInput, SnapshotInput, TileInput},
+    script::native::snapshot_source::{
+        GroundItemInput, SceneEntityInput, SnapshotInput, TileInput,
+    },
     script_js::wire::{encode_snapshot, encode_snapshot_delta},
 };
 
@@ -322,7 +324,7 @@ fn snapshot<'a>(
     npcs: &'a [SceneEntityInput<'a>],
     locs: &'a [SceneEntityInput<'a>],
     players: &'a [SceneEntityInput<'a>],
-    ground: &'a [SceneEntityInput<'a>],
+    ground: &'a [GroundItemInput<'a>],
 ) -> SnapshotInput<'a> {
     let mut input: SnapshotInput<'a> = common::ingame_snapshot();
     input.tick = tick;
@@ -426,12 +428,15 @@ fn assert_fast_rows(facts: &serde_json::Value, label: &str) {
                 row["nameConfigurable"].as_bool().unwrap_or(false),
                 "{label}: {category}[{index}] name must stay configurable"
             );
-            let keys: Vec<&str> = row["keys"]
+            let mut keys: Vec<&str> = row["keys"]
                 .as_array()
                 .expect("keys array")
                 .iter()
                 .map(|key| key.as_str().expect("string key"))
                 .collect();
+            if category == "ground" {
+                assert_eq!(keys.pop(), Some("count"), "{label}: ground count field");
+            }
             assert_eq!(
                 keys,
                 expected_keys(row),
@@ -460,7 +465,10 @@ fn main() {
         entity(3, None, 3230, 0, &actions),
     ];
     let cold_players = [entity(4, None, 3240, 0, &actions)];
-    let cold_ground = [entity(5, Some("Coins"), 3250, 0, &actions)];
+    let cold_ground = [GroundItemInput::new(
+        entity(5, Some("Coins"), 3250, 0, &actions),
+        450,
+    )];
     let cold = snapshot(1, &cold_npcs, &cold_locs, &cold_players, &cold_ground);
 
     let (bytes, mut fingerprint) = encode_snapshot_delta(None, &cold, false);
@@ -488,7 +496,7 @@ fn main() {
     ];
     let replaced_locs = [entity(12, Some("Rock"), 3320, 0, &actions)];
     let replaced_players = [entity(13, Some("Player"), 3330, 0, &actions)];
-    let replaced_ground = [entity(14, None, 3340, 0, &actions)];
+    let replaced_ground = [GroundItemInput::new(entity(14, None, 3340, 0, &actions), 1)];
     let replaced = snapshot(
         2,
         &replaced_npcs,
@@ -539,7 +547,10 @@ fn main() {
     ];
     let recreated_locs = [entity(22, None, 3420, 0, &actions)];
     let recreated_players = [entity(23, Some("Player"), 3430, 0, &actions)];
-    let recreated_ground = [entity(24, Some("Bones"), 3440, 0, &actions)];
+    let recreated_ground = [GroundItemInput::new(
+        entity(24, Some("Bones"), 3440, 0, &actions),
+        1,
+    )];
     let recreated = snapshot(
         4,
         &recreated_npcs,

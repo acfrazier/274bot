@@ -1,6 +1,8 @@
 use script::interact::InteractReq;
 use {
-    script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput},
+    script::native::snapshot_source::{
+        GroundItemInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    },
     script_js::wire::encode_snapshot,
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
@@ -390,7 +392,7 @@ fn actor_snapshot<'a>(
     npcs: &'a [SceneEntityInput<'a>],
     locs: &'a [SceneEntityInput<'a>],
     players: &'a [SceneEntityInput<'a>],
-    ground: &'a [SceneEntityInput<'a>],
+    ground: &'a [GroundItemInput<'a>],
 ) -> SnapshotInput<'a> {
     let mut snapshot = empty_snapshot(tick);
     snapshot.npcs = npcs;
@@ -468,13 +470,9 @@ fn complete_entities_and_query_contract_on_served_isolates() {
     player.target_kind = 2;
     player.target_index = 2;
     let players = [player];
-    let ground = [entity(
-        3,
-        200,
-        Some("Bones"),
-        (3200, 3202, 0),
-        2,
-        &ground_actions,
+    let ground = [GroundItemInput::new(
+        entity(3, 200, Some("Bones"), (3200, 3202, 0), 2, &ground_actions),
+        1,
     )];
     let snapshot = actor_snapshot(1, &npcs, &locs, &players, &ground);
 

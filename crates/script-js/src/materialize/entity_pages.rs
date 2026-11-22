@@ -50,10 +50,11 @@ pub(super) const NPC_NETWORK_ROW_FIELDS: [&str; 2] = ["network_x", "network_z"];
 pub(crate) struct EntityRowShapes {
     pub(crate) common: v8::Global<v8::ObjectTemplate>,
     pub(crate) npc_network: v8::Global<v8::ObjectTemplate>,
+    pub(crate) ground: v8::Global<v8::ObjectTemplate>,
 }
 
 impl EntityRowShapes {
-    /// Build both templates on the isolate thread that will instantiate rows.
+    /// Build the templates on the isolate thread that will instantiate rows.
     fn create(scope: &mut v8::HandleScope) -> Result<Self, String> {
         Ok(Self {
             common: row_template(scope, COMMON_ROW_FIELDS.iter().copied())?,
@@ -64,6 +65,7 @@ impl EntityRowShapes {
                     .copied()
                     .chain(NPC_NETWORK_ROW_FIELDS),
             )?,
+            ground: row_template(scope, COMMON_ROW_FIELDS.into_iter().chain(["count"]))?,
         })
     }
 }

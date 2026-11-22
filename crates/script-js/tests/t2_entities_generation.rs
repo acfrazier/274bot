@@ -1,5 +1,5 @@
 use {
-    script::native::snapshot_source::{SceneEntityInput, SnapshotInput},
+    script::native::snapshot_source::{GroundItemInput, SceneEntityInput, SnapshotInput},
     script_js::wire::IsolateBuf,
     script_js::wire::Snapshot,
 };
@@ -44,7 +44,8 @@ fn entity<'a>(
 
 fn snapshot<'a>(
     tick: u64,
-    [npcs, locs, players, ground]: [&'a [SceneEntityInput<'a>]; 4],
+    [npcs, locs, players]: [&'a [SceneEntityInput<'a>]; 3],
+    ground: &'a [GroundItemInput<'a>],
     self_slot: i32,
     run_energy: i32,
     main_modal_id: i32,
@@ -363,12 +364,13 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
         entity(8, 302, "Bob", (3223, 3224, 0), 1, &trade, Some(8)),
     ];
     let base_ground = [
-        entity(0, 401, "Bones", (3222, 3225, 0), 2, &take, None),
-        entity(1, 402, "Bones", (3223, 3225, 0), 1, &take, None),
+        GroundItemInput::new(entity(0, 401, "Bones", (3222, 3225, 0), 2, &take, None), 1),
+        GroundItemInput::new(entity(1, 402, "Bones", (3223, 3225, 0), 1, &take, None), 1),
     ];
     let base = snapshot(
         1,
-        [&base_npcs, &base_locs, &base_players, &base_ground],
+        [&base_npcs, &base_locs, &base_players],
+        &base_ground,
         0,
         0,
         -1,
@@ -477,18 +479,14 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
         &trade,
         Some(9),
     )];
-    let failed_ground = [entity(
-        22,
-        801,
-        "FailedBones",
-        (3224, 3225, 0),
-        7,
-        &take,
-        None,
+    let failed_ground = [GroundItemInput::new(
+        entity(22, 801, "FailedBones", (3224, 3225, 0), 7, &take, None),
+        1,
     )];
     let failed = snapshot(
         2,
-        [&failed_npcs, &failed_locs, &failed_players, &failed_ground],
+        [&failed_npcs, &failed_locs, &failed_players],
+        &failed_ground,
         9,
         0,
         77,
@@ -534,7 +532,8 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     );
     let omitted = snapshot(
         3,
-        [&failed_npcs, &failed_locs, &failed_players, &failed_ground],
+        [&failed_npcs, &failed_locs, &failed_players],
+        &failed_ground,
         9,
         1,
         77,
@@ -577,7 +576,8 @@ fn production_entity_queries_follow_only_the_successful_native_generation() {
     )];
     let advanced = snapshot(
         4,
-        [&fresh_npcs, &failed_locs, &failed_players, &failed_ground],
+        [&fresh_npcs, &failed_locs, &failed_players],
+        &failed_ground,
         8,
         1,
         77,

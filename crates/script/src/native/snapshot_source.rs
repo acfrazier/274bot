@@ -118,6 +118,18 @@ pub struct SceneEntityInput<'a> {
     pub angle: i32,
 }
 
+/// A posted ground item and the number of units in its stack.
+pub struct GroundItemInput<'a> {
+    pub entity: SceneEntityInput<'a>,
+    pub count: i32,
+}
+
+impl<'a> GroundItemInput<'a> {
+    pub const fn new(entity: SceneEntityInput<'a>, count: i32) -> Self {
+        Self { entity, count }
+    }
+}
+
 /// One chat modal BUTTON_OK choice, including the exact component direct
 /// catalog callers pass to `actions.ifButton`.
 #[derive(Clone, Copy)]
@@ -256,7 +268,7 @@ pub struct SnapshotInput<'a> {
     pub bank_op_result: bool,
     pub locs: &'a [SceneEntityInput<'a>],
     pub players: &'a [SceneEntityInput<'a>],
-    pub ground: &'a [SceneEntityInput<'a>],
+    pub ground: &'a [GroundItemInput<'a>],
     pub equipment: &'a [ItemRowInput<'a>],
     pub chat_open: bool,
     pub chat_continue: bool,

@@ -13,6 +13,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - After Continue is sent, fresh snapshots wait for the next chat interface
   instead of offering the already-used button. This fixes revision-377 Cook
   dialogue failures while retaining native menu refusal checks.
+- The JavaScript compatibility reader preserves ground-item stack counts.
 
 ### Quester
 

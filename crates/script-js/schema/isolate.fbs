@@ -75,6 +75,7 @@ table SceneEntity {
   nz: int; // path-head network SW z
   shape: int; // loc-only placed shape
   angle: int; // loc-only placed rotation
+  ground_count: int = null; // ground-item stack quantity
 }
 
 // One chat modal BUTTON_OK choice. The component id is the exact button

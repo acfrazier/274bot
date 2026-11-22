@@ -1054,7 +1054,7 @@ pub struct SnapshotFingerprint {
     pub bank_op_result: bool,
     pub locs: Vec<SceneEntityFp>,
     pub players: Vec<SceneEntityFp>,
-    pub ground: Vec<SceneEntityFp>,
+    pub ground: Vec<(SceneEntityFp, i32)>,
     pub equipment: Vec<ItemRowFp>,
     pub chat_open: bool,
     pub chat_continue: bool,
@@ -1308,7 +1308,11 @@ impl SnapshotFingerprint {
             npcs: input.npcs.iter().map(entity_fp).collect(),
             locs: input.locs.iter().map(entity_fp).collect(),
             players: input.players.iter().map(entity_fp).collect(),
-            ground: input.ground.iter().map(entity_fp).collect(),
+            ground: input
+                .ground
+                .iter()
+                .map(|item| (entity_fp(&item.entity), item.count))
+                .collect(),
             equipment: input.equipment.iter().map(item_row_fp).collect(),
             chat_open: input.chat_open,
             chat_continue: input.chat_continue,
@@ -2353,7 +2357,7 @@ fn encode_snapshot_masked_into(
     let mut entities_off = |entities: &[SceneEntityInput<'_>]| {
         let offs = entities
             .iter()
-            .map(|e| scene_entity_off(b, e))
+            .map(|e| scene_entity_off(b, e, None))
             .collect::<Vec<_>>();
         b.create_vector(&offs)
     };
@@ -2373,7 +2377,12 @@ fn encode_snapshot_masked_into(
         None
     };
     let ground_off = if mask.ground {
-        Some(entities_off(input.ground))
+        let offs = input
+            .ground
+            .iter()
+            .map(|item| scene_entity_off(b, &item.entity, Some(item.count)))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
     } else {
         None
     };
@@ -4392,6 +4401,7 @@ fn stat_off<'b>(b: &mut FlatBufferBuilder<'b>, s: &StatInput<'_>) -> WIPOffset<S
 fn scene_entity_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     e: &SceneEntityInput<'_>,
+    ground_count: Option<i32>,
 ) -> WIPOffset<SceneEntity<'b>> {
     let name_off = e.name.map(|n| b.create_string(n));
     let action_offs: Vec<_> = e.actions.iter().map(|a| b.create_string(a)).collect();
@@ -4426,6 +4436,9 @@ fn scene_entity_off<'b>(
     }
     if e.angle != 0 {
         table.add_angle(e.angle);
+    }
+    if let Some(count) = ground_count {
+        table.add_ground_count(count);
     }
     table.finish()
 }
