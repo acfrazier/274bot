@@ -131,6 +131,12 @@ fn record_stop(
 ) -> Result<(), String> {
     if let Some(receipt) = receipt {
         if previous.as_ref() != Some(&receipt) {
+            if receipt.state == script::ScriptTerminalState::Stopped {
+                logs.push(RunnerLog::received(format!(
+                    "stopping — {}",
+                    receipt.reason
+                ))?);
+            }
             logs.push(RunnerLog::received(format!(
                 "stopped — {}",
                 receipt.reason
@@ -718,7 +724,7 @@ fn run_corpus() -> Result<(), String> {
     let frame_queue = Arc::clone(&queue);
     let play = host_play::run_with_template(
         template,
-        true,
+        false, // The upstream helpers own tutorial setup. A relog must not teleport.
         vec![],
         |_| (None, None),
         move |client, _, _| {
@@ -908,7 +914,7 @@ fn runner_log_time_is_native_unix_epoch_milliseconds() {
 }
 
 #[test]
-fn native_stop_receipts_reach_the_runner_log_once() {
+fn native_stop_receipts_reach_the_runner_log_in_order_once() {
     let mut logs = vec![RunnerLog::at("script output".into(), UNIX_EPOCH).unwrap()];
     let mut previous = None;
     let receipt = script::ScriptLifecycleReceipt {
@@ -922,7 +928,11 @@ fn native_stop_receipts_reach_the_runner_log_once() {
     record_stop(&mut logs, &mut previous, None).unwrap();
     assert_eq!(
         logs.iter().map(|log| log.msg.as_str()).collect::<Vec<_>>(),
-        ["script output", "stopped — native stop reason"]
+        [
+            "script output",
+            "stopping — native stop reason",
+            "stopped — native stop reason"
+        ]
     );
     assert_eq!(previous, Some(receipt));
 }
