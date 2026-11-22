@@ -92,10 +92,10 @@ every host, including non-CI hosts. Builds omit embedded 377 data when any
 required 377 file is absent. An explicit `NAV_377_PACK` must name a valid pack.
 Missing or invalid explicit inputs fail on every host, including CI.
 
-For the client's frozen Java-oracle tests, `CLIENT_377_CACHE_DIR` must name the
-eight-JAG fixture that matches the checked-in oracle. A newly packed running
-engine cache is not that frozen fixture. Keep this test path separate from the
-cache used by a live host run.
+For the client's frozen Java-oracle tests, `CLIENT_377_ORACLE_CACHE_DIR` must
+name the exact eight-JAG fixture that matches the checked-in oracle. A newly
+packed running engine cache is not that fixture. Live host runs continue to
+use `CLIENT_377_CACHE_DIR`.
 
 The bounded `client_377` scenario uses the existing
 `panel-play --revision 377 --live script_client_377` harness. After the normal
