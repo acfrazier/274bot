@@ -30,6 +30,7 @@ globalThis.rs2b0t = {
         get state() { return globalThis.__e2eStatus.state; },
         get bot() {
             const state = globalThis.__e2eStatus.state;
+            // Upstream retains the last bot. After stop, this adapter replaces it with E2EObserver.
             if (state === 'idle' || state === 'stopped') return null;
             return globalThis.__rs_bot ?? null;
         },
