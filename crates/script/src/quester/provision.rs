@@ -260,8 +260,43 @@ impl BankCloser {
     }
 }
 
-pub struct Provisioner {
+#[derive(Debug, PartialEq, Eq)]
+struct FoodAssessmentKey {
+    stage: usize,
+    origin: Option<WorldTile>,
+    destination: Option<WorldTile>,
+    run_ticks: u16,
+    plan_revision: u64,
+}
+
+struct FoodAssessment {
+    key: FoodAssessmentKey,
+    request_id: u64,
+    complete: bool,
+    route: Option<Arc<super::survival::FoodRoute>>,
+}
+
+impl FoodAssessment {
+    fn is_current(&self, key: &FoodAssessmentKey) -> bool {
+        self.key == *key
+    }
+}
+
+/// Cold stage preparation shares one allocation instead of growing Quester.
+struct StagePreparation {
     path: Option<api::selected::FactKey>,
+    /// Optional needs already logged as unmet since the last path reset.
+    unmet_logged: Vec<UnmetNeed>,
+    food: Option<FoodAssessment>,
+    food_plan: Option<Arc<dyn StepPlan>>,
+    food_plan_revision: u64,
+    /// An unavailable optional bank is final for this stage, not this route.
+    survival_refused_stage: usize,
+    gear_stage: usize,
+    gear_run: Option<Box<dyn StepRun>>,
+}
+
+pub struct Provisioner {
     bank_run: Option<AcquireRun>,
     acquire_run: Option<Box<dyn StepRun>>,
     acquire_finished: bool,
@@ -271,8 +306,7 @@ pub struct Provisioner {
     carry_drawn: u64,
     /// `usize::MAX` is outside every compiled stage slice.
     survival_stage: usize,
-    gear_stage: usize,
-    gear_run: Option<Box<dyn StepRun>>,
+    preparation: Box<StagePreparation>,
     attempts: u32,
     status: Status,
     revision: u64,
@@ -288,13 +322,10 @@ pub struct Provisioner {
     /// The bank this provisioner's trips opened, once a frame showed it open.
     lease: Option<BankLease>,
     closer: BankCloser,
-    /// Optional needs already logged as unmet since the last path reset.
-    unmet_logged: Vec<UnmetNeed>,
 }
 
-// Measured 1,120 B on Linux. The 1,184 B ceiling includes 64 B headroom.
-// Growth is 240 B: 208 B for the inline protected snapshot and 32 B for
-// survival/gear stage state. No copied Path keep list is retained.
+// Keep the original 1,184 B ceiling. Cold preparation state is boxed so
+// cached route assessments do not grow the per-bot inline layout.
 const _: () = assert!(std::mem::size_of::<Provisioner>() <= 1184);
 
 impl Default for Provisioner {
@@ -306,7 +337,6 @@ impl Default for Provisioner {
 impl Provisioner {
     pub fn new() -> Self {
         Self {
-            path: None,
             bank_run: None,
             acquire_run: None,
             acquire_finished: false,
@@ -314,8 +344,16 @@ impl Provisioner {
             coin_drawn: false,
             carry_drawn: 0,
             survival_stage: usize::MAX,
-            gear_stage: usize::MAX,
-            gear_run: None,
+            preparation: Box::new(StagePreparation {
+                path: None,
+                unmet_logged: Vec::new(),
+                food: None,
+                food_plan: None,
+                food_plan_revision: 0,
+                survival_refused_stage: usize::MAX,
+                gear_stage: usize::MAX,
+                gear_run: None,
+            }),
             attempts: 0,
             status: Status::default(),
             revision: 0,
@@ -324,7 +362,19 @@ impl Provisioner {
             opening: false,
             lease: None,
             closer: BankCloser::default(),
-            unmet_logged: Vec::new(),
+        }
+    }
+
+    pub(super) fn set_food_plan(&mut self, plan: Option<Arc<dyn StepPlan>>) {
+        let unchanged = match (&self.preparation.food_plan, &plan) {
+            (Some(previous), Some(next)) => Arc::ptr_eq(previous, next),
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
+            self.preparation.food_plan = plan;
+            self.preparation.food_plan_revision =
+                self.preparation.food_plan_revision.wrapping_add(1);
         }
     }
 
@@ -364,11 +414,16 @@ impl Provisioner {
             self.acquire_run = None;
             self.acquire_finished = false;
         }
-        if self.path.as_ref().is_some_and(|path| path != &plan.path) {
+        if self
+            .preparation
+            .path
+            .as_ref()
+            .is_some_and(|path| path != &plan.path)
+        {
             self.reset(cx.tick.actions);
         }
-        if self.path.is_none() {
-            self.path = Some(plan.path.clone());
+        if self.preparation.path.is_none() {
+            self.preparation.path = Some(plan.path.clone());
             self.set_coin_drawn(plan.coin_float <= 0);
         }
 
@@ -379,13 +434,14 @@ impl Provisioner {
                 Closed::Done => {}
             }
         }
-        if let Some(run) = self.gear_run.as_mut() {
+        if let Some(run) = self.preparation.gear_run.as_mut() {
             match run.poll(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(result) => {
-                    self.gear_run = None;
+                    self.preparation.gear_run = None;
                     result?;
-                    self.gear_stage = stage_index(plan, current_stage).unwrap_or(usize::MAX);
+                    self.preparation.gear_stage =
+                        stage_index(plan, current_stage).unwrap_or(usize::MAX);
                 }
             }
         }
@@ -426,7 +482,8 @@ impl Provisioner {
         self.bank_run = None;
         self.survival_bank = false;
         self.acquire_run = None;
-        self.gear_run = None;
+        self.preparation.gear_run = None;
+        self.preparation.food = None;
         self.closer.cancel();
         self.in_session = false;
         self.opening = false;
@@ -448,21 +505,23 @@ impl Provisioner {
         if let Some(mut run) = self.acquire_run.take() {
             run.cancel(actions);
         }
-        if let Some(mut run) = self.gear_run.take() {
+        if let Some(mut run) = self.preparation.gear_run.take() {
             run.cancel(actions);
         }
-        self.gear_stage = usize::MAX;
+        self.preparation.gear_stage = usize::MAX;
         self.survival_stage = usize::MAX;
+        self.preparation.survival_refused_stage = usize::MAX;
+        self.preparation.food = None;
         self.survival_bank = false;
         self.closer.cancel();
         self.in_session = false;
         self.opening = false;
         self.acquire_finished = false;
-        self.path = None;
+        self.preparation.path = None;
         self.set_coin_drawn(false);
         self.set_carry_drawn(0);
         self.attempts = 0;
-        self.unmet_logged.clear();
+        self.preparation.unmet_logged.clear();
         self.set_status(ProvisionPhase::Idle, None, 0, 0, None, false);
     }
 
@@ -479,7 +538,7 @@ impl Provisioner {
     }
 
     pub(super) fn bank_phase(&self) -> Option<ProvisionPhase> {
-        (self.bank_run.is_some() || self.gear_run.is_some() || self.closer.active())
+        (self.bank_run.is_some() || self.preparation.gear_run.is_some() || self.closer.active())
             .then_some(self.status.phase)
     }
 
@@ -543,11 +602,11 @@ impl Provisioner {
     pub(super) fn run_live(&self) -> bool {
         self.bank_run.is_some()
             || self.closer.active()
-            || self.gear_run.is_some()
+            || self.preparation.gear_run.is_some()
             || (self.acquire_run.is_some() && !self.acquire_finished)
     }
     pub(super) fn has_run(&self) -> bool {
-        self.bank_run.is_some() || self.acquire_run.is_some() || self.gear_run.is_some()
+        self.bank_run.is_some() || self.acquire_run.is_some() || self.preparation.gear_run.is_some()
     }
 
     pub(super) fn transfer_in_flight(&self) -> bool {
@@ -559,6 +618,7 @@ impl Provisioner {
                 .as_ref()
                 .is_some_and(|run| run.transfer_in_flight())
             || self
+                .preparation
                 .gear_run
                 .as_ref()
                 .is_some_and(|run| run.transfer_in_flight())
@@ -569,7 +629,7 @@ impl Provisioner {
             run.interrupt_transfer(actions);
         } else if let Some(run) = &mut self.acquire_run {
             run.interrupt_transfer(actions);
-        } else if let Some(run) = &mut self.gear_run {
+        } else if let Some(run) = &mut self.preparation.gear_run {
             run.interrupt_transfer(actions);
         }
     }
@@ -584,6 +644,125 @@ impl Provisioner {
         if let Some(run) = self.acquire_run.as_mut() {
             run.progress_read_completed(now);
         }
+    }
+
+    /// The existing advisory planner computes geometry only. It cannot walk,
+    /// eat, wait for combat or otherwise change the account.
+    fn poll_food_assessment(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        stage: usize,
+        destination: Option<WorldTile>,
+    ) -> bool {
+        let snapshot = cx.tick.cx.snapshot();
+        let key = FoodAssessmentKey {
+            stage,
+            origin: snapshot.here().map(|here| here.value),
+            destination,
+            run_ticks: crate::combat::frame::Frame::borrow(snapshot).map_or(0, |frame| {
+                crate::combat::risk::RiskInput::observed_run_ticks(&frame)
+            }),
+            // The selected immutable plan includes cross, radius and options.
+            plan_revision: self.preparation.food_plan_revision,
+        };
+        if self
+            .preparation
+            .food
+            .as_ref()
+            .is_none_or(|state| !state.is_current(&key))
+        {
+            // A new or discarded route changes food sizing. The route-free
+            // walking fallback does not restart a bank trip already refused.
+            if destination.is_some()
+                || self
+                    .preparation
+                    .food
+                    .as_ref()
+                    .is_some_and(|state| state.key.destination.is_some())
+            {
+                self.survival_stage = if self.preparation.survival_refused_stage == stage {
+                    stage
+                } else {
+                    usize::MAX
+                };
+            }
+            if let Some(previous) = self.preparation.food.take() {
+                cx.tick.cx.cancel_request(previous.request_id);
+            }
+            let request_id = destination.and_then(|tile| {
+                let request = self
+                    .preparation
+                    .food_plan
+                    .as_ref()
+                    .and_then(|plan| plan.provisioning_walk_request(cx.tick.cx.evidence()))
+                    .unwrap_or_else(|| {
+                        super::families::reach::walk_request(tile, 0, None, cx.tick.cx.evidence())
+                    });
+                cx.tick.cx.assess_walk(request).ok()
+            });
+            #[cfg(any(test, feature = "test-hooks"))]
+            api::host_log!(
+                api::hostlog::Category::BankOp,
+                api::hostlog::Level::Info,
+                "quester food request tick={} request_id={} stage={stage} origin={:?} target={destination:?} run_ticks={} plan_revision={}",
+                cx.tick.cx.evidence().tick,
+                request_id.unwrap_or(0),
+                key.origin,
+                key.run_ticks,
+                key.plan_revision,
+            );
+            self.preparation.food = Some(FoodAssessment {
+                key,
+                request_id: request_id.unwrap_or(0),
+                complete: request_id.is_none(),
+                route: None,
+            });
+            if request_id.is_none() {
+                api::host_log!(
+                    api::hostlog::Category::BankOp,
+                    api::hostlog::Level::Info,
+                    "quester food exposure: walking hunt-range fallback (no planned route)",
+                );
+            }
+        }
+        let state = self
+            .preparation
+            .food
+            .as_mut()
+            .expect("food assessment was initialized above");
+        if state.complete {
+            return true;
+        }
+        let Some(receipt) = cx.tick.cx.take_assess_receipt(state.request_id) else {
+            return false;
+        };
+        state.route = receipt.food_route;
+        state.complete = true;
+        #[cfg(any(test, feature = "test-hooks"))]
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Info,
+            "quester food route tick={} request_id={} origin={:?} target={:?} route_ticks={} run_ticks={} measured={} refusal={:?}",
+            cx.tick.cx.evidence().tick,
+            state.request_id,
+            state.key.origin,
+            state.key.destination,
+            receipt.route_ticks,
+            state.key.run_ticks,
+            state.route.is_some(),
+            receipt.refusal,
+        );
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Info,
+            "quester food exposure: {}",
+            if state.route.is_some() {
+                "planned route at observed speed"
+            } else {
+                "walking hunt-range fallback (assessment failed)"
+            },
+        );
+        true
     }
 
     fn poll_prepare(
@@ -607,6 +786,12 @@ impl Provisioner {
             }
             self.set_status(ProvisionPhase::Ready, None, 0, 0, None, bank_known(cx));
             return Poll::Ready(Ok(ProvisionEvent::Ready));
+        }
+        if let Some((model, stage)) = plan.survival.as_ref().zip(current) {
+            if model.stage_has_crossing(stage) && !self.poll_food_assessment(cx, stage, return_to) {
+                self.set_status(ProvisionPhase::Scanning, None, 0, 0, None, bank_known(cx));
+                return Poll::Pending;
+            }
         }
         let snapshot = cx.tick.cx.snapshot();
         let stock = snapshot.stock();
@@ -645,14 +830,34 @@ impl Provisioner {
                     plan.food_reserves.as_deref().unwrap_or(&[]),
                 );
                 let target = survival
-                    .plan(stage, stock, input, Some(plan))
+                    .plan(
+                        stage,
+                        stock,
+                        input,
+                        Some(plan),
+                        self.preparation
+                            .food
+                            .as_ref()
+                            .and_then(|assessment| assessment.route.as_deref()),
+                    )
                     .unwrap_or_else(|why| super::survival::SurvivalNeed {
                         food: None,
                         gear: Vec::new(),
                         bound: 1.0,
                         unknown: Some(why),
                     });
-                if self.gear_stage != stage {
+                #[cfg(any(test, feature = "test-hooks"))]
+                api::host_log!(
+                    api::hostlog::Category::BankOp,
+                    api::hostlog::Level::Info,
+                    "quester food chosen tick={} request_id={:?} target={return_to:?} measured={} food={:?} unknown={:?}",
+                    input.tick,
+                    self.preparation.food.as_ref().map(|state| state.request_id),
+                    self.preparation.food.as_ref().is_some_and(|state| state.route.is_some()),
+                    target.food.as_ref().map(|(item, count)| (item.id, *count)),
+                    target.unknown,
+                );
+                if self.preparation.gear_stage != stage {
                     if !bank_open(&cx.tick.cx)
                         && target.gear.iter().any(|item| {
                             stock.carried(item.id).unwrap_or(0) == 0
@@ -692,7 +897,7 @@ impl Provisioner {
                                 .iter()
                                 .any(|row| !spillover_keep.contains(&row.def.id)))
                     {
-                        self.gear_run = Some(super::families::begin_survival_loadout(
+                        self.preparation.gear_run = Some(super::families::begin_survival_loadout(
                             super::families::s2::SurvivalLoadoutRequest {
                                 items: &gear,
                                 bank: plan.bank,
@@ -714,7 +919,7 @@ impl Provisioner {
                         self.set_status(ProvisionPhase::Withdrawing, None, 0, 0, None, known);
                         return Poll::Pending;
                     }
-                    self.gear_stage = stage;
+                    self.preparation.gear_stage = stage;
                 }
                 for item in &target.gear {
                     if stock.carried(item.id).unwrap_or(0) == 0 {
@@ -1005,7 +1210,7 @@ impl Provisioner {
                 if fits > 0 || stock.banked(item.id).is_none() {
                     // Draw the attainable target. Record one shortfall below,
                     // rather than a second target from Planner::require.
-                    let attainable = stock.total(item.id).map_or(*count, |have| fits.min(have));
+                    let attainable = stock.total(item.id).map_or(fits, |have| fits.min(have));
                     needs.require(&bank_need(
                         item.id,
                         &item.name,
@@ -1311,7 +1516,7 @@ impl Provisioner {
             }
             self.survival_stage = current.unwrap_or(usize::MAX);
         }
-        let shortfall = self.unmet_logged.first().cloned();
+        let shortfall = self.preparation.unmet_logged.first().cloned();
         self.set_status(
             ProvisionPhase::Ready,
             shortfall.as_ref().map(|need| Arc::clone(&need.item)),
@@ -1377,6 +1582,7 @@ impl Provisioner {
                     };
                     self.log_unmet(plan, &[unmet]);
                     self.survival_stage = stage;
+                    self.preparation.survival_refused_stage = stage;
                     return Poll::Pending;
                 }
                 Poll::Ready(Err(error))
@@ -1544,11 +1750,11 @@ impl Provisioner {
     /// One `info` line for each optional need that provisioning leaves unmet
     /// while it returns `Ready`. A repeat of the same shortfall logs nothing.
     fn log_unmet(&mut self, plan: &CompiledProvisioning, unmet: &[UnmetNeed]) {
-        if self.unmet_logged.as_slice() == unmet {
+        if self.preparation.unmet_logged.as_slice() == unmet {
             return;
         }
         for need in unmet {
-            if self.unmet_logged.contains(need) {
+            if self.preparation.unmet_logged.contains(need) {
                 continue;
             }
             if need.cause == UnmetCause::AssessmentUnavailable && need.need == 0 {
@@ -1573,7 +1779,7 @@ impl Provisioner {
                 need.cause
             );
         }
-        self.unmet_logged = unmet.to_vec();
+        self.preparation.unmet_logged = unmet.to_vec();
     }
 
     fn set_coin_drawn(&mut self, drawn: bool) {
@@ -1931,6 +2137,55 @@ mod ownership_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn food_assessment_resizes_from_the_bank_and_on_changed_route_inputs() {
+        let tile = WorldTile {
+            x: 100,
+            z: 200,
+            level: 0,
+        };
+        let assessment = FoodAssessment {
+            key: FoodAssessmentKey {
+                stage: 1,
+                origin: Some(tile),
+                destination: Some(tile),
+                run_ticks: 10,
+                plan_revision: 3,
+            },
+            request_id: 1,
+            complete: true,
+            route: None,
+        };
+        let mut key = FoodAssessmentKey { ..assessment.key };
+        assert!(assessment.is_current(&key));
+        key.origin = Some(WorldTile { x: 101, ..tile });
+        assert!(
+            !assessment.is_current(&key),
+            "bank origin must replace the old route"
+        );
+        key.origin = Some(tile);
+        key.destination = None;
+        assert!(
+            !assessment.is_current(&key),
+            "a step without an anchor cannot reuse a route"
+        );
+        key.destination = Some(tile);
+        key.run_ticks = 1;
+        assert!(
+            !assessment.is_current(&key),
+            "energy changes invalidate mixed-speed timing"
+        );
+        key.run_ticks = 10;
+        key.plan_revision = 4;
+        assert!(
+            !assessment.is_current(&key),
+            "cross, radius and options belong to the plan"
+        );
+        key.plan_revision = 3;
+        key.stage = 2;
+        assert!(!assessment.is_current(&key));
+    }
     use crate::native::ledger;
     use crate::native::{HostEffect, NativeTick};
     use crate::native_bank::BankPickRequest;
@@ -2286,6 +2541,49 @@ mod tests {
     }
 
     #[test]
+    fn bespoke_thrower_stage_sizes_food_from_ranged_damage_instead_of_a_full_pack() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, _, mut snapshot) = survival_fixture_document(false, true, |document| {
+            let fight = &mut document.roles[0].sequences[0].steps[0];
+            fight.args["target"]["npc"] = serde_json::json!("death_troll_thrower1");
+            fight.args["kill_budget_ticks"] = serde_json::json!(30);
+        });
+        let model = path.provisioning.survival.as_ref().unwrap();
+        let food = model.tables().selected().item_by_alias("lobster").unwrap();
+        snapshot.seed_inventory(
+            vec![item_view(
+                food.id,
+                food.name.as_deref().unwrap(),
+                3,
+                ItemContainer::Inventory,
+            )],
+            28,
+        );
+        let target = model
+            .plan(
+                0,
+                snapshot_view(&snapshot, 1).stock(),
+                survival_input(&snapshot, model),
+                Some(&path.provisioning),
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            target.unknown,
+            Some(crate::combat::risk::UnknownWhy::Kind(
+                crate::combat::risk::UnknownKind::Bespoke,
+            ))
+        );
+        assert_eq!(target.food.unwrap().1, 3);
+        assert_eq!(
+            target.bound, 1.0,
+            "a supply estimate must not grant route admission"
+        );
+    }
+
+    #[test]
     fn planner_error_reports_shortfall_and_preparation_finishes() {
         if !api::test_support::game_data_available() {
             return;
@@ -2316,6 +2614,7 @@ mod tests {
                 },
                 survival_input(&snapshot, survival),
                 Some(plan),
+                None,
             )
             .is_err());
         let mut provisioner = Provisioner::new();
@@ -2338,8 +2637,8 @@ mod tests {
                 Poll::Ready(Ok(ProvisionEvent::Ready))
             ));
         }
-        assert_eq!(provisioner.unmet_logged.len(), 1);
-        let unmet = &provisioner.unmet_logged[0];
+        assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
+        let unmet = &provisioner.preparation.unmet_logged[0];
         assert_eq!(unmet.cause, UnmetCause::AssessmentUnavailable);
         assert!(unmet.item.contains("stage "));
         assert!(unmet.item.contains("Jail guard"));
@@ -2481,6 +2780,7 @@ mod tests {
                     },
                     survival_input(&snapshot, survival),
                     Some(plan),
+                    None,
                 )
                 .unwrap();
             let elapsed = start.elapsed();
@@ -2619,6 +2919,7 @@ mod tests {
                     },
                     survival_input(&snapshot, survival),
                     Some(&path.provisioning),
+                    None,
                 )
                 .unwrap();
             assert_eq!(
@@ -2655,6 +2956,7 @@ mod tests {
                     ..snapshot_view(&snapshot, 1).stock()
                 },
                 input,
+                None,
                 None,
             )
             .unwrap()
@@ -2755,6 +3057,7 @@ mod tests {
                 },
                 observed,
                 None,
+                None,
             )
             .unwrap();
         assert!(target
@@ -2827,6 +3130,7 @@ mod tests {
                 },
                 survival_input(&snapshot, survival),
                 Some(&*plan),
+                None,
             )
             .unwrap();
         assert_eq!(target.gear.len(), equipment.len());
@@ -3025,7 +3329,13 @@ mod tests {
         };
         assert_eq!(stock.total(food.id), None);
         let target = survival
-            .plan(0, stock, survival_input(&snapshot, survival), Some(plan))
+            .plan(
+                0,
+                stock,
+                survival_input(&snapshot, survival),
+                Some(plan),
+                None,
+            )
             .unwrap();
         assert!(target.unknown.is_none());
         assert!(target.bound <= crate::combat::risk::consts::DEATH_BOUND);
@@ -3051,7 +3361,7 @@ mod tests {
             Poll::Ready(Ok(ProvisionEvent::Ready))
         ));
         assert_eq!(provisioner.bank_starts(), 0);
-        assert!(provisioner.unmet_logged.is_empty());
+        assert!(provisioner.preparation.unmet_logged.is_empty());
         assert_eq!(memory.count(food.id), None);
         assert!(ledger.is_none());
     }
@@ -3113,7 +3423,7 @@ mod tests {
             &quests,
         )
         .is_pending());
-        assert!(provisioner.gear_run.is_none());
+        assert!(provisioner.preparation.gear_run.is_none());
         assert_eq!(provisioner.status().phase, ProvisionPhase::Scanning);
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox[0].effect,
@@ -3136,7 +3446,7 @@ mod tests {
                 &banks,
                 &quests,
             );
-            if provisioner.gear_run.is_some() {
+            if provisioner.preparation.gear_run.is_some() {
                 assert!(
                     scanned,
                     "the checked scan must finish before the loadout starts"
@@ -3212,14 +3522,90 @@ mod tests {
             } else {
                 assert!(matches!(result, Poll::Ready(Ok(ProvisionEvent::Ready))));
             }
-            assert!(provisioner.gear_run.is_none());
+            assert!(provisioner.preparation.gear_run.is_none());
             assert!(ledger.as_ref().unwrap().outbox.is_empty());
         }
         assert_eq!(provisioner.bank_starts(), 1);
-        assert_eq!(provisioner.unmet_logged.len(), 1);
-        assert!(provisioner.unmet_logged[0]
+        assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
+        assert!(provisioner.preparation.unmet_logged[0]
             .item
             .contains(rows[0].def.name.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn targetless_food_fallback_keeps_a_completed_bank_refusal() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (path, quests, snapshot) = survival_fixture(true);
+        let plan = &path.provisioning;
+        let (_, _, banks) = openable_bank_fixture();
+        let memory = BankMemory::default();
+        let unknown = ready_snapshot(Vec::new());
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        with_tick_bank(&unknown, Some(&memory), &mut ledger, 1, |native| {
+            let required_after = native.cx.evidence();
+            let mut cx = StepContext {
+                tick: native,
+                quests: &quests,
+                progress: &[],
+                required_after,
+                banks: &banks,
+                choices: &crate::quester::choices::QuestChoices::default(),
+            };
+            provisioner.start_bank(
+                &mut cx,
+                plan,
+                BankAction::Scan,
+                ProvisionPhase::Scanning,
+                Some(Arc::from("survival supplies")),
+                1,
+                0,
+                None,
+            );
+            provisioner.require_survival_return(&cx, None);
+        });
+        assert!(poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            2,
+            plan,
+            None,
+            Some(&plan.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        )
+        .is_pending());
+        assert!(provisioner.bank_run.is_none());
+        assert_eq!(provisioner.survival_stage, 0);
+        assert!(provisioner.preparation.food.is_none());
+        assert!(matches!(
+            &provisioner.preparation.unmet_logged[0].cause,
+            UnmetCause::NoReachableBank { .. }
+        ));
+        assert!(matches!(
+            poll_once_at(
+                &mut provisioner,
+                &snapshot,
+                &mut ledger,
+                3,
+                plan,
+                None,
+                Some(&plan.stages[0]),
+                &memory,
+                &banks,
+                &quests,
+            ),
+            Poll::Ready(Ok(ProvisionEvent::Ready))
+        ));
+        assert_eq!(provisioner.survival_stage, 0);
+        assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
+        assert!(ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.outbox.is_empty()));
     }
 
     #[test]
@@ -3278,7 +3664,7 @@ mod tests {
             assert!(ledger
                 .as_ref()
                 .is_none_or(|ledger| ledger.outbox.is_empty()));
-            assert_eq!(provisioner.unmet_logged.len(), 1);
+            assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
             assert!(matches!(
                 poll_once_at(
                     &mut provisioner,
@@ -3343,13 +3729,13 @@ mod tests {
                 &quests,
             )
             .is_pending());
-            assert_eq!(provisioner.unmet_logged.len(), 1);
+            assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
             assert!(
-                format!("{:?}", provisioner.unmet_logged[0].cause).contains(detail),
+                format!("{:?}", provisioner.preparation.unmet_logged[0].cause).contains(detail),
                 "the shortfall record must keep the typed refusal detail: {detail}"
             );
             assert!(
-                provisioner.unmet_logged[0]
+                provisioner.preparation.unmet_logged[0]
                     .cause
                     .to_string()
                     .contains(detail),
@@ -3383,6 +3769,82 @@ mod tests {
     }
 
     #[test]
+    fn food_route_is_reassessed_from_the_bank_before_the_same_step_starts() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (_, quests, mut snapshot) = survival_fixture(true);
+        let (_, _, banks) = openable_bank_fixture();
+        let memory = BankMemory::default();
+        let old_start = tile(3210, 3210);
+        let bank_start = tile(3215, 3210);
+        let target = tile(3220, 3220);
+        let mut provisioner = Provisioner::new();
+        let mut ledger = None;
+        let mut requests = Vec::new();
+        for (tick, origin, queues) in [
+            (1, old_start, true),
+            (2, old_start, false),
+            (3, bank_start, true),
+        ] {
+            snapshot.seed_tile(origin);
+            let mut local = snapshot.local_player().unwrap().clone();
+            local.player.network = origin;
+            snapshot.seed_local_player(local);
+            let complete = with_tick_bank(&snapshot, Some(&memory), &mut ledger, tick, |native| {
+                let required_after = native.cx.evidence();
+                let mut cx = StepContext {
+                    tick: native,
+                    quests: &quests,
+                    progress: &[],
+                    required_after,
+                    banks: &banks,
+                    choices: &crate::quester::choices::QuestChoices::default(),
+                };
+                provisioner.poll_food_assessment(&mut cx, 0, Some(target))
+            });
+            assert_eq!(complete, !queues);
+            assert_eq!(
+                provisioner.preparation.food.as_ref().unwrap().key.origin,
+                Some(origin)
+            );
+            if !queues {
+                provisioner.survival_stage = 0;
+                continue;
+            }
+            assert_eq!(provisioner.survival_stage, usize::MAX);
+            let ledger = ledger.as_mut().unwrap();
+            let action = ledger.outbox.remove(0);
+            assert!(
+                matches!(&action.effect, HostEffect::AssessWalk(request) if request.target == target)
+            );
+            let authority = action.authority();
+            requests.push(authority.request_id().get());
+            ledger.complete_assess_walk(
+                &authority,
+                crate::native::AssessReceipt {
+                    request_id: authority.request_id().get(),
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run: authority.run(),
+                        tick,
+                        sequence: tick,
+                    },
+                    assessment: None,
+                    refusal: None,
+                    detail: None,
+                    route_ticks: 0,
+                    food_route: None,
+                },
+            );
+        }
+        assert_eq!(requests.len(), 2);
+        assert_ne!(
+            requests[0], requests[1],
+            "bank travel must obtain a new route"
+        );
+    }
+
+    #[test]
     fn optional_survival_bank_must_return_to_the_authored_step_target() {
         if !api::test_support::game_data_available() {
             return;
@@ -3397,27 +3859,51 @@ mod tests {
         };
         let mut provisioner = Provisioner::new();
         let mut ledger = None;
-        assert!(
-            with_tick_bank(&snapshot, Some(&memory), &mut ledger, 1, |native| {
-                let required_after = native.cx.evidence();
-                let mut cx = StepContext {
-                    tick: native,
-                    quests: &quests,
-                    progress: &[],
-                    required_after,
-                    banks: &banks,
-                    choices: &crate::quester::choices::QuestChoices::default(),
-                };
-                provisioner.poll(
-                    &mut cx,
-                    &path.provisioning,
-                    None,
-                    Some(&path.provisioning.stages[0]),
-                    Some(target),
-                )
-            })
-            .is_pending()
-        );
+        for tick in 1..=2 {
+            assert!(
+                with_tick_bank(&snapshot, Some(&memory), &mut ledger, tick, |native| {
+                    let required_after = native.cx.evidence();
+                    let mut cx = StepContext {
+                        tick: native,
+                        quests: &quests,
+                        progress: &[],
+                        required_after,
+                        banks: &banks,
+                        choices: &crate::quester::choices::QuestChoices::default(),
+                    };
+                    provisioner.poll(
+                        &mut cx,
+                        &path.provisioning,
+                        None,
+                        Some(&path.provisioning.stages[0]),
+                        Some(target),
+                    )
+                })
+                .is_pending()
+            );
+            if tick == 1 {
+                let ledger = ledger.as_mut().unwrap();
+                let action = ledger.outbox.remove(0);
+                assert!(matches!(&action.effect, HostEffect::AssessWalk(_)));
+                let authority = action.authority();
+                ledger.complete_assess_walk(
+                    &authority,
+                    crate::native::AssessReceipt {
+                        request_id: authority.request_id().get(),
+                        evidence: api::quest_progress::EvidenceStamp {
+                            run: authority.run(),
+                            tick,
+                            sequence: tick,
+                        },
+                        assessment: None,
+                        refusal: None,
+                        detail: None,
+                        route_ticks: 0,
+                        food_route: None,
+                    },
+                );
+            }
+        }
         assert!(matches!(
             &ledger.as_ref().unwrap().outbox[0].effect,
             HostEffect::BankPick(request)
@@ -3486,8 +3972,8 @@ mod tests {
             ));
         }
         assert_eq!(provisioner.bank_starts(), 1);
-        assert_eq!(provisioner.unmet_logged.len(), 1);
-        let unmet = &provisioner.unmet_logged[0];
+        assert_eq!(provisioner.preparation.unmet_logged.len(), 1);
+        let unmet = &provisioner.preparation.unmet_logged[0];
         assert!(matches!(
             &unmet.cause,
             UnmetCause::NoReachableBank { detail }
@@ -3549,7 +4035,7 @@ mod tests {
                 if reason.as_ref() == "no eligible bank"
         ));
         assert_eq!(provisioner.survival_stage, usize::MAX);
-        assert!(provisioner.unmet_logged.is_empty());
+        assert!(provisioner.preparation.unmet_logged.is_empty());
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 
@@ -3619,6 +4105,7 @@ mod tests {
                     },
                     survival_input(&snapshot, survival),
                     Some(plan),
+                    None,
                 )
                 .unwrap();
             assert!(target.unknown.is_none());
@@ -3679,7 +4166,7 @@ mod tests {
             Poll::Ready(Err(ActionError::Cancelled))
         ));
         assert_eq!(provisioner.survival_stage, usize::MAX);
-        assert!(provisioner.unmet_logged.is_empty());
+        assert!(provisioner.preparation.unmet_logged.is_empty());
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
 

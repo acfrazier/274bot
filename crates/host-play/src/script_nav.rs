@@ -2721,6 +2721,21 @@ impl RouteJob {
                 self.request.radius
             ));
         }
+        let food_route = if matches!(self.kind, Some(RouteDemandKind::Advisory { .. })) {
+            outcome
+                .current_route()
+                .and_then(|route| {
+                    crate::admission::measure_food_route(
+                        &self.request.world,
+                        nav_planner::producer::compact_route_view(&self.lease, route).ok()?,
+                        self.lease.zones()?,
+                        self.request.admission.input.run_ticks,
+                    )
+                })
+                .map(Arc::new)
+        } else {
+            None
+        };
         RouteJobOutput {
             candidate_goals: self.request.candidate_goals.is_some(),
             kind: self.kind.take().expect("route demand kind is present"),
@@ -2741,6 +2756,7 @@ impl RouteJob {
             outcome,
             search_result,
             assessment: self.assessment.take(),
+            food_route,
             refusal: self.refusal.take(),
             blocked: std::mem::take(&mut self.blocked),
             native_failure: self.native_failure.take(),
@@ -3298,6 +3314,7 @@ pub(crate) struct RouteJobOutput {
     outcome: RouteJobOutcome,
     search_result: Option<RouteSearchResultKind>,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
+    food_route: Option<Arc<script::quester::FoodRoute>>,
     refusal: Option<script::native::WalkRefusal>,
     blocked: Box<[ZoneKey]>,
     native_failure: Option<script::native::WalkEnd>,
@@ -4308,6 +4325,7 @@ fn apply_route_output(
             let route_ticks = lease
                 .zip(output.outcome.current_route())
                 .map_or(0, |(lease, route)| compact_route_ticks(lease, route));
+            let food_route = output.food_route.take();
             let no_path = matches!(output.outcome, RouteJobOutcome::NoPath);
             let detail = output
                 .assessment
@@ -4325,6 +4343,15 @@ fn apply_route_output(
                 }
                 (None, detail) => detail,
             };
+            let detail = Some(Arc::from(format!(
+                "{}; food exposure: {}",
+                detail.as_deref().unwrap_or("route assessment"),
+                if food_route.is_some() {
+                    "planned route"
+                } else {
+                    "walking hunt-range fallback (no assessed route)"
+                },
+            )));
             let refusal = output.refusal.take().or_else(|| {
                 no_path.then_some(script::native::WalkRefusal::NoRouteWithinBounds {
                     tried: 0,
@@ -4338,6 +4365,7 @@ fn apply_route_output(
                 refusal,
                 detail,
                 route_ticks,
+                food_route,
             };
             let mut all = navs.lock().expect("navigation state mutex is not poisoned");
             if let Some(bot) = all.get_mut(name) {
@@ -5546,11 +5574,14 @@ impl ScriptWalkArm {
                 evidence,
                 assessment: None,
                 route_ticks: 0,
+                food_route: None,
                 refusal: Some(script::native::WalkRefusal::NoRouteWithinBounds {
                     tried: 0,
                     last: None,
                 }),
-                detail: Some(Arc::from(detail)),
+                detail: Some(Arc::from(format!(
+                    "{detail}; food exposure: walking hunt-range fallback"
+                ))),
             };
             let displaced = {
                 let mut navs = self
@@ -7177,8 +7208,11 @@ fn advisory_refusal(
             tried: 0,
             last: None,
         }),
-        detail: Some(Arc::from(detail)),
+        detail: Some(Arc::from(format!(
+            "{detail}; food exposure: walking hunt-range fallback"
+        ))),
         route_ticks: 0,
+        food_route: None,
     }
 }
 

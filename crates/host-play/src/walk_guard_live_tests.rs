@@ -82,14 +82,41 @@ const CROSSING_BITE_WINDOW: u32 = 3;
 /// stat and inventory are seen one tick later. The cell keeps its documented
 /// four-tick window (docs/dev/harness.md).
 const EAT_HEAL_WINDOW: u32 = 4;
-/// The cell tests the crossing Eat, not provisioning. The Quester's
-/// stage-survival provisioner sizes `imp:0` food at the 28-slot maximum
-/// (quester/survival.rs:450-469; status `provision_need 28` in
-/// EAT-CROSSING-1120 map pass 3). With fewer lobsters held and the bank
-/// unread it scans the bank before the walk (provision.rs:971-1010,1097-1117;
-/// acquire/plan.rs:198-207), which happened in 1 of 10 runs with 4 lobsters.
-/// Holding 28 makes the held count meet that target, so no trip can start.
-const CROSSING_LOBSTERS: i32 = 28;
+/// The cell holds 22 lobsters, below a full pack. The assessed route avoids
+/// spawn-centred hunt zones, so these supplies cover the deterministic seeds.
+/// The oracle checks a bite and continuation, never a random damage total.
+const CROSSING_LOBSTERS: i32 = 22;
+
+struct FoodSizingHostLog(Mutex<Vec<(String, String)>>);
+
+impl api::hostlog::Sink for FoodSizingHostLog {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        let Some(slot) = record.slot else {
+            return;
+        };
+        if record.message.starts_with("quester food ") {
+            self.0
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push((slot.to_owned(), record.message.to_owned()));
+        }
+    }
+}
+
+static FOOD_SIZING_HOST_LOG: FoodSizingHostLog = FoodSizingHostLog(Mutex::new(Vec::new()));
+static FOOD_SIZING_HOST_LOG_INSTALLED: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| api::hostlog::install_sink(&FOOD_SIZING_HOST_LOG));
+
+fn food_sizing_host_log(account: &str) -> Vec<serde_json::Value> {
+    FOOD_SIZING_HOST_LOG
+        .0
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .filter(|(slot, _)| slot == account)
+        .map(|(slot, message)| json!({"account": slot, "message": message}))
+        .collect()
+}
 
 fn in_throwers_zone(tile: WorldTile) -> bool {
     tile.level == 0
@@ -331,6 +358,316 @@ fn throwers_crossing_path_compiles_with_current_schema() {
         )
     })
     .expect("the live crossing fixture must compile before launching a client");
+}
+
+#[test]
+fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let default_pack = default_nav_pack_path();
+    let Some(pack) = api::test_support::local_asset_path(
+        "NAV_PACK",
+        &default_pack.to_string_lossy(),
+        "R289 throwers navigation catalog",
+    ) else {
+        return;
+    };
+    let world =
+        Arc::new(nav_planner::world::NavWorld::from_bytes(&std::fs::read(pack).unwrap()).unwrap());
+    let lease = nav_planner::contract::NavLease::wrap(Arc::clone(&world)).unwrap();
+    let zones = lease.zones().unwrap();
+    let key = zones.resolve(ZONE).unwrap();
+    let selected = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let tables = script::combat::tables::CombatTables::build(Arc::clone(&selected)).unwrap();
+    let risks = script::combat::risk::RiskTables::build(&tables);
+    let (opts, state) = throwers_route_context(&world);
+    let route = nav_planner::router::find_with(
+        &world.collision,
+        &world.graph,
+        WorldTile {
+            x: 2838,
+            z: 3601,
+            level: 0,
+        },
+        WorldTile {
+            x: 2880,
+            z: 3596,
+            level: 0,
+        },
+        opts,
+        &state,
+    )
+    .unwrap();
+    let food = script::quester::FoodRoute::measure(
+        nav_planner::producer::route_view(&lease, &route).unwrap(),
+        zones,
+        &risks,
+        script::combat::risk::RiskInput::available_run_ticks(100, 8),
+    )
+    .unwrap();
+    let covered: Vec<_> = zones.covered_zones(key).unwrap().collect();
+    // The engine sight check confirms zero exposure for throwers at spawn.
+    // A chase can displace a thrower, so this is not a guarantee afterward.
+    assert_eq!(
+        food.crossing_ticks(covered.iter().map(|zone| zone.key()), false),
+        Some(0),
+        "this plan bypasses the hunt zones; no measurement is not the same as zero exposure"
+    );
+    let destination = WorldTile {
+        x: 2871,
+        z: 3602,
+        level: 0,
+    };
+    assert!(world.collision.standable(destination));
+    assert!(zones.containing(destination).any(|zone| {
+        let (x0, z0, x1, z1) = zone.bounds();
+        covered.iter().any(|member| member.key() == zone.key())
+            && destination.x > x0
+            && destination.x < x1
+            && destination.z > z0
+            && destination.z < z1
+    }));
+    let quests = Arc::new(QuestCatalog::from_identity(selected.quest_identity()).unwrap());
+    let carved_selected = Arc::clone(&selected);
+    let carved_quests = Arc::clone(&quests);
+    let compile_world = Arc::clone(&world);
+    let compiled = script::quester::compile::prepare_for_test(move |cap| {
+        let lease = nav_planner::contract::NavLease::wrap(compile_world).unwrap();
+        compile_path(
+            path_json(destination).as_bytes(),
+            &selected,
+            &quests,
+            cap,
+            &script::local_state::OperatorLoadouts::absent(),
+            lease.zones(),
+        )
+    })
+    .unwrap();
+    let request = compiled.sequences[0].steps[0]
+        .plan
+        .provisioning_walk_request(api::quest_progress::EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        })
+        .unwrap();
+    assert_eq!(
+        request.radius, 1,
+        "food must use the authored arrival radius"
+    );
+    assert_eq!(request.cross.as_ref(), &[Arc::<str>::from(ZONE)]);
+    assert!(request.protect);
+    let table = world.graph.zones.as_ref().unwrap();
+    let crossing: Vec<_> = request
+        .cross
+        .iter()
+        .map(|name| table.resolve(name).unwrap())
+        .collect();
+    let opts = nav_planner::router::FindOptions {
+        zones: nav_planner::zones::ZoneExempt::named(&crossing).unwrap(),
+        ..opts
+    };
+    let radius = i32::from(request.radius);
+    let mut targets = Vec::new();
+    for z in request.target.z - radius..=request.target.z + radius {
+        for x in request.target.x - radius..=request.target.x + radius {
+            let tile = WorldTile {
+                x,
+                z,
+                level: request.target.level,
+            };
+            if world.collision.standable(tile) {
+                targets.push(tile);
+            }
+        }
+    }
+    let route = nav_planner::router::find_first_with(
+        &world.collision,
+        &world.graph,
+        WorldTile {
+            x: 2838,
+            z: 3601,
+            level: 0,
+        },
+        &targets,
+        opts,
+        &state,
+    )
+    .into_route()
+    .expect("the production food request reaches the throwers' interior");
+    let walk_tiles: usize = route
+        .legs
+        .iter()
+        .filter_map(|leg| match leg {
+            nav_planner::router::Leg::Walk { tiles } => Some(tiles.len()),
+            _ => None,
+        })
+        .sum();
+    println!("positive production food route walk_tiles={walk_tiles}");
+    assert_eq!(
+        walk_tiles, 137,
+        "the authored radius removes the final exact-target tile"
+    );
+    let model = compiled.provisioning.survival.as_ref().unwrap();
+    let pack = [api::snapshot::ItemView {
+        def: api::obj_names::ItemDefView {
+            id: 379,
+            name: Some("Lobster".into()),
+            stackable: false,
+            members: false,
+            base_value: 0,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        container: api::snapshot::ItemContainer::Inventory,
+        action_family: api::snapshot::ItemActionFamily::Held,
+        slot: 0,
+        count: CROSSING_LOBSTERS,
+        actions: Vec::new(),
+        component_id: 0,
+    }];
+    let stock = api::stock::Stock {
+        pack: Some(&pack),
+        capacity: Some(28),
+        worn: Some(&[]),
+        bank: None,
+    };
+    let mut counts = Vec::new();
+    for (run, energy, expected_ticks, expected_duration) in [
+        (false, 0, [29, 26, 21, 17, 13, 10], 29),
+        (true, 100, [15, 14, 11, 9, 7, 6], 15),
+        (true, 1, [29, 26, 21, 17, 13, 10], 29),
+    ] {
+        let run_ticks = if run {
+            script::combat::risk::RiskInput::available_run_ticks(energy, 8)
+        } else {
+            0
+        };
+        let food = script::quester::FoodRoute::measure(
+            nav_planner::producer::route_view(&lease, &route).unwrap(),
+            zones,
+            &risks,
+            run_ticks,
+        )
+        .unwrap();
+        let ticks: Vec<_> = covered
+            .iter()
+            .map(|zone| food.ticks(zone.key(), run).unwrap())
+            .collect();
+        let duration = u64::from(
+            food.crossing_ticks(covered.iter().map(|zone| zone.key()), run)
+                .expect("the planned crossing must enter a thrower hunt zone"),
+        );
+        assert_eq!(ticks, expected_ticks);
+        assert_eq!(duration, expected_duration);
+        let twice_hits: u64 = ticks
+            .iter()
+            .map(|&ticks| u64::from(ticks).div_ceil(7) * 7)
+            .sum();
+        let poison = 11 * duration.div_ceil(30);
+        let count = ((twice_hits + 2 * poison) * 3)
+            .div_ceil(4)
+            .saturating_add(7)
+            .div_ceil(12);
+        let mut input = script::combat::risk::RiskInput::default();
+        input.hp = 20;
+        input.hp_max = 40;
+        input.set_run(run);
+        input.run_ticks = run_ticks;
+        let need = model
+            .plan(0, stock, input, Some(&compiled.provisioning), Some(&food))
+            .unwrap();
+        assert_eq!(need.food.as_ref().map(|(item, _)| item.id), Some(379));
+        assert_eq!(need.food.unwrap().1, i32::try_from(count).unwrap());
+        assert_eq!(need.bound, 1.0, "food sizing does not admit the crossing");
+        println!(
+            "thrower food run={run} energy={energy} run_prefix={run_ticks} zone_ticks={ticks:?} poison_ticks={duration} lobsters={count}"
+        );
+        counts.push(count);
+    }
+    assert!(
+        counts[1] < counts[0],
+        "energy-backed running must reduce this crossing"
+    );
+    assert_eq!(
+        counts[2], counts[0],
+        "low energy walks the exposed remainder"
+    );
+    assert_eq!(counts, [11, 7, 11]);
+    let compile_world = Arc::clone(&world);
+    let carved_path = script::quester::compile::prepare_for_test(move |cap| {
+        let lease = nav_planner::contract::NavLease::wrap(compile_world).unwrap();
+        compile_path(
+            path_json(WorldTile {
+                x: 2880,
+                z: 3596,
+                level: 0,
+            })
+            .as_bytes(),
+            &carved_selected,
+            &carved_quests,
+            cap,
+            &script::local_state::OperatorLoadouts::absent(),
+            lease.zones(),
+        )
+    })
+    .unwrap();
+    let carved_model = carved_path.provisioning.survival.as_ref().unwrap();
+    for (run, energy) in [(false, 0), (true, 100), (true, 1)] {
+        let mut input = script::combat::risk::RiskInput::default();
+        input.hp = 14;
+        input.hp_max = 40;
+        input.tick = 35;
+        input.prayer = 37;
+        input.prayer_base = 37;
+        input.combat = Some(3);
+        input.defence = 1;
+        input.pos = WorldTile {
+            x: 2838,
+            z: 3601,
+            level: 0,
+        };
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 32,
+            hit_since_mark: false,
+        };
+        input.set_missing_facts(false);
+        input.set_input_locked(false);
+        input.set_unattributed(false);
+        input.set_overflow(false);
+        input.set_map_members(true);
+        input.set_run(run);
+        input.run_ticks = if run {
+            script::combat::risk::RiskInput::available_run_ticks(energy, 8)
+        } else {
+            0
+        };
+        input.food_len = 1;
+        input.food_ids[0] = 379;
+        input.food_counts[0] = CROSSING_LOBSTERS as u8;
+        input.free_slots = 28 - CROSSING_LOBSTERS as u8;
+        let need = carved_model
+            .plan(
+                0,
+                stock,
+                input,
+                Some(&carved_path.provisioning),
+                Some(&food),
+            )
+            .unwrap();
+        assert_eq!(
+            need.food.as_ref().map(|(item, count)| (item.id, *count)),
+            Some((379, 0)),
+            "known poison must keep zero food for the zero-exposure carved route"
+        );
+    }
 }
 
 fn throwers_route_context(
@@ -2084,6 +2421,18 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
     if state.health.iter().any(|(_, hp, _)| *hp <= 0) {
         return gate_fail("death during throwers crossing");
     }
+    if !food {
+        if !state.arrived {
+            return W1GateDecision::Pending;
+        }
+        if !state.snapshot.ingame() || state.snapshot.scene_state() != 2 {
+            return gate_fail("arrival lacks a ready in-game scene");
+        }
+        return W1GateDecision::Pass;
+    }
+    if !crossing_supply_stayed_held(&capture.statuses) {
+        return gate_fail("product: crossing food sizing requested a bank trip or a full pack");
+    }
     let eats: Vec<EatClick> = capture
         .actions
         .iter()
@@ -2106,6 +2455,39 @@ fn evaluate_eat_crossing(state: &LiveState, capture: &CombatCapture, food: bool)
         return gate_fail("arrival lacks a ready in-game scene");
     }
     decision
+}
+
+fn crossing_supply_stayed_held(statuses: &[serde_json::Value]) -> bool {
+    let mut observed = false;
+    for status in statuses {
+        let fields = &status["fields"];
+        if let (Some(attempts), Some(need)) = (
+            fields["provision_attempts"].as_u64(),
+            fields["provision_need"].as_i64(),
+        ) {
+            observed = true;
+            if attempts > 0 || need >= 28 {
+                return false;
+            }
+        }
+    }
+    observed
+}
+
+#[test]
+fn crossing_supply_oracle_rejects_a_bank_attempt_or_full_pack_target() {
+    assert!(!crossing_supply_stayed_held(&[]));
+    assert!(!crossing_supply_stayed_held(&[json!({"fields": {}})]));
+    assert!(crossing_supply_stayed_held(&[
+        json!({"fields": {"provision_need": 16, "provision_attempts": 0}}),
+        json!({"fields": {"provision_need": 0, "provision_attempts": 0}}),
+    ]));
+    assert!(!crossing_supply_stayed_held(&[
+        json!({"fields": {"provision_need": 16, "provision_attempts": 1}}),
+    ]));
+    assert!(!crossing_supply_stayed_held(&[
+        json!({"fields": {"provision_need": 28, "provision_attempts": 0}}),
+    ]));
 }
 
 /// A guard Eat click tick, with its `eat_heal` result (heal tick, HP, lobsters).
@@ -3090,6 +3472,10 @@ fn run_live_w1(mode: W1Mode, arm: Option<SeedArm>) {
         Ok("1"),
         "W1 requires LIVE=1"
     );
+    assert!(
+        *FOOD_SIZING_HOST_LOG_INSTALLED,
+        "W1 requires its food-sizing diagnostic sink"
+    );
     let evidence = evidence_dir().expect("W1 live prerequisites");
     std::fs::create_dir_all(&evidence).expect("create W1 lifecycle evidence directory");
     let home = arm
@@ -3445,6 +3831,9 @@ fn run_live_w1(mode: W1Mode, arm: Option<SeedArm>) {
         "crossing_seed": snapshot.crossing_seed.json(),
         "park_tick": snapshot.park_tick,
         "start_baseline": capture_snapshot.start_baseline,
+        "frames": capture_snapshot.frames,
+        "statuses": capture_snapshot.statuses,
+        "food_sizing": food_sizing_host_log(&account),
         "error": error,
         "account": account,
         "zone": ZONE,

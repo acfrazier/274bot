@@ -301,6 +301,7 @@ fn owned_inventory_still_withdraws_food_and_passes_the_bound() {
             },
             survival_input(&snapshot, survival),
             Some(&path.provisioning),
+            None,
         )
         .unwrap();
     assert!(need.bound <= crate::combat::risk::consts::DEATH_BOUND);
@@ -346,11 +347,16 @@ fn owned_inventory_protects_managed_pack_items_but_can_deposit_unrelated_cargo()
             ),
             if unrelated { 27 } else { 28 }
         );
-        assert!(observed.provisioner.unmet_logged.iter().any(|need| {
-            matches!(need.cause, UnmetCause::NoRoom)
-                && need.need > need.have
-                && need.have == i32::from(unrelated)
-        }));
+        assert!(observed
+            .provisioner
+            .preparation
+            .unmet_logged
+            .iter()
+            .any(|need| {
+                matches!(need.cause, UnmetCause::NoRoom)
+                    && need.need > need.have
+                    && need.have == i32::from(unrelated)
+            }));
         assert_eq!(observed.provisioner.status().phase, ProvisionPhase::Ready);
     }
 }
@@ -389,6 +395,48 @@ fn owned_food_reserves_future_withdrawals_without_executing_them() {
         assert!(observed.withdrawn.iter().all(|&(id, _)| id == lobster));
         assert!(observed.deposited.is_empty());
     }
+}
+
+#[test]
+fn unread_bank_scan_preserves_room_for_future_quest_items() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let (path, quests, snapshot) = survival_fixture_document(true, false, |document| {
+        owned(document);
+        extra_step(
+            document,
+            "bank",
+            serde_json::json!({
+                "op": "withdraw", "items": [{"obj": "bucket_empty", "qty": 27}]
+            }),
+        );
+    });
+    let mut provisioner = Provisioner::new();
+    let mut ledger = None;
+    let memory = BankMemory::default();
+    let (_, _, banks) = openable_bank_fixture();
+    assert!(matches!(
+        poll_once_at(
+            &mut provisioner,
+            &snapshot,
+            &mut ledger,
+            1,
+            &path.provisioning,
+            None,
+            Some(&path.provisioning.stages[0]),
+            &memory,
+            &banks,
+            &quests,
+        ),
+        Poll::Pending
+    ));
+    assert_eq!(provisioner.status().phase, ProvisionPhase::Scanning);
+    assert_eq!(
+        provisioner.status().need,
+        1,
+        "27 quest slots leave one food slot"
+    );
 }
 
 #[test]
@@ -511,7 +559,7 @@ fn owned_inventory_leaves_missing_quest_items_and_authored_carry_to_the_path() {
     });
     let observed = prepare(&path, &quests, &mut snapshot, bank_items(false));
     assert!(food_count(&observed) > 0);
-    assert!(observed.provisioner.unmet_logged.is_empty());
+    assert!(observed.provisioner.preparation.unmet_logged.is_empty());
     let lobster = item("lobster", 0, ItemContainer::Inventory).def.id;
     assert!(observed.withdrawn.iter().all(|&(id, _)| id == lobster));
 }
@@ -609,6 +657,7 @@ fn owned_quest_food_stays_carried_while_bank_survival_food_is_withdrawn() {
             },
             survival_input(&snapshot, model),
             Some(&path.provisioning),
+            None,
         )
         .unwrap();
     assert!(
@@ -627,11 +676,11 @@ fn owned_quest_food_stays_carried_while_bank_survival_food_is_withdrawn() {
         1
     );
     assert_eq!(
-        observed.provisioner.unmet_logged.len(),
+        observed.provisioner.preparation.unmet_logged.len(),
         usize::from(target > 8)
     );
     if target > 8 {
-        let need = &observed.provisioner.unmet_logged[0];
+        let need = &observed.provisioner.preparation.unmet_logged[0];
         assert_eq!(need.cause, UnmetCause::NoSupply);
         assert_eq!((need.need, need.have), (target, 8));
     }
@@ -672,6 +721,7 @@ fn must_have_food_reserves_only_the_declared_quantity_in_survival_targets() {
                 snapshot_view(&snapshot, 0).stock(),
                 survival_input(&snapshot, model),
                 Some(&path.provisioning),
+                None,
             )
             .unwrap();
         assert!(need.unknown.is_none());
@@ -717,6 +767,7 @@ fn two_held_ordinary_food_kinds_report_the_existing_model_limit() {
             },
             survival_input(&snapshot, model),
             Some(&path.provisioning),
+            None,
         )
         .unwrap();
     assert_eq!(
@@ -750,6 +801,7 @@ fn held_message_delay_food_reports_the_existing_timing_limit() {
             },
             survival_input(&snapshot, model),
             Some(&path.provisioning),
+            None,
         )
         .unwrap();
     assert_eq!(

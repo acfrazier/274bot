@@ -5,11 +5,244 @@ use crate::combat::tables::CombatTables;
 use crate::combat::{CompiledKit, FoodReserve, Target};
 use crate::native_bank::BankItem;
 use api::stock::Stock;
-use nav_planner::contract::ZoneTableView;
+use nav_planner::contract::{BoundZoneKey, LegView, PackId, RouteView, ZoneTableView};
 use std::sync::Arc;
+
+/// Food-only geometry. Admission keeps its own conservative exposures.
+#[derive(Debug)]
+pub struct FoodRoute {
+    pack: PackId,
+    zones: Box<[FoodZoneTime]>,
+}
+
+#[derive(Debug)]
+struct FoodZoneTime {
+    zone: BoundZoneKey,
+    walk: FoodTime,
+    run: FoodTime,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct FoodTime {
+    ticks: u32,
+    first: u32,
+    last: u32,
+    at_anchor: bool,
+}
+
+#[derive(Default)]
+struct FoodTrack {
+    time: FoodTime,
+    clock: u32,
+    engaged: Option<u32>,
+}
+
+impl FoodTrack {
+    fn visit(
+        &mut self,
+        tile: api::WorldTile,
+        delta: u32,
+        zone: nav_planner::contract::ZoneView<'_>,
+        kind: risk::KindRisk,
+    ) -> Option<()> {
+        self.clock = self.clock.checked_add(delta)?;
+        let (x, z) = zone.spawn();
+        let distance = tile.x.abs_diff(x).max(tile.z.abs_diff(z));
+        let inside = zone.contains(tile);
+        // Npc.ts:670-674 retains a target within maxrange + attackrange.
+        // Npc.ts:420-422,904-948 follows at WALK, at most one tile/tick.
+        // The expanding reach ball permits every such NPC path. It ignores
+        // obstacles and attack pauses, so it cannot remove a possible throw.
+        // quest_death.npc:1498,1505,1507 gives 20 + 8, hunt 8. These
+        // values come from selected facts, not the zone or fixture name.
+        if tile.level != i32::from(zone.plane()) || (!inside && distance > u32::from(kind.r)) {
+            self.engaged = None;
+        } else if inside && self.engaged.is_none() {
+            self.engaged = Some(if delta == 0 {
+                self.clock
+            } else {
+                self.clock.saturating_sub(delta).saturating_add(1)
+            });
+        }
+        self.time.at_anchor = self.engaged.is_some();
+        let Some(engaged) = self.engaged else {
+            return Some(());
+        };
+        let reachable = engaged.checked_add(distance.saturating_sub(u32::from(kind.reach)))?;
+        let first = if delta == 0 {
+            self.clock
+        } else {
+            self.clock.saturating_sub(delta).saturating_add(1)
+        }
+        .max(reachable)
+        .max(self.time.last.saturating_add(1));
+        if first <= self.clock {
+            self.time.ticks = self.time.ticks.checked_add(self.clock - first + 1)?;
+            if self.time.first == 0 {
+                self.time.first = first;
+            }
+            self.time.last = self.clock;
+        }
+        Some(())
+    }
+}
+
+impl FoodRoute {
+    /// Borrow the planned route. Retain counters, never a copied tile sequence.
+    /// The observed run prefix ends when its energy budget is exhausted.
+    pub fn measure(
+        route: RouteView<'_>,
+        zones: ZoneTableView<'_>,
+        tables: &RiskTables,
+        run_ticks: u16,
+    ) -> Option<Self> {
+        if route.pack() != zones.pack() {
+            return None;
+        }
+        let mut times: Vec<FoodZoneTime> = Vec::new();
+        let destination = [route.destination()];
+        for leg in route
+            .legs()
+            .chain(std::iter::once(LegView::Walk(&destination)))
+        {
+            let (tiles, hold) = match leg {
+                LegView::Walk(tiles) => (tiles, None),
+                LegView::Transport(hop) => (&[][..], Some(hop.effective_takeoff())),
+            };
+            for tile in tiles.iter().copied().chain(hold) {
+                for zone in zones.containing(tile) {
+                    if !times.iter().any(|time| time.zone == zone.key()) {
+                        times.push(FoodZoneTime {
+                            zone: zone.key(),
+                            walk: FoodTime::default(),
+                            run: FoodTime::default(),
+                        });
+                    }
+                }
+            }
+        }
+        for time in &mut times {
+            let zone = zones.zone(time.zone).ok()?;
+            let kind = tables.zone_kind(zone.kind());
+            let mut walk = FoodTrack::default();
+            let mut run = FoodTrack::default();
+            let mut remaining = run_ticks;
+            for leg in route.legs() {
+                match leg {
+                    LegView::Walk(tiles) => {
+                        let mut second = false;
+                        for &tile in tiles {
+                            walk.visit(tile, 1, zone, kind)?;
+                            if run_ticks != 0 {
+                                let delta = if second {
+                                    second = false;
+                                    0
+                                } else if remaining != 0 {
+                                    remaining -= 1;
+                                    second = true;
+                                    1
+                                } else {
+                                    1
+                                };
+                                run.visit(tile, delta, zone, kind)?;
+                            }
+                        }
+                    }
+                    LegView::Transport(hop) => {
+                        let ticks = u32::try_from(hop.ticks()).ok()?;
+                        walk.visit(hop.effective_takeoff(), ticks, zone, kind)?;
+                        walk.visit(hop.landing(), 0, zone, kind)?;
+                        if run_ticks != 0 {
+                            run.visit(hop.effective_takeoff(), ticks, zone, kind)?;
+                            run.visit(hop.landing(), 0, zone, kind)?;
+                        }
+                    }
+                }
+            }
+            walk.visit(route.destination(), 0, zone, kind)?;
+            if run_ticks != 0 {
+                run.visit(route.destination(), 0, zone, kind)?;
+            }
+            time.walk = walk.time;
+            time.run = if run_ticks == 0 { walk.time } else { run.time };
+        }
+        Some(Self {
+            pack: zones.pack(),
+            zones: times.into_boxed_slice(),
+        })
+    }
+
+    /// Food-only occupancy at the observed movement speed. An unvisited zone
+    /// has zero exposure; an unusable measurement needs the walking fallback.
+    pub fn ticks(&self, zone: BoundZoneKey, run: bool) -> Option<u16> {
+        if zone.pack() != self.pack {
+            return None;
+        }
+        let Some(time) = self.zones.iter().find(|time| time.zone == zone) else {
+            return Some(0);
+        };
+        u16::try_from(if run { time.run.ticks } else { time.walk.ticks }).ok()
+    }
+
+    /// One poison clock from first entry to last exit, including gaps and holds.
+    pub fn crossing_ticks(
+        &self,
+        zones: impl IntoIterator<Item = BoundZoneKey>,
+        run: bool,
+    ) -> Option<u16> {
+        let mut first = u32::MAX;
+        let mut last = 0;
+        for zone in zones {
+            if zone.pack() != self.pack {
+                return None;
+            }
+            let Some(time) = self.zones.iter().find(|time| time.zone == zone) else {
+                continue;
+            };
+            let time = if run { &time.run } else { &time.walk };
+            if time.ticks != 0 {
+                first = first.min(time.first);
+                last = last.max(time.last);
+            }
+        }
+        if first == u32::MAX {
+            return Some(0);
+        }
+        u16::try_from(last.checked_sub(first)?.checked_add(1)?).ok()
+    }
+
+    fn at_anchor(&self, zone: BoundZoneKey, run: bool) -> bool {
+        self.zones.iter().any(|time| {
+            time.zone == zone
+                && if run {
+                    time.run.at_anchor
+                } else {
+                    time.walk.at_anchor
+                }
+        })
+    }
+}
+
+struct FoodZone {
+    exposure: usize,
+    zone: BoundZoneKey,
+    crossing: usize,
+    walking_ticks: u16,
+}
+
+impl FoodZone {
+    fn ticks(&self, route: Option<&FoodRoute>, run: bool) -> u16 {
+        route
+            .and_then(|route| route.ticks(self.zone, run))
+            .unwrap_or(self.walking_ticks)
+    }
+}
 
 pub struct StageSurvival {
     exposures: Arc<[SupplyExposure]>,
+    /// One poison clock for the stage, including concurrent zone attackers.
+    duration_ticks: u64,
+    food_zones: Arc<[FoodZone]>,
     /// Every combat machine may put on its opening kit during this stage.
     kits: Arc<[Arc<CompiledKit>]>,
     inventory: super::compile::StageInventory,
@@ -31,7 +264,7 @@ pub struct SurvivalNeed {
     pub unknown: Option<UnknownWhy>,
 }
 
-const _: () = assert!(std::mem::size_of::<StageSurvival>() == 56);
+const _: () = assert!(std::mem::size_of::<StageSurvival>() == 80);
 const _: () = assert!(std::mem::size_of::<CompiledSurvival>() <= 48);
 const _: () = assert!(std::mem::size_of::<SurvivalNeed>() <= 88);
 
@@ -95,6 +328,8 @@ impl CompiledSurvival {
         let mut stages = Vec::with_capacity(sequences.len());
         for (sequence, authored) in sequences.iter().zip(&role.sequences) {
             let mut exposures = Vec::new();
+            let mut duration_ticks = 0u64;
+            let mut food_zones = Vec::new();
             let mut kits = Vec::new();
             let mut crossings = sequence.cross.to_vec();
             for step in authored.steps.iter().chain(&role.prelude) {
@@ -108,6 +343,9 @@ impl CompiledSurvival {
                 let Some(request) = step.plan.combat_request() else {
                     continue;
                 };
+                duration_ticks = duration_ticks
+                    .checked_add(u64::from(request.budget_ticks))
+                    .ok_or_else(|| CompileError::code("survival-exposure-overflow"))?;
                 if let Target::Npc { types, .. } = &request.target {
                     for &ident in types.iter() {
                         let kind = risks.npc(ident).copied().unwrap_or_else(unknown_kind);
@@ -148,7 +386,7 @@ impl CompiledSurvival {
             }
             if !crossings.is_empty() {
                 let zones = zones.ok_or_else(|| CompileError::code("cross-catalog-unavailable"))?;
-                for name in crossings {
+                for (crossing, name) in crossings.into_iter().enumerate() {
                     let key = zones
                         .resolve(&name)
                         .ok_or_else(|| CompileError::code("unknown-cross-zone"))?;
@@ -157,10 +395,8 @@ impl CompiledSurvival {
                         .map_err(|_| CompileError::code("unknown-cross-zone"))?
                     {
                         let kind = risks.zone_kind(zone.kind());
-                        // Supply sizing covers a round trip around the full bounding
-                        // rectangle at the route model's stop factor, plus its lag.
-                        // Actual geometry and single-way ownership are still judged
-                        // by route admission before any crossing is entered.
+                        // Keep the original risk::supply_bound exposure. Route-speed
+                        // food estimates below cannot weaken admission or this bound.
                         let (x0, z0, x1, z1) = zone.bounds();
                         let ticks = x1
                             .checked_sub(x0)
@@ -169,6 +405,15 @@ impl CompiledSurvival {
                             .and_then(|span| span.checked_add(4))
                             .and_then(|ticks| u16::try_from(ticks).ok())
                             .ok_or_else(|| CompileError::code("survival-exposure-overflow"))?;
+                        // Without a planned route, retain the full walking bound;
+                        // observing run alone must never shrink this fallback.
+                        let walking_ticks = ticks;
+                        food_zones.push(FoodZone {
+                            exposure: exposures.len(),
+                            zone: zone.key(),
+                            crossing,
+                            walking_ticks,
+                        });
                         exposures.push(SupplyExposure {
                             ident: zone.kind().npc_id().unwrap_or(-1),
                             kind,
@@ -179,6 +424,8 @@ impl CompiledSurvival {
             }
             stages.push(StageSurvival {
                 exposures: exposures.into(),
+                duration_ticks,
+                food_zones: food_zones.into(),
                 kits: kits.into(),
                 inventory: super::compile::stage_inventory(
                     authored.steps.iter().chain(&role.prelude),
@@ -210,6 +457,12 @@ impl CompiledSurvival {
         self.stages
             .get(stage)
             .is_some_and(|stage| !stage.exposures.is_empty())
+    }
+
+    pub(super) fn stage_has_crossing(&self, stage: usize) -> bool {
+        self.stages
+            .get(stage)
+            .is_some_and(|stage| !stage.food_zones.is_empty())
     }
 
     pub(crate) fn stage_inventory(&self, stage: usize) -> Option<&super::compile::StageInventory> {
@@ -248,6 +501,7 @@ impl CompiledSurvival {
         stock: Stock<'_>,
         input: RiskInput,
         owner: Option<&CompiledProvisioning>,
+        food_route: Option<&FoodRoute>,
     ) -> Result<SurvivalNeed, UnknownWhy> {
         let stage = self.stages.get(stage).ok_or(UnknownWhy::MissingFacts)?;
         let mut required = Vec::new();
@@ -302,7 +556,14 @@ impl CompiledSurvival {
             } else {
                 let food = *food_candidate
                     .get_or_insert_with(|| self.food_candidate(stock, unknown.is_some(), owner));
-                self.food_need(stage, &candidate, unknown.is_some(), food, owner)?
+                self.food_need(
+                    stage,
+                    &candidate,
+                    unknown.is_some(),
+                    food,
+                    owner,
+                    food_route,
+                )?
             };
             if let Some((item, target)) = &food {
                 let fact = self.tables.food(item.id).ok_or(UnknownWhy::MissingFacts)?;
@@ -442,6 +703,7 @@ impl CompiledSurvival {
         unknown: bool,
         food: Option<(i32, &str, i32, i32)>,
         owner: Option<&CompiledProvisioning>,
+        food_route: Option<&FoodRoute>,
     ) -> Result<Option<(BankItem, i32)>, UnknownWhy> {
         let Some((id, name, heal, _)) = food else {
             return Ok(None);
@@ -461,12 +723,58 @@ impl CompiledSurvival {
         if maximum == 0 {
             return Ok(None);
         }
-        let count = if unknown {
-            maximum
+        // A measured route sizes food even when every combat fact is known.
+        let count = if unknown || food_route.is_some() {
+            estimated_food_count(
+                stage.food_exposures(food_route, input.run()),
+                &self.tables,
+                input,
+                stage.food_duration(food_route, input.run()),
+                heal,
+                owner.map(|owner| owner.path.0.as_ref()),
+            )
+            .min(maximum)
         } else {
             self.food_count(stage, input, id, heal, maximum)?
                 .unwrap_or(maximum)
         };
+        #[cfg(any(test, feature = "test-hooks"))]
+        if api::hostlog::enabled(api::hostlog::Category::BankOp) {
+            let branch = if food_route.is_none() && !stage.food_zones.is_empty() {
+                "fallback"
+            } else if unknown {
+                "unknown"
+            } else {
+                "known"
+            };
+            api::host_log!(
+                api::hostlog::Category::BankOp,
+                api::hostlog::Level::Info,
+                "quester food sizing tick={} branch={branch} unknown={unknown} origin={:?} run={} run_ticks={} duration={} count={count} poison={:?}",
+                input.tick,
+                input.pos,
+                input.run(),
+                input.run_ticks,
+                stage.food_duration(food_route, input.run()),
+                input.poison,
+            );
+            for (index, exposure) in stage.food_exposures(food_route, input.run()).enumerate() {
+                let zone = stage.food_zones.iter().find(|zone| zone.exposure == index);
+                api::host_log!(
+                    api::hostlog::Category::BankOp,
+                    api::hostlog::Level::Info,
+                    "quester food term tick={} index={index} npc={} ticks={} walk={:?} run={:?} fallback={:?} max_hit={} attack_interval={}",
+                    input.tick,
+                    exposure.ident,
+                    exposure.ticks,
+                    zone.and_then(|zone| food_route.and_then(|route| route.ticks(zone.zone, false))),
+                    zone.and_then(|zone| food_route.and_then(|route| route.ticks(zone.zone, true))),
+                    zone.map(|zone| zone.walking_ticks),
+                    exposure.kind.max_hit,
+                    exposure.kind.rate,
+                );
+            }
+        }
         Ok(Some((
             BankItem {
                 id,
@@ -671,6 +979,58 @@ impl CompiledSurvival {
     }
 }
 
+impl StageSurvival {
+    fn food_exposures<'a>(
+        &'a self,
+        route: Option<&'a FoodRoute>,
+        run: bool,
+    ) -> impl Iterator<Item = SupplyExposure> + 'a {
+        self.exposures
+            .iter()
+            .enumerate()
+            .map(move |(index, exposure)| {
+                let mut exposure = *exposure;
+                if let Some(zone) = self.food_zones.iter().find(|zone| zone.exposure == index) {
+                    exposure.ticks = zone.ticks(route, run);
+                    if route.is_some_and(|route| route.at_anchor(zone.zone, run)) {
+                        // Declared combat work is stage time at the anchor.
+                        // death_troll_thrower.rs2:8-11 keeps applayer2 between throws.
+                        exposure.ticks = exposure
+                            .ticks
+                            .saturating_add(u16::try_from(self.duration_ticks).unwrap_or(u16::MAX));
+                    }
+                }
+                exposure
+            })
+    }
+
+    fn food_duration(&self, route: Option<&FoodRoute>, run: bool) -> u64 {
+        let mut duration = self.duration_ticks;
+        let mut crossing = None;
+        let mut longest = 0;
+        let mut crossing_route = None;
+        for zone in self.food_zones.iter() {
+            if crossing != Some(zone.crossing) {
+                duration += u64::from(longest);
+                crossing = Some(zone.crossing);
+                let span = route.and_then(|route| {
+                    route.crossing_ticks(
+                        self.food_zones
+                            .iter()
+                            .filter(|member| member.crossing == zone.crossing)
+                            .map(|member| member.zone),
+                        run,
+                    )
+                });
+                longest = span.unwrap_or(0);
+                crossing_route = span.and(route);
+            }
+            longest = longest.max(zone.ticks(crossing_route, run));
+        }
+        duration + u64::from(longest)
+    }
+}
+
 fn walk_crossings(value: &serde_json::Value, visit: &mut impl FnMut(&str)) {
     match value {
         serde_json::Value::Object(fields) => {
@@ -720,6 +1080,118 @@ fn supply_score(result: Result<risk::odds::DeathBound, UnknownWhy>) -> (f64, Opt
     }
 }
 
+/// A policy reserve, not an admission bound. Four ordinary bites replace the
+/// old full-pack guess. Underground Pass has repeatable, unbounded failures
+/// (quest-guides.md, "Damage from a step"), so retain two such reserves there.
+const UNKNOWN_FOOD_DEFAULT: u8 = 4;
+const UNKNOWN_FOOD_OVERRIDES: &[(&str, u8)] = &[("upass", 8)];
+
+fn fallback_food_count(quest: Option<&str>) -> u8 {
+    UNKNOWN_FOOD_OVERRIDES
+        .iter()
+        .find(|(id, _)| Some(*id) == quest)
+        .map_or(UNKNOWN_FOOD_DEFAULT, |(_, count)| *count)
+}
+
+fn estimated_food_count(
+    exposures: impl IntoIterator<Item = SupplyExposure>,
+    tables: &CombatTables,
+    input: &RiskInput,
+    duration_ticks: u64,
+    heal: i32,
+    quest: Option<&str>,
+) -> u8 {
+    let Some((twice_damage, max_hit, poison)) = expected_damage(exposures, tables) else {
+        return fallback_food_count(quest);
+    };
+    let poison = match input.poison {
+        api::condition::PoisonState::Clear | api::condition::PoisonState::Immune { .. } => poison,
+        api::condition::PoisonState::Poisoned { per_tick, .. }
+        | api::condition::PoisonState::Onset {
+            q: Some(per_tick), ..
+        } => poison.max(u64::from(per_tick)),
+        _ => poison.max(u64::from(tables.unknown_poison_pulse())),
+    };
+    // Content skill_combat/scripts/poison.rs2:72-75 arms the next pulse
+    // with settimer(poison, 30); concurrent attackers share that one clock.
+    let twice_damage = twice_damage + 2 * poison * duration_ticks.div_ceil(30);
+    damage_food_count(twice_damage, max_hit, input.hp_max, heal)
+        .unwrap_or_else(|| fallback_food_count(quest))
+}
+
+/// Uniform randominc(max_hit) has mean max_hit / 2. Charge every attack as a
+/// hit, with no defence or prayer credit.
+fn expected_damage(
+    exposures: impl IntoIterator<Item = SupplyExposure>,
+    tables: &CombatTables,
+) -> Option<(u64, u64, u64)> {
+    let (mut twice_damage, mut max_hit, mut poison) = (0u64, 0, 0);
+    for exposure in exposures {
+        if exposure.ticks == 0 {
+            continue;
+        }
+        let kind = exposure.kind;
+        let hit = if kind.unknown_for().is_none() {
+            u64::from(kind.max_hit)
+        } else {
+            let row = tables.npc(exposure.ident)?;
+            // death_troll_thrower.rs2:20-32 calls npc_ranged_maxhit and
+            // randominc, without an accuracy roll or a poison operation.
+            if kind.unknown != risk::UnknownKind::Bespoke
+                || !matches!(
+                    row.config.as_str(),
+                    "death_troll_thrower1"
+                        | "death_troll_thrower2"
+                        | "death_troll_thrower3"
+                        | "death_troll_thrower4"
+                        | "death_troll_thrower5"
+                )
+            {
+                return None;
+            }
+            let ranged = u64::try_from(row.ranged?).ok()?;
+            let bonus = u64::try_from(row.rangebonus?.checked_add(64)?).ok()?;
+            // npc/npc_combat_ranged.rs2:7-13 and combat.rs2:7-12.
+            u64::from(u8::try_from(((ranged + 9) * bonus + 320) / 640).ok()?)
+        };
+        let rate = u64::from(kind.rate);
+        if rate == 0 || exposure.ticks == 0 {
+            return None;
+        }
+        twice_damage += if kind.hazard() || kind.unknown_for().is_none() && !kind.shared_attack() {
+            2 * hit
+                * if kind.hazard() {
+                    1
+                } else {
+                    u64::from(exposure.ticks).div_ceil(rate)
+                }
+        } else {
+            u64::from(exposure.ticks).div_ceil(rate) * hit
+        };
+        max_hit = max_hit.max(hit);
+        poison = poison.max(u64::from(kind.poison));
+    }
+    Some((twice_damage, max_hit, poison))
+}
+
+fn damage_food_count(twice_damage: u64, max_hit: u64, hp_max: u8, heal: i32) -> Option<u8> {
+    let heal = u64::try_from(heal).ok()?.min(u64::from(hp_max));
+    if heal == 0 {
+        return None;
+    }
+    // 50% above the mean plus one full opening hit covers the maximum of
+    // <=4 uniform throws: .75*n*m + m >= n*m. For the verified throwers
+    // (m=7), its distance above the mean is >=3.05 standard deviations for
+    // every n>=5: (.25*n*7+7)/sqrt(n*7*9/12), minimized near n=4.
+    // The opening hit also covers a due projectile before a bite heals
+    // (supplies.rs:7-10). This is a reserve, not a death-probability bound.
+    let damage = twice_damage
+        .checked_mul(3)?
+        .div_ceil(4)
+        .checked_add(max_hit)?;
+    Some(damage.div_ceil(heal).min(28) as u8)
+}
+
 fn unknown_kind() -> risk::KindRisk {
     risk::KindRisk::new(
         0,
@@ -735,4 +1207,459 @@ fn unknown_kind() -> risk::KindRisk {
         false,
         false,
     )
+}
+
+#[cfg(test)]
+mod food_sizing_tests {
+    use super::*;
+
+    #[test]
+    fn energy_budget_uses_the_engine_drain_and_no_recovery_credit() {
+        assert_eq!(RiskInput::available_run_ticks(0, 0), 0);
+        assert_eq!(RiskInput::available_run_ticks(1, 8), 1);
+        assert_eq!(RiskInput::available_run_ticks(100, 64), 10000 / 134);
+        assert_eq!(RiskInput::available_run_ticks(50, 8), 5000 / 76);
+        assert_eq!(RiskInput::available_run_ticks(100, -5), 10000 / 67);
+    }
+
+    #[test]
+    fn engaged_attacker_follows_beyond_the_hunt_zone_at_walk_speed() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (lease, name) = risk::provisioning_cross_fixture();
+        let zones = lease.zones().unwrap();
+        let zone = zones.zone(zones.resolve(&name).unwrap()).unwrap();
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let tables = CombatTables::build(selected).unwrap();
+        let mut kind = RiskTables::build(&tables).zone_kind(zone.kind());
+        kind.r = 28;
+        kind.reach = 8;
+        let (x, z) = zone.spawn();
+        let start = api::WorldTile {
+            x,
+            z,
+            level: i32::from(zone.plane()),
+        };
+        assert!(zone.contains(start));
+        let mut walk = FoodTrack::default();
+        let mut run = FoodTrack::default();
+        walk.visit(start, 1, zone, kind).unwrap();
+        run.visit(start, 1, zone, kind).unwrap();
+        let mut in_zone = 1;
+        for step in 1..=28 {
+            let tile = api::WorldTile {
+                x: x + step,
+                ..start
+            };
+            in_zone += u32::from(zone.contains(tile));
+            walk.visit(tile, 1, zone, kind).unwrap();
+            run.visit(tile, u32::from(step % 2 == 1), zone, kind)
+                .unwrap();
+        }
+        assert_eq!(walk.time.ticks, 29);
+        assert!(
+            walk.time.ticks > in_zone,
+            "zone-only counting loses pursuit"
+        );
+        assert!(
+            run.time.ticks < walk.time.ticks,
+            "a walker cannot follow a runner at run speed"
+        );
+        assert!(walk.time.at_anchor);
+        walk.visit(api::WorldTile { x: x + 29, ..start }, 1, zone, kind)
+            .unwrap();
+        assert_eq!(
+            walk.time.ticks, 29,
+            "the spawn pursuit radius ends engagement"
+        );
+        assert!(!walk.time.at_anchor);
+    }
+
+    #[test]
+    fn food_geometry_keeps_the_per_bot_layout_budget() {
+        let provisioner = std::mem::size_of::<super::super::provision::Provisioner>();
+        let quester = std::mem::size_of::<super::super::runner::Quester>();
+        eprintln!(
+            "food geometry layouts Provisioner={provisioner} Quester={quester} StageSurvival={} Ledger={}",
+            std::mem::size_of::<StageSurvival>(),
+            std::mem::size_of::<crate::native::ledger::Ledger>(),
+        );
+        assert!(provisioner <= 1184);
+        assert!(
+            quester + 64 <= 4000,
+            "the route cache must retain 64 bytes of Quester headroom"
+        );
+    }
+
+    #[test]
+    fn route_food_geometry_uses_observed_speed_not_a_zone_name() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (lease, name) = risk::provisioning_cross_fixture();
+        let zones = lease.zones().unwrap();
+        let key = zones.resolve(&name).unwrap();
+        let zone = zones.zone(key).unwrap();
+        let (x0, _, x1, _) = zone.bounds();
+        let walking = u16::try_from(x1 - x0 + 1).unwrap();
+        let mut measured = FoodRoute {
+            pack: zones.pack(),
+            zones: vec![FoodZoneTime {
+                zone: key,
+                walk: FoodTime {
+                    ticks: u32::from(walking),
+                    first: 1,
+                    last: u32::from(walking) + 10,
+                    at_anchor: false,
+                },
+                run: FoodTime {
+                    ticks: u32::from(walking.div_ceil(2)),
+                    first: 1,
+                    last: u32::from(walking.div_ceil(2)) + 5,
+                    at_anchor: false,
+                },
+            }]
+            .into_boxed_slice(),
+        };
+        assert_eq!(measured.ticks(key, false), Some(walking));
+        assert_eq!(measured.ticks(key, true), Some(walking.div_ceil(2)));
+        assert_eq!(
+            measured.crossing_ticks([key], false),
+            Some(walking + 10),
+            "poison includes gaps between zone visits"
+        );
+        assert_eq!(
+            measured.crossing_ticks([key], true),
+            Some(walking.div_ceil(2) + 5)
+        );
+        let unvisited = FoodRoute {
+            pack: zones.pack(),
+            zones: Box::new([]),
+        };
+        assert_eq!(unvisited.ticks(key, false), Some(0));
+        assert_eq!(unvisited.ticks(key, true), Some(0));
+        let (foreign, foreign_name) = risk::provisioning_cross_fixture();
+        assert_eq!(
+            measured.ticks(
+                foreign.zones().unwrap().resolve(&foreign_name).unwrap(),
+                true
+            ),
+            None
+        );
+        let fallback = FoodZone {
+            exposure: 0,
+            zone: key,
+            crossing: 0,
+            walking_ticks: 100,
+        };
+        assert_eq!(fallback.ticks(None, false), 100);
+        assert_eq!(
+            fallback.ticks(None, true),
+            100,
+            "unmeasured run must not reduce the walking fallback"
+        );
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let tables = CombatTables::build(selected).unwrap();
+        let exposure = SupplyExposure {
+            ident: zone.kind().npc_id().unwrap(),
+            kind: RiskTables::build(&tables).zone_kind(zone.kind()),
+            ticks: 100,
+        };
+        let mut stage = StageSurvival {
+            exposures: Arc::from([exposure]),
+            duration_ticks: 0,
+            food_zones: Arc::from([fallback]),
+            kits: Arc::from([]),
+            inventory: super::super::compile::StageInventory {
+                items: Arc::from([]),
+                equipment_slots: 0,
+            },
+        };
+        let input = RiskInput::default();
+        let food = Food {
+            item: 379,
+            heal: 12,
+            count: 22,
+        };
+        let original =
+            risk::supply_bound(&stage.exposures, &input, &tables, food).map(|bound| bound.bound);
+        assert_eq!(
+            stage
+                .food_exposures(Some(&measured), false)
+                .next()
+                .unwrap()
+                .ticks,
+            walking
+        );
+        assert_eq!(
+            stage
+                .food_exposures(Some(&measured), true)
+                .next()
+                .unwrap()
+                .ticks,
+            walking.div_ceil(2)
+        );
+        assert_eq!(stage.food_exposures(None, true).next().unwrap().ticks, 100);
+        assert_eq!(
+            stage
+                .food_exposures(Some(&unvisited), true)
+                .next()
+                .unwrap()
+                .ticks,
+            0,
+            "an assessed route outside the hunt zones has no crossing exposure"
+        );
+        assert_eq!(stage.food_duration(Some(&unvisited), true), 0);
+        assert_eq!(
+            stage.food_duration(Some(&measured), false),
+            u64::from(walking + 10)
+        );
+        assert_eq!(
+            stage.food_duration(Some(&measured), true),
+            u64::from(walking.div_ceil(2) + 5)
+        );
+        assert_eq!(stage.exposures[0].ticks, 100);
+        assert_eq!(
+            risk::supply_bound(&stage.exposures, &input, &tables, food).map(|bound| bound.bound),
+            original,
+            "food-only exposure cannot replace supply_bound's retained exposure",
+        );
+        stage.duration_ticks = 30;
+        measured.zones[0].walk.at_anchor = true;
+        assert_eq!(
+            stage
+                .food_exposures(Some(&measured), false)
+                .next()
+                .unwrap()
+                .ticks,
+            walking + 30,
+            "an engaged attacker remains a food exposure during anchor work",
+        );
+        assert_eq!(
+            stage.food_duration(Some(&measured), false),
+            u64::from(walking + 40)
+        );
+    }
+
+    #[test]
+    fn known_food_sizing_uses_the_route_without_changing_admission() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let (lease, name) = risk::provisioning_cross_fixture();
+        let zones = lease.zones().unwrap();
+        let key = zones.resolve(&name).unwrap();
+        let zone = zones.zone(key).unwrap();
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let tables = Arc::new(CombatTables::build(selected).unwrap());
+        let stage = StageSurvival {
+            exposures: Arc::from([SupplyExposure {
+                ident: zone.kind().npc_id().unwrap(),
+                kind: RiskTables::build(&tables).zone_kind(zone.kind()),
+                ticks: 100,
+            }]),
+            duration_ticks: 0,
+            food_zones: Arc::from([FoodZone {
+                exposure: 0,
+                zone: key,
+                crossing: 0,
+                walking_ticks: 100,
+            }]),
+            kits: Arc::from([]),
+            inventory: super::super::compile::StageInventory {
+                items: Arc::from([]),
+                equipment_slots: 0,
+            },
+        };
+        let route = FoodRoute {
+            pack: zones.pack(),
+            zones: Box::new([]),
+        };
+        let model = CompiledSurvival {
+            tables: Arc::clone(&tables),
+            stages: Box::new([]),
+            choices: Box::new([]),
+            equipment_slots: 0,
+        };
+        let mut input = RiskInput::default();
+        input.hp = 14;
+        input.hp_max = 40;
+        input.tick = 35;
+        input.prayer = 37;
+        input.prayer_base = 37;
+        input.combat = Some(3);
+        input.defence = 1;
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 32,
+            hit_since_mark: false,
+        };
+        input.set_missing_facts(false);
+        input.set_input_locked(false);
+        input.set_unattributed(false);
+        input.set_overflow(false);
+        let food = Food {
+            item: 379,
+            heal: 12,
+            count: 22,
+        };
+        let admission = risk::supply_bound(&stage.exposures, &input, &tables, food)
+            .expect("the generic NPC and poison facts are known")
+            .bound;
+        let need = model
+            .food_need(
+                &stage,
+                &input,
+                false,
+                Some((379, "Lobster", 12, 2)),
+                None,
+                Some(&route),
+            )
+            .unwrap();
+        assert_eq!(
+            need.as_ref().map(|(item, count)| (item.id, *count)),
+            Some((379, 0)),
+            "food sizing must not replace a measured zero exposure with the admission bound"
+        );
+        assert_eq!(stage.exposures[0].ticks, 100);
+        assert_eq!(
+            risk::supply_bound(&stage.exposures, &input, &tables, food)
+                .unwrap()
+                .bound,
+            admission
+        );
+    }
+
+    #[test]
+    fn thrower_headroom_covers_four_maxima_and_three_sigmas_afterward() {
+        for n in 1..=4 {
+            assert!(0.75 * f64::from(n) * 7.0 + 7.0 >= f64::from(n) * 7.0);
+        }
+        // The expression is increasing for n>4, so its minimum over n>=5 is n=5.
+        let n: f64 = 5.0;
+        let sigmas = (0.25 * n * 7.0 + 7.0) / (n * 7.0 * 9.0 / 12.0).sqrt();
+        assert!(sigmas >= 3.05);
+    }
+
+    #[test]
+    fn damage_budget_rounds_up_and_keeps_the_opening_hit_margin() {
+        assert_eq!(damage_food_count(0, 0, 40, 20), Some(0));
+        // Twenty-five throws, each uniform on 0..=7, need 139 HP of healing.
+        assert_eq!(damage_food_count(175, 7, 40, 12), Some(12));
+        assert_eq!(damage_food_count(175, 7, 40, 20), Some(7));
+        // A small HP cap cannot use the food's full advertised heal.
+        assert_eq!(damage_food_count(16, 1, 4, 12), Some(4));
+        assert_eq!(damage_food_count(100_000, 70, 99, 12), Some(28));
+        assert_eq!(damage_food_count(20, 7, 40, 0), None);
+    }
+
+    #[test]
+    fn unknown_stage_uses_the_default_or_the_quest_override() {
+        assert_eq!(fallback_food_count(None), 4);
+        assert_eq!(fallback_food_count(Some("imp")), 4);
+        assert_eq!(fallback_food_count(Some("upass")), 8);
+    }
+
+    #[test]
+    fn estimated_supply_includes_poison_without_claiming_admission() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let tables = CombatTables::build(selected).unwrap();
+        let empty = [SupplyExposure {
+            ident: -1,
+            kind: unknown_kind(),
+            ticks: 0,
+        }];
+        let mut input = RiskInput::default();
+        input.hp_max = 40;
+        assert_eq!(
+            estimated_food_count(empty, &tables, &input, 0, 20, None),
+            0,
+            "unknown combat and poison facts do not create exposure on a measured clear route"
+        );
+        let kind = risk::KindRisk::new(
+            2,
+            4,
+            1,
+            1,
+            risk::Style::Melee,
+            risk::UnknownKind::Known,
+            3,
+            1000,
+            true,
+            false,
+            false,
+            false,
+        );
+        let exposures = [SupplyExposure {
+            ident: -1,
+            kind,
+            ticks: 31,
+        }];
+        let mut input = RiskInput::default();
+        input.hp_max = 40;
+        input.poison = api::condition::PoisonState::Clear;
+        // Eight attacks average 8 damage. Two poison pulses add 6.
+        assert_eq!(
+            estimated_food_count(exposures, &tables, &input, 31, 12, None),
+            2
+        );
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 0,
+            hit_since_mark: false,
+        };
+        assert_eq!(
+            estimated_food_count(exposures, &tables, &input, 31, 12, None),
+            3
+        );
+        let unknown = [SupplyExposure {
+            kind: unknown_kind(),
+            ..exposures[0]
+        }];
+        assert_eq!(
+            estimated_food_count(unknown, &tables, &input, 31, 12, None),
+            4
+        );
+        assert_eq!(
+            estimated_food_count(unknown, &tables, &input, 31, 12, Some("upass")),
+            8
+        );
+    }
+
+    #[test]
+    fn concurrent_throwers_share_one_poison_clock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let tables = CombatTables::build(selected).unwrap();
+        let risks = RiskTables::build(&tables);
+        // The plateau has six placements across five NPC types.
+        let exposures = [1105, 1101, 1102, 1103, 1104, 1105].map(|ident| SupplyExposure {
+            ident,
+            kind: *risks.npc(ident).unwrap(),
+            ticks: 30,
+        });
+        let mut input = RiskInput::default();
+        input.hp_max = 40;
+        input.poison = api::condition::PoisonState::Poisoned {
+            per_tick: 11,
+            last_mark: 0,
+            hit_since_mark: false,
+        };
+        assert_eq!(expected_damage(exposures, &tables), Some((210, 7, 0)));
+        assert_eq!(
+            estimated_food_count(exposures, &tables, &input, 30, 12, None),
+            16
+        );
+        // Six sequential exposures do allow six poison pulses.
+        assert_eq!(
+            estimated_food_count(exposures, &tables, &input, 180, 12, None),
+            22
+        );
+    }
 }

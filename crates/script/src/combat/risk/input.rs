@@ -100,6 +100,8 @@ pub struct RiskInput {
     pub food_counts: [u8; 6],
     pub poison: PoisonState,
     pub tick: u16,
+    /// Food-only run prefix covered by the observed energy and carried weight.
+    pub run_ticks: u16,
     pub hp: u8,
     pub hp_max: u8,
     pub prayer: u8,
@@ -140,6 +142,7 @@ impl Default for RiskInput {
             food_counts: [0; 6],
             poison: PoisonState::Unknown { since: 0 },
             tick: 0,
+            run_ticks: 0,
             hp: 0,
             hp_max: 0,
             prayer: 0,
@@ -174,6 +177,25 @@ impl RiskInput {
     #[inline]
     pub fn set_run(&mut self, value: bool) {
         self.set_flag(RUN, value);
+    }
+
+    /// Player.processMovement drains floor(67 + 67 * min(kg, 64) / 64)
+    /// units per run tick (Player.ts:701-722). Energy packets truncate to
+    /// percent (UpdateRunEnergyEncoder.ts:9-10). Weight packets truncate kg,
+    /// so use the next whole kg as an upper bound. Do not credit recovery.
+    pub fn available_run_ticks(energy_percent: i32, weight_kg: i32) -> u16 {
+        let kg = weight_kg.saturating_add(1).clamp(0, 64);
+        let drain = 67 + 67 * kg / 64;
+        u16::try_from(energy_percent.clamp(0, 100) * 100 / drain)
+            .expect("at most 10000 energy units divided by at least 67")
+    }
+
+    pub fn observed_run_ticks(frame: &Frame<'_>) -> u16 {
+        if unique_varp(frame.varps, 173) == Some(1) {
+            Self::available_run_ticks(frame.local.energy, frame.local.weight)
+        } else {
+            0
+        }
     }
     #[inline]
     pub const fn other_prayers_on(&self) -> bool {
@@ -338,6 +360,7 @@ impl RiskInput {
             }
         };
         input.set_run(run);
+        input.run_ticks = Self::observed_run_ticks(frame);
         input.set_other_prayers_on(frame.prayers.iter().any(|active| *active));
 
         match tables.selected().item_by_alias("antidragonbreathshield") {

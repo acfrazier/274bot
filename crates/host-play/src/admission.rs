@@ -259,6 +259,15 @@ fn tables(world: &NavWorld) -> Option<&Tables> {
     cell.get().and_then(Option::as_ref)
 }
 
+pub(crate) fn measure_food_route(
+    world: &NavWorld,
+    route: nav_planner::contract::RouteView<'_>,
+    zones: nav_planner::contract::ZoneTableView<'_>,
+    run_ticks: u16,
+) -> Option<script::quester::FoodRoute> {
+    script::quester::FoodRoute::measure(route, zones, &tables(world)?.risks, run_ticks)
+}
+
 /// The same shared selection the admission model uses, read at session start.
 pub(crate) fn condition_tables(world: &NavWorld) -> Option<(Arc<CombatTables>, u8)> {
     let tables = tables(world)?;

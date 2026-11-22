@@ -14,6 +14,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   instead of offering the already-used button. This fixes revision-377 Cook
   dialogue failures while retaining native menu refusal checks.
 
+### Quester
+
+- Unsupported combat stages size food from available damage facts instead of
+  requesting a full backpack. Unknown damage uses a smaller quest-specific
+  reserve. Food withdrawals preserve space for quest items.
+  Crossing estimates use planned hunt-zone exposure at walking speed unless
+  running is observed. Missing route measurements retain the walking bound.
+  Measured routes without exposure request no extra food. An unavailable
+  optional bank reports its shortfall instead of repeating the same trip.
+
 ### Revision 377 login
 
 - Revision 377 login failures show clearer messages. An outdated-client

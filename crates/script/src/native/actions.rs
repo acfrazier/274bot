@@ -3004,6 +3004,7 @@ mod tests {
             )),
             detail: Some(Arc::from("risk input unavailable")),
             route_ticks: 0,
+            food_route: None,
         }
     }
 

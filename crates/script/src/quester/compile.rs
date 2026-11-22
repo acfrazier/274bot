@@ -417,6 +417,14 @@ pub trait StepPlan: Send + Sync {
     fn provisioning_anchor(&self) -> Option<api::WorldTile> {
         self.anchor()
     }
+    /// The actual walk permissions and arrival margin used for food sizing.
+    fn provisioning_walk_request(
+        &self,
+        evidence: api::quest_progress::EvidenceStamp,
+    ) -> Option<crate::native::WalkRequest> {
+        self.provisioning_anchor()
+            .map(|tile| super::families::reach::walk_request(tile, 0, None, evidence))
+    }
     /// Post-machine predicate window, measured on the eligible clock.
     fn settle_timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(8)
