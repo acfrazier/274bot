@@ -162,6 +162,9 @@ pub(super) fn request(
         native.as_ref().map(|native| &native.request),
     );
     let lease = nav_planner::producer::lease(world).unwrap();
+    let allow_mage_wilderness = native
+        .as_ref()
+        .is_some_and(|input| input.request.allow_mage_wilderness);
     let native = native.map(|native| NativePickContext {
         authority: native.authority,
         evidence: native.evidence,
@@ -184,6 +187,7 @@ pub(super) fn request(
         target_count,
         (walking && target_count != 0).then_some(generation),
         native,
+        allow_mage_wilderness,
     )
 }
 /// Replay the captured live Select input and write its per-job CPU evidence.

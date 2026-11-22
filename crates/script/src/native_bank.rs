@@ -272,6 +272,8 @@ pub struct BankPickRequest {
     pub from: WorldTile,
     pub preferences: BankPreferences,
     pub options: WalkOptions,
+    /// Permit wilderness only when ranking the Mage Arena bank.
+    pub allow_mage_wilderness: bool,
     /// Roster indices already proven eligible from this run's live facts.
     /// Air-ranked, with stable catalog ties, when `allow_air_fallback` is true.
     pub eligible: Arc<[u16]>,
@@ -2783,11 +2785,20 @@ struct SelectFallback {
 }
 
 impl Select {
+    pub(crate) fn begin_with_mage_wilderness(
+        args: SelectArgs,
+        allow_mage_wilderness: bool,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<Self, ActionError> {
+        Self::start(args, None, allow_mage_wilderness, cx)
+    }
+
     /// Begins a pick. `avoid` is a bank to leave out of the candidates
     /// (see [`SelectOtherArgs::avoid`]).
     fn start(
         args: SelectArgs,
         avoid: Option<u16>,
+        allow_mage_wilderness: bool,
         cx: &mut ActionContext<'_>,
     ) -> Result<Self, ActionError> {
         let snapshot = cx.snapshot();
@@ -2840,6 +2851,7 @@ impl Select {
                 from: args.from,
                 preferences: args.preferences,
                 options: args.options,
+                allow_mage_wilderness,
                 eligible,
                 explicit_bank,
                 allow_air_fallback: args.allow_air_fallback,
@@ -2857,7 +2869,7 @@ impl NativeMachine for Select {
     type Output = SelectedBank;
 
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
-        Self::start(args, None, cx)
+        Self::start(args, None, false, cx)
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
@@ -2964,7 +2976,7 @@ impl NativeMachine for SelectOther {
 
     fn begin(args: Self::Args, cx: &mut ActionContext<'_>) -> Result<Self, ActionError> {
         Ok(Self {
-            pick: Select::start(args.select, Some(args.avoid), cx)?,
+            pick: Select::start(args.select, Some(args.avoid), false, cx)?,
         })
     }
 

@@ -10,6 +10,10 @@ fn tile(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }
 }
 fn world(wall: bool) -> Arc<NavWorld> {
+    world_with_graph(wall, TransportGraph::default())
+}
+
+fn world_with_graph(wall: bool, graph: TransportGraph) -> Arc<NavWorld> {
     let mut flags = vec![0; 4 * 16 * 16];
     if wall {
         for z in 0..16 {
@@ -27,10 +31,34 @@ fn world(wall: bool) -> Arc<NavWorld> {
             blocked,
             flags: None,
         },
-        TransportGraph::default(),
+        graph,
         vec![],
     ))
 }
+
+fn wilderness_stripe_world() -> Arc<NavWorld> {
+    use nav_planner::transport::{WildernessRules, WildernessZone};
+    world_with_graph(
+        false,
+        TransportGraph {
+            wilderness: WildernessRules {
+                zones: vec![WildernessZone {
+                    x1: 6,
+                    z1: 0,
+                    x2: 7,
+                    z2: 15,
+                    level1: 0,
+                    level2: 0,
+                    origin_z: 0,
+                }],
+                divisor: 8,
+                offset: 1,
+            },
+            ..TransportGraph::default()
+        },
+    )
+}
+
 fn navs(banks: Vec<NamedBank>) -> Arc<Mutex<HashMap<String, super::super::NavBot>>> {
     let mut bot = super::super::NavBot::default();
     bot.bank_pick.facts = Some(Arc::new(NamedBankFacts::from_banks(banks)));
@@ -43,6 +71,7 @@ fn bank(name: &'static str, x: i32, z: i32) -> NamedBank {
 #[cfg(feature = "js")]
 #[test]
 fn bank_pick_v2_uses_account_conditions_over_legacy_options() {
+    use NativePickKind::{AirFallback, NearShortcut, Reachable};
     if !api::test_support::game_data_available() {
         return;
     }
@@ -62,20 +91,79 @@ fn bank_pick_v2_uses_account_conditions_over_legacy_options() {
     };
     let required_quests = ["Lost City", canifis.definition.unwrap().quest.unwrap()];
     let public_banks = [mage, zanaris, bank("Public", 3093, 3958)];
-    for (banks, wilderness, lost_city_colour, expected) in [
-        (public_banks.to_vec(), true, 0x00F800, "Mage Arena"),
-        (public_banks.to_vec(), false, 0x00F800, "Zanaris"),
-        (public_banks.to_vec(), false, 0xF8F800, "Public"),
-        (public_banks.to_vec(), false, 0, "Public"),
-        (vec![canifis], false, 0, "Canifis"),
-    ] {
+    let near = [
+        (
+            public_banks.to_vec(),
+            true,
+            0x00F800,
+            "Mage Arena",
+            NearShortcut,
+        ),
+        (
+            public_banks.to_vec(),
+            false,
+            0x00F800,
+            "Zanaris",
+            NearShortcut,
+        ),
+        (
+            public_banks.to_vec(),
+            false,
+            0xF8F800,
+            "Public",
+            AirFallback,
+        ),
+        (public_banks.to_vec(), false, 0, "Public", AirFallback),
+        (vec![canifis], false, 0, "Canifis", AirFallback),
+    ]
+    .into_iter()
+    .map(|(banks, wilderness, colour, expected, kind)| {
+        (
+            banks,
+            wilderness,
+            colour,
+            expected,
+            Some(kind),
+            tile(3091, 3958),
+            None,
+        )
+    });
+    let cross_wilderness = [
+        NamedBank {
+            tile: tile(14, 8),
+            ..mage
+        },
+        NamedBank {
+            definition: catalog.iter().find(|b| b.name == "Shantay Pass"),
+            ..bank("Shantay Pass", 12, 0)
+        },
+    ];
+    let far = [
+        (None, "Mage Arena", Some(Reachable)),
+        (Some(false), "Shantay Pass", None),
+        (Some(true), "Shantay Pass", Some(Reachable)),
+    ]
+    .into_iter()
+    .map(|(permission, expected, kind)| {
+        (
+            cross_wilderness.to_vec(),
+            true,
+            0x00F800,
+            expected,
+            kind,
+            tile(0, 0),
+            permission,
+        )
+    });
+    for (banks, wilderness, lost_city_colour, expected, kind, from, permission) in near.chain(far) {
         let source = r#"
 let started = false;
 export async function tick(api) {
   if (started) return;
   started = true;
   globalThis.result = await api.bankNearestReachable({
-    from: {x:3091,z:3958,level:0}, use_mage_bank: true, use_zanaris_bank: false
+    ...globalThis.bankPickInput,
+    use_mage_bank: true, use_zanaris_bank: false
   });
 }
 "#;
@@ -111,15 +199,23 @@ export async function tick(api) {
             }
         }
         slot.on_is_up(true);
+        slot.probe(&format!(
+            "globalThis.bankPickInput = {}",
+            serde_json::json!({
+                "from": {"x": from.x, "z": from.z, "level": from.level},
+                "allow_wilderness": permission,
+            })
+        ))
+        .unwrap();
         let navs = navs(banks);
-        let world = Some(world(false));
+        let world = Some(wilderness_stripe_world());
         let mut state = WorldState::empty();
         state.quests.extend(required_quests.map(String::from));
         let state = Arc::new(state);
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
         snapshot.seed_tick(1);
-        snapshot.seed_tile(tile(3091, 3958));
+        snapshot.seed_tile(from);
         snapshot.seed_quest_statuses(
             required_quests
                 .iter()
@@ -140,7 +236,7 @@ export async function tick(api) {
             let bank_selection = slot.bank_selection_input();
             super::super::with_script_snapshot_input_shorts(
                 1,
-                Some((3091, 3958, 0)),
+                Some((from.x, from.z, from.level)),
                 true,
                 None,
                 Some(&snapshot),
@@ -172,7 +268,7 @@ export async function tick(api) {
             let mut cx = script::ScriptCtx {
                 driver: &mut HeldDriver,
                 tick: 1,
-                here: Some((3091, 3958, 0)),
+                here: Some((from.x, from.z, from.level)),
                 walk: None,
                 walk_with: None,
                 inv: None,
@@ -234,13 +330,25 @@ export async function tick(api) {
             assert!(Instant::now() < deadline, "native select service stalled");
             std::thread::yield_now();
         };
-        if expected == "Canifis" {
+        // The air fallback can name a bank even when the route was refused.
+        // Check the receipt, not just the JS-visible bank name.
+        if let Some(kind) = kind {
             let BankPickOutcome::Selected(selected) = &receipt.outcome else {
-                panic!("eligible compatibility bank must retain its air fallback");
+                panic!(
+                    "expected {kind:?} at {from:?} with permission={permission:?}: {:?}",
+                    receipt.outcome
+                );
             };
-            assert_eq!(selected.bank_index, 0);
-            assert_eq!(selected.kind, NativePickKind::AirFallback);
-            assert!(selected.access.is_none());
+            assert_eq!(selected.kind, kind);
+            if expected == "Canifis" {
+                assert_eq!(selected.bank_index, 0);
+                assert!(selected.access.is_none());
+            }
+        } else {
+            assert!(
+                matches!(&receipt.outcome, BankPickOutcome::NoCandidate { detail }
+                if detail.as_ref() == "bank selection failed: NoPath")
+            );
         }
         slot.complete_native_bank_pick(&authority, receipt);
         for _ in 0..8 {
@@ -276,7 +384,7 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
         .get_mut("test")
         .unwrap()
         .bank_preferences = BankPreferences::for_account(None, true);
-    let world = Some(world(false));
+    let world = Some(wilderness_stripe_world());
     let mut frame_a = WorldState::empty();
     frame_a.quests.insert("Frame A".into());
     let mut frame_b = WorldState::empty();
@@ -315,7 +423,77 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
         .expect("a far routable bank queues selection work");
     assert!(Arc::ptr_eq(&active.job.request.state, &frame_a));
     assert_eq!(active.job.request.state.quests, frame_a.quests);
-    assert!(active.job.request.opts.allow_wilderness);
+    let world = world.as_ref().unwrap();
+    let route = find_with(
+        &world.collision,
+        &world.graph,
+        tile(0, 0),
+        tile(12, 12),
+        active.job.request.opts,
+        &frame_a,
+    );
+    assert!(
+        route.is_err(),
+        "a non-Mage bank must not route through wilderness"
+    );
+}
+
+#[test]
+fn raw_bank_walk_ranks_only_the_mage_candidate_with_wilderness_permission() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mage = NamedBank {
+        definition: api::named_banks::bank_catalog()
+            .unwrap()
+            .iter()
+            .find(|bank| bank.name == "Mage Arena"),
+        ..bank("Mage Arena", 12, 4)
+    };
+    let world = Some(wilderness_stripe_world());
+    let from = tile(0, 0);
+    let scope = api::identity::Scope::Slot(api::identity::SlotKey::from_incarnation(1).unwrap());
+    for (permission, bank_index) in [(false, 0), (true, 2)] {
+        let navs = navs(vec![
+            bank("Safe bank", 5, 15),
+            bank("Public bank", 9, 0),
+            mage,
+        ]);
+        navs.lock()
+            .unwrap()
+            .get_mut("test")
+            .unwrap()
+            .bank_preferences = BankPreferences::for_account(None, permission);
+        assert!(queue_bank_walk_scoped(
+            &navs,
+            "test",
+            scope,
+            &world,
+            None,
+            &GameSnapshot::new(),
+            from,
+            None
+        ));
+        let deadline = Instant::now() + BANK_SELECTION_WINDOW;
+        loop {
+            poll_bank_pick(&navs, "test", Instant::now());
+            if let Some(owner) = navs.lock().unwrap()["test"].bank_pick.owner_result.as_ref() {
+                assert_eq!(owner.value().kind, PickKind::Reachable);
+                assert_eq!(
+                    owner.value().index,
+                    Some(bank_index),
+                    "permission={permission}"
+                );
+                assert!(
+                    owner.value().plan.is_some(),
+                    "the winning route must be retained"
+                );
+                break;
+            }
+            assert!(Instant::now() < deadline, "bank walk did not settle");
+            std::thread::yield_now();
+        }
+    }
 }
 
 #[test]
@@ -1311,6 +1489,7 @@ mod bank_pick_capture {
             target_count,
             (walking && target_count != 0).then_some(generation),
             None,
+            false,
         )
     }
 
@@ -2107,6 +2286,7 @@ mod bank_pick_capture {
             target_count,
             None,
             None,
+            false,
         );
         let deadline = Some(Instant::now() + BANK_SELECTION_WINDOW);
         let job = BankPickJob {
@@ -2647,6 +2827,7 @@ mod bank_pick_capture {
             target_count,
             Some(7),
             None,
+            false,
         );
         let (input, preflights) = request
             .work_input(7, false, "test")

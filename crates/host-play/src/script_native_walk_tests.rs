@@ -5439,6 +5439,44 @@ fn bank_trip_options_capture_derived_account_eligibility() {
     }
 }
 
+#[test]
+fn active_card_wilderness_permission_grants_mage_bank_without_a_global_grant() {
+    let mut rig = synthetic_open_rig(false);
+    let slot = rig.slot();
+    {
+        let mut slot = slot.lock().unwrap();
+        let run = slot.native_run().expect("running Walker test card");
+        let config = script::native::PreparedConfig::for_test_script(
+            2,
+            Arc::new(
+                serde_json::from_value(serde_json::json!({
+                    "allow_wilderness": true,
+                }))
+                .unwrap(),
+            ),
+        );
+        assert!(matches!(
+            slot.configure_compiled(config, run),
+            script::CompiledDelivery::Applied
+        ));
+    }
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.walk_globals = Some(Arc::new(Mutex::new(WalkGlobals::default())));
+        bot.native_permissions = Some(Default::default());
+        assert!(!crate::walk_permissions::globals_for(Some(bot)).allow_wilderness);
+        assert!(!bot.bank_preferences.use_mage_bank);
+    }
+    rig.observe(1);
+    assert!(slot.lock().unwrap().bank_preferences().use_mage_bank);
+    assert!(
+        rig.navs.lock().unwrap()["alice"]
+            .bank_preferences
+            .use_mage_bank
+    );
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {

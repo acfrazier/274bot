@@ -237,6 +237,51 @@ fn account_gates_use_base_level_and_require_lost_city_completion() {
 }
 
 #[test]
+fn derived_bank_globals_reset_across_connection_and_run_boundaries() {
+    if !crate::local_bank_catalog::local_bank_catalog_available()
+        || !crate::local_game_data::local_game_data_available(289)
+    {
+        return;
+    }
+    let mut iso = spawn(PROBE, catalog());
+    let mut account = api::snapshot::GameSnapshot::new();
+    account.seed_ingame(2);
+    account.seed_quest_statuses(
+        vec![api::snapshot::QuestStatusView {
+            component_id: -1,
+            name: "Lost City".into(),
+            colour: 0x00F800,
+        }],
+        true,
+    );
+    for boundary in [
+        BankSlot::reset_session_work,
+        BankSlot::reconnect_session_work,
+    ] {
+        iso.slot.refresh_bank_preferences(Some(&account), true);
+        assert_eq!(
+            iso.probe("bankOptions()").unwrap(),
+            serde_json::json!([true, true])
+        );
+        boundary(&mut iso);
+        assert_eq!(
+            iso.probe("bankOptions()").unwrap(),
+            serde_json::json!([false, false])
+        );
+    }
+    iso.slot.refresh_bank_preferences(Some(&account), true);
+    assert_eq!(
+        iso.probe("bankOptions()").unwrap(),
+        serde_json::json!([true, true])
+    );
+    iso.stop();
+    assert_eq!(
+        iso.slot.bank_preferences(),
+        api::named_banks::BankPreferences::default()
+    );
+}
+
+#[test]
 fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
     if !crate::local_bank_catalog::local_bank_catalog_available()
         || !crate::local_game_data::local_game_data_available(289)

@@ -7,6 +7,7 @@ use crate::selected::FactError;
 use crate::selected::LOCAL_GAME_DATA_FAMILY;
 use crate::snapshot::{GameSnapshot, QuestListStatus, WorldTile};
 use serde::Deserialize;
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BankOperation {
@@ -50,6 +51,14 @@ pub fn bank_catalog() -> Result<&'static [BankDefinition], FactError> {
     }
 }
 
+static ZANARIS_QUEST: LazyLock<Option<&'static str>> = LazyLock::new(|| {
+    bank_catalog()
+        .ok()?
+        .iter()
+        .find(|bank| bank.setting == Some("useZanarisBank"))?
+        .quest
+});
+
 /// Account eligibility for banks that have an additional access condition.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BankPreferences {
@@ -63,10 +72,11 @@ impl BankPreferences {
         let use_zanaris_bank = snapshot
             .filter(|snapshot| snapshot.ingame() && snapshot.quest_statuses_available())
             .and_then(|snapshot| {
+                let quest = (*ZANARIS_QUEST)?;
                 snapshot
                     .quest_statuses()
                     .iter()
-                    .find(|row| row.name.eq_ignore_ascii_case("Lost City"))
+                    .find(|row| row.name.eq_ignore_ascii_case(quest))
             })
             .is_some_and(|row| row.status() == QuestListStatus::Complete);
         Self {

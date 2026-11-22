@@ -904,7 +904,11 @@ fn parse_bank_start(
         "bank_select" => {
             let mut args = Args::new(Op::Select);
             args.set_stand(bank_optional_tile(object, "from", None)?);
-            args.set_allow_wilderness(bank_boolean(object, "allow_wilderness", false)?);
+            args.set_allow_wilderness(match object.get("allow_wilderness") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(value)) => Some(*value),
+                Some(_) => return Err("allow_wilderness must be a boolean".into()),
+            });
             args.set_use_mage_bank(match object.get("use_mage_bank") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(value)) => Some(*value),

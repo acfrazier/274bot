@@ -1883,6 +1883,7 @@ impl SlotScript {
         self.held_channel_refusals.clear();
         self.teardown_api(reason);
         self.bank_runtime_boundary();
+        self.bank_preferences = Default::default();
         self.shop_runtime_boundary();
         self.native_runtime.revoke();
         self.evidence_wait_run = None;

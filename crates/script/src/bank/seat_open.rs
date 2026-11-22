@@ -138,7 +138,7 @@ impl NativeMachine for Opening {
                     Arc::clone(&args.facts),
                     args.preferences,
                     args.request.stand,
-                    args.request.allow_wilderness || args.preferences.use_mage_bank,
+                    args.request.allow_wilderness,
                     true,
                     cx,
                 )? {
@@ -2182,7 +2182,7 @@ impl BankingOpen {
                 Arc::clone(facts),
                 self.preferences,
                 Some(from),
-                true,
+                None,
                 false,
                 cx,
             )? {
@@ -2284,7 +2284,7 @@ impl SelectorCore {
         facts: Arc<NamedBankFacts>,
         preferences: BankPreferences,
         start: Option<WorldTile>,
-        allow_wilderness: bool,
+        allow_wilderness: Option<bool>,
         allow_air_fallback: bool,
         cx: &mut ActionContext<'_>,
     ) -> Result<Option<Self>, ActionError> {
@@ -2293,7 +2293,7 @@ impl SelectorCore {
         };
         let options = WalkOptions {
             allow_teleports: WalkBit::Forbid,
-            allow_wilderness: if allow_wilderness {
+            allow_wilderness: if allow_wilderness == Some(true) {
                 WalkBit::Allow
             } else {
                 WalkBit::Forbid
@@ -2301,7 +2301,7 @@ impl SelectorCore {
             allow_danger_zones: WalkBit::Inherit,
             ..WalkOptions::default()
         };
-        let machine = Select::begin(
+        let machine = Select::begin_with_mage_wilderness(
             SelectArgs {
                 facts: Arc::clone(&facts),
                 from,
@@ -2311,6 +2311,7 @@ impl SelectorCore {
                 allow_air_fallback,
                 return_to: None,
             },
+            allow_wilderness.is_none() && preferences.use_mage_bank,
             cx,
         )?;
         Ok(Some(Self { machine, facts }))
