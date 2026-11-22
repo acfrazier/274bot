@@ -117,16 +117,15 @@ fn bank_pick_v2_uses_account_conditions_over_legacy_options() {
         (vec![canifis], false, 0, "Canifis", AirFallback),
     ]
     .into_iter()
-    .map(|(banks, wilderness, colour, expected, kind)| {
-        (
-            banks,
-            wilderness,
-            colour,
-            expected,
-            Some(kind),
-            tile(3091, 3958),
-            None,
-        )
+    .map(|(banks, wilderness, colour, expected, kind)| BankPickCase {
+        banks,
+        wilderness,
+        lost_city_colour: colour,
+        expected,
+        kind: Some(kind),
+        from: tile(3091, 3958),
+        permission: None,
+        compat: false,
     });
     let cross_wilderness = [
         NamedBank {
@@ -144,19 +143,94 @@ fn bank_pick_v2_uses_account_conditions_over_legacy_options() {
         (Some(true), "Shantay Pass", Some(Reachable)),
     ]
     .into_iter()
-    .map(|(permission, expected, kind)| {
-        (
-            cross_wilderness.to_vec(),
-            true,
-            0x00F800,
-            expected,
-            kind,
-            tile(0, 0),
-            permission,
-        )
+    .map(|(permission, expected, kind)| BankPickCase {
+        banks: cross_wilderness.to_vec(),
+        wilderness: true,
+        lost_city_colour: 0x00F800,
+        expected,
+        kind,
+        from: tile(0, 0),
+        permission,
+        compat: false,
     });
-    for (banks, wilderness, lost_city_colour, expected, kind, from, permission) in near.chain(far) {
-        let source = r#"
+    check_bank_pick_cases(&required_quests, near.chain(far));
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn compat_banking_open_considers_wilderness_when_js_v2_does_not() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    // Put a catalog bank with stand access on the far side of the wilderness
+    // stripe. The only way to reach its stand is to cross the stripe.
+    let bank = NamedBank {
+        definition: api::named_banks::bank_catalog()
+            .unwrap()
+            .iter()
+            .find(|bank| bank.name == "Shantay Pass"),
+        ..bank("Shantay Pass", 12, 0)
+    };
+    assert!(bank.definition.is_some());
+    check_bank_pick_cases(
+        &[],
+        [false, true].map(|compat| BankPickCase {
+            banks: vec![bank],
+            wilderness: false,
+            lost_city_colour: 0,
+            expected: bank.name,
+            kind: compat.then_some(NativePickKind::Reachable),
+            from: tile(0, 0),
+            permission: None,
+            compat,
+        }),
+    );
+}
+
+#[cfg(feature = "js")]
+struct BankPickCase {
+    banks: Vec<NamedBank>,
+    wilderness: bool,
+    lost_city_colour: i32,
+    expected: &'static str,
+    kind: Option<NativePickKind>,
+    from: WorldTile,
+    permission: Option<bool>,
+    compat: bool,
+}
+
+#[cfg(feature = "js")]
+fn check_bank_pick_cases(required_quests: &[&str], cases: impl IntoIterator<Item = BankPickCase>) {
+    for BankPickCase {
+        banks,
+        wilderness,
+        lost_city_colour,
+        expected,
+        kind,
+        from,
+        permission,
+        compat,
+    } in cases
+    {
+        let (source, shape) = if compat {
+            (
+                r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+  async loop() {
+    if (globalThis.bankStarted) return;
+    globalThis.bankStarted = true;
+    globalThis.result = await Banking.open({ preferNearby: false });
+  }
+}
+"#
+                .to_owned(),
+                script_js::LoadShape::CompatClass,
+            )
+        } else {
+            (
+                script_js::native_fixture(
+                    r#"
 let started = false;
 export async function tick(api) {
   if (started) return;
@@ -166,16 +240,16 @@ export async function tick(api) {
     use_mage_bank: true, use_zanaris_bank: false
   });
 }
-"#;
+"#,
+                ),
+                script_js::LoadShape::NativeTick,
+            )
+        };
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(1);
         slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory));
-        let prepared = crate::script_runtime::prepared_test_start_card(
-            &script_js::native_fixture(source),
-            script_js::LoadShape::NativeTick,
-            vec![],
-        )
-        .expect("native bank fixture prepares");
+        let prepared = crate::script_runtime::prepared_test_start_card(&source, shape, vec![])
+            .expect("bank fixture prepares");
         let mut settings = script::native::SettingsBag::new();
         settings.insert("useMageBank".into(), serde_json::Value::Bool(!wilderness));
         settings.insert("useZanarisBank".into(), serde_json::Value::Bool(false));
@@ -199,6 +273,8 @@ export async function tick(api) {
             }
         }
         slot.on_is_up(true);
+        let slot_key = api::identity::SlotKey::from_incarnation(1).unwrap();
+        slot.align_seat_session(Some(api::identity::SessionKey::first(slot_key)));
         slot.probe(&format!(
             "globalThis.bankPickInput = {}",
             serde_json::json!({
@@ -210,9 +286,19 @@ export async function tick(api) {
         let navs = navs(banks);
         let world = Some(wilderness_stripe_world());
         let mut state = WorldState::empty();
-        state.quests.extend(required_quests.map(String::from));
+        state
+            .quests
+            .extend(required_quests.iter().copied().map(String::from));
         let state = Arc::new(state);
         let mut snapshot = GameSnapshot::new();
+        if compat {
+            crate::tests::nav_snapshot_at(
+                &mut crate::tests::nav_client(),
+                &mut snapshot,
+                from.x,
+                from.z,
+            );
+        }
         snapshot.seed_ingame(2);
         snapshot.seed_tick(1);
         snapshot.seed_tile(from);
@@ -264,7 +350,7 @@ export async function tick(api) {
                 },
             );
             let (_, legacy, _) = slot.drain_host_interacts(None);
-            assert!(legacy.is_empty(), "select uses the typed native seat");
+            assert!(legacy.is_empty(), "bank pick uses the typed native seat");
             let mut cx = script::ScriptCtx {
                 driver: &mut HeldDriver,
                 tick: 1,
@@ -289,12 +375,18 @@ export async function tick(api) {
                 post(&mut slot, false);
                 slot.take_native_action()
             })
-            .expect("v2 select starts the real native bank picker");
+            .unwrap_or_else(|| {
+                panic!(
+                    "the script must start the native bank picker (compat={compat}, state={:?}, JS={:?})",
+                    slot.state(),
+                    slot.probe("[!!globalThis.bankStarted, globalThis.result ?? null]"),
+                )
+            });
         let authority = action.authority();
         let script::native::HostEffect::BankPick(request) = action.effect else {
-            panic!("v2 select must emit a BankPick action");
+            panic!("the script must emit a BankPick action");
         };
-        assert!(request.allow_air_fallback);
+        assert_eq!(request.allow_air_fallback, !compat);
         let evidence = EvidenceStamp {
             run: authority.run(),
             tick: 1,
@@ -335,11 +427,15 @@ export async function tick(api) {
         if let Some(kind) = kind {
             let BankPickOutcome::Selected(selected) = &receipt.outcome else {
                 panic!(
-                    "expected {kind:?} at {from:?} with permission={permission:?}: {:?}",
+                    "expected {kind:?} at {from:?} with permission={permission:?}, compat={compat}: {:?}",
                     receipt.outcome
                 );
             };
             assert_eq!(selected.kind, kind);
+            if compat {
+                assert_eq!(selected.bank_index, 0);
+                assert_eq!(selected.access_tile, tile(12, 0));
+            }
             if expected == "Canifis" {
                 assert_eq!(selected.bank_index, 0);
                 assert!(selected.access.is_none());
@@ -351,6 +447,10 @@ export async function tick(api) {
             );
         }
         slot.complete_native_bank_pick(&authority, receipt);
+        if compat {
+            slot.stop();
+            continue;
+        }
         for _ in 0..8 {
             post(&mut slot, false);
         }

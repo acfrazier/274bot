@@ -317,9 +317,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 ### Scripts
 
 - Scripts can use the Zanaris bank after the account completes Lost City.
-  The Mage Arena bank follows the existing wilderness permission. Neither
-  bank needs a separate setting. Bank selection avoids the wilderness by
-  default except for Mage Arena when the account permits it.
+  Eligibility for the Mage Arena bank follows the account's wilderness
+  permission. Neither bank needs a separate setting. Native, JS v2, and
+  Luau bank selection avoids wilderness routes by default except for Mage
+  Arena when the account permits it. The rs2b0t-compatible `Banking.open`
+  still allows wilderness routes.
 
 - The catalog script AccountLeveler now loads. It imports four rs2b0t modules
   that 274bot did not provide, so its card showed **failed import**.
