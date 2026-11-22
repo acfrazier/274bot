@@ -749,7 +749,7 @@ table Snapshot {
   // one from before this field. A delta carries it whenever it changes, and
   // an explicit 0 clears it; the dialog reads 0 as no observation too.
   local_attack_marks: ulong = null;
-  // Slot 314: the latest host-observed door crossing. Omitted deltas retain
+  // Slot 322: the latest host-observed door crossing. Omitted deltas retain
   // the last row. This is never inferred from a route plan.
   door_crossing: DoorCrossing;
 }
@@ -1151,6 +1151,8 @@ table Interact {
   // Per-walk prerequisite consent: absent inherits; only false forbids.
   allow_prereq_dialogue: bool = null;
   allow_quest_start: bool = null;
+  // walkOpening opts in to measured door-crossing observations.
+  track_door_crossing: bool = false;
 }
 
 // The tick's shim interact queue, forwarded to the host.

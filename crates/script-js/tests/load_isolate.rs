@@ -8390,6 +8390,7 @@ export default class T extends LoopingBot {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id,
+            track_door_crossing: true,
             avoid: _,
             cross: _,
         }] => *request_id,
@@ -8710,6 +8711,7 @@ export default class T extends LoopingBot {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id,
+            track_door_crossing: false,
             avoid: _,
             cross: _,
         }] => assert_ne!(
@@ -8765,6 +8767,7 @@ export default class T extends LoopingBot {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id,
+            track_door_crossing: false,
             avoid: _,
             cross: _,
         }] => assert_ne!(
@@ -8825,6 +8828,7 @@ export default class T extends LoopingBot {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id,
+            track_door_crossing: false,
             avoid: _,
             cross: _,
         }] => assert_ne!(

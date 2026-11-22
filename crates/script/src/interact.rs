@@ -54,6 +54,10 @@ pub enum InteractReq {
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
+        /// Whether this route's follow may retain a measured door crossing.
+        /// Only native `walkOpening` opts in.
+        #[serde(default)]
+        track_door_crossing: bool,
         /// Frozen rectangle and catalog avoid entries. Empty on old callers.
         #[serde(default)]
         avoid: Vec<InspectAvoidWire>,
@@ -87,6 +91,10 @@ pub enum InteractReq {
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
+        /// Whether this route's follow may retain a measured door crossing.
+        /// Only native `walkOpening` opts in.
+        #[serde(default)]
+        track_door_crossing: bool,
         /// Frozen rectangle and catalog avoid entries. Empty on old callers.
         #[serde(default)]
         avoid: Vec<InspectAvoidWire>,

@@ -739,6 +739,7 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
         allow_prereq_dialogue: None,
         allow_quest_start: None,
         request_id: mirror_id.get(),
+        track_door_crossing: false,
         avoid: Vec::new(),
         cross: Vec::new(),
     };
@@ -882,6 +883,7 @@ fn fixture_24_four_walk_abort_releases_reach_host_in_order() {
                 allow_prereq_dialogue: None,
                 allow_quest_start: None,
                 request_id: raw,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             },

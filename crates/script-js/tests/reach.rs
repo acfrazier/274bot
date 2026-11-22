@@ -259,6 +259,7 @@ fn missing_npc_close_in_failure_keeps_the_resilient_ladder_going() {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id,
+            track_door_crossing: false,
             avoid: _,
             cross: _,
         }] => {

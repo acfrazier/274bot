@@ -211,6 +211,7 @@ fn recorded_walk(req: &InteractReq) -> Option<ScriptAct> {
             allow_prereq_dialogue: _,
             allow_quest_start: _,
             request_id,
+            track_door_crossing: false,
             avoid: _,
             cross: _,
         } => (
@@ -236,6 +237,7 @@ fn recorded_walk(req: &InteractReq) -> Option<ScriptAct> {
             allow_prereq_dialogue: _,
             allow_quest_start: _,
             request_id,
+            track_door_crossing: false,
             avoid: _,
             cross: _,
         } => (

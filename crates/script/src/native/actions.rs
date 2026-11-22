@@ -2779,6 +2779,7 @@ mod tests {
                     allow_prereq_dialogue: None,
                     allow_quest_start: None,
                     request_id: 0,
+                    track_door_crossing: false,
                     avoid: Vec::new(),
                     cross: Vec::new(),
                 },

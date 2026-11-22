@@ -5207,6 +5207,8 @@ pub(crate) struct NavBot {
     pub(crate) traveller: Traveller,
     /// Latest measured crossing for the route that actually followed the door.
     pub(crate) door_crossing: Option<(u64, Arc<nav_executor::DoorCrossing>)>,
+    /// Whether the armed walk requested measured door crossings.
+    pub(crate) track_door_crossing: bool,
     pub(crate) crossing_tracker: nav_executor::DoorCrossings,
     /// Counts the current no-tile-progress episode for this slot's walk.
     pub(crate) walk_no_progress: WalkNoProgress,
@@ -6683,6 +6685,7 @@ impl ScriptWalkArm {
             }
             if !same_owner {
                 bot.door_crossing = None;
+                bot.track_door_crossing = false;
                 bot.crossing_tracker = Default::default();
                 bot.end_native_walk(script::native::WalkEnd::Cancelled);
                 bot.route_basis = None;
@@ -7567,6 +7570,21 @@ impl ScriptRouteRequest {
     }
 }
 impl NavBot {
+    /// Arm request-scoped door-crossing observation after a compat route queues.
+    pub(crate) fn arm_door_crossing(&mut self, request_id: u64, enabled: bool) {
+        if self.walk_request_id == request_id {
+            self.track_door_crossing = enabled && request_id != 0;
+        }
+    }
+
+    /// Whether the installed route still belongs to the opted-in walk.
+    pub(crate) fn tracks_door_crossing(&self) -> bool {
+        self.track_door_crossing
+            && self.route_request_id != 0
+            && self.route_request_id == self.walk_request_id
+            && self.native_walk.is_none()
+    }
+
     /// Retain policy only after the host accepted this exact Load request.
     pub(crate) fn retain_compat_walk(
         &mut self,
@@ -8311,6 +8329,15 @@ impl NavBot {
     pub(crate) fn mark_walk_outcome_posted(&mut self, posted_seq: u64) {
         if self.walk_outcome_seq == posted_seq {
             self.walk_live_refusal_id = 0;
+            // The final crossing can arrive on the same tick as the terminal
+            // outcome. Keep it until the matching snapshot is accepted.
+            if self
+                .door_crossing
+                .as_ref()
+                .is_some_and(|(request_id, _)| *request_id == self.walk_outcome_request_id)
+            {
+                self.door_crossing = None;
+            }
             if self.native_walk.is_none() {
                 self.native_walk_blocked = None;
                 self.walk_outcome_detail = None;
@@ -8767,6 +8794,7 @@ pub(super) fn preserve_recovery_walk_identity(
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: bot.walk_request_id,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         },
@@ -8811,6 +8839,7 @@ pub(crate) fn hold_script_nav(
         {
             let (to, radius, allow_teleports, allow_wilderness, allow_bank_fetch, _) = requested;
             let request_id = nav.walk_request_id;
+            let track_door_crossing = nav.track_door_crossing;
             let (allow_prereq_dialogue, allow_quest_start) = nav
                 .compat_walk
                 .as_ref()
@@ -8847,6 +8876,7 @@ pub(crate) fn hold_script_nav(
                     allow_prereq_dialogue,
                     allow_quest_start,
                     request_id,
+                    track_door_crossing,
                     avoid,
                     cross,
                 }
@@ -8861,6 +8891,7 @@ pub(crate) fn hold_script_nav(
                     allow_prereq_dialogue,
                     allow_quest_start,
                     request_id,
+                    track_door_crossing,
                     avoid,
                     cross,
                 }
@@ -8899,6 +8930,7 @@ fn end_route_follow(nav: &mut NavBot) {
     );
     nav.requested_route = None;
     nav.door_crossing = None;
+    nav.track_door_crossing = false;
     nav.crossing_tracker = Default::default();
     nav.traveller.clear();
     nav.clear_route();

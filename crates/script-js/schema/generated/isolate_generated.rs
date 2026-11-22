@@ -15110,6 +15110,7 @@ impl<'a> Interact<'a> {
   pub const VT_MAX_EXPANSIONS: ::flatbuffers::VOffsetT = 100;
   pub const VT_ALLOW_PREREQ_DIALOGUE: ::flatbuffers::VOffsetT = 102;
   pub const VT_ALLOW_QUEST_START: ::flatbuffers::VOffsetT = 104;
+  pub const VT_TRACK_DOOR_CROSSING: ::flatbuffers::VOffsetT = 106;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -15160,6 +15161,7 @@ impl<'a> Interact<'a> {
     builder.add_z(args.z);
     builder.add_x(args.x);
     if let Some(x) = args.op { builder.add_op(x); }
+    builder.add_track_door_crossing(args.track_door_crossing);
     if let Some(x) = args.allow_quest_start { builder.add_allow_quest_start(x); }
     if let Some(x) = args.allow_prereq_dialogue { builder.add_allow_prereq_dialogue(x); }
     builder.add_progress_journal_only(args.progress_journal_only);
@@ -15517,6 +15519,13 @@ impl<'a> Interact<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<bool>(Interact::VT_ALLOW_QUEST_START, None)}
   }
+  #[inline]
+  pub fn track_door_crossing(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Interact::VT_TRACK_DOOR_CROSSING, Some(false)).unwrap()}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Interact<'_> {
@@ -15574,6 +15583,7 @@ impl ::flatbuffers::Verifiable for Interact<'_> {
      .visit_field::<u64>("max_expansions", Self::VT_MAX_EXPANSIONS, false)?
      .visit_field::<bool>("allow_prereq_dialogue", Self::VT_ALLOW_PREREQ_DIALOGUE, false)?
      .visit_field::<bool>("allow_quest_start", Self::VT_ALLOW_QUEST_START, false)?
+     .visit_field::<bool>("track_door_crossing", Self::VT_TRACK_DOOR_CROSSING, false)?
      .finish();
     Ok(())
   }
@@ -15628,6 +15638,7 @@ pub struct InteractArgs<'a> {
     pub max_expansions: Option<u64>,
     pub allow_prereq_dialogue: Option<bool>,
     pub allow_quest_start: Option<bool>,
+    pub track_door_crossing: bool,
 }
 impl<'a> Default for InteractArgs<'a> {
   #[inline]
@@ -15682,6 +15693,7 @@ impl<'a> Default for InteractArgs<'a> {
       max_expansions: None,
       allow_prereq_dialogue: None,
       allow_quest_start: None,
+      track_door_crossing: false,
     }
   }
 }
@@ -15888,6 +15900,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> InteractBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<bool>(Interact::VT_ALLOW_QUEST_START, allow_quest_start);
   }
   #[inline]
+  pub fn add_track_door_crossing(&mut self, track_door_crossing: bool) {
+    self.fbb_.push_slot::<bool>(Interact::VT_TRACK_DOOR_CROSSING, track_door_crossing, false);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> InteractBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     InteractBuilder {
@@ -15954,6 +15970,7 @@ impl ::core::fmt::Debug for Interact<'_> {
       ds.field("max_expansions", &self.max_expansions());
       ds.field("allow_prereq_dialogue", &self.allow_prereq_dialogue());
       ds.field("allow_quest_start", &self.allow_quest_start());
+      ds.field("track_door_crossing", &self.track_door_crossing());
       ds.finish()
   }
 }

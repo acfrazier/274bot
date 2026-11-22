@@ -811,52 +811,10 @@ pub(crate) struct Walk {
     allow_teleports: bool,
     options: Option<Box<WalkOptions>>,
     compat_tile_intent: bool,
+    track_door_crossing: bool,
 }
 
 impl Walk {
-    /// `Err(arrived)` when no walk was needed (or no tile is posted).
-    pub(crate) fn begin(
-        dest: WorldTile,
-        radius: i32,
-        timeout_ms: u64,
-        allow_teleports: bool,
-        cx: &mut Cx<'_>,
-    ) -> Result<Self, bool> {
-        Self::begin_avoiding(
-            dest,
-            radius,
-            timeout_ms,
-            allow_teleports,
-            Vec::new(),
-            Vec::new(),
-            cx,
-        )
-    }
-
-    /// [`Self::begin`] with rectangle/catalog avoids and named zone exemptions.
-    pub(crate) fn begin_avoiding(
-        dest: WorldTile,
-        radius: i32,
-        timeout_ms: u64,
-        allow_teleports: bool,
-        avoid: Vec<InspectAvoidWire>,
-        cross: Vec<String>,
-        cx: &mut Cx<'_>,
-    ) -> Result<Self, bool> {
-        Self::begin_with_intent(
-            dest,
-            radius,
-            timeout_ms,
-            allow_teleports,
-            avoid,
-            cross,
-            None,
-            None,
-            false,
-            cx,
-        )
-    }
-
     /// Compat `Traversal` walks preserve a walkable requested tile as route end.
     #[expect(
         clippy::too_many_arguments,
@@ -883,6 +841,29 @@ impl Walk {
             allow_prereq_dialogue,
             allow_quest_start,
             true,
+            false,
+            cx,
+        )
+    }
+
+    fn begin_opening_segment(
+        dest: WorldTile,
+        radius: i32,
+        timeout_ms: u64,
+        compat_tile_intent: bool,
+        cx: &mut Cx<'_>,
+    ) -> Result<Self, bool> {
+        Self::begin_with_intent(
+            dest,
+            radius,
+            timeout_ms,
+            false,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            compat_tile_intent,
+            cx.has(LOG),
             cx,
         )
     }
@@ -901,6 +882,7 @@ impl Walk {
         allow_prereq_dialogue: Option<bool>,
         allow_quest_start: Option<bool>,
         compat_tile_intent: bool,
+        track_door_crossing: bool,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
         walk_wait::take_repath();
@@ -944,6 +926,7 @@ impl Walk {
             allow_teleports,
             options,
             compat_tile_intent,
+            track_door_crossing,
         };
         cx.emit(walk.request());
         cx.clock().arm(timeout_ms);
@@ -1035,6 +1018,7 @@ impl Walk {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: self.token,
+                track_door_crossing: self.track_door_crossing,
                 cross,
                 avoid,
                 allow_prereq_dialogue,
@@ -1049,6 +1033,7 @@ impl Walk {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: self.token,
+                track_door_crossing: self.track_door_crossing,
                 avoid,
                 cross,
                 allow_prereq_dialogue,
@@ -2004,6 +1989,7 @@ enum OpeningPhase {
 /// (`walkOpening.ts:127–136`); operator refinement uses the same
 /// path-relevant counterfactual as unstick (toward-dest is weaker).
 /// The route-less fallback leaves the opened passage to the next segment.
+/// Positive `doorStepTicks` requests are refused: the native traveller does not delay the step.
 pub(crate) struct WalkOpening {
     dest: WorldTile,
     radius: i32,
@@ -2093,15 +2079,11 @@ impl WalkOpening {
                     if self.segment >= OPENING_SEGMENTS {
                         return Some(arrived(self.dest, self.radius));
                     }
-                    match Walk::begin_compat_avoiding(
+                    match Walk::begin_opening_segment(
                         self.dest,
                         self.radius,
                         BAKED_TIMEOUT_MS,
-                        false,
-                        Vec::new(),
-                        Vec::new(),
-                        None,
-                        None,
+                        true,
                         cx,
                     ) {
                         Ok(walk) => {
@@ -2136,7 +2118,13 @@ impl WalkOpening {
                                 tile.x,
                                 tile.z
                             ));
-                            match Walk::begin(tile, 1, OPENING_DOOR_WALK_MS, false, cx) {
+                            match Walk::begin_opening_segment(
+                                tile,
+                                1,
+                                OPENING_DOOR_WALK_MS,
+                                false,
+                                cx,
+                            ) {
                                 Ok(walk) => {
                                     self.phase = OpeningPhase::Approach { door: tile, walk };
                                     return None;

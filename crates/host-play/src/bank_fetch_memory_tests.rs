@@ -809,6 +809,7 @@ fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
                 allow_prereq_dialogue: None,
                 allow_quest_start: None,
                 request_id: 43,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             }],

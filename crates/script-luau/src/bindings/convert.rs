@@ -318,6 +318,7 @@ fn bounded_reason(reason: &str) -> String {
 }
 
 /// The three `FindOptions` flags of the JS v2 walk op. Omitted flags are false.
+#[derive(Default)]
 struct WalkOptions {
     allow_teleports: bool,
     allow_wilderness: bool,
@@ -334,11 +335,7 @@ fn option_flag(table: &Table, name: &'static str) -> Result<bool, Refusal> {
 
 fn walk_options(value: &Value) -> Result<WalkOptions, Refusal> {
     match value {
-        Value::Nil => Ok(WalkOptions {
-            allow_teleports: false,
-            allow_wilderness: false,
-            allow_bank_fetch: false,
-        }),
+        Value::Nil => Ok(WalkOptions::default()),
         Value::Table(table) => Ok(WalkOptions {
             allow_teleports: option_flag(table, "allow_teleports")?,
             allow_wilderness: option_flag(table, "allow_wilderness")?,
@@ -367,6 +364,7 @@ pub(crate) fn walk_request(args: &Args, shape: WalkShape) -> Result<InteractReq,
                 allow_prereq_dialogue: None,
                 allow_quest_start: None,
                 request_id: 0,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             })
@@ -386,6 +384,7 @@ pub(crate) fn walk_request(args: &Args, shape: WalkShape) -> Result<InteractReq,
                 allow_prereq_dialogue: None,
                 allow_quest_start: None,
                 request_id: 0,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             })

@@ -5587,6 +5587,7 @@ fn decode_interact_rows<'a>(
                 allow_prereq_dialogue: row.allow_prereq_dialogue(),
                 allow_quest_start: row.allow_quest_start(),
                 request_id: row.request_id(),
+                track_door_crossing: row.track_door_crossing(),
                 avoid: decoded_avoid(&row),
                 cross: row
                     .cross()
@@ -5605,6 +5606,7 @@ fn decode_interact_rows<'a>(
                 allow_prereq_dialogue: row.allow_prereq_dialogue(),
                 allow_quest_start: row.allow_quest_start(),
                 request_id: row.request_id(),
+                track_door_crossing: row.track_door_crossing(),
                 avoid: decoded_avoid(&row),
                 cross: row
                     .cross()
@@ -7007,6 +7009,7 @@ fn interact_off<'b>(
             radius,
             compat_tile_intent,
             request_id,
+            track_door_crossing,
             allow_wilderness,
             allow_bank_fetch,
             allow_prereq_dialogue,
@@ -7022,6 +7025,9 @@ fn interact_off<'b>(
             }
             if *request_id != 0 {
                 table.add_request_id(*request_id);
+            }
+            if *track_door_crossing {
+                table.add_track_door_crossing(true);
             }
             if let Some(off) = action_off {
                 table.add_action(off);
@@ -7090,6 +7096,7 @@ fn interact_off<'b>(
             z,
             level,
             request_id,
+            track_door_crossing,
             allow_wilderness,
             allow_bank_fetch,
             allow_prereq_dialogue,
@@ -7101,6 +7108,9 @@ fn interact_off<'b>(
             table.add_level(*level);
             if *request_id != 0 {
                 table.add_request_id(*request_id);
+            }
+            if *track_door_crossing {
+                table.add_track_door_crossing(true);
             }
             if let Some(off) = action_off {
                 table.add_action(off);
@@ -8972,6 +8982,7 @@ pub(crate) mod tests {
                 allow_prereq_dialogue: None,
                 allow_quest_start: None,
                 request_id: 9,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             },
@@ -8987,6 +8998,7 @@ pub(crate) mod tests {
                 allow_prereq_dialogue: None,
                 allow_quest_start: None,
                 request_id: 0,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             },
@@ -9024,6 +9036,7 @@ pub(crate) mod tests {
                 allow_prereq_dialogue: None,
                 allow_quest_start: Some(false),
                 request_id: 11,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             },
@@ -9039,12 +9052,50 @@ pub(crate) mod tests {
                 allow_prereq_dialogue: Some(true),
                 allow_quest_start: None,
                 request_id: 12,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             },
         ];
         let bytes = encode_interact_batch(&reqs);
         assert_eq!(decode_interact_batch(&bytes).expect("decode"), reqs);
+    }
+    #[test]
+    fn walk_door_crossing_opt_in_roundtrips_for_both_walk_shapes() {
+        let requests = [
+            InteractReq::Walk {
+                x: 10,
+                z: 20,
+                level: 0,
+                allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
+                request_id: 31,
+                track_door_crossing: true,
+                avoid: Vec::new(),
+                cross: Vec::new(),
+            },
+            InteractReq::WalkNear {
+                x: 30,
+                z: 40,
+                level: 0,
+                radius: 1,
+                compat_tile_intent: true,
+                allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                allow_prereq_dialogue: None,
+                allow_quest_start: None,
+                request_id: 32,
+                track_door_crossing: true,
+                avoid: Vec::new(),
+                cross: Vec::new(),
+            },
+        ];
+        let bytes = encode_interact_batch(&requests);
+        assert_eq!(decode_interact_batch(&bytes).expect("decode"), requests);
     }
 
     #[test]
@@ -9062,6 +9113,7 @@ pub(crate) mod tests {
                         allow_prereq_dialogue,
                         allow_quest_start,
                         request_id: 11,
+                        track_door_crossing: false,
                         avoid: Vec::new(),
                         cross: Vec::new(),
                     },
@@ -9077,6 +9129,7 @@ pub(crate) mod tests {
                         allow_prereq_dialogue,
                         allow_quest_start,
                         request_id: 12,
+                        track_door_crossing: false,
                         avoid: Vec::new(),
                         cross: Vec::new(),
                     },
@@ -9130,6 +9183,7 @@ pub(crate) mod tests {
                 allow_prereq_dialogue: None,
                 allow_quest_start: None,
                 request_id: 7,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             }]
