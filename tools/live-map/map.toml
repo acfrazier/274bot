@@ -825,7 +825,7 @@ cells = [
 [[cover]]
 globs = ["crates/script/Cargo.toml", "crates/script/src/card.rs", "crates/script/src/loadouts_store.rs"]
 cells = [
-  "script.catalog-options-headless|${ISOHOME:?} env -u GITHUB_ACTIONS nice -n 10 cargo test --locked -p script --features test-hooks,canvas-raster --lib -- --nocapture --test-threads=1",
+  "script.catalog-options-headless|ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} env -u GITHUB_ACTIONS nice -n 10 cargo test --locked -p script --features test-hooks,canvas-raster --lib -- --nocapture --test-threads=1",
 ]
 
 [[cover]]

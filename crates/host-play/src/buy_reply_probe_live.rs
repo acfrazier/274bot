@@ -556,6 +556,11 @@ struct ProbeTrace {
     observations: Vec<Value>,
     player_info_clock: PlayerInfoClock,
     last_observation_signature: Option<String>,
+    batch_started_utc: Option<String>,
+    batch_ended_utc: Option<String>,
+    batch_end_host_tick: Option<u64>,
+    disconnect_cause: Option<String>,
+    session_change: Option<SessionChangeReceipt>,
 }
 
 impl ProbeTrace {
@@ -564,6 +569,70 @@ impl ProbeTrace {
             self.failure = Some(reason.into());
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SessionChangeReceipt {
+    from_session: u64,
+    to_session: u64,
+    host_tick: u64,
+    observed_at_utc: String,
+    disconnect_cause: Option<String>,
+}
+
+impl SessionChangeReceipt {
+    fn to_value(&self) -> Value {
+        json!({
+            "from_session": self.from_session,
+            "to_session": self.to_session,
+            "host_tick": self.host_tick,
+            "observed_at_utc": self.observed_at_utc,
+            "disconnect_cause": self.disconnect_cause,
+        })
+    }
+}
+
+fn record_session_change(
+    trace: &mut ProbeTrace,
+    from_session: u64,
+    to_session: u64,
+    host_tick: u64,
+    observed_at_utc: String,
+    disconnect_cause: Option<String>,
+) {
+    if trace.session_change.is_none() {
+        trace.session_change = Some(SessionChangeReceipt {
+            from_session,
+            to_session,
+            host_tick,
+            observed_at_utc,
+            disconnect_cause,
+        });
+    }
+}
+
+fn record_batch_end(
+    trace: &mut ProbeTrace,
+    host_tick: u64,
+    ended_utc: String,
+    disconnect_cause: Option<String>,
+) {
+    trace.batch_end_host_tick = Some(host_tick);
+    trace.batch_ended_utc = Some(ended_utc);
+    trace.disconnect_cause.clone_from(&disconnect_cause);
+    if let Some(change) = trace.session_change.as_mut() {
+        change.disconnect_cause.clone_from(&disconnect_cause);
+    }
+}
+
+fn utc_timestamp() -> String {
+    format!(
+        "{}Z",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs()
+    )
 }
 
 fn item_fact(data: &SelectedGameData, alias: &str) -> Result<ItemFact, String> {
@@ -2206,24 +2275,42 @@ struct LiveState {
 }
 
 impl LiveState {
-    fn observe_login_clock(&mut self, client: &Client) {
-        if self.login_client_session != Some(client.gens.session) {
-            if self.started && self.login_client_session.is_some() {
-                self.trace.lock().fail(format!(
-                    "client session changed during batch: expected {:?}, observed {}",
-                    self.login_client_session, client.gens.session
-                ));
+    fn observe_login_clock(
+        login_client_session: &mut Option<u64>,
+        login_start_tick: &mut Option<u64>,
+        trace: &Arc<Mutex<ProbeTrace>>,
+        started: bool,
+        host_tick: u64,
+        client: &Client,
+    ) {
+        if *login_client_session != Some(client.gens.session) {
+            if let Some(previous_session) = *login_client_session {
+                if started {
+                    let mut trace = trace.lock();
+                    record_session_change(
+                        &mut trace,
+                        previous_session,
+                        client.gens.session,
+                        host_tick,
+                        utc_timestamp(),
+                        None,
+                    );
+                    trace.fail(format!(
+                        "client session changed during batch: expected {:?}, observed {}",
+                        Some(previous_session),
+                        client.gens.session
+                    ));
+                }
             }
-            self.login_client_session = Some(client.gens.session);
-            self.login_start_tick = None;
+            *login_client_session = Some(client.gens.session);
+            *login_start_tick = None;
         }
         if client.ingame && client.scene_state == 2 {
-            let tick = u64::from(self.snapshot.tick());
-            let start = *self.login_start_tick.get_or_insert(tick);
-            let login_ticks = tick.saturating_sub(start).saturating_add(1);
-            let mut trace = self.trace.lock();
+            let start = *login_start_tick.get_or_insert(host_tick);
+            let login_ticks = host_tick.saturating_sub(start).saturating_add(1);
+            let mut trace = trace.lock();
             trace.login_player_info_ticks = Some(login_ticks);
-            if self.started && login_ticks > MAX_BATCH_LOGIN_TICKS {
+            if started && login_ticks > MAX_BATCH_LOGIN_TICKS {
                 trace.fail(format!(
                     "batch exceeded the first {MAX_BATCH_LOGIN_TICKS} login ticks"
                 ));
@@ -2284,7 +2371,14 @@ impl LiveState {
         Driver::finish_pending_packet(client);
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
-        self.observe_login_clock(client);
+        Self::observe_login_clock(
+            &mut self.login_client_session,
+            &mut self.login_start_tick,
+            &self.trace,
+            self.started,
+            u64::from(self.snapshot.tick()),
+            client,
+        );
         self.update_terminal_context(client, None);
         if self.started {
             self.packet_counts.observe(client, self.snapshot.tick());
@@ -2645,6 +2739,44 @@ struct BatchRunConfig {
     fixture: Fixture,
 }
 
+fn batch_script_receipt(
+    batch_index: usize,
+    batch: &BatchPlan,
+    account: &str,
+    trace: &ProbeTrace,
+) -> Value {
+    json!({
+        "batch_index": batch_index,
+        "plan": batch,
+        "account": account,
+        "batch_started_utc": trace.batch_started_utc,
+        "batch_ended_utc": trace.batch_ended_utc,
+        "batch_end_host_tick": trace.batch_end_host_tick,
+        "disconnect_cause": trace.disconnect_cause,
+        "session_change": trace.session_change.as_ref().map(SessionChangeReceipt::to_value),
+        "started": trace.started,
+        "start_tick": trace.start_tick,
+        "session": trace.session,
+        "script_run": trace.script_run,
+        "phase": trace.phase,
+        "settled_replies": trace.settled_replies,
+        "last_reply": trace.last_reply,
+        "login_player_info_ticks": trace.login_player_info_ticks,
+        "complete_tick": trace.complete_tick,
+        "completed": trace.completed,
+        "failure": trace.failure,
+        "terminal_context": trace.terminal_context,
+        "player_info_clock": trace.player_info_clock,
+    })
+}
+
+fn session_end_disconnect_cause(arm: &crate::SlotArm) -> Option<String> {
+    let (event, _) = arm.take_lifecycle_event();
+    match event?.payload() {
+        api::lifecycle::SessionEventOut::SessionEnded { cause, .. } => Some(format!("{cause:?}")),
+        _ => None,
+    }
+}
 fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
     let BatchRunConfig {
         batch_index,
@@ -2657,7 +2789,10 @@ fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
         selected,
         fixture,
     } = config;
-    let trace = Arc::new(Mutex::new(ProbeTrace::default()));
+    let trace = Arc::new(Mutex::new(ProbeTrace {
+        batch_started_utc: Some(utc_timestamp()),
+        ..ProbeTrace::default()
+    }));
     let capture = Arc::new(StdMutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
     let mut runner = ScenarioRunner::with_world(
@@ -2805,6 +2940,21 @@ fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
         thread::sleep(POLL_INTERVAL);
     }
 
+    let batch_end_host_tick = u64::from(frame_state.lock().snapshot.tick());
+    let batch_ended_utc = utc_timestamp();
+    let disconnect_cause = play
+        .arm(&account)
+        .as_deref()
+        .and_then(session_end_disconnect_cause);
+    {
+        let mut trace = trace.lock();
+        record_batch_end(
+            &mut trace,
+            batch_end_host_tick,
+            batch_ended_utc,
+            disconnect_cause,
+        );
+    }
     {
         let mut trace = trace.lock();
         if let Some(error) = terminal_error.as_deref() {
@@ -2837,24 +2987,7 @@ fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
                 login_player_info_ticks,
             },
         );
-        let script = json!({
-            "batch_index": batch_index,
-            "plan": batch,
-            "account": account,
-            "started": trace.started,
-            "start_tick": trace.start_tick,
-            "session": trace.session,
-            "script_run": trace.script_run,
-            "phase": trace.phase,
-            "settled_replies": trace.settled_replies,
-            "last_reply": trace.last_reply,
-            "login_player_info_ticks": trace.login_player_info_ticks,
-            "complete_tick": trace.complete_tick,
-            "completed": trace.completed,
-            "failure": trace.failure,
-            "terminal_context": trace.terminal_context,
-            "player_info_clock": trace.player_info_clock,
-        });
+        let script = batch_script_receipt(batch_index, &batch, &account, &trace);
         (samples, trace.observations.clone(), script, admission)
     };
     let actions = capture
@@ -4664,5 +4797,81 @@ mod network_coords_tests {
             drop(trace);
             rig.slot.stop();
         }
+    }
+}
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    #[test]
+    fn session_receipt_uses_the_batch_session_change_after_login_grant() {
+        let trace = Arc::new(Mutex::new(ProbeTrace {
+            batch_started_utc: Some("1763700000Z".into()),
+            ..ProbeTrace::default()
+        }));
+        let mut login_client_session = Some(0);
+        let mut login_start_tick = None;
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            cache_dir: String::new(),
+            members: false,
+            lowmem: true,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.session = 1;
+        LiveState::observe_login_clock(
+            &mut login_client_session,
+            &mut login_start_tick,
+            &trace,
+            false,
+            70,
+            &client,
+        );
+        assert_eq!(login_client_session, Some(1));
+        assert!(
+            trace.lock().session_change.is_none(),
+            "pre-batch login generation is not a disconnect"
+        );
+
+        client.ingame = false;
+        client.scene_state = 0;
+        client.gens.session = 2;
+        LiveState::observe_login_clock(
+            &mut login_client_session,
+            &mut login_start_tick,
+            &trace,
+            true,
+            81,
+            &client,
+        );
+        let batch_ended_utc = utc_timestamp();
+        {
+            let mut trace = trace.lock();
+            record_batch_end(
+                &mut trace,
+                82,
+                batch_ended_utc.clone(),
+                Some("ReadError".into()),
+            );
+        }
+
+        let trace = trace.lock();
+        let receipt = batch_script_receipt(1, &BATCH_SCHEDULE[0], "alice", &trace);
+        assert_eq!(receipt["batch_started_utc"], "1763700000Z");
+        assert_eq!(receipt["batch_ended_utc"], batch_ended_utc);
+        assert_eq!(receipt["batch_end_host_tick"], 82);
+        assert_eq!(receipt["disconnect_cause"], "ReadError");
+        assert_eq!(receipt["session_change"]["from_session"], 1);
+        assert_eq!(receipt["session_change"]["to_session"], 2);
+        assert_eq!(receipt["session_change"]["host_tick"], 81);
+        assert!(receipt["session_change"]["observed_at_utc"]
+            .as_str()
+            .is_some_and(|timestamp| timestamp.ends_with('Z')));
+        assert_eq!(receipt["session_change"]["disconnect_cause"], "ReadError");
+        assert!(receipt["failure"]
+            .as_str()
+            .is_some_and(|failure| failure.contains("client session changed during batch")));
     }
 }
