@@ -580,8 +580,8 @@ fn planned_thrower_food_geometry_uses_walk_or_observed_run() {
             .unwrap();
         assert_eq!(
             need.food.as_ref().map(|(item, count)| (item.id, *count)),
-            Some((379, 1)),
-            "known poison must not replace the carved route with admission exposure"
+            Some((379, 0)),
+            "known poison must keep zero food for the zero-exposure carved route"
         );
     }
 }
