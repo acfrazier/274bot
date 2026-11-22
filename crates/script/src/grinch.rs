@@ -603,7 +603,6 @@ impl Grinch {
                 bank: None,
                 explicit: self.prepared.bank.clone(),
                 required: self.prepared.bank.is_some(),
-                preferences: Default::default(),
             },
             stage: BankStage::Planned,
             partial_ok: false,

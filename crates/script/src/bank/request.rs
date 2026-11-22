@@ -288,7 +288,7 @@ pub struct BankSeatArgs {
     pub(crate) prefer_nearby: Option<bool>,
     pub(crate) nearby_radius: Option<f64>,
     pub(crate) obstacles: Vec<String>,
-    pub(crate) allow_wilderness: bool,
+    pub(crate) allow_wilderness: Option<bool>,
     pub(crate) use_mage_bank: Option<bool>,
     pub(crate) use_zanaris_bank: Option<bool>,
     pub(crate) note_mode: bool,
@@ -334,7 +334,7 @@ impl BankSeatArgs {
             prefer_nearby: None,
             nearby_radius: None,
             obstacles: Vec::new(),
-            allow_wilderness: false,
+            allow_wilderness: None,
             use_mage_bank: None,
             use_zanaris_bank: None,
             note_mode: false,
@@ -530,13 +530,13 @@ impl BankSeatArgs {
         self.obstacles = obstacles;
     }
 
-    /// Return whether wilderness banks are allowed.
-    pub fn allow_wilderness(&self) -> bool {
+    /// Return the caller's explicit wilderness route permission, if supplied.
+    pub fn allow_wilderness(&self) -> Option<bool> {
         self.allow_wilderness
     }
 
-    /// Set whether wilderness banks are allowed.
-    pub fn set_allow_wilderness(&mut self, allow_wilderness: bool) {
+    /// Set the caller's explicit wilderness route permission, if supplied.
+    pub fn set_allow_wilderness(&mut self, allow_wilderness: Option<bool>) {
         self.allow_wilderness = allow_wilderness;
     }
 
@@ -887,6 +887,7 @@ impl BankSeatArgs {
             baseline_generation => F_BASELINE_GENERATION,
             prefer_nearby => F_PREFER_NEARBY,
             nearby_radius => F_NEARBY_RADIUS,
+            allow_wilderness => F_ALLOW_WILDERNESS,
             use_mage_bank => F_USE_MAGE_BANK,
             use_zanaris_bank => F_USE_ZANARIS_BANK,
         );
@@ -895,9 +896,6 @@ impl BankSeatArgs {
         }
         if !self.obstacles.is_empty() {
             fields |= F_OBSTACLES;
-        }
-        if self.allow_wilderness {
-            fields |= F_ALLOW_WILDERNESS;
         }
         if self.note_mode {
             fields |= F_NOTE_MODE;

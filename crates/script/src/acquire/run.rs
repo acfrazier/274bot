@@ -11,7 +11,7 @@ use crate::native::{
 use crate::native_bank::{BankMachine, BankRequest};
 use crate::quester::prereq::reach::{PrereqSelect, PrereqSelectOther};
 use crate::quester::prereq::walk::PrereqWalk;
-use api::named_banks::NamedBankFacts;
+use api::named_banks::{BankPreferences, NamedBankFacts};
 use api::selected::RunKey;
 use api::snapshot::ItemView;
 use api::stock::Stock;
@@ -109,6 +109,7 @@ const _: () =
 pub struct AcquireRun {
     request: AcquireRequest,
     banks: Arc<NamedBankFacts>,
+    bank_preferences: BankPreferences,
     run: RunKey,
     phase: Phase,
     active: Active,
@@ -191,6 +192,7 @@ impl AcquireRun {
         let mut run = Self {
             request,
             banks: Arc::clone(banks),
+            bank_preferences: cx.bank_preferences,
             run: cx.run(),
             phase: Phase::Done,
             active: Active::None,
@@ -333,7 +335,7 @@ impl AcquireRun {
                     let args = bank::SelectArgs {
                         facts: Arc::clone(&self.banks),
                         from: from.value,
-                        preferences: self.request.bank.preferences,
+                        preferences: self.bank_preferences,
                         options: self.request.walk,
                         explicit: self.explicit.clone(),
                         allow_air_fallback: false,

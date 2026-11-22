@@ -606,6 +606,7 @@ pub struct SlotScript {
     /// Bumped on each successful Start and watchdog isolate replacement.
     runtime_generation: u64,
     last_settings_fp: Option<String>,
+    bank_preferences: api::named_banks::BankPreferences,
     /// Isolate-facing projection for the current Load run; replaced at spawn.
     runtime_context: Arc<ScriptRuntimeContext>,
     /// Recovery hints retained across surface run restarts.
@@ -729,6 +730,7 @@ impl SlotScript {
             source_identity: None,
             runtime_generation: 0,
             last_settings_fp: None,
+            bank_preferences: Default::default(),
             runtime_context: Arc::new(ScriptRuntimeContext::new(0)),
             recovery_hints: Arc::new(RecoveryHintsCell::new()),
         }
@@ -1416,7 +1418,7 @@ impl SlotScript {
 
     /// Spawn the surface and enter Starting. A queued Start already moved
     /// the runtime generation, so its respawn does not bump it again.
-    fn spawn_surface(&mut self, start: SurfaceStart, bump: bool) -> Result<(), StartLoadError> {
+    fn spawn_surface(&mut self, mut start: SurfaceStart, bump: bool) -> Result<(), StartLoadError> {
         self.bank_runtime_boundary();
         self.shop_runtime_boundary();
         let run_generation = self
@@ -1438,12 +1440,20 @@ impl SlotScript {
             native_input,
         ));
         runtime_context.set_source_identity(self.source_identity.clone());
+        let raw_settings = (kind == SurfaceKind::Js).then(|| {
+            let bag =
+                bank_seat::bank_run_settings(start.settings_bag.as_deref(), self.bank_preferences);
+            start.settings_bag.replace(Arc::new(bag))
+        });
         let mut run = factory.spawn_with_state(
             &start,
             execution,
             Arc::clone(&self.recovery_hints),
             self.local_state.clone(),
         )?;
+        if let Some(raw_settings) = raw_settings {
+            start.settings_bag = raw_settings;
+        }
         runtime_context.set_state(RuntimeRunState::Running);
         run.bind_runtime_context(Arc::clone(&runtime_context));
         self.runtime_context = runtime_context;
@@ -1873,6 +1883,7 @@ impl SlotScript {
         self.held_channel_refusals.clear();
         self.teardown_api(reason);
         self.bank_runtime_boundary();
+        self.bank_preferences = Default::default();
         self.shop_runtime_boundary();
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
@@ -2038,6 +2049,7 @@ impl SlotScript {
         self.seat_fence.revoke();
         self.api_session_boundary(reconnect);
         self.bank_session_boundary(reconnect);
+        self.update_bank_preferences(Default::default());
         self.shop_session_boundary(reconnect);
         if !self.surface_active() {
             // As with Stop, registered hooks run on the pump thread.
@@ -2095,7 +2107,18 @@ impl SlotScript {
             return;
         }
         if let Some(isolate) = &self.surface {
-            isolate.post_settings_bag(bag);
+            if self
+                .surface_start
+                .as_ref()
+                .is_some_and(|start| start.card.kind() == SurfaceKind::Js)
+            {
+                isolate.post_settings_bag(&bank_seat::bank_run_settings(
+                    Some(bag),
+                    self.bank_preferences,
+                ));
+            } else {
+                isolate.post_settings_bag(bag);
+            }
         }
         if let Some(identity) = &mut self.surface_start {
             identity.settings_bag = Some(Arc::new(bag.clone()));

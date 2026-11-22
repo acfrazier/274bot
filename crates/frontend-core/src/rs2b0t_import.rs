@@ -1274,11 +1274,11 @@ const GLOBAL_NOT_SUPPORTED: [(&str, &str); 20] = [
     ),
     (
         "useZanarisBank",
-        GLOBAL_SCRIPT_DEFAULT,
+        "274bot uses this bank when the account completes Lost City",
     ),
     (
         "useMageBank",
-        GLOBAL_SCRIPT_DEFAULT,
+        "274bot uses this bank when wilderness routing is allowed",
     ),
     (
         "runAuto",

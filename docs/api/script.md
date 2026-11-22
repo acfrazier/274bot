@@ -1340,8 +1340,8 @@ It also makes a trip when no inventory slot is free. Power mode can still
 take a supply-only trip.
 `bank` defaults to `Nearest`. A named bank chosen by the user is required: always use that bank,
 and refuse if it is unavailable or unroutable instead of substituting another.
-`useMageBank` and `useZanarisBank` remain eligibility opt-ins, not ranking
-preferences. The unsupported `Closest` mode is not offered.
+Zanaris requires observed Lost City completion. Mage Arena requires wilderness
+permission. The unsupported `Closest` mode is not offered.
 Ordinary banks use packed stand access. Declared teller banks use the same
 live NPC/dialogue opener as `Bank.openNpcAccess`, including multi-page chat;
 an open modal without a loaded item table is not a successful native open.

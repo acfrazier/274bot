@@ -1281,6 +1281,7 @@ fn compiled_ctx<'a>(
             reach: None,
             reach_flood: None,
             bank_memory: None,
+            bank_preferences: Default::default(),
             shop_keepers: None,
             collision: None,
             nav: None,

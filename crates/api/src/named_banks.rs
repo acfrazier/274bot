@@ -5,8 +5,9 @@
 use crate::selected::FactError;
 #[cfg(not(all(feature = "embedded-game-data", not(no_local_game_data))))]
 use crate::selected::LOCAL_GAME_DATA_FAMILY;
-use crate::snapshot::WorldTile;
+use crate::snapshot::{GameSnapshot, QuestListStatus, WorldTile};
 use serde::Deserialize;
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BankOperation {
@@ -50,11 +51,39 @@ pub fn bank_catalog() -> Result<&'static [BankDefinition], FactError> {
     }
 }
 
-/// These opt-ins are false unless the calling script explicitly enables them.
+static ZANARIS_QUEST: LazyLock<Option<&'static str>> = LazyLock::new(|| {
+    bank_catalog()
+        .ok()?
+        .iter()
+        .find(|bank| bank.setting == Some("useZanarisBank"))?
+        .quest
+});
+
+/// Account eligibility for banks that have an additional access condition.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BankPreferences {
     pub use_mage_bank: bool,
     pub use_zanaris_bank: bool,
+}
+
+impl BankPreferences {
+    /// Derive bank access from the observed quest list and effective wilderness permission.
+    pub fn for_account(snapshot: Option<&GameSnapshot>, allow_wilderness: bool) -> Self {
+        let use_zanaris_bank = snapshot
+            .filter(|snapshot| snapshot.ingame() && snapshot.quest_statuses_available())
+            .and_then(|snapshot| {
+                let quest = (*ZANARIS_QUEST)?;
+                snapshot
+                    .quest_statuses()
+                    .iter()
+                    .find(|row| row.name.eq_ignore_ascii_case(quest))
+            })
+            .is_some_and(|row| row.status() == QuestListStatus::Complete);
+        Self {
+            use_mage_bank: allow_wilderness,
+            use_zanaris_bank,
+        }
+    }
 }
 
 impl BankDefinition {
@@ -70,7 +99,7 @@ impl BankDefinition {
             && self.enabled_by_preferences(preferences)
     }
 
-    /// Whether the caller enabled this bank's optional setting.
+    /// Whether the account satisfies this bank's additional access condition.
     pub fn enabled_by_preferences(&self, preferences: BankPreferences) -> bool {
         self.setting.is_none_or(|setting| match setting {
             "useMageBank" => preferences.use_mage_bank,

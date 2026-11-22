@@ -114,6 +114,7 @@ impl Runtime {
         let mut cx = ActionContext {
             stage_cross: None,
             protected_items: self.protected_items.as_ref().map(Arc::clone),
+            bank_preferences: Default::default(),
             walk_prereq: Default::default(),
             condition: self.condition,
             poison_unknown_pulse: self.poison_unknown_pulse,

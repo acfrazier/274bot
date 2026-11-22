@@ -1345,7 +1345,7 @@ export function tick(api) {
             level: 0,
         })
     );
-    assert!(args.allow_wilderness());
+    assert_eq!(args.allow_wilderness(), Some(true));
     assert_eq!(args.use_mage_bank(), Some(false));
     assert_eq!(args.use_zanaris_bank(), Some(true));
 

@@ -852,6 +852,7 @@ pub fn with_test_tick<R>(
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: WalkCancelReason::None,
             snapshot,
+            bank_preferences: frame.compiled().bank_preferences,
             shop_keepers: frame.compiled().shop_keepers,
             revision,
             retained: &mut retained,
@@ -937,6 +938,7 @@ pub struct ActionContext<'a> {
     pub(crate) walk_prereq: PrereqOptions,
     pub(crate) revision: ClientRevision,
     pub(crate) snapshot: SnapshotView<'a>,
+    pub(crate) bank_preferences: api::named_banks::BankPreferences,
     /// Frame-local stage consent. Every route keeps the existing named `cross` path.
     pub(crate) stage_cross: Option<Arc<[Arc<str>]>>,
     pub(crate) condition: Option<api::condition::BotCondition>,

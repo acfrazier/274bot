@@ -5158,7 +5158,9 @@ fn bank_args_off<'b>(
     if let Some(obstacles) = obstacles {
         table.add_obstacles(obstacles);
     }
-    table.add_allow_wilderness(bank.allow_wilderness());
+    if let Some(allow_wilderness) = bank.allow_wilderness() {
+        table.add_allow_wilderness(allow_wilderness);
+    }
     if let Some(use_mage_bank) = bank.use_mage_bank() {
         table.add_use_mage_bank(use_mage_bank);
     }
@@ -6343,7 +6345,10 @@ fn decode_bank_args(
             .map(|names| names.iter().map(str::to_owned).collect())
             .unwrap_or_default(),
     );
-    args.set_allow_wilderness(row.allow_wilderness());
+    // The builder writes explicit defaults. An absent scalar is therefore
+    // distinct from the caller explicitly setting false.
+    let has_wilderness = row._tab.vtable().get(BankSeatArgs::VT_ALLOW_WILDERNESS) != 0;
+    args.set_allow_wilderness(has_wilderness.then(|| row.allow_wilderness()));
     args.set_use_mage_bank(row.use_mage_bank());
     args.set_use_zanaris_bank(row.use_zanaris_bank());
     args.set_note_mode(row.note_mode());
@@ -10683,12 +10688,14 @@ pub(crate) mod tests {
         args.set_hooks_present(HOOK_LOG);
         payloads.push(args);
 
-        let mut args = BankSeatArgs::new(Operation::Select);
-        args.set_stand(Some(tile()));
-        args.set_allow_wilderness(true);
-        args.set_use_mage_bank(Some(false));
-        args.set_use_zanaris_bank(Some(true));
-        payloads.push(args);
+        for permission in [None, Some(false), Some(true)] {
+            let mut args = BankSeatArgs::new(Operation::Select);
+            args.set_stand(Some(tile()));
+            args.set_allow_wilderness(permission);
+            args.set_use_mage_bank(Some(false));
+            args.set_use_zanaris_bank(Some(true));
+            payloads.push(args);
+        }
 
         let mut args = BankSeatArgs::new(Operation::DepositLabel);
         args.set_item_name(Some("Rune essence".into()));

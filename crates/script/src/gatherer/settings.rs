@@ -2,7 +2,6 @@ use crate::native::{ConfigError, SettingsBag, StartError};
 use crate::SettingDef;
 use api::game_data::SelectedGameData;
 use api::gather_methods::{first_gap, GatherCatalog, GatherMethod, GatherSkill, GatherTarget};
-use api::named_banks::BankPreferences;
 use api::selected::{Knowledge, RequirementKind};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
@@ -96,10 +95,6 @@ pub struct GathererSettings {
     pub disposition: String,
     #[serde(default = "default_bank")]
     pub bank: String,
-    #[serde(default)]
-    pub use_mage_bank: bool,
-    #[serde(default)]
-    pub use_zanaris_bank: bool,
     #[serde(default = "default_bait_target")]
     pub bait_target: i32,
     #[serde(default = "default_buy_tools")]
@@ -190,8 +185,6 @@ impl Default for GathererSettings {
             radius: default_radius(),
             disposition: default_disposition(),
             bank: default_bank(),
-            use_mage_bank: false,
-            use_zanaris_bank: false,
             bait_target: default_bait_target(),
             buy_tools: default_buy_tools(),
             food: String::new(),
@@ -222,7 +215,10 @@ impl GathererSettings {
 
     fn decode_bag(bag: &SettingsBag) -> Result<Self, ConfigError> {
         Self::deserialize(serde::de::value::MapDeserializer::new(
-            bag.iter().map(|(key, value)| (key.as_str(), value)),
+            bag.iter()
+                // Old saved card parameters are no longer controls.
+                .filter(|(key, _)| !matches!(key.as_str(), "useMageBank" | "useZanarisBank"))
+                .map(|(key, value)| (key.as_str(), value)),
         ))
         .map_err(|error| ConfigError::new("", "invalid-settings", error.to_string()))
     }
@@ -440,8 +436,6 @@ impl GathererSettings {
             || self.disposition != other.disposition
             || self.allow_teleports != other.allow_teleports
             || self.bank != other.bank
-            || self.use_mage_bank != other.use_mage_bank
-            || self.use_zanaris_bank != other.use_zanaris_bank
             || self.bait_target != other.bait_target
             || self.buy_tools != other.buy_tools
             || self.food != other.food
@@ -454,12 +448,6 @@ impl GathererSettings {
             || self.allow_danger_zones != other.allow_danger_zones
     }
 
-    pub fn bank_preferences(&self) -> BankPreferences {
-        BankPreferences {
-            use_mage_bank: self.use_mage_bank,
-            use_zanaris_bank: self.use_zanaris_bank,
-        }
-    }
     pub fn resources_field(&self) -> &'static str {
         match self.skill_kind() {
             Skill::Woodcutting => "woodcuttingResources",
@@ -814,16 +802,6 @@ static SCHEMA: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             bank.label = Some("Bank: Nearest (default), or always use the bank you pick".into());
             bank
         },
-        boolean_setting_show_if(
-            "useMageBank",
-            false,
-            "{ key: 'disposition', anyOf: ['Bank'] }",
-        ),
-        boolean_setting_show_if(
-            "useZanarisBank",
-            false,
-            "{ key: 'disposition', anyOf: ['Bank'] }",
-        ),
         number_setting_show_if(
             "baitTarget",
             "100",
@@ -942,12 +920,6 @@ fn number_setting_show_if(
     def
 }
 
-fn boolean_setting_show_if(id: &str, default: bool, show_if: &str) -> SettingDef {
-    let mut def = boolean_setting(id, default);
-    def.show_if = Some(show_if.into());
-    def
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1053,7 +1025,11 @@ mod tests {
         let defaults = GathererSettings::from_bag(&SettingsBag::new()).unwrap();
         assert_eq!(defaults.disposition, "Bank");
         assert_eq!(defaults.bank, "Nearest");
-        assert_eq!(defaults.bank_preferences(), BankPreferences::default());
+        let retired = json!({"useMageBank":true,"useZanarisBank":true});
+        assert_eq!(
+            GathererSettings::from_bag(retired.as_object().unwrap()).unwrap(),
+            defaults
+        );
         assert_eq!(defaults.death_policy, "Recover");
         assert_eq!(defaults.max_deaths, 2);
         let bank = schema()

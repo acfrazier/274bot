@@ -136,7 +136,6 @@ fn request(
             bank,
             explicit: None,
             required,
-            preferences: BankPreferences::default(),
         },
         stage,
         partial_ok,
@@ -193,6 +192,10 @@ fn new_run(
     banks: &Arc<api::named_banks::NamedBankFacts>,
 ) -> AcquireRun {
     crate::quester::families::tests::with_tick_bank(snapshot, memory, ledger, 1, |tick| {
+        tick.cx.bank_preferences = BankPreferences::for_account(
+            Some(snapshot),
+            request.walk.allow_wilderness == crate::native::WalkBit::Allow,
+        );
         let plan = match plan::plan(&request, &tick.cx.snapshot().stock(), WorldFacts::default())
             .expect("fixture acquisition request plans")
         {
@@ -1190,7 +1193,6 @@ fn acquire_reissues_original_bank_pick_after_real_journal_close_and_opens_bank()
         ..crate::native::WalkOptions::default()
     };
     let mut request = authored_request(Some(bank), true, Vec::new());
-    request.bank.preferences = preferences;
     request.walk = options;
     let required_after = request.required_after;
     let mut ledger = None;

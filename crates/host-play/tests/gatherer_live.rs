@@ -737,19 +737,11 @@ impl Cell {
                     _ => "Nearest",
                 }),
             );
-            bag.insert(
-                "useMageBank".into(),
-                json!(case == LiveCase::BankCost && BANK_COST_FIXTURE_INTENT.use_mage_bank),
-            );
-            bag.insert(
-                "useZanarisBank".into(),
-                json!(case == LiveCase::BankCost && BANK_COST_FIXTURE_INTENT.use_zanaris_bank),
-            );
         }
         bag.insert("allowTeleports".into(), json!(false));
         bag.insert(
             "allowWilderness".into(),
-            json!(case == LiveCase::BankCost && BANK_COST_FIXTURE_INTENT.allow_wilderness),
+            json!(case == LiveCase::BankCost && BANK_COST_ALLOW_WILDERNESS),
         );
         bag.insert(
             "deathPolicy".into(),
@@ -832,27 +824,7 @@ impl Cell {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct BankCostFixtureIntent {
-    use_mage_bank: bool,
-    use_zanaris_bank: bool,
-    allow_wilderness: bool,
-}
-
-const BANK_COST_FIXTURE_INTENT: BankCostFixtureIntent = BankCostFixtureIntent {
-    use_mage_bank: true,
-    use_zanaris_bank: false,
-    allow_wilderness: true,
-};
-
-impl BankCostFixtureIntent {
-    fn bank_preferences(self) -> api::named_banks::BankPreferences {
-        api::named_banks::BankPreferences {
-            use_mage_bank: self.use_mage_bank,
-            use_zanaris_bank: self.use_zanaris_bank,
-        }
-    }
-}
+const BANK_COST_ALLOW_WILDERNESS: bool = true;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LiveCase {
@@ -6558,7 +6530,8 @@ fn configure_bank_cost_plan(
     let facts = world
         .named_bank_facts()
         .ok_or("BankCost selected template has no bound named-bank facts")?;
-    let preferences = BANK_COST_FIXTURE_INTENT.bank_preferences();
+    let preferences =
+        api::named_banks::BankPreferences::for_account(None, BANK_COST_ALLOW_WILDERNESS);
     let eligible = |bank: &api::named_banks::NamedBank| {
         bank.eligible(|skill| (skill == 10).then_some(1), |_| false, preferences)
     };
@@ -7430,10 +7403,8 @@ fn run_cell_with_fixture(
             "five_second_timeout_expected": false,
         })),
         "bank_cost_fixture_intent": (case == LiveCase::BankCost).then(|| json!({
-            "use_mage_bank": BANK_COST_FIXTURE_INTENT.use_mage_bank,
-            "allow_wilderness": BANK_COST_FIXTURE_INTENT.allow_wilderness,
-            "use_zanaris_bank": BANK_COST_FIXTURE_INTENT.use_zanaris_bank,
-            "prerequisite": "selected nav facts expose eligible banks and explicitly disable Zanaris plus Fishing Guild",
+            "allow_wilderness": BANK_COST_ALLOW_WILDERNESS,
+            "prerequisite": "selected nav facts expose eligible banks, but the account lacks Lost City completion and Fishing Guild access",
         })),
         "bank_cost_oracle": (case == LiveCase::BankCost).then(|| json!({
             "eligible_air_candidates": plan.bank_cost_air_banks,

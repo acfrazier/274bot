@@ -315,6 +315,7 @@ struct BankPickRequest {
     timeout_fallback: AtomicBool,
     order: Vec<BankCandidate>,
     target_count: usize,
+    mage_order: Option<usize>,
     walk_generation: Option<u64>,
     native: Option<NativePickContext>,
     service: Option<NativeServicePickContext>,
@@ -504,6 +505,7 @@ enum BankPickStage {
     ResolveFirst,
     ResolveManyBest,
     ResolveMany,
+    AfterRanking,
     Finish,
 }
 
@@ -512,6 +514,7 @@ enum BankPickSearchKind {
     Single,
     Many,
     First,
+    Mage,
     UnresolvedQuestGates,
     Journal,
     Return,
@@ -526,6 +529,7 @@ struct BankPickSearchPreflight {
 
 struct BankPickPreflights {
     primary: Option<BankPickSearchPreflight>,
+    mage: Option<SearchPreflight>,
     fallback: Option<SearchPreflight>,
     diagnosis: Option<SearchPreflight>,
     journal: Option<SearchPreflight>,
@@ -648,6 +652,7 @@ impl CooperativeBankPickJob {
         self.search_request = None;
         self.target_buffer = None;
         self.search_preflights.primary = None;
+        self.search_preflights.mage = None;
         self.search_preflights.diagnosis = None;
         if !keep_fallback {
             self.search_preflights.fallback = None;
@@ -780,7 +785,29 @@ impl CooperativeBankPickJob {
         !self.fallback_started && self.job.request.timeout_fallback.load(Ordering::Acquire)
     }
 
+    fn accept_mage_route(&mut self, route: nav_planner::router::CompactRoute) {
+        if route.ticks() >= self.best_cost {
+            return;
+        }
+        let request = &self.job.request;
+        let index = request
+            .mage_candidate()
+            .expect("Mage search has a target")
+            .index;
+        let access_tile = request.native.is_some().then(|| route.destination());
+        let walk_route = request.walk_generation.is_some().then_some(route);
+        self.result =
+            Some(self.record_result(Some(index), access_tile, PickKind::Reachable, walk_route));
+    }
+
     fn search_error(&mut self, kind: BankPickSearchKind) {
+        if kind == BankPickSearchKind::Mage {
+            self.cursor = None;
+            self.search_request = None;
+            self.search_preflights.mage = None;
+            self.stage = BankPickStage::AfterRanking;
+            return;
+        }
         if self.job.request.service.is_some() {
             self.release_search_storage(false);
             self.search_kind = None;
@@ -824,8 +851,8 @@ impl CooperativeBankPickJob {
                 ));
                 self.stage = BankPickStage::Finish;
             }
-            BankPickSearchKind::UnresolvedQuestGates => {
-                unreachable!("bank-pick work has no non-service quest-gate diagnosis")
+            BankPickSearchKind::Mage | BankPickSearchKind::UnresolvedQuestGates => {
+                unreachable!("the specialized bank search error was handled");
             }
         }
     }
@@ -868,6 +895,10 @@ impl CooperativeBankPickJob {
                 if self.search_request.is_none() {
                     return Err(kind);
                 }
+                Ok(())
+            }
+            BankPickSearchKind::Mage => {
+                self.search_request = Some(self.job.request.mage_search_request().ok_or(kind)?);
                 Ok(())
             }
             BankPickSearchKind::Return => Err(kind),
@@ -919,7 +950,7 @@ impl CooperativeBankPickJob {
                     }
                 }
             }
-            BankPickSearchKind::Single | BankPickSearchKind::Return => {
+            BankPickSearchKind::Single | BankPickSearchKind::Mage | BankPickSearchKind::Return => {
                 unreachable!("single searches have no target array")
             }
         };
@@ -1020,7 +1051,7 @@ impl CooperativeBankPickJob {
                     relaxation: GateRelaxation::UnknownOnly,
                 }
             }
-            BankPickSearchKind::Single | BankPickSearchKind::Return => {
+            BankPickSearchKind::Single | BankPickSearchKind::Mage | BankPickSearchKind::Return => {
                 unreachable!("single searches have no target array")
             }
         });
@@ -1034,6 +1065,8 @@ impl CooperativeBankPickJob {
             self.search_preflights.diagnosis.take()
         } else if self.search_kind == Some(BankPickSearchKind::Journal) {
             self.search_preflights.journal.take()
+        } else if self.search_kind == Some(BankPickSearchKind::Mage) {
+            self.search_preflights.mage.take()
         } else if self.fallback_started {
             self.search_preflights.fallback.take()
         } else {
@@ -1131,24 +1164,9 @@ impl CooperativeJob for CooperativeBankPickJob {
                         self.search_error(self.search_kind.unwrap_or(BankPickSearchKind::Single));
                         continue;
                     };
-                    let kind = match &request {
-                        SearchRequest::Single { .. } => self
-                            .search_kind
-                            .filter(|kind| *kind == BankPickSearchKind::Return)
-                            .unwrap_or(BankPickSearchKind::Single),
-                        SearchRequest::Many { .. } => BankPickSearchKind::Many,
-                        SearchRequest::First { .. } => BankPickSearchKind::First,
-                        SearchRequest::UnresolvedQuestGates { .. } => {
-                            BankPickSearchKind::UnresolvedQuestGates
-                        }
-                        SearchRequest::ActionableQuestGates { .. } => BankPickSearchKind::Journal,
-                        SearchRequest::MissingItemReqs { .. }
-                        | SearchRequest::MissingItemReqsForRoute { .. }
-                        | SearchRequest::BlockingZones { .. }
-                        | SearchRequest::EntranceRequirements { .. } => {
-                            unreachable!("bank-pick request uses a route search variant")
-                        }
-                    };
+                    let kind = self
+                        .search_kind
+                        .expect("prepared bank search retains its kind");
                     let Some(preflight) = self.current_preflight() else {
                         drop(request);
                         self.search_error(kind);
@@ -1240,6 +1258,14 @@ impl CooperativeJob for CooperativeBankPickJob {
                             drop(state);
                             match outcome {
                                 SearchOutcome::Single { route }
+                                    if self.search_kind == Some(BankPickSearchKind::Mage) =>
+                                {
+                                    if let Ok(route) = route {
+                                        self.accept_mage_route(route);
+                                    }
+                                    self.stage = BankPickStage::AfterRanking;
+                                }
+                                SearchOutcome::Single { route }
                                     if self.search_kind == Some(BankPickSearchKind::Return) =>
                                 {
                                     if route.is_err() {
@@ -1253,7 +1279,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                 }
                                 SearchOutcome::Single { route } => {
                                     let index = self.job.request.first();
-                                    let mut result = match route {
+                                    self.result = Some(match route {
                                         Ok(route) => self.record_result(
                                             index,
                                             None,
@@ -1266,12 +1292,17 @@ impl CooperativeJob for CooperativeBankPickJob {
                                             PickKind::AirFallback,
                                             None,
                                         ),
-                                    };
-                                    if result.route.is_some() {
-                                        result.nav_lease = self.lease.take();
-                                    }
-                                    self.result = Some(result);
+                                    });
                                     self.stage = BankPickStage::Finish;
+                                }
+                                SearchOutcome::First { search }
+                                    if self.search_kind == Some(BankPickSearchKind::Mage) =>
+                                {
+                                    let (route, _) = search.into_routes();
+                                    if let Ok(route) = route {
+                                        self.accept_mage_route(route);
+                                    }
+                                    self.stage = BankPickStage::AfterRanking;
                                 }
                                 SearchOutcome::First { search } => {
                                     let is_service = self.job.request.service.is_some();
@@ -1296,6 +1327,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                         }
                                         Ok(route) => {
                                             let access_tile = route.destination();
+                                            self.best_cost = route.ticks();
                                             drop(route);
                                             self.first_access_tile = Some(access_tile);
                                             self.first_order = 0;
@@ -1336,19 +1368,17 @@ impl CooperativeJob for CooperativeBankPickJob {
                                                 }
                                             }));
                                             self.result = Some(result);
-                                            if error == RouteError::NoPath
-                                                && self.search_preflights.journal.is_some()
-                                            {
-                                                self.start_journal_search();
-                                            } else {
-                                                self.stage = BankPickStage::Finish;
+                                            if error != RouteError::NoPath {
+                                                self.search_preflights.journal = None;
                                             }
+                                            self.stage = BankPickStage::AfterRanking;
                                         }
                                     }
                                 }
                                 SearchOutcome::Many { results, best } => {
                                     if let Some((target, route)) = best {
                                         drop(results);
+                                        self.best_cost = route.ticks();
                                         self.first_target = Some(target);
                                         self.pending_route = Some(route);
                                         self.scan_order = 0;
@@ -1356,7 +1386,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                         self.stage = BankPickStage::ResolveMany;
                                     } else if self.job.request.walk_generation.is_some() {
                                         drop(results);
-                                        self.start_fallback_search();
+                                        self.stage = BankPickStage::AfterRanking;
                                     } else {
                                         self.pending_many_results = Some(results);
                                         self.best_scan = 0;
@@ -1455,7 +1485,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                 if let Some(return_to) = self.job.request.return_target() {
                                     self.start_return_search(access_tile, return_to);
                                 } else {
-                                    self.stage = BankPickStage::Finish;
+                                    self.stage = BankPickStage::AfterRanking;
                                 }
                             }
                         }
@@ -1487,7 +1517,7 @@ impl CooperativeJob for CooperativeBankPickJob {
                                 PickKind::AirFallback,
                                 None,
                             ));
-                            self.stage = BankPickStage::Finish;
+                            self.stage = BankPickStage::AfterRanking;
                         }
                         continue;
                     }
@@ -1532,21 +1562,37 @@ impl CooperativeJob for CooperativeBankPickJob {
                                 self.pending_route = None;
                                 None
                             };
-                            let mut result = self.record_result(
+                            let result = self.record_result(
                                 Some(candidate.index),
                                 None,
                                 PickKind::Reachable,
                                 route,
                             );
-                            if result.route.is_some() {
-                                result.nav_lease = self.lease.take();
-                            }
                             self.result = Some(result);
-                            self.stage = BankPickStage::Finish;
+                            self.stage = BankPickStage::AfterRanking;
                         }
                     }
                     if let Some(outcome) = self.consume_unit(ctx) {
                         return outcome;
+                    }
+                }
+                BankPickStage::AfterRanking => {
+                    // Search with the broader policy only against the Mage
+                    // bank's own access tiles. It cannot qualify another bank.
+                    if self.search_preflights.mage.is_some() {
+                        self.search_kind = Some(BankPickSearchKind::Mage);
+                        self.stage = BankPickStage::StartSearch;
+                    } else if self.result.is_none() {
+                        self.start_fallback_search();
+                    } else if self.search_preflights.journal.is_some()
+                        && self
+                            .result
+                            .as_ref()
+                            .is_some_and(|result| result.kind == PickKind::NoCandidate)
+                    {
+                        self.start_journal_search();
+                    } else {
+                        self.stage = BankPickStage::Finish;
                     }
                 }
                 BankPickStage::Finish => {
@@ -1572,11 +1618,14 @@ impl CooperativeJob for CooperativeBankPickJob {
                     self.search_kind = None;
                     self.search_request = None;
                     self.target_buffer = None;
-                    return StepOutcome::Completed(
-                        self.result
-                            .take()
-                            .expect("completed bank pick retains its result"),
-                    );
+                    let mut result = self
+                        .result
+                        .take()
+                        .expect("completed bank pick retains its result");
+                    if result.route.is_some() && result.nav_lease.is_none() {
+                        result.nav_lease = self.lease.take();
+                    }
+                    return StepOutcome::Completed(result);
                 }
             }
         }
@@ -1681,22 +1730,94 @@ impl BankPickRequest {
         options
     }
 
+    fn mage_candidate(&self) -> Option<&BankCandidate> {
+        self.order.get(self.mage_order?)
+    }
+
+    fn options_for_bank(&self, index: usize) -> FindOptions {
+        FindOptions {
+            allow_wilderness: self.opts.allow_wilderness
+                || self
+                    .mage_candidate()
+                    .is_some_and(|mage| mage.index == index),
+            ..self.opts
+        }
+    }
+
+    fn mage_search_options(&self) -> FindOptions {
+        FindOptions {
+            allow_wilderness: true,
+            allow_teleports: self.native.is_none() && self.opts.allow_teleports,
+            ..self.opts
+        }
+    }
+
+    fn mage_search_request(&self) -> Option<SearchRequest> {
+        let mage = self.mage_candidate()?;
+        let options = self.mage_search_options();
+        if self.native.is_some() {
+            let access = self.candidate_access(mage)?;
+            let mut targets = Vec::new();
+            targets.try_reserve_exact(access.len()).ok()?;
+            targets.extend_from_slice(access);
+            Some(SearchRequest::First {
+                from: self.from,
+                targets: targets.into_boxed_slice(),
+                fallback: Box::default(),
+                options,
+                avoid: Box::default(),
+                max_settles: self.target_budget(),
+            })
+        } else {
+            Some(SearchRequest::Single {
+                from: self.from,
+                to: self.bank_facts().banks()[mage.index].tile,
+                options,
+                avoid: Box::default(),
+                max_settles: BANK_TARGET_BUDGET,
+            })
+        }
+    }
+
+    fn mage_search_shape(&self) -> Option<SearchRequestShape> {
+        let mage = self.mage_candidate()?;
+        let options = self.mage_search_options();
+        if self.native.is_some() {
+            let access = self.candidate_access(mage)?;
+            (!access.is_empty()).then_some(SearchRequestShape::First {
+                target_capacity: access.len(),
+                fallback_capacity: 0,
+                options,
+                avoid_capacity: 0,
+                max_settles: self.target_budget(),
+            })
+        } else {
+            self.bank_facts().banks()[mage.index]
+                .routable
+                .then_some(SearchRequestShape::Single {
+                    options,
+                    avoid_capacity: 0,
+                    max_settles: BANK_TARGET_BUDGET,
+                })
+        }
+    }
+
     fn single_search_request(&self) -> Option<SearchRequest> {
         let index = self.first()?;
         let facts = self.facts.as_deref()?;
         Some(SearchRequest::Single {
             from: self.from,
             to: facts.banks()[index].tile,
-            options: self.opts,
+            options: self.options_for_bank(index),
             avoid: Box::default(),
             max_settles: NODE_BUDGET,
         })
     }
 
     fn single_search_shape(&self) -> Option<SearchRequestShape> {
-        self.first()?;
+        let index = self.first()?;
         Some(SearchRequestShape::Single {
-            options: self.opts,
+            options: self.options_for_bank(index),
             avoid_capacity: 0,
             max_settles: NODE_BUDGET,
         })
@@ -1766,6 +1887,15 @@ impl BankPickRequest {
     ) -> Option<(BankPickInput, BankPickPreflights)> {
         let (kind, shape) = self.search_shape(route_only)?;
         let primary = SearchCursor::preflight(shape, &self.lease, &self.state)?;
+        let mage = match kind {
+            BankPickSearchKind::First | BankPickSearchKind::Many => {
+                match self.mage_search_shape() {
+                    Some(shape) => Some(SearchCursor::preflight(shape, &self.lease, &self.state)?),
+                    None => None,
+                }
+            }
+            _ => None,
+        };
         let fallback = if self.walk_generation.is_some() {
             let fallback_shape = self.single_search_shape()?;
             Some(SearchCursor::preflight(
@@ -1878,29 +2008,45 @@ impl BankPickRequest {
         } else {
             0
         };
-        let phase_charge = |preflight: &SearchPreflight| -> Option<WorkCharge> {
-            let reservation = preflight.reservation();
-            let input_bytes = base_input_bytes
-                .checked_add(preflight.input_bytes())?
-                .checked_add(reservation.future_layout_bytes)?;
-            Some(WorkCharge::new(
-                input_bytes,
-                reservation.peak_bytes.checked_add(failure_bytes)?,
-                0,
-                0,
-            ))
+        let phase_charge =
+            |preflight: &SearchPreflight, retained_route: usize| -> Option<WorkCharge> {
+                let reservation = preflight.reservation();
+                let input_bytes = base_input_bytes
+                    .checked_add(preflight.input_bytes())?
+                    .checked_add(reservation.future_layout_bytes)?;
+                Some(WorkCharge::new(
+                    input_bytes,
+                    reservation
+                        .peak_bytes
+                        .checked_add(failure_bytes)?
+                        .checked_add(retained_route)?,
+                    0,
+                    0,
+                ))
+            };
+        let primary_charge = phase_charge(&primary, 0)?;
+        // A raw bank walk keeps the best strict route while ranking Mage.
+        let mage_charge = match mage.as_ref() {
+            Some(preflight) => {
+                let retained_route = if self.walk_generation.is_some() {
+                    primary.reservation().result_bytes
+                } else {
+                    0
+                };
+                Some(phase_charge(preflight, retained_route)?)
+            }
+            None => None,
         };
-        let primary_charge = phase_charge(&primary)?;
         let fallback_charge = match fallback.as_ref() {
-            Some(preflight) => Some(phase_charge(preflight)?),
+            Some(preflight) => Some(phase_charge(preflight, 0)?),
             None => None,
         };
         let diagnosis_charge = match diagnosis.as_ref() {
-            Some(preflight) => Some(phase_charge(preflight)?),
+            Some(preflight) => Some(phase_charge(preflight, 0)?),
             None => None,
         };
         let return_charge = match return_route.as_ref() {
-            Some(preflight) => Some(phase_charge(preflight)?),
+            Some(preflight) => Some(phase_charge(preflight, 0)?),
             None => None,
         };
         let journal_charge = match journal.as_ref() {
@@ -1928,6 +2074,7 @@ impl BankPickRequest {
         };
         let mut charge = primary_charge;
         for additional in [
+            mage_charge,
             fallback_charge,
             diagnosis_charge,
             journal_charge,
@@ -1954,6 +2101,7 @@ impl BankPickRequest {
                     kind,
                     token: primary,
                 }),
+                mage,
                 fallback,
                 diagnosis,
                 journal,
@@ -2150,7 +2298,7 @@ impl BankPickRequest {
             self.bank_facts().banks()[index].tile,
             0,
             self.opts.allow_teleports,
-            self.opts.allow_wilderness,
+            self.options_for_bank(index).allow_wilderness,
             self.opts.allow_bank_fetch,
             self.opts.zones,
         )
@@ -2592,7 +2740,22 @@ fn make_bank_pick_request(
     target_count: usize,
     walk_generation: Option<u64>,
     native: Option<NativePickContext>,
+    allow_mage_wilderness: bool,
 ) -> Arc<BankPickRequest> {
+    let mage_order = if allow_mage_wilderness
+        && !opts.allow_wilderness
+        && native
+            .as_ref()
+            .is_none_or(|native| native.return_to.is_none())
+    {
+        order.iter().position(|candidate| {
+            facts.banks()[candidate.index]
+                .definition
+                .is_some_and(|definition| definition.setting == Some("useMageBank"))
+        })
+    } else {
+        None
+    };
     Arc::new(BankPickRequest {
         request_id,
         lease,
@@ -2603,6 +2766,7 @@ fn make_bank_pick_request(
         timeout_fallback: AtomicBool::new(false),
         order,
         target_count,
+        mage_order,
         walk_generation,
         native,
         service: None,
@@ -2635,6 +2799,7 @@ fn make_service_pick_request(
         timeout_fallback: AtomicBool::new(false),
         order,
         target_count,
+        mage_order: None,
         walk_generation: None,
         native: None,
         service: Some(service),
@@ -2742,7 +2907,7 @@ pub(super) fn queue_native_service_pick_scoped(
     );
 }
 
-/// The raw native walk-nearest-bank verb keeps native option defaults.
+/// The raw native bank walk uses the slot's observed bank eligibility.
 #[expect(
     clippy::too_many_arguments,
     reason = "bank walking captures the gating state and the current quest observation"
@@ -2838,6 +3003,11 @@ fn queue_bank(
     } else if native.is_none() && (request_id == 0 || request_id <= bot.bank_pick.last_id) {
         return false;
     }
+    let preferences = if walking {
+        bot.bank_preferences
+    } else {
+        preferences
+    };
     let service_exclusions = service
         .as_ref()
         .and_then(|_| bot.requested_exclusions.clone());
@@ -3023,6 +3193,13 @@ fn queue_bank(
     } else {
         None
     };
+    let allow_mage_wilderness = if walking {
+        preferences.use_mage_bank
+    } else {
+        native
+            .as_ref()
+            .is_some_and(|input| input.request.allow_mage_wilderness)
+    };
     let native_context = native.map(|native| NativePickContext {
         authority: native.authority,
         evidence: native.evidence,
@@ -3059,6 +3236,7 @@ fn queue_bank(
             target_count,
             walk_generation,
             native_context,
+            allow_mage_wilderness,
         )
     };
     let near_index = if request.allow_air_fallback() {

@@ -861,7 +861,7 @@ pub struct FindOptions {
     pub allow_teleports: bool,
     pub allow_wilderness: bool,
     pub allow_bank_fetch: bool,
-    /// Existing named-bank opt-ins, captured when the walk is armed.
+    /// Derived named-bank eligibility, captured when the walk is armed.
     pub bank_preferences: api::named_banks::BankPreferences,
     /// For bank access goals, break equal path costs by input target order.
     /// Compare safe arrivals with each destination's own-zone completion.

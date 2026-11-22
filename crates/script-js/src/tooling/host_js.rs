@@ -606,7 +606,7 @@ fn render_native_v2(out: &mut String) {
     );
     out.push_str("  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. Same busy refuse as prayerSet. */\n");
     out.push_str("  prayerClear(): Promise<HelperResult<PrayerClearCounts>>;\n");
-    out.push_str("  /** Select without moving. Native wilderness defaults false; an air fallback does not prove reachability. */\n");
+    out.push_str("  /** Select without moving. Omitted allow_wilderness permits wilderness only for Mage Arena when the account allows it. False forbids it for all routes; true permits it. Zanaris requires Lost City. Legacy bank flags are ignored. An air fallback does not prove reachability. */\n");
     out.push_str("  bankNearestReachable(input?: { from?: WorldTile; allow_wilderness?: boolean; use_mage_bank?: boolean; use_zanaris_bank?: boolean }): Promise<HelperResult<BankLocation | null>>;\n");
     out.push_str(
         "  foodCount(input: { items: ItemRow[]; foodName: string }): HelperResult<number>;\n",

@@ -2180,7 +2180,6 @@ fn one_acquisition_buys_two_needs_and_waits_for_each_counted_final_close() {
             bank: None,
             explicit: None,
             required: false,
-            preferences: Default::default(),
         },
         stage: BankStage::Planned,
         partial_ok: true,
