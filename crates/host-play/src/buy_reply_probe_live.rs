@@ -556,6 +556,11 @@ struct ProbeTrace {
     observations: Vec<Value>,
     player_info_clock: PlayerInfoClock,
     last_observation_signature: Option<String>,
+    batch_started_utc: Option<String>,
+    batch_ended_utc: Option<String>,
+    batch_end_host_tick: Option<u64>,
+    disconnect_cause: Option<String>,
+    session_change: Option<SessionChangeReceipt>,
 }
 
 impl ProbeTrace {
@@ -564,6 +569,56 @@ impl ProbeTrace {
             self.failure = Some(reason.into());
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SessionChangeReceipt {
+    from_session: u64,
+    to_session: u64,
+    host_tick: u64,
+    observed_at_utc: String,
+    disconnect_cause: Option<String>,
+}
+
+impl SessionChangeReceipt {
+    fn to_value(&self) -> Value {
+        json!({
+            "from_session": self.from_session,
+            "to_session": self.to_session,
+            "host_tick": self.host_tick,
+            "observed_at_utc": self.observed_at_utc,
+            "disconnect_cause": self.disconnect_cause,
+        })
+    }
+}
+
+fn record_session_change(
+    trace: &mut ProbeTrace,
+    from_session: u64,
+    to_session: u64,
+    host_tick: u64,
+    observed_at_utc: String,
+    disconnect_cause: Option<String>,
+) {
+    if trace.session_change.is_none() {
+        trace.session_change = Some(SessionChangeReceipt {
+            from_session,
+            to_session,
+            host_tick,
+            observed_at_utc,
+            disconnect_cause,
+        });
+    }
+}
+
+fn utc_timestamp() -> String {
+    format!(
+        "{}Z",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs()
+    )
 }
 
 fn item_fact(data: &SelectedGameData, alias: &str) -> Result<ItemFact, String> {
@@ -2208,11 +2263,23 @@ struct LiveState {
 impl LiveState {
     fn observe_login_clock(&mut self, client: &Client) {
         if self.login_client_session != Some(client.gens.session) {
-            if self.started && self.login_client_session.is_some() {
-                self.trace.lock().fail(format!(
-                    "client session changed during batch: expected {:?}, observed {}",
-                    self.login_client_session, client.gens.session
-                ));
+            if let Some(previous_session) = self.login_client_session {
+                let mut trace = self.trace.lock();
+                record_session_change(
+                    &mut trace,
+                    previous_session,
+                    client.gens.session,
+                    u64::from(self.snapshot.tick()),
+                    utc_timestamp(),
+                    None,
+                );
+                if self.started {
+                    trace.fail(format!(
+                        "client session changed during batch: expected {:?}, observed {}",
+                        Some(previous_session),
+                        client.gens.session
+                    ));
+                }
             }
             self.login_client_session = Some(client.gens.session);
             self.login_start_tick = None;
@@ -2645,6 +2712,44 @@ struct BatchRunConfig {
     fixture: Fixture,
 }
 
+fn batch_script_receipt(
+    batch_index: usize,
+    batch: &BatchPlan,
+    account: &str,
+    trace: &ProbeTrace,
+) -> Value {
+    json!({
+        "batch_index": batch_index,
+        "plan": batch,
+        "account": account,
+        "batch_started_utc": trace.batch_started_utc,
+        "batch_ended_utc": trace.batch_ended_utc,
+        "batch_end_host_tick": trace.batch_end_host_tick,
+        "disconnect_cause": trace.disconnect_cause,
+        "session_change": trace.session_change.as_ref().map(SessionChangeReceipt::to_value),
+        "started": trace.started,
+        "start_tick": trace.start_tick,
+        "session": trace.session,
+        "script_run": trace.script_run,
+        "phase": trace.phase,
+        "settled_replies": trace.settled_replies,
+        "last_reply": trace.last_reply,
+        "login_player_info_ticks": trace.login_player_info_ticks,
+        "complete_tick": trace.complete_tick,
+        "completed": trace.completed,
+        "failure": trace.failure,
+        "terminal_context": trace.terminal_context,
+        "player_info_clock": trace.player_info_clock,
+    })
+}
+
+fn session_end_disconnect_cause(arm: &crate::SlotArm) -> Option<String> {
+    let (event, _) = arm.take_lifecycle_event();
+    match event?.payload() {
+        api::lifecycle::SessionEventOut::SessionEnded { cause, .. } => Some(format!("{cause:?}")),
+        _ => None,
+    }
+}
 fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
     let BatchRunConfig {
         batch_index,
@@ -2657,7 +2762,10 @@ fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
         selected,
         fixture,
     } = config;
-    let trace = Arc::new(Mutex::new(ProbeTrace::default()));
+    let trace = Arc::new(Mutex::new(ProbeTrace {
+        batch_started_utc: Some(utc_timestamp()),
+        ..ProbeTrace::default()
+    }));
     let capture = Arc::new(StdMutex::new(CombatCapture::default()));
     let _registration = CaptureRegistration::install(&account, Arc::clone(&capture));
     let mut runner = ScenarioRunner::with_world(
@@ -2805,6 +2913,21 @@ fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
         thread::sleep(POLL_INTERVAL);
     }
 
+    let batch_end_host_tick = u64::from(frame_state.lock().snapshot.tick());
+    let batch_ended_utc = utc_timestamp();
+    let disconnect_cause = play
+        .arm(&account)
+        .as_deref()
+        .and_then(session_end_disconnect_cause);
+    {
+        let mut trace = trace.lock();
+        trace.batch_end_host_tick = Some(batch_end_host_tick);
+        trace.batch_ended_utc = Some(batch_ended_utc);
+        trace.disconnect_cause.clone_from(&disconnect_cause);
+        if let Some(change) = trace.session_change.as_mut() {
+            change.disconnect_cause.clone_from(&disconnect_cause);
+        }
+    }
     {
         let mut trace = trace.lock();
         if let Some(error) = terminal_error.as_deref() {
@@ -2837,24 +2960,7 @@ fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
                 login_player_info_ticks,
             },
         );
-        let script = json!({
-            "batch_index": batch_index,
-            "plan": batch,
-            "account": account,
-            "started": trace.started,
-            "start_tick": trace.start_tick,
-            "session": trace.session,
-            "script_run": trace.script_run,
-            "phase": trace.phase,
-            "settled_replies": trace.settled_replies,
-            "last_reply": trace.last_reply,
-            "login_player_info_ticks": trace.login_player_info_ticks,
-            "complete_tick": trace.complete_tick,
-            "completed": trace.completed,
-            "failure": trace.failure,
-            "terminal_context": trace.terminal_context,
-            "player_info_clock": trace.player_info_clock,
-        });
+        let script = batch_script_receipt(batch_index, &batch, &account, &trace);
         (samples, trace.observations.clone(), script, admission)
     };
     let actions = capture
@@ -4664,5 +4770,39 @@ mod network_coords_tests {
             drop(trace);
             rig.slot.stop();
         }
+    }
+}
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_session_change_writes_tick_time_and_disconnect_cause() {
+        let mut trace = ProbeTrace {
+            batch_started_utc: Some("1763700000Z".into()),
+            batch_ended_utc: Some("1763700012Z".into()),
+            batch_end_host_tick: Some(82),
+            disconnect_cause: Some("ReadError".into()),
+            ..ProbeTrace::default()
+        };
+        record_session_change(
+            &mut trace,
+            4,
+            5,
+            81,
+            "1763700011Z".into(),
+            Some("ReadError".into()),
+        );
+
+        let receipt = batch_script_receipt(1, &BATCH_SCHEDULE[0], "alice", &trace);
+        assert_eq!(receipt["batch_started_utc"], "1763700000Z");
+        assert_eq!(receipt["batch_ended_utc"], "1763700012Z");
+        assert_eq!(receipt["batch_end_host_tick"], 82);
+        assert_eq!(receipt["disconnect_cause"], "ReadError");
+        assert_eq!(receipt["session_change"]["from_session"], 4);
+        assert_eq!(receipt["session_change"]["to_session"], 5);
+        assert_eq!(receipt["session_change"]["host_tick"], 81);
+        assert_eq!(receipt["session_change"]["observed_at_utc"], "1763700011Z");
+        assert_eq!(receipt["session_change"]["disconnect_cause"], "ReadError");
     }
 }
