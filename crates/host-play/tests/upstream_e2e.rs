@@ -91,17 +91,54 @@ fn account_cheat(command: &str) -> bool {
     )
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct RunnerLog {
+    time: u64,
+    msg: String,
+}
+
+impl RunnerLog {
+    fn received(msg: String) -> Result<Self, String> {
+        Self::at(msg, SystemTime::now())
+    }
+
+    fn at(msg: String, received_at: SystemTime) -> Result<Self, String> {
+        let time = received_at
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("native log receipt time: {error}"))?
+            .as_millis();
+        let time = u64::try_from(time)
+            .map_err(|_| "native log receipt time exceeds the u64 millisecond range".to_owned())?;
+        Ok(Self { time, msg })
+    }
+
+    fn as_value(&self) -> Value {
+        json!({"time":self.time, "msg":&self.msg})
+    }
+}
+
+fn append_logs(logs: &mut Vec<RunnerLog>, messages: Vec<String>) -> Result<(), String> {
+    for message in messages {
+        logs.push(RunnerLog::received(message)?);
+    }
+    Ok(())
+}
+
 fn record_stop(
-    logs: &mut Vec<String>,
+    logs: &mut Vec<RunnerLog>,
     previous: &mut Option<script::ScriptLifecycleReceipt>,
     receipt: Option<script::ScriptLifecycleReceipt>,
-) {
+) -> Result<(), String> {
     if let Some(receipt) = receipt {
         if previous.as_ref() != Some(&receipt) {
-            logs.push(format!("stopped — {}", receipt.reason));
+            logs.push(RunnerLog::received(format!(
+                "stopped — {}",
+                receipt.reason
+            ))?);
             *previous = Some(receipt);
         }
     }
+    Ok(())
 }
 
 fn shot_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
@@ -127,7 +164,7 @@ struct Session {
     account: String,
     tested: bool,
     observer: bool,
-    logs: Vec<String>,
+    logs: Vec<RunnerLog>,
     receipt: Option<script::ScriptLifecycleReceipt>,
     error: Option<String>,
     last_issue: Option<Value>,
@@ -248,16 +285,17 @@ impl Adapter {
     fn evaluate(&mut self, request: &Value) -> Reply {
         let session = self.session.as_mut().ok_or("no session")?;
         let state = self.play.script_state(&session.account);
-        session
-            .logs
-            .extend(self.play.script_take_pending_logs(&session.account));
+        append_logs(
+            &mut session.logs,
+            self.play.script_take_pending_logs(&session.account),
+        )?;
         if !session.observer {
             session.error = self.play.script_last_error(&session.account);
             record_stop(
                 &mut session.logs,
                 &mut session.receipt,
                 self.play.script_lifecycle_receipt(&session.account),
-            );
+            )?;
         }
         let native_state;
         let state_name = if session.observer {
@@ -287,7 +325,7 @@ impl Adapter {
         let receipt = &session.receipt;
         let status = json!({
             "state":state_name,
-            "logs":session.logs.iter().map(|msg| json!({"msg":msg})).collect::<Vec<_>>(),
+            "logs":session.logs.iter().map(RunnerLog::as_value).collect::<Vec<_>>(),
             "error":error,
             "receipt":receipt,
             "walk_cancelled_by_user": self.play.script_walk_cancelled_by_user(&session.account),
@@ -488,9 +526,10 @@ impl Adapter {
                 let Some(session) = self.session.as_mut() else {
                     return Ok(self.last_diagnostic.clone());
                 };
-                session
-                    .logs
-                    .extend(self.play.script_take_pending_logs(&session.account));
+                append_logs(
+                    &mut session.logs,
+                    self.play.script_take_pending_logs(&session.account),
+                )?;
                 let facts = self.play.script_probe_for_test(&session.account,
                     "({stats:globalThis.__rs2b0t_host?.snapshot?.stats, tile:rs2b0t.reader.worldTile()})");
                 Ok(json!({
@@ -499,7 +538,7 @@ impl Adapter {
                     "observer":session.observer,
                     "error":self.play.script_last_error(&session.account).or_else(||session.error.clone()),
                     "receipt":self.play.script_lifecycle_receipt(&session.account).or_else(||session.receipt.clone()),
-                    "logs":session.logs,
+                    "logs":session.logs.iter().map(RunnerLog::as_value).collect::<Vec<_>>(),
                     "facts":facts,
                     "last_issue":session.last_issue,
                     "host_events":NATIVE_EVENTS.0.lock().unwrap().iter()
@@ -856,8 +895,21 @@ fn fixture_cheats_cannot_mutate_the_world_or_tick_speed() {
 }
 
 #[test]
+fn runner_log_time_is_native_unix_epoch_milliseconds() {
+    let log = RunnerLog::at(
+        "banked 13 rings".into(),
+        UNIX_EPOCH + Duration::from_millis(1_725_000_123_456),
+    )
+    .unwrap();
+    assert_eq!(
+        log.as_value(),
+        json!({"time":1_725_000_123_456u64, "msg":"banked 13 rings"})
+    );
+}
+
+#[test]
 fn native_stop_receipts_reach_the_runner_log_once() {
-    let mut logs = vec!["script output".into()];
+    let mut logs = vec![RunnerLog::at("script output".into(), UNIX_EPOCH).unwrap()];
     let mut previous = None;
     let receipt = script::ScriptLifecycleReceipt {
         runtime_generation: 1,
@@ -865,10 +917,13 @@ fn native_stop_receipts_reach_the_runner_log_once() {
         tick: 8,
         reason: "native stop reason".into(),
     };
-    record_stop(&mut logs, &mut previous, Some(receipt.clone()));
-    record_stop(&mut logs, &mut previous, Some(receipt.clone()));
-    record_stop(&mut logs, &mut previous, None);
-    assert_eq!(logs, ["script output", "stopped — native stop reason"]);
+    record_stop(&mut logs, &mut previous, Some(receipt.clone())).unwrap();
+    record_stop(&mut logs, &mut previous, Some(receipt.clone())).unwrap();
+    record_stop(&mut logs, &mut previous, None).unwrap();
+    assert_eq!(
+        logs.iter().map(|log| log.msg.as_str()).collect::<Vec<_>>(),
+        ["script output", "stopped — native stop reason"]
+    );
     assert_eq!(previous, Some(receipt));
 }
 
