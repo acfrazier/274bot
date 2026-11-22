@@ -10,6 +10,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - NPC Talk-to, dialogue choices and Continue use current client-built menu
   rows. Missing, stale, ambiguous or ineligible rows refuse without a
   synthetic fallback or a fabricated mouse-click packet.
+- After Continue is sent, fresh snapshots wait for the next chat interface
+  instead of offering the already-used button. This fixes revision-377 Cook
+  dialogue failures while retaining native menu refusal checks.
 
 ### Revision 377 login
 

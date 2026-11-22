@@ -3,7 +3,7 @@ use api::interact::{
     WireCommand, SCENE_READY,
 };
 use api::prot::packet_metadata;
-use api::snapshot::{GameSnapshot, WidgetView};
+use api::snapshot::{Family, GameSnapshot, WidgetView};
 use client::client::{
     Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision, MiniMenuAction,
 };
@@ -12,7 +12,7 @@ use client::config::runtime_377::{
     CacheFields377, InterfaceFields377, MorphTable377, NpcFields377,
 };
 use client::config::{Cache, CacheRevision377, NpcType};
-use client::io::{ClientProt, ClientStream, Isaac};
+use client::io::{ClientProt, ClientStream, Isaac, Packet, ServerProt289};
 use std::net::TcpListener;
 use std::sync::Arc;
 
@@ -903,6 +903,72 @@ fn repeated_continue_refuses_after_one_wire_send_without_further_mutation() {
                 .filter(|frame| frame.protocol == ClientProt::RESUME_PAUSEBUTTON)
                 .count(),
             1
+        );
+    }
+}
+
+#[test]
+fn fresh_snapshot_hides_locally_latched_continue_without_interface_packet() {
+    for revision in [ClientRevision::R377, ClientRevision::R289] {
+        let (mut scene, mut snapshot) = continue_scene(revision);
+        let iface_generation = scene.client.gens.iface;
+        let first = Interactions::new(&snapshot, &mut scene.client).continue_dialog(None);
+        assert!(matches!(first, SendResult::Sent { .. }), "{first:?}");
+        assert!(scene.client.resumed_pause_button);
+        assert_eq!(scene.client.gens.iface, iface_generation);
+        let after_first_ui = ui_state(&scene.client);
+        let after_first_wire = wire_state(&scene.client);
+
+        assert!(
+            snapshot.rebuild_family(&scene.client, Family::ChatOptions),
+            "{revision:?}: the local pause latch must refresh without an interface packet"
+        );
+        assert_eq!(snapshot.chat_continue_component_id(), -1);
+        let measured = allocation_counter::measure(|| {
+            for _ in 0..8 {
+                assert!(!snapshot.rebuild_family(&scene.client, Family::ChatOptions));
+            }
+        });
+        assert_eq!(measured.count_total, 0);
+        let second = Interactions::new(&snapshot, &mut scene.client).continue_dialog(None);
+        assert!(matches!(
+            second,
+            SendResult::Refused {
+                reason: SendReason::NoContinue,
+                ..
+            }
+        ));
+        assert_eq!(ui_state(&scene.client), after_first_ui);
+        assert_eq!(wire_state(&scene.client), after_first_wire);
+
+        // The next chat interface resets the client latch, even for the same root.
+        // vendor/fr-client-rust/crates/client/src/client/runtime_377.rs:535-552.
+        // vendor/fr-client-rust/crates/client/src/client/client.rs:6152-6165.
+        // vendor/fr-client-rust/crates/client/src/client/interface_packet_377.rs:144.
+        let opcode = if revision == ClientRevision::R377 {
+            109
+        } else {
+            ServerProt289::IF_OPENCHAT
+        };
+        let mut packet = Packet::new((CHAT_ROOT as u16).to_be_bytes().to_vec());
+        scene.client.psize = packet.length() as i32;
+        scene.client.handle_packet(opcode, &mut packet);
+        assert_eq!(packet.pos, packet.length());
+        assert!(!scene.client.resumed_pause_button);
+        assert!(scene.client.gens.iface > iface_generation);
+        snapshot.rebuild(&scene.client);
+        assert_eq!(
+            snapshot.chat_continue_component_id(),
+            CONTINUE_BUTTON as i32
+        );
+        let next = Interactions::new(&snapshot, &mut scene.client).continue_dialog(None);
+        assert!(matches!(next, SendResult::Sent { .. }), "{next:?}");
+        assert_eq!(
+            frames(&scene.client)
+                .iter()
+                .filter(|frame| frame.protocol == ClientProt::RESUME_PAUSEBUTTON)
+                .count(),
+            2
         );
     }
 }
