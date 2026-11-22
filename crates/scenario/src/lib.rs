@@ -440,6 +440,26 @@ pub struct Step {
     pub wait: Wait,
 }
 
+/// A typed refusal from a scenario's native interaction or fixture cheat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepSendRefusal {
+    Interaction(api::interact::SendReason),
+    Cheat(client::CheatRefusal),
+}
+
+impl std::fmt::Display for StepSendRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Interaction(reason) => write!(f, "interaction refused: {reason:?}"),
+            Self::Cheat(reason) => write!(f, "fixture cheat refused: {reason:?}"),
+        }
+    }
+}
+
+/// A repeatable native send that retains its typed refusal.
+pub type InteractionSender =
+    dyn Fn(&mut Client, &GameSnapshot) -> Result<(), StepSendRefusal> + Send + Sync;
+
 /// What a step sends through the client's driver.
 pub enum StepKind {
     /// 377 `perform(step, { arms, budgetTicks })`: run the closure once,
@@ -508,6 +528,10 @@ pub enum StepKind {
     Repeat {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
+    },
+    /// Like [`StepKind::Repeat`], but retains the native refusal in the receipt.
+    RepeatInteraction {
+        send: Box<InteractionSender>,
     },
     /// Native seed deposit through the open bank window. Pending bank-side
     /// data re-arms once per observed game tick. An accepted send waits for

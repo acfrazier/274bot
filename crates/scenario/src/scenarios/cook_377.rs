@@ -115,26 +115,32 @@ fn talk() -> Step {
 fn dialogue(name: &'static str, proof: Proof, readback: Option<&'static str>) -> Step {
     Step {
         name,
-        kind: StepKind::Repeat {
+        kind: StepKind::RepeatInteraction {
             send: Box::new(move |client, snapshot| {
                 // Completion can arrive before the old chat widget is retired.
                 // Once the requested product proof holds, do not send a stale continue.
                 if proof.check(snapshot, None) {
-                    return true;
+                    return Ok(());
                 }
                 if let Some(command) = readback {
-                    if !interact::cheat(client, command).is_sent() {
-                        return false;
+                    if let client::CheatSend::Refused(reason) = interact::cheat(client, command) {
+                        return Err(crate::StepSendRefusal::Cheat(reason));
                     }
                 }
                 let mut interaction = Interactions::new(snapshot, client);
-                if !snapshot.chat_options().is_empty() {
+                let result = if !snapshot.chat_options().is_empty() {
                     // quest_cook.rs2:2,29: both positive choices are option 1.
-                    matches!(interaction.answer_choice(1), SendResult::Sent { .. })
+                    interaction.answer_choice(1)
                 } else if snapshot.chat_continue_component_id() != -1 {
-                    matches!(interaction.continue_dialog(None), SendResult::Sent { .. })
+                    interaction.continue_dialog(None)
                 } else {
-                    true
+                    return Ok(());
+                };
+                match result {
+                    SendResult::Sent { .. } => Ok(()),
+                    SendResult::Refused { reason, .. } => {
+                        Err(crate::StepSendRefusal::Interaction(reason))
+                    }
                 }
             }),
         },
@@ -525,14 +531,14 @@ mod tests {
             },
             None,
         );
-        let StepKind::Repeat { send } = step.kind else {
+        let StepKind::RepeatInteraction { send } = step.kind else {
             panic!("dialogue repeats")
         };
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_chat_modal(356, vec!["Click here to continue".into()]);
         let mut client = client(ClientRevision::R377);
         assert!(
-            send(&mut client, &snapshot),
+            send(&mut client, &snapshot).is_ok(),
             "a modal without a continue component waits"
         );
         assert!(
@@ -548,7 +554,7 @@ mod tests {
             true,
         );
         assert!(
-            send(&mut client, &snapshot),
+            send(&mut client, &snapshot).is_ok(),
             "the product completion stops further continues"
         );
     }

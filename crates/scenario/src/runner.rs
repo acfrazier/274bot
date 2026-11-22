@@ -1382,7 +1382,9 @@ impl ScenarioRunner {
             // (`repeat_sent_game_tick` is `None`).
             let repeat = matches!(
                 self.current_step().kind,
-                StepKind::Repeat { .. } | StepKind::NativeSeedDeposit { .. }
+                StepKind::Repeat { .. }
+                    | StepKind::RepeatInteraction { .. }
+                    | StepKind::NativeSeedDeposit { .. }
             );
             let repeat_ready = !repeat || self.repeat_sent_game_tick != Some(self.snapshot.tick());
             if !self.step_sent && repeat_ready {
@@ -1430,6 +1432,7 @@ impl ScenarioRunner {
                     StepKind::DrainDialogs { .. }
                         | StepKind::Relog
                         | StepKind::Repeat { .. }
+                        | StepKind::RepeatInteraction { .. }
                         | StepKind::NativeSeedDeposit { .. }
                 );
                 if self.step_sent {
@@ -2560,7 +2563,8 @@ impl ScenarioRunner {
     fn dispatch_kind(&self) -> &'static str {
         match self.current_step().kind {
             StepKind::Perform { .. } | StepKind::Repeat { .. } => "legacy-closure",
-            StepKind::MakeProduct { .. }
+            StepKind::RepeatInteraction { .. }
+            | StepKind::MakeProduct { .. }
             | StepKind::EnterAmount { .. }
             | StepKind::KeyGesture { .. } => "interaction",
             StepKind::NativeSeedDeposit { .. } => "fixture-deposit",
@@ -2610,6 +2614,9 @@ impl ScenarioRunner {
                     Err("driver rejected the send".into())
                 }
             }
+            StepKind::RepeatInteraction { send } => send(client, &self.snapshot)
+                .map(|()| "accepted")
+                .map_err(|reason| reason.to_string()),
             StepKind::NativeSeedDeposit {
                 unnoted_id,
                 quantity,
