@@ -14,6 +14,12 @@ import { reader as E2EReader, actions as E2EActions } from '#/bot/adapter/Client
 globalThis.window = globalThis;
 globalThis.__e2eCommands = [];
 globalThis.__e2eStatus = { state: 'idle', logs: [] };
+globalThis.__e2eSessionReady = session => {
+    const snapshot = globalThis.__rs2b0t_host?.snapshot;
+    // Native statsReady is not a per-login packet receipt on this host.
+    return snapshot?.client_adapter?.session_generation === session &&
+        E2EReader.ingame() && E2EReader.sceneState() === 2 && snapshot.stats?.length > 0;
+};
 globalThis.__rs2b0t = {
     Inventory: E2EInventory, Bank: E2EBank, Skills: E2ESkills, Quests: E2EQuests,
     Game: E2EGame, Equipment: E2EEquipment, Locs: E2ELocs, Npcs: E2ENpcs,
