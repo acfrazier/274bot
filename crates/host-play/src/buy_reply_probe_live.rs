@@ -611,6 +611,20 @@ fn record_session_change(
     }
 }
 
+fn record_batch_end(
+    trace: &mut ProbeTrace,
+    host_tick: u64,
+    ended_utc: String,
+    disconnect_cause: Option<String>,
+) {
+    trace.batch_end_host_tick = Some(host_tick);
+    trace.batch_ended_utc = Some(ended_utc);
+    trace.disconnect_cause.clone_from(&disconnect_cause);
+    if let Some(change) = trace.session_change.as_mut() {
+        change.disconnect_cause.clone_from(&disconnect_cause);
+    }
+}
+
 fn utc_timestamp() -> String {
     format!(
         "{}Z",
@@ -2261,19 +2275,26 @@ struct LiveState {
 }
 
 impl LiveState {
-    fn observe_login_clock(&mut self, client: &Client) {
-        if self.login_client_session != Some(client.gens.session) {
-            if let Some(previous_session) = self.login_client_session {
-                let mut trace = self.trace.lock();
-                record_session_change(
-                    &mut trace,
-                    previous_session,
-                    client.gens.session,
-                    u64::from(self.snapshot.tick()),
-                    utc_timestamp(),
-                    None,
-                );
-                if self.started {
+    fn observe_login_clock(
+        login_client_session: &mut Option<u64>,
+        login_start_tick: &mut Option<u64>,
+        trace: &Arc<Mutex<ProbeTrace>>,
+        started: bool,
+        host_tick: u64,
+        client: &Client,
+    ) {
+        if *login_client_session != Some(client.gens.session) {
+            if let Some(previous_session) = *login_client_session {
+                if started {
+                    let mut trace = trace.lock();
+                    record_session_change(
+                        &mut trace,
+                        previous_session,
+                        client.gens.session,
+                        host_tick,
+                        utc_timestamp(),
+                        None,
+                    );
                     trace.fail(format!(
                         "client session changed during batch: expected {:?}, observed {}",
                         Some(previous_session),
@@ -2281,16 +2302,15 @@ impl LiveState {
                     ));
                 }
             }
-            self.login_client_session = Some(client.gens.session);
-            self.login_start_tick = None;
+            *login_client_session = Some(client.gens.session);
+            *login_start_tick = None;
         }
         if client.ingame && client.scene_state == 2 {
-            let tick = u64::from(self.snapshot.tick());
-            let start = *self.login_start_tick.get_or_insert(tick);
-            let login_ticks = tick.saturating_sub(start).saturating_add(1);
-            let mut trace = self.trace.lock();
+            let start = *login_start_tick.get_or_insert(host_tick);
+            let login_ticks = host_tick.saturating_sub(start).saturating_add(1);
+            let mut trace = trace.lock();
             trace.login_player_info_ticks = Some(login_ticks);
-            if self.started && login_ticks > MAX_BATCH_LOGIN_TICKS {
+            if started && login_ticks > MAX_BATCH_LOGIN_TICKS {
                 trace.fail(format!(
                     "batch exceeded the first {MAX_BATCH_LOGIN_TICKS} login ticks"
                 ));
@@ -2351,7 +2371,14 @@ impl LiveState {
         Driver::finish_pending_packet(client);
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
-        self.observe_login_clock(client);
+        Self::observe_login_clock(
+            &mut self.login_client_session,
+            &mut self.login_start_tick,
+            &self.trace,
+            self.started,
+            u64::from(self.snapshot.tick()),
+            client,
+        );
         self.update_terminal_context(client, None);
         if self.started {
             self.packet_counts.observe(client, self.snapshot.tick());
@@ -2921,12 +2948,12 @@ fn run_live_batch(config: BatchRunConfig) -> BatchOutcome {
         .and_then(session_end_disconnect_cause);
     {
         let mut trace = trace.lock();
-        trace.batch_end_host_tick = Some(batch_end_host_tick);
-        trace.batch_ended_utc = Some(batch_ended_utc);
-        trace.disconnect_cause.clone_from(&disconnect_cause);
-        if let Some(change) = trace.session_change.as_mut() {
-            change.disconnect_cause.clone_from(&disconnect_cause);
-        }
+        record_batch_end(
+            &mut trace,
+            batch_end_host_tick,
+            batch_ended_utc,
+            disconnect_cause,
+        );
     }
     {
         let mut trace = trace.lock();
@@ -4777,32 +4804,74 @@ mod receipt_tests {
     use super::*;
 
     #[test]
-    fn synthetic_session_change_writes_tick_time_and_disconnect_cause() {
-        let mut trace = ProbeTrace {
+    fn session_receipt_uses_the_batch_session_change_after_login_grant() {
+        let trace = Arc::new(Mutex::new(ProbeTrace {
             batch_started_utc: Some("1763700000Z".into()),
-            batch_ended_utc: Some("1763700012Z".into()),
-            batch_end_host_tick: Some(82),
-            disconnect_cause: Some("ReadError".into()),
             ..ProbeTrace::default()
-        };
-        record_session_change(
-            &mut trace,
-            4,
-            5,
-            81,
-            "1763700011Z".into(),
-            Some("ReadError".into()),
+        }));
+        let mut login_client_session = Some(0);
+        let mut login_start_tick = None;
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            cache_dir: String::new(),
+            members: false,
+            lowmem: true,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.session = 1;
+        LiveState::observe_login_clock(
+            &mut login_client_session,
+            &mut login_start_tick,
+            &trace,
+            false,
+            70,
+            &client,
+        );
+        assert_eq!(login_client_session, Some(1));
+        assert!(
+            trace.lock().session_change.is_none(),
+            "pre-batch login generation is not a disconnect"
         );
 
+        client.ingame = false;
+        client.scene_state = 0;
+        client.gens.session = 2;
+        LiveState::observe_login_clock(
+            &mut login_client_session,
+            &mut login_start_tick,
+            &trace,
+            true,
+            81,
+            &client,
+        );
+        let batch_ended_utc = utc_timestamp();
+        {
+            let mut trace = trace.lock();
+            record_batch_end(
+                &mut trace,
+                82,
+                batch_ended_utc.clone(),
+                Some("ReadError".into()),
+            );
+        }
+
+        let trace = trace.lock();
         let receipt = batch_script_receipt(1, &BATCH_SCHEDULE[0], "alice", &trace);
         assert_eq!(receipt["batch_started_utc"], "1763700000Z");
-        assert_eq!(receipt["batch_ended_utc"], "1763700012Z");
+        assert_eq!(receipt["batch_ended_utc"], batch_ended_utc);
         assert_eq!(receipt["batch_end_host_tick"], 82);
         assert_eq!(receipt["disconnect_cause"], "ReadError");
-        assert_eq!(receipt["session_change"]["from_session"], 4);
-        assert_eq!(receipt["session_change"]["to_session"], 5);
+        assert_eq!(receipt["session_change"]["from_session"], 1);
+        assert_eq!(receipt["session_change"]["to_session"], 2);
         assert_eq!(receipt["session_change"]["host_tick"], 81);
-        assert_eq!(receipt["session_change"]["observed_at_utc"], "1763700011Z");
+        assert!(receipt["session_change"]["observed_at_utc"]
+            .as_str()
+            .is_some_and(|timestamp| timestamp.ends_with('Z')));
         assert_eq!(receipt["session_change"]["disconnect_cause"], "ReadError");
+        assert!(receipt["failure"]
+            .as_str()
+            .is_some_and(|failure| failure.contains("client session changed during batch")));
     }
 }
