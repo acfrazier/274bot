@@ -10,7 +10,7 @@ runs. Merlot also stores finished malbec runs in its `NIGHTLY/` mirror.
 
 ```
 merlot macOS user LaunchAgent (20:00 America/New_York)
-  Tart clone from baked base: 8 vCPU, 24 GiB RAM, 160 GB disk
+  Tart clone from baked base: 8 vCPU, 16 GiB RAM, 160 GB disk
   main Engine A via helper forward (44594/1080); private Engine Q for quest
   $NIGHTLY_MAC_RUNS/<run>-mac/
   $NIGHTLY_MAC_RUNS/<run>-mac-quest/
@@ -62,7 +62,7 @@ Jobs run sequentially and share the runner's lock and build tree:
   do not use the operator's `~/.274bot/servers.json`.
 - **macOS, merlot:** the `local.274bot-nightly-mac` LaunchAgent starts a fresh
   clone of the local `274bot-mac-base` image at 20:00 America/New_York. The base
-  runs macOS 27.2.1. The clone uses 8 vCPU, 24 GiB RAM and a 160 GB disk.
+  runs macOS 27.2.1. The clone uses 8 vCPU, 16 GiB RAM and a 160 GB disk.
   The host stages the runner, catalog, fixtures and Engine A/Q source data.
   Shared inputs stay read-only. Private guest copies permit owner writes for
   dependency installation, engine state and Git mirrors.
@@ -628,7 +628,7 @@ carries no machine-specific path.
 The Mac user LaunchAgent starts at **20:00 America/New_York**. It starts one
 Tart clone from `274bot-mac-base`, runs both Mac jobs, then stops and deletes the
 clone before verifying and publishing completed run archives to `NIGHTLY/`.
-The clone uses 8 vCPU, 24 GiB RAM and a 160 GB disk. The controller protects
+The clone uses 8 vCPU, 16 GiB RAM and a 160 GB disk. The controller protects
 a 120 GiB free-space floor on `NIGHTLY_MAC_DISK_ROOT`.
 `panel-play` runs in the guest's Aqua session. The user must be logged in.
 The controller checks
