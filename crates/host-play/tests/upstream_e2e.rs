@@ -20,19 +20,46 @@ type Reply = Result<Value, String>;
 type FrameAction = Box<dyn FnOnce(&mut client::client::Client) -> Reply + Send>;
 type FrameQueue = Arc<Mutex<VecDeque<(FrameAction, mpsc::Sender<Reply>)>>>;
 
-struct NativeEvents(Mutex<VecDeque<Value>>);
+struct EventCapture {
+    account: Option<String>,
+    rows: VecDeque<Value>,
+}
+
+struct NativeEvents(Mutex<EventCapture>);
+
+impl NativeEvents {
+    const fn new() -> Self {
+        Self(Mutex::new(EventCapture {
+            account: None,
+            rows: VecDeque::new(),
+        }))
+    }
+
+    fn capture(&self, account: Option<&str>) {
+        let mut capture = self.0.lock().unwrap();
+        capture.account = account.map(str::to_owned);
+        capture.rows.clear();
+    }
+
+    fn snapshot(&self) -> Value {
+        json!(self.0.lock().unwrap().rows)
+    }
+}
 
 impl api::hostlog::Sink for NativeEvents {
     fn record(&self, record: &api::hostlog::Record<'_>) {
-        if !record.slot.is_some_and(|slot| slot.starts_with("uea")) {
+        let Some(account) = record.slot else {
+            return;
+        };
+        let mut capture = self.0.lock().unwrap();
+        if capture.account.as_deref() != Some(account) {
             return;
         }
-        let mut events = self.0.lock().unwrap();
-        if events.len() == 1024 {
-            events.pop_front();
+        if capture.rows.len() == 1024 {
+            capture.rows.pop_front();
         }
-        events.push_back(json!({
-            "account":record.slot, "tick":record.tick, "source":record.source.label(),
+        capture.rows.push_back(json!({
+            "account":account, "tick":record.tick, "source":record.source.label(),
             "level":record.level.label(), "message":record.message,
         }));
     }
@@ -42,7 +69,7 @@ impl api::hostlog::Sink for NativeEvents {
     }
 }
 
-static NATIVE_EVENTS: NativeEvents = NativeEvents(Mutex::new(VecDeque::new()));
+static NATIVE_EVENTS: NativeEvents = NativeEvents::new();
 
 fn required(key: &str) -> Result<PathBuf, String> {
     std::env::var_os(key)
@@ -539,9 +566,11 @@ impl Adapter {
                     .pop()
                     .expect("one live account was requested");
                 let uid = nonce.subsec_nanos() as i32;
-                self.play.try_spawn_slot(
+                let session = Session::new(account, &self.output)?;
+                NATIVE_EVENTS.capture(Some(&session.account));
+                if let Err(error) = self.play.try_spawn_slot(
                     Profile {
-                        username: account.clone(),
+                        username: session.account.clone(),
                         password: "test".into(),
                         uid,
                         settings: ProfileSettings::default(),
@@ -549,8 +578,11 @@ impl Adapter {
                     None,
                     None,
                     None,
-                )?;
-                self.session = Some(Session::new(account, &self.output)?);
+                ) {
+                    NATIVE_EVENTS.capture(None);
+                    return Err(error);
+                }
+                self.session = Some(session);
                 self.start_script("E2EObserver")
             }
             "evaluate" => self.evaluate(&request),
@@ -675,9 +707,7 @@ impl Adapter {
                     "logs":session.logs.iter().map(RunnerLog::as_value).collect::<Vec<_>>(),
                     "facts":facts,
                     "last_issue":session.last_issue,
-                    "host_events":NATIVE_EVENTS.0.lock().unwrap().iter()
-                        .filter(|row| row["account"].as_str() == Some(session.account.as_str()))
-                        .collect::<Vec<_>>(),
+                    "host_events":NATIVE_EVENTS.snapshot(),
                     "walk_cancelled_by_user": self.play.script_walk_cancelled_by_user(&session.account),
                 }))
             }
@@ -686,6 +716,7 @@ impl Adapter {
                     self.last_diagnostic = self.dispatch(json!({"op":"diagnostics"}))?;
                 }
                 if let Some(session) = self.session.take() {
+                    NATIVE_EVENTS.capture(None);
                     self.play.script_stop(&session.account);
                     self.play.stop_slot(&session.account);
                     std::fs::write(
@@ -1170,6 +1201,38 @@ fn runner_log_time_is_native_unix_epoch_milliseconds() {
         log.as_value(),
         json!({"time":1_725_000_123_456u64, "msg":"banked 13 rings"})
     );
+}
+
+#[test]
+fn native_host_events_follow_the_active_session_account() {
+    use api::hostlog::{Level, Record, Sink, Source};
+
+    let events = NativeEvents::new();
+    let account = "cp21abc123_0";
+    events.capture(Some(account));
+    let record = |slot| Record {
+        slot,
+        tick: Some(18),
+        source: Source::Script,
+        level: Level::Info,
+        message: "script requested stop",
+    };
+    events.record(&record(None));
+    events.record(&record(Some("cp21def456_0")));
+    events.record(&record(Some(account)));
+    assert_eq!(
+        events.snapshot(),
+        json!([{"account":account, "tick":18, "source":"script",
+                "level":"info", "message":"script requested stop"}])
+    );
+
+    events.capture(Some("cp21def456_0"));
+    events.record(&record(Some(account)));
+    assert_eq!(events.snapshot(), json!([]));
+
+    events.capture(None);
+    events.record(&record(Some("cp21def456_0")));
+    assert_eq!(events.snapshot(), json!([]));
 }
 
 #[test]
