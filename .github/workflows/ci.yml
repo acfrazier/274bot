@@ -251,6 +251,11 @@ jobs:
             cache_key: workspace
             save_cache: false
             os: ubuntu-24.04
+          - lane: compat-js
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
     runs-on: ${{ matrix.os }}
     env:
       SKIP_GPU: "1"
@@ -287,7 +292,23 @@ jobs:
           workspaces: |
             . -> target
             vendor/fr-client-rust -> target
+      - name: Setup Node.js for compat-js
+        if: matrix.lane == 'compat-js'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Checkout pinned rs2b0t source for compat-js
+        if: matrix.lane == 'compat-js'
+        uses: actions/checkout@v5
+        with:
+          repository: rs2b2t/rs2b0t
+          ref: ae56ccc95ba5681b12f1f66ec2adea14427fe497
+          path: rs2b0t
+          fetch-depth: 1
+          persist-credentials: false
       - name: Test ${{ matrix.lane }}
+        env:
+          RS2B0T: ${{ matrix.lane == 'compat-js' && format('{0}/rs2b0t', github.workspace) || '' }}
         run: cargo run --locked -p xtask -- ci test-${{ matrix.lane }}
 
   # Preserve the required `test` status while the expensive commands fan out.
