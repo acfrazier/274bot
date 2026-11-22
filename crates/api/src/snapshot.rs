@@ -1,6 +1,6 @@
-//! Generation-stamped snapshot families. `GameSnapshot` owns per-family
-//! views rebuilt only when that family's gen moved; reads borrow the last
-//! rebuild instead of deep-copying the world on every read.
+//! Generation-stamped snapshot families. `GameSnapshot` refreshes packet data
+//! when its family's generation moves and reads cheap local client state.
+//! Reads borrow cached views instead of deep-copying the world.
 
 use crate::obj_names::ItemDefView;
 use client::client::{Client, ClientGens, ClientNpc, Skill};
@@ -49,8 +49,8 @@ const FIXTURE_BANK_SIZE: i32 = 64;
 /// threats retain priority over local-source candidates.
 pub const MAX_PROJECTILES_PER_SNAPSHOT: usize = 32;
 
-/// Generation-stamped read model. `rebuild_family` copies only the family
-/// whose gen moved; `npcs()` returns the last rebuild without allocating.
+/// Generation-stamped read model with cheap local-state refreshes.
+/// Family reads borrow their caches without allocating.
 /// Serializes to the whole-window shot sidecar JSON (the terminal state).
 #[derive(Serialize)]
 pub struct GameSnapshot {
@@ -848,12 +848,9 @@ impl GameSnapshot {
         self.loc_model_stamp
     }
 
-    /// Rebuild `family` from `client` iff its gen moved since the last
-    /// rebuild of that family. Returns true iff the gen moved. The npc/
-    /// player/stat families rebuild their view caches; the rest track
-    /// their counter so a later view can detect movement. `client` is
-    /// borrowed immutably (the ground-item lists iterate through the
-    /// `LinkList`'s shared iterator).
+    /// Refresh `family` from generation-gated packet data and local client state.
+    /// Returns true when the family refreshes. `client` is borrowed immutably
+    /// (the ground-item lists iterate through the `LinkList`'s shared iterator).
     pub fn rebuild_family(&mut self, client: &Client, family: Family) -> bool {
         self.refresh_event_watermarks(client);
         if !self.family_observed(client, family) {

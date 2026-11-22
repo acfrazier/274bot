@@ -7043,15 +7043,35 @@ fn receipt_records_refused_closure_without_claiming_observation() {
 
 #[test]
 fn receipt_preserves_typed_interaction_refusal() {
-    for reason in [
-        api::interact::SendReason::MenuUnavailable,
-        api::interact::SendReason::MenuAmbiguous,
-        api::interact::SendReason::MenuIneligible,
-        api::interact::SendReason::StaleTarget,
+    use crate::StepSendRefusal::{Cheat, Interaction};
+    use api::interact::SendReason::{MenuAmbiguous, MenuIneligible, MenuUnavailable, StaleTarget};
+
+    for (reason, detail) in [
+        (
+            Interaction(MenuUnavailable),
+            "interaction refused: MenuUnavailable",
+        ),
+        (
+            Interaction(MenuAmbiguous),
+            "interaction refused: MenuAmbiguous",
+        ),
+        (
+            Interaction(MenuIneligible),
+            "interaction refused: MenuIneligible",
+        ),
+        (Interaction(StaleTarget), "interaction refused: StaleTarget"),
+        (
+            Cheat(client::CheatRefusal::NotAuthorized),
+            "fixture cheat refused: NotAuthorized",
+        ),
+        (
+            Cheat(client::CheatRefusal::Offline),
+            "fixture cheat refused: Offline",
+        ),
     ] {
         let mut scenario = stat_scenario(0, 10);
         scenario.steps[0].kind = StepKind::RepeatInteraction {
-            send: Box::new(move |_, _| Err(crate::StepSendRefusal::Interaction(reason))),
+            send: Box::new(move |_, _| Err(reason)),
         };
         let mut runner = ScenarioRunner::with_world(scenario, None);
         runner.set_scene_settle(Duration::ZERO);
@@ -7062,7 +7082,7 @@ fn receipt_preserves_typed_interaction_refusal() {
         assert_eq!(events[1]["event"], "DISPATCH");
         assert_eq!(events[1]["kind"], "interaction");
         assert_eq!(events[1]["result"], "refused");
-        assert_eq!(events[1]["detail"], format!("interaction refused: {reason:?}"));
+        assert_eq!(events[1]["detail"], detail);
         assert!(events.iter().all(|event| event["event"] != "OBSERVED"));
         assert_eq!(receipt["outcome"], "FAIL");
     }

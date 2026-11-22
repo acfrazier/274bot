@@ -1101,6 +1101,12 @@ impl GameSnapshot {
     /// BUTTON_CONTINUE component (the m8aq `chatOptions`/continue).
     pub(super) fn rebuild_chat_options(&mut self, client: &Client) -> bool {
         if !track(client.gens.iface, &mut self.chat_options_gate) {
+            // PAUSE_BUTTON latches locally without an interface-generation bump.
+            // vendor/fr-client-rust/crates/client/src/client/client.rs:5035-5045.
+            if client.resumed_pause_button && self.chat_continue_component_id != -1 {
+                self.chat_continue_component_id = -1;
+                return true;
+            }
             return false;
         }
         self.chat_options.clear();

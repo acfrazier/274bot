@@ -530,9 +530,7 @@ pub enum StepKind {
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
     /// Like [`StepKind::Repeat`], but retains the native refusal in the receipt.
-    RepeatInteraction {
-        send: Box<InteractionSender>,
-    },
+    RepeatInteraction { send: Box<InteractionSender> },
     /// Native seed deposit through the open bank window. Pending bank-side
     /// data re-arms once per observed game tick. An accepted send waits for
     /// `wait.arm` without sending again, for at most two observed game ticks.
