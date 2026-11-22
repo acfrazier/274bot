@@ -140,7 +140,15 @@ fn content_gate_graph(script: &str, shipyard: bool) -> TransportGraph {
         "[grandtree_fencegate_l]\nop1=Open\ncategory=shipyard_gate\n[grandtree_fencegate_r]\nop1=Open\ncategory=shipyard_gate\n[guidorgatelclosed]\nop1=Open\ncategory=varrock_gate\n[guidorgaterclosed]\nop1=Open\ncategory=varrock_gate\n",
     );
     let (left, right) = if shipyard { (2438, 2439) } else { (2050, 2051) };
-    write_open_square(&fx, &format!("0 5 46: {left} 0\n0 5 47: {right} 0\n"));
+    if shipyard {
+        write_open_square(&fx, &format!("0 5 46: {left} 0\n0 5 47: {right} 0\n"));
+    } else {
+        fx.write("maps/m50_53.jm2", "==== MAP ====\n0 0 0: h1\n");
+        fx.write(
+            "maps/m51_53.jm2",
+            "==== MAP ====\n0 0 0: h1\n==== LOC ====\n0 0 13: 2050 0\n0 0 14: 2051 0\n",
+        );
+    }
     let defs = loc_defs(&[(left, 1, 1), (right, 1, 1)]);
     let collision = bake_collision(&fx, &defs, &HashSet::new());
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -252,23 +260,53 @@ fn actual_shipyard_handlers_preserve_direct_windows_and_refuse_the_password_arm(
 }
 
 #[test]
-fn actual_varrock_handlers_keep_membership_and_refuse_the_guard_search_arm() {
+fn actual_varrock_handler_admits_one_members_only_entry_without_a_quest_stage() {
     if !api::test_support::game_data_available() {
         return;
     }
     let graph = content_gate_graph(VARROCK, false);
-    let direct = content_state(80, 2, 14);
-    let searching = content_state(80, 2, 10);
-    let mut free = content_state(80, 2, 14);
+    let mut member = WorldState::empty().with_map_members(true);
+    member.inventory_ready = true;
+    member.equipment_ready = true;
+    let mut free = member.clone();
     free.map_members = false;
-    for (id, z) in [(2050, 3438), (2051, 3439)] {
-        assert!(content_crossing(&graph, &direct, id, z, true), "entry {id}");
-        assert!(content_crossing(&graph, &direct, id, z, false), "exit {id}");
-        assert!(!content_crossing(&graph, &searching, id, z, true));
-        assert!(content_crossing(&graph, &searching, id, z, false));
-        assert!(!content_crossing(&graph, &free, id, z, true));
-        assert!(!content_crossing(&graph, &free, id, z, false));
+    let edges = graph
+        .edges
+        .iter()
+        .filter(|edge| matches!(edge.loc_id, 2050 | 2051));
+    for (id, from, to) in [
+        (2050, tile(3263, 3405), tile(3264, 3405)),
+        (2050, tile(3264, 3405), tile(3263, 3405)),
+        (2051, tile(3264, 3406), tile(3263, 3406)),
+    ] {
+        let edge = edges
+            .clone()
+            .find(|edge| edge.loc_id == id && edge.takeoff == Some(from) && edge.to == to)
+            .expect("verified gate crossing");
+        assert!(edge.members_req);
+        assert_eq!(edge.kind, TransportKind::Ladder);
+        assert_eq!(edge.option, 1);
+        assert!(edge.quest_gates.is_none());
+        assert!(member.allows(edge));
+        assert!(!free.allows(edge));
     }
+    assert_eq!(edges.count(), 3);
+}
+
+#[test]
+fn changed_varrock_search_does_not_gain_an_unconditional_entry() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let script = VARROCK.replace("inv_del(inv, ethenea, 1)", "inv_del(inv, ethenea, 2)");
+    let graph = content_gate_graph(&script, false);
+    let eastbound: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.loc_id == 2050 && edge.takeoff == Some(tile(3263, 3405)))
+        .collect();
+    assert!(!eastbound.is_empty(), "the old direct windows remain");
+    assert!(eastbound.iter().all(|edge| edge.quest_gates.is_some()));
 }
 
 #[test]
