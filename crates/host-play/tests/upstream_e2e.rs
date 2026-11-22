@@ -7,12 +7,14 @@ use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use api::loadout::Loadout;
 use host_play::{Play, ProfileOptions, SharedClientTemplate};
 use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const FACADE: &str = include_str!("upstream_e2e/facade.js");
 const CASES: &str = include_str!("../../../tools/live-map/upstream-cases.json");
+const ZANARIS_BANK: &str = "useZanarisBank";
 const OBSERVER: &str = "import { LoopingBot } from '#/bot/api/bot/Bot.js';\nexport default class E2EObserver extends LoopingBot { async loop() { return 1000; } }";
 type Reply = Result<Value, String>;
 type FrameAction = Box<dyn FnOnce(&mut client::client::Client) -> Reply + Send>;
@@ -175,6 +177,70 @@ struct Session {
     error: Option<String>,
     last_issue: Option<Value>,
     settings: script::ScriptSettingsStore,
+    loadouts: Vec<Loadout>,
+}
+
+impl Session {
+    fn new(account: String, output: &Path) -> Result<Self, String> {
+        let settings =
+            script::ScriptSettingsStore::at(output.join(format!("{account}-settings.json")))
+                .map_err(|error| error.to_string())?;
+        Ok(Self {
+            account,
+            tested: false,
+            observer: false,
+            logs: Vec::new(),
+            receipt: None,
+            error: None,
+            last_issue: None,
+            settings,
+            loadouts: Vec::new(),
+        })
+    }
+
+    fn set_settings(&mut self, name: &str, bag: &Map<String, Value>) -> Reply {
+        for (key, value) in bag {
+            let value = match (name, key.as_str()) {
+                ("Loadouts", "sets") => {
+                    let raw = value
+                        .as_str()
+                        .ok_or("Loadouts.sets must be a JSON string")?;
+                    self.loadouts = serde_json::from_str(raw)
+                        .map_err(|error| format!("Loadouts.sets: {error}"))?;
+                    continue;
+                }
+                ("Global", ZANARIS_BANK) => Value::Bool(match value {
+                    Value::Bool(enabled) => *enabled,
+                    Value::Number(number) => number.as_f64() == Some(1.0),
+                    Value::String(raw) => {
+                        let raw = raw.trim();
+                        raw == "1"
+                            || raw.eq_ignore_ascii_case("true")
+                            || raw.eq_ignore_ascii_case("yes")
+                    }
+                    _ => return Err(format!("Global.{ZANARIS_BANK} must be a scalar setting")),
+                }),
+                _ => value.clone(),
+            };
+            self.settings
+                .set_value(script::ScriptSource::Catalog, name, key, value);
+        }
+        self.settings.save()?;
+        Ok(Value::Null)
+    }
+
+    fn start_settings(&self, name: &str, schema: &[script::SettingDef]) -> Map<String, Value> {
+        let source = script::ScriptSource::Catalog;
+        let mut overrides = self.settings.overrides(source, name);
+        // Native named banks read the card's run bag, not an account-wide toggle.
+        if !overrides.contains_key(ZANARIS_BANK) {
+            let mut global = self.settings.overrides(source, "Global");
+            if let Some(opt_in) = global.swap_remove(ZANARIS_BANK) {
+                overrides.insert(ZANARIS_BANK.into(), opt_in);
+            }
+        }
+        script::merge_bag(schema, &overrides, None)
+    }
 }
 
 struct Adapter {
@@ -217,12 +283,7 @@ impl Adapter {
                     api_family: Some(card.api_family().as_str().into()),
                 },
             )?;
-            let settings = session.settings.merged_bag(
-                script::ScriptSource::Catalog,
-                name,
-                &card.settings_schema,
-                None,
-            );
+            let settings = session.start_settings(name, &card.settings_schema);
             println!(
                 "{}",
                 json!({"phase":"start", "card":name, "source_sha256":card.sha256, "settings":settings})
@@ -242,8 +303,15 @@ impl Adapter {
             session.receipt = None;
             session.error = None;
         }
-        self.play
-            .script_start_load(&session.account, js, checked, Some(settings), siblings)?;
+        self.play.script_start_handle().start_load_with_loadouts(
+            &session.account,
+            js,
+            checked,
+            Some(settings),
+            siblings,
+            &session.loadouts,
+        )?;
+        self.play.wake(&session.account);
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             match self.play.script_poll_start(&session.account) {
@@ -421,32 +489,17 @@ impl Adapter {
                     None,
                     None,
                 )?;
-                let settings = script::ScriptSettingsStore::at(
-                    self.output.join(format!("{account}-settings.json")),
-                )
-                .map_err(|error| error.to_string())?;
-                self.session = Some(Session {
-                    account,
-                    tested: false,
-                    observer: false,
-                    logs: Vec::new(),
-                    receipt: None,
-                    error: None,
-                    settings,
-                    last_issue: None,
-                });
+                self.session = Some(Session::new(account, &self.output)?);
                 self.start_script("E2EObserver")
             }
             "evaluate" => self.evaluate(&request),
             "settings" => {
                 let name = request["name"].as_str().ok_or("missing script")?;
                 let bag = request["bag"].as_object().ok_or("missing settings")?;
-                let settings = &mut self.session.as_mut().ok_or("no session")?.settings;
-                for (key, value) in bag {
-                    settings.set_value(script::ScriptSource::Catalog, name, key, value.clone());
-                }
-                settings.save()?;
-                Ok(Value::Null)
+                self.session
+                    .as_mut()
+                    .ok_or("no session")?
+                    .set_settings(name, bag)
             }
             "start" => self.start_script(request["name"].as_str().ok_or("missing script")?),
             "status" => frame_call(
@@ -831,6 +884,109 @@ fn upstream_e2e_corpus() {
     if let Err(error) = run_corpus() {
         panic!("{error}");
     }
+}
+
+#[test]
+fn fixture_settings_supply_named_operator_loadout_at_start() {
+    let _home = script::IsolatedEnv::enter("upstream-loadout-fixture");
+    let mut session = Session::new("alice".into(), &script::bot_home()).unwrap();
+    let loadouts = json!({
+        "sets": r#"[{"name":"Melee","worn":{"righthand":"Rune scimitar"},"carry":[{"item":"Lobster","qty":8}]}]"#
+    });
+    session
+        .set_settings("Loadouts", loadouts.as_object().unwrap())
+        .unwrap();
+    session
+        .set_settings(
+            "ArdyFighter",
+            json!({"loadout":"Melee"}).as_object().unwrap(),
+        )
+        .unwrap();
+    let settings = session.start_settings("ArdyFighter", &[]);
+    let selected = script::loadouts_store::resolve_compat_script_loadout_setting(
+        &session.loadouts,
+        settings["loadout"].as_str(),
+    )
+    .unwrap();
+    assert_eq!(
+        selected,
+        Some(
+            &Loadout::new("Melee")
+                .with_slot("righthand", "Rune scimitar")
+                .with_carry("Lobster", 8)
+        )
+    );
+    for invalid in [json!([]), json!("[{}]")] {
+        assert!(session
+            .set_settings("Loadouts", json!({"sets":invalid}).as_object().unwrap())
+            .is_err());
+        assert_eq!(session.loadouts.len(), 1);
+    }
+    session
+        .set_settings("Loadouts", json!({"sets":"[]"}).as_object().unwrap())
+        .unwrap();
+    assert!(session.loadouts.is_empty());
+}
+
+#[test]
+fn fixture_settings_supply_zanaris_preference_at_start() {
+    let _home = script::IsolatedEnv::enter("upstream-zanaris-fixture");
+    let mut session = Session::new("alice".into(), &script::bot_home()).unwrap();
+    session
+        .set_settings(
+            "Global",
+            json!({"useZanarisBank":true,"useMageBank":true})
+                .as_object()
+                .unwrap(),
+        )
+        .unwrap();
+    session
+        .set_settings(
+            "CookBot",
+            json!({"location":"Zanaris"}).as_object().unwrap(),
+        )
+        .unwrap();
+    let settings = session.start_settings("CookBot", &[]);
+    assert_eq!(settings.get("useZanarisBank"), Some(&Value::Bool(true)));
+    assert_eq!(settings["location"], "Zanaris");
+    assert!(!settings.contains_key("useMageBank"));
+
+    assert!(session
+        .set_settings(
+            "Global",
+            json!({"useZanarisBank":null}).as_object().unwrap()
+        )
+        .is_err());
+    for (raw, enabled) in [
+        (json!(1), true),
+        (json!(" Yes "), true),
+        (json!(false), false),
+    ] {
+        session
+            .set_settings("Global", json!({"useZanarisBank":raw}).as_object().unwrap())
+            .unwrap();
+        assert_eq!(
+            session.start_settings("CookBot", &[])["useZanarisBank"],
+            enabled
+        );
+    }
+    session
+        .set_settings(
+            "Global",
+            json!({"useZanarisBank":true}).as_object().unwrap(),
+        )
+        .unwrap();
+
+    session
+        .set_settings(
+            "CookBot",
+            json!({"useZanarisBank":false}).as_object().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        session.start_settings("CookBot", &[])["useZanarisBank"],
+        false
+    );
 }
 
 #[test]
