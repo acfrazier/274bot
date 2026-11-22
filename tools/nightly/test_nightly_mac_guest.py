@@ -379,7 +379,7 @@ class TartStartTests(unittest.TestCase):
         command = popen.call_args.args[0]
         self.assertEqual(observed, session)
         self.assertEqual(command[command.index("--cpu") + 1], "8")
-        self.assertEqual(command[command.index("--memory") + 1], "24576")
+        self.assertEqual(command[command.index("--memory") + 1], "16384")
         self.assertEqual(command[command.index("--disk-size") + 1], "160")
         self.assertEqual(command[command.index("--base") + 1], "274bot-mac-base")
         self.assertIn("--skip-tcc-bootstrap", command)
