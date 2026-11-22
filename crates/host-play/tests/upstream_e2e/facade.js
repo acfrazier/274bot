@@ -28,6 +28,11 @@ globalThis.rs2b0t = {
     registry: { get: name => ({ name }) },
     runner: {
         get state() { return globalThis.__e2eStatus.state; },
+        get bot() {
+            const state = globalThis.__e2eStatus.state;
+            if (state === 'idle' || state === 'stopped') return null;
+            return globalThis.__rs_bot ?? null;
+        },
         get ctx() { return { log: globalThis.__e2eStatus.logs }; },
         start(meta) {
             if (!meta || typeof meta.name !== 'string') throw new Error('missing script metadata');

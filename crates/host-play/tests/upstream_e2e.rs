@@ -872,6 +872,34 @@ fn facade_runs_in_the_real_load_isolate_and_keeps_actions_explicit() {
 }
 
 #[test]
+fn facade_reads_bank_trips_from_the_running_compat_instance() {
+    let source = format!(
+        "{FACADE}\n\
+         import {{ LoopingBot }} from '#/bot/api/bot/Bot.js';\n\
+         export default class TripCounter extends LoopingBot {{\n\
+             bankTrips = 0;\n\
+             countBankTrip() {{ this.bankTrips++; }}\n\
+             async loop() {{ return 1000; }}\n\
+         }}"
+    );
+    let isolate =
+        script_js::LoadIsolate::spawn(source, script_js::LoadShape::CompatClass, Vec::new())
+            .unwrap();
+    let predicate = "(rs2b0t.runner.bot?.bankTrips ?? 0) > 0";
+    isolate.probe("__e2eStatus.state = 'running'").unwrap();
+    assert_eq!(isolate.probe(predicate).unwrap(), false);
+    isolate.probe("__rs_bot.countBankTrip()").unwrap();
+    assert_eq!(isolate.probe(predicate).unwrap(), true);
+    assert_eq!(
+        isolate.probe("rs2b0t.runner.bot === __rs_bot").unwrap(),
+        true
+    );
+    isolate.probe("__e2eStatus.state = 'stopped'").unwrap();
+    assert_eq!(isolate.probe("rs2b0t.runner.bot === null").unwrap(), true);
+    isolate.join();
+}
+
+#[test]
 fn fixture_cheats_cannot_mutate_the_world_or_tick_speed() {
     for command in [
         "tele 0,50,50,20,20",
