@@ -28,13 +28,14 @@ export function towardDest(door, here, dest) {
     return globalThis.__rs2b0t_walk_opening('towardDest', door, here, dest);
 }
 
-export async function walkOpening(dest, radius, obstacles, log) {
+export async function walkOpening(dest, radius, obstacles, log, opts) {
     const out = await runMachine(
         'walk-opening',
         {
             dest: { x: dest.x, z: dest.z, level: dest.level ?? 0 },
             radius: radius ?? 0,
             obstacles: Array.isArray(obstacles) ? obstacles : [],
+            opts,
         },
         { log: typeof log === 'function' ? log : undefined },
     );

@@ -5205,6 +5205,9 @@ pub(crate) struct NavBot {
     /// Request exclusions retained for reconnect carry and retransmission gates.
     pub(crate) requested_exclusions: Option<Arc<ScriptRouteExclusions>>,
     pub(crate) traveller: Traveller,
+    /// Latest measured crossing for the route that actually followed the door.
+    pub(crate) door_crossing: Option<(u64, Arc<nav_executor::DoorCrossing>)>,
+    pub(crate) crossing_tracker: nav_executor::DoorCrossings,
     /// Counts the current no-tile-progress episode for this slot's walk.
     pub(crate) walk_no_progress: WalkNoProgress,
     pub(crate) route: Option<Arc<Route>>,
@@ -6679,6 +6682,8 @@ impl ScriptWalkArm {
                 admission.input = input;
             }
             if !same_owner {
+                bot.door_crossing = None;
+                bot.crossing_tracker = Default::default();
                 bot.end_native_walk(script::native::WalkEnd::Cancelled);
                 bot.route_basis = None;
                 bot.assessment = None;
@@ -8893,6 +8898,8 @@ fn end_route_follow(nav: &mut NavBot) {
         "Advisory route was cancelled when the host ended route work; the script may ask again",
     );
     nav.requested_route = None;
+    nav.door_crossing = None;
+    nav.crossing_tracker = Default::default();
     nav.traveller.clear();
     nav.clear_route();
     nav.bank_fetch = None;

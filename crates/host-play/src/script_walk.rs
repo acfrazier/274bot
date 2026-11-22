@@ -1104,6 +1104,18 @@ fn arrived_in_area(snapshot: &GameSnapshot, here: WorldTile, to: WorldTile, radi
     })
 }
 
+fn retain_door_crossing(bot: &mut NavBot) {
+    if let Some(crossing) = bot.crossing_tracker.take() {
+        // Do not attribute an old route's crossing to a pending retarget.
+        if bot.route_request_id != 0
+            && bot.route_request_id == bot.walk_request_id
+            && bot.native_walk.is_none()
+        {
+            bot.door_crossing = Some((bot.route_request_id, Arc::new(crossing)));
+        }
+    }
+}
+
 /// The armed walk's route ended (arrived, or frozen `'blocked'`): clear it
 /// and publish the settled outcome for the armed request.
 fn settle_route_end(bot: &mut NavBot, blocked: bool) {
@@ -1650,6 +1662,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
             if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
                 owe_walk_guard_off(bot);
                 finish_walk_guard(driver, snapshot, bot, Some(name));
+                bot.traveller
+                    .observe_door_crossing(snapshot, &mut bot.crossing_tracker);
+                retain_door_crossing(bot);
                 bot.traveller.clear();
                 settle_route_end(bot, false);
             } else if !suppress_follow {
@@ -1708,6 +1723,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
                             let mut options = TravelOptions {
                                 // Exact arrival matches the armed walk's destination.
                                 close_enough: 0,
+                                door_crossings: (bot.route_request_id != 0
+                                    && bot.native_walk.is_none())
+                                .then_some(&mut bot.crossing_tracker),
                                 teleports: borrowed_world
                                     .map(|world| world.graph.teleports.as_slice()),
                                 edges: borrowed_world.map(|world| world.graph.edges.as_slice()),
@@ -1808,6 +1826,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 }),
                             }
                         };
+                        retain_door_crossing(bot);
                         let owned_estimated_end = defer_estimated_end
                             && bot.requested_route == armed
                             && bot.route_request_id == bot.walk_request_id

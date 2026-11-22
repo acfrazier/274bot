@@ -14,6 +14,18 @@ table Tile {
   z: int;
   level: int;
 }
+
+// The traveller's measured door crossing for one walk request.
+table DoorCrossing {
+  request_id: ulong;
+  tile: Tile (required);
+  name: string (required);
+  open_sent: ulong;
+  opened: ulong;
+  stepped: ulong;
+  crossed: ulong;
+}
+
 // One typed setting pair for a native gather request. kind: 1 text, 2 integer, 3 boolean, 4 string list, 5 tile.
 table SettingRow {
   key: string;
@@ -737,6 +749,9 @@ table Snapshot {
   // one from before this field. A delta carries it whenever it changes, and
   // an explicit 0 clears it; the dialog reads 0 as no observation too.
   local_attack_marks: ulong = null;
+  // Slot 314: the latest host-observed door crossing. Omitted deltas retain
+  // the last row. This is never inferred from a route plan.
+  door_crossing: DoorCrossing;
 }
 
 table Collision {

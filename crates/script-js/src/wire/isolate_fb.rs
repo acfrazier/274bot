@@ -53,13 +53,13 @@ use generated::rs_2b_0t::isolate::*;
 pub use generated::rs_2b_0t::isolate::{
     ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, AvoidRect, BankApproach, BankStand,
     Booth, Carry, ChatLine, ChatModalTexts, ChatOption, ClientAdapterFacts, Collision, CombatFight,
-    CombatProjectile, CombatStyle, InspectHop, Interact, InteractBatch, JournalEvidence,
-    MainModalTexts, MakeButton, MakeProduct, MirrorRevoke, NativeRequest, NearestBooth, NpcBox,
-    ProgressFlagRow, ProjectionLoc, ProjectionScene, PuzzleBoard, QuestProgressRow, QuestStatus,
-    Reach, Row, SceneEntity, SeatAbortReason, SeatCancel, SeatCancelReason, SeatDecide, SeatKind,
-    SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase, SeatPrompt, SeatRefusal, SeatResult,
-    SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp, WalkCancelReason,
-    WidgetFact, WidgetText,
+    CombatProjectile, CombatStyle, DoorCrossing, InspectHop, Interact, InteractBatch,
+    JournalEvidence, MainModalTexts, MakeButton, MakeProduct, MirrorRevoke, NativeRequest,
+    NearestBooth, NpcBox, ProgressFlagRow, ProjectionLoc, ProjectionScene, PuzzleBoard,
+    QuestProgressRow, QuestStatus, Reach, Row, SceneEntity, SeatAbortReason, SeatCancel,
+    SeatCancelReason, SeatDecide, SeatKind, SeatLive, SeatOutcome, SeatOutcomeKind, SeatPhase,
+    SeatPrompt, SeatRefusal, SeatResult, SettingRow, SideTabIface, Snapshot, Stat, StatusField,
+    Tile, Varp, WalkCancelReason, WidgetFact, WidgetText,
 };
 
 impl From<script::native::WalkCancelReason> for WalkCancelReason {
@@ -1135,6 +1135,8 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_no_path: bool,
     pub walk_remaining_request_id: u64,
     pub walk_remaining: u64,
+    /// One immutable crossing per (request, Open-send tick) in a login.
+    door_crossing: Option<(u64, u64)>,
     pub walk_outcome_cancel_reason: WalkCancelReason,
     /// The walk outcome's named shorts. Part of that family: a list that moved
     /// without a scalar moving still re-posts the family, so a clear is never
@@ -1501,6 +1503,9 @@ impl SnapshotFingerprint {
             walk_outcome_no_path: native.walk_outcome_no_path,
             walk_remaining_request_id: native.walk_remaining_request_id,
             walk_remaining: native.walk_remaining,
+            door_crossing: native
+                .door_crossing
+                .map(|row| (row.request_id, row.open_sent)),
             walk_outcome_cancel_reason: input.walk_outcome_cancel_reason.into(),
             walk_missing_carry: native
                 .walk_missing_carry
@@ -1667,6 +1672,7 @@ pub struct DeltaMask {
     pub bank_approaches: bool,
     pub user_move_intent_seq: bool,
     pub walk_outcome: bool,
+    pub door_crossing: bool,
     pub route_inspect: bool,
     pub collision: bool,
     /// One bit for the `MainModalTexts` pair: `(root, texts)` changes
@@ -1794,6 +1800,7 @@ impl DeltaMask {
             bank_approaches: true,
             user_move_intent_seq: true,
             walk_outcome: true,
+            door_crossing: true,
             route_inspect: true,
             collision: true,
             main_modal_texts: true,
@@ -1926,6 +1933,7 @@ impl DeltaMask {
                 || next.walk_remaining != last.walk_remaining
                 || next.walk_outcome_cancel_reason != last.walk_outcome_cancel_reason
                 || next.walk_missing_carry != last.walk_missing_carry,
+            door_crossing: next.door_crossing != last.door_crossing,
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
             main_modal_texts: next.main_modal_texts != last.main_modal_texts,
@@ -2035,6 +2043,7 @@ impl DeltaMask {
             || self.bank_approaches
             || self.user_move_intent_seq
             || self.walk_outcome
+            || self.door_crossing
             || self.route_inspect
             || self.collision
             || self.main_modal_texts
@@ -2151,6 +2160,9 @@ impl IsolateBuf {
         let mut fp = SnapshotFingerprint::from_input_with_native(input, *native);
         if let Some(previous) = last {
             fp.taking_damage = native.taking_damage.or(previous.taking_damage);
+            if input.ingame && fp.door_crossing.is_none() {
+                fp.door_crossing = previous.door_crossing;
+            }
         }
         fp.collision = collision_fp(last.map(|prev| &prev.collision), native.collision);
         let (mask, evidence_changed) = match last {
@@ -2207,6 +2219,9 @@ impl IsolateBuf {
         };
         let mut fp = SnapshotFingerprint::from_input_with_native(input, *native);
         fp.taking_damage = native.taking_damage.or(last.taking_damage);
+        if input.ingame && fp.door_crossing.is_none() {
+            fp.door_crossing = last.door_crossing;
+        }
         fp.collision = collision_fp(Some(&last.collision), native.collision);
         let mut mask = DeltaMask::changed(last, &fp, force_banks);
         mask.npc_boxes = false;
@@ -2765,6 +2780,13 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let door_crossing_table_off = if mask.door_crossing {
+        native
+            .door_crossing
+            .map(|crossing| door_crossing_off(b, crossing))
+    } else {
+        None
+    };
     let mut table = SnapshotBuilder::new(b);
     table.add_tick(input.tick);
     if mask.here {
@@ -3173,6 +3195,9 @@ fn encode_snapshot_masked_into(
     if let Some(off) = guardian_active_event_off {
         table.add_guardian_active_event(off);
     }
+    if let Some(off) = door_crossing_table_off {
+        table.add_door_crossing(off);
+    }
     table.add_canvas_width(SNAPSHOT_CANVAS_W);
     table.add_canvas_height(SNAPSHOT_CANVAS_H);
     let root = table.finish();
@@ -3186,6 +3211,23 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<Tile<'
     table.add_level(t.level);
     table.finish()
 }
+fn door_crossing_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    input: DoorCrossingInput<'_>,
+) -> WIPOffset<DoorCrossing<'b>> {
+    let name = b.create_string(input.name);
+    let tile = tile_off(b, input.tile);
+    let mut table = DoorCrossingBuilder::new(b);
+    table.add_request_id(input.request_id);
+    table.add_tile(tile);
+    table.add_name(name);
+    table.add_open_sent(input.open_sent);
+    table.add_opened(input.opened);
+    table.add_stepped(input.stepped);
+    table.add_crossed(input.crossed);
+    table.finish()
+}
+
 fn combat_projectile_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     projectile: &ProjectileView,

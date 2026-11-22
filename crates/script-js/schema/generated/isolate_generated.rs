@@ -1370,6 +1370,206 @@ impl ::core::fmt::Debug for Tile<'_> {
       ds.finish()
   }
 }
+pub enum DoorCrossingOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct DoorCrossing<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for DoorCrossing<'a> {
+  type Inner = DoorCrossing<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> DoorCrossing<'a> {
+  pub const VT_REQUEST_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_TILE: ::flatbuffers::VOffsetT = 6;
+  pub const VT_NAME: ::flatbuffers::VOffsetT = 8;
+  pub const VT_OPEN_SENT: ::flatbuffers::VOffsetT = 10;
+  pub const VT_OPENED: ::flatbuffers::VOffsetT = 12;
+  pub const VT_STEPPED: ::flatbuffers::VOffsetT = 14;
+  pub const VT_CROSSED: ::flatbuffers::VOffsetT = 16;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    DoorCrossing { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args DoorCrossingArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<DoorCrossing<'bldr>> {
+    let mut builder = DoorCrossingBuilder::new(_fbb);
+    builder.add_crossed(args.crossed);
+    builder.add_stepped(args.stepped);
+    builder.add_opened(args.opened);
+    builder.add_open_sent(args.open_sent);
+    builder.add_request_id(args.request_id);
+    if let Some(x) = args.name { builder.add_name(x); }
+    if let Some(x) = args.tile { builder.add_tile(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn request_id(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(DoorCrossing::VT_REQUEST_ID, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn tile(&self) -> Tile<'a> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Tile>>(DoorCrossing::VT_TILE, None).unwrap()}
+  }
+  #[inline]
+  pub fn name(&self) -> &'a str {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(DoorCrossing::VT_NAME, None).unwrap()}
+  }
+  #[inline]
+  pub fn open_sent(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(DoorCrossing::VT_OPEN_SENT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn opened(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(DoorCrossing::VT_OPENED, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn stepped(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(DoorCrossing::VT_STEPPED, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn crossed(&self) -> u64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u64>(DoorCrossing::VT_CROSSED, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for DoorCrossing<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<u64>("request_id", Self::VT_REQUEST_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("tile", Self::VT_TILE, true)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("name", Self::VT_NAME, true)?
+     .visit_field::<u64>("open_sent", Self::VT_OPEN_SENT, false)?
+     .visit_field::<u64>("opened", Self::VT_OPENED, false)?
+     .visit_field::<u64>("stepped", Self::VT_STEPPED, false)?
+     .visit_field::<u64>("crossed", Self::VT_CROSSED, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct DoorCrossingArgs<'a> {
+    pub request_id: u64,
+    pub tile: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
+    pub name: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub open_sent: u64,
+    pub opened: u64,
+    pub stepped: u64,
+    pub crossed: u64,
+}
+impl<'a> Default for DoorCrossingArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    DoorCrossingArgs {
+      request_id: 0,
+      tile: None, // required field
+      name: None, // required field
+      open_sent: 0,
+      opened: 0,
+      stepped: 0,
+      crossed: 0,
+    }
+  }
+}
+
+pub struct DoorCrossingBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> DoorCrossingBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_request_id(&mut self, request_id: u64) {
+    self.fbb_.push_slot::<u64>(DoorCrossing::VT_REQUEST_ID, request_id, 0);
+  }
+  #[inline]
+  pub fn add_tile(&mut self, tile: ::flatbuffers::WIPOffset<Tile<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Tile>>(DoorCrossing::VT_TILE, tile);
+  }
+  #[inline]
+  pub fn add_name(&mut self, name: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(DoorCrossing::VT_NAME, name);
+  }
+  #[inline]
+  pub fn add_open_sent(&mut self, open_sent: u64) {
+    self.fbb_.push_slot::<u64>(DoorCrossing::VT_OPEN_SENT, open_sent, 0);
+  }
+  #[inline]
+  pub fn add_opened(&mut self, opened: u64) {
+    self.fbb_.push_slot::<u64>(DoorCrossing::VT_OPENED, opened, 0);
+  }
+  #[inline]
+  pub fn add_stepped(&mut self, stepped: u64) {
+    self.fbb_.push_slot::<u64>(DoorCrossing::VT_STEPPED, stepped, 0);
+  }
+  #[inline]
+  pub fn add_crossed(&mut self, crossed: u64) {
+    self.fbb_.push_slot::<u64>(DoorCrossing::VT_CROSSED, crossed, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> DoorCrossingBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    DoorCrossingBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<DoorCrossing<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    self.fbb_.required(o, DoorCrossing::VT_TILE,"tile");
+    self.fbb_.required(o, DoorCrossing::VT_NAME,"name");
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for DoorCrossing<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("DoorCrossing");
+      ds.field("request_id", &self.request_id());
+      ds.field("tile", &self.tile());
+      ds.field("name", &self.name());
+      ds.field("open_sent", &self.open_sent());
+      ds.field("opened", &self.opened());
+      ds.field("stepped", &self.stepped());
+      ds.field("crossed", &self.crossed());
+      ds.finish()
+  }
+}
 pub enum SettingRowOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -8773,6 +8973,7 @@ impl<'a> Snapshot<'a> {
   pub const VT_ROUTE_INSPECT_TERMINAL: ::flatbuffers::VOffsetT = 316;
   pub const VT_ROUTE_INSPECT_PREV_TERMINAL: ::flatbuffers::VOffsetT = 318;
   pub const VT_LOCAL_ATTACK_MARKS: ::flatbuffers::VOffsetT = 320;
+  pub const VT_DOOR_CROSSING: ::flatbuffers::VOffsetT = 322;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -8818,6 +9019,7 @@ impl<'a> Snapshot<'a> {
     builder.add_withdraw_x_result_seq(args.withdraw_x_result_seq);
     builder.add_bank_generation(args.bank_generation);
     builder.add_tick(args.tick);
+    if let Some(x) = args.door_crossing { builder.add_door_crossing(x); }
     if let Some(x) = args.route_inspect_prev_terminal { builder.add_route_inspect_prev_terminal(x); }
     if let Some(x) = args.route_inspect_terminal { builder.add_route_inspect_terminal(x); }
     if let Some(x) = args.guardian_active_event { builder.add_guardian_active_event(x); }
@@ -10045,6 +10247,13 @@ impl<'a> Snapshot<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<u64>(Snapshot::VT_LOCAL_ATTACK_MARKS, None)}
   }
+  #[inline]
+  pub fn door_crossing(&self) -> Option<DoorCrossing<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<DoorCrossing>>(Snapshot::VT_DOOR_CROSSING, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for Snapshot<'_> {
@@ -10210,6 +10419,7 @@ impl ::flatbuffers::Verifiable for Snapshot<'_> {
      .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("route_inspect_terminal", Self::VT_ROUTE_INSPECT_TERMINAL, false)?
      .visit_field::<::flatbuffers::ForwardsUOffset<Tile>>("route_inspect_prev_terminal", Self::VT_ROUTE_INSPECT_PREV_TERMINAL, false)?
      .visit_field::<u64>("local_attack_marks", Self::VT_LOCAL_ATTACK_MARKS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<DoorCrossing>>("door_crossing", Self::VT_DOOR_CROSSING, false)?
      .finish();
     Ok(())
   }
@@ -10372,6 +10582,7 @@ pub struct SnapshotArgs<'a> {
     pub route_inspect_terminal: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
     pub route_inspect_prev_terminal: Option<::flatbuffers::WIPOffset<Tile<'a>>>,
     pub local_attack_marks: Option<u64>,
+    pub door_crossing: Option<::flatbuffers::WIPOffset<DoorCrossing<'a>>>,
 }
 impl<'a> Default for SnapshotArgs<'a> {
   #[inline]
@@ -10534,6 +10745,7 @@ impl<'a> Default for SnapshotArgs<'a> {
       route_inspect_terminal: None,
       route_inspect_prev_terminal: None,
       local_attack_marks: None,
+      door_crossing: None,
     }
   }
 }
@@ -11172,6 +11384,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SnapshotBuilder<'a, 'b, A> {
     self.fbb_.push_slot_always::<u64>(Snapshot::VT_LOCAL_ATTACK_MARKS, local_attack_marks);
   }
   #[inline]
+  pub fn add_door_crossing(&mut self, door_crossing: ::flatbuffers::WIPOffset<DoorCrossing<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<DoorCrossing>>(Snapshot::VT_DOOR_CROSSING, door_crossing);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SnapshotBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SnapshotBuilder {
@@ -11346,6 +11562,7 @@ impl ::core::fmt::Debug for Snapshot<'_> {
       ds.field("route_inspect_terminal", &self.route_inspect_terminal());
       ds.field("route_inspect_prev_terminal", &self.route_inspect_prev_terminal());
       ds.field("local_attack_marks", &self.local_attack_marks());
+      ds.field("door_crossing", &self.door_crossing());
       ds.finish()
   }
 }

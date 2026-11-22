@@ -10,6 +10,19 @@ pub struct TileInput {
     pub level: i32,
 }
 
+/// One traveller-observed door crossing for a specific request. The four
+/// event values preserve the host's unsigned game-tick representation.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct DoorCrossingInput<'a> {
+    pub request_id: u64,
+    pub tile: TileInput,
+    pub name: &'a str,
+    pub open_sent: u64,
+    pub opened: u64,
+    pub stepped: u64,
+    pub crossed: u64,
+}
+
 /// Compact native reach query posted on the isolate snapshot.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ReachViewInput<'a> {
@@ -380,6 +393,9 @@ pub struct NativeFactsInput<'a> {
     /// Active Traveller token and remaining walk-hop tiles; zero when idle.
     pub walk_remaining_request_id: u64,
     pub walk_remaining: u64,
+    /// Latest measured crossing. `None` omits this delta and retains the last
+    /// row. `Some` publishes or updates the request-scoped observation.
+    pub door_crossing: Option<DoorCrossingInput<'a>>,
     /// The walk outcome's navigator-named gate shorts. ALWAYS supplied — an
     /// empty slice is the observed "this outcome names no short", and the pack
     /// posts it with the family above in the same buffer, so a clear is never

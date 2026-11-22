@@ -27,7 +27,7 @@
 //! the side-tab and bank-stand tables keep the one fact read from each.
 
 use crate::wire::{
-    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle,
+    ApiCombatOutcome, ApiGather, ApiGatherOutcome, ApiProgress, CombatStyle, DoorCrossing,
     JournalEvidence as JournalEvidenceWire, QuestProgressRow, QuestStatus, Row, SceneEntity,
     Snapshot, Stat,
 };
@@ -609,6 +609,37 @@ pub struct WalkOutcome {
     pub remaining: u64,
 }
 
+/// A host-observed door crossing ledger. Match `request_id` before use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DoorCrossingRow {
+    pub request_id: u64,
+    pub tile: Tile,
+    pub name: Text,
+    pub open_sent: u64,
+    pub opened: u64,
+    pub stepped: u64,
+    pub crossed: u64,
+}
+
+impl DoorCrossingRow {
+    fn read(row: &DoorCrossing<'_>, strings: &mut Interner) -> Self {
+        let tile = row.tile();
+        Self {
+            request_id: row.request_id(),
+            tile: Tile {
+                x: tile.x(),
+                z: tile.z(),
+                level: tile.level(),
+            },
+            name: strings.text(row.name()),
+            open_sent: row.open_sent(),
+            opened: row.opened(),
+            stepped: row.stepped(),
+            crossed: row.crossed(),
+        }
+    }
+}
+
 /// The latest posted live Gatherer page, retained only for request identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GatherObservation {
@@ -820,6 +851,9 @@ scene_pages! {
         api_combat: GatherObservation,
         api_combat_outcome: CombatOutcomeObservation,
         api_progress: ProgressPage,
+        /// The latest measured row. Native machines read it from
+        /// `since_login().door_crossing()` and match the request id.
+        door_crossing: DoorCrossingRow,
     }
     shared {
         npcs: EntityRow => shared_npcs,
@@ -1716,6 +1750,9 @@ impl Scene {
                     .collect(),
             );
         }
+        if let Some(crossing) = snap.door_crossing() {
+            p.door_crossing(DoorCrossingRow::read(&crossing, strings));
+        }
         if let Some(page) = snap.api_gather() {
             p.api_gather(read_gather_page(page));
         }
@@ -1839,8 +1876,9 @@ mod tests {
             encode_snapshot_with_native,
         },
         script::native::snapshot_source::{
-            BankStandInput, ItemRowInput, NativeFactsInput, QuestStatusInput, ReachViewInput,
-            SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
+            BankStandInput, DoorCrossingInput, ItemRowInput, NativeFactsInput, QuestStatusInput,
+            ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput,
+            TileInput,
         },
     };
 
@@ -1983,6 +2021,150 @@ mod tests {
                     level: 0
                 })
             );
+        });
+    }
+
+    #[test]
+    fn door_crossing_delta_retains_the_row_and_scopes_it_to_login() {
+        on_reset();
+        let mut snap = empty(1);
+        let first = DoorCrossingInput {
+            request_id: u64::MAX - 5,
+            tile: TileInput {
+                x: 2949,
+                z: 3450,
+                level: 0,
+            },
+            name: "Doric's Door",
+            open_sent: 4_294_967_296,
+            opened: 4_294_967_297,
+            stepped: 4_294_967_298,
+            crossed: 4_294_967_299,
+        };
+        let first_native = NativeFactsInput {
+            door_crossing: Some(first),
+            ..Default::default()
+        };
+        let (keyframe, fingerprint) =
+            encode_snapshot_delta_with_native(None, &snap, first_native, false);
+        apply_bytes(&keyframe);
+        with(|scene| {
+            let row = scene.since_login().door_crossing().expect("crossing");
+            assert_eq!(row.request_id, first.request_id);
+            assert_eq!(
+                row.tile,
+                Tile {
+                    x: 2949,
+                    z: 3450,
+                    level: 0
+                }
+            );
+            assert_eq!(row.name.as_ref(), "Doric's Door");
+            assert_eq!(row.open_sent, first.open_sent);
+            assert_eq!(row.opened, first.opened);
+            assert_eq!(row.stepped, first.stepped);
+            assert_eq!(row.crossed, first.crossed);
+        });
+
+        snap.tick = 2;
+        let (omitted, retained) = encode_snapshot_delta_with_native(
+            Some(&fingerprint),
+            &snap,
+            NativeFactsInput::default(),
+            false,
+        );
+        let omitted = Snapshot::from_bytes(&omitted).expect("omitted delta");
+        assert!(omitted.door_crossing().is_none());
+        apply(&omitted);
+        with(|scene| {
+            assert_eq!(
+                scene
+                    .since_login()
+                    .door_crossing()
+                    .map(|row| row.request_id),
+                Some(first.request_id)
+            );
+        });
+
+        snap.tick = 3;
+        let (same, fingerprint) =
+            encode_snapshot_delta_with_native(Some(&retained), &snap, first_native, false);
+        assert!(
+            Snapshot::from_bytes(&same)
+                .expect("unchanged delta")
+                .door_crossing()
+                .is_none(),
+            "re-supplying the retained row must not post it again"
+        );
+
+        snap.tick = 4;
+        snap.ingame = false;
+        let (logout, fingerprint) = encode_snapshot_delta_with_native(
+            Some(&fingerprint),
+            &snap,
+            NativeFactsInput::default(),
+            false,
+        );
+        apply_bytes(&logout);
+        with(|scene| {
+            assert!(scene.latest().door_crossing().is_some());
+            assert!(scene.since_login().door_crossing().is_none());
+        });
+
+        snap.tick = 5;
+        snap.ingame = true;
+        let (login, fingerprint) = encode_snapshot_delta_with_native(
+            Some(&fingerprint),
+            &snap,
+            NativeFactsInput::default(),
+            false,
+        );
+        apply_bytes(&login);
+        with(|scene| assert!(scene.since_login().door_crossing().is_none()));
+
+        let next = DoorCrossingInput {
+            request_id: first.request_id + 1,
+            tile: TileInput {
+                x: 2950,
+                z: 3451,
+                level: 0,
+            },
+            name: "Workshop Door",
+            open_sent: 5,
+            opened: 6,
+            stepped: 6,
+            crossed: 7,
+        };
+        snap.tick = 6;
+        let (changed, _) = encode_snapshot_delta_with_native(
+            Some(&fingerprint),
+            &snap,
+            NativeFactsInput {
+                door_crossing: Some(next),
+                ..Default::default()
+            },
+            false,
+        );
+        let changed = Snapshot::from_bytes(&changed).expect("changed crossing");
+        let crossing = changed.door_crossing().expect("changed row posted");
+        assert_eq!(crossing.request_id(), next.request_id);
+        apply(&changed);
+        with(|scene| {
+            let row = scene.since_login().door_crossing().expect("new login row");
+            assert_eq!(row.request_id, next.request_id);
+            assert_eq!(
+                row.tile,
+                Tile {
+                    x: 2950,
+                    z: 3451,
+                    level: 0
+                }
+            );
+            assert_eq!(row.name.as_ref(), "Workshop Door");
+            assert_eq!(row.open_sent, next.open_sent);
+            assert_eq!(row.opened, next.opened);
+            assert_eq!(row.stepped, next.stepped);
+            assert_eq!(row.crossed, next.crossed);
         });
     }
 

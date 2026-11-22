@@ -6458,6 +6458,186 @@ fn follow_troll_walks_an_open_door_without_closing_it() {
     );
 }
 
+fn sent_east_door_hop(
+    tracker: &mut super::DoorCrossings,
+) -> (
+    Client,
+    GameSnapshot,
+    FollowRec,
+    Traveller,
+    Route,
+    TravelOptions<'_>,
+) {
+    let mut c = scene_client();
+    plant_door(&mut c, false, 1);
+    let snap = snap_at(&mut c, 0, 0);
+    let mut edge = door_edge();
+    edge.dir = Some(DoorDir::E);
+    edge.open_loc_id = Some(1531);
+    let route = Route {
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge.clone()),
+        }],
+        dest: edge.to,
+        ticks: 1.0,
+    };
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        close_enough: 0,
+        door_crossings: Some(tracker),
+        ..TravelOptions::default()
+    };
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.loc_ops, 1, "the request sent Open");
+    (c, snap, rec, traveller, route, options)
+}
+
+#[test]
+fn traveller_reports_only_measured_door_crossings_once() {
+    let mut tracker = super::DoorCrossings::default();
+    let (mut c, mut snap, mut rec, mut traveller, route, mut options) =
+        sent_east_door_hop(&mut tracker);
+    assert!(options
+        .door_crossings
+        .as_deref_mut()
+        .unwrap()
+        .take()
+        .is_none());
+
+    plant_door(&mut c, true, 1);
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(snap.tick(), 2);
+    assert!(traveller
+        .follow(&mut rec, &snap, route.clone(), &mut options)
+        .is_none());
+    assert_eq!(rec.walked, vec![(3, 0)], "the request sent the step");
+
+    plant_player(&mut c, 3, 0);
+    bump_rebuild(&mut c, &mut snap);
+    assert_eq!(snap.tick(), 3);
+    assert!(matches!(
+        traveller.follow(&mut rec, &snap, route.clone(), &mut options),
+        Some(TravelOutcome::Arrived { at }) if at == route.dest
+    ));
+    drop(options);
+    assert_eq!(
+        tracker.take(),
+        Some(super::DoorCrossing {
+            tile: WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            },
+            name: "Door".into(),
+            open_sent: 1,
+            opened: 2,
+            stepped: 2,
+            crossed: 3,
+        })
+    );
+    assert!(tracker.take().is_none());
+}
+
+#[test]
+fn observe_door_crossing_before_clear_captures_goal_arrival_without_sending() {
+    let mut tracker = super::DoorCrossings::default();
+    let (mut c, mut snap, mut rec, mut traveller, route, mut options) =
+        sent_east_door_hop(&mut tracker);
+    plant_door(&mut c, true, 1);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(traveller
+        .follow(&mut rec, &snap, route, &mut options)
+        .is_none());
+    drop(options);
+    assert_eq!(rec.walked, vec![(3, 0)]);
+
+    plant_player(&mut c, 3, 0);
+    bump_rebuild(&mut c, &mut snap);
+    traveller.observe_door_crossing(&snap, &mut tracker);
+    traveller.clear();
+    assert_eq!(
+        tracker.take(),
+        Some(super::DoorCrossing {
+            tile: WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            },
+            name: "Door".into(),
+            open_sent: 1,
+            opened: 2,
+            stepped: 2,
+            crossed: 3,
+        })
+    );
+    assert!(tracker.take().is_none());
+}
+
+#[test]
+fn door_crossing_observation_ignores_planned_and_non_door_hops() {
+    let mut c = scene_client();
+    let snap = snap_at(&mut c, 3, 0);
+    let options = TravelOptions::default();
+    let mut tracker = super::DoorCrossings::default();
+
+    let mut door = door_edge();
+    door.dir = Some(DoorDir::E);
+    door.open_loc_id = Some(1531);
+    let planned = Route {
+        legs: vec![Leg::Transport {
+            edge: Box::new(door.clone()),
+        }],
+        dest: door.to,
+        ticks: 1.0,
+    };
+    let planned_run = FollowRun::start(planned, &options);
+    planned_run.observe_door_crossing(&snap, &mut tracker);
+    assert!(
+        tracker.take().is_none(),
+        "a route plan without an executed transport is not a crossing"
+    );
+
+    door.kind = TransportKind::Ladder;
+    let non_door = Route {
+        legs: vec![Leg::Transport {
+            edge: Box::new(door.clone()),
+        }],
+        dest: door.to,
+        ticks: 1.0,
+    };
+    let mut non_door_run = FollowRun::start(non_door, &options);
+    non_door_run.transport = Some(TransportHop {
+        leg: non_door_run.next_leg().unwrap().into_transport(),
+        to: door.to,
+        ticks_waited: super::TickCount::default(),
+        sent_tile: None,
+        arrival_footprint: None,
+        tries: 0,
+        troll: true,
+        npc_index: None,
+        npc_recovery: super::NpcRecovery::default(),
+        open_sent_tick: None,
+        door_retry: super::DoorRetry::default(),
+        occupied: super::OccupiedRetry::default(),
+        chat_seq: 0,
+        refusal_watch: None,
+        pass_watch: None,
+        dialog_page: None,
+        approach: None,
+    });
+    non_door_run.observe_door_crossing(&snap, &mut tracker);
+    assert!(
+        tracker.take().is_none(),
+        "a directional non-door transport is not a door crossing"
+    );
+}
+
 #[test]
 fn troll_open_door_progress_does_not_reverse_to_approach() {
     // A far-side target takes several snapshots to reach. Recovery must

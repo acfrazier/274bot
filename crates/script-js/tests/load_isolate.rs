@@ -8347,14 +8347,15 @@ export default class T extends LoopingBot {
 
 // walkOpening starts its dedicated Rust machine instead of reducing to a JS walk helper.
 #[test]
-fn isolate_walk_opening_starts_native_machine() {
+fn isolate_walk_opening_reports_only_its_measured_door_crossing_once() {
     let src = r#"
 import { walkOpening } from '../../event/webwalk/walkOpening.js';
 export default class T extends LoopingBot {
     async loop() {
         globalThis.__probe = 'go';
+        globalThis.__crossings ??= [];
         try {
-            await walkOpening({ x: 3222, z: 3295, level: 0 }, 0, [], () => {});
+            await walkOpening({ x: 3222, z: 3295, level: 0 }, 0, [], m => __crossings.push(m), { doorStepTicks: 0 });
         } catch (e) {
             globalThis.__probe = String(e.message || e);
         }
@@ -8378,7 +8379,7 @@ export default class T extends LoopingBot {
     );
     assert_eq!(value, "go", "walkOpening parks on its native machine");
     let drained = iso.drain_interacts();
-    match &drained[..] {
+    let request_id = match &drained[..] {
         [script::interact::InteractReq::Walk {
             x: 3222,
             z: 3295,
@@ -8391,12 +8392,121 @@ export default class T extends LoopingBot {
             request_id,
             avoid: _,
             cross: _,
-        }] => assert_ne!(
-            *request_id, 0,
-            "walkOpening starts its first native segment"
-        ),
+        }] => *request_id,
         other => panic!("walkOpening starts a native walk segment, got {other:?}"),
+    };
+    assert_ne!(request_id, 0);
+    assert_eq!(iso.probe("__crossings.length").unwrap(), 0);
+    let mut crossing = script::native::snapshot_source::DoorCrossingInput {
+        request_id: request_id + 1,
+        tile: script::native::snapshot_source::TileInput {
+            x: 3223,
+            z: 3224,
+            level: 0,
+        },
+        name: "Door",
+        open_sent: 10,
+        opened: 12,
+        stepped: 13,
+        crossed: 15,
+    };
+    for tick in 16..=19 {
+        if tick == 17 {
+            crossing.request_id = request_id;
+        }
+        snap.tick = tick;
+        let native = script::native::snapshot_source::NativeFactsInput {
+            door_crossing: Some(crossing),
+            ..Default::default()
+        };
+        iso.post_snapshot(script_js::wire::encode_snapshot_with_native(&snap, native));
+        iso.on_game_tick(tick);
+        let count = iso.probe("__crossings.length").unwrap();
+        assert_eq!(count, usize::from(tick >= 17));
     }
+    assert_eq!(
+        iso.probe("__crossings[0]").unwrap(),
+        "  crossed 'Door' at (3223,3224) (Open sent tick 10, open +2, stepped +3, crossed +5)"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_walk_opening_arrival_with_only_a_planned_door_does_not_log_a_crossing() {
+    use script::native::snapshot_source::{
+        InspectHopInput, NativeFactsInput, RouteInspectFactsInput, RouteInspectTerminalInput,
+        TileInput,
+    };
+    let src = r#"
+import { walkOpening } from '../../event/webwalk/walkOpening.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__logs = [];
+        globalThis.__arrived = await walkOpening({x: 12, z: 10, level: 0}, 0,
+            ['door'], m => __logs.push(m), { doorStepTicks: 0 });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(TileInput {
+        x: 10,
+        z: 10,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__started").unwrap(), true);
+    let requests = iso.drain_interacts();
+    let [script::interact::InteractReq::Walk { request_id, .. }] = requests.as_slice() else {
+        panic!("expected one walk, got {requests:?}");
+    };
+    let hops = [InspectHopInput {
+        kind: "door",
+        loc_id: 1530,
+        loc_name: "Door",
+        action: "Open",
+        option: 1,
+        from_x: 11,
+        from_z: 10,
+        from_level: 0,
+        to_x: 12,
+        to_z: 10,
+        to_level: 0,
+        ticks: 2,
+    }];
+    snap.here = Some(TileInput {
+        x: 12,
+        z: 10,
+        level: 0,
+    });
+    let native = NativeFactsInput {
+        route_inspect: RouteInspectFactsInput {
+            latest: RouteInspectTerminalInput {
+                seq: 1,
+                generation: 1,
+                request_id: *request_id,
+                ok: true,
+                terminal: snap.here,
+                hops: &hops,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    for tick in 2..=4 {
+        snap.tick = tick;
+        iso.post_snapshot(script_js::wire::encode_snapshot_with_native(&snap, native));
+        iso.on_game_tick(tick);
+        if iso.probe("globalThis.__arrived === true").unwrap() == true {
+            break;
+        }
+    }
+    assert_eq!(iso.probe("globalThis.__arrived").unwrap(), true);
+    assert_eq!(iso.probe("__logs").unwrap(), serde_json::json!([]));
     iso.join();
 }
 

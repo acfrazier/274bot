@@ -395,6 +395,25 @@ pub enum TravelOutcome {
     GaveUp { at: WorldTile, hops: u32 },
 }
 
+/// One measured state-aware door crossing. A record is available only when
+/// this traveller sent the Open and step, observed the door open, and then
+/// observed the directional crossing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoorCrossing {
+    /// World tile of the door loc.
+    pub tile: WorldTile,
+    /// Live loc name, or empty when the scene has no name for it.
+    pub name: String,
+    /// Snapshot tick when the Open interaction was sent.
+    pub open_sent: u64,
+    /// First snapshot tick on which the door was observed open.
+    pub opened: u64,
+    /// Snapshot tick when the walk through the door was sent.
+    pub stepped: u64,
+    /// First snapshot tick on which the directional crossing was observed.
+    pub crossed: u64,
+}
+
 /// The phase of a leg reported to the `on_leg` callback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LegPhase {
@@ -486,6 +505,8 @@ pub struct TravelOptions<'a> {
     pub close_enough: i32,
     /// Optional observations; does not select actions or retry policy.
     pub on_event: Option<Box<dyn FnMut(TravelEvent) + 'a>>,
+    /// Optional request-owned ledger. The caller drains it after each follow poll.
+    pub door_crossings: Option<&'a mut DoorCrossings>,
     /// Minimum tick budget for one hop (default 60). A walk also allows
     /// one tick per planned route step to its aim, not straight-line distance.
     /// Walk speed: `engine/src/engine/entity/PathingEntity.ts:144-149`.
@@ -531,6 +552,7 @@ impl Default for TravelOptions<'_> {
         TravelOptions {
             close_enough: 2,
             on_event: None,
+            door_crossings: None,
             budget_ticks_per_hop: DEFAULT_HOP_BUDGET_TICKS,
             max_hops: 60,
             teleports: None,
@@ -593,6 +615,15 @@ impl Traveller {
     /// teardown.
     pub fn set_essence(&mut self, essence: Option<EssenceSession>) {
         self.essence = essence;
+    }
+
+    /// Observe an active door crossing without sending or advancing the
+    /// follow. Call before clearing a route when host arrival can skip its
+    /// final follow poll.
+    pub fn observe_door_crossing(&self, snapshot: &GameSnapshot, tracker: &mut DoorCrossings) {
+        if let Some(run) = self.follow.as_ref() {
+            run.observe_door_crossing(snapshot, tracker);
+        }
     }
 
     /// The tile the traveller is currently walking toward: the active walk
@@ -1144,6 +1175,9 @@ impl FollowRun {
                 }
             }
             // No active hop: work the next leg (or finish).
+            if let Some(tracker) = options.door_crossings.as_deref_mut() {
+                tracker.end_hop();
+            }
             let Some(route_leg) = self.next_leg() else {
                 return Some(TravelOutcome::Arrived { at: here(snapshot) });
             };
@@ -1502,6 +1536,7 @@ impl FollowRun {
                             };
                             let chat_seq_at_send = chat_seq(snapshot);
                             let arrival_footprint = target.footprint();
+                            let target_name = target.name();
                             let mut ix = Interactions::new(snapshot, d);
                             match interact_transport(
                                 snapshot,
@@ -1538,6 +1573,12 @@ impl FollowRun {
                                     };
                                     let refusal_watch = gate_refusal_watch(snapshot, edge, options);
                                     let pass_watch = gate_pass_watch(snapshot, edge, options);
+                                    note_door_open_sent(
+                                        edge,
+                                        snapshot.tick(),
+                                        target_name,
+                                        options,
+                                    );
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
                                         leg,
@@ -1777,6 +1818,124 @@ struct TransportHop {
     /// the edge's `at`. `None` after the interaction is sent (or on a hop
     /// with no interact, like the open-leaf walk-through).
     approach: Option<ApproachHop>,
+}
+
+/// Request-owned observations. Walks without a measured Open need no allocation.
+#[derive(Default)]
+pub struct DoorCrossings(Option<Box<CrossingState>>);
+
+#[derive(Default)]
+struct CrossingState {
+    progress: Option<DoorCrossingProgress>,
+    completed: Option<DoorCrossing>,
+}
+
+impl DoorCrossings {
+    /// Drain one completed crossing, without synthesizing an unobserved milestone.
+    pub fn take(&mut self) -> Option<DoorCrossing> {
+        self.0.as_deref_mut()?.completed.take()
+    }
+
+    fn progress(&mut self) -> Option<&mut DoorCrossingProgress> {
+        self.0.as_deref_mut()?.progress.as_mut()
+    }
+
+    fn complete(&mut self, tile: WorldTile, tick: u32) {
+        if let Some(state) = self.0.as_deref_mut() {
+            if let Some(row) = state.progress.take().and_then(|p| p.crossed(tile, tick)) {
+                state.completed = Some(row);
+            }
+        }
+    }
+
+    fn end_hop(&mut self) {
+        if let Some(state) = self.0.as_deref_mut() {
+            state.progress = None;
+        }
+    }
+}
+
+struct DoorCrossingProgress {
+    open_sent: u64,
+    opened: Option<u64>,
+    stepped: Option<u64>,
+    name: Option<String>,
+}
+
+impl DoorCrossingProgress {
+    fn sent(tick: u32, name: Option<&str>) -> Self {
+        Self {
+            open_sent: u64::from(tick),
+            opened: None,
+            stepped: None,
+            name: name.map(str::to_owned),
+        }
+    }
+
+    fn note_send(&mut self, tick: u32, name: Option<&str>) {
+        self.open_sent = u64::from(tick);
+        self.opened = None;
+        self.stepped = None;
+        if self.name.is_none() {
+            self.name = name.map(str::to_owned);
+        }
+    }
+
+    fn observe_open(&mut self, tick: u32, name: Option<&str>) {
+        let tick = u64::from(tick);
+        if self.opened.is_none() && self.open_sent != tick {
+            self.opened = Some(tick);
+        }
+        if self.name.is_none() {
+            self.name = name.map(str::to_owned);
+        }
+    }
+
+    fn step_sent(&mut self, tick: u32) {
+        if self.opened.is_some() && self.stepped.is_none() {
+            self.stepped = Some(u64::from(tick));
+        }
+    }
+
+    fn crossed(self, tile: WorldTile, tick: u32) -> Option<DoorCrossing> {
+        Some(DoorCrossing {
+            tile,
+            name: self.name.unwrap_or_default(),
+            open_sent: self.open_sent,
+            opened: self.opened?,
+            stepped: self.stepped?,
+            crossed: u64::from(tick),
+        })
+    }
+}
+
+fn door_crossing_enabled(edge: &TransportEdge, options: &TravelOptions<'_>) -> bool {
+    options.door_crossings.is_some()
+        && edge.kind == TransportKind::Door
+        && edge.dir.is_some()
+        && !is_slashable_web(edge)
+        && !drives_hop_dialogs(edge, options)
+        && !has_authored_crossing_metadata(edge, options)
+}
+
+fn note_door_open_sent(
+    edge: &TransportEdge,
+    tick: u32,
+    name: Option<&str>,
+    options: &mut TravelOptions<'_>,
+) {
+    if !door_crossing_enabled(edge, options) {
+        return;
+    }
+    let Some(tracker) = options.door_crossings.as_deref_mut() else {
+        return;
+    };
+    let progress = &mut tracker.0.get_or_insert_with(Default::default).progress;
+    if let Some(progress) = progress.as_mut() {
+        progress.note_send(tick, name);
+    } else {
+        *progress = Some(DoorCrossingProgress::sent(tick, name));
+    }
 }
 
 /// The transport approach: a standable take-off tile within Chebyshev 1 of
