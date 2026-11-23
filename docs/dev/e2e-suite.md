@@ -48,11 +48,16 @@ so its frozen reference rows remain `unmapped_reference`, not runnable native ca
 ## Configuration
 
 `--profile NAME` and `--catalog DIR` are required by `run`; both are validated before any
-launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`, `--vault`,
+launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`,
 `--world-members true|false`, `--lowmem` (the default) or `--highmem`, `--mainland`,
 `--nav-paints on|off`, `--exec-core PATH`, `--exec-pair PATH`, `--exec-external PATH`,
 `--external-ts ABS`, `--cwd DIR`, `--child-arg ARG` (repeatable). `run` also takes
 `--run-dir DIR` and `--resume`, and `--verbose` streams child output.
+The `--vault PATH` override is available only when `e2e-suite` is built with
+`--features test-support`; use it only for disposable test vaults. Normal product
+builds do not accept it. For example: `cargo run -p e2e --features test-support
+--bin e2e-suite -- run ...`.
+
 
 Headed runs default to `--nav-paints on`; `--nav-paints off` disables the diagnostic
 layers. The choice is recorded in the resume identity and forwarded to both native
@@ -91,18 +96,19 @@ would move the child's inner deadline behind the case budget the run recorded, s
 the enforced policy is always the manifest's budget plus the scenario's own deadline. The
 refused list is exactly the controls the launched executables consume (`BUDGET_S`); every
 other session knob (`BOT_MAINLAND`, `BOT_DEBUG`, `BOT_CPU`) stays untouched.
-Input paths must be absolute: a child resolves
-a relative path against its own working directory, which the suite cannot reproduce when it
-binds the identity, so a relative `--catalog`/`--engine`/`--cache`/`--vault`/`--exec-core`/
-`--exec-pair`/`--exec-external`/`--cwd` (or a relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/`NAV_PACK`/
-`NAV_FLAGS`/`BOT_CACHE_MANIFEST`/`CARGO_TARGET_DIR`) is refused. `--external-ts` is refused
-unless it is absolute, which is the rule the panel applies to its own raw-source flag.
-Every child also receives `274BOT_SMOKE_DIR` pointing at the run's `shots/` directory.
-Reference `args`/`env` from the frozen manifest are preserved as metadata and are never
-applied wholesale; a typed option is added only when a native adapter really consumes it.
-`--child-arg` is appended to the child argv; identity is captured from that *effective*
-argv, so a `--child-arg --vault PATH` is bound as the vault the child will parse. A typed
-binding cannot be re-bound that way: `--child-arg --live …` or `--child-arg --external-ts …`
+Input paths must be absolute: a child resolves a relative path against its own working
+directory, which the suite cannot reproduce when it binds the identity, so relative
+`--catalog`/`--engine`/`--cache`/`--exec-core`/`--exec-pair`/`--exec-external`/`--cwd`
+(or `--vault` in test-support builds), or relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/
+`NAV_PACK`/`NAV_FLAGS`/`BOT_CACHE_MANIFEST`/`CARGO_TARGET_DIR`, is refused.
+`--external-ts` is refused unless it is absolute, which is the rule the panel applies to
+its own raw-source flag. Every child also receives `274BOT_SMOKE_DIR` pointing at the
+run's `shots/` directory. Reference `args`/`env` from the frozen manifest are preserved
+as metadata and are never applied wholesale; a typed option is added only when a native
+adapter really consumes it. `--child-arg` is appended to the child argv; identity is
+captured from that *effective* argv, so in test-support builds a
+`--child-arg --vault PATH` is bound as the vault the child will parse. A typed binding
+cannot be re-bound that way: `--child-arg --live …` or `--child-arg --external-ts …`
 is refused, because the case's live name and the loader smoke's raw source are the
 selection the suite bound and hashed.
 
@@ -284,7 +290,8 @@ The suite's own behavior is checked offline, with the disposable `e2e-suite-fixt
 child standing in for a panel executable:
 
     cargo test -p e2e --lib
-    cargo test -p e2e --test suite_offline
+    cargo test -p e2e --features test-support --lib
+    cargo test -p e2e --features test-support --test suite_offline
 
 The offline suite (see `crates/e2e/tests/suite_offline.rs` and
 `crates/e2e/fixtures/native-suite/offline-suite-manifest.json`) covers printed command

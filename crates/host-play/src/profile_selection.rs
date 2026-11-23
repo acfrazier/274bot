@@ -219,10 +219,13 @@ impl ProfileOptions {
                 .unwrap_or(Path::new("."))
                 .join("content")
         });
+        #[cfg(feature = "test-support")]
         let vault_path = self
             .vault_path
             .clone()
             .unwrap_or_else(|| bot_dir.join(&profile.vault));
+        #[cfg(not(feature = "test-support"))]
+        let vault_path = bot_dir.join(&profile.vault);
         let working_dir = env
             .working_dir
             .clone()

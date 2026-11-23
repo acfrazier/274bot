@@ -136,9 +136,10 @@ that does not repeat the value.
 ## Which vault file
 
 The vault file is the `vault` field of the bound profile in `~/.274bot/servers.json`,
-under `~/.274bot/`; `--vault PATH` overrides it. The built-ins use `vault`
-(`local-274`), `vault-289` (`local-289`) and `vault-prod` (`rs2b2t`).
-Profiles must name distinct vault files, so profiles never share
+under `~/.274bot/`. The built-ins use `vault` (`local-274`), `vault-289`
+(`local-289`) and `vault-prod` (`rs2b2t`). Normal product launchers do not
+accept a vault-path override; test-support builds expose one only for disposable
+e2e fixtures. Profiles must name distinct vault files, so profiles never share
 storage implicitly.
 
 ## Importing profiles from rs2b0t

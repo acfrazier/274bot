@@ -90,6 +90,7 @@ pub struct ProfileOptions {
     pub nav_pack: Option<PathBuf>,
     pub nav_flags: Option<PathBuf>,
     pub content_dir: Option<PathBuf>,
+    #[cfg(feature = "test-support")]
     pub vault_path: Option<PathBuf>,
     pub catalog_root: Option<PathBuf>,
     /// Operator-declared WORLD membership for the profile (`true`/`false`).
@@ -108,6 +109,12 @@ pub fn parse_profile_args(
         let flag = arg.as_ref();
         if flag == "--prod" {
             return Err("--prod was removed; use --rs2b2t or --profile rs2b2t".into());
+        }
+        #[cfg(not(feature = "test-support"))]
+        if flag == "--vault" || flag.starts_with("--vault=") {
+            return Err(
+                "--vault is available only in test-support builds; use the selected server profile's configured vault".into(),
+            );
         }
         if flag == "--rs2b2t" {
             options.rs2b2t = true;
@@ -162,6 +169,7 @@ pub fn parse_profile_args(
             "--nav-pack" => options.nav_pack = Some(value.into()),
             "--nav-flags" => options.nav_flags = Some(value.into()),
             "--content" => options.content_dir = Some(value.into()),
+            #[cfg(feature = "test-support")]
             "--vault" => options.vault_path = Some(value.into()),
             "--catalog" => options.catalog_root = Some(value.into()),
             "--world-members" => {

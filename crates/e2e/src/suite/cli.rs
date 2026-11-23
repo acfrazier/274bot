@@ -37,7 +37,7 @@ config (dry-run and run):
   --profile NAME                native server profile (required by run)
   --revision REV --host HOST --port PORT
   --engine DIR --cache DIR --catalog DIR   (catalog is required by run)
-  --vault PATH --lowmem|--highmem --mainland
+  --vault PATH (test-support builds only) --lowmem|--highmem --mainland
   --nav-paints on|off            headed diagnostic paints (default on)
   --exec-core PATH --exec-pair PATH        direct native executables
   --exec-external PATH          direct external_watch executable (loader smoke)
@@ -96,6 +96,7 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
         engine: None,
         cache: None,
         catalog: PathBuf::new(),
+        #[cfg(feature = "test-support")]
         vault: None,
         lowmem: true,
         mainland: false,
@@ -112,6 +113,12 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
 
     let mut it = argv.iter();
     while let Some(arg) = it.next() {
+        #[cfg(not(feature = "test-support"))]
+        if arg.as_str() == "--vault" || arg.starts_with("--vault=") {
+            return Err(
+                "--vault is available only in test-support builds; use the selected server profile's configured vault".into(),
+            );
+        }
         let mut value = |flag: &str| -> SuiteResult<String> {
             it.next()
                 .cloned()
@@ -180,6 +187,7 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
                 config.catalog = PathBuf::from(value("--catalog")?);
                 catalog_given = true;
             }
+            #[cfg(feature = "test-support")]
             "--vault" => config.vault = Some(PathBuf::from(value("--vault")?)),
             "--world-members" => {
                 config.world_members = Some(match value("--world-members")?.as_str() {

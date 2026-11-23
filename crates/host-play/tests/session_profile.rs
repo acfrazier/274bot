@@ -206,14 +206,34 @@ fn flags_are_order_independent_and_override_saved_or_environment_revision() {
     assert_eq!(selected.revision(), ClientRevision::R274);
     assert_eq!(selected.game_port(), 43594);
     assert!(selected.vault_path().ends_with(".274bot/vault"));
+}
 
+#[cfg(feature = "test-support")]
+#[test]
+fn test_support_build_accepts_explicit_vault_path() {
+    let fixture = Fixture::new();
     let mut environment = fixture.env();
     environment.working_dir = Some(fixture.0.clone());
-    let (options, _) =
+    let (options, rest) =
         parse_profile_args(["--cache", "relative-cache", "--vault", "relative-vault"]).unwrap();
+    assert!(rest.is_empty());
     let selected = options.resolve_with_env(None, &environment).unwrap();
     assert_eq!(selected.cache_dir(), fixture.0.join("relative-cache"));
     assert_eq!(selected.vault_path(), fixture.0.join("relative-vault"));
+}
+
+#[cfg(not(feature = "test-support"))]
+#[test]
+fn release_build_rejects_explicit_vault_path_during_parse() {
+    for args in [
+        &["--vault", "relative-vault"][..],
+        &["--vault=relative-vault"][..],
+    ] {
+        let error = parse_profile_args(args).unwrap_err();
+        assert!(error.contains("--vault"), "{error}");
+        assert!(error.contains("test-support"), "{error}");
+        assert!(error.contains("configured vault"), "{error}");
+    }
 }
 
 #[test]
@@ -306,27 +326,30 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
         host_play::ProfileClass::Local
     );
 
-    let explicit = ProfileOptions {
-        profile: Some("public-289".into()),
-        cache_dir: Some("explicit-cache".into()),
-        unpack_dir: Some("explicit-unpack".into()),
-        nav_pack: Some("explicit.navpack".into()),
-        nav_flags: Some("explicit.navflags".into()),
-        content_dir: Some("explicit-content".into()),
-        vault_path: Some("explicit-vault".into()),
-        ..ProfileOptions::default()
-    };
-    let mut explicit_environment = fixture.env();
-    explicit_environment.working_dir = Some(fixture.0.clone());
-    let selected = explicit
-        .resolve_with_env(Some(274), &explicit_environment)
-        .unwrap();
-    assert_eq!(selected.cache_dir(), fixture.0.join("explicit-cache"));
-    assert_eq!(selected.unpack_dir(), fixture.0.join("explicit-unpack"));
-    assert_eq!(selected.nav_pack(), fixture.0.join("explicit.navpack"));
-    assert_eq!(selected.nav_flags(), fixture.0.join("explicit.navflags"));
-    assert_eq!(selected.content_dir(), fixture.0.join("explicit-content"));
-    assert_eq!(selected.vault_path(), fixture.0.join("explicit-vault"));
+    #[cfg(feature = "test-support")]
+    {
+        let explicit = ProfileOptions {
+            profile: Some("public-289".into()),
+            cache_dir: Some("explicit-cache".into()),
+            unpack_dir: Some("explicit-unpack".into()),
+            nav_pack: Some("explicit.navpack".into()),
+            nav_flags: Some("explicit.navflags".into()),
+            content_dir: Some("explicit-content".into()),
+            vault_path: Some("explicit-vault".into()),
+            ..ProfileOptions::default()
+        };
+        let mut explicit_environment = fixture.env();
+        explicit_environment.working_dir = Some(fixture.0.clone());
+        let selected = explicit
+            .resolve_with_env(Some(274), &explicit_environment)
+            .unwrap();
+        assert_eq!(selected.cache_dir(), fixture.0.join("explicit-cache"));
+        assert_eq!(selected.unpack_dir(), fixture.0.join("explicit-unpack"));
+        assert_eq!(selected.nav_pack(), fixture.0.join("explicit.navpack"));
+        assert_eq!(selected.nav_flags(), fixture.0.join("explicit.navflags"));
+        assert_eq!(selected.content_dir(), fixture.0.join("explicit-content"));
+        assert_eq!(selected.vault_path(), fixture.0.join("explicit-vault"));
+    }
 }
 
 #[test]

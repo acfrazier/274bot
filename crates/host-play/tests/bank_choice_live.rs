@@ -4,7 +4,7 @@
 //! Real CpuPix3D frames and JSON receipts retain the bank-arrival evidence.
 //!
 //! Run against the shared local 289 engine with a throwaway HOME, for example:
-//! `env HOME="$(mktemp -d)" LIVE=1 BOT_LIVE_NAME_PREFIX=bc BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_NAV_PACK=/absolute/path/to/274bot.navpack WORLD_ENGINE_DIR=/absolute/path/to/engine RS2B0T=/absolute/path/to/rs2b0t BOT_CACHE_DIR=/absolute/path/to/cache LIVE_EVIDENCE_DIR=/absolute/path/to/evidence cargo test --locked -p host-play --features live-harness --test bank_choice_live -- --ignored --nocapture --test-threads=1`
+//! `env HOME="$(mktemp -d)" LIVE=1 BOT_LIVE_NAME_PREFIX=bc BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_NAV_PACK=/absolute/path/to/274bot.navpack WORLD_ENGINE_DIR=/absolute/path/to/engine RS2B0T=/absolute/path/to/rs2b0t BOT_CACHE_DIR=/absolute/path/to/cache LIVE_EVIDENCE_DIR=/absolute/path/to/evidence cargo test --locked -p host-play --features live-harness,test-support --test bank_choice_live -- --ignored --nocapture --test-threads=1`
 
 #![cfg(feature = "live-harness")]
 

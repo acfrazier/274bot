@@ -65,11 +65,15 @@ rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled
 # These harnesses use the optional scenario runner even for their offline tests.
 [[test]]
 name = "catalog_boundary_live"
-required-features = ["memory-profile"]
+required-features = ["memory-profile", "test-support"]
 
 [[test]]
 name = "world_boundary_live"
 required-features = ["memory-profile"]
+
+[[test]]
+name = "gatherer_live"
+required-features = ["test-support"]
 
 [[test]]
 name = "grinch_live"
@@ -85,19 +89,19 @@ required-features = ["test-support", "js"]
 
 [[test]]
 name = "t2_family_live"
-required-features = ["js"]
+required-features = ["js", "test-support"]
 
 [[test]]
 name = "two_slot_isolation_live"
-required-features = ["js"]
+required-features = ["js", "test-support"]
 
 [[test]]
 name = "loadout_provision_live"
-required-features = ["js"]
+required-features = ["js", "test-support"]
 
 [[test]]
 name = "paired_catalog_live"
-required-features = ["js"]
+required-features = ["js", "test-support"]
 
 [[test]]
 name = "upstream_e2e"
@@ -126,6 +130,118 @@ required-features = ["live-harness", "test-support"]
 [[test]]
 name = "nav_prereq_live"
 required-features = ["live-harness", "test-support", "live-probe", "js"]
+
+[[test]]
+name = "bank_choice_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "client_adapter_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "compat_bank_live"
+required-features = ["js", "live-harness", "test-support"]
+
+[[test]]
+name = "compat_v1_dialogue_game_questlog_live"
+required-features = ["js", "live-harness", "test-support"]
+
+[[test]]
+name = "compat_v1_live"
+required-features = ["js", "live-harness", "test-support"]
+
+[[test]]
+name = "compat_v1_shop_trade_live"
+required-features = ["js", "live-harness", "test-support"]
+
+[[test]]
+name = "compat_v1_trade_live"
+required-features = ["js", "live-harness", "test-support"]
+
+[[test]]
+name = "compat_v1_walking_live"
+required-features = ["js", "live-harness", "test-support"]
+
+[[test]]
+name = "clue_walk_arrive_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "cook_bank_loop_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "entrana_content_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "native_survival_cure_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_bank_ownership_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_danger_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_dev_paths_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_families_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_hint_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_members_world_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_partner_trade_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_path_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_queue_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_sheep_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_squire_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_upkeep_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "quester_vampire_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "relog_release_live"
+required-features = ["live-harness", "test-support"]
+
+[[test]]
+name = "rss_ladder"
+required-features = ["test-support"]
+
+[[test]]
+name = "zanaris_entrana_live"
+required-features = ["live-harness", "test-support"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

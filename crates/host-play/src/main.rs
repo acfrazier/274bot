@@ -29,7 +29,7 @@ fn usage() -> ! {
          [--revision 274|289|377] [--host HOST] [--port PORT] \
          [--asset-host HOST] [--http-port PORT] [--engine PATH] \
          [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
-         [--content DIR] [--vault PATH] [--catalog DIR] \
+         [--content DIR] [--catalog DIR] \
          [--world-members true|false] \
          [--vault-pass-stdin] [--lowmem|--highmem] [--mainland] [--debug] \
          [--user USER]... (default user: test)"

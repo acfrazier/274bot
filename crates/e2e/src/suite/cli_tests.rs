@@ -152,6 +152,36 @@ fn argument_parsing_rejects_unknown_flags_and_missing_values() {
     .unwrap_err();
     assert!(error.contains("conflict"), "{error}");
 }
+#[cfg(not(feature = "test-support"))]
+#[test]
+fn suite_cli_rejects_vault_override_without_test_support() {
+    for args in [
+        vec![
+            "list".to_string(),
+            "--vault".into(),
+            "/fixture-vault".into(),
+        ],
+        vec!["list".to_string(), "--vault=/fixture-vault".into()],
+    ] {
+        let error = parse_args(&args).unwrap_err();
+        assert!(error.contains("--vault"), "{error}");
+        assert!(error.contains("test-support"), "{error}");
+        assert!(error.contains("configured vault"), "{error}");
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn suite_cli_accepts_vault_override_with_test_support() {
+    let vault = PathBuf::from("/fixture-vault");
+    let parsed = parse_args(&[
+        "list".to_string(),
+        "--vault".to_string(),
+        vault.display().to_string(),
+    ])
+    .unwrap();
+    assert_eq!(parsed.config.vault, Some(vault));
+}
 
 /// A cleanup that could not reap the process tree is a shared failure on *every* exit
 /// path, not only on a timeout: the suite cannot claim the child is gone.

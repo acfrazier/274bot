@@ -687,15 +687,18 @@ def main():
             ("jobs", 1),
             ("exec", OrderedDict([
                 ("core", OrderedDict([("program", "cargo"),
-                                      ("args", ["run", "--quiet", "-p", "panel", "--example", "catalog_watch",
-                                                "--"])])),
+                                      ("args", ["run", "--quiet", "-p", "panel",
+                                                "--features", "test-support", "--example",
+                                                "catalog_watch", "--"])])),
                 ("pair", OrderedDict([("program", "cargo"),
-                                      ("args", ["run", "--quiet", "-p", "panel", "--example", "pair_watch",
-                                                "--"])])),
+                                      ("args", ["run", "--quiet", "-p", "panel",
+                                                "--features", "test-support", "--example",
+                                                "pair_watch", "--"])])),
                 # The dedicated loader smoke's own entrypoint: `catalog_watch` never produces an
                 # EXTERNAL_LOADER receipt, so the row must not borrow the core template.
                 ("external", OrderedDict([("program", "cargo"),
-                                          ("args", ["run", "--quiet", "-p", "panel", "--example",
+                                          ("args", ["run", "--quiet", "-p", "panel",
+                                                    "--features", "test-support", "--example",
                                                     "external_watch", "--"])])),
             ])),
             # Desired run options and whether the current native adapters can select them.

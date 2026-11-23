@@ -27,6 +27,8 @@
      "--quiet",
      "-p",
      "panel",
+     "--features",
+     "test-support",
      "--example",
      "catalog_watch",
      "--"
@@ -39,6 +41,8 @@
      "--quiet",
      "-p",
      "panel",
+     "--features",
+     "test-support",
      "--example",
      "pair_watch",
      "--"
@@ -51,6 +55,8 @@
      "--quiet",
      "-p",
      "panel",
+     "--features",
+     "test-support",
      "--example",
      "external_watch",
      "--"
