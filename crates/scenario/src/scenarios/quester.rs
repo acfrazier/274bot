@@ -198,10 +198,11 @@ pub fn quester_stage_with_watch(
     quest_display: &'static str,
     varp: &'static str,
     value: i32,
-    items: &'static [(&'static str, i32)],
+    items: &[(&'static str, i32)],
     stand: WorldTile,
     watch_ticks: u32,
 ) -> Scenario {
+    let items = items.to_vec();
     let mut steps = script_live_seed_steps();
     steps.push(Step {
         name: "reset quest stage",
@@ -221,7 +222,7 @@ pub fn quester_stage_with_watch(
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
-                for (alias, qty) in items {
+                for &(alias, qty) in &items {
                     cheat(c, &format!("give {alias} {qty}"));
                 }
                 true

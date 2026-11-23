@@ -6,7 +6,7 @@ mod quester_live;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::skill::Skill;
 use quester_live::{Cell, Mode};
-use script::quester::path::PathKind;
+use script::quester::path::{PathDocument, PathKind, StepDocument};
 use script::quester::registry;
 use serde_json::{json, Map};
 use std::path::PathBuf;
@@ -33,10 +33,59 @@ const ZANARIS_CONTENT_STATS: [(u8, i32); 2] = [
     (8, 36),  // `Skill::names[8]` is Woodcutting.
     (12, 31), // `Skill::names[12]` is Crafting.
 ];
-// The R289 Path reserves 16 coins for `buy-axe-for-shamus` (`zanaris.json:42,196-200`).
-// `axes.obj:35-38` sets the axe cost to 16, and `lumbridge.inv:1-10` stocks it.
-const ZANARIS_COIN_FLOAT: i32 = 16;
-const EXTRA_ITEMS: [(&str, i32); 2] = [("knife", 1), ("coins", ZANARIS_COIN_FLOAT)];
+// The Path's buy estimates fund its axe and Entrana bread purchases.
+// `zanaris.json:196-198,289-291` cites their R289 shop content:
+// `axes.obj:35-38`, `lumbridge.inv:1-10`, `dough.obj:39-40`, and `ardougne_east.inv:15-24`.
+const EXTRA_ITEMS: [(&str, i32); 1] = [("knife", 1)];
+type ZanarisFixtureItems = Vec<(&'static str, i32)>;
+
+fn add_zanaris_buy_estimate(total: &mut i32, step: &StepDocument) -> Result<(), String> {
+    if step.kind != "buy" {
+        return Ok(());
+    }
+    let estimate = step
+        .args
+        .get("est_gp")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|amount| i32::try_from(amount).ok())
+        .ok_or_else(|| format!("Zanaris Path buy step {} has invalid est_gp", step.id.0))?;
+    *total = (*total)
+        .checked_add(estimate)
+        .ok_or_else(|| "Zanaris Path purchase estimates exceed i32".to_owned())?;
+    Ok(())
+}
+
+fn zanaris_purchase_estimate(path: &PathDocument) -> Result<i32, String> {
+    let mut total = 0;
+    if let Some(quest) = &path.quest {
+        for steps in quest.acquire.values() {
+            for step in steps {
+                add_zanaris_buy_estimate(&mut total, step)?;
+            }
+        }
+    }
+    for role in &path.roles {
+        if let Some(step) = &role.progress_reader {
+            add_zanaris_buy_estimate(&mut total, step)?;
+        }
+        for step in &role.prelude {
+            add_zanaris_buy_estimate(&mut total, step)?;
+        }
+        for sequence in &role.sequences {
+            for step in &sequence.steps {
+                add_zanaris_buy_estimate(&mut total, step)?;
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn zanaris_fixture_items(path: &PathDocument) -> Result<(ZanarisFixtureItems, i32), String> {
+    let coin_seed = zanaris_purchase_estimate(path)?;
+    let mut items = EXTRA_ITEMS.to_vec();
+    items.push(("coins", coin_seed));
+    Ok((items, coin_seed))
+}
 const STAND: WorldTile = WorldTile {
     x: 3145,
     z: 3202,
@@ -135,13 +184,14 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
         .item_by_alias("coins")
         .map(|item| item.id)
         .ok_or("selected R289 data has no coins item")?;
+    let (extra_items, coin_seed) = zanaris_fixture_items(&path)?;
 
     let mut scenario = scenario::quester_stage_with_watch(
         "zanaris-entrana-dungeon-entry",
         DISPLAY,
         QUEST,
         stage_value,
-        &EXTRA_ITEMS,
+        &extra_items,
         STAND,
         12_000,
     );
@@ -210,10 +260,9 @@ fn zanaris_navigation_cell() -> Result<Cell, String> {
             .filter(|item| item.def.id == coins_id)
             .map(|item| item.count)
             .sum();
-        if coin_count != ZANARIS_COIN_FLOAT {
+        if coin_count != coin_seed {
             return Err(format!(
-                "Base40 fixture coins expected {}, observed {coin_count}",
-                ZANARIS_COIN_FLOAT
+                "Base40 fixture coins expected {coin_seed}, observed {coin_count}"
             ));
         }
         Ok(json!({
@@ -291,4 +340,48 @@ fn live_zanaris_entrana_dungeon_entry() {
     )
     .expect("Lost City Path must reach the Entrana dungeon on the selected nav pack");
     println!("LOST-CITY-DUNGEON-ENTRY {receipt}");
+}
+#[cfg(test)]
+mod tests {
+    use super::{zanaris_fixture_items, PathDocument};
+    use serde_json::Value;
+
+    fn sum_buy_estimates(value: &Value) -> u64 {
+        let current = if value.get("kind").and_then(Value::as_str) == Some("buy") {
+            value
+                .get("args")
+                .and_then(|args| args.get("est_gp"))
+                .and_then(Value::as_u64)
+                .expect("every Path buy step has an unsigned est_gp")
+        } else {
+            0
+        };
+        let nested = match value {
+            Value::Array(values) => values.iter().map(sum_buy_estimates).sum(),
+            Value::Object(fields) => fields.values().map(sum_buy_estimates).sum(),
+            _ => 0,
+        };
+        current + nested
+    }
+
+    #[test]
+    fn zanaris_fixture_coin_seed_covers_path_purchase_estimates() {
+        let path: PathDocument =
+            serde_json::from_str(include_str!("../../script/paths/289/zanaris.json"))
+                .expect("embedded Zanaris Path is valid JSON");
+        let raw_path = serde_json::to_value(&path).expect("Zanaris Path serializes");
+        let required = sum_buy_estimates(&raw_path);
+        let (items, coin_seed) = zanaris_fixture_items(&path).expect("Path purchases are priced");
+        let seeded = items
+            .iter()
+            .find_map(|(alias, quantity)| (*alias == "coins").then_some(*quantity))
+            .expect("fixture seeds coins");
+        assert_eq!(seeded, coin_seed);
+        let seeded = u64::try_from(seeded).expect("coin seed is nonnegative");
+
+        assert!(
+            seeded >= required,
+            "Zanaris fixture seeds {seeded} coins but its Path purchases need {required}"
+        );
+    }
 }
