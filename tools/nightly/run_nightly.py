@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import datetime as dt
+import errno
 import hashlib
 import json
 import os
@@ -461,6 +462,20 @@ def kill_tree(pid: int, proc: subprocess.Popen | None = None) -> None:
 
 
 
+def _signal_recorded_group(pid: int, sig: int, proc: subprocess.Popen | None) -> bool:
+    """Signal a recorded child group, returning false if the group is absent."""
+    try:
+        os.killpg(pid, sig)
+    except ProcessLookupError:
+        return False
+    except PermissionError as error:
+        # macOS kill(2) can return EPERM if any group member cannot be signaled.
+        if error.errno != errno.EPERM or proc is None or proc.poll() is None:
+            raise
+        log(f"killpg({pid}) returned EPERM after the recorded child exited: {error}")
+    return True
+
+
 def stop_cell_process(pid: int, proc: subprocess.Popen | None = None) -> None:
     """Stop only a recorded live-cell process group after MAC-QUIET appears."""
     with _children_lock:
@@ -470,19 +485,14 @@ def stop_cell_process(pid: int, proc: subprocess.Popen | None = None) -> None:
     if IS_WINDOWS:
         kill_tree(pid, proc)
         return
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
+    if not _signal_recorded_group(pid, signal.SIGTERM, proc):
         return
     if proc is not None:
         try:
             proc.wait(timeout=1)
         except subprocess.TimeoutExpired:
             pass
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    _signal_recorded_group(pid, signal.SIGKILL, proc)
     if proc is not None:
         proc.wait()
 
