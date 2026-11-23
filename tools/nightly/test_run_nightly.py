@@ -1428,6 +1428,23 @@ class RevisionImportTests(unittest.TestCase):
         self.assertEqual(out.stdout.split(), ["[]", "289"])
 
 
+class Revision377CellSkipTests(unittest.TestCase):
+    def test_every_377_catalog_cell_is_skipped_in_the_289_sweep(self):
+        # The nightly runs revisions 274 and 289 only. A 377 cell needs the
+        # 377 engine inputs, so it must print as SKIP with a reason. Running it
+        # on the 289 engine gave 0 ticks (2026-11-12 triage).
+        tree = Path(__file__).resolve().parents[2]
+        if not (tree / rn.CATALOG_RS).is_file():
+            self.skipTest("runner copy without the product tree (self-update sandbox)")
+        cells_377 = sorted(cell for cell in rn.catalog_cells(tree) if "377" in cell)
+        self.assertTrue(cells_377)
+        skips = rn.read_skips(rn.HERE / "skip.conf")
+        for cell in cells_377:
+            with self.subTest(cell=cell):
+                self.assertIn(cell, skips)
+                self.assertIn("377", skips[cell])
+
+
 class CellsFileTests(unittest.TestCase):
     def test_a_relative_cells_file_is_read_beside_the_script(self):
         self.assertEqual(rn.cells_file_path(None, "cells-274.conf"), rn.HERE / "cells-274.conf")
