@@ -582,8 +582,8 @@ pub struct Traveller {
     /// varp persists too); a new entry overwrites it.
     essence: Option<EssenceSession>,
     /// The tick allowance of the follow that started last
-    /// ([`Self::take_follow_allowance`]); zero when none is waiting.
-    follow_allowance: u64,
+    /// ([`Self::take_follow_allowance`]), saturated; zero when none is waiting.
+    follow_allowance: u32,
 }
 
 impl Traveller {
@@ -603,7 +603,7 @@ impl Traveller {
     /// `None` until a new follow starts, so a replan reports its own.
     pub fn take_follow_allowance(&mut self) -> Option<u64> {
         let ticks = std::mem::take(&mut self.follow_allowance);
-        (ticks != 0).then_some(ticks)
+        (ticks != 0).then_some(u64::from(ticks))
     }
 
     /// Drop the active follow run and its terminal-leg record.
@@ -795,7 +795,12 @@ impl Traveller {
         if self.follow.is_none() {
             self.follow_terminal_leg = None;
             let run = start_run(options);
-            self.follow_allowance = run.allowance;
+            self.follow_allowance = u32::try_from(route_allowance_ticks(
+                leg_shapes(&run.legs),
+                run.budget,
+                run.max_hops,
+            ))
+            .unwrap_or(u32::MAX);
             self.follow = Some(run);
         }
         let outcome = self
@@ -1004,8 +1009,6 @@ struct FollowRun {
     settle_until: Option<u32>,
     walk: Option<WalkHop>,
     transport: Option<TransportHop>,
-    /// The observed ticks this follow may take ([`route_allowance_ticks`]).
-    allowance: u64,
 }
 
 impl FollowRun {
@@ -1026,11 +1029,6 @@ impl FollowRun {
     }
 
     fn with_legs(legs: RouteLegSource, options: &TravelOptions<'_>) -> FollowRun {
-        let allowance = route_allowance_ticks(
-            leg_shapes(&legs),
-            options.budget_ticks_per_hop,
-            options.max_hops,
-        );
         FollowRun {
             stun_wait: None,
             stun_recovery_used: false,
@@ -1050,7 +1048,6 @@ impl FollowRun {
             settle_until: None,
             walk: None,
             transport: None,
-            allowance,
         }
     }
 
