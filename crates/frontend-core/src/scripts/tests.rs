@@ -60,6 +60,14 @@ fn surface_start_errors_keep_runtime_and_refusal_classification() {
             StartLoadError::Surface(SurfaceError::ForeignCard(SurfaceKind::Js)),
             ScriptStartErrorKind::Refused,
         ),
+        (
+            StartLoadError::SettingValue(script::SavedSettingValueError {
+                setting: "names".into(),
+                kind: script::SavedSettingValueErrorKind::WrongType,
+            }),
+            ScriptStartErrorKind::Refused,
+        ),
+        ),
     ] {
         let diagnostic = error.to_string();
         let converted = super::ScriptStartError::from(error);

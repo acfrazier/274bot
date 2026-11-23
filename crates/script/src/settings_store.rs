@@ -260,6 +260,7 @@ pub fn validate_saved_setting_value(
         "boolean" if !value.is_boolean() => {
             return Err(error(SavedSettingValueErrorKind::WrongType));
         }
+        "boolean" => {}
         "number" => {
             let Some(number) = value.as_f64().filter(|number| number.is_finite()) else {
                 return Err(error(SavedSettingValueErrorKind::WrongType));
