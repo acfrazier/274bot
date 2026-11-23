@@ -95,7 +95,11 @@ fn apply(replay: &mut Replay<'_>, texts: &Texts, action: Action, model: &State) 
         }
         Action::Recv => {
             let entry = replay.rx.try_recv().expect("the model has a queued entry");
-            assert_eq!(Some(entry.lines as u8), model.inflight, "entry taken");
+            assert_eq!(
+                Some(entry.lines as u8),
+                model.chan.first().copied(),
+                "entry taken"
+            );
             replay.inflight = Some(entry);
         }
         Action::Finish { fail } => {

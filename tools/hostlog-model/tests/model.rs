@@ -54,13 +54,11 @@ fn every_mutation_fails_the_invariant_that_must_catch_it() {
         let mut caught = false;
         for profile in profiles() {
             let result = explore_profile(&profile, mutation, None, limits(), true);
-            let names: Vec<&str> = result
+            caught |= result
                 .failure
                 .iter()
                 .chain(&result.failures)
-                .map(|(v, _)| v.name)
-                .collect();
-            caught |= names.contains(&expected);
+                .any(|(v, _)| v.name == expected);
         }
         assert!(
             caught,
