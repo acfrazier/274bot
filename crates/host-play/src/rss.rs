@@ -197,7 +197,8 @@ pub fn sample_process() -> (u64, f64) {
     }
 }
 
-/// Current resident set size in bytes.
+/// Current process memory in bytes: physical footprint on macOS, resident
+/// pages on Linux, and working set on Windows.
 ///
 /// Distinct from [`sample_process`]'s first field, which is lifetime peak
 /// (`ru_maxrss` / Windows `PeakWorkingSetSize`). Returns `None` on unsupported
@@ -205,27 +206,31 @@ pub fn sample_process() -> (u64, f64) {
 pub fn current_resident_bytes() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
-        // libc::mach_task_self is deprecated in favor of mach2; stay on
-        // libc with the rest of host-play and suppress the warn.
-        #[allow(deprecated)]
-        unsafe {
-            let mut info: libc::mach_task_basic_info = std::mem::zeroed();
-            let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
-            let kr = libc::task_info(
+        // TASK_VM_INFO_REV1 is 38 integer_t cells. Its final two cells are
+        // phys_footprint, at u64 index 18 (mach/task_info.h).
+        let mut info = [0_u64; 19];
+        let mut count: libc::mach_msg_type_number_t = 38;
+        #[expect(
+            deprecated,
+            reason = "libc's Mach task accessor avoids an extra FFI dependency"
+        )]
+        // SAFETY: mach_task_self() names this process. task_info writes at most
+        // count integer_t cells into the aligned 19-u64 buffer. Its returned
+        // count is checked before reading the complete phys_footprint field.
+        let kr = unsafe {
+            libc::task_info(
                 libc::mach_task_self(),
-                libc::MACH_TASK_BASIC_INFO,
-                &mut info as *mut _ as libc::task_info_t,
+                22, // TASK_VM_INFO
+                info.as_mut_ptr().cast::<libc::integer_t>(),
                 &mut count,
-            );
-            if kr != libc::KERN_SUCCESS {
-                return None;
-            }
-            let n = info.resident_size as u64;
-            if n == 0 {
-                None
-            } else {
-                Some(n)
-            }
+            )
+        };
+        if kr != libc::KERN_SUCCESS || count != 38 {
+            return None;
+        }
+        match info[18] {
+            0 => None,
+            footprint => Some(footprint),
         }
     }
     #[cfg(target_os = "linux")]
@@ -322,6 +327,33 @@ mod tests {
             assert_eq!(current, None);
             assert_eq!(peak, 0);
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_current_memory_matches_map_footprint() {
+        // The map_footprint example reads ri_phys_footprint from RUSAGE_INFO_V4.
+        // SAFETY: rusage_info_v4 is a plain C output struct. The current PID and
+        // writable buffer match proc_pid_rusage's RUSAGE_INFO_V4 contract.
+        let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+        let readout = current_resident_bytes().expect("task_info current footprint");
+        // SAFETY: The current PID identifies the same process as the readout.
+        // proc_pid_rusage writes RUSAGE_INFO_V4 into the valid output buffer.
+        let rc = unsafe {
+            libc::proc_pid_rusage(
+                libc::getpid(),
+                libc::RUSAGE_INFO_V4,
+                (&mut info as *mut libc::rusage_info_v4).cast::<libc::rusage_info_t>(),
+            )
+        };
+        assert_eq!(rc, 0, "proc_pid_rusage(RUSAGE_INFO_V4) failed");
+        let example = info.ri_phys_footprint;
+        println!("readout_bytes={readout} example_ri_phys_footprint_bytes={example}");
+        assert!(example > 0, "example footprint was zero");
+        assert!(
+            readout.abs_diff(example) <= 2 * 1024 * 1024,
+            "readout={readout} example={example}: different memory metrics"
+        );
     }
 
     #[test]

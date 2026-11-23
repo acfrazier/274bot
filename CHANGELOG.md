@@ -35,6 +35,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Revision 377 login failures show clearer messages. An outdated-client
   refusal asks you to reload the page instead of suggesting a login-key problem.
 
+### macOS memory
+
+- The current-memory readout reports physical footprint, consistent with the
+  map-cache footprint measurement. Lifetime peak RSS remains a separate metric.
+
 ### Navigation
 
 - Danger routing now defaults to **Always**, matching compat v1. Walks may
