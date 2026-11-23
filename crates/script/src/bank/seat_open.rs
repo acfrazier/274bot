@@ -2460,7 +2460,9 @@ fn selected_bank(facts: &NamedBankFacts, selected: SelectedBank) -> Option<Selec
 mod tests {
     use super::*;
     use crate::native::{ledger, HostEffect};
-    use crate::quester::families::tests::{local_player, with_tick, with_tick_reach};
+    use crate::quester::families::tests::{
+        local_player, with_tick, with_tick_reach, with_tick_without_selected_game_data,
+    };
     use api::snapshot::GameSnapshot;
 
     fn duel_chest(open: bool) -> LocView {
@@ -3244,24 +3246,25 @@ mod tests {
         snapshot.seed_ingame(2);
         snapshot.seed_local_player(local_player(tile(100, 100)));
         let mut ledger = None;
-        let (_owner, mut opening, action_id) = with_tick(&snapshot, &mut ledger, 1, |tick| {
-            let owner = tick
-                .actions
-                .begin::<Opening>(args.clone(), &mut tick.cx)
-                .expect("opening owner");
-            let action_id = tick.cx.action_id;
-            let mut opening = Opening::begin(args, &mut tick.cx).expect("opening machine");
-            // The slot hold gate skips this machine; drive it directly to exercise a refused walk.
-            tick.cx.eligible = false;
-            let refused = walk_request(&tick.cx, bank_tile, 2, access_walk_options());
-            assert!(matches!(tick.cx.walk(refused), Err(ActionError::Held)));
-            assert!(opening.poll(&mut tick.cx).is_pending());
-            (owner, opening, action_id)
-        });
+        let (_owner, mut opening, action_id) =
+            with_tick_without_selected_game_data(&snapshot, &mut ledger, 1, |tick| {
+                let owner = tick
+                    .actions
+                    .begin::<Opening>(args.clone(), &mut tick.cx)
+                    .expect("opening owner");
+                let action_id = tick.cx.action_id;
+                let mut opening = Opening::begin(args, &mut tick.cx).expect("opening machine");
+                // The slot hold gate skips this machine; drive it directly to exercise a refused walk.
+                tick.cx.eligible = false;
+                let refused = walk_request(&tick.cx, bank_tile, 2, access_walk_options());
+                assert!(matches!(tick.cx.walk(refused), Err(ActionError::Held)));
+                assert!(opening.poll(&mut tick.cx).is_pending());
+                (owner, opening, action_id)
+            });
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
 
         let mut events = Vec::new();
-        with_tick(&snapshot, &mut ledger, 2, |tick| {
+        with_tick_without_selected_game_data(&snapshot, &mut ledger, 2, |tick| {
             tick.cx.action_id = action_id;
             assert!(opening.poll(&mut tick.cx).is_pending());
         });
@@ -3278,7 +3281,7 @@ mod tests {
         lock_hooks(&hooks).answer = Some(TransferAnswer::Value(Value::Null));
 
         snapshot.seed_npcs(vec![bank_npc(7, bank_tile, bank_tile)]);
-        with_tick(&snapshot, &mut ledger, 3, |tick| {
+        with_tick_without_selected_game_data(&snapshot, &mut ledger, 3, |tick| {
             tick.cx.action_id = action_id;
             assert!(opening.poll(&mut tick.cx).is_pending());
         });
