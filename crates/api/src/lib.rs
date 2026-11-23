@@ -27,6 +27,7 @@ pub mod ground_take;
 pub mod hostlog;
 pub mod identity;
 pub mod interact;
+pub mod json;
 pub mod lifecycle;
 pub mod line_of_sight;
 pub mod loadout;
