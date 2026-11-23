@@ -2,6 +2,9 @@
 //! Each cell runs in a child test process so the production Driver's stderr-only
 //! packet trace is captured without changing logging policy or sharing HOME state.
 
+#[path = "support/test_executable.rs"]
+mod test_executable;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1704,7 +1707,7 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         return;
     }
     let trace = evidence().join(format!("{cell}-driver-trace.txt"));
-    let status = Command::new(std::env::current_exe().unwrap())
+    let status = Command::new(test_executable::executable().unwrap())
         .args([
             "--exact",
             cell,

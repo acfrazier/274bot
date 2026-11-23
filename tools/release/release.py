@@ -50,6 +50,7 @@ GAME_DATA_ENV = (
 FULL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 NOTES_FOOTER = Path(__file__).resolve().parent / "notes-footer.md"
 SAFE_REMOTE = re.compile(r"^[A-Za-z0-9._/-]+$")
+SAFE_WINDOWS_REMOTE = re.compile(r"^[A-Za-z]:/[A-Za-z0-9._/-]+$")
 RELEASE_TAG = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)*$")
 
 
@@ -172,17 +173,23 @@ def validate_rustc_host(output, platform):
         )
 
 
-def validate_remote_root(value, label):
-    if not value or not SAFE_REMOTE.fullmatch(value):
-        raise ReleaseError(f"{label} must contain only letters, digits, '.', '_', '-', and '/'")
-    path = PurePosixPath(value)
-    if path.is_absolute() or any(part in ("", ".", "..") for part in path.parts):
-        raise ReleaseError(f"{label} must be a relative path below the remote home directory")
-    return path.as_posix()
-
-
-
-
+def validate_remote_root(value, label, windows=False):
+    pattern = SAFE_WINDOWS_REMOTE if windows else SAFE_REMOTE
+    if (
+        not isinstance(value, str)
+        or not pattern.fullmatch(value)
+        or (not windows and not value.startswith("/"))
+    ):
+        kind = "absolute drive path" if windows else "absolute POSIX path"
+        raise ReleaseError(
+            f"{label} must be an {kind} to a request evidence directory"
+        )
+    parts = value[3:].split("/") if windows else value[1:].split("/")
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise ReleaseError(
+            f"{label} must not contain empty, '.' or '..' path components"
+        )
+    return value
 
 
 def safe_tar_members(archive):
@@ -408,8 +415,9 @@ def selected_platforms(value):
 
 def render_build_plan(args, commit, client_commit, version):
     platforms = []
+    selected = selected_platforms(args.platform)
     cargo = "cargo build --locked --release -p panel --bin panel-play -p tui --bin tui-play"
-    for platform in selected_platforms(args.platform):
+    for platform in selected:
         if platform == "macos":
             executor = "local macOS"
             transport = "none"
@@ -432,12 +440,31 @@ def render_build_plan(args, commit, client_commit, version):
                 "set both revisions' GAME_DATA roots and RS2B0T to the transported local inputs",
                 "run python tools/local-data/build.py before the product build",
                 "set GIT_DIRTY=0 and BOT_NAV_BUILD=require",
+                "set CARGO_HOME to the request-local worker cache at cache/cargo",
                 "clean the API target to force fresh compiled-cfg evidence",
                 cargo + " --message-format=json-render-diagnostics",
                 "require the API embedded-game-data feature and reject no_local_game_data",
                 "write the same-build per-file receipt and run package.py",
             ],
         })
+    work_dir = Path(args.work_dir).resolve() if args.work_dir else None
+    platform_roots = {}
+    for platform in selected:
+        if platform == "macos":
+            root = work_dir / commit / platform if work_dir else None
+        elif platform == "linux":
+            root = (
+                linux_root(args, commit)
+                if args.linux_remote_root is not None
+                else None
+            )
+        else:
+            root = (
+                windows_root(args, commit)
+                if args.windows_remote_root is not None
+                else None
+            )
+        platform_roots[platform] = str(root) if root is not None else None
     return {
         "mode": "dry-run",
         "action": "build",
@@ -456,6 +483,11 @@ def render_build_plan(args, commit, client_commit, version):
                 "${SNAPSHOT_ROOT}/${SNAPSHOT_VERSION} for the revision-289 map bundle"
             ),
             "identity": "local game inputs are transported without content digests or pins",
+        },
+        "staging": {
+            "work_dir": str(work_dir) if work_dir else None,
+            "platform_roots": platform_roots,
+            "cargo_home": "{worker_root}/cache/cargo",
         },
         "platforms": platforms,
         "not_performed": ["build", "notarize", "tag", "push", "publish"],
@@ -603,11 +635,10 @@ MACOS_DEPLOYMENT_TARGET = "11.0"
 # is an allowlist built from empty: only the keys below are copied from
 # the parent, everything else about the build environment is constructed
 # here, and SDKROOT is left unset so xcrun rediscovers the SDK through
-# DEVELOPER_DIR / xcode-select. None of the dropped variables was set in
-# the environment that produced the known-good 0.2.1 package, so the
-# allowlist cannot change what that build finds. (~/.cargo/config.toml can
-# still inject rustflags from outside the environment; the otool linkage
-# check below is the fail-closed backstop for that.)
+# DEVELOPER_DIR / xcode-select. A request-local CARGO_HOME prevents loading
+# the builder's ~/.cargo/config.toml; repository-local Cargo configuration
+# remains active. The otool linkage check below is the fail-closed backstop
+# for unexpected linked-library paths.
 MACOS_SYSTEM_PATH_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 # Copied from the parent only when set, each linkage-neutral or needed to
 # identify the build user: USER/LOGNAME (codesign and passwd lookups),
@@ -616,9 +647,10 @@ MACOS_SYSTEM_PATH_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 # a cargo fetch that misses the local cache). PATH, HOME and
 # MACOSX_DEPLOYMENT_TARGET are also allowlisted but always constructed,
 # never inherited; DEVELOPER_DIR is copied only after validation below.
-# Deliberately not copied: CARGO_HOME/RUSTUP_HOME/RUSTUP_TOOLCHAIN (the
-# fixed PATH already names ~/.cargo/bin and rust-toolchain.toml pins the
-# toolchain) and every search-path, compiler-selection and DYLD_ variable.
+# Deliberately not inherited: CARGO_HOME is set to the worker-local
+# cache/cargo path below; RUSTUP_HOME/RUSTUP_TOOLCHAIN are not inherited
+# and rust-toolchain.toml pins the toolchain. Search-path, compiler-
+# selection and DYLD_ variables are also omitted.
 MACOS_PASSTHROUGH_ENV = (
     "USER", "LOGNAME", "TMPDIR", "LANG",
     "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
@@ -700,6 +732,7 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
         "BOT_NAV_BUILD": "require",
         "BOT_NAV_SNAPSHOT_ROOT": str(local_inputs / "snapshots"),
         "RS2B0T": str(local_inputs / "rs2b0t"),
+        "CARGO_HOME": str(Path(target).parent / "cargo"),
         "CARGO_TARGET_DIR": str(target),
         "CARGO_BUILD_JOBS": str(expect["jobs"]),
         "CARGO_INCREMENTAL": "0",
@@ -875,7 +908,8 @@ def scp_base(identity=None, known_hosts=None):
 
 
 def linux_root(args, commit):
-    return f"{validate_remote_root(args.linux_remote_root, '--linux-remote-root')}/{commit}/linux"
+    root = validate_remote_root(args.linux_remote_root, "--linux-remote-root")
+    return f"{root}/{commit}/linux"
 
 
 def linux_run(args, script):
@@ -904,14 +938,31 @@ def windows_transport(args, action, *values):
 
 
 def windows_root(args, commit):
-    return f"{validate_remote_root(args.windows_remote_root, '--windows-remote-root')}/{commit}/windows"
+    root = validate_remote_root(
+        args.windows_remote_root, "--windows-remote-root", windows=True
+    )
+    return f"{root}/{commit}/windows"
+
+
+def validate_remote_roots(args, platforms):
+    if "linux" in platforms:
+        linux_root(args, args.commit)
+    if "windows" in platforms:
+        windows_root(args, args.commit)
 
 
 def powershell_quote(value):
     value = str(value)
     if any(character in value for character in "\x00\r\n\u2018\u2019\u201a\u201b"):
-        raise ReleaseError("PowerShell argument contains a forbidden quote or control character")
+        raise ReleaseError(
+            "PowerShell argument contains a forbidden quote or control character"
+        )
     return "'" + value.replace("'", "''") + "'"
+
+
+def powershell_root_assignment(remote):
+    path = str(remote).replace("/", "\\")
+    return "$root = " + powershell_quote(path)
 
 
 def stage_payload(args, platform, commit_root, payload):
@@ -926,16 +977,19 @@ def stage_payload(args, platform, commit_root, payload):
         linux_run(args, f"cd {shlex.quote(remote)} && tar -xzf payload.tar.gz")
         return remote
     remote = windows_root(args, args.commit)
-    create = "$root = Join-Path $HOME {}; New-Item -ItemType Directory -Force $root | Out-Null".format(
-        powershell_quote(remote.replace("/", "\\"))
+    create = (
+        f"{powershell_root_assignment(remote)}; "
+        "New-Item -ItemType Directory -Force $root | Out-Null"
     )
     windows_transport(args, "run", create)
     windows_transport(args, "put", payload, f"{remote}/payload.tar.gz")
-    extract = "$root = Join-Path $HOME {}; Set-Location $root; python -m tarfile -e payload.tar.gz .".format(
-        powershell_quote(remote.replace("/", "\\"))
+    extract = (
+        f"{powershell_root_assignment(remote)}; "
+        "Set-Location $root; python -m tarfile -e payload.tar.gz ."
     )
     windows_transport(args, "run", extract)
     return remote
+
 
 def clear_platform_stage(args, platform, commit_root):
     if platform == "macos":
@@ -947,9 +1001,9 @@ def clear_platform_stage(args, platform, commit_root):
         return
     remote = windows_root(args, args.commit)
     script = (
-        "$root = Join-Path $HOME {}; "
-        "if (Test-Path $root) {{ Remove-Item -Recurse -Force -ErrorAction Stop $root }}"
-    ).format(powershell_quote(remote.replace("/", "\\")))
+        f"{powershell_root_assignment(remote)}; "
+        "if (Test-Path $root) { Remove-Item -Recurse -Force -ErrorAction Stop $root }"
+    )
     windows_transport(args, "run", script)
 
 
@@ -968,9 +1022,10 @@ def dispatch_build(args, platform, root):
     command = ["python", "-u", "release.py", "build", "--commit", args.commit,
                "--platform", platform, "--worker-root", ".",
                "--rusty-v8-archive", args.rusty_v8_archive]
-    script = "$root = Join-Path $HOME {}; Set-Location $root; {}".format(
-        powershell_quote(root.replace("/", "\\")),
-        "& " + " ".join(powershell_quote(value) for value in command),
+    script = (
+        f"{powershell_root_assignment(root)}; "
+        "Set-Location $root; "
+        + "& " + " ".join(powershell_quote(value) for value in command)
     )
     windows_transport(args, "run", script)
 
@@ -986,6 +1041,7 @@ def build_controller(args):
                          indent=2, sort_keys=True))
         return
     platforms = selected_platforms(args.platform)
+    validate_remote_roots(args, platforms)
     if "windows" in platforms:
         if not args.windows_host:
             raise ReleaseError("Windows build requires --windows-host or RELEASE_WINDOWS_HOST")
@@ -1218,8 +1274,10 @@ def finalize_controller(args):
     notes = Path(args.release_notes).resolve()
     if not notes.is_file():
         raise ReleaseError(f"release notes are missing: {notes}")
-    if "windows" in selected_platforms(args.platform) and not args.windows_host:
+    platforms = selected_platforms(args.platform)
+    if "windows" in platforms and not args.windows_host:
         raise ReleaseError("Windows finalization requires --windows-host or RELEASE_WINDOWS_HOST")
+    validate_remote_roots(args, platforms)
     commit_root = Path(args.work_dir).resolve() / args.commit
     expect_path = commit_root / "prepared/expect.json"
     if not expect_path.is_file():
@@ -1230,7 +1288,7 @@ def finalize_controller(args):
     args.release_notes = notes
     artifact_dir = Path(args.artifact_dir).resolve() if args.artifact_dir else commit_root / "artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    for platform in selected_platforms(args.platform):
+    for platform in platforms:
         name = release_base(args.tag, platform) + ARCHIVE_SUFFIX[platform]
         destination = artifact_dir / name
         if destination.exists():
@@ -1255,9 +1313,10 @@ def finalize_controller(args):
             command = ["python", "-u", "release.py", "finalize", "--commit", args.commit,
                        "--platform", platform, "--worker-root", ".", "--tag", args.tag,
                        "--release-notes", "RELEASE-NOTES.md"]
-            script = "$root = Join-Path $HOME {}; Set-Location $root; {}".format(
-                powershell_quote(root.replace("/", "\\")),
-                "& " + " ".join(powershell_quote(value) for value in command),
+            script = (
+                f"{powershell_root_assignment(root)}; "
+                "Set-Location $root; "
+                + "& " + " ".join(powershell_quote(value) for value in command)
             )
             windows_transport(args, "run", script)
             windows_transport(args, "get", f"{root}/{name}", destination)
@@ -1907,6 +1966,7 @@ def verify_controller(args):
     if not args.artifact_dir:
         raise ReleaseError("verify requires --artifact-dir")
     selected = selected_platforms(args.platform)
+    validate_remote_roots(args, selected)
     if "windows" in selected and not args.windows_host:
         raise ReleaseError("Windows verification requires --windows-host or RELEASE_WINDOWS_HOST")
     artifact_dir = Path(args.artifact_dir).resolve()
@@ -1962,23 +2022,25 @@ def verify_controller(args):
         else:
             root = windows_root(args, args.commit)
             create = (
-                "$root = Join-Path $HOME {}; "
+                f"{powershell_root_assignment(root)}; "
                 "New-Item -ItemType Directory -Force $root | Out-Null"
-            ).format(powershell_quote(root.replace("/", "\\")))
+            )
             windows_transport(args, "run", create)
             windows_transport(args, "put", Path(__file__), f"{root}/release.py")
             windows_transport(args, "put", archive, f"{root}/{archive.name}")
             command = ["python", "-u", "release.py", "verify", "--commit", args.commit,
                        "--platform", platform, "--worker-root", ".", "--archive", archive.name]
-            script = "$root = Join-Path $HOME {}; Set-Location $root; {}".format(
-                powershell_quote(root.replace("/", "\\")),
-                "& " + " ".join(powershell_quote(value) for value in command),
+            script = (
+                f"{powershell_root_assignment(root)}; "
+                "Set-Location $root; "
+                + "& " + " ".join(powershell_quote(value) for value in command)
             )
             windows_transport(args, "run", script)
     print(json.dumps(
         {"verified": sorted(native_archives), "map_catalogues": map_catalogues},
         indent=2,
     ))
+
 
 def retain_release_outputs(root, commit, platform):
     root = Path(root).resolve()
@@ -2018,6 +2080,7 @@ def clean_controller(args):
     platforms = selected_platforms(args.platform)
     if "windows" in platforms and not args.windows_host:
         raise ReleaseError("Windows cleanup requires --windows-host or RELEASE_WINDOWS_HOST")
+    validate_remote_roots(args, platforms)
     for platform in platforms:
         if args.mode == "reset-platform":
             clear_platform_stage(args, platform, commit_root)
@@ -2034,22 +2097,30 @@ def clean_controller(args):
             root = windows_root(args, args.commit)
             command = ["python", "-u", "release.py", "clean", "--commit", args.commit,
                        "--platform", platform, "--worker-root", ".", "--mode", "retain"]
-            script = "$root = Join-Path $HOME {}; Set-Location $root; {}".format(
-                powershell_quote(root.replace("/", "\\")),
-                "& " + " ".join(powershell_quote(value) for value in command),
+            script = (
+                f"{powershell_root_assignment(root)}; "
+                "Set-Location $root; "
+                + "& " + " ".join(powershell_quote(value) for value in command)
             )
             windows_transport(args, "run", script)
 
 
 def add_transport_arguments(parser):
     parser.add_argument("--linux-host", default=os.environ.get("RELEASE_LINUX_HOST", "274bot-builder"))
-    parser.add_argument("--linux-remote-root", default=os.environ.get("RELEASE_LINUX_ROOT", "274bot-release"))
+    parser.add_argument(
+        "--linux-remote-root",
+        default=os.environ.get("RELEASE_LINUX_ROOT"),
+        help="absolute POSIX request evidence directory on the Linux builder",
+    )
     parser.add_argument("--linux-identity", type=Path, default=os.environ.get("RELEASE_LINUX_IDENTITY"))
     parser.add_argument("--linux-known-hosts", type=Path,
                         default=os.environ.get("RELEASE_LINUX_KNOWN_HOSTS"))
     parser.add_argument("--windows-host", default=os.environ.get("RELEASE_WINDOWS_HOST"))
-    parser.add_argument("--windows-remote-root",
-                        default=os.environ.get("RELEASE_WINDOWS_ROOT", "274bot-release"))
+    parser.add_argument(
+        "--windows-remote-root",
+        default=os.environ.get("RELEASE_WINDOWS_ROOT"),
+        help="absolute drive-qualified request evidence directory on the Windows builder",
+    )
     parser.add_argument("--windows-identity", type=Path,
                         default=os.environ.get("RELEASE_WINDOWS_IDENTITY"))
     parser.add_argument("--windows-known-hosts", type=Path,

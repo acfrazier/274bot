@@ -47,6 +47,9 @@ mod menu;
 #[path = "revision_377_live/interference.rs"]
 mod interference;
 
+#[path = "support/test_executable.rs"]
+mod test_executable;
+
 #[path = "revision_377_live/keys.rs"]
 mod keys;
 
@@ -1158,7 +1161,8 @@ fn nightly_quiet_lock_callsite_uses_the_configured_variable() -> Result<(), Stri
     let home = ScratchHome::new()?;
     let lock = home.0.join("callsite-quiet");
     fs::create_dir(&lock).map_err(|error| error.to_string())?;
-    let result = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+    let executable = test_executable::executable().map_err(|error| error.to_string())?;
+    let result = std::process::Command::new(executable)
         .args([
             "--exact",
             "nightly_quiet_lock_environment_probe",

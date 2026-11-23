@@ -469,7 +469,7 @@ rss_ladder 1 acf   13u  IPv4 0x3      0t0  TCP 127.0.0.1:50002->127.0.0.1:43594 
         }
 
         let output = crate::test_process::output(
-            std::process::Command::new(std::env::current_exe().expect("current test executable"))
+            std::process::Command::new(crate::test_process::executable())
                 .arg("process_cpu_counter_busy_loop_child")
                 .arg("--nocapture")
                 .arg("--ignored")
