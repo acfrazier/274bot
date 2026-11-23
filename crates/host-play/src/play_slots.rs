@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use api::host_log;
 use api::hostlog::{Category, Level};
 use api::identity::SlotKeyMinter;
-use api::lifecycle::Intent;
+use api::lifecycle::{Intent, LoginRefusal};
 use api::snapshot::GameSnapshot;
 use client::client::Client;
 use client::config::{Cache, IfType, IfTypeMut};
@@ -29,9 +29,9 @@ use crate::play_login::{
     capture_login_authorization, configure_slot_world, drop_queue_place, enqueue_queue_place,
     granted_permit_world_is_current, observe_client_session_exit, plan_login_retry,
     publish_login_latched_from_arm, refresh_slot_world_preference, should_handshake,
-    sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
-    wait_for_transfer_response, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
-    SlotLogin,
+    sync_profile_arm, terminal_login_refusal, tick_flags, transfer_countdown_message,
+    wait_for_permit, wait_for_transfer_response, PermitWait, QueuePlaceRetirement,
+    SharedLoginQueue, SlotArm, SlotLogin,
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
@@ -1488,7 +1488,10 @@ fn spawn_slot_thread(
                             host_log!(Category::Login, Level::Info, "handshake ok");
                         }
                         Err(e) => {
-                            show_title_message(&mut client, &e.mes1, &e.mes2);
+                            let terminal = terminal_login_refusal(&e, client.revision());
+                            if terminal.is_none() {
+                                show_title_message(&mut client, &e.mes1, &e.mes2);
+                            }
                             let transfer_countdown = Cell::new(None);
                             if wait_for_transfer_response(
                                 &e,
@@ -1511,7 +1514,35 @@ fn spawn_slot_thread(
                             if !arm.login_attempt_is_current(login_command, login_world_generation) {
                                 continue;
                             }
-                            record_login_error(&slot_statuses, &username, &e);
+                            if let Some(refusal) = terminal {
+                                if arm.hold_login_on_server_refusal(
+                                    login_command,
+                                    login_world_generation,
+                                    refusal,
+                                ) {
+                                    let title = format!("Login stopped (code {})", refusal.code());
+                                    show_title_message(
+                                        &mut client,
+                                        &title,
+                                        refusal.explanation(),
+                                    );
+                                    record_login_error(
+                                        &slot_statuses,
+                                        &username,
+                                        &e,
+                                        Some(refusal),
+                                    );
+                                    if refusal == LoginRefusal::RevisionCacheOrRsaMismatch
+                                        && world_round.is_some()
+                                    {
+                                        refresh_key = true;
+                                        world_dirty = true;
+                                        key_refreshed = false;
+                                    }
+                                }
+                                continue;
+                            }
+                            record_login_error(&slot_statuses, &username, &e, None);
                             if let Some(delay) = arm.defer_clean_release_at(
                                 &e,
                                 login_command,
@@ -1582,7 +1613,9 @@ fn spawn_slot_thread(
                     // a wait was cancelled) answers no screen the operator
                     // saw, so a stale Log In must not undo a Logout.
                     slot_input.discard_user(&mut client.shell);
-                    show_title_message(&mut client, "", "");
+                    if arm.login_refusal().is_none() {
+                        show_title_message(&mut client, "", "");
+                    }
                 }
                 let mut mainland_sent = false;
                 let arm_obs = Arc::clone(&arm);

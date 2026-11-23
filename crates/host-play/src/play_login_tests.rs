@@ -343,7 +343,6 @@ fn non_cancelling_intents_preserve_attempt_currency_and_token() {
         Intent::MemoryMode(MemoryMode::Low),
         Intent::AutoLogin(true),
         Intent::ScriptNeedsSession(true),
-        Intent::Login,
         Intent::RelogNow,
     ] {
         let arm = SlotArm::new(7, true);
@@ -371,6 +370,7 @@ fn cancelling_rows_after_unused_grant_abandon_without_settlement() {
     for row in [
         Intent::Logout,
         Intent::HoldLoggedOut,
+        Intent::Login,
         Intent::WithdrawLogin,
         Intent::RemoveSlot,
         Intent::ProcessShutdown,
@@ -1285,6 +1285,122 @@ fn stale_attempt_cannot_install_generic_backoff_on_new_login_intent() {
     );
     assert!(arm.login_wanted());
 }
+#[test]
+fn terminal_server_refusal_classifier_is_revision_scoped() {
+    let refusals = [
+        (3, LoginRefusal::InvalidCredentials),
+        (4, LoginRefusal::AccountBanned),
+        (6, LoginRefusal::RevisionCacheOrRsaMismatch),
+        (11, LoginRefusal::IpBanOrSaveRefusal),
+        (12, LoginRefusal::MembersWorldRequired),
+        (13, LoginRefusal::PlayerSaveRejected),
+        (17, LoginRefusal::MembersAreaOnFreeWorld),
+    ];
+    for (code, expected) in refusals {
+        let error = LoginError::response(code, "", "");
+        for revision in [
+            client::client::ClientRevision::R274,
+            client::client::ClientRevision::R289,
+        ] {
+            assert_eq!(
+                terminal_login_refusal(&error, revision),
+                Some(expected),
+                "response {code} on {revision:?}"
+            );
+        }
+        assert_eq!(
+            terminal_login_refusal(&error, client::client::ClientRevision::R377),
+            None,
+            "response {code} on revision 377"
+        );
+    }
+
+    for code in [1, 5, 7, 8, 9, 14, 16, 21] {
+        let error = LoginError::response(code, "", "");
+        assert_eq!(
+            terminal_login_refusal(&error, client::client::ClientRevision::R289),
+            None,
+            "response {code} remains retryable"
+        );
+    }
+
+    let unknown = LoginError::response(255, "", "");
+    assert_eq!(
+        terminal_login_refusal(&unknown, client::client::ClientRevision::R289),
+        Some(LoginRefusal::Unsupported { code: 255 })
+    );
+    assert_eq!(
+        terminal_login_refusal(&unknown, client::client::ClientRevision::R377),
+        None
+    );
+
+    let mut transport = LoginError::response(6, "", "");
+    transport.transport = Some(client::client::LoginTransportError {
+        stage: client::client::LoginStage::ReadResponse,
+        kind: std::io::ErrorKind::WouldBlock,
+        errno: None,
+        detail: "read timed out".into(),
+    });
+    assert_eq!(
+        terminal_login_refusal(&transport, client::client::ClientRevision::R289),
+        None,
+        "a transport failure is not a server response"
+    );
+}
+
+#[test]
+fn server_refusal_hold_cancels_current_login_and_requires_explicit_rearm() {
+    let arm = SlotArm::new(7, true);
+    let command = arm.login_command(false).unwrap();
+    let world = arm.world_generation();
+    let cancel = LoginCancel::new();
+    assert!(arm.begin_attempt(command, world, cancel.clone()));
+
+    let refusal = LoginRefusal::AccountBanned;
+    assert!(arm.hold_login_on_server_refusal(command, world, refusal));
+    assert!(cancel.is_cancelled(), "the in-flight attempt is fenced");
+    assert!(!arm.login_wanted());
+    assert_eq!(arm.login_refusal(), Some(refusal));
+
+    arm.set_auto_login(true);
+    arm.set_script_active(true);
+    assert!(!arm.login_wanted(), "mirrored demand cannot clear the hold");
+    assert_eq!(arm.login_refusal(), Some(refusal));
+
+    arm.arm_explicit_login();
+    assert!(arm.login_wanted(), "explicit Login is the rearm authority");
+    assert_eq!(arm.login_refusal(), None);
+}
+
+#[test]
+fn stale_server_refusals_cannot_hold_replacement_world_or_credentials() {
+    let refusal = LoginRefusal::RevisionCacheOrRsaMismatch;
+
+    let world_arm = SlotArm::new(7, true);
+    let (world_command, world_generation) =
+        capture_login_authorization(&world_arm, false).unwrap();
+    world_arm.post_intent(Intent::WorldPreference(IntentWorldChoice::World(5)));
+    assert!(!world_arm.hold_login_on_server_refusal(
+        world_command,
+        world_generation,
+        refusal
+    ));
+    assert!(world_arm.login_wanted());
+    assert_eq!(world_arm.login_refusal(), None);
+
+    let credential_arm = SlotArm::new(8, true);
+    let (credential_command, credential_world) =
+        capture_login_authorization(&credential_arm, false).unwrap();
+    credential_arm.post_intent(Intent::LoginIdentityChanged);
+    assert!(!credential_arm.hold_login_on_server_refusal(
+        credential_command,
+        credential_world,
+        refusal
+    ));
+    assert!(credential_arm.login_wanted());
+    assert_eq!(credential_arm.login_refusal(), None);
+}
+
 
 #[test]
 fn reaffirming_login_and_load_all_keep_bound_release_evidence() {

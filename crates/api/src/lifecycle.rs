@@ -188,7 +188,7 @@ impl Intent {
             Intent::Login => RowMeaning {
                 session: SessionEffect::ArmLogin,
                 run: RunEffect::ResumeHeld,
-                attempt: AttemptCancellation::Never,
+                attempt: AttemptCancellation::Always,
             },
             Intent::AutoLogin(true) => RowMeaning {
                 session: SessionEffect::PolicyOnly,
@@ -324,11 +324,91 @@ pub enum LifecycleFact {
     /// A pending turnover ends with it (today `finish_memory_relogs`,
     /// `session.rs:1160-1173`).
     WorldPreferenceFailed,
+
+    /// A current game-server refusal that must stop automatic login.
+    /// The command and world fences prevent an older socket result from
+    /// replacing newer operator intent.
+    ServerLoginRefused {
+        /// The authorization used by the completed handshake.
+        command: IntentCommand,
+        /// The selected-world generation used by the completed handshake.
+        world_generation: u64,
+        /// The typed server refusal.
+        refusal: LoginRefusal,
+    },
 }
+
+/// A terminal game-server login refusal for the supported 274 and 289
+/// response tables. The 377 response table is not inferred from these values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LoginRefusal {
+    /// Code 3: unchanged credentials cannot authenticate this account.
+    InvalidCredentials,
+    /// Code 4: the account is banned. The reply does not give an expiry.
+    AccountBanned,
+    /// Code 6: revision, cache checksums, or RSA marker did not match.
+    RevisionCacheOrRsaMismatch,
+    /// Code 11: possible IP ban or rejected player-save state.
+    IpBanOrSaveRefusal,
+    /// Code 12: the selected world requires membership.
+    MembersWorldRequired,
+    /// Code 13: the world could not load or admit the player save.
+    PlayerSaveRejected,
+    /// Code 17: the player is in a members-only area on a free world.
+    MembersAreaOnFreeWorld,
+    /// A 274 or 289 server sent a refusal that has no known policy.
+    Unsupported { code: u8 },
+}
+
+impl LoginRefusal {
+    /// The server response byte.
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::InvalidCredentials => 3,
+            Self::AccountBanned => 4,
+            Self::RevisionCacheOrRsaMismatch => 6,
+            Self::IpBanOrSaveRefusal => 11,
+            Self::MembersWorldRequired => 12,
+            Self::PlayerSaveRejected => 13,
+            Self::MembersAreaOnFreeWorld => 17,
+            Self::Unsupported { code } => code,
+        }
+    }
+
+    /// The host explanation. It does not reuse the Java title-screen text.
+    pub const fn explanation(self) -> &'static str {
+        match self {
+            Self::InvalidCredentials => "The username or password was rejected.",
+            Self::AccountBanned => "The account is banned. The reply does not give an expiry.",
+            Self::RevisionCacheOrRsaMismatch => {
+                "The server rejected the revision, cache checksums, or RSA key."
+            }
+            Self::IpBanOrSaveRefusal => {
+                "The server rejected the session. It may be an IP ban or a player-save refusal."
+            }
+            Self::MembersWorldRequired => "The selected world requires membership.",
+            Self::PlayerSaveRejected => "The world could not load or admit the player save.",
+            Self::MembersAreaOnFreeWorld => {
+                "The player is in a members-only area on a free world."
+            }
+            Self::Unsupported { .. } => "The server sent an unsupported login refusal.",
+        }
+    }
+}
+
+/// Why automatic and script-triggered login is held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LoginHold {
+    /// The slot could not apply its selected world preference.
+    WorldPreference,
+    /// The server returned a terminal refusal for this worker's engine.
+    ServerRefusal(LoginRefusal),
+}
+
 
 impl LifecycleFact {
     /// Every fact row (with representative values), for exhaustive checks.
-    pub const ALL: [LifecycleFact; 5] = [
+    pub const ALL: [LifecycleFact; 6] = [
         LifecycleFact::LoginSucceeded,
         LifecycleFact::SessionExited {
             clean: true,
@@ -343,6 +423,14 @@ impl LifecycleFact {
             window_seconds: 600,
         },
         LifecycleFact::WorldPreferenceFailed,
+        LifecycleFact::ServerLoginRefused {
+            command: IntentCommand {
+                generation: IntentGeneration(0),
+                cancellation: IntentGeneration(0),
+            },
+            world_generation: 0,
+            refusal: LoginRefusal::AccountBanned,
+        },
     ];
 
     /// The frozen meaning of this row.
@@ -369,6 +457,11 @@ impl LifecycleFact {
                 attempt: AttemptCancellation::Always,
             },
             LifecycleFact::WorldPreferenceFailed => RowMeaning {
+                session: SessionEffect::WithdrawLogin,
+                run: RunEffect::HoldWork,
+                attempt: AttemptCancellation::Always,
+            },
+            LifecycleFact::ServerLoginRefused { .. } => RowMeaning {
                 session: SessionEffect::WithdrawLogin,
                 run: RunEffect::HoldWork,
                 attempt: AttemptCancellation::Always,
@@ -619,7 +712,7 @@ pub struct IntentSnapshot {
     logout_wanted: bool,
     turnover: bool,
     latch: Option<LoginLatch>,
-    error_hold: bool,
+    error_hold: Option<LoginHold>,
     auto_login: bool,
     script_needs_session: bool,
     world: WorldChoice,
@@ -662,8 +755,13 @@ impl IntentSnapshot {
         self.latch
     }
 
-    /// Whether a world-preference error holds the login.
+    /// Whether any error hold suppresses login.
     pub const fn error_hold(&self) -> bool {
+        self.error_hold.is_some()
+    }
+
+    /// The typed error hold, if one is active.
+    pub const fn login_hold(&self) -> Option<LoginHold> {
         self.error_hold
     }
 
@@ -705,7 +803,7 @@ impl IntentSnapshot {
         !self.closed
             && self.latch.is_none()
             && (!matches!(self.login, LoginIntent::Withdrawn)
-                || (!self.error_hold && self.script_needs_session))
+                || (self.error_hold.is_none() && self.script_needs_session))
     }
 
     /// Why the slot parks instead of logging in (today `relog_park_reason`,
@@ -715,7 +813,12 @@ impl IntentSnapshot {
             Some(LoginLatch::OperatorLogout) => Some(ParkReason::OperatorLogout),
             Some(LoginLatch::PersistedLogout) => Some(ParkReason::PersistedLogout),
             Some(LoginLatch::RepeatGuard { .. }) => Some(ParkReason::RepeatGuard),
-            None if self.error_hold => Some(ParkReason::WorldError),
+            None if matches!(self.error_hold, Some(LoginHold::WorldPreference)) => {
+                Some(ParkReason::WorldError)
+            }
+            None if matches!(self.error_hold, Some(LoginHold::ServerRefusal(_))) => {
+                Some(ParkReason::ServerRefusal)
+            }
             None if self.login_wanted() => None,
             None => Some(ParkReason::NoIntent),
         }
@@ -736,6 +839,8 @@ pub enum ParkReason {
     RepeatGuard,
     /// A world-preference error holds the login.
     WorldError,
+    /// A terminal server refusal holds automatic and script-triggered login.
+    ServerRefusal,
 }
 
 /// The generation-stamped operator-intent mailbox: one per slot lifetime,
@@ -760,7 +865,7 @@ pub struct IntentMailbox {
     /// session exits. A stronger row supersedes it.
     turnover: bool,
     latch: Option<LoginLatch>,
-    error_hold: bool,
+    error_hold: Option<LoginHold>,
     auto_login: bool,
     script_needs_session: bool,
     world: WorldChoice,
@@ -789,7 +894,7 @@ impl IntentMailbox {
             logout: None,
             turnover: false,
             latch: None,
-            error_hold: false,
+            error_hold: None,
             auto_login,
             script_needs_session: false,
             world,
@@ -854,7 +959,7 @@ impl IntentMailbox {
     /// Re-derive the auto-login want after a hold lifts (today
     /// `release_error_hold`, `play_login.rs:575-589`).
     fn rederive_auto_want(&mut self) {
-        if self.auto_login && self.latch.is_none() && matches!(self.login, LoginIntent::Withdrawn) {
+        if self.auto_login && self.error_hold.is_none() && self.latch.is_none() && matches!(self.login, LoginIntent::Withdrawn) {
             self.login = LoginIntent::Auto;
         }
     }
@@ -862,7 +967,7 @@ impl IntentMailbox {
     /// Arm one explicit login and lift every latch, hold and pending
     /// turnover half (today `arm_explicit_login`, `play_login.rs:370-381`).
     fn arm_login(&mut self) {
-        self.error_hold = false;
+        self.error_hold = None;
         self.latch = None;
         self.login = LoginIntent::Once;
         self.logout = None;
@@ -912,14 +1017,16 @@ impl IntentMailbox {
         }
         match intent {
             Intent::Login => {
-                self.command(false)?;
+                self.command(true)?;
                 self.arm_login();
             }
             Intent::AutoLogin(enabled) => {
                 let withdraws = !enabled && self.login == LoginIntent::Auto;
                 self.command(withdraws)?;
                 self.auto_login = enabled;
-                self.error_hold = false;
+                if matches!(self.error_hold, Some(LoginHold::WorldPreference)) {
+                    self.error_hold = None;
+                }
                 if enabled {
                     self.rederive_auto_want();
                 } else if withdraws {
@@ -958,13 +1065,13 @@ impl IntentMailbox {
             Intent::WorldPreference(world) => {
                 if self.world != world {
                     let world_generation = self.next_world_generation()?;
-                    if self.error_hold {
+                    if matches!(self.error_hold, Some(LoginHold::WorldPreference)) {
                         self.command(false)?;
                     }
                     self.world = world;
                     self.world_generation = world_generation;
-                    if self.error_hold {
-                        self.error_hold = false;
+                    if matches!(self.error_hold, Some(LoginHold::WorldPreference)) {
+                        self.error_hold = None;
                         self.rederive_auto_want();
                     }
                 }
@@ -1058,7 +1165,19 @@ impl IntentMailbox {
                 if !self.closed {
                     self.command(true)?;
                     self.login = LoginIntent::Withdrawn;
-                    self.error_hold = true;
+                    self.error_hold = Some(LoginHold::WorldPreference);
+                    self.turnover = false;
+                }
+            }
+            LifecycleFact::ServerLoginRefused {
+                command,
+                world_generation,
+                refusal,
+            } => {
+                if !self.closed && self.attempt_is_current(command, world_generation) {
+                    self.command(true)?;
+                    self.login = LoginIntent::Withdrawn;
+                    self.error_hold = Some(LoginHold::ServerRefusal(refusal));
                     self.turnover = false;
                 }
             }

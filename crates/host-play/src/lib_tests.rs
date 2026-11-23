@@ -292,6 +292,7 @@ fn startup_progress_is_latest_only_and_clears_on_completion() {
         &statuses,
         "alice",
         &LoginError::response(16, "busy", "busy"),
+        None,
     );
     let rows = statuses.lock().unwrap();
     assert_eq!(rows[0].startup_phase, StartupPhase::Error);
@@ -438,6 +439,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
         &statuses,
         "alice",
         &LoginError::response(5, "invalid", "invalid"),
+        None,
     );
     client.ingame = false;
     drive_startup_observe(&mut pump, &mut snapshot, &statuses, "alice", &client);
@@ -728,7 +730,7 @@ fn refused_login_row_names_the_failed_stage_instead_of_code_minus_one() {
     let error = refused_login_error();
     let statuses = rows(&["alice"]);
     set_startup_phase(&statuses, "alice", StartupPhase::Connecting);
-    record_login_error(&statuses, "alice", &error);
+    record_login_error(&statuses, "alice", &error, None);
     let rows = statuses.lock().unwrap();
     let shown = rows[0].error.as_deref().expect("published login error");
     assert!(
@@ -742,6 +744,25 @@ fn refused_login_row_names_the_failed_stage_instead_of_code_minus_one() {
     let transport = error.transport.as_ref().expect("receipt");
     assert_eq!(transport.kind, std::io::ErrorKind::ConnectionRefused);
     assert!(transport.errno.is_some());
+}
+
+#[test]
+fn terminal_refusal_status_keeps_typed_host_explanation_on_only_its_slot() {
+    let statuses = rows(&["alice", "bob"]);
+    let error = LoginError::response(6, "server mes1", "Please reload this page.");
+    let refusal = api::lifecycle::LoginRefusal::RevisionCacheOrRsaMismatch;
+    record_login_error(&statuses, "alice", &error, Some(refusal));
+
+    let rows = statuses.lock().unwrap();
+    assert_eq!(rows[0].login_refusal, Some(refusal));
+    assert_eq!(
+        rows[0].error.as_deref(),
+        Some(
+            "Login stopped (code 6): The server rejected the revision, cache checksums, or RSA key. Select Log in to retry."
+        )
+    );
+    assert_eq!(rows[1].login_refusal, None);
+    assert_eq!(rows[1].error, None);
 }
 
 #[test]
@@ -884,6 +905,7 @@ fn response_one_returns_to_fifo_without_publishing_error() {
         &statuses,
         "alice",
         &LoginError::response(1, "retry", "retry"),
+        None,
     );
     let rows = statuses.lock().unwrap();
     assert_eq!(rows[0].startup_phase, StartupPhase::Connecting);

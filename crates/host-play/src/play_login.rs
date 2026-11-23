@@ -11,9 +11,11 @@ use api::hostlog::{Category, Level};
 use api::identity::{Deadline, Event, Scope, SessionKey, SlotKey, SlotKeyMinter};
 use api::lifecycle::{
     AbortedAttempt, HandshakeKind, HoldReason, Intent, IntentCommand, IntentMailbox, LifecycleFact,
-    LoginIntent, LoginLatch, MemoryMode, ParkReason, PostReceipt, QueueBlocker, SessionEndCause,
-    SessionEventOut, SessionGate, TransportFailure, WorldChoice as IntentWorldChoice,
+    LoginHold, LoginIntent, LoginLatch, LoginRefusal, MemoryMode, ParkReason, PostReceipt,
+    QueueBlocker, SessionEndCause, SessionEventOut, SessionGate, TransportFailure,
+    WorldChoice as IntentWorldChoice,
 };
+use client::io::ClientRevision;
 use client::client::{Client, LoginError};
 use client::config::IfType;
 use client::io::client_stream::LoginCancel;
@@ -93,6 +95,7 @@ pub(super) enum RelogParkReason {
     PersistedLogout,
     RepeatGuard,
     WorldError,
+    ServerRefusal,
 }
 
 impl std::fmt::Display for RelogParkReason {
@@ -103,8 +106,8 @@ impl std::fmt::Display for RelogParkReason {
             Self::PersistedLogout => "persisted_logout",
             Self::RepeatGuard => "repeat_guard",
             Self::WorldError => "world_error",
+            Self::ServerRefusal => "server_refusal",
         })
-    }
 }
 
 /// Maximum unconsumed session boundaries per slot. Overflow drops the oldest
@@ -873,6 +876,7 @@ impl SlotArm {
             Some(ParkReason::PersistedLogout) => RelogParkReason::PersistedLogout,
             Some(ParkReason::RepeatGuard) => RelogParkReason::RepeatGuard,
             Some(ParkReason::WorldError) => RelogParkReason::WorldError,
+            Some(ParkReason::ServerRefusal) => RelogParkReason::ServerRefusal,
             Some(ParkReason::NoIntent) | None => RelogParkReason::NoIntent,
         }
     }
@@ -888,6 +892,12 @@ impl SlotArm {
 
     pub fn login_held_by_error(&self) -> bool {
         self.lifecycle.lock().mailbox.snapshot().error_hold()
+    }
+    pub fn login_refusal(&self) -> Option<LoginRefusal> {
+        match self.lifecycle.lock().mailbox.snapshot().login_hold() {
+            Some(LoginHold::ServerRefusal(refusal)) => Some(refusal),
+            Some(LoginHold::WorldPreference) | None => None,
+        }
     }
 
     pub fn set_auto_login(&self, enabled: bool) {
@@ -940,6 +950,49 @@ impl SlotArm {
             cancel.cancel();
         }
         self.retry_wake.notify_all();
+    }
+
+    /// Hold automatic login only if this completed attempt still owns both
+    /// its command and selected-world generations.
+    pub(super) fn hold_login_on_server_refusal(
+        &self,
+        command: IntentCommand,
+        world_generation: u64,
+        refusal: LoginRefusal,
+    ) -> bool {
+        let (applied, cancel) = {
+            #[cfg(test)]
+            let mut lifecycle = K4CancelGuard::new(
+                self.lifecycle.lock(),
+                self.assert_cancel_order.load(Ordering::Relaxed),
+            );
+            #[cfg(not(test))]
+            let mut lifecycle = self.lifecycle.lock();
+            let receipt = lifecycle
+                .mailbox
+                .observe(LifecycleFact::ServerLoginRefused {
+                    command,
+                    world_generation,
+                    refusal,
+                })
+                .expect("server-refusal generation exhausted");
+            if receipt.invalidated_attempt() {
+                lifecycle.clean_exit = None;
+                lifecycle.last_queue = None;
+            }
+            let cancel = receipt
+                .invalidated_attempt()
+                .then(|| lifecycle.attempt.clone())
+                .flatten();
+            (receipt.invalidated_attempt(), cancel)
+        };
+        if let Some(cancel) = cancel {
+            cancel.cancel();
+        }
+        if applied {
+            self.retry_wake.notify_all();
+        }
+        applied
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1520,6 +1573,31 @@ pub(super) fn server_hold<T>(
         Err(error) if error.code == 16 => Some(backoff.next_throttle_delay()),
         _ => None,
     }
+}
+
+/// Map terminal refusals only for the engine tables with measured semantics.
+/// Transport failures and revision 377 keep their existing handling.
+pub(super) fn terminal_login_refusal(
+    error: &LoginError,
+    revision: ClientRevision,
+) -> Option<LoginRefusal> {
+    if error.transport.is_some()
+        || !matches!(revision, ClientRevision::R274 | ClientRevision::R289)
+    {
+        return None;
+    }
+    let code = u8::try_from(error.code).ok()?;
+    Some(match code {
+        3 => LoginRefusal::InvalidCredentials,
+        4 => LoginRefusal::AccountBanned,
+        6 => LoginRefusal::RevisionCacheOrRsaMismatch,
+        11 => LoginRefusal::IpBanOrSaveRefusal,
+        12 => LoginRefusal::MembersWorldRequired,
+        13 => LoginRefusal::PlayerSaveRejected,
+        17 => LoginRefusal::MembersAreaOnFreeWorld,
+        1 | 5 | 7 | 8 | 9 | 14 | 16 | 21 => return None,
+        code => LoginRefusal::Unsupported { code },
+    })
 }
 
 /// Release today's ClientStream before the queue acknowledges retirement.

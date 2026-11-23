@@ -20,6 +20,7 @@ use crate::scripts::{ScriptRunState as RunState, StatusView};
 use host::login_queue::AdmitBlocker;
 use host_play::{Play, SlotArm, SlotStatus, StartupPhase, WalkArm};
 
+use api::lifecycle::LoginRefusal;
 use api::hostlog::{Level, Source};
 
 use crate::login_notice::{LoginFailure, LoginNotice};
@@ -267,6 +268,8 @@ pub struct FleetRow {
     /// history) until the slot is ready, goes offline or a new worker
     /// lifetime starts. At most [`REASON_CAP`] bytes.
     error: Option<String>,
+    /// A final server refusal held by the live slot owner.
+    login_refusal: Option<LoginRefusal>,
     /// The current login notice (`login {error}`, the words of the error
     /// state line): the newest failed login, kept through the retry's
     /// state changes until the bot logs in, a newer login fails, or
@@ -302,6 +305,7 @@ impl Default for FleetRow {
             script_walk: false,
             manual_walk: false,
             error: None,
+            login_refusal: None,
             login_notice: None,
             last_op: None,
             brief: String::from(Phase::Offline.label()),
@@ -327,6 +331,7 @@ impl FleetRow {
         self.script_walk = source.script_walk;
         self.manual_walk = source.manual_walk;
         self.error.clone_from(&source.error);
+        self.login_refusal = source.login_refusal;
         self.login_notice.clone_from(&source.login_notice);
         match (&mut self.last_op, source.last_op.as_ref()) {
             (Some(held), Some(brief)) => *held = brief.duplicate(),
@@ -352,6 +357,7 @@ impl FleetRow {
             script_walk: false,
             manual_walk: false,
             error: None,
+            login_refusal: None,
             login_notice: None,
             last_op: None,
             brief: String::new(),
@@ -397,6 +403,7 @@ impl FleetRow {
         self.parked = false;
         self.manual_walk = false;
         self.error = None;
+        self.login_refusal = None;
         self.login_notice = None;
         self.last_op = None;
         self.brief.clear();
@@ -469,6 +476,11 @@ impl FleetRow {
     /// The lifetime's error, when one is retained.
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    /// The typed terminal server refusal, if the live slot is held for it.
+    pub fn login_refusal(&self) -> Option<LoginRefusal> {
+        self.login_refusal
     }
 
     /// The current login notice, whatever the phase: `login {error}`, the
@@ -717,6 +729,11 @@ impl SlotDetail {
         &self.row
     }
 
+    /// The selected slot's typed terminal server refusal.
+    pub fn login_refusal(&self) -> Option<LoginRefusal> {
+        self.row.login_refusal()
+    }
+
     /// One status line for the phase.
     pub fn state(&self) -> &str {
         &self.state
@@ -727,6 +744,9 @@ impl SlotDetail {
     /// shows this same failure). Both front ends show it next to the state
     /// line, and in place of the `last error` row ([`FleetRow::last_error`]).
     pub fn login_notice_line(&self) -> Option<&str> {
+        if self.row.login_refusal().is_some() {
+            return None;
+        }
         self.row
             .login_notice()
             .filter(|notice| *notice != self.state)
@@ -1272,10 +1292,16 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     let arm = input.play.and_then(|play| play.arm(&row.name));
     let lifetime = arm.as_ref().map_or(0, |arm| arm.lifetime_id());
     let new_lifetime = std::mem::replace(&mut state.lifetime, lifetime) != lifetime;
+    let old_refusal = row.login_refusal;
+    let login_refusal = arm.as_ref().and_then(|arm| arm.login_refusal());
     let (phase, retrying, guard_parked) = phase_of(status, arm.as_deref());
-    let queue = match phase {
-        Phase::Queued | Phase::LoginError => status.and_then(QueuePlace::of),
-        _ => input.start_places.get(row.name.as_str()).copied(),
+    let queue = if login_refusal.is_some() {
+        None
+    } else {
+        match phase {
+            Phase::Queued | Phase::LoginError => status.and_then(QueuePlace::of),
+            _ => input.start_places.get(row.name.as_str()).copied(),
+        }
     };
     let script = match (input.play, arm.is_some()) {
         (Some(play), true) => RunState::from_script(play.script_state(&row.name)),
@@ -1307,6 +1333,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.world,
         row.phase,
         row.queue,
+        row.login_refusal,
         row.retrying,
         row.guard_parked,
         row.connected,
@@ -1318,6 +1345,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         world,
         phase,
         queue,
+        login_refusal,
         retrying,
         guard_parked,
         connected,
@@ -1329,6 +1357,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.world = world;
         row.phase = phase;
         row.queue = queue;
+        row.login_refusal = login_refusal;
         row.retrying = retrying;
         row.guard_parked = guard_parked;
         row.connected = connected;
@@ -1338,45 +1367,56 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.manual_walk = manual_walk;
         changed = true;
     }
-    match status.and_then(|s| s.error.as_deref()) {
+    let current_error = status
+        .filter(|s| !(s.login_refusal.is_some() && login_refusal.is_none()))
+        .and_then(|s| s.error.as_deref());
+    match current_error {
         Some(error) => {
             if !same_capped(row.error.as_deref(), error) {
                 row.error = Some(capped(error));
                 changed = true;
             }
         }
-        None if new_lifetime || matches!(phase, Phase::Ready | Phase::Offline) => {
+        None
+            if new_lifetime
+                || old_refusal.is_some()
+                || matches!(phase, Phase::Ready | Phase::Offline) =>
+        {
             changed |= row.error.take().is_some();
         }
         // The host cleared it for a retry: keep it as the last error.
         None => {}
     }
-    // A failed login of this worker (the host's Error phase with its text)
-    // is the row's login notice, apart from the phase: a retry's Connecting
-    // or a parked logged out does not clear it.
-    let failure = status
-        .filter(|s| {
-            arm.is_some()
-                && phase != Phase::Failed
-                && s.startup_phase == StartupPhase::Error
-                && s.error.is_some()
-        })
-        .and_then(|s| {
-            Some(LoginFailure {
-                lifetime,
-                at: s.startup_phase_started,
-                text: row.error.as_deref()?,
+    // A final refusal is the row's persistent state, not a timed login
+    // notice. A new explicit attempt clears the refusal at the owner.
+    if login_refusal.is_some() {
+        changed |= state.notice.take().is_some();
+        changed |= row.login_notice.take().is_some();
+    } else {
+        let failure = status
+            .filter(|s| {
+                arm.is_some()
+                    && phase != Phase::Failed
+                    && s.login_refusal.is_none()
+                    && s.startup_phase == StartupPhase::Error
+                    && s.error.is_some()
             })
-        });
-    let logged_in = matches!(phase, Phase::Loading | Phase::Ready);
-    changed |= crate::login_notice::update_slot(
-        &mut state.notice,
-        &mut row.login_notice,
-        failure,
-        logged_in,
-        input.now,
-    );
-    changed
+            .and_then(|s| {
+                Some(LoginFailure {
+                    lifetime,
+                    at: s.startup_phase_started,
+                    text: row.error.as_deref()?,
+                })
+            });
+        let logged_in = matches!(phase, Phase::Loading | Phase::Ready);
+        changed |= crate::login_notice::update_slot(
+            &mut state.notice,
+            &mut row.login_notice,
+            failure,
+            logged_in,
+            input.now,
+        );
+    }
 }
 
 /// The single phase derivation, with whether a login error is a retry
@@ -1528,6 +1568,18 @@ fn write_state(
                 );
             }
             _ => out.push_str("logged out (Log in to connect)"),
+        },
+        (Phase::LoginError, _) if row.login_refusal.is_some() => match error {
+            Some(error) => out.push_str(error),
+            None => {
+                let refusal = row.login_refusal.expect("checked terminal login refusal");
+                let _ = write!(
+                    out,
+                    "Login stopped (code {}): {} Select Log in to retry.",
+                    refusal.code(),
+                    refusal.explanation()
+                );
+            }
         },
         (Phase::LoginError, _) => match error {
             Some(error) => {

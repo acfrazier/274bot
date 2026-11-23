@@ -157,12 +157,13 @@ fn only_stop_and_removal_terminate_a_run_and_logout_holds_it() {
 }
 
 #[test]
-fn every_command_advances_the_generation_but_only_cancelling_rows_move_the_fence() {
+fn explicit_login_fences_an_in_flight_attempt() {
     let mut mailbox = armed();
     let start = mailbox.snapshot();
     let login = mailbox.post(Intent::Login).unwrap();
     assert!(login.generation() > start.generation());
-    assert_eq!(mailbox.snapshot().cancellation(), start.cancellation());
+    assert!(login.invalidated_attempt());
+    assert!(mailbox.snapshot().cancellation() > start.cancellation());
 
     let logout = mailbox.post(Intent::Logout).unwrap();
     assert!(logout.generation() > login.generation());
@@ -623,6 +624,68 @@ fn a_world_error_holds_the_login_until_the_operator_changes_something() {
     assert_eq!(toggled.snapshot().login(), LoginIntent::Withdrawn);
     toggled.post(Intent::AutoLogin(true)).unwrap();
     assert_eq!(toggled.snapshot().login(), LoginIntent::Auto);
+}
+
+#[test]
+fn server_refusal_hold_ignores_mirrors_and_lifts_only_for_new_authority() {
+    let mut mailbox = armed();
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+    let command = mailbox.login_command(false).unwrap();
+    let refusal = LoginRefusal::AccountBanned;
+    let receipt = mailbox
+        .observe(LifecycleFact::ServerLoginRefused {
+            command,
+            world_generation: 0,
+            refusal,
+        })
+        .unwrap();
+    assert!(receipt.invalidated_attempt());
+    let snapshot = mailbox.snapshot();
+    assert_eq!(
+        snapshot.login_hold(),
+        Some(LoginHold::ServerRefusal(refusal))
+    );
+    assert_eq!(snapshot.park_reason(), Some(ParkReason::ServerRefusal));
+    assert!(!snapshot.login_wanted());
+
+    mailbox.post(Intent::AutoLogin(true)).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(false)).unwrap();
+    mailbox.post(Intent::ScriptNeedsSession(true)).unwrap();
+    mailbox
+        .post(Intent::WorldPreference(WorldChoice::World(12)))
+        .unwrap();
+    assert_eq!(
+        mailbox.snapshot().login_hold(),
+        Some(LoginHold::ServerRefusal(refusal))
+    );
+    assert!(!mailbox.snapshot().login_wanted());
+
+    mailbox.post(Intent::Login).unwrap();
+    assert_eq!(mailbox.snapshot().login_hold(), None);
+    assert!(mailbox.snapshot().login_wanted());
+}
+
+#[test]
+fn stale_server_refusals_cannot_hold_replacement_world_or_identity() {
+    for replacement in [
+        Intent::WorldPreference(WorldChoice::World(12)),
+        Intent::LoginIdentityChanged,
+        Intent::Login,
+    ] {
+        let mut mailbox = armed();
+        let old = mailbox.login_command(false).unwrap();
+        mailbox.post(replacement).unwrap();
+        let before = mailbox.snapshot();
+        let receipt = mailbox
+            .observe(LifecycleFact::ServerLoginRefused {
+                command: old,
+                world_generation: 0,
+                refusal: LoginRefusal::RevisionCacheOrRsaMismatch,
+            })
+            .unwrap();
+        assert!(!receipt.invalidated_attempt(), "{replacement:?}");
+        assert_eq!(mailbox.snapshot(), before, "{replacement:?}");
+    }
 }
 
 #[test]
