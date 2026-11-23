@@ -1103,9 +1103,13 @@ pub(super) fn current_digest(
 /// the rows read are not everything the file holds, and the service never
 /// rewrites it.
 fn loadout_rows(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
-    let Value::Array(elements) = serde_json::from_str(raw)? else {
+    let (document, duplicate) = value_and_duplicate_fields(raw)?;
+    let Value::Array(elements) = document else {
         return Err(ReadError::NotAnArray);
     };
+    if let Some(duplicate) = duplicate {
+        return Err(duplicate);
+    }
     let mut rows = Vec::with_capacity(elements.len());
     let (mut unreadable, mut lossy) = (0, 0);
     for element in &elements {
