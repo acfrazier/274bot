@@ -285,6 +285,38 @@ fn a_hint_recorded_for_another_scope_waits_for_that_scope() {
     assert_eq!(service.readback_lease(&under_b, WAIT).unwrap(), None);
 }
 
+/// A source recorded for another scope never blocks this scope's own saves:
+/// the new scope saves before any import of that source, across a restart,
+/// and the recorded scope still gets its source afterwards.
+#[test]
+fn a_hint_recorded_for_another_scope_does_not_block_this_scopes_saves() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("bank-other-scope-save");
+    let root = root_of(&scratch);
+    let source = root.bank_hint_file(PROFILE, "alice");
+    let bytes = legacy_document("alice", Some((289, "content-a")), 7, &[(995, 7)], &[]);
+    write_private(&source, &bytes);
+    let under_a = scoped(LocalStateDomain::BankHints, "alice", "content-a");
+    let under_b = scoped(LocalStateDomain::BankHints, "alice", "content-b");
+
+    let service = bank_service(&scratch);
+    assert_eq!(service.readback_lease(&under_b, WAIT).unwrap(), None);
+    let saved = request(service.submit(hint_edit(&under_b, None, vec![(995, 3)], 9)));
+    completed(&service, saved);
+    assert_eq!(std::fs::read(&source).unwrap(), bytes, "not consumed");
+    drop(service);
+
+    let service = bank_service(&scratch);
+    let lease = service.readback_lease(&under_b, WAIT).unwrap().unwrap();
+    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 3)]);
+    assert_eq!(std::fs::read(&source).unwrap(), bytes, "still not consumed");
+    let lease = service.readback_lease(&under_a, WAIT).unwrap().unwrap();
+    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 7)]);
+    assert!(!source.exists(), "the recorded scope took its source");
+    let lease = service.readback_lease(&under_b, WAIT).unwrap().unwrap();
+    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 3)]);
+}
+
 /// After the first import, a changed or a new file at the old path is never
 /// read: the database is the only authority, and a restart keeps what it
 /// holds. A source that was absent stays absent.
@@ -1382,6 +1414,7 @@ fn bank_budget_report() {
 
     // The first import of every account: parse the ceiling file, store the
     // widest hint, keep the evidence, close the ledger.
+    let imports_started = Instant::now();
     for n in 0..accounts {
         let started = Instant::now();
         let lease = service
@@ -1391,6 +1424,7 @@ fn bank_budget_report() {
         record(&mut residence, "bank-import-residence", started.elapsed());
         assert_eq!(lease.snapshot().as_bank_hints().unwrap().len(), 1_024);
     }
+    let all_imports = imports_started.elapsed();
     let resident_banks = service
         .shared
         .state
@@ -1452,10 +1486,17 @@ fn bank_budget_report() {
     std::thread::scope(|scope| {
         let exit = scope.spawn(|| {
             let started = Instant::now();
-            completed(
-                &service,
-                request(service.submit(bank_hint_at_width(&observation, 1_024, at + 9_000))),
-            );
+            // The cold loads may evict the observed account's store first; an
+            // exit save hydrates it again, as a slot does.
+            let receipt = loop {
+                match service.submit(bank_hint_at_width(&observation, 1_024, at + 9_000)) {
+                    SubmitReceipt::Refused(ErrorCode::NotReady { .. }) => {
+                        service.readback_lease(&observation, WAIT).unwrap();
+                    }
+                    receipt => break receipt,
+                }
+            };
+            completed(&service, request(receipt));
             started.elapsed()
         });
         let cold = scope.spawn(|| {
@@ -1516,6 +1557,7 @@ fn bank_budget_report() {
             "cold_loads_past_cap": 44,
         },
         "drain_of_all_saves_ms": drained.as_secs_f64() * 1000.0,
+        "first_import_of_all_accounts_ms": all_imports.as_secs_f64() * 1000.0,
         "database": {
             "page_count": pages,
             "freelist_pages": freelist,

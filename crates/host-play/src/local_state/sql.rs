@@ -248,13 +248,6 @@ impl WaitCause {
             .unwrap_or(text)
             .trim_end_matches('.')
     }
-
-    /// Whether another writer of the same root holds the write lock or the
-    /// preferences guard now (a short wait that a gap between its saves
-    /// ends), as opposed to a pinned WAL reader or a maintenance command.
-    pub(super) fn is_lock_contention(self) -> bool {
-        matches!(self, Self::Guard | Self::Busy)
-    }
 }
 
 /// What a database job ended with, short of success.

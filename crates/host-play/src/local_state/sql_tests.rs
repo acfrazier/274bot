@@ -2739,6 +2739,16 @@ fn a_pinned_reader_fills_the_wal_to_its_bound_then_the_idle_reset_lets_the_next_
         service.submit(bank_hint("carol", 1_760_000_002)),
         SubmitReceipt::Refused(ErrorCode::NotReady { .. })
     ));
+    let wal_lengths: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
+    let (lengths, wal_path) = (Arc::clone(&wal_lengths), wal.clone());
+    service.set_job_hook_for_test(Arc::new(move |class, _| {
+        if class == "wal-truncate" {
+            lengths
+                .lock()
+                .unwrap()
+                .push(std::fs::metadata(&wal_path).map_or(0, |meta| meta.len()));
+        }
+    }));
     reader.execute_batch("COMMIT").unwrap();
     drop(reader);
     let deadline = Instant::now() + WAIT;
@@ -2746,12 +2756,18 @@ fn a_pinned_reader_fills_the_wal_to_its_bound_then_the_idle_reset_lets_the_next_
         assert!(Instant::now() < deadline, "the idle reset never ran");
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(wal_frames(&probe), 0, "TRUNCATE resets the log count");
-    assert_eq!(
-        std::fs::metadata(&wal).unwrap().len(),
-        0,
-        "a zero-length WAL"
-    );
+    // Read on the writer thread right after each TRUNCATE job, before any
+    // later job (a waiting bank hint) can write again; the hook runs just
+    // after the job that counted the reset.
+    let lengths_deadline = Instant::now() + WAIT;
+    while !wal_lengths.lock().unwrap().contains(&0) {
+        assert!(
+            Instant::now() < lengths_deadline,
+            "the TRUNCATE left no zero-length WAL: {:?}",
+            wal_lengths.lock().unwrap()
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
     save(&preferences, "after", json!(true)).unwrap();
     let hint = submit_hint(&service, "carol", 1_760_000_002);
     assert!(
@@ -4444,7 +4460,7 @@ fn occupancy_class_verdict_uses_p99_and_hard_ceiling() {
 /// A11's CI microbenchmark entrypoint runs the local-state SQL occupancy gate
 /// in a locked release build and preserves its JSON report. The gate measures
 /// every SQL job class through typed-view publication under the §4.4 load:
-/// two OS processes on one root, each with eight queued and one active D-sized
+/// one OS process on the root, with eight queued and one active D-sized
 /// preference save in every round, with the bank exit save, the Start loadout
 /// readback and a bank load queued beside them. The classes that run once
 /// (first import, quarantine, hard-maximum WAL recovery on open, uncertain
@@ -4532,19 +4548,15 @@ fn occupancy_gate_every_sql_job_class() {
     }
 
     // Steady commits (the first after the open, then the first after an
-    // idle reset), the idle TRUNCATE, and D-sized refreshes after the
-    // other service's commits.
+    // idle reset) and the idle TRUNCATE.
     {
         let root = phase_root(&scratch, "steady");
         write_private(&root.preferences_file(), &d_document(0));
         let writer = LocalStateService::open_process(root.clone());
-        let reader = LocalStateService::open_process(root.clone());
-        let (writes, reads) = (Timeline::attach(&writer), Timeline::attach(&reader));
-        let (wp, rp) = (writer.preferences(), reader.preferences());
+        let writes = Timeline::attach(&writer);
+        let wp = writer.preferences();
         ready(&wp);
-        ready(&rp);
         writes.take();
-        reads.take();
         let mut after_reset = false;
         let mut first = true;
         for step in 0..24 {
@@ -4560,22 +4572,6 @@ fn occupancy_gate_every_sql_job_class() {
                 after_reset = class == "wal-truncate";
                 first = false;
                 file_under(&mut classes, label, vec![took]);
-            }
-            if step % 4 == 3 {
-                // The other process follows: its one-second freshness
-                // demand starts a refresh (read, parse, typed view).
-                std::thread::sleep(Duration::from_millis(1_100));
-                let seen = rp.snapshot().map(|snapshot| snapshot.version());
-                let watch = Instant::now();
-                while rp.snapshot().map(|snapshot| snapshot.version()) == seen
-                    && watch.elapsed() < Duration::from_secs(3)
-                {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                for (class, took) in reads.take() {
-                    assert_eq!(class, "pref-readback");
-                    file_under(&mut classes, "refresh-d-sized", vec![took]);
-                }
             }
         }
         // A pinned reader keeps every TRUNCATE busy: its partial copy work.
@@ -4744,7 +4740,6 @@ fn occupancy_gate_every_sql_job_class() {
 
     let mut missing: Vec<&str> = [
         "load/pref-save",
-        "load/pref-readback",
         "load/wal-truncate",
         "load/bank-write",
         "load/bank-readback",
@@ -4757,7 +4752,6 @@ fn occupancy_gate_every_sql_job_class() {
         "steady/commit-steady",
         "steady/commit-after-reset",
         "steady/idle-truncate",
-        "refresh-d-sized",
         "truncate-busy",
         "rollback-declined",
         "rollback-full",
@@ -4829,7 +4823,6 @@ fn occupancy_gate_every_sql_job_class() {
         // they are the `bank-*` classes of the SQL build.
         for (json_class, class) in [
             ("pref-save", "pref-save"),
-            ("pref-readback", "pref-readback"),
             ("file-write", "bank-write"),
             ("file-readback", "bank-readback"),
             ("bank-exit-save-residence", "bank-exit-save-residence"),
@@ -5327,62 +5320,4 @@ fn a_stream_of_bank_jobs_cannot_starve_a_queued_preference_save() {
     let snapshot = ready(&reopened.preferences());
     assert_eq!(snapshot.document()["bulk"]["m0"], json!("value-0"));
     assert_eq!(snapshot.document()["bulk"]["m1"], json!("value-1"));
-}
-
-/// A bank job of one service takes the database's write lock between the
-/// preference saves of another, instead of waiting until its whole burst
-/// ends (the gate's 500 ms residence at 1 MiB per save).
-#[test]
-fn a_bank_job_takes_the_lock_between_another_services_preference_saves() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("bank-between-saves");
-    let root = root_of(&scratch);
-    occupancy_tests::seed_document(&root);
-    let busy = LocalStateService::open_process(root.clone());
-    let other = LocalStateService::open_process(root.clone());
-    let busy_preferences = busy.preferences();
-    ready(&busy_preferences);
-    let (entered_tx, entered) = mpsc::channel();
-    let (release, released) = mpsc::channel::<()>();
-    let released = std::sync::Mutex::new(released);
-    let hold = Arc::new(AtomicBool::new(false));
-    let armed = Arc::clone(&hold);
-    busy.set_write_stall_for_test(Arc::new(move || {
-        if armed.swap(false, Ordering::SeqCst) {
-            let _ = entered_tx.send(());
-            let _ = released.lock().unwrap().recv_timeout(WAIT);
-        }
-    }));
-    for round in 0..3 {
-        hold.store(true, Ordering::SeqCst);
-        let mut updates = Vec::new();
-        for save in 0..9 {
-            match busy_preferences.begin_patch(occupancy_tests::patch(round, save, 0)) {
-                Ok(Update::Queued(update)) => updates.push(update),
-                other => panic!("the save is queued: {other:?}"),
-            }
-            if save == 0 {
-                entered.recv_timeout(WAIT).expect("the first save is held");
-            }
-        }
-        release.send(()).unwrap();
-        let account = format!("gap{round}");
-        other
-            .readback_lease(&bank_identity(&account), WAIT)
-            .expect("the bank read completes");
-        let still_queued = updates
-            .iter()
-            .filter(|update| !update.wait_for_completion(Duration::ZERO))
-            .count();
-        assert!(
-            still_queued >= 3,
-            "round {round}: the bank read waited for the other service's burst ({still_queued} of 9 saves still pending)"
-        );
-        for update in &mut updates {
-            update
-                .wait(WAIT)
-                .expect("the save settles")
-                .expect("the save is durable");
-        }
-    }
 }

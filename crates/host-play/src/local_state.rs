@@ -160,15 +160,15 @@ const PREFERENCE_DEADLINE: Duration = Duration::from_secs(5);
 /// preference job: the old file lock's retry intervals, without sleeping.
 const RETRY_FIRST: Duration = Duration::from_millis(1);
 const RETRY_MAX: Duration = Duration::from_millis(50);
-/// How often a bank job that waits for the database write lock tries again,
-/// for how long, and how long the writer leaves the lock free after one
-/// preference save when another waits behind it.
-const BANK_POLL: Duration = Duration::from_millis(1);
-const BANK_POLL_WINDOW: Duration = Duration::from_secs(2);
-const PREFERENCE_YIELD: Duration = Duration::from_millis(2);
 /// The most file-store and bank jobs the writer runs in a row while a
-/// preference job is due.
-const FILE_JOB_BURST: u32 = 8;
+/// preference job is due. Without it a preference save waits behind every
+/// queued file job: the 256 first imports of the resident cap take 6.98 s in
+/// one process on syrah (`first_import_of_all_accounts_ms` of
+/// `bank_budget_report`), over [`PREFERENCE_DEADLINE`]. The bound is the depth
+/// of a preference queue ([`OPERATOR_QUEUE_CAP`], the load of
+/// design-r7.md:259), so a save waits behind at most 8 file jobs: 8 x the
+/// largest bank job measured there (107.8 ms, `bank-import-residence`), 0.9 s.
+const FILE_JOB_BURST: u32 = OPERATOR_QUEUE_CAP as u32;
 
 /// How many edits of one operator store (loadouts, preferences) may wait
 /// behind the one in flight.
@@ -853,22 +853,6 @@ impl Retry {
             (self.backoff * 2).min(RETRY_MAX)
         };
         self.at = Some(now + self.backoff);
-    }
-
-    /// Schedule the next attempt of a bank job that waits for the database
-    /// write lock: every [`BANK_POLL`] for the first [`BANK_POLL_WINDOW`]
-    /// of its wait (it must take the short gap between another process's
-    /// saves), then the doubling delay. The caller has set `first`.
-    fn delay_polling(&mut self, now: Instant) {
-        let waited = self
-            .first
-            .map_or(Duration::ZERO, |first| now.saturating_duration_since(first));
-        if waited < BANK_POLL_WINDOW {
-            self.backoff = BANK_POLL;
-            self.at = Some(now + BANK_POLL);
-        } else {
-            self.delay(now);
-        }
     }
 
     fn due(&self, now: Instant) -> bool {
@@ -2336,13 +2320,6 @@ impl State {
         self.seq
     }
 
-    /// Whether a preference save waits behind the one just finished.
-    fn preference_save_queued(&self) -> bool {
-        self.stores
-            .get(&StoreKey::Preferences)
-            .is_some_and(|store| !store.queue.is_empty())
-    }
-
     /// The next version of any store, or `None` once the space is spent:
     /// versions refuse instead of wrapping or reusing a value.
     fn next_version(&mut self) -> Option<StoreVersion> {
@@ -3469,8 +3446,6 @@ impl Shared {
                 }
                 Job::Checkpoint => self.checkpoint(&mut db),
             }));
-            let pref_save_done =
-                matches!(job, Job::Write(StoreKey::Preferences, _)) && matches!(outcome, Ok(None));
             match outcome {
                 Ok(None) => {
                     if matches!(job, Job::Write(StoreKey::Preferences, _)) {
@@ -3488,13 +3463,6 @@ impl Shared {
                 }
             }
             self.settled.notify_all();
-            // Between two queued preference saves the database's write lock
-            // is free for a moment: a waiting bank job of another process
-            // (it polls every millisecond) takes the gap, so it is not held
-            // until the whole burst ends.
-            if pref_save_done && self.state.lock().preference_save_queued() {
-                thread::sleep(PREFERENCE_YIELD);
-            }
         }
     }
 
@@ -3529,12 +3497,7 @@ impl Shared {
                 if let Some(store) = state.stores.get_mut(&key) {
                     store.readback = Readback::Queued;
                 }
-                if cause.is_lock_contention() {
-                    state.bank_readback_retry.first.get_or_insert(now);
-                    state.bank_readback_retry.delay_polling(now);
-                } else {
-                    state.bank_readback_retry.delay(now);
-                }
+                state.bank_readback_retry.delay(now);
             }
             Job::Readback(key) => {
                 let expired_writes = {
@@ -3588,12 +3551,7 @@ impl Shared {
                     self.settle_waited(&mut state, &key, vec![terminal], cause);
                     return;
                 }
-                if matches!(key, StoreKey::BankHint { .. }) && cause.is_lock_contention() {
-                    queued.retry.first.get_or_insert(now);
-                    queued.retry.delay_polling(now);
-                } else {
-                    queued.retry.delay(now);
-                }
+                queued.retry.delay(now);
                 if matches!(key, StoreKey::Preferences) {
                     state.preference_wait = Some(cause);
                 }

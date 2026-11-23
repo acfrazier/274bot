@@ -106,6 +106,18 @@ impl BankKey {
         format!("{}/{}", self.profile, self.account)
     }
 
+    /// The ledger row that records that this scope read the account's legacy
+    /// hint and found it recorded for another scope: it decides this scope's
+    /// saves and never consumes the source.
+    fn scope_marker_source(&self) -> String {
+        format!(
+            "{}#{}/{}",
+            self.ledger_source(),
+            self.revision,
+            self.content
+        )
+    }
+
     /// What a log line calls the hint.
     fn label(&self) -> String {
         format!(
@@ -510,7 +522,20 @@ impl Db {
         if let Some((revision, content)) = &hint.scope {
             if *revision != key.revision || *content != key.content {
                 // Recorded for another scope: not this scope's to take, and
-                // not consumed.
+                // not consumed. A marker of this scope records that it looked,
+                // so this scope's own saves are decided without the source.
+                tx.execute(
+                    "INSERT OR IGNORE INTO import_ledger
+                         (domain, source, digest, kind, evidence, path)
+                     VALUES (?1, ?2, NULL, 'other-scope', 'none', ?3)",
+                    params![
+                        LEDGER_DOMAIN,
+                        key.scope_marker_source(),
+                        bounded_path(&display)
+                    ],
+                )
+                .map_err(|error| refused_by(error, "writing the bank hint scope marker"))?;
+                tx.commit().map_err(commit_error)?;
                 return Ok(BankHydrated {
                     read: BankRead::Absent,
                     notices,
@@ -823,9 +848,15 @@ impl Staging for BankStaged {
         }
         // The import decided this account's source before any save: a save
         // against an undecided source would let a later import replace it.
-        match read_bank_ledger(tx, &self.key) {
-            Ok(Some(_)) => {}
-            Ok(None) => {
+        let decided = match read_bank_ledger(tx, &self.key) {
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => read_ledger_of(tx, LEDGER_DOMAIN, &self.key.scope_marker_source())
+                .map(|marker| marker.is_some()),
+            Err(error) => Err(error),
+        };
+        match decided {
+            Ok(true) => {}
+            Ok(false) => {
                 return Err((
                     ErrorCode::Failed {
                         domain,
