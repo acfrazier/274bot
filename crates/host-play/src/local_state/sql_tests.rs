@@ -1316,10 +1316,9 @@ fn same_root_export_completes_on_windows() {
     drop(preferences);
     drop(service);
     run_preferences_maintenance(&root, Frontend::Tui, &MaintenanceAction::ExportSameRoot).unwrap();
-    let exported: serde_json::Value = serde_json::from_str(
-        &vault::read_private_file(&root.preferences_file(), 1 << 20).unwrap(),
-    )
-    .unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_str(&vault::read_private_file(&root.preferences_file(), 1 << 20).unwrap())
+            .unwrap();
     assert_eq!(exported["last_focus"], json!("erin"));
 }
 
