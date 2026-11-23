@@ -951,3 +951,63 @@ fn a_rail_cap_world_marker_is_a_button_only_while_the_server_has_worlds() {
         assert!(!session.world_picker.is_open());
     }
 }
+
+/// KI:69: after undocking, the Script prefs window fits its contents. It
+/// opens shorter than the old fixed 360×480 for a short body, grows when
+/// more rows draw, and stops at the height cap.
+#[test]
+fn script_prefs_window_fits_its_contents() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = context();
+    let mut state = panel_state(Session::new());
+    state.session.persist_ui = false;
+    state.session.script_prefs_open = true;
+
+    /// Four frames of the floating Script prefs window; its outer size.
+    fn script_prefs_size(ctx: &mut Context, state: &mut PanelState) -> [f32; 2] {
+        let mut size = [0.0; 2];
+        for _ in 0..4 {
+            ctx.prepare_frame(
+                FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures(),
+            );
+            {
+                let ui = ctx.frame();
+                target_windows(ui, state);
+                size = ui.with_bound_context(|| {
+                    // SAFETY: the caller binds the frame's context; the name
+                    // is a NUL-terminated copy that outlives the call, and the
+                    // window is read only after the lookup found it.
+                    unsafe {
+                        let name = CString::new("Script prefs").unwrap();
+                        let window = sys::igFindWindowByName(name.as_ptr());
+                        assert!(!window.is_null(), "Script prefs was drawn");
+                        [(*window).Size.x, (*window).Size.y]
+                    }
+                });
+            }
+            ctx.render();
+        }
+        size
+    }
+
+    let short = script_prefs_size(&mut ctx, &mut state);
+    assert!(
+        short[0] >= 360.0 - 0.5 && short[0] <= 480.0 + 0.5,
+        "the width stays readable: {short:?}"
+    );
+    assert!(
+        short[1] < 480.0,
+        "a short body does not open at the old fixed height: {short:?}"
+    );
+
+    state.session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+    let tall = script_prefs_size(&mut ctx, &mut state);
+    assert!(
+        tall[1] > short[1] + 20.0,
+        "more rows grow the window: {short:?} -> {tall:?}"
+    );
+    assert!(
+        tall[1] <= 720.0 + 0.5,
+        "the height stops at the cap: {tall:?}"
+    );
+}

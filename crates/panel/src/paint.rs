@@ -38,8 +38,8 @@ pub enum PaintFrameHit {
 }
 
 /// Map the applet-space chatbox onto the Game Image's display rect
-/// (`min` = the Image widget's top-left corner, `size` = its display
-/// size, which is the native 765×503 in single-bot mode).
+/// (`min` = the Image widget's top-left corner, `size` = its display size,
+/// fitted to the pane in single-bot mode and to the cell in Grid mode).
 pub fn chatbox_rect(min: [f32; 2], size: [f32; 2]) -> [f32; 4] {
     let sx = size[0] / APPLET_W as f32;
     let sy = size[1] / APPLET_H as f32;

@@ -92,6 +92,8 @@ struct Rig {
     text: String,
     /// Centre of the Game window as of the last `UiFrame` frame.
     game_centre: Option<[f32; 2]>,
+    /// The host display size the next frames lay out against.
+    display: [f32; 2],
     ctx: Context,
     _imgui: MutexGuard<'static, ()>,
 }
@@ -139,6 +141,7 @@ impl Rig {
             drawn,
             text: String::new(),
             game_centre: None,
+            display: DISPLAY,
             ctx,
             _imgui: imgui,
         })
@@ -178,8 +181,9 @@ impl Rig {
         io.add_mouse_pos_event(spot);
         io.add_mouse_button_event(MouseButton::Left, left_down);
         io.add_mouse_button_event(MouseButton::Right, right_down);
-        self.ctx
-            .prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
+        self.ctx.prepare_frame(
+            FramePrepareOptions::new(self.display, 1.0 / 60.0).renderer_has_textures(),
+        );
         let title = game_window_title(self.state.session.focused_name().as_deref());
         let (exit, centre) =
             {
@@ -931,6 +935,58 @@ fn game_and_grid_panes_release_mouse_buttons_outside_the_image() {
             );
         }
     }
+}
+
+/// The single-bot Game view follows a host-window resize: the blit fills
+/// its pane instead of staying at the native 765×503 (KI:69).
+#[test]
+fn the_game_blit_follows_a_window_resize() {
+    let (session, _dir) = session_with_play("game-resize", &["alice"]);
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    publish_ingame(rig.session(), "alice");
+    for _ in 0..3 {
+        assert!(!rig.frame(Pointer::Away));
+    }
+    let before = game_blit();
+    rig.display = [1920.0, 1200.0];
+    for _ in 0..3 {
+        assert!(!rig.frame(Pointer::Away));
+    }
+    let after = game_blit();
+    assert!(
+        after.avail[0] > before.avail[0] + 100.0 && after.avail[1] > before.avail[1] + 100.0,
+        "the Game pane grows with the window: {:?} -> {:?}",
+        before.avail,
+        after.avail
+    );
+    assert!(
+        after.size[0] > before.size[0] + 100.0 && after.size[1] > before.size[1] + 100.0,
+        "the Game blit grows with its pane: {:?} -> {:?}",
+        before.size,
+        after.size
+    );
+    for (pane, blit) in [("default", before), ("enlarged", after)] {
+        assert!(
+            blit.size[0] <= blit.avail[0] + 0.5 && blit.size[1] <= blit.avail[1] + 0.5,
+            "{pane}: the blit fits the pane: {:?} in {:?}",
+            blit.size,
+            blit.avail
+        );
+        let aspect = blit.size[0] / blit.size[1];
+        assert!(
+            (aspect - 765.0 / 503.0).abs() < 0.01,
+            "{pane}: the blit keeps the stage aspect, got {aspect}"
+        );
+    }
+}
+
+/// The single-bot Game blit as the last frame drew it.
+fn game_blit() -> super::GameBlitRecord {
+    super::TEST_GAME_BLIT
+        .with(|cell| cell.get())
+        .expect("the Game pane drew")
 }
 
 /// A Grid press inside the focused cell's script paint must not also click
