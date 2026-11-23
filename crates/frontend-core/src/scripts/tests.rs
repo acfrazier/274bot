@@ -67,7 +67,6 @@ fn surface_start_errors_keep_runtime_and_refusal_classification() {
             }),
             ScriptStartErrorKind::Refused,
         ),
-        ),
     ] {
         let diagnostic = error.to_string();
         let converted = super::ScriptStartError::from(error);
