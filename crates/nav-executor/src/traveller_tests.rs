@@ -3969,6 +3969,103 @@ fn follow_shantay_door_edge_drives_the_pass_handover_dialog_before_arriving() {
     );
 }
 
+fn plant_guidor_search_page(c: &mut Client, text: &str) {
+    plant_continue_dialog(c);
+    c.set_iface(
+        102,
+        IfType {
+            id: 102,
+            layer_id: 100,
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        102,
+        IfTypeMut {
+            text: text.into(),
+            ..Default::default()
+        },
+    );
+    c.set_iface(
+        100,
+        IfType {
+            id: 100,
+            layer_id: 100,
+            children: Some(vec![101, 102]),
+            ..Default::default()
+        },
+    );
+}
+
+#[test]
+fn follow_guidor_gate_continues_both_guard_pages_before_arriving() {
+    let mut c = scene_client();
+    c.map_build_base_z = 3392;
+    plant_loc_sized(
+        &mut c,
+        2050,
+        "Gate",
+        "Open",
+        64,
+        13,
+        LocGeometry {
+            width: 1,
+            length: 1,
+            angle: 0,
+        },
+    );
+    let mut snap = snap_at(&mut c, 63, 13);
+    let mut rec = FollowRec {
+        route: Some((63, 13)),
+        build_base: Some((3200, 3392)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let to = WorldTile {
+        x: 3264,
+        z: 3405,
+        level: 0,
+    };
+    let route = web_route(TransportEdge {
+        at: to,
+        to,
+        takeoff: Some(WorldTile { x: 3263, ..to }),
+        loc_id: 2050,
+        members_req: true,
+        ..ladder_edge()
+    });
+    let mut options = TravelOptions::default();
+    assert_eq!(
+        traveller.follow(&mut rec, &snap, route.clone(), &mut options),
+        None
+    );
+    assert_eq!(rec.loc_ops, 1);
+    assert_eq!(rec.pause_buttons, 0);
+
+    for (text, pressed) in [
+        ("An unrelated conversation.", 0),
+        ("Halt. I need to conduct a search on you.", 1),
+        ("You may now pass.", 2),
+    ] {
+        plant_guidor_search_page(&mut c, text);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(traveller
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.pause_buttons, pressed, "{text}");
+    }
+
+    c.chat_modal_id = -1;
+    plant_player(&mut c, 64, 13);
+    bump_rebuild(&mut c, &mut snap);
+    assert!(matches!(
+        traveller.follow(&mut rec, &snap, route, &mut options),
+        Some(TravelOutcome::Arrived { at }) if at == to
+    ));
+    assert_eq!(rec.loc_ops, 1);
+}
+
 /// The Ardougne lever (`wilderness_lever.rs2` `[oploc1,wildinlever]`, loc
 /// 1814) first shows a warning `~mesbox` and then `~p_choice3_header`
 /// while `%warning_wilderness_teleport_lever` is false (every new account).

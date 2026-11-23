@@ -1,6 +1,7 @@
 //! Loc entrances whose content performs a deterministic sequence of door
 //! crossings and teleports. Every live-NPC lookup is universally quantified;
 //! a possible refusal or different landing rejects that state alternative.
+use super::super::rs2_syntax::parse_expr;
 use super::*;
 
 // Bound the full item, NPC, quest-completion, and quest-stage product.
@@ -1059,6 +1060,139 @@ fn trajectory(input: TrajectoryInputs<'_>) -> Option<Trajectory> {
     normalize(&mut result.needs).then_some(result)
 }
 
+// east_gate.rs2:4-47. Only the two Guidor gate placements use this proof.
+fn guidor_gate_side(id: i32, placement: &Placement) -> bool {
+    placement.shape == 0
+        && placement.angle == 0
+        && placement.level == 0
+        && placement.x == 3264
+        && matches!((id, placement.z), (2050, 3405) | (2051, 3406))
+}
+
+fn guidor_gate_paths(handler: &Block, supported: &HashSet<String>) -> Option<[Block; 2]> {
+    let [members, Stmt::If(sides, None), direct, open] = handler.body.as_slice() else {
+        return None;
+    };
+    let [(axis, west)] = sides.as_slice() else {
+        return None;
+    };
+    let [members_again, Stmt::If(searches, None)] = west.as_slice() else {
+        return None;
+    };
+    let [(search, searched)] = searches.as_slice() else {
+        return None;
+    };
+    let [halt, close_halt, notice, delay, ethenea, honey, broline, pass, close_pass, motion @ ..] =
+        searched.as_slice()
+    else {
+        return None;
+    };
+
+    let condition =
+        |expr: &Expr, text| lex(text).and_then(|tokens| parse_expr(&tokens)).as_ref() == Some(expr);
+    let message = |stmt: &Stmt, command: &str| {
+        matches!(stmt, Stmt::Call(name, args) if name == command
+            && matches!(args.as_slice(), [Expr::Str(calls)] if calls.is_empty()))
+    };
+    let closed = |stmt: &Stmt| matches!(stmt, Stmt::Call(name, args) if name == "if_close" && args.is_empty());
+    let delays = |stmt: &Stmt| {
+        matches!(stmt, Stmt::Call(name, args) if name == "p_delay"
+            && matches!(args.as_slice(), [Expr::Num(ticks)] if *ticks >= 0))
+    };
+    if !supported.contains("check_axis")
+        || !condition(axis, "~check_axis(coord, loc_coord, loc_angle) = false")
+        || members_again != members
+        || !matches!(open, Stmt::Jump(label, args) if label == "open_varrockgate" && args.is_empty())
+        || motion.last() != Some(open)
+        || !condition(
+            search,
+            concat!(
+                "%biohazard >= ^biohazard_given_distillator & ",
+                "%biohazard < ^biohazard_found_secret & npc_find(coord, bioguard1, 2, 0) = true"
+            ),
+        )
+        || !message(halt, "~chatnpc")
+        || !message(notice, "mes")
+        || !message(pass, "~chatnpc")
+        || !delays(delay)
+        || !closed(close_halt)
+        || !closed(close_pass)
+    {
+        return None;
+    }
+
+    // The executor handles the two chat pauses. Price all three vial delays,
+    // but do not turn vial presence into a route requirement. Nothing else
+    // can be deleted on this path.
+    let mut search_body = vec![members.clone(), delay.clone()];
+    for (stmt, vial) in [
+        (ethenea, "ethenea"),
+        (honey, "liquid_honey"),
+        (broline, "sulphuric_broline"),
+    ] {
+        let Stmt::If(arms, None) = stmt else {
+            return None;
+        };
+        let [(Expr::Cmp(CmpOp::Gt, total, zero), body)] = arms.as_slice() else {
+            return None;
+        };
+        let [notice, Stmt::Call(del, args), delay] = body.as_slice() else {
+            return None;
+        };
+        let item = |args: &[Expr]| matches!(args, [Expr::Word(inv), Expr::Word(obj)] if inv == "inv" && obj == vial);
+        if **zero != Expr::Num(0)
+            || !matches!(total.as_ref(), Expr::Call(name, args) if name == "inv_total" && item(args))
+            || !message(notice, "mes")
+            || !delays(delay)
+            || del != "inv_del"
+            || !matches!(args.split_last(), Some((Expr::Num(1), held)) if item(held))
+        {
+            return None;
+        }
+        search_body.push(delay.clone());
+    }
+    search_body.extend_from_slice(motion);
+    Some([
+        Block {
+            body: vec![members.clone(), direct.clone(), open.clone()],
+            params: Vec::new(),
+            reads_members: true,
+        },
+        Block {
+            body: search_body,
+            params: Vec::new(),
+            reads_members: true,
+        },
+    ])
+}
+
+fn guidor_gate_trajectory(
+    input: TrajectoryInputs<'_>,
+    [direct, searched]: &[Block; 2],
+    landing: WorldTile,
+) -> Option<Trajectory> {
+    let input = TrajectoryInputs {
+        npc: &[],
+        scenery: &[],
+        above: &[],
+        ..input
+    };
+    let mut direct = trajectory(TrajectoryInputs {
+        handler: direct,
+        ..input
+    })?;
+    let searched = trajectory(TrajectoryInputs {
+        handler: searched,
+        ..input
+    })?;
+    if direct.to != landing || searched.to != landing {
+        return None;
+    }
+    direct.needs.merge(searched.needs);
+    direct.ticks = direct.ticks.max(searched.ticks);
+    direct.needs.members.then_some(direct)
+}
+
 pub(super) fn edges(input: EntranceInputs<'_>) {
     let EntranceInputs {
         args:
@@ -1136,6 +1270,10 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
             if covered.contains(&(id, option)) && obstacle != Some(obstacles::Class::Ladder) {
                 continue;
             }
+            let guidor_paths =
+                (handler_name == "_varrock_gate" && option == 1 && matches!(id, 2050 | 2051))
+                    .then(|| guidor_gate_paths(handler, supported))
+                    .flatten();
             let calls = reachable_calls(handler, src);
             if !calls.iter().any(|call| {
                 matches!(
@@ -1305,6 +1443,78 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                     .into_iter()
                     .filter(|stand| collision.standable(*stand))
                 {
+                    let trajectory_inputs = TrajectoryInputs {
+                        src,
+                        facts,
+                        loc_facts: fact,
+                        positions,
+                        proofs,
+                        supported,
+                        selectors,
+                        handler,
+                        id,
+                        placement,
+                        stand,
+                        absent: &[],
+                        npc: &reads.npc,
+                        above: &above,
+                        scenery: &reads.scenery,
+                        obstacle,
+                        complete: true,
+                        stage_ranges: None,
+                        above_mask: 0,
+                    };
+                    let mut admit = |result: Trajectory| {
+                        if obstacle.is_none()
+                            && !paired_gate
+                            && result.needs.quests.is_empty()
+                            && result.needs.forbidden_held.is_empty()
+                            && result.needs.forbidden_worn.is_empty()
+                            && result.needs.items.is_empty()
+                            && result.needs.worn.is_empty()
+                        {
+                            return;
+                        }
+                        if !collision.standable(result.to) {
+                            return;
+                        }
+                        if covered.contains(&(id, option))
+                            && graph.edges[..first_new_edge].iter().any(|edge| {
+                                edge.loc_id == id && edge.option == option && edge.to == result.to
+                            })
+                        {
+                            return;
+                        }
+                        let mut edge = gated_edge(
+                            obstacle.map_or(kind, obstacles::Class::kind),
+                            id,
+                            at,
+                            result.to,
+                            result.needs,
+                        );
+                        edge.takeoff = Some(stand);
+                        edge.option = option;
+                        edge.ticks = result.ticks;
+                        if observable.admit_edge(graph, edge, audit) && member_path {
+                            audit.record_member_path(graph.edges.last().expect("admitted edge"));
+                        }
+                    };
+                    if let Some(paths) = guidor_paths
+                        .as_ref()
+                        .filter(|_| guidor_gate_side(id, placement) && stand.x < at.x)
+                    {
+                        // The search takes both leaves' users via the south
+                        // stand. Only the south leaf lands at the same tile
+                        // in both branches (east_gate.rs2:34-47).
+                        if id == 2050 {
+                            if let Some(result) =
+                                guidor_gate_trajectory(trajectory_inputs, paths, at)
+                            {
+                                admit(result);
+                            }
+                        }
+                        continue;
+                    }
                     for mask in 0..(1usize << reads.items.len()) {
                         let absent: Vec<_> = reads
                             .items
@@ -1315,98 +1525,40 @@ pub(super) fn edges(input: EntranceInputs<'_>) {
                             })
                             .collect();
                         let trajectory_inputs = TrajectoryInputs {
-                            src,
-                            facts,
-                            loc_facts: fact,
-                            positions,
-                            proofs,
-                            supported,
-                            selectors,
-                            handler,
-                            id,
-                            placement,
-                            stand,
                             absent: &absent,
-                            npc: &reads.npc,
-                            above: &above,
-                            scenery: &reads.scenery,
-                            obstacle,
-                            complete: true,
-                            stage_ranges: None,
-                            above_mask: 0,
+                            ..trajectory_inputs
                         };
-                        {
-                            let mut admit = |result: Trajectory| {
-                                if obstacle.is_none()
-                                    && !paired_gate
-                                    && result.needs.quests.is_empty()
-                                    && result.needs.forbidden_held.is_empty()
-                                    && result.needs.forbidden_worn.is_empty()
-                                    && result.needs.items.is_empty()
-                                    && result.needs.worn.is_empty()
-                                {
-                                    return;
+                        if let Some(variants) = &stage_variants {
+                            for stage_ranges in variants {
+                                if let Some(result) = trajectory(TrajectoryInputs {
+                                    stage_ranges: Some(stage_ranges),
+                                    ..trajectory_inputs
+                                }) {
+                                    admit(result);
                                 }
-                                if !collision.standable(result.to) {
-                                    return;
-                                }
-                                if covered.contains(&(id, option))
-                                    && graph.edges[..first_new_edge].iter().any(|edge| {
-                                        edge.loc_id == id
-                                            && edge.option == option
-                                            && edge.to == result.to
-                                    })
-                                {
-                                    return;
-                                }
-                                let mut edge = gated_edge(
-                                    obstacle.map_or(kind, obstacles::Class::kind),
-                                    id,
-                                    at,
-                                    result.to,
-                                    result.needs,
-                                );
-                                edge.takeoff = Some(stand);
-                                edge.option = option;
-                                edge.ticks = result.ticks;
-                                if observable.admit_edge(graph, edge, audit) && member_path {
-                                    audit.record_member_path(
-                                        graph.edges.last().expect("admitted edge"),
-                                    );
-                                }
-                            };
-                            if let Some(variants) = &stage_variants {
-                                for stage_ranges in variants {
-                                    if let Some(result) = trajectory(TrajectoryInputs {
-                                        stage_ranges: Some(stage_ranges),
-                                        ..trajectory_inputs
-                                    }) {
-                                        admit(result);
-                                    }
-                                }
-                            } else {
-                                for above_mask in 0..(1usize << above.len()) {
-                                    let complete = trajectory(TrajectoryInputs {
-                                        above_mask,
-                                        ..trajectory_inputs
-                                    });
-                                    let incomplete = (above_mask == 0 && reads.quests.len() == 1)
-                                        .then(|| {
-                                            trajectory(TrajectoryInputs {
-                                                complete: false,
-                                                ..trajectory_inputs
-                                            })
+                            }
+                        } else {
+                            for above_mask in 0..(1usize << above.len()) {
+                                let complete = trajectory(TrajectoryInputs {
+                                    above_mask,
+                                    ..trajectory_inputs
+                                });
+                                let incomplete = (above_mask == 0 && reads.quests.len() == 1)
+                                    .then(|| {
+                                        trajectory(TrajectoryInputs {
+                                            complete: false,
+                                            ..trajectory_inputs
                                         })
-                                        .flatten()
-                                        .filter(|candidate| {
-                                            complete.as_ref().is_some_and(|other| {
-                                                other.to == candidate.to
-                                                    && weaker_than(&other.needs, &candidate.needs)
-                                            })
-                                        });
-                                    for result in [complete, incomplete].into_iter().flatten() {
-                                        admit(result);
-                                    }
+                                    })
+                                    .flatten()
+                                    .filter(|candidate| {
+                                        complete.as_ref().is_some_and(|other| {
+                                            other.to == candidate.to
+                                                && weaker_than(&other.needs, &candidate.needs)
+                                        })
+                                    });
+                                for result in [complete, incomplete].into_iter().flatten() {
+                                    admit(result);
                                 }
                             }
                         }

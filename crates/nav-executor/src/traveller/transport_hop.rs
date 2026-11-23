@@ -151,6 +151,33 @@ pub(super) fn drives_hop_dialogs(edge: &TransportEdge, options: &TravelOptions<'
         || has_refusal_texts(edge, options)
 }
 
+fn guidor_gate_search_page(edge: &TransportEdge, snapshot: &GameSnapshot) -> bool {
+    const SOUTH_LEAF: WorldTile = WorldTile {
+        x: 3264,
+        z: 3405,
+        level: 0,
+    };
+    edge.kind == TransportKind::Ladder
+        && edge.loc_id == 2050
+        && edge.option == 1
+        && edge.at == SOUTH_LEAF
+        && edge.to == SOUTH_LEAF
+        && edge.takeoff
+            == Some(WorldTile {
+                x: 3263,
+                ..SOUTH_LEAF
+            })
+        && snapshot.chat_continue_component_id() != -1
+        // east_gate.rs2:15,34 and chat.rs2:321-333. These pages pause the
+        // crossing but never ask the player to select a choice.
+        && [
+            "Halt. I need to conduct a search on you.",
+            "You may now pass.",
+        ]
+        .iter()
+        .any(|text| api::snapshot::chat_page_matches(snapshot.chat_modal_texts(), text))
+}
+
 fn has_refusal_texts(edge: &TransportEdge, options: &TravelOptions<'_>) -> bool {
     let Some(crossing) = edge.quest_gates.as_ref().and_then(|_| edge.crossing_id()) else {
         return false;
@@ -1185,7 +1212,9 @@ impl FollowRun {
                 });
             }
         }
-        if hop.refusal_watch.is_none() && drives_hop_dialogs(&edge, options) {
+        if guidor_gate_search_page(&edge, snapshot) {
+            let _ = Interactions::new(snapshot, d).continue_dialog(None);
+        } else if hop.refusal_watch.is_none() && drives_hop_dialogs(&edge, options) {
             if npc_hop
                 && (snapshot.chat_continue_component_id() != -1
                     || !snapshot.chat_options().is_empty()
