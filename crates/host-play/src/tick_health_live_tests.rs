@@ -69,8 +69,17 @@ fn tick_health_engine_a_receipt() {
     let observations = observations.lock().unwrap();
     let receipts = &observations.receipts;
     let complete = receipts.len() >= 8;
+    let packet_deltas_match = receipts.windows(2).all(|pair| {
+        pair[0].session != pair[1].session
+            || (pair[1]
+                .packet_generation
+                .wrapping_sub(pair[0].packet_generation)
+                == pair[1].packet_delta
+                && pair[1].server_ticks.wrapping_sub(pair[0].server_ticks) == pair[1].packet_delta)
+    });
     let receipt = serde_json::json!({
-        "verdict": if complete { "PASS" } else { "FAIL" },
+        "verdict": if complete && packet_deltas_match { "PASS" } else { "FAIL" },
+        "packet_deltas_match": packet_deltas_match,
         "source_sha": std::env::var("LIVE_SOURCE_SHA").ok(),
         "account": account,
         "source": "applied PLAYER_INFO generation at monotonic drain receive observations",
