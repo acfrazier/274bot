@@ -1568,8 +1568,6 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let cursor = ui.cursor_pos();
     let off = applet_offset(avail, size);
     ui.set_cursor_pos([cursor[0] + off[0], cursor[1] + off[1]]);
-    #[cfg(test)]
-    record_test_game_blit(avail, size);
     if state.game_view.is_none() {
         state.game_view = Some(GameView::init(gpu));
     }
@@ -1634,6 +1632,8 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // longer guaranteed to be the Image.
         let min = ui.item_rect_min();
         image_min = min;
+        #[cfg(test)]
+        record_test_game_blit(avail, size, min);
         image_hovered = ui.is_item_hovered();
         #[cfg(feature = "render-diagnostics")]
         {
@@ -4777,6 +4777,8 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             {
                 quest_paths_section(ui, session);
             }
+            #[cfg(test)]
+            test_script_prefs_filler(ui);
         });
     session.script_prefs_open = open;
 }
@@ -6346,19 +6348,34 @@ std::thread_local! {
     /// The single-bot Game blit as the last frame drew it.
     static TEST_GAME_BLIT: std::cell::Cell<Option<GameBlitRecord>> =
         const { std::cell::Cell::new(None) };
+    /// Rows a test adds to the floating Script prefs body to pass the
+    /// height cap, so the cap and its scroll can be asserted.
+    static TEST_SCRIPT_PREFS_FILLER_ROWS: std::cell::Cell<u32> =
+        const { std::cell::Cell::new(0) };
 }
 
-/// The single-bot Game blit's pane and display sizes as a test sees it.
+/// The single-bot Game blit's pane, display size and Image origin as a test
+/// sees it.
 #[cfg(test)]
 #[derive(Debug, Clone, Copy)]
 struct GameBlitRecord {
     avail: [f32; 2],
     size: [f32; 2],
+    /// The Image item's top-left corner (screen coordinates).
+    min: [f32; 2],
 }
 
 #[cfg(test)]
-fn record_test_game_blit(avail: [f32; 2], size: [f32; 2]) {
-    TEST_GAME_BLIT.set(Some(GameBlitRecord { avail, size }));
+fn record_test_game_blit(avail: [f32; 2], size: [f32; 2], min: [f32; 2]) {
+    TEST_GAME_BLIT.set(Some(GameBlitRecord { avail, size, min }));
+}
+
+#[cfg(test)]
+fn test_script_prefs_filler(ui: &Ui) {
+    let rows = TEST_SCRIPT_PREFS_FILLER_ROWS.with(std::cell::Cell::get);
+    for row in 0..rows {
+        ui.text(format!("filler row {row}"));
+    }
 }
 
 /// The rail's scrolling tiles region as a test sees it.

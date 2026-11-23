@@ -954,7 +954,7 @@ fn a_rail_cap_world_marker_is_a_button_only_while_the_server_has_worlds() {
 
 /// KI:69: after undocking, the Script prefs window fits its contents. It
 /// opens shorter than the old fixed 360×480 for a short body, grows when
-/// more rows draw, and stops at the height cap.
+/// more rows draw, stops at the 720 px cap, and scrolls past it.
 #[test]
 fn script_prefs_window_fits_its_contents() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -963,9 +963,11 @@ fn script_prefs_window_fits_its_contents() {
     state.session.persist_ui = false;
     state.session.script_prefs_open = true;
 
-    /// Four frames of the floating Script prefs window; its outer size.
-    fn script_prefs_size(ctx: &mut Context, state: &mut PanelState) -> [f32; 2] {
+    /// Four frames of the floating Script prefs window: its outer size and
+    /// the vertical scroll range.
+    fn script_prefs_size(ctx: &mut Context, state: &mut PanelState) -> ([f32; 2], f32) {
         let mut size = [0.0; 2];
+        let mut scroll_max_y = 0.0;
         for _ in 0..4 {
             ctx.prepare_frame(
                 FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures(),
@@ -973,7 +975,7 @@ fn script_prefs_window_fits_its_contents() {
             {
                 let ui = ctx.frame();
                 target_windows(ui, state);
-                size = ui.with_bound_context(|| {
+                (size, scroll_max_y) = ui.with_bound_context(|| {
                     // SAFETY: the caller binds the frame's context; the name
                     // is a NUL-terminated copy that outlives the call, and the
                     // window is read only after the lookup found it.
@@ -981,16 +983,16 @@ fn script_prefs_window_fits_its_contents() {
                         let name = CString::new("Script prefs").unwrap();
                         let window = sys::igFindWindowByName(name.as_ptr());
                         assert!(!window.is_null(), "Script prefs was drawn");
-                        [(*window).Size.x, (*window).Size.y]
+                        ([(*window).Size.x, (*window).Size.y], (*window).ScrollMax.y)
                     }
                 });
             }
             ctx.render();
         }
-        size
+        (size, scroll_max_y)
     }
 
-    let short = script_prefs_size(&mut ctx, &mut state);
+    let (short, _) = script_prefs_size(&mut ctx, &mut state);
     assert!(
         short[0] >= 360.0 - 0.5 && short[0] <= 480.0 + 0.5,
         "the width stays readable: {short:?}"
@@ -1001,13 +1003,23 @@ fn script_prefs_window_fits_its_contents() {
     );
 
     state.session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
-    let tall = script_prefs_size(&mut ctx, &mut state);
+    let (tall, _) = script_prefs_size(&mut ctx, &mut state);
     assert!(
         tall[1] > short[1] + 20.0,
         "more rows grow the window: {short:?} -> {tall:?}"
     );
+
+    // Far more rows than the cap holds: the window must stop at 720 and
+    // scroll the rest instead of growing. A missing cap grows past 720.
+    super::TEST_SCRIPT_PREFS_FILLER_ROWS.set(80);
+    let (capped, scroll_max_y) = script_prefs_size(&mut ctx, &mut state);
+    super::TEST_SCRIPT_PREFS_FILLER_ROWS.set(0);
     assert!(
-        tall[1] <= 720.0 + 0.5,
-        "the height stops at the cap: {tall:?}"
+        (capped[1] - 720.0).abs() <= 0.5,
+        "the height is the cap: {capped:?}"
+    );
+    assert!(
+        scroll_max_y > 0.0,
+        "content past the cap scrolls: ScrollMax.y={scroll_max_y}"
     );
 }

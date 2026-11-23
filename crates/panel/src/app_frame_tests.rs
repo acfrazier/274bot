@@ -19,7 +19,9 @@ use dear_imgui_rs::{sys, ConfigFlags, Context, FramePrepareOptions, MouseButton}
 use dear_imgui_wgpu as imgui_wgpu;
 use frontend_core::command::Subject;
 use frontend_core::scripts::{CompiledCardId, ScriptChoice, ScriptRunState};
-use frontend_core::surface::{FrameBuf, InputEv, InputProbe, InputSender, SlotInput};
+use frontend_core::surface::{
+    map_image_to_applet, FrameBuf, InputEv, InputProbe, InputSender, SlotInput,
+};
 use frontend_core::test_support::paint::TestPaint;
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
@@ -987,6 +989,89 @@ fn game_blit() -> super::GameBlitRecord {
     super::TEST_GAME_BLIT
         .with(|cell| cell.get())
         .expect("the Game pane drew")
+}
+
+/// A click on the scaled single-bot Game image maps back to the 765×503
+/// applet: the capture must use the fitted blit size, not the native one.
+#[test]
+fn a_click_on_the_scaled_game_view_maps_to_applet_coordinates() {
+    let (session, _dir) = session_with_play("game-click-map", &["alice"]);
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    publish_ingame(rig.session(), "alice");
+    rig.session().focus.lock().unwrap().capture = true;
+    rig.display = [1920.0, 1200.0];
+    for _ in 0..3 {
+        assert!(!rig.frame(Pointer::Away));
+    }
+    let (sender, probe) = InputSender::probe();
+    rig.session().map_desk.set_input_sender(Some(sender));
+    for _ in 0..3 {
+        assert!(!rig.frame(Pointer::Away));
+    }
+    let blit = game_blit();
+    let scale = blit.size[0] / 765.0;
+    assert!(
+        (scale - scale.round()).abs() > 0.01,
+        "the enlarged display gives a fractional fit: {scale}"
+    );
+    assert!(
+        blit.size[1] > 503.0,
+        "the blit is enlarged: {:?}",
+        blit.size
+    );
+    let points = [
+        ("top-left", [1.0, 1.0]),
+        ("middle", [blit.size[0] * 0.5, blit.size[1] * 0.5]),
+        ("bottom-right", [blit.size[0] - 1.0, blit.size[1] - 1.0]),
+        ("fractional", [blit.size[0] * 0.37, blit.size[1] * 0.61]),
+    ];
+    for (label, local) in points {
+        let at = [blit.min[0] + local[0], blit.min[1] + local[1]];
+        // ImGui floors a pointer position before the frame reads it, so the
+        // panel maps this integer screen point against the Image rect.
+        let mapped_local = [at[0].floor() - blit.min[0], at[1].floor() - blit.min[1]];
+        let mut hovered = false;
+        for _ in 0..8 {
+            assert!(!rig.frame_buttons_at(at, false, false, Pointer::Over));
+            if drain(&probe)
+                .iter()
+                .any(|event| matches!(event, InputEv::Move { .. }))
+            {
+                hovered = true;
+                break;
+            }
+        }
+        assert!(hovered, "{label}: the pointer reaches the image");
+        assert!(!rig.frame_buttons_at(at, true, false, Pointer::Over));
+        let down = drain(&probe)
+            .into_iter()
+            .find_map(|event| match event {
+                InputEv::Down { button: 1, x, y } => Some((x, y)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{label}: the press reaches alice"));
+        let expected =
+            map_image_to_applet(mapped_local[0], mapped_local[1], blit.size[0], blit.size[1])
+                .expect("the point is inside the image");
+        assert_eq!(
+            down, expected,
+            "{label}: local {mapped_local:?} in {:?} at {:?}",
+            blit.size, blit.min
+        );
+        assert!(
+            (0..765).contains(&down.0) && (0..503).contains(&down.1),
+            "{label}: the applet coordinate is inside 765x503: {down:?}"
+        );
+        assert_ne!(
+            map_image_to_applet(mapped_local[0], mapped_local[1], 765.0, 503.0),
+            Some(expected),
+            "{label}: the fitted mapping differs from a native-size mapping"
+        );
+        assert!(!rig.frame_buttons_at(at, false, false, Pointer::Over));
+        drain(&probe);
+    }
 }
 
 /// A Grid press inside the focused cell's script paint must not also click
