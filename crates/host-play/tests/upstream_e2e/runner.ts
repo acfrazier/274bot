@@ -175,6 +175,9 @@ async function runChild(testCase: Case, file: string, directory: string, resultP
     mkdirSync(directory, { recursive: true });
     if (existsSync(resultPath)) throw new Error(`stale child result exists for ${testCase.id}`);
     process.chdir(directory);
+    // Keep relative artifact writes here, but use the selected upstream checkout for Git commands.
+    process.env.GIT_DIR = join(upstream, '.git');
+    process.env.GIT_WORK_TREE = upstream;
     process.env.UEP_CASE_ID = testCase.id;
     process.env.UEP_CASE_OUTPUT = directory;
     process.env.USER_NAME = `uep${Date.now().toString(36).slice(-7)}-${testCase.id}`;
