@@ -482,6 +482,12 @@ pub enum StepKind {
     /// that ends anywhere but the destination fails the step with the
     /// terminal outcome's message.
     Follow { dest: WorldTile },
+    /// Follow with a fixture-controlled pause. A false result pauses polling
+    /// without replacing the armed route, resetting its budget, or sending input.
+    FollowWhen {
+        dest: WorldTile,
+        may_poll: Box<dyn Fn(&Client) -> bool + Send + Sync>,
+    },
     /// Whole-world nav with the any-tile teleport layer on: like
     /// [`StepKind::Follow`], but the route arms with
     /// `FindOptions::allow_teleports`, so a destination only the packed

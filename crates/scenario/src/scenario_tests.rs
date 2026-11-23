@@ -10770,42 +10770,20 @@ fn script_gold_watch_is_a_short_agentic_budget() {
 }
 
 #[test]
-fn nearest_door_loc_returns_the_offset_open_leaf_not_the_packed_at() {
-    // Live Catherby: packed closed 1530 is (2816,3438); the open leaf
-    // 1531 sits a tile off that `at`. The closer used to find the id
-    // in radius 3 then still slam packed `at`, so interact_with_loc
-    // looked up a typecode on an empty tile.
-    let packed = WorldTile {
-        x: 2816,
-        z: 3438,
-        level: 0,
-    };
-    let found = nearest_door_loc(packed, |x, z| (x == 2816 && z == 3439).then_some(OPEN_ID));
+fn catherby_door_leaf_uses_the_content_tiles() {
     assert_eq!(
-        found,
-        Some((
-            WorldTile {
-                x: 2816,
-                z: 3439,
-                level: 0
-            },
-            OPEN_ID
-        )),
-        "slam target is the live leaf tile, not packed at"
+        door_leaf(|x, z| (x == 2816 && z == 3439).then_some(OPEN_ID)),
+        Some(OPEN_ID)
     );
-}
-
-#[test]
-fn nearest_door_loc_keeps_the_packed_closed_leaf() {
-    let packed = WorldTile {
-        x: 2816,
-        z: 3438,
-        level: 0,
-    };
-    let found = nearest_door_loc(packed, |x, z| {
-        (x == packed.x && z == packed.z).then_some(CLOSED_ID)
-    });
-    assert_eq!(found, Some((packed, CLOSED_ID)));
+    assert_eq!(
+        door_leaf(|x, z| (x == 2816 && z == 3438).then_some(CLOSED_ID)),
+        Some(CLOSED_ID)
+    );
+    assert_eq!(
+        door_leaf(|x, z| (x == 2816 && z == 3438).then_some(OPEN_ID)),
+        None,
+        "an open leaf at the packed closed tile is not this fixture"
+    );
 }
 
 #[test]
@@ -10817,21 +10795,28 @@ fn nav_door_is_a_two_profile_fleet_with_a_door_closer_companion() {
         s.seed.mainland,
         "the hop lands the walker before the Catherby tele"
     );
-    assert_eq!(s.steps.len(), 2, "tele the walker, then follow the route");
+    assert_eq!(s.steps.len(), 5, "setup, follow, then verify recovery");
     assert!(
         matches!(s.steps[0].kind, StepKind::Perform { .. }),
         "step 1 is the Catherby cheat-tele"
     );
-    let (dest, arm) = match &s.steps[1].kind {
-        StepKind::Follow { dest } => (
+    let (dest, arm) = match &s.steps[3].kind {
+        StepKind::FollowWhen { dest, .. } => (
             *dest,
-            match &s.steps[1].wait.arm {
+            match &s.steps[3].wait.arm {
                 Proof::Arrived { x, z, level } => (*x, *z, *level),
                 other => panic!("follow arm must be arrived, got {other:?}"),
             },
         ),
-        _ => panic!("nav_door step 2 must be Follow"),
+        _ => panic!("nav_door must keep the same follow during the close"),
     };
+    assert!(matches!(
+        s.steps[4].kind,
+        StepKind::Await {
+            evidence: "single_close_reopen_and_cross",
+            ..
+        }
+    ));
     assert_eq!(
         dest,
         WorldTile {

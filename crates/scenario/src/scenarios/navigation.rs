@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use super::combat::{BRASS_KEY_ID, RUNE_SCIMITAR_ID};
 use super::pair::{follow_step, nav_kit_steps, tele_step};
 use super::production::{COINS_ID, HITPOINTS_STAT, MAGIC_STAT};
@@ -115,30 +117,23 @@ pub fn nav_full_scenario() -> Scenario {
     }
 }
 
-/// The `nav_door` scenario: the two-bot door slam as a scenario fleet.
-/// Profile 0 (`test`) is the driven walker: after the mainland seed it
-/// cheat-teles to the Catherby range-house `OUTSIDE` stand, then `Follow`s
-/// a whole-world route through the door to `DEST` inside. Profile 1
-/// (`test2`) is the closer companion: it cheat-teles inside, then
-/// `op_loc`s the door shut on each game tick observed through `PLAYER_INFO`
-/// as soon as the door reads open, so the walker's follow is stressed against
-/// a game-tick-perfect closer. The walker's terminal outcome at the door is
-/// the diagnostic target (the closer slams the door shut as the walker
-/// approaches, which surfaces as `Refused Unreachable` in the traveller's
-/// settle).
-/// The companion's gating mirrors the old harness: the first `scene_state ==
-/// 2` frame is skipped (host-play queues `mainland_hop` after the hook),
-/// and the Catherby tele waits until `here` is the mainland courtyard.
+/// Single-close recovery at the Catherby range-house door. Pause the armed
+/// follow when the walker sees its first Open take effect. Resume that same
+/// follow only after the companion's one Close takes effect on both clients.
 pub(crate) fn nav_door_scenario() -> Scenario {
-    let outside = WorldTile {
-        x: OUTSIDE.x,
-        z: OUTSIDE.z,
-        level: 0,
-    };
-    let dest = WorldTile {
+    let recovery = Arc::new(Mutex::new(DoorRecovery::default()));
+    let walker = Arc::clone(&recovery);
+    let observed = Arc::clone(&recovery);
+    let summary = Arc::clone(&recovery);
+    let arrive = Proof::Arrived {
         x: DEST.x,
         z: DEST.z,
-        level: 0,
+        level: DEST.level,
+    };
+    let outside = Proof::Arrived {
+        x: OUTSIDE.x,
+        z: OUTSIDE.z,
+        level: OUTSIDE.level,
     };
     Scenario {
         name: "nav_door",
@@ -155,38 +150,91 @@ pub(crate) fn nav_door_scenario() -> Scenario {
                     send: Box::new(|c, _| cheat(c, WALKER_TELE).is_sent()),
                 },
                 wait: Wait {
-                    arm: Proof::Arrived {
-                        x: outside.x,
-                        z: outside.z,
-                        level: 0,
+                    arm: outside,
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "start with the range-house door closed",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| match live_door_leaf(c) {
+                        Some(CLOSED_ID) => true,
+                        // The previous run may have left the real door open.
+                        Some(OPEN_ID) => op_loc(c, OPEN_DOOR.x, OPEN_DOOR.z, OPEN_ID),
+                        _ => false,
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::LocIdNear {
+                        id: CLOSED_ID,
+                        x: DOOR.x,
+                        z: DOOR.z,
+                        level: DOOR.level,
+                        radius: 0,
                     },
                     budget_ticks: 120,
                 },
             },
             Step {
-                name: "follow through the range-house door",
-                kind: StepKind::Follow { dest },
+                name: "return to the outside stand after door setup",
+                kind: StepKind::Perform {
+                    send: Box::new(|c, _| {
+                        door_client_tile(c) == Some(OUTSIDE) || cheat(c, WALKER_TELE).is_sent()
+                    }),
+                },
                 wait: Wait {
-                    arm: Proof::Arrived {
-                        x: dest.x,
-                        z: dest.z,
-                        level: dest.level,
-                    },
+                    arm: outside,
+                    budget_ticks: 120,
+                },
+            },
+            Step {
+                name: "follow through the range-house door",
+                kind: StepKind::FollowWhen {
+                    dest: DEST,
+                    may_poll: Box::new(move |c| {
+                        let mut state = walker.lock().expect("door recovery witness mutex");
+                        let before = *state;
+                        let here = door_client_tile(c);
+                        let poll = state.walker_poll(live_door_leaf(c), here);
+                        if debug_enabled() && *state != before {
+                            eprintln!("[nav-door] walker {before:?} -> {state:?} at {here:?}");
+                        }
+                        poll
+                    }),
+                },
+                wait: Wait {
+                    arm: arrive,
                     budget_ticks: 600,
                 },
             },
+            Step {
+                name: "verify the door recovery and crossing",
+                kind: StepKind::Await {
+                    evidence: "single_close_reopen_and_cross",
+                    ready: Box::new(move |_| {
+                        *observed.lock().expect("door recovery witness mutex")
+                            == DoorRecovery::Crossed
+                    }),
+                    summary: Some(Box::new(move || {
+                        let state = summary.lock().expect("door recovery witness mutex");
+                        format!("single-close recovery: {state:?}")
+                    })),
+                },
+                // The armed follow has terminated. Its witness cannot change
+                // now, so this check needs no further observation window.
+                wait: Wait {
+                    arm: arrive,
+                    budget_ticks: 1,
+                },
+            },
         ],
-        proof: Proof::Arrived {
-            x: dest.x,
-            z: dest.z,
-            level: dest.level,
-        },
+        proof: arrive,
         companions: vec![Companion {
             profile: 1,
             per_frame: {
                 let mut slot = CloserSlot::default();
                 Box::new(move |c| {
-                    closer_frame(c, &mut slot);
+                    closer_frame(c, &mut slot, &recovery);
                     false
                 })
             },
@@ -342,11 +390,17 @@ pub(crate) fn nav_quest_door_scenario() -> Scenario {
     }
 }
 
-/// Closed Catherby range-house door (loc 1530) the closer slams.
+/// North-facing straight wall in `content/maps/m44_53.jm2:4200`.
 const DOOR: WorldTile = WorldTile {
     x: 2816,
     z: 3438,
     level: 0,
+};
+// Opening moves the north-facing leaf one tile north
+// (`content/scripts/doors/scripts/door_procs.rs2:1-9,21-29`).
+const OPEN_DOOR: WorldTile = WorldTile {
+    z: DOOR.z + 1,
+    ..DOOR
 };
 pub(crate) const CLOSED_ID: i32 = 1530;
 pub(crate) const OPEN_ID: i32 = 1531;
@@ -366,10 +420,14 @@ const DEST: WorldTile = WorldTile {
 /// `::tele` to OUTSIDE (level, mx, mz, lx, lz).
 const WALKER_TELE: &str = "tele 0,43,53,61,44";
 /// Inside, diagonal to the door (2817,3439) — off the 2816 corridor.
+const CLOSER_STAND: WorldTile = WorldTile {
+    x: 2817,
+    z: 3439,
+    level: 0,
+};
 const CLOSER_TELE: &str = "tele 0,44,53,1,47";
 
-/// Per-frame state of the closer companion (profile 1), owned by the
-/// companion's closure. All plain fields, so the closure is `Send`.
+/// Client-cycle state of the closer companion (profile 1).
 #[derive(Default)]
 struct CloserSlot {
     /// First `scene_state == 2` was observed; that frame host-play still
@@ -380,50 +438,88 @@ struct CloserSlot {
     last_gen: u64,
 }
 
-/// The closer companion's per-frame hook: gate the Catherby tele behind
-/// the mainland hop, then on each observed game tick (`PLAYER_INFO`) `op_loc`
-/// the live open leaf (id 1531, often a tile off packed `at`) so it slams shut.
-fn closer_frame(c: &mut Client, s: &mut CloserSlot) {
-    let Some(lp) = &c.local_player else {
-        if debug_enabled() {
-            eprintln!("[nav-closer] no local_player scene={}", c.scene_state);
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum DoorRecovery {
+    #[default]
+    WaitingForCloser,
+    Ready,
+    FirstOpen,
+    CloseSent,
+    CloseRefused,
+    CloseConfirmed,
+    Reopening,
+    Reopened,
+    Crossed,
+}
+
+impl DoorRecovery {
+    fn walker_poll(&mut self, leaf: Option<i32>, here: Option<WorldTile>) -> bool {
+        match (*self, leaf) {
+            (Self::Ready, Some(OPEN_ID)) => {
+                *self = Self::FirstOpen;
+                false
+            }
+            (Self::CloseConfirmed, Some(CLOSED_ID)) => {
+                // Do not resume on a stale open read from before Close.
+                *self = Self::Reopening;
+                true
+            }
+            (Self::Reopening, Some(OPEN_ID)) => {
+                *self = Self::Reopened;
+                true
+            }
+            (Self::Reopened, _) if here == Some(OPEN_DOOR) => {
+                *self = Self::Crossed;
+                true
+            }
+            (Self::Ready | Self::Reopening, Some(CLOSED_ID))
+            | (Self::Reopened | Self::Crossed, _) => true,
+            _ => false,
         }
-        return;
-    };
-    let here = WorldTile {
-        x: c.map_build_base_x + lp.route_x[0],
-        z: c.map_build_base_z + lp.route_z[0],
-        level: 0,
-    };
-    if stage_closer_tele(c, here, s) {
-        return;
     }
-    if c.gens.player == s.last_gen {
+
+    fn closer_poll(&mut self, leaf: Option<i32>, send: impl FnOnce() -> bool) {
+        match (*self, leaf) {
+            (Self::FirstOpen, Some(OPEN_ID)) => {
+                *self = if send() {
+                    Self::CloseSent
+                } else {
+                    Self::CloseRefused
+                };
+            }
+            (Self::CloseSent, Some(CLOSED_ID)) => *self = Self::CloseConfirmed,
+            _ => {}
+        }
+    }
+}
+
+fn closer_frame(c: &mut Client, s: &mut CloserSlot, recovery: &Mutex<DoorRecovery>) {
+    let Some(here) = door_client_tile(c) else {
+        return;
+    };
+    if stage_closer_tele(c, here, s) || c.scene_state != 2 || c.gens.player == s.last_gen {
         return;
     }
     s.last_gen = c.gens.player;
-    let loc = wall_loc(c, DOOR);
-    if debug_enabled() {
+    let mut state = recovery.lock().expect("door recovery witness mutex");
+    let before = *state;
+    if before == DoorRecovery::WaitingForCloser && here == CLOSER_STAND {
+        *state = DoorRecovery::Ready;
+    }
+    if matches!(before, DoorRecovery::FirstOpen | DoorRecovery::CloseSent) {
+        // OP_LOC1 swaps the leaf without p_delay for straight walls. Wait
+        // for the closed leaf on a later PLAYER_INFO, not a timer or the
+        // accepted send (`content/scripts/doors/scripts/doors.rs2:1-2,10-37`).
+        state.closer_poll(live_door_leaf(c), || {
+            op_loc(c, OPEN_DOOR.x, OPEN_DOOR.z, OPEN_ID)
+        });
+    }
+    if debug_enabled() && *state != before {
         eprintln!(
-            "[nav-closer] here={here:?} loc={loc:?} tele_sent={} scene={}",
-            s.tele_sent, c.scene_state
+            "[nav-door] closer {before:?} -> {state:?} at player generation {}",
+            s.last_gen
         );
     }
-    let Some((loc_tile, loc_id)) = loc else {
-        return;
-    };
-    if loc_id == CLOSED_ID {
-        return;
-    }
-    // OP_LOC1 on the live open leaf is Close. The leaf often sits a tile
-    // off packed `at`; slamming packed `at` looks up an empty typecode.
-    if debug_enabled() {
-        eprintln!(
-            "[nav-closer] SLAM op_loc id={loc_id} at ({},{}) packed=({},{})",
-            loc_tile.x, loc_tile.z, DOOR.x, DOOR.z
-        );
-    }
-    op_loc(c, loc_tile.x, loc_tile.z, loc_id);
 }
 
 /// Host-play queues `mainland_hop` *after* `per_frame` on the first
@@ -457,49 +553,29 @@ fn stage_closer_tele(c: &mut Client, here: WorldTile, s: &mut CloserSlot) -> boo
     true
 }
 
-fn wall_loc(c: &Client, tile: WorldTile) -> Option<(WorldTile, i32)> {
+fn door_client_tile(c: &Client) -> Option<WorldTile> {
+    let (x, z) = c.local_route()?;
     let (bx, bz) = c.build_base();
-    nearest_door_loc(tile, |x, z| {
-        c.loc_typecode(x - bx, z - bz).map(|tc| (tc >> 14) & 0x7fff)
+    Some(WorldTile {
+        x: bx + x,
+        z: bz + z,
+        level: c.minusedlevel,
     })
 }
 
-/// Nearest 1530/1531 within chebyshev 3 of packed `at`. Returns the live
-/// tile — the Catherby open leaf sits a tile off that origin, and
-/// `op_loc` must click the leaf, not packed `at`.
-pub(crate) fn nearest_door_loc(
-    packed: WorldTile,
-    lookup: impl Fn(i32, i32) -> Option<i32>,
-) -> Option<(WorldTile, i32)> {
-    let mut best: Option<(i32, WorldTile, i32)> = None;
-    for dx in -3i32..=3 {
-        for dz in -3i32..=3 {
-            let gap = dx.abs().max(dz.abs());
-            if gap > 3 {
-                continue;
-            }
-            let x = packed.x + dx;
-            let z = packed.z + dz;
-            let Some(id) = lookup(x, z) else {
-                continue;
-            };
-            if id != CLOSED_ID && id != OPEN_ID {
-                continue;
-            }
-            if best.map(|(g, _, _)| gap < g).unwrap_or(true) {
-                best = Some((
-                    gap,
-                    WorldTile {
-                        x,
-                        z,
-                        level: packed.level,
-                    },
-                    id,
-                ));
-            }
-        }
+fn live_door_leaf(c: &Client) -> Option<i32> {
+    let (bx, bz) = c.build_base();
+    door_leaf(|x, z| c.loc_typecode(x - bx, z - bz).map(|tc| (tc >> 14) & 0x7fff))
+}
+
+pub(crate) fn door_leaf(lookup: impl Fn(i32, i32) -> Option<i32>) -> Option<i32> {
+    let closed = lookup(DOOR.x, DOOR.z) == Some(CLOSED_ID);
+    let open = lookup(OPEN_DOOR.x, OPEN_DOOR.z) == Some(OPEN_ID);
+    match (closed, open) {
+        (true, false) => Some(CLOSED_ID),
+        (false, true) => Some(OPEN_ID),
+        _ => None,
     }
-    best.map(|(_, tile, id)| (tile, id))
 }
 
 fn at_lumbridge(here: WorldTile) -> bool {
@@ -1809,5 +1885,55 @@ pub(crate) fn nav_mage_arena_bank_scenario() -> Scenario {
             terminal_shot: Some("nav_mage_arena_bank terminal"),
             ..Default::default()
         },
+    }
+}
+
+#[cfg(test)]
+mod door_recovery_tests {
+    use super::*;
+
+    #[test]
+    fn closer_sends_only_once_through_multiple_open_observations() {
+        let mut recovery = DoorRecovery::FirstOpen;
+        let mut sends = 0;
+        for leaf in [
+            CLOSED_ID, OPEN_ID, OPEN_ID, CLOSED_ID, OPEN_ID, CLOSED_ID, OPEN_ID,
+        ] {
+            recovery.closer_poll(Some(leaf), || {
+                sends += 1;
+                true
+            });
+        }
+        assert_eq!(sends, 1);
+        assert_eq!(recovery, DoorRecovery::CloseConfirmed);
+    }
+
+    #[test]
+    fn recovery_requires_a_confirmed_close_reopen_and_far_stand_in_order() {
+        let mut recovery = DoorRecovery::Ready;
+        recovery.closer_poll(Some(OPEN_ID), || panic!("close before walker Open"));
+        assert!(recovery.walker_poll(Some(CLOSED_ID), Some(DOOR)));
+        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR)));
+        recovery.closer_poll(Some(OPEN_ID), || true);
+        assert!(!recovery.walker_poll(Some(CLOSED_ID), Some(DOOR)));
+        recovery.closer_poll(Some(CLOSED_ID), || panic!("close on the closed leaf"));
+        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR)));
+        assert!(recovery.walker_poll(Some(CLOSED_ID), Some(DOOR)));
+        assert!(recovery.walker_poll(Some(CLOSED_ID), Some(OPEN_DOOR)));
+        assert_eq!(recovery, DoorRecovery::Reopening);
+        assert!(recovery.walker_poll(Some(OPEN_ID), Some(DOOR)));
+        assert_eq!(recovery, DoorRecovery::Reopened);
+        assert!(recovery.walker_poll(Some(OPEN_ID), Some(OPEN_DOOR)));
+        assert_eq!(recovery, DoorRecovery::Crossed);
+    }
+
+    #[test]
+    fn refused_close_does_not_retry_or_release_the_walker() {
+        let mut recovery = DoorRecovery::FirstOpen;
+        recovery.closer_poll(Some(OPEN_ID), || false);
+        recovery.closer_poll(Some(OPEN_ID), || panic!("second Close attempt"));
+        recovery.closer_poll(Some(CLOSED_ID), || panic!("close on the closed leaf"));
+        assert!(!recovery.walker_poll(Some(CLOSED_ID), Some(DOOR)));
+        assert_eq!(recovery, DoorRecovery::CloseRefused);
     }
 }
