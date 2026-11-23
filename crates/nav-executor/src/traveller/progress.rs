@@ -14,7 +14,7 @@
 //!   (`walk.rs:17-26,242-243`), at least `budget`, longer for a hop that plans
 //!   more steps (`walk.rs:588-590`);
 //! - an unsent walk hop: `budget` (`walk.rs:529`);
-//! - a transport leg's wait for its loc or npc: `budget` polls
+//! - a transport leg's wait for its loc or npc: `budget` observed ticks
 //!   (`traveller.rs:1320,1398,1465,1648`, `transport_hop.rs:993,1138,1940,1971`);
 //! - an approach walk: `budget` (`transport_hop.rs:1795`);
 //! - the hop clock after an interaction, which holds door recovery, occupied
@@ -78,7 +78,7 @@ impl FollowRun {
 
     /// A loc or npc wait starts over.
     pub(super) fn restart_loc_wait(&mut self) {
-        self.loc_wait = 0;
+        self.loc_wait = TickCount::default();
         clock_started();
     }
 }

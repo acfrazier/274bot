@@ -1005,8 +1005,9 @@ struct FollowRun {
     budget: u32,
     /// Shared by every walk hop and stalled resend in this follow.
     walk_packet_budget: WalkPacketBudget,
-    /// Ticks the current transport leg has waited for its loc to appear.
-    loc_wait: u32,
+    /// Observed ticks the current transport leg has waited for its loc to
+    /// appear: one per `PLAYER_INFO` packet, as every follower clock counts.
+    loc_wait: TickCount,
     /// Refused clicks this follow may still sit out while nothing was
     /// clicked yet (frozen `CANDIDATE_SETTLE_TRIES`, one budget per walk).
     settle_left: u32,
@@ -1048,7 +1049,7 @@ impl FollowRun {
             close_enough: options.close_enough,
             budget: options.budget_ticks_per_hop,
             walk_packet_budget: WalkPacketBudget::default(),
-            loc_wait: 0,
+            loc_wait: TickCount::default(),
             settle_left: SCENE_SETTLE_TRIES,
             settle_until: None,
             walk: None,
@@ -1316,8 +1317,7 @@ impl FollowRun {
                                 return Some(TravelOutcome::Refused { at: here, reason });
                             }
                             TeleportSend::Wait(reason) => {
-                                self.loc_wait += 1;
-                                if self.loc_wait > self.budget {
+                                if self.loc_wait.observe(snapshot.tick()) > self.budget {
                                     fire_leg(options, &leg, LegPhase::Failed);
                                     return Some(TravelOutcome::Blocked {
                                         at: here,
@@ -1394,8 +1394,7 @@ impl FollowRun {
                                 npc.network
                             }
                             None => {
-                                self.loc_wait += 1;
-                                if self.loc_wait > self.budget {
+                                if self.loc_wait.observe(snapshot.tick()) > self.budget {
                                     fire_leg(options, &leg, LegPhase::Failed);
                                     return Some(TravelOutcome::Blocked {
                                         at: here,
@@ -1461,8 +1460,7 @@ impl FollowRun {
                             // the loaded scene: keep waiting, bounded by
                             // the hop budget. The leg stays on the front
                             // while waiting.
-                            self.loc_wait += 1;
-                            if self.loc_wait > self.budget {
+                            if self.loc_wait.observe(snapshot.tick()) > self.budget {
                                 fire_leg(options, &leg, LegPhase::Failed);
                                 return Some(TravelOutcome::Blocked {
                                     at: here,
@@ -1484,7 +1482,7 @@ impl FollowRun {
                         match result {
                             SendResult::Sent { .. } => {
                                 let npc_recovery = NpcRecovery {
-                                    waited: self.loc_wait,
+                                    waited: self.loc_wait.get(),
                                     last_tick: Some(snapshot.tick()),
                                     ..Default::default()
                                 };
@@ -1599,7 +1597,7 @@ impl FollowRun {
                                     let open_sent_tick =
                                         (edge.kind == TransportKind::Door).then(|| snapshot.tick());
                                     let npc_recovery = NpcRecovery {
-                                        waited: self.loc_wait,
+                                        waited: self.loc_wait.get(),
                                         last_tick: Some(snapshot.tick()),
                                         ..Default::default()
                                     };
@@ -1644,8 +1642,7 @@ impl FollowRun {
                             // scene yet: keep waiting, bounded by the hop
                             // budget. The leg stays on the front while
                             // waiting.
-                            self.loc_wait += 1;
-                            if self.loc_wait > self.budget {
+                            if self.loc_wait.observe(snapshot.tick()) > self.budget {
                                 fire_leg(options, &leg, LegPhase::Failed);
                                 return Some(TravelOutcome::Blocked {
                                     at: here,

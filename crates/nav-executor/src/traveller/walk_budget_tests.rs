@@ -486,3 +486,74 @@ fn every_start_of_a_clock_counts_as_progress() {
     count.observe(5);
     assert_eq!(clock_starts(), before);
 }
+
+/// A transport leg whose loc never appears, followed from a player standing
+/// next to it, so the wait for the loc is the only clock that runs.
+fn missing_loc_follow() -> (Client, GameSnapshot, FollowRec, Route) {
+    let mut client = scene_client();
+    let snapshot = snap_at(&mut client, 2, 3);
+    let driver = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let edge = TransportEdge {
+        takeoff: None,
+        worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
+        loc_id: 99,
+        ..ladder_edge()
+    };
+    let route = Route {
+        legs: vec![Leg::Transport {
+            edge: Box::new(edge),
+        }],
+        dest: WorldTile {
+            x: 3202,
+            z: 3205,
+            level: 0,
+        },
+        ticks: 2.0,
+    };
+    (client, snapshot, driver, route)
+}
+
+#[test]
+fn a_loc_wait_counts_server_ticks_however_often_the_follower_is_polled() {
+    const START: u32 = 1_000;
+    // Polls every tick, every 2nd, every 3rd, and a batched drain of 50
+    // ticks that lands on the same tick as the every-tick poll.
+    let schedules: [&[u32]; 4] = [
+        &(0..=61).collect::<Vec<_>>(),
+        &(0..=30).map(|n| n * 2).collect::<Vec<_>>(),
+        &(0..=20).map(|n| n * 3).collect::<Vec<_>>(),
+        &[0, 10, 60, 61],
+    ];
+    for schedule in schedules {
+        let (_client, mut snapshot, mut driver, route) = missing_loc_follow();
+        let mut traveller = Traveller::new();
+        let mut options = TravelOptions::default();
+        let mut ended = None;
+        let mut progress = None;
+        for &offset in schedule {
+            snapshot.seed_tick(START + offset);
+            let outcome = traveller.follow(&mut driver, &snapshot, route.clone(), &mut options);
+            progress = progress.or(traveller.take_clock_progress());
+            if let Some(outcome) = outcome {
+                ended = Some((offset, outcome));
+                break;
+            }
+        }
+        // The follow starts a clock of 60 ticks on the first poll, so the
+        // owner's deadline is START + 60 + 1.
+        assert_eq!(progress, Some(60), "{schedule:?}");
+        let Some((offset, TravelOutcome::Blocked { .. })) = ended else {
+            panic!("the loc wait must end the follow: {ended:?} on {schedule:?}");
+        };
+        // The wait's clock lapses when it has counted more than the budget:
+        // the first poll at or after 60 ticks. That is no later than the
+        // owner's deadline at offset 61.
+        assert_eq!(offset, 60, "{schedule:?}");
+        assert!(offset <= 60 + 1);
+    }
+}

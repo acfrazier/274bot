@@ -441,9 +441,11 @@ impl FollowRun {
             *refused = (0, None);
             return false;
         }
-        if refused.1 != Some(tick) {
-            *refused = (refused.0.saturating_add(1), Some(tick));
-        }
+        // One tick per `PLAYER_INFO` packet since the last credit.
+        let credit = refused
+            .1
+            .map_or(1, |last| TickCount::credit_since(last, tick));
+        *refused = (refused.0.saturating_add(credit), Some(tick));
         refused.0 >= END_BLOCKED_STALL_TICKS
     }
 

@@ -869,17 +869,21 @@ impl FollowRun {
                 } else {
                     hop.ticks_waited.get()
                 },
-                loc_wait: self.loc_wait,
+                loc_wait: self.loc_wait.get(),
                 budget: self.budget,
                 live_loc: find_transport_loc(snapshot, edge).map(|l| (l.id, l.tile)),
             });
         }
         let npc_hop = matches!(&hop.leg, Leg::Transport { edge } if npc_backed(edge));
         if npc_hop {
-            if hop.npc_recovery.last_tick != Some(snapshot.tick()) {
-                hop.npc_recovery.last_tick = Some(snapshot.tick());
-                hop.npc_recovery.waited += 1;
-            }
+            // One tick per `PLAYER_INFO` packet since the last read: a poll
+            // that comes after several game ticks credits them all.
+            let credit = hop
+                .npc_recovery
+                .last_tick
+                .map_or(1, |last| TickCount::credit_since(last, snapshot.tick()));
+            hop.npc_recovery.last_tick = Some(snapshot.tick());
+            hop.npc_recovery.waited = hop.npc_recovery.waited.saturating_add(credit);
             if hop.approach.is_some() {
                 if hop.npc_recovery.waited > self.budget {
                     fire_leg(options, &hop.leg, LegPhase::Failed);
@@ -989,8 +993,7 @@ impl FollowRun {
             }) {
                 let Some(target) = find_transport_target_instance(snapshot, &edge, hop.npc_index)
                 else {
-                    self.loc_wait += 1;
-                    if self.loc_wait > self.budget {
+                    if self.loc_wait.observe(snapshot.tick()) > self.budget {
                         fire_leg(options, &hop.leg, LegPhase::Failed);
                         return Poll::Terminal(TravelOutcome::Blocked {
                             at: here,
@@ -1134,8 +1137,7 @@ impl FollowRun {
                     }
                 }
                 None => {
-                    self.loc_wait += 1;
-                    if self.loc_wait > self.budget {
+                    if self.loc_wait.observe(snapshot.tick()) > self.budget {
                         fire_leg(options, &hop.leg, LegPhase::Failed);
                         Poll::Terminal(TravelOutcome::Blocked {
                             at: here,
@@ -1850,7 +1852,7 @@ impl FollowRun {
                 "troll here={here:?} at={tile:?} cheb={} ticks_waited={} loc_wait={}",
                 cheb(here, edge.at),
                 hop.ticks_waited.get(),
-                self.loc_wait
+                self.loc_wait.get()
             );
         }
         // Once on the destination side, a closer behind us must not pull
@@ -1936,8 +1938,7 @@ impl FollowRun {
             let Some(approach) = approach_tile(snapshot, edge.at, here) else {
                 // No standable tile adjacent to the door in the loaded
                 // scene: keep waiting, bounded by the hop budget.
-                self.loc_wait += 1;
-                if self.loc_wait > self.budget {
+                if self.loc_wait.observe(snapshot.tick()) > self.budget {
                     fire_leg(options, &hop.leg, LegPhase::Failed);
                     return Some(TravelOutcome::Blocked {
                         at: here,
@@ -1967,8 +1968,7 @@ impl FollowRun {
             // out of view, or a scripted self-closing swap). For a door with
             // no open leaf, wait for `edge.loc_id` to return; its displaced
             // inactive leaf is not a walk-through target.
-            self.loc_wait += 1;
-            if self.loc_wait > self.budget {
+            if self.loc_wait.observe(snapshot.tick()) > self.budget {
                 fire_leg(options, &hop.leg, LegPhase::Failed);
                 return Some(TravelOutcome::Blocked {
                     at: here,
