@@ -1,15 +1,13 @@
 use super::script_basics::script_live_seed_steps;
 use crate::*;
 
-/// Inside the selected-289 `woodcutting.draynor` site (x 3082..=3136,
-/// z 3200..=3256), on open ground in view of real normal trees: content
-/// `m48_50.jm2` places loc 1276 at (3107,3229), (3111,3226), (3106,3231)
-/// and (3105,3228), all within the r6 proof below. The previous start
-/// (3217,3231) was a Lumbridge tree's own footprint with no 1276 in r6,
-/// so the pre-Start tree proof could never hold on 289.
+/// Open ground in the selected-289 `woodcutting.draynor` site. `m48_50.jm2`
+/// places normal trees at (3111,3217) and (3113,3217) (lines 5517 and 5578).
+/// The closest jail guard spawns 24 tiles away (line 6688). The r12 search
+/// and one-tile tree approach stay outside its five-tile hunt from r5 wander.
 const GATHERER_START: WorldTile = WorldTile {
-    x: 3109,
-    z: 3228,
+    x: 3112,
+    z: 3213,
     level: 0,
 };
 const BRONZE_AXE_ID: i32 = 1351;
@@ -160,6 +158,30 @@ mod tests {
     use api::selected::{EntityId, Knowledge};
     use client::io::ClientRevision;
     use std::sync::Arc;
+
+    #[test]
+    fn start_search_area_stays_outside_jail_guard_hunt_range() {
+        let radius = GATHERER_START_INJECT
+            .iter()
+            .find_map(|setting| match (setting.id, &setting.value) {
+                ("radius", ScriptInjectValue::Num(radius)) => Some(*radius),
+                _ => None,
+            })
+            .expect("Start mode sets a search radius");
+        // m48_50.jm2:6688,6690-6691,6694 are the ground-level jailguard spawns.
+        // draynor.npc:180 sets huntrange=5. NpcType.ts:101 defaults wanderrange to 5.
+        // Include one tile for interaction beside a tree at the search edge.
+        let guard_reach_from_spawn = 5.0 + 5.0;
+        for (x, z) in [(3109, 3237), (3120, 3238), (3121, 3249), (3127, 3248)] {
+            let distance = (x - GATHERER_START.x)
+                .abs()
+                .max((z - GATHERER_START.z).abs());
+            assert!(
+                f64::from(distance) > radius + 1.0 + guard_reach_from_spawn,
+                "the Start area overlaps the hunt range of the jail guard at ({x},{z})"
+            );
+        }
+    }
 
     /// The seed must stand inside the site it names, with a real placement
     /// of the proved tree id inside the proof radius — the two content
