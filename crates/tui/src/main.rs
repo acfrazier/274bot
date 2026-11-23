@@ -28,11 +28,10 @@ fn main() -> ExitCode {
     // The session log records the result when it opens.
     frontend_core::process::raise_fd_limit();
     let result = tui::bin::main();
-    let result = if let Err(error) = frontend_core::process::shutdown_background_work() {
+    if let Err(error) = frontend_core::process::shutdown_background_work() {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
         ExitCode::FAILURE
     } else {
         result
-    };
-    result
+    }
 }

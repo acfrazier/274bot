@@ -48,10 +48,9 @@ fn main() -> std::process::ExitCode {
     if let Err(error) = &shutdown {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
     }
-    let result = if run.is_err() || shutdown.is_err() {
+    if run.is_err() || shutdown.is_err() {
         std::process::ExitCode::FAILURE
     } else {
         std::process::ExitCode::SUCCESS
-    };
-    result
+    }
 }
