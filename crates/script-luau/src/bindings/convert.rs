@@ -6,9 +6,12 @@
 //! numeric `FromLua` of `mlua`, which converts a numeric string
 //! (ADR 0023 item 26).
 
+use api::script_contract::MAX_START_CHARGE;
+
 use mlua::{BorrowedStr, Lua, LuaString, MultiValue, Table, Value};
 use script::bank::request::{BankSeatArgs, BankSeatOperation};
 use script::interact::InteractReq;
+use script::native::seat::SeatTerminal;
 use script::native::snapshot_source::TileInput;
 use script::native::WalkCancelReason;
 use script::surface::client::{ClientError, SeatCompletion, WalkCompletion};
@@ -71,6 +74,11 @@ pub(crate) enum Refusal {
     Argument {
         argument: &'static str,
         expected: &'static str,
+    },
+    /// One interaction text argument exceeds its byte bound.
+    TextTooLong {
+        argument: &'static str,
+        max_bytes: usize,
     },
     /// More arguments than the member takes.
     Arity(usize),
@@ -396,7 +404,11 @@ pub(crate) fn walk_request(args: &Args, shape: WalkShape) -> Result<InteractReq,
 fn required_text(value: &Value, argument: &'static str) -> Result<String, Refusal> {
     match value {
         Value::String(text) => match text.to_str() {
-            Ok(text) => Ok(text.to_owned()),
+            Ok(text) if text.len() <= MAX_START_CHARGE => Ok(text.to_owned()),
+            Ok(_) => Err(Refusal::TextTooLong {
+                argument,
+                max_bytes: MAX_START_CHARGE,
+            }),
             Err(_) => Err(refuse(argument, "UTF-8 text")),
         },
         _ => Err(refuse(argument, "a string")),
@@ -459,25 +471,71 @@ pub(crate) fn held_request(args: &Args) -> Result<InteractReq, Refusal> {
     })
 }
 
-/// The value that resumes an awaited binding. `api.wait` and bank operations
-/// resume with nil; a walk resumes with its result table.
+/// The value that resumes an awaited binding. Bank awaits return a tagged seat
+/// result; a walk returns its result table, and `api.wait` returns nil.
 pub(crate) fn completion(lua: &Lua, completion: &SeatCompletion) -> mlua::Result<Value> {
     match completion {
+        SeatCompletion::Terminal { result, value } => {
+            bank_result(lua, result.outcome, value.as_deref()).map(Value::Table)
+        }
         SeatCompletion::Walk(walk) => walk_result(lua, walk).map(Value::Table),
         SeatCompletion::Aborted(reason) => {
-            let result = lua.create_table()?;
-            result.raw_set("ok", false)?;
-            result.raw_set("failed", true)?;
-            result.raw_set("aborted", abort_reason(*reason))?;
-            Ok(Value::Table(result))
+            bank_result(lua, SeatTerminal::Aborted(*reason), None).map(Value::Table)
         }
-        // Bank starts and `api.wait` have no result value. The current surface
-        // has no binding that awaits the other handled native families.
         SeatCompletion::NextTick
-        | SeatCompletion::Terminal(_)
         | SeatCompletion::Gather(_)
         | SeatCompletion::Combat(_)
         | SeatCompletion::Progress(_) => Ok(Value::Nil),
+    }
+}
+
+/// A typed bank terminal with the optional value published by the slot.
+fn bank_result(lua: &Lua, outcome: SeatTerminal, value: Option<&[u8]>) -> mlua::Result<Table> {
+    let result = lua.create_table()?;
+    let (status, reason) = match outcome {
+        SeatTerminal::Done => ("done", None),
+        SeatTerminal::Failed => ("failed", None),
+        SeatTerminal::Refused(reason) => ("refused", Some(format!("{reason:?}"))),
+        SeatTerminal::Aborted(reason) => ("aborted", Some(abort_reason(reason).to_owned())),
+    };
+    result.raw_set("status", status)?;
+    result.raw_set("has_value", value.is_some())?;
+    if let Some(bytes) = value {
+        let value = script::channel::decode(bytes).map_err(|error| {
+            mlua::Error::RuntimeError(format!("bank seat result is invalid: {error}"))
+        })?;
+        result.raw_set("value", channel_value(lua, value)?)?;
+    }
+    if let Some(reason) = reason {
+        result.raw_set("reason", reason)?;
+    }
+    Ok(result)
+}
+
+/// Convert the bounded structured-clone value to the corresponding Luau value.
+fn channel_value(lua: &Lua, value: serde_json::Value) -> mlua::Result<Value> {
+    match value {
+        serde_json::Value::Null => Ok(Value::Nil),
+        serde_json::Value::Bool(value) => Ok(Value::Boolean(value)),
+        serde_json::Value::Number(number) => number
+            .as_f64()
+            .map(Value::Number)
+            .ok_or_else(|| mlua::Error::RuntimeError("bank result number is invalid".to_owned())),
+        serde_json::Value::String(value) => Ok(Value::String(lua.create_string(value)?)),
+        serde_json::Value::Array(values) => {
+            let table = lua.create_table()?;
+            for (index, value) in values.into_iter().enumerate() {
+                table.raw_set((index + 1) as i64, channel_value(lua, value)?)?;
+            }
+            Ok(Value::Table(table))
+        }
+        serde_json::Value::Object(values) => {
+            let table = lua.create_table()?;
+            for (key, value) in values {
+                table.raw_set(key, channel_value(lua, value)?)?;
+            }
+            Ok(Value::Table(table))
+        }
     }
 }
 

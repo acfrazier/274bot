@@ -228,7 +228,10 @@ fn stamped_start_and_exact_terminal_are_consumed_once() {
     );
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
     assert_eq!(client.take_completion(), None);
     assert!(client.awaiting().is_none());
@@ -484,7 +487,10 @@ fn starts_and_cancels_retry_until_a_page_acknowledges_them() {
     assert_eq!(client.pending_starts(), 0);
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
 
     let watermark = client.drain_seat_batches().pop().unwrap();
@@ -605,7 +611,10 @@ fn reset_preserves_a_completion_already_copied_from_the_page() {
     assert!(client.completion_ready());
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
 }
 
@@ -850,7 +859,10 @@ fn completion_waits_until_lifecycle_capacity_is_available() {
     assert_eq!(batch.batch.reqs.len(), MAX_SEAT_GAMEPLAY_ROWS);
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
 }
 
@@ -930,7 +942,10 @@ fn terminal_page_consumes_every_result_sequence() {
     assert_eq!(batch.batch.consumed_terminal_seq, 2);
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
 }
 
@@ -1021,7 +1036,10 @@ fn model_trace_drives_the_client_terminal_receipt() {
                 let terminal = seat.results()[0];
                 assert_eq!(terminal.seq, sequence);
                 assert_eq!(terminal.outcome, SeatTerminal::Done);
-                expected = Some(SeatCompletion::Terminal(terminal));
+                expected = Some(SeatCompletion::Terminal {
+                    result: terminal,
+                    value: None,
+                });
                 let page = SeatPageInput::new(&[], seat.results(), &[], 0).unwrap();
                 client.accept_delivery(
                     &snapshot(),

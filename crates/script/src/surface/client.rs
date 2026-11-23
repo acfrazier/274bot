@@ -72,7 +72,11 @@ pub struct WalkCompletion {
 /// A completion copied while its borrowed snapshot page is still alive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeatCompletion {
-    Terminal(SeatResult),
+    Terminal {
+        result: SeatResult,
+        /// The bounded structured-clone value published for this terminal.
+        value: Option<Vec<u8>>,
+    },
     Gather(GatherEnd),
     Combat(CombatEnd),
     Progress(ProgressPage),
@@ -641,6 +645,14 @@ impl SeatClient {
                 else {
                     return;
                 };
+                let terminal = || SeatCompletion::Terminal {
+                    result: *result,
+                    value: page
+                        .result_values()
+                        .iter()
+                        .find(|value| value.id == id)
+                        .map(|value| value.value.to_vec()),
+                };
                 let value = match (kind, result.outcome) {
                     (NativeKind::Gather, SeatTerminal::Done | SeatTerminal::Failed) => native
                         .api_gather_outcome
@@ -669,8 +681,8 @@ impl SeatClient {
                         })
                         .cloned()
                         .map(SeatCompletion::Progress)
-                        .or(Some(SeatCompletion::Terminal(*result))),
-                    _ => Some(SeatCompletion::Terminal(*result)),
+                        .or_else(|| Some(terminal())),
+                    _ => Some(terminal()),
                 };
                 if let Some(value) = value {
                     self.stored = Some(StoredCompletion {

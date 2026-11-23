@@ -8,6 +8,7 @@ pub mod support;
 use std::collections::BTreeMap;
 
 use script::bank::request::BankSeatOperation;
+use script::interact::InteractReq;
 use script::native::request::NativeKind;
 use script::native::seat_rows::SeatStartArgs;
 use script::surface::{LentOutcome, SurfaceRun};
@@ -23,14 +24,30 @@ fn used_bytes(run: &dyn SurfaceRun) -> u64 {
 }
 
 /// One measured game tick, then the slot's own drains.
-fn measured_tick(run: &mut dyn SurfaceRun, tick_number: u64) -> u64 {
+fn measured_tick(
+    run: &mut dyn SurfaceRun,
+    tick_number: u64,
+    expected_interactions: Option<usize>,
+) -> u64 {
     let input = snapshot(tick_number);
     let mut outcome = LentOutcome::Refused;
     let info = allocation_counter::measure(|| {
         outcome = tick(&mut *run, &input);
     });
     assert_eq!(outcome, LentOutcome::Accepted);
-    drop(run.drain_seat_batches());
+    let batches = run.drain_seat_batches();
+    if let Some(expected) = expected_interactions {
+        let interactions = batches
+            .iter()
+            .flat_map(|batch| batch.batch.reqs.iter())
+            .filter(|row| !matches!(&row.request, InteractReq::LoopSettled))
+            .count();
+        assert_eq!(
+            interactions, expected,
+            "the measured tick queues every interaction request"
+        );
+    }
+    drop(batches);
     drop(run.drain_tick_outcomes());
     info.count_total
 }
@@ -51,7 +68,7 @@ fn g2_suspended_tick_without_completion_allocates_nothing_and_stays_out_of_the_v
     let (entries_before, _) = run.execution_sequence();
     let mut total = 0;
     for number in 2..2 + TICKS {
-        total += measured_tick(&mut *run, number);
+        total += measured_tick(&mut *run, number, None);
     }
     let (entries_after, _) = run.execution_sequence();
     println!("G2: {TICKS} suspended ticks made {total} Rust allocations");
@@ -74,10 +91,10 @@ struct Profile {
     used_peak: u64,
 }
 
-fn profile(source: &str, ticks: u64) -> Profile {
+fn profile(source: &str, ticks: u64, expected_interactions: Option<usize>) -> Profile {
     let mut run = spawn(source);
     for number in 1..=WARM_UP {
-        measured_tick(&mut *run, number);
+        measured_tick(&mut *run, number, expected_interactions);
     }
     let used_after_warm_up = used_bytes(&*run);
     let mut used = used_after_warm_up;
@@ -85,7 +102,11 @@ fn profile(source: &str, ticks: u64) -> Profile {
     let mut counts = Vec::new();
     let mut changes = Vec::new();
     for number in WARM_UP + 1..=WARM_UP + ticks {
-        counts.push(measured_tick(&mut *run, number));
+        counts.push(measured_tick(
+            &mut *run,
+            number,
+            expected_interactions,
+        ));
         let now = used_bytes(&*run);
         changes.push(now as i64 - used as i64);
         used = now;
@@ -184,11 +205,11 @@ const LONG_TICKS: u64 = 10 * TICKS;
 
 #[test]
 fn g3_scalar_read_tick_stays_within_the_accepted_limit() {
-    let read = profile(SCALAR_READ, TICKS);
+    let read = profile(SCALAR_READ, TICKS, None);
     read.print("G3 scalar read");
-    let empty = profile(EMPTY_TICK, TICKS);
+    let empty = profile(EMPTY_TICK, TICKS, None);
     empty.print("G3 empty tick (control: the scope alone)");
-    let long = profile(SCALAR_READ, LONG_TICKS);
+    let long = profile(SCALAR_READ, LONG_TICKS, None);
     long.print("G3 scalar read, long");
     println!(
         "G3 accepted limit: at most {G3_ACCEPTED_RUST_ALLOCATIONS_PER_TICK} Rust allocations per tick; \
@@ -251,7 +272,7 @@ fn bank_start_allocations(member: &str, expected: BankSeatOperation) -> u64 {
 
 #[test]
 fn l4b_bank_and_interaction_ticks_stay_within_the_allocation_budget() {
-    let interactions = profile(L4B_INTERACTIONS, TICKS);
+    let interactions = profile(L4B_INTERACTIONS, TICKS, Some(5));
     interactions.print("L4b five interaction requests");
     // Keep the 10-allocation cushion; these five rows own eight text strings.
     let interaction_limit = G3_ACCEPTED_RUST_ALLOCATIONS_PER_TICK + 10 + 8;

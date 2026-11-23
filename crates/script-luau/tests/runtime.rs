@@ -20,7 +20,7 @@ use script::native::recovery_hints::RecoveryHintsCell;
 #[cfg(feature = "test-hooks")]
 use script::native::seat::{SeatResult, SeatTerminal};
 #[cfg(feature = "test-hooks")]
-use script::native::seat_rows::SeatPageInput;
+use script::native::seat_rows::{SeatPageInput, SeatResultValue};
 use script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput};
 #[cfg(feature = "test-hooks")]
 use script::slot::{RunState, ScriptTerminalState};
@@ -798,6 +798,62 @@ fn real_slot_seat_terminal_resumes_after_pause_and_rejects_stale_ids() {
         LentOutcome::Accepted
     );
     assert!(slot.drain_logs().is_empty(), "one completion resumes once");
+}
+
+#[cfg(feature = "test-hooks")]
+#[test]
+fn real_slot_bank_terminal_resumes_with_status_and_published_value() {
+    let source = r#"
+        return {
+            tick = function()
+                local result = api.bank.openNearest()
+                api.log(result.status, result.has_value, type(result.value), result.value)
+            end,
+        }
+        "#;
+    for (sequence, outcome, value, expected) in [
+        (
+            8,
+            SeatTerminal::Done,
+            serde_json::json!(true),
+            "done\ttrue\tboolean\ttrue",
+        ),
+        (
+            9,
+            SeatTerminal::Failed,
+            serde_json::json!("bank unavailable"),
+            "failed\ttrue\tstring\tbank unavailable",
+        ),
+    ] {
+        let mut slot = started_slot(source, false);
+        assert_eq!(slot_tick(&mut slot, 1, false), LentOutcome::Accepted);
+        let id = queued_start_id(&mut slot);
+        let encoded_value = script::channel::encode(&value).expect("bank result value");
+        let terminal = [seat_result(id, sequence, outcome)];
+        let result_values = [SeatResultValue {
+            id,
+            value: &encoded_value,
+        }];
+        let page = SeatPageInput::new(&[], &terminal, &[], 0)
+            .expect("bank terminal page")
+            .with_result_values(&result_values)
+            .expect("bank terminal value");
+        let input = empty_snapshot(1);
+        assert_eq!(
+            slot_wake(
+                &mut slot,
+                &input,
+                &NativeFactsInput {
+                    seat_page: Some(page),
+                    ..Default::default()
+                },
+                false,
+                false,
+            ),
+            LentOutcome::Accepted
+        );
+        assert_eq!(slot.drain_logs(), [expected]);
+    }
 }
 
 #[cfg(feature = "test-hooks")]

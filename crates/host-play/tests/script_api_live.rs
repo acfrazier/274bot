@@ -1625,9 +1625,9 @@ return {
             state.observed_tile,
         )
     };
+    let expected_bank_axe_after = bank_axe_before + inventory_after_seed;
     assert_eq!(
-        bank_axe_after,
-        bank_axe_before + (inventory_after_seed - inventory_before_seed),
+        bank_axe_after, expected_bank_axe_after,
         "the bank gained the bronze axe the fixture seeded"
     );
     assert!(!bank_open, "the script closed the bank");
@@ -1662,7 +1662,7 @@ return {
             "bank_axe": {
                 "count_before": bank_axe_before,
                 "count_after": bank_axe_after,
-                "expected_count_after": bank_axe_before + inventory_after_seed,
+                "expected_count_after": expected_bank_axe_after,
                 "inventory_contains_axe_after": inventory_has_axe,
                 "bank_open_after": bank_open,
             },

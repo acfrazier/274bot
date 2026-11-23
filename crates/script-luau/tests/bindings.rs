@@ -3,6 +3,8 @@
 
 pub mod support;
 
+use api::script_contract::MAX_START_CHARGE;
+
 use script::bank::request::BankSeatOperation;
 use script::interact::InteractReq;
 use script::native::request::NativeKind;
@@ -628,6 +630,31 @@ fn interaction_bindings_queue_exact_typed_rows() {
         ]
     );
     assert!(run.drain_logs().is_empty());
+}
+
+#[test]
+fn interaction_text_is_bounded_before_host_copy() {
+    let source = format!(
+        r#"
+        return {{ tick = function(api)
+            local name = string.rep("x", {MAX_START_CHARGE})
+            api.interact.player(name, "Trade")
+            api.log(pcall(api.interact.player, string.rep("y", {MAX_START_CHARGE}+1), "Trade"))
+        end }}
+        "#
+    );
+    let mut run = spawn(&source);
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    let error = format!("api.interact.player: name exceeds {MAX_START_CHARGE} bytes");
+    assert_refused(&run.drain_logs(), &[error.as_str()]);
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1, "one interaction batch");
+    assert_eq!(batches[0].batch.reqs.len(), 2);
+    let InteractReq::Player { name, action } = &batches[0].batch.reqs[0].request else {
+        panic!("the argument at the limit is accepted");
+    };
+    assert_eq!(name.len(), MAX_START_CHARGE);
+    assert_eq!(action, "Trade");
 }
 
 #[test]

@@ -20,7 +20,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Native `Banking.open` reports known-bank access, fallback destinations, and
   visible booths through its optional log callback.
 - Luau scripts can open the nearest world bank, deposit all bankable backpack
-  items and close the bank through awaited native operations.
+  items and close the bank through awaited native operations. Each await
+  returns the typed terminal status and any bank result value.
 - Luau scripts can queue exact NPC, loc, ground-item, player and held-item
   interaction requests through the native seat.
 

@@ -762,6 +762,9 @@ fn refusal_value(
         Refusal::Argument { argument, expected } => {
             format!("api.{path}: {argument} must be {expected}")
         }
+        Refusal::TextTooLong { argument, max_bytes } => {
+            format!("api.{path}: {argument} exceeds {max_bytes} bytes")
+        }
         Refusal::Arity(1) => format!("api.{path}: expects at most 1 argument"),
         Refusal::Arity(arity) => format!("api.{path}: expects at most {arity} arguments"),
         Refusal::NoInput => {
@@ -798,7 +801,9 @@ fn test_completion_table(
 ) -> mlua::Result<Table> {
     let result = lua.create_table()?;
     match completion {
-        SeatCompletion::Terminal(terminal) => {
+        SeatCompletion::Terminal {
+            result: terminal, ..
+        } => {
             result.set("kind", "terminal")?;
             result.set("token", terminal.id.get())?;
             result.set("sequence", terminal.seq)?;
