@@ -773,7 +773,7 @@ fn format_entry(line: fmt::Arguments<'_>, plan: Plan) -> Option<Entry> {
     let mut writer = EntryWriter::new(plan);
     fmt::write(&mut writer, line).ok()?;
     let matched = writer.written == plan.len && (plan.len == 0 || writer.started == plan.lines);
-    matched.then(|| Entry {
+    matched.then_some(Entry {
         text: writer.out,
         lines: plan.lines,
     })
