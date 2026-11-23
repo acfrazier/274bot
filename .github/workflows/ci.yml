@@ -165,12 +165,13 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.1
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.14.8"
           check-latest: false
       - name: Release tool tests
-        run: python3 -B -m unittest discover -s tools/release/tests
+        run: cargo run --locked -p xtask -- ci release-tool-tests
 
   test_lanes:
     name: test (${{ matrix.lane }})
