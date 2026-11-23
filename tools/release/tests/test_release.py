@@ -1830,11 +1830,11 @@ class ReleaseDryRunTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             plan = json.loads(result.stdout)
-            self.assertEqual(plan["staging"]["work_dir"], str(evidence))
+            self.assertEqual(plan["staging"]["work_dir"], str(evidence.resolve()))
             self.assertEqual(
                 plan["staging"]["platform_roots"],
                 {
-                    "macos": str(evidence / commit / "macos"),
+                    "macos": str((evidence / commit / "macos").resolve()),
                     "linux": f"/srv/evidence/A7-1123/{commit}/linux",
                     "windows": f"D:/evidence/A7-1123/{commit}/windows",
                 },
