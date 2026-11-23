@@ -7,28 +7,42 @@
 //! counters, producer phases and channel behaviour must equal the model's. A
 //! change to the product that the model does not describe fails here; a
 //! change to the model that the product does not follow fails here too.
+//!
+//! The traces include a producer that holds a sender clone across `give_up`
+//! and reserves after it, and producers that keep acting between `give_up`
+//! and the process exit.
 
 use super::*;
 use hostlog_model::{
     explore, profiles, Action, Limits, Machine, Model, Mutation, Options, Phase, Profile, Shutdown,
     State,
 };
+use std::cell::Cell;
 use std::sync::mpsc::TryRecvError;
 
-/// What one entry of each model size is made of.
-struct Texts {
-    one: String,
-    two: String,
-    over: String,
+/// The text of one producer's entry. `bad`: the second formatting pass yields
+/// a longer text than the first.
+struct Source {
+    text: String,
+    bad: Cell<bool>,
 }
 
-impl Texts {
-    fn new() -> Self {
-        Self {
-            one: "one line".to_owned(),
-            two: "t".repeat(STDERR_LINE_BYTES + 1),
-            over: "o".repeat(STDERR_ENTRY_BYTES + 1),
+impl fmt::Display for Source {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.text)?;
+        if self.bad.get() {
+            f.write_str(&"x".repeat(STDERR_ENTRY_LINES * STDERR_PIECE_BYTES))?;
         }
+        Ok(())
+    }
+}
+
+/// The text that makes a model entry of `lines` lines (0: refused as too long).
+fn text_of(lines: u8) -> String {
+    match lines {
+        0 => "o".repeat(STDERR_ENTRY_LINES * STDERR_PIECE_BYTES + 1),
+        1 => "one line".to_owned(),
+        _ => "t".repeat(STDERR_LINE_BYTES + 1),
     }
 }
 
@@ -37,6 +51,7 @@ struct Replay<'a> {
     output: &'a StderrOutput,
     rx: Receiver<Entry>,
     steps: Vec<Option<Enqueue<'a>>>,
+    sources: Vec<Source>,
     inflight: Option<Entry>,
 }
 
@@ -46,17 +61,23 @@ impl<'a> Replay<'a> {
             output,
             rx,
             steps: (0..producers).map(|_| None).collect(),
+            sources: (0..producers)
+                .map(|_| Source {
+                    text: text_of(1),
+                    bad: Cell::new(false),
+                })
+                .collect(),
             inflight: None,
         }
     }
 
-    fn step_producer(&mut self, i: usize, line: fmt::Arguments<'_>, busy: bool) {
+    fn step_producer(&mut self, i: usize, busy: bool) {
         let output = self.output;
         let slot = &mut self.steps[i];
         let steps = slot.get_or_insert_with(|| Enqueue::new(output));
         // A busy try-lock: another thread holds the sender lock.
         let guard = busy.then(|| output.tx.lock());
-        let more = steps.step(line);
+        let more = steps.step(format_args!("{}", self.sources[i]));
         drop(guard);
         if !more {
             *slot = None;
@@ -72,27 +93,30 @@ impl<'a> Replay<'a> {
             },
             Some(EnqueuePhase::Start) => Phase::Start,
             Some(EnqueuePhase::Cloned(_)) => Phase::Cloned,
-            Some(EnqueuePhase::Reserved(..)) => Phase::Reserved,
-            Some(EnqueuePhase::Formatted(_, _, entry)) => Phase::Formatted(entry.lines as u8),
+            Some(EnqueuePhase::Measured(_, plan)) => Phase::Measured(plan.lines as u8),
+            Some(EnqueuePhase::Reserved(_, _, plan)) => Phase::Reserved(plan.lines as u8),
             Some(EnqueuePhase::Held(_, _, entry)) => Phase::Held(entry.lines as u8),
         }
     }
 }
 
-fn apply(replay: &mut Replay<'_>, texts: &Texts, action: Action, model: &State) {
+fn apply(replay: &mut Replay<'_>, action: Action, model: &State) {
     match action {
-        Action::Acquire { i, busy } => replay.step_producer(i as usize, format_args!(""), busy),
-        Action::Reserve { i } | Action::Grow { i } | Action::Send { i } => {
-            replay.step_producer(i as usize, format_args!(""), false);
+        Action::Acquire { i, busy } => {
+            // A new entry: a fresh text.
+            replay.sources[i as usize].bad.set(false);
+            replay.step_producer(i as usize, busy);
         }
-        Action::Format { i, lines } => {
-            let text = match lines {
-                0 => &texts.over,
-                1 => &texts.one,
-                _ => &texts.two,
-            };
-            replay.step_producer(i as usize, format_args!("{text}"), false);
+        Action::Measure { i, lines } => {
+            replay.sources[i as usize].text = text_of(lines);
+            replay.step_producer(i as usize, false);
         }
+        Action::Reserve { i } | Action::Send { i } => replay.step_producer(i as usize, false),
+        Action::Format { i, ok } => {
+            replay.sources[i as usize].bad.set(!ok);
+            replay.step_producer(i as usize, false);
+        }
+        Action::Pend { .. } => unreachable!("only the HalfReserve mutation has this step"),
         Action::Recv => {
             let entry = replay.rx.try_recv().expect("the model has a queued entry");
             assert_eq!(
@@ -113,8 +137,9 @@ fn apply(replay: &mut Replay<'_>, texts: &Texts, action: Action, model: &State) 
             );
         }
         Action::Close => replay.output.close(),
-        Action::Settle => {
-            // The writer thread ended: it saw `Disconnected` (WorkerExit).
+        Action::Settle | Action::Exit => {
+            // The writer thread ended (it saw `Disconnected` in WorkerExit), or
+            // the process exits: nothing runs in the product.
         }
         Action::GiveUp => {
             let lost = replay.output.give_up();
@@ -129,14 +154,19 @@ fn apply(replay: &mut Replay<'_>, texts: &Texts, action: Action, model: &State) 
 fn compare(replay: &Replay<'_>, model: &State, after: &str) {
     let counters = &replay.output.counters;
     assert_eq!(
-        counters.queued.load(Ordering::Acquire),
+        counters.lines(),
         usize::from(model.queued),
         "queued lines after {after}"
     );
     assert_eq!(
-        counters.pending.load(Ordering::Acquire),
+        counters.pending(),
         usize::from(model.pending),
         "pending entries after {after}"
+    );
+    assert_eq!(
+        counters.closed(),
+        model.closed,
+        "admission closed after {after}"
     );
     assert_eq!(
         counters.dropped.load(Ordering::Relaxed),
@@ -174,13 +204,13 @@ fn compare(replay: &Replay<'_>, model: &State, after: &str) {
 
 /// Replay `trace` from a fresh queue of `cap` lines, comparing after every
 /// step.
-fn replay_trace(model: &Model, texts: &Texts, trace: &[Action], cap: usize) {
+fn replay_trace(model: &Model, trace: &[Action], cap: usize) {
     let (output, rx) = StderrOutput::channel_with_cap(cap);
     let mut replay = Replay::new(&output, rx, model.bounds.producers);
     let mut state = model.initial();
     compare(&replay, &state, "the start");
     for (n, action) in trace.iter().enumerate() {
-        apply(&mut replay, texts, *action, &state);
+        apply(&mut replay, *action, &state);
         state = model
             .step(&state, action)
             .expect("a trace of the correct model");
@@ -203,7 +233,6 @@ fn conform(profile: &Profile, cap: usize) -> usize {
         "{}",
         profile.name
     );
-    let texts = Texts::new();
     let mut replays = 0;
     let mut enabled = Vec::new();
     for node in 0..result.states {
@@ -211,12 +240,12 @@ fn conform(profile: &Profile, cap: usize) -> usize {
         let state = result.state_of(node).clone();
         enabled.clear();
         model.actions(&state, &mut enabled);
-        replay_trace(&model, &texts, &prefix, cap);
+        replay_trace(&model, &prefix, cap);
         replays += 1;
         for action in &enabled {
             let mut trace = prefix.clone();
             trace.push(*action);
-            replay_trace(&model, &texts, &trace, cap);
+            replay_trace(&model, &trace, cap);
             replays += 1;
         }
     }

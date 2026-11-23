@@ -44,11 +44,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   or dropped as a whole; no entry is cut. An entry is dropped and counted if the
   queue cannot hold all its lines, the queue is closed, the short sender lock
   is contended, the writer cannot start, the entry needs more than 16 lines, or
-  the stderr write fails. The line storage never exceeds 256 KiB, the one entry
-  being written included. At exit the app waits up to 250 ms for the writer to
-  finish; a sink that does not finish (a pipe nobody reads) is abandoned, and
-  the entries still pending are counted as dropped and noted in the session
-  log. Both log views show the dropped-entry count; the optional session file
+  the stderr write fails. The queue reserves all the lines of an entry in one
+  step, before it allocates the entry, so its storage never exceeds 262,400 bytes
+  (256 lines of 1,024 bytes and their newlines), whatever the entry size, the
+  entry being written included. At exit the app waits up to 250 ms for the
+  writer to finish; a sink that does not finish (a pipe nobody reads) is
+  abandoned. Admission then closes: the entries pending at that instant are
+  counted as dropped and noted in the session log, and a producer that reserves
+  later is refused and counts itself. Both log views show the dropped-entry count; the optional session file
   remains a separate sink.
 
 ### Navigation

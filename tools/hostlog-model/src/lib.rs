@@ -8,11 +8,14 @@
 //! violation. See README.md.
 //!
 //! The model keeps the product's own steps. A producer is the phase machine
-//! of `Enqueue` (`Start`, `Cloned`, `Reserved`, `Formatted`, `Held`); the
+//! of `Enqueue` (`Start`, `Cloned`, `Measured`, `Reserved`, `Held`); the
 //! writer is `Recv`, then a sink write, then `Finish`; shutdown is `Close`
 //! followed by either `Settle` (the writer ended) or `GiveUp` (the wait
-//! ended). Each action is one atomic step of the product: one try-lock, one
-//! compare-and-swap, one send, one receive.
+//! ended), and the process `Exit`s at any later point. Producers keep acting
+//! between `GiveUp` and `Exit`. Each action is one atomic step of the product:
+//! one try-lock, one compare-and-swap of the state word (lines, pending and
+//! the closed flag together), one send, one receive; or a pass that touches no
+//! shared state.
 
 pub mod explorer;
 
@@ -38,12 +41,16 @@ pub enum Sink {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Mutation {
     None,
-    /// The first line is reserved without looking at the cap.
+    /// The lines are reserved without looking at the cap.
     ReserveWithoutCheck,
-    /// The extra lines of a split entry are added without looking at the cap.
-    GrowWithoutCheck,
-    /// A split entry that cannot get its extra lines keeps its first line.
-    GrowFailKeepsReservation,
+    /// A reservation takes the lines and, in a later step, the pending count
+    /// (the first design: two atomic operations).
+    HalfReserve,
+    /// `give_up` does not close admission: a producer that reserves after its
+    /// snapshot is accepted and lost uncounted.
+    GiveUpKeepsAdmission,
+    /// A formatting failure keeps the reservation.
+    FormatFailKeepsReservation,
     /// The writer forgets to take the entry off the pending count.
     FinishKeepsPending,
     /// The writer releases an entry's lines when it takes the entry, not when
@@ -60,11 +67,12 @@ pub enum Mutation {
 }
 
 impl Mutation {
-    pub const ALL: [Mutation; 10] = [
+    pub const ALL: [Mutation; 11] = [
         Mutation::None,
         Mutation::ReserveWithoutCheck,
-        Mutation::GrowWithoutCheck,
-        Mutation::GrowFailKeepsReservation,
+        Mutation::HalfReserve,
+        Mutation::GiveUpKeepsAdmission,
+        Mutation::FormatFailKeepsReservation,
         Mutation::FinishKeepsPending,
         Mutation::ReleaseAtRecv,
         Mutation::RefusalNotCounted,
@@ -77,8 +85,9 @@ impl Mutation {
         match self {
             Mutation::None => "none",
             Mutation::ReserveWithoutCheck => "reserve-without-check",
-            Mutation::GrowWithoutCheck => "grow-without-check",
-            Mutation::GrowFailKeepsReservation => "grow-fail-keeps-reservation",
+            Mutation::HalfReserve => "half-reserve",
+            Mutation::GiveUpKeepsAdmission => "give-up-keeps-admission",
+            Mutation::FormatFailKeepsReservation => "format-fail-keeps-reservation",
             Mutation::FinishKeepsPending => "finish-keeps-pending",
             Mutation::ReleaseAtRecv => "release-at-recv",
             Mutation::RefusalNotCounted => "refusal-not-counted",
@@ -96,8 +105,9 @@ impl Mutation {
     pub fn caught_by(self) -> Option<&'static str> {
         match self {
             Mutation::None => None,
-            Mutation::ReserveWithoutCheck | Mutation::GrowWithoutCheck => Some("bound"),
-            Mutation::GrowFailKeepsReservation => Some("lines-conserved"),
+            Mutation::ReserveWithoutCheck => Some("bound"),
+            Mutation::HalfReserve | Mutation::GiveUpKeepsAdmission => Some("exit-silent-loss"),
+            Mutation::FormatFailKeepsReservation => Some("lines-conserved"),
             Mutation::FinishKeepsPending => Some("pending-conserved"),
             Mutation::ReleaseAtRecv => Some("lines-conserved"),
             Mutation::RefusalNotCounted | Mutation::GiveUpNotCounted => Some("drop-uncounted"),
@@ -123,6 +133,8 @@ pub struct Bounds {
     pub over: bool,
     /// A try-lock of the sender may fail.
     pub busy: bool,
+    /// The second formatting pass may differ from the first.
+    pub format_fails: bool,
     pub horizon: usize,
 }
 
@@ -133,11 +145,13 @@ pub enum Phase {
     Start,
     /// A sender clone is held.
     Cloned,
-    /// The first line is reserved.
-    Reserved,
-    /// The entry is formatted and needs this many lines.
-    Formatted(u8),
-    /// All lines are reserved; the entry waits to be sent.
+    /// The entry's size is known: it needs this many lines.
+    Measured(u8),
+    /// Only the lines are reserved (mutation `HalfReserve`).
+    HalfReserved(u8),
+    /// All the lines and the entry are reserved.
+    Reserved(u8),
+    /// The entry is formatted; it waits to be sent.
     Held(u8),
     /// No entries left.
     Done,
@@ -160,10 +174,11 @@ pub enum Shutdown {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct State {
     pub prods: [Prod; MAX_PRODUCERS],
-    /// Lines reserved, queued or being written.
+    /// The state word of the product: lines reserved, queued or being written,
+    /// entries pending, and the closed flag. Every operation on it is one step.
     pub queued: u8,
-    /// Entries reserved, queued or being written.
     pub pending: u8,
+    pub closed: bool,
     /// The product's drop counter.
     pub dropped: u8,
     /// Line counts of the entries in the channel, oldest first.
@@ -189,12 +204,7 @@ impl State {
     pub fn clones(&self) -> u8 {
         self.prods
             .iter()
-            .filter(|p| {
-                matches!(
-                    p.phase,
-                    Phase::Cloned | Phase::Reserved | Phase::Formatted(_) | Phase::Held(_)
-                )
-            })
+            .filter(|p| !matches!(p.phase, Phase::Start | Phase::Done))
             .count() as u8
     }
 
@@ -202,8 +212,7 @@ impl State {
         self.prods
             .iter()
             .map(|p| match p.phase {
-                Phase::Reserved | Phase::Formatted(_) => 1,
-                Phase::Held(k) => k,
+                Phase::HalfReserved(k) | Phase::Reserved(k) | Phase::Held(k) => k,
                 _ => 0,
             })
             .sum()
@@ -212,12 +221,7 @@ impl State {
     fn held_entries(&self) -> u8 {
         self.prods
             .iter()
-            .filter(|p| {
-                matches!(
-                    p.phase,
-                    Phase::Reserved | Phase::Formatted(_) | Phase::Held(_)
-                )
-            })
+            .filter(|p| matches!(p.phase, Phase::Reserved(_) | Phase::Held(_)))
             .count() as u8
     }
 }
@@ -227,12 +231,14 @@ impl State {
 pub enum Action {
     /// `StderrOutput::sender`. `busy`: the try-lock failed.
     Acquire { i: u8, busy: bool },
-    /// `StderrOutput::reserve_first`.
+    /// `measure_entry`; `lines` 0 is an entry that needs too many lines.
+    Measure { i: u8, lines: u8 },
+    /// `Counters::reserve`: all the lines and the entry in one operation.
     Reserve { i: u8 },
-    /// `format_entry`; `lines` 0 is an entry over the limit.
-    Format { i: u8, lines: u8 },
-    /// `Reservation::grow` for the extra lines of a split entry.
-    Grow { i: u8 },
+    /// The pending count of a `HalfReserve` reservation.
+    Pend { i: u8 },
+    /// `format_entry`; `ok` false: the second pass differed from the first.
+    Format { i: u8, ok: bool },
     /// `SyncSender::try_send`, then `Reservation::commit`.
     Send { i: u8 },
     /// The writer takes an entry (`Receiver::recv`).
@@ -247,6 +253,8 @@ pub enum Action {
     Settle,
     /// The wait ends with the writer alive: `StderrOutput::give_up`.
     GiveUp,
+    /// The process exits.
+    Exit,
     /// No action is enabled in a state where the process has not exited.
     Stuck,
 }
@@ -283,11 +291,6 @@ impl Model {
         } else {
             Phase::Done
         };
-    }
-
-    fn release(&self, s: &mut State, lines: u8) {
-        s.queued = s.queued.saturating_sub(lines);
-        s.pending = s.pending.saturating_sub(1);
     }
 
     /// The invariants, after every step.
@@ -327,7 +330,7 @@ impl Model {
                 ),
             ));
         }
-        if s.exited {
+        if matches!(action, Action::Exit) || (s.exited && matches!(action, Action::Close)) {
             let unwritten = s.accepted - s.written - s.failed;
             if unwritten > s.lost {
                 return Err(Self::violation(
@@ -338,12 +341,14 @@ impl Model {
                     ),
                 ));
             }
-            if matches!(action, Action::Settle) && (s.pending != 0 || unwritten != 0) {
-                return Err(Self::violation(
-                    "exit-silent-loss",
-                    "a clean shutdown left entries pending".to_owned(),
-                ));
-            }
+        }
+        if matches!(action, Action::Settle)
+            && (s.pending != 0 || s.accepted != s.written + s.failed)
+        {
+            return Err(Self::violation(
+                "exit-silent-loss",
+                "a clean shutdown left entries pending".to_owned(),
+            ));
         }
         Ok(())
     }
@@ -368,6 +373,7 @@ impl Machine for Model {
             prods,
             queued: 0,
             pending: 0,
+            closed: false,
             dropped: 0,
             chan: Vec::new(),
             inflight: None,
@@ -397,17 +403,23 @@ impl Machine for Model {
                         out.push(Action::Acquire { i, busy: true });
                     }
                 }
-                Phase::Cloned => out.push(Action::Reserve { i }),
-                Phase::Reserved => {
-                    out.push(Action::Format { i, lines: 1 });
+                Phase::Cloned => {
+                    out.push(Action::Measure { i, lines: 1 });
                     if self.bounds.two_line {
-                        out.push(Action::Format { i, lines: 2 });
+                        out.push(Action::Measure { i, lines: 2 });
                     }
                     if self.bounds.over {
-                        out.push(Action::Format { i, lines: 0 });
+                        out.push(Action::Measure { i, lines: 0 });
                     }
                 }
-                Phase::Formatted(_) => out.push(Action::Grow { i }),
+                Phase::Measured(_) => out.push(Action::Reserve { i }),
+                Phase::HalfReserved(_) => out.push(Action::Pend { i }),
+                Phase::Reserved(_) => {
+                    out.push(Action::Format { i, ok: true });
+                    if self.bounds.format_fails {
+                        out.push(Action::Format { i, ok: false });
+                    }
+                }
                 Phase::Held(_) => out.push(Action::Send { i }),
                 Phase::Done => {}
             }
@@ -436,7 +448,7 @@ impl Machine for Model {
                     out.push(Action::GiveUp);
                 }
             }
-            Shutdown::Done => {}
+            Shutdown::Done => out.push(Action::Exit),
         }
         if out.len() == first {
             out.push(Action::Stuck);
@@ -455,41 +467,59 @@ impl Machine for Model {
                     s.prods[i].phase = Phase::Cloned;
                 }
             }
-            Action::Reserve { i } => {
-                let i = i as usize;
-                if s.queued < cap || self.mutation == Mutation::ReserveWithoutCheck {
-                    s.queued += 1;
-                    s.pending += 1;
-                    s.prods[i].phase = Phase::Reserved;
-                } else {
-                    self.refuse(&mut s, i);
-                }
-            }
-            Action::Format { i, lines } => {
+            Action::Measure { i, lines } => {
                 let i = i as usize;
                 if lines == 0 {
-                    self.release(&mut s, 1);
                     self.refuse(&mut s, i);
                 } else {
-                    s.prods[i].phase = Phase::Formatted(lines);
+                    s.prods[i].phase = Phase::Measured(lines);
                 }
             }
-            Action::Grow { i } => {
+            Action::Reserve { i } => {
                 let i = i as usize;
-                let Phase::Formatted(k) = s.prods[i].phase else {
+                let Phase::Measured(n) = s.prods[i].phase else {
                     return Err(Self::violation(
                         "model",
-                        "Grow outside Formatted".to_owned(),
+                        "Reserve outside Measured".to_owned(),
                     ));
                 };
-                if k == 1 {
-                    s.prods[i].phase = Phase::Held(1);
-                } else if s.queued + (k - 1) <= cap || self.mutation == Mutation::GrowWithoutCheck {
-                    s.queued += k - 1;
-                    s.prods[i].phase = Phase::Held(k);
+                let room = s.queued + n <= cap || self.mutation == Mutation::ReserveWithoutCheck;
+                if !room || s.closed {
+                    self.refuse(&mut s, i);
+                } else if self.mutation == Mutation::HalfReserve {
+                    s.queued += n;
+                    s.prods[i].phase = Phase::HalfReserved(n);
                 } else {
-                    if self.mutation != Mutation::GrowFailKeepsReservation {
-                        self.release(&mut s, 1);
+                    s.queued += n;
+                    s.pending += 1;
+                    s.prods[i].phase = Phase::Reserved(n);
+                }
+            }
+            Action::Pend { i } => {
+                let i = i as usize;
+                let Phase::HalfReserved(n) = s.prods[i].phase else {
+                    return Err(Self::violation(
+                        "model",
+                        "Pend outside HalfReserved".to_owned(),
+                    ));
+                };
+                s.pending += 1;
+                s.prods[i].phase = Phase::Reserved(n);
+            }
+            Action::Format { i, ok } => {
+                let i = i as usize;
+                let Phase::Reserved(n) = s.prods[i].phase else {
+                    return Err(Self::violation(
+                        "model",
+                        "Format outside Reserved".to_owned(),
+                    ));
+                };
+                if ok {
+                    s.prods[i].phase = Phase::Held(n);
+                } else {
+                    if self.mutation != Mutation::FormatFailKeepsReservation {
+                        s.queued = s.queued.saturating_sub(n);
+                        s.pending = s.pending.saturating_sub(1);
                     }
                     self.refuse(&mut s, i);
                 }
@@ -540,18 +570,18 @@ impl Machine for Model {
                     s.exited = true;
                 }
             }
-            Action::Settle => {
-                s.shutdown = Shutdown::Done;
-                s.exited = true;
-            }
+            Action::Settle => s.shutdown = Shutdown::Done,
             Action::GiveUp => {
                 s.lost += s.pending;
                 if self.mutation != Mutation::GiveUpNotCounted {
                     s.dropped += s.pending;
                 }
+                if self.mutation != Mutation::GiveUpKeepsAdmission {
+                    s.closed = true;
+                }
                 s.shutdown = Shutdown::Done;
-                s.exited = true;
             }
+            Action::Exit => s.exited = true,
             Action::Stuck => {
                 return Err(Self::violation(
                     "stuck",
@@ -581,7 +611,8 @@ pub fn profiles() -> Vec<Profile> {
         two_line: true,
         over: true,
         busy: true,
-        horizon: 60,
+        format_fails: true,
+        horizon: 80,
     };
     vec![
         Profile {
@@ -595,7 +626,8 @@ pub fn profiles() -> Vec<Profile> {
                 ..base
             },
         },
-        // A sink that never returns: the queue fills, and shutdown must give up.
+        // A sink that never returns: the queue fills, and shutdown must give
+        // up while producers keep acting until the process exits.
         Profile {
             name: "stalled",
             bounds: Bounds {
@@ -620,6 +652,7 @@ pub fn profiles() -> Vec<Profile> {
                 producers: 3,
                 busy: false,
                 over: false,
+                format_fails: false,
                 ..base
             },
         },

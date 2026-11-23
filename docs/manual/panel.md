@@ -60,9 +60,11 @@ than one line is split into numbered `[i/n]` lines and is kept or dropped as a
 whole; nothing is cut. A producer that cannot get the short sender lock at
 once drops its entry rather than wait; the queue also drops entries when it
 cannot hold all their lines, when it is closed, when the writer cannot start,
-or when a stderr write fails. The line storage never exceeds 256 KiB. At exit the
-app waits up to 250 ms for the writer; entries still pending after that are
-counted as dropped. The log view shows the number of dropped entries.
+or when a stderr write fails. The queue reserves all the lines of an entry before it
+allocates the entry, so its storage never exceeds 262,400 bytes (256 lines of
+1,024 bytes and their newlines). At exit the app waits up to 250 ms for the
+writer; then admission closes, and the entries pending at that instant and any
+later ones are counted as dropped. The log view shows the number of dropped entries.
 
 To keep the log of a whole session in a file, tick **session log file** in
 **General config**. While it is on, the row reads `writing <path>` under

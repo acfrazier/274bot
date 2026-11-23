@@ -24,7 +24,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, LazyLock, OnceLock};
 use std::thread;
@@ -214,15 +214,17 @@ pub const STDERR_LINE_BYTES: usize = 1_024;
 /// Most lines one log entry may become. A longer entry is refused whole and
 /// counted, never cut.
 pub const STDERR_ENTRY_LINES: usize = 16;
+/// Largest queue storage in bytes: every reserved line is at most
+/// [`STDERR_LINE_BYTES`] of text plus the newline that joins it to the next
+/// line of its entry. Every byte of an entry is allocated only after its lines
+/// are reserved, and the allocation never exceeds them, so this bound holds
+/// for entries that are split, refused, or being formatted.
+pub const STDERR_QUEUE_BYTES: usize = STDERR_QUEUE_LINES * (STDERR_LINE_BYTES + 1);
 /// Width of the `[i/n] ` marker that numbers the lines of a split entry
-/// (`[16/16] ` at most).
+/// (`[16/16] ` at most), and of the newline before the line.
 const STDERR_MARKER_BYTES: usize = 8;
 /// Bytes of an entry that one numbered line carries.
 const STDERR_PIECE_BYTES: usize = STDERR_LINE_BYTES - STDERR_MARKER_BYTES;
-/// Largest entry in bytes. A split at character boundaries leaves every
-/// piece but the last at least `STDERR_PIECE_BYTES - 3` long, so an entry of
-/// this size needs at most [`STDERR_ENTRY_LINES`] lines.
-const STDERR_ENTRY_BYTES: usize = STDERR_ENTRY_LINES * (STDERR_PIECE_BYTES - 3);
 /// How long process shutdown waits for the writer to drain accepted entries.
 const STDERR_SHUTDOWN_WAIT: Duration = Duration::from_millis(250);
 /// A numbered, packed log line (at most [`LINE_BYTES`]) plus its `[tag slot] `
@@ -237,47 +239,113 @@ struct Entry {
     lines: usize,
 }
 
+/// What a text needs, from a pass that allocates nothing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Plan {
+    /// Bytes of the text.
+    len: usize,
+    /// Lines the text becomes.
+    lines: usize,
+}
+
+const LINES_BITS: u32 = 24;
+const LINES_MASK: u64 = (1 << LINES_BITS) - 1;
+const PENDING_ONE: u64 = 1 << LINES_BITS;
+const PENDING_MASK: u64 = LINES_MASK;
+/// Admission is closed: no entry may be reserved any more.
+const CLOSED: u64 = 1 << 63;
+
+/// Why a reservation was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Refusal {
+    /// Admission was closed by [`Counters::close_admission`].
+    Closed,
+    /// The queue cannot hold all the lines.
+    Full,
+}
+
 /// The shared counters of one stderr queue.
+///
+/// Lines in use, entries pending and the closed flag live in one atomic word,
+/// so each reservation, release and close is a single linearizable operation:
+/// a snapshot of `pending` taken by [`Counters::close_admission`] is exactly the
+/// set of entries reserved before the close, and every later reservation is
+/// refused.
 struct Counters {
     /// The line cap: [`STDERR_QUEUE_LINES`] in the product.
     cap: usize,
-    /// Lines reserved by producers, queued, or being written. Never above
-    /// [`STDERR_QUEUE_LINES`], so the line storage never exceeds
-    /// `STDERR_QUEUE_LINES * STDERR_LINE_BYTES`.
-    queued: AtomicUsize,
-    /// Entries reserved, queued or being written.
-    pending: AtomicUsize,
-    /// Entries refused, failed, or lost at exit.
+    /// Bits 0..24: lines reserved, queued or being written (never above the
+    /// cap, so storage never exceeds [`STDERR_QUEUE_BYTES`]). Bits 24..48:
+    /// entries reserved, queued or being written. Bit 63: admission closed.
+    state: AtomicU64,
+    /// Entries refused, failed, or given up at exit.
     dropped: AtomicU64,
 }
 
 impl Counters {
     fn new(cap: usize) -> Self {
+        assert!(
+            (cap as u64) <= LINES_MASK,
+            "the line count must fit its field"
+        );
         Self {
             cap,
-            queued: AtomicUsize::new(0),
-            pending: AtomicUsize::new(0),
+            state: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
         }
     }
 
-    /// Add `extra` lines if the queue still has room for all of them.
-    fn try_add_lines(&self, extra: usize) -> bool {
-        let mut queued = self.queued.load(Ordering::Acquire);
-        loop {
-            if queued + extra > self.cap {
-                return false;
-            }
-            match self.queued.compare_exchange_weak(
-                queued,
-                queued + extra,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return true,
-                Err(actual) => queued = actual,
-            }
-        }
+    #[cfg(test)]
+    /// Lines reserved, queued or being written.
+    fn lines(&self) -> usize {
+        (self.state.load(Ordering::Acquire) & LINES_MASK) as usize
+    }
+
+    #[cfg(test)]
+    /// Entries reserved, queued or being written.
+    fn pending(&self) -> usize {
+        ((self.state.load(Ordering::Acquire) >> LINES_BITS) & PENDING_MASK) as usize
+    }
+
+    #[cfg(test)]
+    fn closed(&self) -> bool {
+        self.state.load(Ordering::Acquire) & CLOSED != 0
+    }
+
+    /// Reserve `lines` for one new entry: all the lines and the entry, or
+    /// nothing. Refused when admission is closed or the queue cannot hold them.
+    fn reserve(&self, lines: usize) -> Result<(), Refusal> {
+        let cap = self.cap as u64;
+        let add = lines as u64 + PENDING_ONE;
+        self.state
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
+                if state & CLOSED != 0 || (state & LINES_MASK) + lines as u64 > cap {
+                    None
+                } else {
+                    Some(state + add)
+                }
+            })
+            .map(|_| ())
+            .map_err(|state| {
+                if state & CLOSED != 0 {
+                    Refusal::Closed
+                } else {
+                    Refusal::Full
+                }
+            })
+    }
+
+    /// Release `lines` and the entry that held them.
+    fn release(&self, lines: usize) {
+        self.state
+            .fetch_sub(lines as u64 + PENDING_ONE, Ordering::AcqRel);
+    }
+
+    /// Close admission and return the entries pending at that instant. Every
+    /// reservation after this is refused.
+    fn close_admission(&self) -> u64 {
+        let before = self.state.fetch_or(CLOSED, Ordering::AcqRel);
+        (before >> LINES_BITS) & PENDING_MASK
     }
 
     /// The writer is done with `entry`: release its lines, and count it
@@ -286,8 +354,7 @@ impl Counters {
         if write_failed {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
-        self.queued.fetch_sub(entry.lines, Ordering::AcqRel);
-        self.pending.fetch_sub(1, Ordering::AcqRel);
+        self.release(entry.lines);
     }
 }
 
@@ -300,16 +367,6 @@ struct Reservation<'a> {
 }
 
 impl Reservation<'_> {
-    /// Hold `extra` more lines, all or none.
-    fn grow(&mut self, extra: usize) -> bool {
-        if self.counters.try_add_lines(extra) {
-            self.lines += extra;
-            true
-        } else {
-            false
-        }
-    }
-
     fn commit(mut self) {
         self.committed = true;
     }
@@ -318,8 +375,7 @@ impl Reservation<'_> {
 impl Drop for Reservation<'_> {
     fn drop(&mut self) {
         if !self.committed {
-            self.counters.queued.fetch_sub(self.lines, Ordering::AcqRel);
-            self.counters.pending.fetch_sub(1, Ordering::AcqRel);
+            self.counters.release(self.lines);
         }
     }
 }
@@ -391,16 +447,14 @@ impl StderrOutput {
         self.tx.try_lock().and_then(|tx| tx.as_ref().cloned())
     }
 
-    /// The first line of an entry, or `None` when the queue is full. No
-    /// allocation happens before this succeeds.
-    fn reserve_first(&self) -> Option<Reservation<'_>> {
-        if !self.counters.try_add_lines(1) {
-            return None;
-        }
-        self.counters.pending.fetch_add(1, Ordering::AcqRel);
+    /// Reserve `lines` for one entry, or `None` when admission is closed or
+    /// the queue cannot hold them all. No allocation happens before this
+    /// succeeds.
+    fn reserve(&self, lines: usize) -> Option<Reservation<'_>> {
+        self.counters.reserve(lines).ok()?;
         Some(Reservation {
             counters: &self.counters,
-            lines: 1,
+            lines,
             committed: false,
         })
     }
@@ -426,10 +480,12 @@ impl StderrOutput {
         self.tx.lock().take();
     }
 
-    /// Give up on the writer: every entry still pending is counted as dropped.
-    /// Returns that count.
+    /// Give up on the writer: close admission and count every entry pending at
+    /// that instant as dropped. A producer that reserves later is refused and
+    /// counts itself, so no entry is accepted and lost uncounted. Returns the
+    /// entries given up.
     fn give_up(&self) -> u64 {
-        let lost = self.counters.pending.load(Ordering::Acquire) as u64;
+        let lost = self.counters.close_admission();
         self.counters.dropped.fetch_add(lost, Ordering::Relaxed);
         lost
     }
@@ -458,17 +514,18 @@ impl StderrOutput {
 }
 
 /// Where one entry is on its way into the queue. Each step is one atomic
-/// operation of the producer; `tools/hostlog-model` has the same phases.
+/// operation of the producer or a pass without shared state;
+/// `tools/hostlog-model` has the same phases.
 enum EnqueuePhase<'a> {
     /// Nothing held.
     Start,
     /// A sender clone is held.
     Cloned(SyncSender<Entry>),
-    /// The first line is reserved.
-    Reserved(SyncSender<Entry>, Reservation<'a>),
-    /// The entry is formatted.
-    Formatted(SyncSender<Entry>, Reservation<'a>, Entry),
-    /// All the entry's lines are reserved.
+    /// The entry's size is known (no allocation, no shared state).
+    Measured(SyncSender<Entry>, Plan),
+    /// All the entry's lines are reserved in one atomic operation.
+    Reserved(SyncSender<Entry>, Reservation<'a>, Plan),
+    /// The entry is formatted into storage that its lines cover.
     Held(SyncSender<Entry>, Reservation<'a>, Entry),
     Done,
 }
@@ -490,8 +547,8 @@ impl<'a> Enqueue<'a> {
         }
     }
 
-    /// Run one step; `line` is the entry, formatted in the `Reserved` step.
-    /// Returns false once the entry is finished.
+    /// Run one step; `line` is the entry, read by the `Cloned` and `Reserved`
+    /// steps. Returns false once the entry is finished.
     fn step(&mut self, line: fmt::Arguments<'_>) -> bool {
         let output = self.output;
         self.phase = match std::mem::replace(&mut self.phase, EnqueuePhase::Done) {
@@ -499,21 +556,18 @@ impl<'a> Enqueue<'a> {
                 Some(tx) => EnqueuePhase::Cloned(tx),
                 None => output.refused(),
             },
-            EnqueuePhase::Cloned(tx) => match output.reserve_first() {
-                Some(reservation) => EnqueuePhase::Reserved(tx, reservation),
+            EnqueuePhase::Cloned(tx) => match measure_entry(line) {
+                Some(plan) => EnqueuePhase::Measured(tx, plan),
                 None => output.refused(),
             },
-            EnqueuePhase::Reserved(tx, reservation) => match format_entry(line) {
-                Some(entry) => EnqueuePhase::Formatted(tx, reservation, entry),
+            EnqueuePhase::Measured(tx, plan) => match output.reserve(plan.lines) {
+                Some(reservation) => EnqueuePhase::Reserved(tx, reservation, plan),
                 None => output.refused(),
             },
-            EnqueuePhase::Formatted(tx, mut reservation, entry) => {
-                if entry.lines > 1 && !reservation.grow(entry.lines - 1) {
-                    output.refused()
-                } else {
-                    EnqueuePhase::Held(tx, reservation, entry)
-                }
-            }
+            EnqueuePhase::Reserved(tx, reservation, plan) => match format_entry(line, plan) {
+                Some(entry) => EnqueuePhase::Held(tx, reservation, entry),
+                None => output.refused(),
+            },
             EnqueuePhase::Held(tx, reservation, entry) => {
                 if tx.try_send(entry).is_ok() {
                     reservation.commit();
@@ -576,66 +630,152 @@ pub fn test_fill_stderr_queue_and_drop_one_line() -> u64 {
     global.dropped()
 }
 
-/// Collects one formatted entry and refuses one over [`STDERR_ENTRY_BYTES`].
-struct BoundedEntry {
-    text: String,
+/// Largest prefix of `value` that fits `room` bytes and ends at a character
+/// boundary.
+fn fit(value: &str, room: usize) -> usize {
+    let mut end = room.min(value.len());
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
 }
 
-impl fmt::Write for BoundedEntry {
-    fn write_str(&mut self, value: &str) -> fmt::Result {
-        if value.len() > STDERR_ENTRY_BYTES - self.text.len() {
-            return Err(fmt::Error);
+/// The first pass over an entry: counts bytes and the pieces of
+/// [`STDERR_PIECE_BYTES`] it splits into, and allocates nothing.
+struct Measure {
+    piece: usize,
+    pieces: usize,
+    len: usize,
+}
+
+impl fmt::Write for Measure {
+    fn write_str(&mut self, mut value: &str) -> fmt::Result {
+        self.len += value.len();
+        while !value.is_empty() {
+            self.pieces = self.pieces.max(1);
+            let take = fit(value, STDERR_PIECE_BYTES - self.piece);
+            if take == 0 {
+                if self.pieces == STDERR_ENTRY_LINES {
+                    return Err(fmt::Error);
+                }
+                self.pieces += 1;
+                self.piece = 0;
+                continue;
+            }
+            self.piece += take;
+            value = &value[take..];
         }
-        self.text.push_str(value);
         Ok(())
     }
 }
 
-/// Format one log entry. A text that fits one line stays one line. A longer
-/// one is split at character boundaries into lines of at most
-/// [`STDERR_LINE_BYTES`] bytes, each numbered `[i/n] `, and nothing is cut.
-/// `None`: the text is over [`STDERR_ENTRY_BYTES`] (a formatting error counts
-/// the same way), so the caller counts the whole entry as dropped.
-fn format_entry(line: fmt::Arguments<'_>) -> Option<Entry> {
-    let mut whole = BoundedEntry {
-        text: String::with_capacity(STDERR_LINE_BYTES),
+/// What `line` needs, or `None` when it needs more than
+/// [`STDERR_ENTRY_LINES`] lines (a formatting error counts the same way): the
+/// caller counts the whole entry as dropped. A text that fits one line is one
+/// line; a longer one is split at character boundaries into numbered lines.
+fn measure_entry(line: fmt::Arguments<'_>) -> Option<Plan> {
+    let mut measure = Measure {
+        piece: 0,
+        pieces: 0,
+        len: 0,
     };
-    fmt::write(&mut whole, line).ok()?;
-    let text = whole.text;
-    if text.len() <= STDERR_LINE_BYTES {
-        return Some(Entry { text, lines: 1 });
-    }
-    let lines = split_lines(&text).count();
-    let mut out = String::with_capacity(text.len() + lines * (STDERR_MARKER_BYTES + 1));
-    for (index, piece) in split_lines(&text).enumerate() {
-        if index > 0 {
-            out.push('\n');
-        }
-        out.push('[');
-        out.push_str(&(index + 1).to_string());
-        out.push('/');
-        out.push_str(&lines.to_string());
-        out.push_str("] ");
-        out.push_str(piece);
-    }
-    Some(Entry { text: out, lines })
+    fmt::write(&mut measure, line).ok()?;
+    let lines = if measure.len <= STDERR_LINE_BYTES {
+        1
+    } else {
+        measure.pieces
+    };
+    Some(Plan {
+        len: measure.len,
+        lines,
+    })
 }
 
-/// `text` in pieces of at most [`STDERR_PIECE_BYTES`] bytes, cut only at
-/// character boundaries.
-fn split_lines(text: &str) -> impl Iterator<Item = &str> {
-    let mut rest = text;
-    std::iter::from_fn(move || {
-        if rest.is_empty() {
-            return None;
+/// The second pass: writes the entry into one buffer sized by its [`Plan`], so
+/// the allocation never exceeds the reserved lines. A formatter that yields
+/// another text the second time ends the pass.
+struct EntryWriter {
+    plan: Plan,
+    out: String,
+    piece: usize,
+    piece_cap: usize,
+    started: usize,
+    written: usize,
+}
+
+impl EntryWriter {
+    fn new(plan: Plan) -> Self {
+        // A marker and the newline before it: at most STDERR_MARKER_BYTES + 1.
+        let capacity = if plan.lines == 1 {
+            plan.len
+        } else {
+            plan.len + plan.lines * (STDERR_MARKER_BYTES + 1)
+        };
+        Self {
+            plan,
+            out: String::with_capacity(capacity),
+            piece: 0,
+            piece_cap: if plan.lines == 1 {
+                STDERR_LINE_BYTES
+            } else {
+                STDERR_PIECE_BYTES
+            },
+            started: 0,
+            written: 0,
         }
-        let mut end = STDERR_PIECE_BYTES.min(rest.len());
-        while !rest.is_char_boundary(end) {
-            end -= 1;
+    }
+
+    fn start_piece(&mut self) -> fmt::Result {
+        if self.started == self.plan.lines {
+            return Err(fmt::Error);
         }
-        let (piece, tail) = rest.split_at(end);
-        rest = tail;
-        Some(piece)
+        self.started += 1;
+        self.piece = 0;
+        if self.plan.lines > 1 {
+            if self.started > 1 {
+                self.out.push('\n');
+            }
+            fmt::Write::write_fmt(
+                &mut self.out,
+                format_args!("[{}/{}] ", self.started, self.plan.lines),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Write for EntryWriter {
+    fn write_str(&mut self, mut value: &str) -> fmt::Result {
+        if self.written + value.len() > self.plan.len {
+            return Err(fmt::Error);
+        }
+        self.written += value.len();
+        while !value.is_empty() {
+            if self.started == 0 {
+                self.start_piece()?;
+            }
+            let take = fit(value, self.piece_cap - self.piece);
+            if take == 0 {
+                self.start_piece()?;
+                continue;
+            }
+            self.out.push_str(&value[..take]);
+            self.piece += take;
+            value = &value[take..];
+        }
+        Ok(())
+    }
+}
+
+/// Format `line` as the entry that `plan` describes. `None`: the second pass
+/// did not match the first, and the caller counts the entry as dropped.
+fn format_entry(line: fmt::Arguments<'_>, plan: Plan) -> Option<Entry> {
+    let mut writer = EntryWriter::new(plan);
+    fmt::write(&mut writer, line).ok()?;
+    let matched = writer.written == plan.len && (plan.len == 0 || writer.started == plan.lines);
+    matched.then(|| Entry {
+        text: writer.out,
+        lines: plan.lines,
     })
 }
 
@@ -1038,7 +1178,7 @@ thread_local! {
 #[cfg(test)]
 fn write_stderr(line: fmt::Arguments<'_>) {
     // A refused (oversized) entry reaches no sink, as in production.
-    if let Some(entry) = format_entry(line) {
+    if let Some(entry) = measure_entry(line).and_then(|plan| format_entry(line, plan)) {
         STDERR.with(|lines| {
             lines
                 .borrow_mut()

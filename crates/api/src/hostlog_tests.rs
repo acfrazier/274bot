@@ -473,7 +473,7 @@ fn a_failed_debug_write_is_dropped_instead_of_panicking() {
     let output = output_writing_to(writer);
     output.enqueue(format_args!("[nav-trace slot] debug first"));
     // The writer finishes the first entry before it takes the second.
-    wait_until(|| output.counters.pending.load(Ordering::Acquire) == 0);
+    wait_until(|| output.counters.pending() == 0);
     output.enqueue(format_args!("[nav-trace slot] debug second"));
     assert_eq!(output.shutdown(LONG_WAIT), 0);
     assert_eq!(output.dropped(), 1);
@@ -545,12 +545,12 @@ fn unnumbered(entry: &Entry) -> String {
 #[test]
 fn a_text_that_fits_one_line_is_not_numbered_and_a_longer_one_is_split_not_cut() {
     let fits = "a".repeat(STDERR_LINE_BYTES);
-    let entry = format_entry(format_args!("{fits}")).unwrap();
+    let entry = entry_of(format_args!("{fits}")).unwrap();
     assert_eq!((entry.lines, entry.text.as_str()), (1, fits.as_str()));
 
     // One byte over: two numbered lines, and every byte survives.
     let over = "b".repeat(STDERR_LINE_BYTES + 1);
-    let entry = format_entry(format_args!("{over}")).unwrap();
+    let entry = entry_of(format_args!("{over}")).unwrap();
     assert_eq!(entry.lines, 2);
     assert!(entry
         .text
@@ -562,7 +562,7 @@ fn a_text_that_fits_one_line_is_not_numbered_and_a_longer_one_is_split_not_cut()
     // Multi-byte characters stay whole at every cut.
     for unit in ["é", "€", "😀"] {
         let text = unit.repeat(2_500);
-        let entry = format_entry(format_args!("[nav-trace] {text}")).unwrap();
+        let entry = entry_of(format_args!("[nav-trace] {text}")).unwrap();
         assert!(entry.lines > 1);
         assert_eq!(entry.text.lines().count(), entry.lines);
         assert!(entry
@@ -573,12 +573,21 @@ fn a_text_that_fits_one_line_is_not_numbered_and_a_longer_one_is_split_not_cut()
     }
 }
 
+/// The entry of `line`, or `None` when it is refused: both passes of the
+/// producer, with no queue.
+fn entry_of(line: fmt::Arguments<'_>) -> Option<Entry> {
+    let plan = measure_entry(line)?;
+    format_entry(line, plan)
+}
+
 #[test]
 fn the_largest_entry_fits_its_line_budget_and_a_larger_one_is_refused_whole() {
+    // Pieces hold at least STDERR_PIECE_BYTES - 3 bytes, so this many bytes
+    // fit the line budget for every character width.
+    let fits = STDERR_ENTRY_LINES * (STDERR_PIECE_BYTES - 3);
     for unit in ["a", "é", "€", "😀"] {
-        let text = unit.repeat(STDERR_ENTRY_BYTES / unit.len());
-        assert!(text.len() <= STDERR_ENTRY_BYTES);
-        let entry = format_entry(format_args!("{text}")).expect("an entry at the cap");
+        let text = unit.repeat(fits / unit.len());
+        let entry = entry_of(format_args!("{text}")).expect("an entry within the budget");
         assert!(
             entry.lines <= STDERR_ENTRY_LINES,
             "{unit}: {} lines",
@@ -586,13 +595,20 @@ fn the_largest_entry_fits_its_line_budget_and_a_larger_one_is_refused_whole() {
         );
         assert_eq!(unnumbered(&entry), text);
     }
+    // The ASCII limit: sixteen full lines are kept, one byte more is refused.
+    let full = "a".repeat(STDERR_ENTRY_LINES * STDERR_PIECE_BYTES);
+    assert_eq!(
+        entry_of(format_args!("{full}")).map(|e| e.lines),
+        Some(STDERR_ENTRY_LINES)
+    );
+    let over = format!("{full}b");
+    assert!(entry_of(format_args!("{over}")).is_none());
 
     let (output, _receiver) = StderrOutput::channel();
-    let too_long = "x".repeat(STDERR_ENTRY_BYTES + 1);
-    output.enqueue(format_args!("{too_long}"));
+    output.enqueue(format_args!("{over}"));
     assert_eq!(output.dropped(), 1, "a refused entry counts once");
-    assert_eq!(output.counters.queued.load(Ordering::Acquire), 0);
-    assert_eq!(output.counters.pending.load(Ordering::Acquire), 0);
+    assert_eq!(output.counters.lines(), 0);
+    assert_eq!(output.counters.pending(), 0);
 }
 
 #[test]
@@ -600,28 +616,19 @@ fn a_split_entry_holds_all_its_lines_or_is_refused_whole() {
     let (output, _receiver) = StderrOutput::channel();
     let three_lines = "z".repeat(3 * STDERR_PIECE_BYTES - 10);
     output.enqueue(format_args!("{three_lines}"));
-    assert_eq!(output.counters.queued.load(Ordering::Acquire), 3);
-    assert_eq!(output.counters.pending.load(Ordering::Acquire), 1);
+    assert_eq!(output.counters.lines(), 3);
+    assert_eq!(output.counters.pending(), 1);
 
     for _ in 0..STDERR_QUEUE_LINES - 4 {
         output.enqueue(format_args!("filler"));
     }
-    assert_eq!(
-        output.counters.queued.load(Ordering::Acquire),
-        STDERR_QUEUE_LINES - 1
-    );
+    assert_eq!(output.counters.lines(), STDERR_QUEUE_LINES - 1);
     // One line is free, two are needed: nothing stays reserved.
     let two_lines = "y".repeat(STDERR_LINE_BYTES + 1);
     output.enqueue(format_args!("{two_lines}"));
     assert_eq!(output.dropped(), 1);
-    assert_eq!(
-        output.counters.queued.load(Ordering::Acquire),
-        STDERR_QUEUE_LINES - 1
-    );
-    assert_eq!(
-        output.counters.pending.load(Ordering::Acquire),
-        STDERR_QUEUE_LINES - 3
-    );
+    assert_eq!(output.counters.lines(), STDERR_QUEUE_LINES - 1);
+    assert_eq!(output.counters.pending(), STDERR_QUEUE_LINES - 3);
 }
 
 #[test]
@@ -646,6 +653,7 @@ fn a_split_entry_reaches_the_sink_in_one_piece_between_other_entries() {
 fn stderr_queue_allocation_and_size_stay_within_the_process_bound() {
     assert_eq!(STDERR_QUEUE_LINES, 256);
     assert_eq!(STDERR_LINE_BYTES, 1_024);
+    assert_eq!(STDERR_QUEUE_BYTES, 256 * 1_025);
     assert_eq!(
         std::mem::size_of::<String>(),
         3 * std::mem::size_of::<usize>()
@@ -664,20 +672,17 @@ fn stderr_queue_allocation_and_size_stay_within_the_process_bound() {
         init.bytes_total
     );
 
+    // 256 one-line entries: one allocation each, never above the bound.
     let (output, _receiver) = StderrOutput::channel();
     let queued = allocation_counter::measure(|| {
         for index in 0..STDERR_QUEUE_LINES {
             output.enqueue(format_args!("line {index}"));
         }
     });
-    let max_line_storage = STDERR_QUEUE_LINES * STDERR_LINE_BYTES;
     assert_eq!(queued.count_total, STDERR_QUEUE_LINES as u64);
-    assert_eq!(queued.bytes_total, max_line_storage as u64);
-    assert_eq!(queued.bytes_current, max_line_storage as i64);
-    assert_eq!(
-        output.counters.queued.load(Ordering::Acquire),
-        STDERR_QUEUE_LINES
-    );
+    assert!(queued.bytes_total <= STDERR_QUEUE_BYTES as u64);
+    assert!(queued.bytes_max <= STDERR_QUEUE_BYTES as u64);
+    assert_eq!(output.counters.lines(), STDERR_QUEUE_LINES);
     assert_eq!(output.dropped(), 0);
 
     let full_queue_drop = allocation_counter::measure(|| {
@@ -689,13 +694,170 @@ fn stderr_queue_allocation_and_size_stay_within_the_process_bound() {
 }
 
 #[test]
+fn split_entries_stay_within_the_bound_and_a_refusal_allocates_nothing() {
+    // Sixteen entries of sixteen full lines each fill the queue. The text is
+    // built outside the measured region; the measured storage is the queue's.
+    let text = "s".repeat(STDERR_ENTRY_LINES * STDERR_PIECE_BYTES);
+    let (output, _receiver) = StderrOutput::channel();
+    let split = allocation_counter::measure(|| {
+        for _ in 0..STDERR_QUEUE_LINES / STDERR_ENTRY_LINES {
+            output.enqueue(format_args!("{text}"));
+        }
+    });
+    assert_eq!(output.dropped(), 0);
+    assert_eq!(output.counters.lines(), STDERR_QUEUE_LINES);
+    assert_eq!(
+        split.count_total,
+        (STDERR_QUEUE_LINES / STDERR_ENTRY_LINES) as u64
+    );
+    assert!(
+        split.bytes_max <= STDERR_QUEUE_BYTES as u64,
+        "peak {} over the documented bound {STDERR_QUEUE_BYTES}",
+        split.bytes_max
+    );
+
+    // A full queue refuses a split entry with no allocation at all.
+    let refused = allocation_counter::measure(|| {
+        output.enqueue(format_args!("{text}"));
+    });
+    assert_eq!((refused.count_total, refused.bytes_total), (0, 0));
+    assert_eq!(output.dropped(), 1);
+}
+
+#[test]
+fn a_split_entry_without_room_for_all_its_lines_is_refused_before_it_allocates() {
+    let (output, _receiver) = StderrOutput::channel();
+    for _ in 0..STDERR_QUEUE_LINES - 1 {
+        output.enqueue(format_args!("filler"));
+    }
+    // One line is free; the entry needs sixteen.
+    let text = "t".repeat(STDERR_ENTRY_LINES * STDERR_PIECE_BYTES);
+    let refused = allocation_counter::measure(|| {
+        output.enqueue(format_args!("{text}"));
+    });
+    assert_eq!((refused.count_total, refused.bytes_total), (0, 0));
+    assert_eq!(output.dropped(), 1);
+    assert_eq!(output.counters.lines(), STDERR_QUEUE_LINES - 1);
+    assert_eq!(output.counters.pending(), STDERR_QUEUE_LINES - 1);
+}
+
+#[test]
+fn a_formatting_pass_that_differs_from_the_first_is_refused_and_releases_its_lines() {
+    struct Shifty(std::cell::Cell<u32>);
+    impl fmt::Display for Shifty {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let call = self.0.get();
+            self.0.set(call + 1);
+            // The first pass is short, the second long: the reservation covers
+            // only the first.
+            f.write_str(&"x".repeat(if call == 0 { 10 } else { 5_000 }))
+        }
+    }
+    let (output, _receiver) = StderrOutput::channel();
+    let shifty = Shifty(std::cell::Cell::new(0));
+    output.enqueue(format_args!("{shifty}"));
+    assert_eq!(output.dropped(), 1);
+    assert_eq!(output.counters.lines(), 0);
+    assert_eq!(output.counters.pending(), 0);
+}
+
+#[test]
+fn a_producer_that_cloned_the_sender_before_give_up_is_refused_after_it() {
+    let (output, _receiver) = StderrOutput::channel();
+    output.enqueue(format_args!("accepted before"));
+    // A second producer holds a sender clone and has not reserved yet.
+    let mut late = Enqueue::new(&output);
+    assert!(late.step(format_args!("late")));
+    assert!(matches!(late.phase, EnqueuePhase::Cloned(_)));
+    // Shutdown gives up: the one accepted entry is counted lost.
+    output.close();
+    assert_eq!(output.give_up(), 1);
+    assert_eq!(output.dropped(), 1);
+    // The late producer measures, then its reservation is refused and counted.
+    assert!(late.step(format_args!("late")));
+    assert!(!late.step(format_args!("late")));
+    assert_eq!(output.dropped(), 2);
+    assert_eq!(output.counters.lines(), 1, "only the entry from before");
+    assert_eq!(output.counters.pending(), 1);
+    assert!(output.counters.closed());
+}
+
+#[test]
+fn a_producer_that_reserved_before_give_up_is_counted_lost_exactly_once() {
+    let (output, _receiver) = StderrOutput::channel();
+    let mut early = Enqueue::new(&output);
+    assert!(early.step(format_args!("early")));
+    assert!(early.step(format_args!("early")));
+    assert!(early.step(format_args!("early")));
+    assert!(matches!(early.phase, EnqueuePhase::Reserved(..)));
+    output.close();
+    // Its reservation is in the snapshot ...
+    assert_eq!(output.give_up(), 1);
+    // ... and it may still send: the entry is counted once, never twice.
+    while early.step(format_args!("early")) {}
+    assert_eq!(output.dropped(), 1);
+}
+
+#[test]
+fn concurrent_producers_and_give_up_leave_no_entry_uncounted() {
+    // A stalled sink, eight producers of mixed-size entries, and a give-up at
+    // an arbitrary moment: every submitted entry is counted exactly once.
+    const PRODUCERS: usize = 8;
+    const ENTRIES: usize = 300;
+    for round in 0..12 {
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let output = Arc::new(output_writing_to(BlockingWriter {
+            entered: entered_tx,
+            release: release_rx,
+            blocked_once: false,
+        }));
+        let go = Arc::new(std::sync::Barrier::new(PRODUCERS + 1));
+        let producers: Vec<_> = (0..PRODUCERS)
+            .map(|id| {
+                let output = Arc::clone(&output);
+                let go = Arc::clone(&go);
+                std::thread::spawn(move || {
+                    go.wait();
+                    for n in 0..ENTRIES {
+                        // One to three lines.
+                        let text = "p".repeat(1 + (id + n) % 3 * STDERR_PIECE_BYTES);
+                        output.enqueue(format_args!("{text}"));
+                    }
+                })
+            })
+            .collect();
+        go.wait();
+        for _ in 0..round * 20 {
+            std::thread::yield_now();
+        }
+        output.close();
+        let lost = output.give_up();
+        for producer in producers {
+            producer.join().unwrap();
+        }
+        let _ = entered_rx.try_recv();
+        // The sink never finished an entry, so every submitted entry is a
+        // refusal, or was pending at the snapshot.
+        assert_eq!(
+            output.dropped(),
+            (PRODUCERS * ENTRIES) as u64,
+            "round {round}: {lost} given up"
+        );
+        assert!(output.counters.closed());
+        drop(release_tx);
+        wait_until(|| output.counters.pending() == 0);
+    }
+}
+
+#[test]
 fn a_closed_stderr_queue_counts_the_refused_entry() {
     let (output, receiver) = StderrOutput::channel();
     drop(receiver);
     output.enqueue(format_args!("closed"));
     assert_eq!(output.dropped(), 1);
-    assert_eq!(output.counters.queued.load(Ordering::Acquire), 0);
-    assert_eq!(output.counters.pending.load(Ordering::Acquire), 0);
+    assert_eq!(output.counters.lines(), 0);
+    assert_eq!(output.counters.pending(), 0);
     output.shutdown(LONG_WAIT);
     output.enqueue(format_args!("after shutdown"));
     assert_eq!(output.dropped(), 2);
@@ -735,8 +897,8 @@ fn shutdown_drains_every_accepted_entry_when_the_sink_is_writable() {
     assert!(written.starts_with("first\n[1/2] "));
     assert!(written.ends_with("\nsecond\n"));
     assert_eq!(output.dropped(), 0);
-    assert_eq!(output.counters.pending.load(Ordering::Acquire), 0);
-    assert_eq!(output.counters.queued.load(Ordering::Acquire), 0);
+    assert_eq!(output.counters.pending(), 0);
+    assert_eq!(output.counters.lines(), 0);
     // A second shutdown is a no-op.
     assert_eq!(output.shutdown(LONG_WAIT), 0);
 }
@@ -803,7 +965,7 @@ fn shutdown_gives_up_on_a_stalled_sink_within_its_wait_and_counts_the_lost_entri
 
     // The sink recovers: the abandoned thread still drains and ends.
     let _ = release_tx.send(());
-    wait_until(|| output.counters.pending.load(Ordering::Acquire) == 0);
+    wait_until(|| output.counters.pending() == 0);
 }
 
 #[test]
