@@ -355,7 +355,7 @@ impl ScenarioNav {
 
 /// A poll or per-leg cheat. `when` is a [`Proof`] that must hold for
 /// [`SustainWhen::Poll`]; [`SustainWhen::EachNavStep`] fires at the start
-/// of every Walk/Follow/FollowTele (rs2b0t `restoreRunEnergy` each OD).
+/// of every Walk/Follow/FollowWhen/FollowTele (rs2b0t `restoreRunEnergy` each OD).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sustain {
     pub when: SustainWhen,
@@ -460,6 +460,9 @@ impl std::fmt::Display for StepSendRefusal {
 pub type InteractionSender =
     dyn Fn(&mut Client, &GameSnapshot) -> Result<(), StepSendRefusal> + Send + Sync;
 
+/// Gate that runs before a fixture's armed follow. It can send fixture input.
+pub type FixtureFollowGate = dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync;
+
 /// What a step sends through the client's driver.
 pub enum StepKind {
     /// 377 `perform(step, { arms, budgetTicks })`: run the closure once,
@@ -482,6 +485,13 @@ pub enum StepKind {
     /// that ends anywhere but the destination fails the step with the
     /// terminal outcome's message.
     Follow { dest: WorldTile },
+    /// Follow with a fixture-controlled pause. A false result stops the
+    /// traveller from polling or sending input without replacing its route
+    /// or resetting its budget.
+    FollowWhen {
+        dest: WorldTile,
+        may_poll: Box<FixtureFollowGate>,
+    },
     /// Whole-world nav with the any-tile teleport layer on: like
     /// [`StepKind::Follow`], but the route arms with
     /// `FindOptions::allow_teleports`, so a destination only the packed

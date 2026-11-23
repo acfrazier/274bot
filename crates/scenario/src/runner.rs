@@ -1594,6 +1594,7 @@ impl ScenarioRunner {
                 let nav_done = match &self.current_step().kind {
                     StepKind::Walk { .. }
                     | StepKind::Follow { .. }
+                    | StepKind::FollowWhen { .. }
                     | StepKind::FollowTele { .. } => self.route.is_none(),
                     _ => true,
                 };
@@ -2489,7 +2490,10 @@ impl ScenarioRunner {
     fn fire_nav_step_sustains(&mut self, client: &mut Client) {
         if !matches!(
             self.current_step().kind,
-            StepKind::Walk { .. } | StepKind::Follow { .. } | StepKind::FollowTele { .. }
+            StepKind::Walk { .. }
+                | StepKind::Follow { .. }
+                | StepKind::FollowWhen { .. }
+                | StepKind::FollowTele { .. }
         ) {
             return;
         }
@@ -2570,9 +2574,10 @@ impl ScenarioRunner {
             StepKind::NativeSeedDeposit { .. } => "fixture-deposit",
             StepKind::DrainDialogs { .. } => "dialogue",
             StepKind::Relog => "relog",
-            StepKind::Walk { .. } | StepKind::Follow { .. } | StepKind::FollowTele { .. } => {
-                "route"
-            }
+            StepKind::Walk { .. }
+            | StepKind::Follow { .. }
+            | StepKind::FollowWhen { .. }
+            | StepKind::FollowTele { .. } => "route",
             StepKind::ObserveMazeCompletion {
                 trigger: Some(_), ..
             }
@@ -2738,7 +2743,9 @@ impl ScenarioRunner {
                 }
                 Ok("no-send")
             }
-            StepKind::Walk { dest } | StepKind::Follow { dest } => self
+            StepKind::Walk { dest }
+            | StepKind::Follow { dest }
+            | StepKind::FollowWhen { dest, .. } => self
                 .arm_route(*dest, self.nav_find_opts(false))
                 .map(|()| "armed"),
             StepKind::FollowTele { dest } => self
@@ -2855,9 +2862,14 @@ impl ScenarioRunner {
     /// cycles (and a stored `TravelOptions<'static>` would make the runner
     /// non-`Send`, which the panel's shared runner slot requires).
     fn step_route(&mut self, client: &mut Client) {
-        let Some(route) = self.route.clone() else {
+        let Some(route) = self.route.as_ref() else {
             return;
         };
+        if matches!(&self.current_step().kind, StepKind::FollowWhen { may_poll, .. } if !may_poll(client, &self.snapshot))
+        {
+            return;
+        }
+        let route = route.clone();
         if crate::debug_enabled() {
             let lp = client.local_player.as_ref();
             let phys = lp.map(|p| ((p.x - 64) / 128, (p.z - 64) / 128));

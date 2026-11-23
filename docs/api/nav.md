@@ -1840,10 +1840,10 @@ LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1
 ```
 
 `nav_full`: `find` + `follow` (Lumbridge courtyard → (3220,3264,0)).
-`nav_door` is the gold fixture if something regresses: two slots — the
-walker crosses Catherby door 1530 to (2817,3443,0) while a tick-perfect
-closer keeps the door closed; PASS on
-`Arrived`. Additional live tests under `crates/e2e/tests`: `nav_gates`,
+`nav_door`: the walker opens the Catherby range-house door (1530) during a
+follow. The companion closes it once before the walker can cross. The same
+follow must reopen the door, cross it, and arrive at (2817,3443,0).
+Additional live tests under `crates/e2e/tests`: `nav_gates`,
 `nav_cart`, `nav_spirit`, `nav_wildy`, `nav_toll`, `nav_essence`,
 `nav_elkoy`, `nav_zanaris`, `nav_collision`, `nav_seers_crabs`. Headed
 corpus: `cargo run --release -p panel --bin panel-play -- --live script_nav_routes`.
