@@ -1,0 +1,9 @@
+{
+  "bank-hints/local-289/alice.json": {"schema_version":1,"profile":"local-289","account":"alice","observed_at_unix":1762790000,"rows":[[995,1000],[1511,27]]},
+  "loadouts.json": [{"name":"upgrade","worn":["Bronze axe"],"carry":["Lobster"]}],
+  "panel-ui.json": {"nav":{"pause_script_on_manual_walk_abort":false}},
+  "profile_settings": {
+    "alice":{"lowmem":true},
+    "bob":{"lowmem":true,"script_assignment":{"source_kind":"compiled","identity":"Gatherer"},"script_settings":{"compiled:Gatherer":{"schema_version":4,"values":{"skill":"Mining"}},"compiled:Sherlock":{}}}
+  }
+}

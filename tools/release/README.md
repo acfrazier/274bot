@@ -395,3 +395,64 @@ lane), never by the builder.
 The Linux package is checked with `package.py --check --platform linux` on the
 builder. A real launch of the staged `panel-play` needs a display and Vulkan
 driver as listed above; `tui-play` needs neither.
+
+## Saved-data upgrade gate
+
+`upgrade_test.py control` tests historical startup without logging in to a game.
+Use tmux and Python with `cryptography`. Supply the preserved **test** snapshot from the
+0.2.8 build. Never supply an operator profile or vault. Run the command once
+with the TUI at `0dd33c2ed` and once with the TUI at `eaff8cbc9`:
+
+```sh
+python3 upgrade_test.py control --binary "$TUI" --snapshot "$SNAPSHOT_028" \
+  --pass-file "$TEST_PASSPHRASE_FILE" --account "$TEST_ACCOUNT" --cache "$CACHE" \
+  --crc-file "$ARCHIVED_CRC" --work "$NEW_DIR"
+```
+
+Set `ENGINE_DIR` for the historical local profile. Supply the complete revision-289
+client cache and its original 40-byte `/crc` response. The control serves only
+that response on loopback. It does not use a running engine or edit the cache.
+The tool checks the unchanged stores, then an unscoped hint, legacy loadout
+rows and missing preference keys. A separate encrypted vault contains sparse
+profile settings, a schema-4 Gatherer entry and an empty compiled envelope.
+The tool supplies existing profile names before an absent name. Only that
+last lookup proves that startup and unlock completed. A timeout is an error.
+The tool also presses Start on the real 0.2.8 Gatherer. It checks the schema-4
+refusal or successful admission and restoration of `Mining`. The old binary
+must return 1 for a format refusal. The fixed binary must return 0. An
+infrastructure failure returns 2 and cannot satisfy the negative control.
+This checks admission without a game connection. It does not replace the live gate.
+
+For the release gate, use the **full shipped 0.2.9 package**, not a source
+build. Verify the package against its published checksum. Obtain both
+executable checksums from that verified package. Start from an interactive
+terminal outside tmux. The tool requires tmux, a display, and the release
+test engine. Use only a disposable test account. Keep the work directory
+private. It contains an encrypted test vault and product session logs.
+
+```sh
+python3 upgrade_test.py live --shipped "$OLD_TUI" --shipped-panel "$OLD_PANEL" \
+  --shipped-sha256 "$OLD_TUI_SHA" --panel-sha256 "$OLD_PANEL_SHA" \
+  --candidate "$NEW_TUI" --account "$TEST_ACCOUNT" --cache "$CACHE" --work "$NEW_DIR"
+```
+
+1. In the shipped panel, enable session-file logging. With **no profile focused**,
+   change a parameter of a loaded noncompiled card to write `script-settings.json`.
+   Close the panel normally. Do not create or edit any saved file by hand.
+2. In the shipped TUI, create and log in the named test account. Enable automatic
+   login. Disable “Pause script on manual movement.” Create a loadout named `upgrade`.
+3. Open a real bank with at least one item, then close it. Keep logging enabled.
+4. Set Gatherer `skill` to `Mining`, Grinch `radius` to `7`, and Quester
+   `Maximum deaths` to `3`. Leave unqualified guides off. Turn global teleport
+   permission off and turn Sherlock's `Allow teleports` on. A global override
+   is not evidence that the card kept its setting.
+5. Close all dialogs. Leave the test account focused and the script idle.
+   Detach with the tmux prefix followed by `d`. Do not quit the TUI.
+
+The tool checks the settings in the writer's parameter panes and starts and
+stops each card. It checks the saved stores, the bank-open event and the durable
+bank save. Then it starts the candidate on the **same HOME**. It answers only
+the hidden vault prompt and fails if startup requests a move-aside. The candidate
+gets no setting edits. The tool requires each saved value and a new working
+or waiting state for the selected card. Keep the final verdict and executable
+checksums with the release evidence. The procedure does not use a public server.
