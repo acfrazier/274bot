@@ -5245,6 +5245,112 @@ export default class T extends LoopingBot {
     slot.stop();
 }
 
+fn assert_npc_access_log_for_walk_result(
+    obstacles: &str,
+    walk_end: script::native::WalkEnd,
+    expected_log: bool,
+) {
+    static BANK: api::named_banks::BankDefinition = api::named_banks::BankDefinition {
+        name: "Shilo Village",
+        tile: api::snapshot::WorldTile {
+            x: 300,
+            z: 100,
+            level: 0,
+        },
+        approach: None,
+        skill: None,
+        quest: None,
+        setting: None,
+        object: None,
+        open_first: None,
+        npc: Some(api::named_banks::BankOperation {
+            name: "Banker",
+            op: "Talk-to",
+        }),
+        choose: Some("Bank"),
+    };
+    let source = format!(
+        r#"
+import {{ Banking }} from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__messages = [];
+        await Banking.open({{
+            stand: {{ x: 300, z: 100, level: 0 }},
+            obstacles: {obstacles},
+            log: message => globalThis.__messages.push(message),
+        }});
+    }}
+}}
+"#
+    );
+    let banks = std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+        api::named_banks::NamedBank {
+            name: BANK.name,
+            tile: BANK.tile,
+            definition: Some(&BANK),
+            routable: true,
+        },
+    ]));
+    let mut slot = new_bank_slot(&source, LoadShape::CompatClass, banks);
+    let mut input = base_snapshot();
+    input.here = Some(script::native::snapshot_source::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
+    let [walk] = actions.as_slice() else {
+        panic!("known-bank access must start its stand walk");
+    };
+    let authority = walk.authority();
+    slot.slot.complete_native_walk(
+        &authority,
+        script::native::WalkReceipt {
+            request_id: walk.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: walk.run(),
+                tick: 1,
+                sequence: 1,
+            },
+            goal: None,
+            end: walk_end,
+            blocked: None,
+            detail: None,
+            refusal: None,
+            assessment: None,
+            escape: None,
+            prereq_allow: None,
+        },
+    );
+    tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+    assert_eq!(
+        slot.probe("__messages.includes('bank: Shilo Village uses npc access')")
+            .unwrap(),
+        serde_json::json!(expected_log),
+        "bank access logging follows trimmed caller obstacles"
+    );
+    slot.stop();
+}
+
+#[test]
+fn isolate_banking_open_logs_known_bank_access_for_obstacle_no_path() {
+    assert_npc_access_log_for_walk_result(
+        r#"["  Door  ", "   "]"#,
+        script::native::WalkEnd::NoPath,
+        true,
+    );
+}
+
+#[test]
+fn isolate_banking_open_skips_known_bank_access_for_blocked_walk_without_obstacles() {
+    assert_npc_access_log_for_walk_result(r#"["   "]"#, script::native::WalkEnd::Blocked, false);
+}
+
 static DRAYNOR_BANK: api::named_banks::BankDefinition = api::named_banks::BankDefinition {
     name: "Draynor",
     tile: api::snapshot::WorldTile {

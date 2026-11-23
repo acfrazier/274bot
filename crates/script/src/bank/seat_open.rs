@@ -14,7 +14,7 @@ use crate::bank::seat_transfer::{TransferAnswer, TransferCall, TransferHooks};
 use crate::interact::InteractReq;
 use crate::native::{
     ActionContext, ActionError, NativeMachine, PrereqAllow, WalkAllow, WalkBit, WalkEnd,
-    WalkOptions, WalkReceipt, WalkRequest, WalkStallReason,
+    WalkOptions, WalkRequest,
 };
 use crate::native_bank::{
     nearest_eligible_bank as select_nearest_eligible_bank, BankPickOutcome, BankSelector, PickKind,
@@ -449,24 +449,6 @@ fn walk_arrived(cx: &ActionContext<'_>, target: WorldTile, radius: i32) -> bool 
     api::query::is_arrived(here.value, target, radius, || {
         snapshot.reach().map_or(&unavailable, |reach| reach.value)
     })
-}
-
-fn walk_has_obstacle(receipt: &WalkReceipt) -> bool {
-    receipt
-        .blocked
-        .as_deref()
-        .is_some_and(|blocked| !blocked.is_empty())
-        || matches!(
-            &receipt.end,
-            WalkEnd::Blocked
-                | WalkEnd::NeedsEvidence(_)
-                | WalkEnd::NeedsStep(_)
-                | WalkEnd::GateRefused(_)
-        )
-        || matches!(
-            &receipt.end,
-            WalkEnd::Stalled(stall) if stall.why == WalkStallReason::EndBlocked
-        )
 }
 
 fn lower_eq(left: &str, right: &str) -> bool {
@@ -1968,6 +1950,7 @@ struct BankingOpen {
     nearby_radius: f64,
     preferences: BankPreferences,
     access_log_after_walk: Option<(&'static str, &'static str)>,
+    log_access_on_walk_failure: bool,
 }
 
 impl BankingOpen {
@@ -1999,6 +1982,10 @@ impl BankingOpen {
             nearby_radius: request.nearby_radius.unwrap_or(14.0),
             preferences,
             access_log_after_walk: None,
+            log_access_on_walk_failure: request
+                .obstacles
+                .iter()
+                .any(|obstacle| !obstacle.trim().is_empty()),
         }
     }
 
@@ -2088,21 +2075,17 @@ impl BankingOpen {
                     }
                 }
                 BankingPhase::Walk(mut walk) => {
-                    let (terminal, receipt_arrived, obstructed) =
-                        if walk.follow.session == cx.run().session {
-                            cx.walk_receipt(walk.follow.request_id).map_or(
-                                (false, false, false),
-                                |receipt| {
-                                    (
-                                        receipt.end != WalkEnd::Cancelled,
-                                        receipt.end == WalkEnd::Arrived,
-                                        walk_has_obstacle(receipt),
-                                    )
-                                },
-                            )
-                        } else {
-                            (false, false, false)
-                        };
+                    let (terminal, receipt_arrived) = if walk.follow.session == cx.run().session {
+                        cx.walk_receipt(walk.follow.request_id)
+                            .map_or((false, false), |receipt| {
+                                (
+                                    receipt.end != WalkEnd::Cancelled,
+                                    receipt.end == WalkEnd::Arrived,
+                                )
+                            })
+                    } else {
+                        (false, false)
+                    };
                     let arrived = walk_arrived(cx, walk.target, walk.radius);
                     let deadline_reached = walk.deadline.reached(cx);
                     if arrived || terminal || deadline_reached {
@@ -2110,10 +2093,7 @@ impl BankingOpen {
                             cx.cancel_request(walk.follow.request_id);
                         }
                         self.open_target(walk.next);
-                        if self.queue_access_log_after_walk(
-                            log,
-                            arrived || receipt_arrived || obstructed,
-                        ) {
+                        if self.queue_access_log_after_walk(log, arrived || receipt_arrived) {
                             return Poll::Pending;
                         }
                         continue;
@@ -2323,11 +2303,11 @@ impl BankingOpen {
         )
     }
 
-    fn queue_access_log_after_walk(&mut self, log: &mut LogCall, should_log: bool) -> bool {
+    fn queue_access_log_after_walk(&mut self, log: &mut LogCall, walk_arrived: bool) -> bool {
         let Some((bank_name, access_kind)) = self.access_log_after_walk.take() else {
             return false;
         };
-        if should_log {
+        if walk_arrived || self.log_access_on_walk_failure {
             log.queue(format!("bank: {bank_name} uses {access_kind} access"), true);
             true
         } else {
