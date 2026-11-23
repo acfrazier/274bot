@@ -68,7 +68,7 @@ pub(super) const MAX_PAGES: u64 = 4 * DOCUMENT_MAX / PAGE_SIZE;
 /// The most bank-hint identities (account × content scope) the database
 /// holds. A new identity past it is refused `Busy`; no stored hint is ever
 /// evicted to make room. The page budget below derives from the accepted
-/// bank budget (`design-r7.md:260`: 1,024 rows per hint, 256 resident stores).
+/// bank budget (1,024 rows per hint, 256 resident stores).
 pub(super) const MAX_BANK_HINTS: u64 = 1024;
 /// The largest stored rows value of one hint: [`api::bank_memory::MAX_HINT_ROWS`]
 /// rows of one 4-byte id and one 4-byte count.
