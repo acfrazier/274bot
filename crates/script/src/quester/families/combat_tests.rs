@@ -1752,6 +1752,15 @@ fn pending_walk(ledger: &TestLedger) -> Option<WalkOut> {
     })
 }
 
+/// The host takes the newest walk request, plans its route and posts the
+/// follower's tick allowance for it, so the walk's own deadline is far beyond
+/// the escape's observed-tick budget that these tests measure.
+fn host_plans_the_walk(ledger: &mut TestLedger) {
+    let ledger = ledger.as_mut().expect("native ledger");
+    let authority = ledger.outbox.last().expect("a queued walk").authority();
+    assert!(ledger.post_walk_allowance(&authority, 100_000));
+}
+
 fn last_walk(ledger: &TestLedger) -> WalkOut {
     pending_walk(ledger).expect("the abort must have requested a native walk")
 }
@@ -3990,6 +3999,7 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
         );
 
         // Each entry is the tick a walk was requested and the walk.
+        host_plans_the_walk(&mut ledger);
         let mut walks = vec![(12, last_walk(&ledger))];
         let mut tick = 12;
         let bound = 12 + 2 * pass as u64 * (FLOOD_RADIUS as u64 + escape::ESCAPE_SLACK_TICKS) + 20;
@@ -4003,6 +4013,7 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
             if let Some(walk) = pending_walk(&ledger) {
                 if walk.request_id != walks.last().unwrap().1.request_id {
                     walks.push((tick, walk));
+                    host_plans_the_walk(&mut ledger);
                 }
             }
             assert!(
