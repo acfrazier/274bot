@@ -5,6 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
+### Saved data
+
+- Loadout files with duplicate JSON fields are refused instead of choosing the last value.
+  The source file remains unchanged until the duplicates are removed.
+
 ### Interactions
 
 - NPC Talk-to, dialogue choices and Continue use current client-built menu
