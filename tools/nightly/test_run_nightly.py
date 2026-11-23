@@ -2139,6 +2139,35 @@ class QuestJobTests(unittest.TestCase):
             self.assertFalse((home / ".274bot" / "servers.json").exists())
 
 
+class PlainSweepTests(unittest.TestCase):
+    def test_input_dependent_catalog_scenarios_leave_the_plain_sweep(self):
+        """Every fallible factory needs runtime inputs the sweep cannot pass.
+
+        The catalog marks them `Entry::fallible`; a plain sweep has no cell
+        inputs, so each one must be in skip.conf and say which input it needs.
+        The default cell list still names them because it is the catalog, so a
+        cell-name check keeps working; skip.conf is what keeps them out of the
+        sweep.
+        """
+        catalog = rn.RUNNER_REPO / rn.CATALOG_RS
+        if not catalog.is_file():
+            self.skipTest("runner copy without the product tree (self-update sandbox)")
+        fallible = re.findall(r'Entry::fallible\(\s*"([A-Za-z0-9_]+)"', rn.rtext(catalog))
+        self.assertIn("quest_watch_seed", fallible)
+        self.assertIn("quest_watch_speed", fallible)
+
+        skips = rn.read_skips(rn.HERE / "skip.conf")
+        missing = [name for name in fallible if name not in skips]
+        self.assertEqual(
+            missing, [], f"input-dependent scenarios would run in the plain sweep: {missing}")
+        self.assertIn("QUEST_WATCH_SEED", skips["quest_watch_seed"])
+        self.assertIn("QUEST_WATCH_SPEED_MS", skips["quest_watch_speed"])
+
+        listed = rn.catalog_cells(rn.RUNNER_REPO)
+        for name in fallible:
+            self.assertIn(name, listed, "explicit selection needs the catalog name")
+
+
 class TemporaryCargoEnvironmentTests(unittest.TestCase):
     def test_builds_with_ephemeral_home_share_runner_cache_directory(self):
         with tempfile.TemporaryDirectory() as tmp:
