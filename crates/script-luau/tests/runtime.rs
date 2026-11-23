@@ -858,6 +858,54 @@ fn real_slot_bank_terminal_resumes_with_status_and_published_value() {
 
 #[cfg(feature = "test-hooks")]
 #[test]
+fn real_slot_walk_session_reset_returns_failed_walk_result() {
+    let mut slot = started_slot(
+        r#"
+        return {
+            tick = function()
+                local result = api.walk.to(3200, 3201, 0)
+                api.log(result.ok, result.failed, result.aborted)
+            end,
+        }
+        "#,
+        false,
+    );
+    assert_eq!(slot_tick(&mut slot, 1, false), LentOutcome::Accepted);
+    let _id = queued_walk_id(&mut slot);
+    assert!(slot.drain_logs().is_empty());
+
+    slot.reset_session_work();
+    slot.on_is_up(true);
+    assert_eq!(slot_tick(&mut slot, 2, false), LentOutcome::Accepted);
+    assert_eq!(slot.drain_logs(), ["false\ttrue\treset"]);
+}
+
+#[cfg(feature = "test-hooks")]
+#[test]
+fn real_slot_bank_session_reset_returns_aborted_bank_result() {
+    let mut slot = started_slot(
+        r#"
+        return {
+            tick = function()
+                local result = api.bank.openNearest()
+                api.log(result.status, result.has_value, result.value == nil, result.reason)
+            end,
+        }
+        "#,
+        false,
+    );
+    assert_eq!(slot_tick(&mut slot, 1, false), LentOutcome::Accepted);
+    let _id = queued_start_id(&mut slot);
+    assert!(slot.drain_logs().is_empty());
+
+    slot.reset_session_work();
+    slot.on_is_up(true);
+    assert_eq!(slot_tick(&mut slot, 2, false), LentOutcome::Accepted);
+    assert_eq!(slot.drain_logs(), ["aborted\tfalse\ttrue\treset"]);
+}
+
+#[cfg(feature = "test-hooks")]
+#[test]
 fn real_slot_walk_completion_copies_actual_request_after_held_tick() {
     let mut slot = started_slot(
         r#"
