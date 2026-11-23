@@ -1,20 +1,28 @@
-//! The root-use lease (T5.3 §4.3): every new-version process that uses a
-//! state root's database holds `<root>/instance.lock` **shared** for its
-//! lifetime; an explicit maintenance command (same-root export, recovery)
-//! takes it **exclusive** without waiting, so it never runs beside a user
-//! of the same root.
+//! A product startup holds `<root>/instance.lock` exclusively before it
+//! opens saved state. The OS releases the lock when the process exits.
+//! The state service shares the frontend's locked descriptor.
 //!
-//! A frontend whose instance permit already holds the lock
-//! ([`crate::InstanceLock`]) hands the same open file to the service, so a
-//! process keeps one descriptor for it. A composition without the permit
-//! (a harness, Continue anyway, an explicit root) takes its own shared
-//! lease when the database first opens.
+//! Shared leases remain for library compositions and contention tests.
+//! Maintenance takes an independent exclusive lock and never waits.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::sync::Arc;
 
 use super::files::StateRoot;
+
+/// A state root cannot be opened by this process.
+#[derive(Debug, thiserror::Error)]
+pub enum StateRootLockError {
+    #[error("Another 274bot process is using state root {}. Close that process before starting 274bot.", root.display())]
+    InUse { root: std::path::PathBuf },
+    #[error("Cannot lock 274bot state root {}: {source}", root.display())]
+    Io {
+        root: std::path::PathBuf,
+        #[source]
+        source: io::Error,
+    },
+}
 
 /// One holder of a root's `instance.lock`, shared or exclusive. Clones of
 /// the instance permit's file share one descriptor; the lock is released
@@ -25,6 +33,18 @@ pub struct RootUse {
 }
 
 impl RootUse {
+    /// Hold the root exclusively before any startup reads or writes.
+    pub fn acquire(root: &StateRoot) -> Result<Self, StateRootLockError> {
+        Self::exclusive(root)
+            .map_err(|source| StateRootLockError::Io {
+                root: root.path().to_path_buf(),
+                source,
+            })?
+            .ok_or_else(|| StateRootLockError::InUse {
+                root: root.path().to_path_buf(),
+            })
+    }
+
     /// The lease over an already locked instance file.
     pub(crate) fn from_locked(file: Arc<File>) -> Self {
         Self { file }
@@ -84,6 +104,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn startup_lock_io_error_preserves_its_root_and_source() {
+        let scratch = script::IsolatedEnv::enter("root-lock-io");
+        let path = scratch.home.join("not-a-directory");
+        std::fs::write(&path, b"keep").unwrap();
+        let root = StateRoot::new(path.clone());
+        let error = RootUse::acquire(&root).unwrap_err();
+        assert!(matches!(
+            error,
+            StateRootLockError::Io { root, source } if root == path && source.kind() != io::ErrorKind::WouldBlock
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"keep");
+    }
+
+    #[test]
     fn shared_leases_coexist_and_exclude_maintenance_until_the_last_one_drops() {
         let scratch = script::IsolatedEnv::enter("root-use");
         let root = StateRoot::new(scratch.home.join(".274bot"));
@@ -101,3 +135,7 @@ mod tests {
         assert!(RootUse::shared(&root).unwrap().is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "root_use_process_tests.rs"]
+mod process_tests;

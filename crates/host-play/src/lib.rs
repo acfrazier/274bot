@@ -134,7 +134,7 @@ pub use host::{ManualMoveIntent, MouseOwner};
 pub use instance_lock::{
     instance_conflict_message, instance_lock_path, resolve_instance_permit,
     try_acquire_instance_lock, InstanceHolder, InstanceKind, InstanceLock, InstanceLockResult,
-    InstancePermit, InstancePermitOutcome,
+    InstancePermit,
 };
 #[cfg(test)]
 use nav_executor::Traveller;

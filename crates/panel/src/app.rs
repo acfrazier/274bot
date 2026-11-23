@@ -47,8 +47,8 @@ use dear_imgui_rs::{
 #[cfg(feature = "js")]
 use dear_imgui_rs::{TableColumnFlags, TableFlags};
 use frontend_core::launch::{
-    InstanceConflict, InstanceKind, InstancePermit, Passphrase, PreparationCompletion,
-    PreparationJob, ProfilePreparation, ProgressStage, ProgressUnit, ProgressView, ValidationJob,
+    InstanceKind, InstancePermit, Passphrase, PreparationCompletion, PreparationJob,
+    ProfilePreparation, ProgressStage, ProgressUnit, ProgressView, ValidationJob,
     ValidationPending,
 };
 use frontend_core::process::debug_enabled;
@@ -8135,39 +8135,6 @@ fn init_panel_running(
     Ok((state, StartupPreparation::new(boot)))
 }
 
-/// `Some(true)` continue, `Some(false)` exit, `None` still open.
-fn instance_conflict_choice(ui: &Ui, conflict: &InstanceConflict) -> Option<bool> {
-    let mut open = true;
-    let mut choice = None;
-    ui.window("Another 274bot is running")
-        .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
-        .size_constraints(
-            scale_size(ui, [DIALOG_W, 80.0]),
-            [scale_px(ui, DIALOG_W), scale_px(ui, 720.0)],
-        )
-        .build(|| {
-            let _wrap = ui.push_text_wrap_pos(scale_px(ui, DIALOG_W - 16.0));
-            ui.text_wrapped(conflict.message());
-            ui.spacing();
-            let avail = ui.content_region_avail()[0];
-            let (w, stack) = scaled_button_row_layout(ui, avail, 2);
-            if ui.button_with_size("Exit", [w, 0.0]) {
-                choice = Some(false);
-            }
-            if !stack {
-                ui.same_line();
-            }
-            if ui.button_with_size("Continue anyway", [w, 0.0]) {
-                choice = Some(true);
-            }
-        });
-    if !open {
-        Some(false)
-    } else {
-        choice
-    }
-}
 /// `Some(true)` moves the refused files aside, `Some(false)` keeps them and
 /// exits, and `None` leaves the prompt open.
 fn saved_data_choice(ui: &Ui, refusal: &str) -> Option<bool> {
@@ -8276,6 +8243,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let root = frontend_core::saved_data::StateRoot::new(
         frontend_core::scripts::paths::bot_home().join(".274bot"),
     );
+    let permit = frontend_core::launch::acquire_instance(InstanceKind::Panel)?;
     let mut saved_data_prompt = saved_data_preflight(&root, skip_lock)?;
     if let Some(scenario) = args.mode.prepare_fixture_name() {
         return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
@@ -8284,25 +8252,18 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         });
     }
     let shot_state = Arc::new(Mutex::new(crate::window::ShotState::default()));
-    let mut instance_prompt = None;
-    let mut startup_permit = None;
-    let mut running = None;
-    match frontend_core::launch::acquire_instance(InstanceKind::Panel, skip_lock) {
-        Ok(Ok(permit)) => {
-            if saved_data_prompt.is_some() {
-                startup_permit = Some(permit);
-            } else {
-                running = Some(init_panel_running(&args, Arc::clone(&shot_state), permit)?);
-            }
-        }
-        Ok(Err(conflict)) => {
-            instance_prompt = Some(conflict);
-        }
-        Err(e) => {
-            eprintln!("panel: instance lock: {e}");
-            exit_after_work_shutdown(1);
-        }
-    }
+    let mut startup_permit = Some(permit);
+    let running = if saved_data_prompt.is_some() {
+        None
+    } else {
+        Some(init_panel_running(
+            &args,
+            Arc::clone(&shot_state),
+            startup_permit
+                .take()
+                .expect("startup holds the instance lock"),
+        )?)
+    };
     let running = Rc::new(RefCell::new(running));
     let mut presented = false;
 
@@ -8330,17 +8291,6 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         move |ui, gpu| {
             let _profile_draw = client::profiling::UI_DRAW.start();
             let mut initialize = false;
-            if let Some(holder) = instance_prompt.as_ref() {
-                match instance_conflict_choice(ui, holder) {
-                    None => return false,
-                    Some(false) => return true,
-                    Some(true) => {
-                        instance_prompt = None;
-                        startup_permit = Some(InstancePermit::skip());
-                        initialize = saved_data_prompt.is_none();
-                    }
-                }
-            }
             if let Some((_, message)) = saved_data_prompt.as_ref() {
                 match saved_data_choice(ui, message) {
                     None => return false,
@@ -8375,7 +8325,9 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                 }
             }
             if initialize {
-                let permit = startup_permit.take().unwrap_or_else(InstancePermit::skip);
+                let permit = startup_permit
+                    .take()
+                    .expect("saved-data startup retains the instance lock");
                 match init_panel_running(&args, Arc::clone(&shot_state), permit) {
                     Ok(ready) => *frame_running.borrow_mut() = Some(ready),
                     Err(error) => {

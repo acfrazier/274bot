@@ -50,6 +50,30 @@ fn hydrate_panel_preferences(session: &mut crate::session::Session) {
 }
 
 #[test]
+fn held_state_root_refuses_panel_startup_before_any_window_or_store_access() {
+    let iso = frontend_core::test_support::IsolatedStores::enter("panel-instance-refusal");
+    let root = host_play::local_state::StateRoot::new(iso.home().join(".274bot"));
+    let _lock = host_play::local_state::RootUse::acquire(&root).unwrap();
+    // A preflight would read this invalid saved store and return another error.
+    let loadouts = root.path().join("loadouts.json");
+    std::fs::write(&loadouts, b"not JSON").unwrap();
+    for argv in [vec![], vec!["--smoke".to_string()]] {
+        let args = parse_args(argv, None).unwrap();
+        let error = super::run_panel(args).expect_err("a held root refuses every startup mode");
+        assert!(matches!(
+            &error,
+            crate::window::PanelError::StateRootLock(
+                frontend_core::launch::StateRootLockError::InUse { root: held }
+            ) if held == root.path()
+        ));
+        assert!(error.to_string().contains("Another 274bot process"));
+        assert!(error.to_string().contains(root.path().to_str().unwrap()));
+        assert_eq!(std::fs::read(&loadouts).unwrap(), b"not JSON");
+        assert!(!root.database_file().exists());
+    }
+}
+
+#[test]
 #[ignore]
 fn panel_exit_status_child() {
     match std::env::var("PANEL_EXIT_CHILD").as_deref() {

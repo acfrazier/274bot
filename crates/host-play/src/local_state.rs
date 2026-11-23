@@ -146,7 +146,7 @@ pub use maintenance::{
     maintenance_command, maintenance_help, parse_maintenance, run_preferences_maintenance,
     MaintenanceAction, MaintenanceError,
 };
-pub use root_use::RootUse;
+pub use root_use::{RootUse, StateRootLockError};
 pub use sql::Frontend;
 
 /// How long one preference save may keep being retried (a contended

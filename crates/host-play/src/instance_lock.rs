@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::local_state::RootUse;
+use crate::local_state::{RootUse, StateRoot, StateRootLockError};
 
 /// Which frontend holds `~/.274bot`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,12 +70,7 @@ impl InstanceHolder {
     }
 }
 
-/// The instance lock held for the process lifetime. The exclusive probe
-/// that took it tells this process no other instance holds the root; it is
-/// then held **shared**, as the root-use lease of the state database (T5.3
-/// §4.3): another instance's exclusive probe still sees it, a maintenance
-/// command (export, recovery) is refused while it is held, and the
-/// process's local-state service shares this one descriptor.
+/// The exclusive instance lock, held until the process and its state service stop.
 #[derive(Debug)]
 pub struct InstanceLock {
     _file: Arc<File>,
@@ -107,8 +102,7 @@ pub enum InstanceLockResult {
     Contested(InstanceHolder),
 }
 
-/// Proof that the caller already decided the instance lock: either this
-/// process holds it, or a harness / Continue-anyway path skipped it.
+/// The process's instance lock, or an unbound library-test session.
 #[derive(Debug)]
 pub enum InstancePermit {
     Locked(InstanceLock),
@@ -133,11 +127,18 @@ impl InstancePermit {
     }
 }
 
-/// Interactive acquire may need an operator confirm before a permit exists.
-#[derive(Debug)]
-pub enum InstancePermitOutcome {
-    Ready(InstancePermit),
-    NeedsConfirm(InstanceHolder),
+/// Acquire the mandatory startup lock before opening any saved state.
+pub fn resolve_instance_permit(kind: InstanceKind) -> Result<InstancePermit, StateRootLockError> {
+    let root = StateRoot::new(script::bot_home().join(".274bot"));
+    match try_acquire_instance_lock(kind).map_err(|source| StateRootLockError::Io {
+        root: root.path().to_path_buf(),
+        source,
+    })? {
+        InstanceLockResult::Acquired(lock) => Ok(InstancePermit::Locked(lock)),
+        InstanceLockResult::Contested(_) => Err(StateRootLockError::InUse {
+            root: root.path().to_path_buf(),
+        }),
+    }
 }
 
 /// `~/.274bot/instance.lock` — exclusive OS lock, not the pid/kind marker.
@@ -158,32 +159,15 @@ pub fn instance_conflict_message(holder: &InstanceHolder) -> String {
         .display();
     match (holder.kind, holder.pid) {
         (Some(kind), Some(pid)) => format!(
-            "Another 274bot {} (pid {}) is using {} — running both can overwrite each other's settings",
+            "Another 274bot {} (pid {}) is using state root {}. Close that process before starting 274bot.",
             kind.label(),
             pid,
             dir
         ),
         _ => format!(
-            "Another 274bot instance (pid unknown) is using {} — running both can overwrite each other's settings",
+            "Another 274bot process (pid unknown) is using state root {}. Close that process before starting 274bot.",
             dir
         ),
-    }
-}
-
-/// Harness / live / memory paths pass `skip`. Interactive paths pass `false`
-/// and either receive a held lock or a confirm.
-pub fn resolve_instance_permit(
-    kind: InstanceKind,
-    skip: bool,
-) -> io::Result<InstancePermitOutcome> {
-    if skip {
-        return Ok(InstancePermitOutcome::Ready(InstancePermit::SkipLock));
-    }
-    match try_acquire_instance_lock(kind)? {
-        InstanceLockResult::Acquired(lock) => {
-            Ok(InstancePermitOutcome::Ready(InstancePermit::Locked(lock)))
-        }
-        InstanceLockResult::Contested(holder) => Ok(InstancePermitOutcome::NeedsConfirm(holder)),
     }
 }
 
@@ -201,18 +185,6 @@ pub fn try_acquire_instance_lock(kind: InstanceKind) -> io::Result<InstanceLockR
         .open(&path)?;
     match file.try_lock() {
         Ok(()) => {
-            // Held shared from here: the probe above proved no other
-            // instance; the shared hold keeps the next probe contested and
-            // admits this process's database users.
-            if let Err(error) = share(&file) {
-                let _ = file.unlock();
-                return match error {
-                    TryLockError::WouldBlock => {
-                        Ok(InstanceLockResult::Contested(read_holder_retry()))
-                    }
-                    TryLockError::Error(error) => Err(error),
-                };
-            }
             write_holder(kind)?;
             Ok(InstanceLockResult::Acquired(InstanceLock {
                 _file: Arc::new(file),
@@ -221,15 +193,6 @@ pub fn try_acquire_instance_lock(kind: InstanceKind) -> io::Result<InstanceLockR
         Err(TryLockError::WouldBlock) => Ok(InstanceLockResult::Contested(read_holder_retry())),
         Err(TryLockError::Error(e)) => Err(e),
     }
-}
-
-/// Turn the exclusive hold into a shared one. `flock` converts in place;
-/// Windows keeps an exclusive range lock beside a new shared one, so the
-/// exclusive lock is released first.
-fn share(file: &File) -> Result<(), TryLockError> {
-    #[cfg(windows)]
-    file.unlock().map_err(TryLockError::Error)?;
-    file.try_lock_shared()
 }
 
 const MARKER_WAIT: Duration = Duration::from_millis(500);
@@ -340,14 +303,16 @@ mod tests {
     }
 
     #[test]
-    fn skip_permit_does_not_create_the_lock_file() {
-        let _iso = script::IsolatedEnv::enter("instance-permit-skip");
-        match resolve_instance_permit(InstanceKind::Panel, true).unwrap() {
-            InstancePermitOutcome::Ready(InstancePermit::SkipLock) => {}
-            other => panic!("{other:?}"),
-        }
-        assert!(!instance_lock_path().exists());
-        assert!(!instance_holder_path().exists());
+    fn startup_permit_holds_an_exclusive_lock() {
+        let _iso = script::IsolatedEnv::enter("instance-permit");
+        let permit = resolve_instance_permit(InstanceKind::Panel).unwrap();
+        assert!(matches!(permit, InstancePermit::Locked(_)));
+        let root = StateRoot::new(script::bot_home().join(".274bot"));
+        assert!(RootUse::shared(&root).unwrap().is_none());
+        assert!(matches!(
+            resolve_instance_permit(InstanceKind::Tui),
+            Err(StateRootLockError::InUse { .. })
+        ));
     }
 
     #[test]

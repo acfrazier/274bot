@@ -1549,12 +1549,11 @@ impl InstanceKind {
     }
 }
 
-/// Permission to open the operator's preferences and vault: the held
-/// single-instance lock, or an explicit decision to run without it.
+/// The instance lock retained by the operator session.
 pub struct InstancePermit(host_play::InstancePermit);
 
 impl InstancePermit {
-    /// Run without the lock (harness boots, a confirmed second instance).
+    /// Construct an unbound library-test session, not a product startup.
     pub fn skip() -> Self {
         Self(host_play::InstancePermit::skip())
     }
@@ -1564,29 +1563,11 @@ impl InstancePermit {
     }
 }
 
-/// Another running 274bot holds the instance lock.
-pub struct InstanceConflict(host_play::InstanceHolder);
+pub use host_play::local_state::StateRootLockError;
 
-impl InstanceConflict {
-    /// The operator-facing explanation (who holds the lock and where).
-    pub fn message(&self) -> String {
-        host_play::instance_conflict_message(&self.0)
-    }
-}
-
-/// Take the single-instance lock for `kind` (or skip it when `skip`).
-/// `Ok(Err(conflict))` means another instance holds it and the operator
-/// must decide; `Err` is an I/O failure taking the lock.
-pub fn acquire_instance(
-    kind: InstanceKind,
-    skip: bool,
-) -> std::io::Result<Result<InstancePermit, InstanceConflict>> {
-    Ok(
-        match host_play::resolve_instance_permit(kind.to_host(), skip)? {
-            host_play::InstancePermitOutcome::Ready(permit) => Ok(InstancePermit(permit)),
-            host_play::InstancePermitOutcome::NeedsConfirm(holder) => Err(InstanceConflict(holder)),
-        },
-    )
+/// Take the exclusive state-root lock before opening saved state.
+pub fn acquire_instance(kind: InstanceKind) -> Result<InstancePermit, StateRootLockError> {
+    host_play::resolve_instance_permit(kind.to_host()).map(InstancePermit)
 }
 
 #[cfg(test)]

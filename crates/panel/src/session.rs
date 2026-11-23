@@ -1831,8 +1831,8 @@ impl Session {
             .expect("isolated saved data is readable")
     }
 
-    /// Interactive startup must pass the lock outcome so prefs/vault cannot
-    /// load without a decision. Harness boots pass [`InstancePermit::SkipLock`].
+    /// Product startup passes the exclusive root permit before loading saved
+    /// state. Isolated library tests can pass [`InstancePermit::SkipLock`].
     pub fn with_instance(
         instance: frontend_core::launch::InstancePermit,
     ) -> Result<Self, SessionStartupError> {

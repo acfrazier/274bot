@@ -10623,11 +10623,8 @@ fn skip_lock_session_takes_the_root_lease_but_no_instance_lock() {
 #[test]
 fn locked_session_releases_the_instance_lock_on_drop() {
     let iso = IsolatedStores::enter("session-hold-lock");
-    let permit = match frontend_core::launch::acquire_instance(InstanceKind::Panel, false) {
-        Ok(Ok(permit)) => permit,
-        Ok(Err(_)) => panic!("expected acquire"),
-        Err(error) => panic!("expected acquire: {error}"),
-    };
+    let permit = frontend_core::launch::acquire_instance(InstanceKind::Panel)
+        .expect("the isolated root is free");
     let session = Session::with_instance(permit).expect("isolated script settings are readable");
     drop(session);
     match host_play::try_acquire_instance_lock(host_play::InstanceKind::Tui).unwrap() {
