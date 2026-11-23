@@ -40,7 +40,7 @@ def fresh_home(work):
 def tui(binary, state, profile, cache):
     return [str(binary.resolve(strict=True)), '--profile', profile, '--revision', '289',
             '--cache', str(cache.resolve(strict=True)), '--unpack', str(state / 'unpack-289'),
-            '--vault', str(state / 'vault-289'), '--vault-pass-stdin']
+            '--vault-pass-stdin']
 
 
 def write_shape_vault(state, profiles, passphrase):
@@ -89,6 +89,35 @@ def control(args, work):
             thread.join()
 
 
+def copy_stores(source, target):
+    # Copy only saved user data, never caches, logs, locks or links.
+    names = ('vault-289', 'panel-ui.json', 'loadouts.json', 'servers.json', 'script-settings.json',
+             'js-scripts.json', 'rs2b0t-import', 'rs2b0t-path', 'bank-hints', 'script-runtime-settings')
+
+    def copy(path, dest):
+        require(not path.is_symlink(), f'{path.name}: snapshot contains a link')
+        if path.is_dir():
+            dest.mkdir()
+            for child in path.iterdir():
+                copy(child, dest / child.name)
+        else:
+            require(path.is_file(), f'{path.name}: not a regular file')
+            shutil.copyfile(path, dest)
+
+    for name in names:
+        path = source / name
+        if path.exists() or path.is_symlink():
+            copy(path, target / name)
+
+
+def startup_result(code, out, missing, lane):
+    if code == 1 and 'a format from before 0.2.8' in out:
+        files = [p for p in ('loadouts.json', 'bank-hints/local-289/alice.json', 'vault-289') if p in out]
+        raise Refused(f'{lane}: refused {", ".join(files)}')
+    require(code == 1 and f'no profile named {missing} in the vault:' in out,
+            f'{lane}: unexpected startup outcome (exit {code}); no compatibility verdict')
+
+
 def historical_readers(args, work, port):
     fixture = json.loads((Path(__file__).parent / 'fixtures/upgrade-028.json').read_text())
     profiles = fixture.pop('profile_settings')
@@ -104,10 +133,7 @@ def historical_readers(args, work, port):
         else:
             password = args.pass_file.read_bytes().rstrip(b'\r\n')
             users = [args.account]
-            # Never copy caches, logs, locks, symlinks, or an entire HOME.
-            for name in ('vault-289', 'panel-ui.json', 'loadouts.json', 'servers.json'):
-                require(not (args.snapshot / name).is_symlink(), f'{name}: snapshot contains a link')
-                shutil.copyfile(args.snapshot / name, state / name)
+            copy_stores(args.snapshot, state)
             if lane == 'older-shapes':
                 for name, document in fixture.items():
                     target = state / name
@@ -124,14 +150,11 @@ def historical_readers(args, work, port):
         run = subprocess.run(cmd, env=dict(os.environ, HOME=str(state.parent)), input=password+b'\n',
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
         out = run.stdout.decode(errors='replace')
-        if run.returncode == 1 and f'no profile named {missing} in the vault:' in out:
+        try:
+            startup_result(run.returncode, out, missing, lane)
             print(f'{lane}: startup accepted data and validated existing profiles')
-        elif run.returncode == 1 and 'a format from before 0.2.8' in out:
-            files = [p for p in ('loadouts.json', 'bank-hints/local-289/alice.json', 'vault-289') if p in out]
-            failures.append(f'{lane}: refused {", ".join(files)}')
-        else:
-            # Do not include raw TUI output. It may contain local paths or profile data.
-            raise Failure(f'{lane}: unexpected startup outcome (exit {run.returncode}); no compatibility verdict')
+        except Refused as error:
+            failures.append(str(error))
     # Probe the escaped Gatherer break separately from the startup refusal.
     # The game port is closed: this control checks admission, not gameplay.
     with tempfile.TemporaryDirectory(prefix='ug-', dir='/tmp') as socket_dir:
@@ -155,6 +178,13 @@ def historical_readers(args, work, port):
                 pane.parameter('Gatherer', 'skill: Mining')
                 print('snapshot: Gatherer accepted schema 4 and restored Mining')
             pane.quit()
+            if not failures:
+                old = Pane(socket, work/'older-shapes/home/.274bot', args.binary, 'local-289',
+                           args.account, args.pass_file.read_bytes().rstrip(b'\r\n'), work,
+                           'legacy', args.cache, archive_port=port)
+                old.saved_ui('Lobster:1', 'Bronze axe')
+                old.quit()
+                print('older-shapes: read legacy gear, carry quantity and manual movement preference')
         finally:
             close_server(socket)
     if failures:
@@ -172,21 +202,46 @@ CARDS = {'Gatherer': 'skill: Mining', 'Grinch': 'radius (1–16): 7',
          'Quester': 'Maximum deaths (0–255): 3', 'Sherlock': 'Allow teleports: On (script opt-in)'}
 
 
+CATALOG = Path(__file__).resolve().parent / 'fixtures/upgrade-catalog'
+PROBE = CATALOG / 'src/bot/scripts/UpgradeProbe.ts'
+RAW = '  release:029  '
+PROFILE = 'upgrade-289'
+
+
+def rename_local_profile(state):
+    roster = state / 'servers.json'
+    doc = json.loads(roster.read_text())
+    local, = (row for row in doc['servers'] if row['name'] == 'local-289')
+    world = local['worlds'][0]
+    require(local['revision'] == 289 and local['vault'] == 'vault-289' and local['transport'] == 'tcp'
+            and world['host'] == world['asset_host'] == '127.0.0.1', 'expected shipped loopback server')
+    local['name'] = PROFILE
+    roster.write_text(json.dumps(doc))
+    return f"{PROFILE} · {world['host']}:{world['port']} · revision 289"
+
+
 def check_writer(state, profile, account, since):
     def load(name):
         return json.loads((state / name).read_text())
     require((state/'vault-289').read_bytes().startswith(b'274VAULT'), 'missing encrypted vault')
     servers = load('servers.json')
     require(servers['schema_version'] == 1 and any(s['name'] == profile for s in servers['servers']), 'missing server profile')
-    require(any(row['name'] == 'upgrade' for row in load('loadouts.json')), 'missing upgrade loadout')
+    require(any(row['name'] == 'upgrade' and {'item': 'Lobster', 'qty': 7} in row['carry']
+                for row in load('loadouts.json')), 'missing upgrade loadout or carry quantity')
     prefs = load('panel-ui.json')
     require(prefs['nav']['pause_script_on_manual_walk_abort'] is False and prefs['session_log_file'] is True,
             'missing nondefault preference or session logging')
-    require(any(isinstance(row, dict) and row for row in load('script-settings.json').values()), 'missing shared card override')
+    require(load('script-settings.json').get('file:UpgradeProbe', {}).get('mode') == 'shared',
+            'missing shared card override')
+    require({'name': 'UpgradeProbe', 'path': str(PROBE)} in load('js-scripts.json'), 'missing file script')
     hint = load(f'bank-hints/{profile}/{account}.json')
     require(hint['profile'] == profile and hint['account'] == account and hint['revision'] == 289
             and hint['content'] and hint['schema_version'] == 1 and since <= hint['observed_at_unix'] <= time.time()
             and hint['rows'], 'no scoped bank observation from this run')
+    runtime = load(f"script-runtime-settings/{profile}/{account}/289-{hint['content']}.json")
+    require(all(runtime[k] == hint[k] for k in ('profile', 'account', 'revision', 'content', 'schema_version'))
+            and {'namespace': 'UpgradeProbe', 'key': 'sentinel', 'raw': RAW} in runtime['rows'],
+            'missing scoped runtime setting')
     # The shipped host reports the frame-open edge and the durable close
     # write separately. A hand-written equivalent JSON file proves neither.
     opened = closed = False
@@ -197,6 +252,7 @@ def check_writer(state, profile, account, since):
                 closed |= ('bank hints: saved rows=' in line and ' why=close ' in line
                            and f'bank-hints/{profile}/{account}.json' in line)
     require(opened and closed, 'missing live bank open or durable close observation')
+    return f"bank hints: loaded rows={len(hint['rows'])} observed_at_unix={hint['observed_at_unix']}"
 
 
 class Pane:
@@ -204,6 +260,8 @@ class Pane:
         self.tmux = ['tmux', '-u', '-f', '/dev/null', '-S', str(socket)]
         self.phase = phase
         self.status = work / (phase + '.exit')
+        self.logs = state / 'logs'
+        self.previous_logs = set(self.logs.glob('session-*.log*'))
         cmd = tui(binary, state, profile, cache)
         if archive_port is not None:
             cmd.extend(['--host', '127.0.0.1', '--port', '1', '--asset-host', '127.0.0.1', '--http-port', str(archive_port)])
@@ -248,10 +306,10 @@ class Pane:
         self.key('F5')
         self.until(lambda s: 'script: idle' in s, 'script pane not idle')
 
-    def select(self, card):
+    def select(self, card, badges='[Compiled] [Builtin]'):
         self.key('b')
         self.until(lambda s: '[Compiled] [Builtin]' in s, 'native picker not visible')
-        selected = re.compile(r'> ' + re.escape(card) + r'\s+\[Compiled\] \[Builtin\]')
+        selected = re.compile(r'> ' + re.escape(card) + r'\s+' + re.escape(badges))
         for _ in range(128):
             screen = self.screen()
             if selected.search(screen):
@@ -261,7 +319,7 @@ class Pane:
             last = re.search(r'script: idle\s+sel: (\S+)', screen)
             self.key('Down')
             self.until(lambda s: not last or last.group() not in s, 'picker did not advance')
-        raise Failure(f'{self.phase}: missing compiled card {card}')
+        raise Failure(f'{self.phase}: missing {badges} card {card}')
 
     def parameter(self, card, setting):
         self.key('v')
@@ -283,6 +341,38 @@ class Pane:
             print(f'{self.phase}: {card}: {setting}; start observed', flush=True)
             self.key('e')
             self.until(idle.search, f'{card}: stop did not settle')
+
+    def saved_ui(self, carry, unassigned=None):
+        self.key('F3', 'l')
+        self.until(lambda s: 'selected: upgrade' in s and f'carry item:qty: {carry}' in s
+                   and (not unassigned or f'unassigned: {unassigned}' in s), 'loadout not restored')
+        self.key('Escape')
+        self.until(lambda s: 'carry item:qty:' not in s, 'loadout editor did not close')
+        self.key('o')
+        self.until(lambda s: 'random events:' in s, 'settings did not open')
+        self.key(*(['Down'] * 11))
+        self.until(lambda s: 'Pause script on manual movement: false' in s, 'preference not restored')
+        self.key('Escape')
+
+    def logged(self, message):
+        def has_line(_screen):
+            for path in set(self.logs.glob('session-*.log*')) - self.previous_logs:
+                with path.open(errors='replace') as log:
+                    if any(message in line for line in log):
+                        return True
+            return False
+        self.until(has_line, f'missing new session-log receipt: {message}', 60)
+
+    def probe(self, mode, raw, *, catalog=False):
+        self.script_pane()
+        if catalog:
+            self.select('UpgradeCatalog', '[Compat] [Catalog]')
+        else:
+            self.select('UpgradeProbe', '[Compat] [File]')
+        self.key('t')
+        self.logged(f'UPGRADE_READ mode={mode} raw={raw}')
+        self.key('e')
+        self.until(lambda s: 'script: idle' in s, 'probe did not stop')
 
     def quit(self):
         self.key('C-q')
@@ -309,7 +399,9 @@ def live(args, work):
     candidate = digest(args.candidate)
     require(shipped == args.shipped_sha256 and candidate != shipped, 'incorrect producer or identical candidate')
     require(digest(args.shipped_panel) == args.panel_sha256, 'incorrect producer panel')
-    require(re.fullmatch(r'[a-z0-9]+', args.account), 'invalid test account')
+    require(all(re.fullmatch(r'[a-z0-9]+', u) for u in (args.account, args.shared_account))
+            and args.account != args.shared_account, 'supply two distinct disposable accounts')
+    require(not os.environ.get('RS2B0T'), 'unset RS2B0T; only the persisted catalog root may supply the card')
     since = int(time.time())
     state = fresh_home(work)
     password = secrets.token_hex(32).encode()
@@ -319,18 +411,46 @@ def live(args, work):
         try:
             # The TUI has no editor for settings without a focused profile.
             # Only the shipped panel can produce this global override.
-            print('Save a global card override in the shipped panel, enable session logging, then quit.', flush=True)
-            subprocess.run(tui(args.shipped_panel, state, args.profile, args.cache), input=password+b'\n',
-                           env=dict(os.environ, HOME=str(state.parent)),
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           check=True, timeout=900)
-            writer = Pane(sock, state, args.shipped, args.profile, None, password, work, 'writer', args.cache)
+            def panel(profile):
+                subprocess.run(tui(args.shipped_panel, state, profile, args.cache), input=password+b'\n',
+                               env=dict(os.environ, HOME=str(state.parent)), stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, check=True, timeout=900)
+            print(f'In Browse choose Not now. Load {PROBE}, set global mode=shared, enable logging and quit.', flush=True)
+            panel('local-289')
+            require((state/'rs2b0t-import').read_text().strip() == 'deferred', 'writer did not defer import')
+            label = rename_local_profile(state)
+            writer = Pane(sock, state, args.shipped, PROFILE, None, password, work, 'writer', args.cache)
             print('Configure the writer as described in README.md. Detach without quitting.', flush=True)
             subprocess.run([*writer.tmux, 'attach-session', '-t', 'writer'], check=True, timeout=1800)
+            writer.probe('profile', json.dumps(RAW))
             writer.cards()
             writer.quit()
-            check_writer(state, args.profile, args.account, since)
-            reader = Pane(sock, state, args.candidate, args.profile, args.account, password, work, 'candidate', args.cache)
+            hint = check_writer(state, PROFILE, args.account, since)
+            # Import and defer are mutually exclusive. Exercise the real pre-import HOME on a copy.
+            deferred_dir = work/'deferred'
+            deferred_dir.mkdir()
+            deferred = fresh_home(deferred_dir)
+            copy_stores(state, deferred)
+            before = Pane(sock, deferred, args.candidate, PROFILE, args.shared_account, password,
+                          work, 'deferred', args.cache)
+            before.script_pane()
+            before.key('b')
+            before.until(lambda s: '[Import catalog…]' in s, 'catalog defer was lost')
+            before.key('Escape')
+            before.until(lambda s: 'script — browse' not in s, 'deferred picker did not close')
+            before.probe('shared', 'undefined')
+            before.quit()
+            require(not any('.pre-0.' in p.name for p in deferred.rglob('*')), 'candidate moved deferred data aside')
+            print(f'In the shipped panel import catalog {CATALOG}, then quit.', flush=True)
+            panel(PROFILE)
+            require((state/'rs2b0t-path').read_text().strip() == str(CATALOG)
+                    and not (state/'rs2b0t-import').exists(), 'writer did not import the fixture catalog')
+            reader = Pane(sock, state, args.candidate, PROFILE, args.account, password, work, 'candidate', args.cache)
+            reader.until(lambda s: label in s, 'custom server name and endpoint not restored')
+            reader.logged(hint)
+            reader.saved_ui('Lobster:7')
+            reader.probe('profile', json.dumps(RAW))
+            reader.probe('default', json.dumps(RAW), catalog=True)
             reader.cards()
             reader.quit()
             require(not any('.pre-0.' in p.name for p in state.rglob('*')), 'candidate moved data aside')
@@ -351,7 +471,7 @@ def main():
         gate.add_argument('--'+arg, type=Path, required=True)
     gate.add_argument('--shipped-sha256', required=True)
     gate.add_argument('--panel-sha256', required=True)
-    gate.set_defaults(profile='local-289')
+    gate.add_argument('--shared-account', required=True)
     gate.add_argument('--account', required=True)
     for mode in (historical, gate):
         mode.add_argument('--cache', required=True, type=Path, help='local revision-289 client cache')
