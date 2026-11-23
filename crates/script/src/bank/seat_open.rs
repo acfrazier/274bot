@@ -13,8 +13,8 @@ use crate::bank::request::{
 use crate::bank::seat_transfer::{TransferAnswer, TransferCall, TransferHooks};
 use crate::interact::InteractReq;
 use crate::native::{
-    ActionContext, ActionError, NativeMachine, PrereqAllow, WalkAllow, WalkBit, WalkEnd, WalkOptions,
-    WalkReceipt, WalkRequest, WalkStallReason,
+    ActionContext, ActionError, NativeMachine, PrereqAllow, WalkAllow, WalkBit, WalkEnd,
+    WalkOptions, WalkReceipt, WalkRequest, WalkStallReason,
 };
 use crate::native_bank::{
     nearest_eligible_bank as select_nearest_eligible_bank, BankPickOutcome, BankSelector, PickKind,
@@ -2034,10 +2034,10 @@ impl BankingOpen {
                             WorldTarget::Access(Some(AccessSpec::from_bank(selection.bank))),
                         );
                         if log_enabled {
-                            let tile = selection.bank.definition.map_or(
-                                selection.bank.tile,
-                                |definition| definition.tile,
-                            );
+                            let tile = selection
+                                .bank
+                                .definition
+                                .map_or(selection.bank.tile, |definition| definition.tile);
                             log.queue(
                                 format!(
                                     "no booth in scene — web-walking to the {} bank at ({}, {}, {})",
@@ -2328,10 +2328,7 @@ impl BankingOpen {
             return false;
         };
         if should_log {
-            log.queue(
-                format!("bank: {bank_name} uses {access_kind} access"),
-                true,
-            );
+            log.queue(format!("bank: {bank_name} uses {access_kind} access"), true);
             true
         } else {
             false

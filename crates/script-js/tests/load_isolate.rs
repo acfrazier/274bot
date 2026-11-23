@@ -5184,10 +5184,7 @@ export default class T extends LoopingBot {
         };
         let request = bank_interaction(open);
         if definition.npc.is_some() {
-            assert!(matches!(
-                request,
-                script::interact::InteractReq::Npc { .. }
-            ));
+            assert!(matches!(request, script::interact::InteractReq::Npc { .. }));
         } else {
             assert!(matches!(
                 request,
