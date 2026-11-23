@@ -85,7 +85,7 @@ fn ordinary_search_outcome(snapshot: &GameSnapshot) -> Option<&'static str> {
 mod ordinary_search_tests {
     use super::*;
     use api::obj_names::ItemDefView;
-    use api::snapshot::{ChatLineView, ItemActionFamily, ItemContainer, ItemView};
+    use api::snapshot::{ChatLineView, ItemActionFamily, ItemContainer, ItemView, StatView};
 
     fn frame(pack: &[(i32, &str)]) -> GameSnapshot {
         let mut snapshot = GameSnapshot::new();
@@ -184,6 +184,34 @@ mod ordinary_search_tests {
         snapshot.seed_transmission_ready(true, false);
         snapshot.seed_ingame(1);
         assert_eq!(ordinary_search_outcome(&snapshot), None);
+    }
+
+    #[test]
+    fn fixture_requires_spider_safe_defence_before_the_stand() {
+        let fixture = ordinary_search_fixture();
+        let stand = fixture
+            .steps
+            .iter()
+            .position(|step| step.name == "teleport next to the first clue step")
+            .unwrap();
+        let seed = &fixture.steps[stand - 1];
+        assert_eq!(
+            seed.name,
+            "seed defence above the Giant spider hunt threshold"
+        );
+        assert!(matches!(seed.kind, StepKind::Perform { .. }));
+        let mut snapshot = GameSnapshot::new();
+        for (level, ready) in [(1, false), (7, false), (8, true)] {
+            snapshot.seed_stats(vec![StatView {
+                index: 1,
+                name: "defence".into(),
+                effective: level,
+                base: level,
+                xp: 0,
+                used: true,
+            }]);
+            assert_eq!(seed.wait.arm.check(&snapshot, None), ready);
+        }
     }
 }
 
@@ -316,17 +344,42 @@ fn live_sherlock_entrana_walk_arrive() {
     ).expect("Sherlock must strip, take the real boat, search the drawers from the north stand and replace the clue within the fixed deadline");
 }
 
-#[test]
-#[ignore = "requires LIVE=1, Engine A paths, CPU rendering and isolated HOME"]
-fn live_sherlock_ordinary_search_walk_arrive() {
-    assert!(std::env::var_os("QUESTER_TICK_MS").is_none());
+const SPIDER_SAFE_COMBAT_LEVEL: i32 = 5;
+
+fn ordinary_search_fixture() -> scenario::Scenario {
     let mut fixture = scenario::get("sherlock_search").unwrap();
     reseed_after_relog(&mut fixture);
     let stand = fixture
         .steps
-        .iter_mut()
-        .find(|step| step.name == "teleport next to the first clue step")
+        .iter()
+        .position(|step| step.name == "teleport next to the first clue step")
         .unwrap();
+    // R289 all.npc:1495-1509 gives the level-2 Giant spider a 10-tile wander
+    // and a one-tile hunt. Its hunt skips players above twice its level
+    // outside the Wilderness (all.hunt:37-45; Npc.ts:1011-1013).
+    // Defence 8 is the minimum that gives a fresh account combat level 5
+    // (PlayerLoading.ts:40-49; Player.ts:1355-1360).
+    const DEFENCE_LEVEL: i32 = 8;
+    fixture.steps.insert(
+        stand,
+        Step {
+            name: "seed defence above the Giant spider hunt threshold",
+            kind: StepKind::Perform {
+                send: Box::new(|client, _| {
+                    api::interact::cheat(client, &format!("setstat defence {DEFENCE_LEVEL}"))
+                        .is_sent()
+                }),
+            },
+            wait: Wait {
+                arm: Proof::Stat {
+                    id: 1,
+                    min: DEFENCE_LEVEL,
+                },
+                budget_ticks: 200,
+            },
+        },
+    );
+    let stand = &mut fixture.steps[stand + 1];
     stand.kind = StepKind::Perform {
         send: Box::new(|client, _| {
             api::interact::seed_at(client, 0, 3256, 3236);
@@ -338,6 +391,14 @@ fn live_sherlock_ordinary_search_walk_arrive() {
         z: 3236,
         level: 0,
     };
+    fixture
+}
+
+#[test]
+#[ignore = "requires LIVE=1, Engine A paths, CPU rendering and isolated HOME"]
+fn live_sherlock_ordinary_search_walk_arrive() {
+    assert!(std::env::var_os("QUESTER_TICK_MS").is_none());
+    let mut fixture = ordinary_search_fixture();
     let search_receipt = Arc::new(OnceLock::new());
     let watch_receipt = Arc::clone(&search_receipt);
     let watch = fixture.steps.last_mut().unwrap();
@@ -378,7 +439,19 @@ fn live_sherlock_ordinary_search_walk_arrive() {
                 {
                     return Err("Start requires only the seeded search clue ten tiles from the mainland target, with no prior search outcome".into());
                 }
-                Ok(json!({"clue": SEARCH_CLUE, "tile": snapshot.tile()}))
+                let combat_level = snapshot
+                    .local_player()
+                    .map(|local| local.player.combat_level);
+                if combat_level.is_none_or(|level| level < SPIDER_SAFE_COMBAT_LEVEL) {
+                    return Err(format!(
+                        "Start requires combat level {SPIDER_SAFE_COMBAT_LEVEL} or higher to avoid Giant spider aggression, observed {combat_level:?}"
+                    ));
+                }
+                Ok(json!({
+                    "clue": SEARCH_CLUE,
+                    "tile": snapshot.tile(),
+                    "combat_level": combat_level,
+                }))
             })),
         },
         Box::new(|handle, account, _| {
