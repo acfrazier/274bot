@@ -53,10 +53,8 @@ pub const THIN_SCROLLBAR_ROUNDING: f32 = 3.0;
 /// Fullscreen dock-host window padding. Zero, so the dockspace spans the
 /// viewport and [`panel_split_ratio`] (computed against the viewport width)
 /// divides it exactly. Any padding here shrinks the dockspace while the
-/// ratio still divides the full width: the game leaf loses more than the
-/// panel leaf, its content dips below the 765px blit, [`applet_offset`]
-/// clamps to zero, and the blit sits flush-left (16px gray left, ~6 right
-/// at the default size) instead of centred.
+/// ratio still divides the full width, so the game leaf loses more than
+/// the panel leaf and the split drifts from the fixed panel width.
 pub const DOCKHOST_PADDING: [f32; 2] = [0.0, 0.0];
 
 /// Sanitize the display scale without quantizing fractional DPI.
@@ -88,14 +86,8 @@ pub fn scale_size(ui: &Ui, logical_size: [f32; 2]) -> [f32; 2] {
     [logical_size[0] * scale, logical_size[1] * scale]
 }
 
-/// Native applet size. Non-grid Game blit is always this; host-window
-/// zoom/resize does not scale the client.
-pub fn native_applet() -> [f32; 2] {
-    [STAGE_W, STAGE_H]
-}
-
-/// Offset of the native applet inside the Game pane: centred both ways,
-/// so spare width is split evenly on each side.
+/// Offset that centres the fitted applet inside the Game pane: spare space
+/// is split evenly on each side.
 pub fn applet_offset(avail: [f32; 2], size: [f32; 2]) -> [f32; 2] {
     [
         ((avail[0] - size[0]) * 0.5).max(0.0),
@@ -103,7 +95,8 @@ pub fn applet_offset(avail: [f32; 2], size: [f32; 2]) -> [f32; 2] {
     ]
 }
 
-/// Grid-mode only: 765:503 stage fitted into `avail`.
+/// The 765:503 stage fitted into `avail`, keeping its aspect: the
+/// single-bot Game pane and every Grid cell follow a window resize.
 pub fn fit_applet(avail: [f32; 2]) -> [f32; 2] {
     let w = avail[0].max(1.0);
     let h = avail[1].max(1.0);

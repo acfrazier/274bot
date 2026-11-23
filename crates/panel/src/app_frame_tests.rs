@@ -19,7 +19,9 @@ use dear_imgui_rs::{sys, ConfigFlags, Context, FramePrepareOptions, MouseButton}
 use dear_imgui_wgpu as imgui_wgpu;
 use frontend_core::command::Subject;
 use frontend_core::scripts::{CompiledCardId, ScriptChoice, ScriptRunState};
-use frontend_core::surface::{FrameBuf, InputEv, InputProbe, InputSender, SlotInput};
+use frontend_core::surface::{
+    map_image_to_applet, FrameBuf, InputEv, InputProbe, InputSender, SlotInput,
+};
 use frontend_core::test_support::paint::TestPaint;
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
@@ -92,6 +94,8 @@ struct Rig {
     text: String,
     /// Centre of the Game window as of the last `UiFrame` frame.
     game_centre: Option<[f32; 2]>,
+    /// The host display size the next frames lay out against.
+    display: [f32; 2],
     ctx: Context,
     _imgui: MutexGuard<'static, ()>,
 }
@@ -139,6 +143,7 @@ impl Rig {
             drawn,
             text: String::new(),
             game_centre: None,
+            display: DISPLAY,
             ctx,
             _imgui: imgui,
         })
@@ -178,8 +183,9 @@ impl Rig {
         io.add_mouse_pos_event(spot);
         io.add_mouse_button_event(MouseButton::Left, left_down);
         io.add_mouse_button_event(MouseButton::Right, right_down);
-        self.ctx
-            .prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
+        self.ctx.prepare_frame(
+            FramePrepareOptions::new(self.display, 1.0 / 60.0).renderer_has_textures(),
+        );
         let title = game_window_title(self.state.session.focused_name().as_deref());
         let (exit, centre) =
             {
@@ -930,6 +936,170 @@ fn game_and_grid_panes_release_mouse_buttons_outside_the_image() {
                 "{pane} {name}: the physical off-image release reaches the press slot"
             );
         }
+    }
+}
+
+/// The single-bot Game view follows a host-window resize: the blit fills
+/// its pane instead of staying at the native 765×503 (KI:69).
+#[test]
+fn the_game_blit_follows_a_window_resize() {
+    let (session, _dir) = session_with_play("game-resize", &["alice"]);
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    publish_ingame(rig.session(), "alice");
+    let before = settled_game_blit(&mut rig, "default display", |blit| {
+        blit.avail[0] > 100.0 && blit.avail[1] > 100.0 && blit.size[1] > 100.0
+    });
+    rig.display = [1920.0, 1200.0];
+    let after = settled_game_blit(&mut rig, "enlarged display", |blit| {
+        blit.avail[0] > before.avail[0] + 100.0 && blit.avail[1] > before.avail[1] + 100.0
+    });
+    assert!(
+        after.avail[0] > before.avail[0] + 100.0 && after.avail[1] > before.avail[1] + 100.0,
+        "the Game pane grows with the window: {:?} -> {:?}",
+        before.avail,
+        after.avail
+    );
+    assert!(
+        after.size[0] > before.size[0] + 100.0 && after.size[1] > before.size[1] + 100.0,
+        "the Game blit grows with its pane: {:?} -> {:?}",
+        before.size,
+        after.size
+    );
+    for (pane, blit) in [("default", before), ("enlarged", after)] {
+        assert!(
+            blit.size[0] <= blit.avail[0] + 0.5 && blit.size[1] <= blit.avail[1] + 0.5,
+            "{pane}: the blit fits the pane: {:?} in {:?}",
+            blit.size,
+            blit.avail
+        );
+        let aspect = blit.size[0] / blit.size[1];
+        assert!(
+            (aspect - 765.0 / 503.0).abs() < 0.01,
+            "{pane}: the blit keeps the stage aspect, got {aspect}"
+        );
+    }
+}
+
+/// The single-bot Game blit as the last frame drew it.
+fn game_blit() -> super::GameBlitRecord {
+    super::TEST_GAME_BLIT
+        .with(|cell| cell.get())
+        .expect("the Game pane drew")
+}
+
+/// Frames until the Game blit is `ready` and unchanged for two consecutive
+/// frames. The first frames can draw before the dock layout settles, so a
+/// fixed frame count is not enough.
+fn settled_game_blit(
+    rig: &mut Rig,
+    what: &str,
+    ready: impl Fn(&super::GameBlitRecord) -> bool,
+) -> super::GameBlitRecord {
+    let close = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01;
+    let mut previous: Option<super::GameBlitRecord> = None;
+    for _ in 0..60 {
+        assert!(!rig.frame(Pointer::Away));
+        let current = game_blit();
+        if ready(&current) {
+            if previous.is_some_and(|prev| {
+                close(prev.size, current.size) && close(prev.avail, current.avail)
+            }) {
+                return current;
+            }
+            previous = Some(current);
+        } else {
+            previous = None;
+        }
+    }
+    panic!("{what}: the Game blit did not settle in 60 frames");
+}
+
+/// A click on the scaled single-bot Game image maps back to the 765×503
+/// applet: the capture must use the fitted blit size, not the native one.
+#[test]
+fn a_click_on_the_scaled_game_view_maps_to_applet_coordinates() {
+    let (session, _dir) = session_with_play("game-click-map", &["alice"]);
+    // Capture before the first frame: the focus sync attaches its own sender
+    // on that frame, and the probe below must replace it afterwards, as the
+    // other frame click tests do.
+    session.focus.lock().unwrap().capture = true;
+    let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+        return;
+    };
+    publish_ingame(rig.session(), "alice");
+    rig.display = [1920.0, 1200.0];
+    let blit = settled_game_blit(&mut rig, "enlarged display", |blit| {
+        blit.avail[0] > 100.0 && blit.avail[1] > 100.0 && blit.size[1] > 503.0
+    });
+    let (sender, probe) = InputSender::probe();
+    rig.session().map_desk.set_input_sender(Some(sender));
+    drain(&probe);
+    let scale = blit.size[0] / 765.0;
+    assert!(
+        (scale - scale.round()).abs() > 0.01,
+        "the enlarged display gives a fractional fit: {scale}"
+    );
+    assert!(
+        blit.size[1] > 503.0,
+        "the blit is enlarged: {:?}",
+        blit.size
+    );
+    let points = [
+        ("top-left", [1.0, 1.0]),
+        ("middle", [blit.size[0] * 0.5, blit.size[1] * 0.5]),
+        ("bottom-right", [blit.size[0] - 1.0, blit.size[1] - 1.0]),
+        ("fractional", [blit.size[0] * 0.37, blit.size[1] * 0.61]),
+    ];
+    for (label, local) in points {
+        let at = [blit.min[0] + local[0], blit.min[1] + local[1]];
+        // ImGui floors a pointer position before the frame reads it, so the
+        // panel maps this integer screen point against the Image rect.
+        let mapped_local = [at[0].floor() - blit.min[0], at[1].floor() - blit.min[1]];
+        let mut hovered = false;
+        for _ in 0..8 {
+            assert!(!rig.frame_buttons_at(at, false, false, Pointer::Over));
+            if drain(&probe)
+                .iter()
+                .any(|event| matches!(event, InputEv::Move { .. }))
+            {
+                hovered = true;
+                break;
+            }
+        }
+        assert!(hovered, "{label}: the pointer reaches the image");
+        assert!(!rig.frame_buttons_at(at, true, false, Pointer::Over));
+        assert!(
+            game_blit().hovered,
+            "{label}: the press frame draws a hovered Image"
+        );
+        let down = drain(&probe)
+            .into_iter()
+            .find_map(|event| match event {
+                InputEv::Down { button: 1, x, y } => Some((x, y)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{label}: the press reaches alice"));
+        let expected =
+            map_image_to_applet(mapped_local[0], mapped_local[1], blit.size[0], blit.size[1])
+                .expect("the point is inside the image");
+        assert_eq!(
+            down, expected,
+            "{label}: local {mapped_local:?} in {:?} at {:?}",
+            blit.size, blit.min
+        );
+        assert!(
+            (0..765).contains(&down.0) && (0..503).contains(&down.1),
+            "{label}: the applet coordinate is inside 765x503: {down:?}"
+        );
+        assert_ne!(
+            map_image_to_applet(mapped_local[0], mapped_local[1], 765.0, 503.0),
+            Some(expected),
+            "{label}: the fitted mapping differs from a native-size mapping"
+        );
+        assert!(!rig.frame_buttons_at(at, false, false, Pointer::Over));
+        drain(&probe);
     }
 }
 

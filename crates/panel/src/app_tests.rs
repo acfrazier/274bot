@@ -19,9 +19,7 @@ use super::{
 };
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::{patiently, TestDir};
-use crate::theme::{
-    applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
-};
+use crate::theme::{applet_offset, fit_applet, game_window_title, panel_split_ratio, PANEL_WIDTH};
 use crate::window::RedrawMode;
 use client::io::{Packet, ServerProt};
 use dear_imgui_rs::{BackendFlags, ConfigFlags, Id, WindowFlags};
@@ -2069,7 +2067,6 @@ fn amber_palette_preserves_scaled_scrollbars_across_monitor_changes() {
 
 #[test]
 fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
-    assert_eq!(native_applet(), [765.0, 503.0]);
     assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);
     let off = applet_offset([1200.0, 700.0], [765.0, 503.0]);
     assert!(
@@ -2077,19 +2074,23 @@ fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
         "centred in the pane"
     );
     assert!((off[1] - (700.0 - 503.0) * 0.5).abs() < 0.01);
-    // Grid cells downscale; the non-grid Game blit stays native_applet.
+    // A pane smaller than the stage downscales; a pane wider than it keeps
+    // the stage's aspect and follows the resize.
     assert_eq!(fit_applet([382.5, 251.5]), [382.5, 251.5]);
     let wide = fit_applet([2000.0, 503.0]);
     assert!((wide[1] - 503.0).abs() < 0.01);
     assert!(wide[0] <= 2000.0);
+    let tall = fit_applet([2000.0, 900.0]);
+    assert!((tall[1] - 900.0).abs() < 0.01);
+    assert!(tall[0] > 765.0);
 }
 
 #[test]
-fn game_window_flags_have_no_scrollbar() {
+fn game_window_flags_have_no_scrollbar_and_allow_resize() {
     let f = game_window_flags();
     assert!(f.contains(WindowFlags::NO_SCROLLBAR));
     assert!(f.contains(WindowFlags::NO_SCROLL_WITH_MOUSE));
-    assert!(f.contains(WindowFlags::NO_RESIZE));
+    assert!(!f.contains(WindowFlags::NO_RESIZE));
     assert!(!f.contains(WindowFlags::HORIZONTAL_SCROLLBAR));
 }
 
