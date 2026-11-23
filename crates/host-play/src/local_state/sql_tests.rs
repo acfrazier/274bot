@@ -4459,8 +4459,11 @@ fn occupancy_class_verdict_uses_p99_and_hard_ceiling() {
 #[ignore = "the S4 occupancy gate; run alone with T53_OCCUPANCY_OUT (and T53_JSON_BASELINE)"]
 fn occupancy_gate_every_sql_job_class() {
     // First-import jobs run once per state root off the UI thread, so they are diagnostic only.
-    const FIRST_IMPORT_DIAGNOSTIC_CLASSES: &[&str] =
-        &["first-import/file-readback", "first-import/pref-readback"];
+    const FIRST_IMPORT_DIAGNOSTIC_CLASSES: &[&str] = &[
+        "first-import/file-readback",
+        "first-import/pref-readback",
+        "first-import/bank-readback",
+    ];
     let out = env_path("T53_OCCUPANCY_OUT");
     let scratch = IsolatedEnv::enter("t53s4-occupancy-gate");
     let load =
@@ -4477,6 +4480,27 @@ fn occupancy_gate_every_sql_job_class() {
         write_private(&root.preferences_file(), &d_document(round));
         let (service, timeline) = Timeline::open_timed(&root);
         ready(&service.preferences());
+        // The first import of a bank hint source at the 64 KiB ceiling
+        // (1,024 rows, a recorded scope): strict read, claim, store, evidence.
+        let account = format!("import{round}");
+        let rows: Vec<(i32, i32)> = (1..=1_024).map(|id| (id, 1_000_000)).collect();
+        let source = json!({
+            "schema_version": files::HINT_SCHEMA_VERSION,
+            "profile": "local-289",
+            "account": account,
+            "observed_at_unix": 1_759_700_000_u64,
+            "revision": 289,
+            "content": "test-content",
+            "rows": rows,
+        });
+        write_private(
+            &root.bank_hint_file("local-289", &account),
+            &serde_json::to_vec(&source).unwrap(),
+        );
+        service
+            .readback_lease(&bank_identity(&account), WAIT)
+            .expect("the bank hint source is read")
+            .expect("the bank hint source is imported");
         for (class, took) in timeline.take() {
             file_under(&mut classes, &format!("first-import/{class}"), vec![took]);
         }
