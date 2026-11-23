@@ -42,6 +42,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Quester
 
+- Quest walks no longer stop after a fallback click reaches the next-to-last
+  route tile. Walks that cannot send a click retry within the game-tick hop
+  budget, and a walk that still cannot send ends as stalled after that budget,
+  instead of waiting for a long host timeout.
 - Unsupported combat stages size food from available damage facts instead of
   requesting a full backpack. Unknown damage uses a smaller quest-specific
   reserve. Food withdrawals preserve space for quest items.

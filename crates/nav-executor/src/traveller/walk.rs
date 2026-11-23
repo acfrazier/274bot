@@ -156,6 +156,7 @@ impl FollowRun {
             && last_allowed.is_none_or(|last_allowed| hop.aim_index > last_allowed)
         {
             hop.sent = false;
+            hop.ticks_waited = TickCount::sent_at(snapshot.tick());
             return self.send_walk_hop(d, snapshot, options, hop, here);
         }
         // Last tile of the walk is the dest: exact stand. Mid-hops
@@ -203,6 +204,7 @@ impl FollowRun {
                 // Mid-leg click-ahead: send the next hop on this poll.
                 hop.cursor = hop.aim_index + 1;
                 hop.sent = false;
+                hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                 self.send_walk_hop(d, snapshot, options, hop, here)
             }
             // A disconnect ends the watch; the hop was effectively dropped.
@@ -499,9 +501,35 @@ impl FollowRun {
             return Poll::LegDone;
         }
         let last_allowed = max_walk_index(&hop, options.route_index_limit);
-        if last_allowed.is_none_or(|last_allowed| last_allowed <= hop.cursor) {
+        if last_allowed.is_none_or(|last_allowed| {
+            last_allowed < hop.cursor
+                || (options.route_index_limit.is_some() && hop.tiles()[last_allowed] == here)
+        }) {
+            // A route-safety hold is intentional, not a refused walk.
+            hop.ticks_waited = TickCount::sent_at(snapshot.tick());
             self.walk = Some(hop);
             return Poll::Watching;
+        }
+        // Refusals happen before a packet is sent, but must not leave the
+        // route armed forever. Reuse the configured hop allowance (60 game
+        // ticks by default); accepted movement gets its own planned budget.
+        // Basis: a map-rebuild refusal (`SceneUnavailable`) ends when the
+        // client has its map squares. In the revision-289 live receipt of
+        // CLIENT-PIN-F09FFBB (review-opus, pass 2) each of 8 rebuilds during a
+        // walk showed the refusing scene state on one sampled tick, so 60 is
+        // about 60 times that. `OffScene` and `Unreachable` refusals have no
+        // engine timer (another player can keep a door closed): any finite
+        // bound for them is policy, not content.
+        if hop.ticks_waited.observe(snapshot.tick()) >= self.budget {
+            self.log_walk_stall(&hop, snapshot, here, HopFailure::Dropped);
+            fire_leg(options, &hop.leg(), LegPhase::Failed);
+            return Poll::Terminal(TravelOutcome::Stalled {
+                at: here,
+                aiming: hop.aim,
+                why: HopFailure::Dropped,
+                tries: hop.tries,
+                last_refusal: None,
+            });
         }
         if self.hops >= self.max_hops {
             fire_leg(options, &hop.leg(), LegPhase::Failed);

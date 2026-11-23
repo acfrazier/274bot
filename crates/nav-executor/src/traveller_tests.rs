@@ -37,6 +37,8 @@ mod occupied_tests;
 mod open_door_approach_tests;
 #[path = "traveller/walk_budget_tests.rs"]
 mod walk_budget_tests;
+#[path = "traveller/walk_send_tests.rs"]
+mod walk_send_tests;
 
 // --- Task 14: pollable high-level follow (drive legs via interact+settle) ---
 
