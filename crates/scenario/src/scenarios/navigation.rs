@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use api::snapshot::ChatLineView;
+
 use super::combat::{BRASS_KEY_ID, RUNE_SCIMITAR_ID};
 use super::pair::{follow_step, nav_kit_steps, tele_step};
 use super::production::{COINS_ID, HITPOINTS_STAT, MAGIC_STAT};
@@ -191,11 +193,16 @@ pub(crate) fn nav_door_scenario() -> Scenario {
                 name: "follow through the range-house door",
                 kind: StepKind::FollowWhen {
                     dest: DEST,
-                    may_poll: Box::new(move |c| {
+                    may_poll: Box::new(move |c, snapshot| {
                         let mut state = walker.lock().expect("door recovery witness mutex");
                         let before = *state;
                         let here = door_client_tile(c);
-                        let poll = state.walker_poll(live_door_leaf(c), here);
+                        let poll = state.walker_poll(
+                            live_door_leaf(c),
+                            here,
+                            snapshot.chat_lines(),
+                            || cheat(c, "getvar runemysteries").is_sent(),
+                        );
                         if debug_enabled() && *state != before {
                             eprintln!("[nav-door] walker {before:?} -> {state:?} at {here:?}");
                         }
@@ -443,7 +450,11 @@ enum DoorRecovery {
     #[default]
     WaitingForCloser,
     Ready,
-    FirstOpen,
+    DrainingOpen {
+        chat_after: i32,
+    },
+    DrainQueryRefused,
+    CloseReady,
     CloseSent,
     CloseRefused,
     CloseConfirmed,
@@ -453,10 +464,47 @@ enum DoorRecovery {
 }
 
 impl DoorRecovery {
-    fn walker_poll(&mut self, leaf: Option<i32>, here: Option<WorldTile>) -> bool {
+    fn walker_poll(
+        &mut self,
+        leaf: Option<i32>,
+        here: Option<WorldTile>,
+        chat: &[ChatLineView],
+        query: impl FnOnce() -> bool,
+    ) -> bool {
         match (*self, leaf) {
             (Self::Ready, Some(OPEN_ID)) => {
-                *self = Self::FirstOpen;
+                // DoorRetry can resend an unanswered Open at +2 game ticks
+                // (nav-executor transport_hop.rs:662-673,709-718). Freeze the
+                // traveller now, but drain its earlier sends before Close.
+                // The engine decodes the read-only getvar after prior Open
+                // packets in stream order (NetworkPlayer.ts:55-138). It
+                // writes the reply during input (ClientCheatHandler.ts:306-318,
+                // NetworkPlayer.ts:191-226, TcpClientSocket.ts:15-17).
+                // TCP data enters the input buffer only between synchronous
+                // ticks (World.ts:341-509, TcpServer.ts:24-31, app.ts:36-39).
+                // Thus the Close can be decoded only in a later tick.
+                // Before the door opens, each Open replaces the one pending
+                // interaction. After it opens, the engine rejects Open for
+                // the missing closed leaf (OpLocHandler.ts:30-35,53-54).
+                let chat_after = chat.first().map_or(0, |line| line.sequence);
+                *self = if query() {
+                    Self::DrainingOpen { chat_after }
+                } else {
+                    Self::DrainQueryRefused
+                };
+                false
+            }
+            (Self::DrainingOpen { chat_after }, Some(OPEN_ID))
+                if chat.iter().any(|line| {
+                    line.sequence > chat_after
+                        && line.type_ == 0
+                        && line
+                            .text
+                            .strip_prefix("get runemysteries: ")
+                            .is_some_and(|value| value.parse::<i32>().is_ok())
+                }) =>
+            {
+                *self = Self::CloseReady;
                 false
             }
             (Self::CloseConfirmed, Some(CLOSED_ID)) => {
@@ -480,7 +528,7 @@ impl DoorRecovery {
 
     fn closer_poll(&mut self, leaf: Option<i32>, send: impl FnOnce() -> bool) {
         match (*self, leaf) {
-            (Self::FirstOpen, Some(OPEN_ID)) => {
+            (Self::CloseReady, Some(OPEN_ID)) => {
                 *self = if send() {
                     Self::CloseSent
                 } else {
@@ -506,7 +554,7 @@ fn closer_frame(c: &mut Client, s: &mut CloserSlot, recovery: &Mutex<DoorRecover
     if before == DoorRecovery::WaitingForCloser && here == CLOSER_STAND {
         *state = DoorRecovery::Ready;
     }
-    if matches!(before, DoorRecovery::FirstOpen | DoorRecovery::CloseSent) {
+    if matches!(before, DoorRecovery::CloseReady | DoorRecovery::CloseSent) {
         // OP_LOC1 swaps the leaf without p_delay for straight walls. Wait
         // for the closed leaf on a later PLAYER_INFO, not a timer or the
         // accepted send (`content/scripts/doors/scripts/doors.rs2:1-2,10-37`).
@@ -1892,9 +1940,53 @@ pub(crate) fn nav_mage_arena_bank_scenario() -> Scenario {
 mod door_recovery_tests {
     use super::*;
 
+    fn reply(sequence: i32, type_: i32, text: &str) -> ChatLineView {
+        ChatLineView {
+            type_,
+            username: None,
+            text: text.to_owned(),
+            sequence,
+        }
+    }
+
+    fn unexpected_query() -> bool {
+        panic!("the drain query must only be sent on the first open read")
+    }
+
+    #[test]
+    fn closer_cannot_act_on_the_walkers_first_open_read_alone() {
+        let mut recovery = DoorRecovery::Ready;
+        let stale = [reply(8, 0, "get runemysteries: 0")];
+        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR), &stale, || true));
+        let bad_replies = [
+            reply(11, 0, "get runemysteries: unknown"),
+            reply(10, 2, "get runemysteries: 0"),
+            reply(9, 0, "get tutorial: 1000"),
+            reply(8, 0, "get runemysteries: 0"),
+        ];
+        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR), &bad_replies, unexpected_query));
+        let mut close_sent = false;
+        recovery.closer_poll(Some(OPEN_ID), || {
+            close_sent = true;
+            true
+        });
+        assert!(!close_sent, "an earlier Open can still be in flight");
+        assert_eq!(recovery, DoorRecovery::DrainingOpen { chat_after: 8 });
+    }
+
+    #[test]
+    fn refused_drain_query_never_releases_closer() {
+        let mut recovery = DoorRecovery::Ready;
+        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR), &[], || false));
+        let later = [reply(9, 0, "get runemysteries: 0")];
+        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR), &later, unexpected_query));
+        recovery.closer_poll(Some(OPEN_ID), || panic!("close after a refused query"));
+        assert_eq!(recovery, DoorRecovery::DrainQueryRefused);
+    }
+
     #[test]
     fn closer_sends_only_once_through_multiple_open_observations() {
-        let mut recovery = DoorRecovery::FirstOpen;
+        let mut recovery = DoorRecovery::CloseReady;
         let mut sends = 0;
         for leaf in [
             CLOSED_ID, OPEN_ID, OPEN_ID, CLOSED_ID, OPEN_ID, CLOSED_ID, OPEN_ID,
@@ -1912,28 +2004,31 @@ mod door_recovery_tests {
     fn recovery_requires_a_confirmed_close_reopen_and_far_stand_in_order() {
         let mut recovery = DoorRecovery::Ready;
         recovery.closer_poll(Some(OPEN_ID), || panic!("close before walker Open"));
-        assert!(recovery.walker_poll(Some(CLOSED_ID), Some(DOOR)));
-        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR)));
+        assert!(recovery.walker_poll(Some(CLOSED_ID), Some(DOOR), &[], unexpected_query));
+        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR), &[], || true));
+        let ack = [reply(1, 0, "get runemysteries: 0")];
+        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR), &ack, unexpected_query));
+        assert_eq!(recovery, DoorRecovery::CloseReady);
         recovery.closer_poll(Some(OPEN_ID), || true);
-        assert!(!recovery.walker_poll(Some(CLOSED_ID), Some(DOOR)));
+        assert!(!recovery.walker_poll(Some(CLOSED_ID), Some(DOOR), &[], unexpected_query));
         recovery.closer_poll(Some(CLOSED_ID), || panic!("close on the closed leaf"));
-        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR)));
-        assert!(recovery.walker_poll(Some(CLOSED_ID), Some(DOOR)));
-        assert!(recovery.walker_poll(Some(CLOSED_ID), Some(OPEN_DOOR)));
+        assert!(!recovery.walker_poll(Some(OPEN_ID), Some(DOOR), &[], unexpected_query));
+        assert!(recovery.walker_poll(Some(CLOSED_ID), Some(DOOR), &[], unexpected_query));
+        assert!(recovery.walker_poll(Some(CLOSED_ID), Some(OPEN_DOOR), &[], unexpected_query));
         assert_eq!(recovery, DoorRecovery::Reopening);
-        assert!(recovery.walker_poll(Some(OPEN_ID), Some(DOOR)));
+        assert!(recovery.walker_poll(Some(OPEN_ID), Some(DOOR), &[], unexpected_query));
         assert_eq!(recovery, DoorRecovery::Reopened);
-        assert!(recovery.walker_poll(Some(OPEN_ID), Some(OPEN_DOOR)));
+        assert!(recovery.walker_poll(Some(OPEN_ID), Some(OPEN_DOOR), &[], unexpected_query));
         assert_eq!(recovery, DoorRecovery::Crossed);
     }
 
     #[test]
     fn refused_close_does_not_retry_or_release_the_walker() {
-        let mut recovery = DoorRecovery::FirstOpen;
+        let mut recovery = DoorRecovery::CloseReady;
         recovery.closer_poll(Some(OPEN_ID), || false);
         recovery.closer_poll(Some(OPEN_ID), || panic!("second Close attempt"));
         recovery.closer_poll(Some(CLOSED_ID), || panic!("close on the closed leaf"));
-        assert!(!recovery.walker_poll(Some(CLOSED_ID), Some(DOOR)));
+        assert!(!recovery.walker_poll(Some(CLOSED_ID), Some(DOOR), &[], unexpected_query));
         assert_eq!(recovery, DoorRecovery::CloseRefused);
     }
 }

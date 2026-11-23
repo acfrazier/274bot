@@ -18,7 +18,7 @@ use host_play::run_with_io;
 use scenario::{RunnerStatus, ScenarioRunner};
 
 #[test]
-#[ignore = "requires a local 274 engine, nav pack, two accounts, and LIVE=1"]
+#[ignore = "requires a local engine, matching nav pack, two accounts, and LIVE=1"]
 fn nav_door() {
     if !live() {
         return;

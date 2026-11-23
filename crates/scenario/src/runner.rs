@@ -2865,7 +2865,7 @@ impl ScenarioRunner {
         let Some(route) = self.route.as_ref() else {
             return;
         };
-        if matches!(&self.current_step().kind, StepKind::FollowWhen { may_poll, .. } if !may_poll(client))
+        if matches!(&self.current_step().kind, StepKind::FollowWhen { may_poll, .. } if !may_poll(client, &self.snapshot))
         {
             return;
         }
