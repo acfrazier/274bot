@@ -159,6 +159,19 @@ jobs:
       - name: Check FlatBuffer bindings
         run: cargo run --locked -p xtask -- ci flatbuffers
 
+  release_tool_tests:
+    name: release-tool-tests
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.14.8"
+          check-latest: false
+      - name: Release tool tests
+        run: python3 -B -m unittest discover -s tools/release/tests
+
   test_lanes:
     name: test (${{ matrix.lane }})
     if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/heads/release/') }}
