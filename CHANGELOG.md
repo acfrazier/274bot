@@ -74,6 +74,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Scenario runner
 
+- `tui-play --live script_<name>` reports a runtime-selected scenario's own
+  startup refusal, such as a missing `QUEST_WATCH_SEED` plan or
+  `QUEST_WATCH_SPEED_MS`, instead of calling the scenario unknown. Only an
+  unregistered name is "unknown scenario".
 - Scenarios can name measured windows. Unexpected damage, combat or targeting
   inside a window makes the run INVALID, never a pass or successful exit,
   even after cleanup. The receipt keeps the same events outside a window.

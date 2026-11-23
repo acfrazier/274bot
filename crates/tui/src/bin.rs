@@ -251,12 +251,15 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
 }
 
 /// The `--live` scenario, `Err` when the name is not a `script_<name>`.
-/// Unknown names fail the run (same usage contract as panel-play).
+/// Unknown names fail the run (same usage contract as panel-play), and a
+/// runtime-selected factory's own startup error keeps its text instead of
+/// being reported as an unknown name.
 pub fn live_scenario(name: &str) -> Result<frontend_core::live::Scenario, String> {
     let script = name
         .strip_prefix("script_")
         .ok_or_else(|| format!("tui-play: --live {name}: only script_<name> is supported"))?;
-    frontend_core::live::Scenario::get(script)
+    frontend_core::live::Scenario::try_get(script)
+        .map_err(|error| format!("tui-play: --live {name}: {error}"))?
         .ok_or_else(|| format!("tui-play: --live {name}: unknown scenario"))
 }
 
