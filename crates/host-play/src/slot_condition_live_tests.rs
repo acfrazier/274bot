@@ -136,9 +136,9 @@ impl PoisonOracle {
             }
         }
         if let Some(deadline) = self.dose_drop_deadline {
-            if tick > deadline || (tick == deadline && dose_held) {
+            if tick >= deadline && dose_held {
                 return Err(format!(
-                    "dose drop not observed by tick {deadline} (sample {tick}, held={dose_held})"
+                    "dose still held at tick {tick} (deadline {deadline})"
                 ));
             }
             if !dose_held {
@@ -152,8 +152,10 @@ impl PoisonOracle {
             if self.immune_origin.is_none() {
                 self.immune_origin = Some(tick.saturating_sub(elapsed.max(1) - 1));
                 // anti_poison.rs2:5-9 changes the slot in the drink cycle.
-                // World.ts:1108-1116 sends PLAYER_INFO before inventory.
-                // This oracle samples once per tick, so check by the next sample.
+                // Player.ts:2304-2306 sends the message immediately
+                // (NetworkPlayer.ts:221-226). World.ts:1108-1116 then
+                // sends PLAYER_INFO before inventory, so the dose must be
+                // gone at the first sample at or after the next tick.
                 if dose_held {
                     self.dose_drop_deadline = Some(tick + 1);
                 }
@@ -681,13 +683,17 @@ mod oracle_tests {
     }
 
     #[test]
-    fn condition_oracle_rejects_dose_drop_missing_at_the_next_tick_sample() {
+    fn condition_oracle_checks_dose_at_or_after_the_next_tick() {
         let immune = condition(PoisonState::Immune { until_lower: 311 });
-        for (tick, held) in [(192, true), (193, false)] {
+        for tick in [192, 193] {
             let mut oracle = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
             assert_eq!(oracle.observe(191, immune, true, true), Ok(false));
-            assert!(oracle.observe(tick, immune, true, held).is_err());
+            assert!(oracle.observe(tick, immune, true, true).is_err());
         }
+
+        let mut skipped = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
+        assert_eq!(skipped.observe(191, immune, true, true), Ok(false));
+        assert_eq!(skipped.observe(193, immune, true, false), Ok(false));
     }
 
     #[test]
