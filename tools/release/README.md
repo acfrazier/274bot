@@ -32,9 +32,17 @@ For a real candidate, provide all four local generator roots and the actual
 `RS2B0T` query source. Revision 289 also requires the decoded snapshot used
 for its map and terrain bundle:
 
+Keep `WORK` and `ARTIFACTS` under the request evidence directory, outside the
+local home directory. Set `RELEASE_LINUX_ROOT` and `RELEASE_WINDOWS_ROOT` to
+absolute, request-specific evidence directories outside each builder's home
+directory (for example, `/evidence/request/linux` and
+`D:/evidence/request/windows`). Remote operations use those roots verbatim.
+
 ```sh
 python3 tools/release/release.py build \
   --commit "$COMMIT" --platform all --work-dir "$WORK" \
+  --linux-remote-root "$RELEASE_LINUX_ROOT" \
+  --windows-remote-root "$RELEASE_WINDOWS_ROOT" \
   --game-data-274-engine "$GAME_DATA_274_ENGINE" \
   --game-data-274-content "$GAME_DATA_274_CONTENT" \
   --game-data-289-engine "$GAME_DATA_289_ENGINE" \
@@ -122,12 +130,14 @@ unqualified `stable` to qualify a release.
   `/Applications/*.app/Contents/Developer` (`xcrun` finds the Apple
   toolchain through it; any other value is dropped), plus the keys the
   worker itself pins. Everything else -- `LIBRARY_PATH`, `PKG_CONFIG*`,
-  `DYLD_*`, compiler/flag overrides, `RUSTFLAGS`, and in particular
-  `CARGO_HOME`, `RUSTUP_HOME` and `RUSTUP_TOOLCHAIN` (the toolchain comes from
-  `rust-toolchain.toml`) -- is not inherited. None of the dropped
+  `DYLD_*`, compiler/flag overrides, `RUSTFLAGS`, `RUSTUP_HOME` and
+  `RUSTUP_TOOLCHAIN` (the toolchain comes from `rust-toolchain.toml`) -- is not
+  inherited. Each worker constructs `CARGO_HOME` as
+  `<worker_root>/cache/cargo`, so Cargo uses request-local config and cache
+  files rather than the builder account's `~/.cargo`. None of the dropped
   variables was set in the environment that produced the known-good
-  0.2.1 package. Linux and Windows environment construction is
-  unchanged.
+  0.2.1 package. Linux and Windows retain their platform-specific inherited
+  environment but also use this worker-local `CARGO_HOME`.
 - Linux x64 uses the SSH target `274bot-builder` by default. Override it with
   `--linux-host` or `RELEASE_LINUX_HOST`.
 - Windows x64 runs over the promoted `windows-ssh.py` transport.
@@ -139,11 +149,14 @@ unqualified `stable` to qualify a release.
   `--windows-identity`/`--windows-known-hosts` parameters (with matching
   `RELEASE_*` environment variables). Batch mode and strict host-key checking
   are always enabled.
-- Remote work roots default to the home-relative `274bot-release` and can be
-  changed with `--linux-remote-root` / `--windows-remote-root` (or
-  `RELEASE_LINUX_ROOT` / `RELEASE_WINDOWS_ROOT`). Cargo output is
-  cached below the platform's per-commit workspace, so artifacts from different
-  commits cannot mix. Remote roots must stay below the remote home directory.
+- Remote roots are required for real Linux and Windows operations. Set
+  `--linux-remote-root` / `--windows-remote-root` (or
+  `RELEASE_LINUX_ROOT` / `RELEASE_WINDOWS_ROOT`) to absolute request-evidence
+  directories: a POSIX path such as `/evidence/request/linux` on Linux and a
+  drive-qualified path such as `D:/evidence/request/windows` on Windows. The
+  controller uses these paths directly and never joins them to remote `$HOME`.
+  Cargo output is cached below each platform's per-commit workspace, so
+  artifacts from different commits cannot mix.
 - `--jobs` defaults to 4, `--revision` to 289, and the macOS app profile to
   `rs2b2t`.
 
