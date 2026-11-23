@@ -13063,7 +13063,7 @@
       "module": "api/bank/Bank.js",
       "selector": "Bank.withdrawLoad",
       "reason": "rs2b0t 90a69240 accepts a numeric item ID; the host adapter forwards the ID to the bank seat.",
-      "runtime": "crates/script-js/src/shim/bank.js:177",
+      "runtime": "crates/script-js/src/shim/bank.js:176",
       "declaration": "/** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */\nwithdrawLoad(name: string | number): Promise<boolean>;",
       "family_id": "bank",
       "nav_consuming": true
@@ -13155,7 +13155,7 @@
       "module": "api/bank/Bank.js",
       "selector": "Bank.items",
       "reason": "Bank.items preserves its legacy noted/cert projection, frozen and reused only with posted bank-session and item generations; audited consumers only read the rows.",
-      "runtime": "crates/script-js/src/shim/bank.js:59",
+      "runtime": "crates/script-js/src/shim/bank.js:58",
       "declaration": "items(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[]; cert: number }>[];",
       "family_id": "bank",
       "nav_consuming": true
