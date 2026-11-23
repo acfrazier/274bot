@@ -128,7 +128,7 @@ fn apply(replay: &mut Replay<'_>, action: Action, model: &State) {
         }
         Action::Finish { fail } => {
             let entry = replay.inflight.take().expect("an entry in the writer");
-            replay.output.counters.finish(&entry, fail);
+            replay.output.counters.finish(entry, fail);
         }
         Action::WorkerExit => {
             assert!(

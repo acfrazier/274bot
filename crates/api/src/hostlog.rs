@@ -348,13 +348,17 @@ impl Counters {
         (before >> LINES_BITS) & PENDING_MASK
     }
 
-    /// The writer is done with `entry`: release its lines, and count it
-    /// when the write failed.
-    fn finish(&self, entry: &Entry, write_failed: bool) {
+    /// The writer is done with `entry`: count it when the write failed, free
+    /// its buffer, and only then release its lines. A producer that reserves
+    /// the released lines therefore never allocates while the old buffer is
+    /// alive, and storage stays within [`STDERR_QUEUE_BYTES`].
+    fn finish(&self, entry: Entry, write_failed: bool) {
         if write_failed {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
-        self.release(entry.lines);
+        let lines = entry.lines;
+        drop(entry);
+        self.release(lines);
     }
 }
 
@@ -790,9 +794,18 @@ fn run_stderr_writer(
         let Ok(entry) = rx.recv() else {
             break;
         };
-        let failed = write(&entry.text).is_err();
-        counters.finish(&entry, failed);
+        write_entry(entry, &counters, &mut write);
     }
+}
+
+/// Write one entry, then free it and release its lines (in that order).
+fn write_entry(
+    entry: Entry,
+    counters: &Counters,
+    write: &mut impl FnMut(&str) -> std::io::Result<()>,
+) {
+    let failed = write(&entry.text).is_err();
+    counters.finish(entry, failed);
 }
 
 fn run_process_stderr_writer(rx: Receiver<Entry>, counters: Arc<Counters>, on_wait: impl FnMut()) {
