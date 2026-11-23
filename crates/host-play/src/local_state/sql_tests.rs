@@ -4356,20 +4356,20 @@ fn file_under(classes: &mut occupancy_tests::Samples, label: &str, values: Vec<f
     classes.entry(label.to_string()).or_default().extend(values);
 }
 
-/// The occupancy gate of plan §4.4 for every SQL job class, measured as
-/// complete writer jobs through the typed-view publication (the writer's
-/// own job hook), under the stated load: two OS processes on one root,
-/// each with eight queued and one active D-sized preference save in every
-/// round, with the bank exit save, the Start loadout readback and a bank
-/// load queued beside them. The classes that run once (first import,
-/// quarantine, hard-maximum WAL recovery on open, uncertain COMMIT,
-/// rollbacks, connection setup, shutdown close, same-root export and
+/// A11's CI microbenchmark entrypoint runs the local-state SQL occupancy gate
+/// in a locked release build and preserves its JSON report. The gate measures
+/// every SQL job class through typed-view publication under the §4.4 load:
+/// two OS processes on one root, each with eight queued and one active D-sized
+/// preference save in every round, with the bank exit save, the Start loadout
+/// readback and a bank load queued beside them. The classes that run once
+/// (first import, quarantine, hard-maximum WAL recovery on open, uncertain
+/// COMMIT, rollbacks, connection setup, shutdown close, same-root export and
 /// recovery) run on roots of their own while the load runs, except the
 /// maintenance commands, which need the exclusive root and run after it.
-/// Writes `T53_OCCUPANCY_OUT` (JSON) with the maximum and p99 of every
-/// class and, given `T53_JSON_BASELINE` (the report of
-/// `occupancy_load_report` on the pinned JSON build), the matching jobs of
-/// that build; fails when a class passes 250 ms or the load is not whole.
+/// Writes `T53_OCCUPANCY_OUT` (JSON) with the maximum and p99 of every class
+/// and, given `T53_JSON_BASELINE` (the report of `occupancy_load_report` on
+/// the pinned JSON build), the matching jobs of that build; fails when a
+/// class passes 250 ms or the load is not whole.
 #[test]
 #[ignore = "the S4 occupancy gate; run alone with T53_OCCUPANCY_OUT (and T53_JSON_BASELINE)"]
 fn occupancy_gate_every_sql_job_class() {
