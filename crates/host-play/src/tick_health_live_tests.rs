@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use api::snapshot::GameSnapshot;
 use api::tick_health::TickHealthReceipt;
+use client::client::{Client, ClientConfig};
 use vault::{Profile, ProfileSettings};
 
 #[derive(Default)]
@@ -12,6 +13,46 @@ struct Observations {
     pump: host::Pump,
     snapshot: GameSnapshot,
     receipts: Vec<TickHealthReceipt>,
+}
+
+impl Observations {
+    fn observe(&mut self, client: &Client) {
+        let drain = self.pump.drain_client(client);
+        host::publish_snapshot(&mut self.snapshot, client, drain);
+        if self.snapshot.ingame() && drain.packet_delta != 0 && self.receipts.len() < 16 {
+            let receipt = self.snapshot.tick_health();
+            assert_eq!(receipt.packet_delta, drain.packet_delta);
+            self.receipts.push(receipt);
+        }
+    }
+}
+
+#[test]
+fn receipt_cell_keeps_packets_applied_while_the_scene_is_loading() {
+    let mut client = Client::new(ClientConfig {
+        host: "127.0.0.1".into(),
+        port: 43594,
+        cache_dir: std::env::temp_dir()
+            .join("absent-tick-health-cache")
+            .to_string_lossy()
+            .into_owned(),
+        members: true,
+        lowmem: false,
+    });
+    client.ingame = true;
+    let mut observations = Observations::default();
+    for (generation, scene_state) in [(1, 2), (2, 1), (3, 2)] {
+        client.gens.player_info = generation;
+        client.gens.player = generation;
+        client.scene_state = scene_state;
+        observations.observe(&client);
+    }
+    assert_eq!(observations.receipts.len(), 3);
+    for (receipt, generation) in observations.receipts.iter().zip(1..=3) {
+        assert_eq!(receipt.packet_generation, generation);
+        assert_eq!(receipt.server_ticks, generation);
+        assert_eq!(receipt.packet_delta, 1);
+    }
 }
 
 #[test]
@@ -44,18 +85,7 @@ fn tick_health_engine_a_receipt() {
         }],
         |_| (None, None),
         move |client, _, _| {
-            let mut observations = frame_observations.lock().unwrap();
-            let drain = observations.pump.drain_client(client);
-            host::publish_snapshot(&mut observations.snapshot, client, drain);
-            if observations.snapshot.ingame()
-                && observations.snapshot.scene_state() == 2
-                && drain.packet_delta != 0
-                && observations.receipts.len() < 16
-            {
-                let receipt = observations.snapshot.tick_health();
-                assert_eq!(receipt.packet_delta, drain.packet_delta);
-                observations.receipts.push(receipt);
-            }
+            frame_observations.lock().unwrap().observe(client);
         },
     )
     .unwrap();
