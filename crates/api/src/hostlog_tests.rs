@@ -1,5 +1,7 @@
 use super::*;
 use std::borrow::Cow;
+use std::io::Write as _;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 type Captured = (Option<String>, Option<u32>, Source, Level, String);
@@ -210,6 +212,42 @@ fn stderr_and_the_sink_only_ever_see_the_redacted_line() {
 }
 
 #[test]
+fn debug_and_always_stderr_errors_use_the_redacted_writer_path() {
+    install();
+    register_secret("redaction-token");
+    let old_debug = DEBUG.load(Ordering::Relaxed);
+    set_debug(true);
+    std::thread::spawn(|| {
+        bind_slot("route-gina");
+        crate::host_log!(Category::NavTrace, Level::Debug, "debug redaction-token");
+        crate::host_log!(
+            stderr;
+            Category::Login,
+            Level::Error,
+            "error redaction-token"
+        );
+        assert_eq!(
+            STDERR.with(|lines| lines.borrow().clone()),
+            [
+                "[nav-trace route-gina] debug ***",
+                "[login route-gina] error ***"
+            ]
+        );
+    })
+    .join()
+    .unwrap();
+    set_debug(old_debug);
+
+    assert_eq!(
+        lines_for("route-gina")
+            .into_iter()
+            .map(|line| line.4)
+            .collect::<Vec<_>>(),
+        ["error ***"]
+    );
+}
+
+#[test]
 fn any_thread_reads_a_slots_current_tick() {
     install();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -241,29 +279,6 @@ fn any_thread_reads_a_slots_current_tick() {
     assert_eq!(lines_for("route-fay")[0].1, Some(314));
     done_tx.send(()).unwrap();
     worker.join().unwrap();
-}
-
-/// A stderr that refuses every write, as a redirected stderr on a full disk does.
-struct FullDisk;
-
-impl std::io::Write for FullDisk {
-    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-        Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
-    }
-}
-
-#[test]
-fn a_failed_debug_write_is_dropped_instead_of_panicking() {
-    // `eprintln!` panics here; a panic while a caller holds the shared nav
-    // lock poisoned it for every slot (T14-POISON-DIAG).
-    write_line(&mut FullDisk, format_args!("[nav-trace slot] walk-send"));
-
-    let mut out = Vec::new();
-    write_line(&mut out, format_args!("[nav-trace slot] walk-send"));
-    assert_eq!(out, b"[nav-trace slot] walk-send\n");
 }
 
 /// Strip the `[i/n] ` marker of `line`, checking it numbers line `index` of
@@ -395,4 +410,336 @@ fn cut_chars_counts_characters_ends_with_an_ellipsis_and_borrows_when_it_fits() 
     let cut = cut_chars(&wide, SUMMARY_CHARS);
     assert_eq!(cut.chars().count(), SUMMARY_CHARS);
     assert!(cut.ends_with('…') && cut.starts_with("😀"));
+}
+
+/// A stderr that refuses every write, as a redirected stderr on a full disk does.
+struct FullDisk;
+
+impl std::io::Write for FullDisk {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
+    }
+}
+
+#[derive(Default)]
+struct FailOnceWriter {
+    failed_once: bool,
+    bytes: Vec<u8>,
+}
+
+impl std::io::Write for FailOnceWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if !self.failed_once {
+            self.failed_once = true;
+            return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_failed_debug_write_is_dropped_instead_of_panicking() {
+    let (output, receiver) = StderrOutput::channel();
+    let dropped = Arc::clone(&output.dropped);
+    let queued = Arc::clone(&output.queued);
+    let worker = std::thread::spawn(move || {
+        let mut writer = FailOnceWriter::default();
+        run_stderr_writer(
+            receiver,
+            dropped,
+            queued,
+            || {},
+            |line| write_line(&mut writer, line),
+        );
+        writer
+    });
+
+    output.enqueue(format_args!("[nav-trace slot] debug first"));
+    output.enqueue(format_args!("[nav-trace slot] debug second"));
+    output.shutdown();
+    let writer = worker.join().unwrap();
+    assert_eq!(output.dropped(), 1);
+    assert_eq!(writer.bytes, b"[nav-trace slot] debug second\n");
+}
+
+#[test]
+fn stderr_lock_is_available_while_the_process_writer_waits() {
+    let (output, receiver) = StderrOutput::channel();
+    let dropped = Arc::clone(&output.dropped);
+    let queued = Arc::clone(&output.queued);
+    let (waiting_tx, waiting_rx) = std::sync::mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || {
+        let mut waiting_tx = Some(waiting_tx);
+        run_process_stderr_writer(receiver, dropped, queued, || {
+            if let Some(waiting_tx) = waiting_tx.take() {
+                let _ = waiting_tx.send(());
+            }
+        });
+    });
+    waiting_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("process writer did not reach its idle wait");
+
+    let (probe_tx, probe_rx) = std::sync::mpsc::sync_channel(1);
+    let probe = std::thread::spawn(move || {
+        eprintln!("stderr lock probe");
+        let mut stderr = std::io::stderr();
+        let _ = stderr.flush();
+        let _ = writeln!(stderr, "stderr write probe");
+        let _ = probe_tx.send(());
+    });
+    let probe_returned = probe_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .is_ok();
+    output.shutdown();
+    probe.join().unwrap();
+    worker.join().unwrap();
+    assert!(
+        probe_returned,
+        "the idle process stderr writer held the standard stderr lock"
+    );
+}
+
+#[test]
+fn stderr_lines_keep_utf8_and_never_exceed_the_byte_limit() {
+    let line = format_stderr_line(format_args!("[nav-trace] {}", "é".repeat(1_000)));
+    assert!(line.len() <= STDERR_LINE_BYTES);
+    assert!(line.ends_with(TRUNCATION_MARKER));
+    assert!(line.is_char_boundary(line.len()));
+}
+
+#[test]
+fn stderr_queue_allocation_and_size_stay_within_the_process_bound() {
+    assert_eq!(STDERR_QUEUE_LINES, 256);
+    assert_eq!(STDERR_LINE_BYTES, 1_024);
+    assert_eq!(
+        std::mem::size_of::<String>(),
+        3 * std::mem::size_of::<usize>()
+    );
+    assert!(std::mem::size_of::<StderrOutput>() <= 128);
+
+    let init = allocation_counter::measure(|| {
+        let (output, receiver) = StderrOutput::channel();
+        drop(output);
+        drop(receiver);
+    });
+    assert!(
+        init.bytes_total <= 16 * 1024,
+        "fixed queue metadata allocated {} bytes",
+        init.bytes_total
+    );
+
+    let (output, _receiver) = StderrOutput::channel();
+    let queued = allocation_counter::measure(|| {
+        for index in 0..STDERR_QUEUE_LINES {
+            output.enqueue(format_args!("line {index}"));
+        }
+    });
+    let max_line_storage = STDERR_QUEUE_LINES * STDERR_LINE_BYTES;
+    assert_eq!(queued.count_total, STDERR_QUEUE_LINES as u64);
+    assert_eq!(queued.bytes_total, max_line_storage as u64);
+    assert_eq!(queued.bytes_current, max_line_storage as i64);
+    assert_eq!(output.queued.load(Ordering::Acquire), STDERR_QUEUE_LINES);
+    assert_eq!(output.dropped(), 0);
+
+    let full_queue_drop = allocation_counter::measure(|| {
+        output.enqueue(format_args!("one more"));
+    });
+    assert_eq!(full_queue_drop.count_total, 0);
+    assert_eq!(full_queue_drop.bytes_total, 0);
+    assert_eq!(output.dropped(), 1);
+}
+
+#[test]
+fn a_closed_stderr_queue_counts_the_refused_line() {
+    let (output, receiver) = StderrOutput::channel();
+    drop(receiver);
+    output.enqueue(format_args!("closed"));
+    assert_eq!(output.dropped(), 1);
+    output.shutdown();
+    output.enqueue(format_args!("after shutdown"));
+    assert_eq!(output.dropped(), 2);
+}
+
+#[test]
+fn stderr_queue_submission_drops_instead_of_waiting_for_sender_lock() {
+    let (output, _receiver) = StderrOutput::channel();
+    let output = Arc::new(output);
+    let locked_sender = output.tx.lock();
+    let thread_output = Arc::clone(&output);
+    let (completed_tx, completed_rx) = std::sync::mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || {
+        thread_output.enqueue(format_args!("contended"));
+        let _ = completed_tx.send(());
+    });
+
+    let completed = completed_rx
+        .recv_timeout(std::time::Duration::from_millis(100))
+        .is_ok();
+    drop(locked_sender);
+    worker.join().unwrap();
+    assert!(completed, "slot submission waited on the sender lock");
+    assert_eq!(output.dropped(), 1);
+}
+
+struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for CaptureWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn stderr_shutdown_drains_accepted_lines_when_the_sink_is_writable() {
+    let (output, receiver) = StderrOutput::channel();
+    let bytes = Arc::new(Mutex::new(Vec::new()));
+    let mut writer = CaptureWriter(Arc::clone(&bytes));
+    let dropped = Arc::clone(&output.dropped);
+    let queued = Arc::clone(&output.queued);
+    let worker = std::thread::spawn(move || {
+        run_stderr_writer(
+            receiver,
+            dropped,
+            queued,
+            || {},
+            |line| write_line(&mut writer, line),
+        );
+    });
+
+    output.enqueue(format_args!("first"));
+    output.enqueue(format_args!("second"));
+    output.shutdown();
+    worker.join().unwrap();
+    assert_eq!(&*bytes.lock().unwrap(), b"first\nsecond\n");
+    assert_eq!(output.dropped(), 0);
+}
+
+#[test]
+fn stderr_io_failure_is_counted_and_does_not_panic_the_worker() {
+    let (output, receiver) = StderrOutput::channel();
+    let dropped = Arc::clone(&output.dropped);
+    let queued = Arc::clone(&output.queued);
+    let worker = std::thread::spawn(move || {
+        let mut writer = FullDisk;
+        run_stderr_writer(
+            receiver,
+            dropped,
+            queued,
+            || {},
+            |line| write_line(&mut writer, line),
+        );
+    });
+    output.enqueue(format_args!("first"));
+    output.enqueue(format_args!("second"));
+    output.shutdown();
+    worker.join().unwrap();
+    assert_eq!(output.dropped(), 2);
+}
+
+struct BlockingWriter {
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+    blocked_once: bool,
+}
+
+impl std::io::Write for BlockingWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if !self.blocked_once {
+            self.blocked_once = true;
+            let _ = self.entered.send(());
+            self.release.recv().unwrap();
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn shutdown_does_not_wait_for_a_blocked_stderr_pipe() {
+    let (output, receiver) = StderrOutput::channel();
+    let dropped = Arc::clone(&output.dropped);
+    let queued = Arc::clone(&output.queued);
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (worker_done_tx, worker_done_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let mut writer = BlockingWriter {
+            entered: entered_tx,
+            release: release_rx,
+            blocked_once: false,
+        };
+        run_stderr_writer(
+            receiver,
+            dropped,
+            queued,
+            || {},
+            |line| write_line(&mut writer, line),
+        );
+        let _ = worker_done_tx.send(());
+    });
+    output.enqueue(format_args!("blocked"));
+    let writer_entered = entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .is_ok();
+
+    let (shutdown_done_tx, shutdown_done_rx) = std::sync::mpsc::channel();
+    let shutdown = std::thread::spawn(move || {
+        output.shutdown();
+        let _ = shutdown_done_tx.send(());
+    });
+    let shutdown_returned = shutdown_done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .is_ok();
+
+    let _ = release_tx.send(());
+    let worker_returned = worker_done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .is_ok();
+    if shutdown_returned {
+        shutdown.join().unwrap();
+    } else {
+        drop(shutdown);
+    }
+    if worker_returned {
+        worker.join().unwrap();
+    } else {
+        drop(worker);
+    }
+
+    assert!(
+        writer_entered,
+        "stderr writer did not reach the blocked sink"
+    );
+    assert!(
+        shutdown_returned,
+        "shutdown waited for the blocked stderr sink"
+    );
+    assert!(
+        worker_returned,
+        "stderr worker did not exit after the blocked sink was released"
+    );
+}
+
+#[test]
+fn reading_stderr_drop_count_does_not_start_the_writer() {
+    assert!(std::sync::LazyLock::get(&STDERR_OUTPUT).is_none());
+    assert_eq!(stderr_dropped(), 0);
+    assert!(std::sync::LazyLock::get(&STDERR_OUTPUT).is_none());
 }

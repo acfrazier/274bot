@@ -24,7 +24,16 @@ fn main() -> std::process::ExitCode {
     {
         return std::process::ExitCode::from(code as u8);
     }
-    frontend_core::process::bootstrap().expect("protected V8 bootstrap on process main thread");
+    if let Err(error) = frontend_core::process::bootstrap() {
+        api::host_log!(
+            stderr;
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Error,
+            "panel: {error}"
+        );
+        api::hostlog::shutdown_stderr_writer();
+        return std::process::ExitCode::FAILURE;
+    }
     let args = parse_args();
     // Before any slot starts: a Finder-launched app gets 256 open files.
     // The session log records the result when it opens.
@@ -38,9 +47,11 @@ fn main() -> std::process::ExitCode {
     if let Err(error) = &shutdown {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");
     }
-    if run.is_err() || shutdown.is_err() {
+    let result = if run.is_err() || shutdown.is_err() {
         std::process::ExitCode::FAILURE
     } else {
         std::process::ExitCode::SUCCESS
-    }
+    };
+    api::hostlog::shutdown_stderr_writer();
+    result
 }

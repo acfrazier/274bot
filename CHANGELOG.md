@@ -35,6 +35,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Revision 377 login failures show clearer messages. An outdated-client
   refusal asks you to reload the page instead of suggesting a login-key problem.
 
+### Logging
+
+- Host stderr uses a bounded process queue (256 lines, 1 KiB per line). The
+  writer holds the stderr lock only while it writes a line; producers never
+  wait for queue space or that lock. A line is dropped if the queue is full or
+  closed, the short sender lock is contended, the writer cannot start, or a
+  stderr write fails. The peak line storage is 257 KiB, including the one line
+  the writer may be writing. Both log views show dropped-line counts; the
+  optional session file remains a separate sink.
+
 ### Navigation
 
 - Danger routing now defaults to **Always**, matching compat v1. Walks may

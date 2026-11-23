@@ -167,6 +167,9 @@ pub fn log_body(ui: &Ui, session: &mut Session, last: bool) {
     if pane.view.dropped() > 0 {
         ui.text_colored(TEXT_DIM, "older lines rolled off (ring bound)");
     }
+    if let Some(notice) = process_stderr_drop_notice() {
+        ui.text_colored(TEXT_DIM, &notice);
+    }
     let height = if last {
         ui.content_region_avail()[1].max(scale_px(ui, MIN_FILL_HEIGHT))
     } else {
@@ -400,5 +403,35 @@ impl Session {
         self.setting_drafts
             .session_log
             .unwrap_or(self.ui.session_log_file)
+    }
+}
+
+fn stderr_drop_notice(dropped: u64) -> Option<String> {
+    (dropped > 0).then(|| format!("stderr output dropped: {dropped} line(s)"))
+}
+fn process_stderr_drop_notice() -> Option<String> {
+    stderr_drop_notice(frontend_core::log::stderr_dropped())
+}
+
+#[cfg(test)]
+mod stderr_drop_tests {
+    use super::{process_stderr_drop_notice, stderr_drop_notice};
+
+    #[test]
+    fn reports_a_real_process_stderr_queue_drop() {
+        assert_eq!(stderr_drop_notice(0), None);
+
+        let before = frontend_core::log::stderr_dropped();
+        let dropped = api::hostlog::test_fill_stderr_queue_and_drop_one_line();
+        assert!(
+            dropped > before,
+            "the full queue did not record a real drop"
+        );
+
+        let expected = format!("stderr output dropped: {dropped} line(s)");
+        assert_eq!(
+            process_stderr_drop_notice().as_deref(),
+            Some(expected.as_str())
+        );
     }
 }

@@ -24,8 +24,10 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, LazyLock, OnceLock};
+use std::thread;
 
 use parking_lot::{Mutex, RwLock};
 
@@ -202,6 +204,246 @@ pub trait Sink: Send + Sync {
     fn test_nav_trace_enabled(&self) -> bool {
         false
     }
+}
+
+/// Maximum number of stderr lines reserved or queued for writing.
+pub const STDERR_QUEUE_LINES: usize = 256;
+/// Maximum bytes in one stderr line, excluding its newline.
+pub const STDERR_LINE_BYTES: usize = 1_024;
+/// A numbered, packed log line (at most [`LINE_BYTES`]) plus its `[tag slot] `
+/// head always fits one stderr line, so the writer never cuts a packed line.
+const _: () = assert!(LINE_BYTES * 2 <= STDERR_LINE_BYTES);
+
+/// One reserved queue slot. Dropping an uncommitted reservation releases it.
+struct QueueSlot<'a> {
+    queued: &'a AtomicUsize,
+    committed: bool,
+}
+
+impl QueueSlot<'_> {
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for QueueSlot<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.queued.fetch_sub(1, Ordering::Release);
+        }
+    }
+}
+
+/// Process-owned, bounded stderr output. Producers do not wait for queue space
+/// or for the sender lock; sender-lock contention drops the line.
+struct StderrOutput {
+    tx: Mutex<Option<SyncSender<String>>>,
+    queued: Arc<AtomicUsize>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl StderrOutput {
+    fn channel() -> (Self, Receiver<String>) {
+        Self::channel_with_dropped(Arc::new(AtomicU64::new(0)))
+    }
+
+    fn channel_with_dropped(dropped: Arc<AtomicU64>) -> (Self, Receiver<String>) {
+        let (tx, rx) = mpsc::sync_channel(STDERR_QUEUE_LINES);
+        (
+            Self {
+                tx: Mutex::new(Some(tx)),
+                queued: Arc::new(AtomicUsize::new(0)),
+                dropped,
+            },
+            rx,
+        )
+    }
+
+    fn start() -> Self {
+        let (output, rx) = Self::channel();
+        let dropped = Arc::clone(&output.dropped);
+        let queued = Arc::clone(&output.queued);
+        match thread::Builder::new()
+            .name("host-log".into())
+            .spawn(move || run_process_stderr_writer(rx, dropped, queued, || {}))
+        {
+            Ok(_detached) => output,
+            Err(_) => {
+                output.tx.lock().take();
+                output
+            }
+        }
+    }
+
+    fn enqueue(&self, line: fmt::Arguments<'_>) {
+        let Some(tx) = self.tx.try_lock().and_then(|tx| tx.as_ref().cloned()) else {
+            self.note_drop();
+            return;
+        };
+        let Some(reservation) = self.reserve_queue_slot() else {
+            self.note_drop();
+            return;
+        };
+        let line = format_stderr_line(line);
+        if tx.try_send(line).is_ok() {
+            reservation.commit();
+        } else {
+            self.note_drop();
+        }
+    }
+
+    fn reserve_queue_slot(&self) -> Option<QueueSlot<'_>> {
+        let mut queued = self.queued.load(Ordering::Acquire);
+        loop {
+            if queued >= STDERR_QUEUE_LINES {
+                return None;
+            }
+            match self.queued.compare_exchange_weak(
+                queued,
+                queued + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Some(QueueSlot {
+                        queued: &self.queued,
+                        committed: false,
+                    });
+                }
+                Err(actual) => queued = actual,
+            }
+        }
+    }
+
+    fn note_drop(&self) {
+        self.dropped.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn shutdown(&self) {
+        self.tx.lock().take();
+    }
+
+    fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+}
+
+static STDERR_OUTPUT: LazyLock<StderrOutput> = LazyLock::new(StderrOutput::start);
+
+fn stderr_output() -> &'static StderrOutput {
+    &STDERR_OUTPUT
+}
+
+/// Start the process-owned stderr writer before slot workers start.
+///
+/// The writer is also started lazily if a host logs before process bootstrap.
+pub fn start_stderr_writer() {
+    let _ = stderr_output();
+}
+
+/// Close the stderr queue at process exit. The detached writer drains accepted
+/// lines when the sink works; it is not joined because a pipe can be blocked.
+pub fn shutdown_stderr_writer() {
+    if let Some(output) = LazyLock::get(&STDERR_OUTPUT) {
+        output.shutdown();
+    }
+}
+
+/// Number of stderr lines dropped because the sender lock was busy, the queue
+/// was full or closed, the worker could not start, or the stderr write failed.
+pub fn stderr_dropped() -> u64 {
+    LazyLock::get(&STDERR_OUTPUT).map_or(0, StderrOutput::dropped)
+}
+#[cfg(feature = "test-support")]
+/// Test hook that fills an isolated queue and records one process drop.
+#[doc(hidden)]
+pub fn test_fill_stderr_queue_and_drop_one_line() -> u64 {
+    let global = stderr_output();
+    let (output, receiver) = StderrOutput::channel_with_dropped(Arc::clone(&global.dropped));
+    for _ in 0..STDERR_QUEUE_LINES {
+        output.enqueue(format_args!("test"));
+    }
+    output.enqueue(format_args!("overflow"));
+    drop(output);
+    drop(receiver);
+    global.dropped()
+}
+
+const TRUNCATION_MARKER: &str = "…";
+
+struct BoundedLine {
+    line: String,
+    truncated: bool,
+}
+
+impl fmt::Write for BoundedLine {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        if self.truncated {
+            return Err(fmt::Error);
+        }
+        if value.len() <= STDERR_LINE_BYTES - self.line.len() {
+            self.line.push_str(value);
+            return Ok(());
+        }
+        let content_cap = STDERR_LINE_BYTES - TRUNCATION_MARKER.len();
+        if self.line.len() > content_cap {
+            let mut end = content_cap;
+            while !self.line.is_char_boundary(end) {
+                end -= 1;
+            }
+            self.line.truncate(end);
+        } else {
+            let mut end = (content_cap - self.line.len()).min(value.len());
+            while !value.is_char_boundary(end) {
+                end -= 1;
+            }
+            self.line.push_str(&value[..end]);
+        }
+        self.line.push_str(TRUNCATION_MARKER);
+        self.truncated = true;
+        Err(fmt::Error)
+    }
+}
+
+fn format_stderr_line(line: fmt::Arguments<'_>) -> String {
+    let mut bounded = BoundedLine {
+        line: String::with_capacity(STDERR_LINE_BYTES),
+        truncated: false,
+    };
+    let _ = fmt::write(&mut bounded, line);
+    bounded.line
+}
+
+fn run_stderr_writer(
+    rx: Receiver<String>,
+    dropped: Arc<AtomicU64>,
+    queued: Arc<AtomicUsize>,
+    mut on_wait: impl FnMut(),
+    mut write: impl FnMut(&str) -> std::io::Result<()>,
+) {
+    loop {
+        on_wait();
+        let Ok(line) = rx.recv() else {
+            break;
+        };
+        queued.fetch_sub(1, Ordering::AcqRel);
+        if write(&line).is_err() {
+            dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+fn run_process_stderr_writer(
+    rx: Receiver<String>,
+    dropped: Arc<AtomicU64>,
+    queued: Arc<AtomicUsize>,
+    on_wait: impl FnMut(),
+) {
+    let stderr = std::io::stderr();
+    run_stderr_writer(rx, dropped, queued, on_wait, |line| {
+        let mut stderr = stderr.lock();
+        write_line(&mut stderr, line)
+    });
 }
 
 static SINK: OnceLock<&'static dyn Sink> = OnceLock::new();
@@ -560,18 +802,14 @@ pub fn emit(emit: Emit<'_>, args: fmt::Arguments<'_>) {
     }
 }
 
-/// Writes one debug line to stderr. A failed write (for example a full disk
-/// behind a redirected stderr) is dropped: `eprintln!` would panic instead, and
-/// callers log while they hold shared locks, so one failed write would poison
-/// them for every slot.
+/// Enqueue one bounded stderr line. Only the worker performs I/O.
 #[cfg(not(test))]
 fn write_stderr(line: fmt::Arguments<'_>) {
-    write_line(&mut std::io::stderr().lock(), line);
+    stderr_output().enqueue(line);
 }
 
-fn write_line(out: &mut impl std::io::Write, line: fmt::Arguments<'_>) {
-    // A logging failure has nowhere better to go than the sink that failed.
-    let _ = writeln!(out, "{line}");
+fn write_line(out: &mut impl std::io::Write, line: &str) -> std::io::Result<()> {
+    writeln!(out, "{line}")
 }
 
 #[cfg(test)]
@@ -582,7 +820,7 @@ thread_local! {
 
 #[cfg(test)]
 fn write_stderr(line: fmt::Arguments<'_>) {
-    STDERR.with(|lines| lines.borrow_mut().push(line.to_string()));
+    STDERR.with(|lines| lines.borrow_mut().push(format_stderr_line(line)));
 }
 
 /// Log one host line through the routing facade.
