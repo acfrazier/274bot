@@ -4975,6 +4975,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_banking_open_logs_local_bank_route_and_queues_walk() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -5024,6 +5027,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_banking_open_logs_known_bank_access_after_walk() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     static NPC_BANK: api::named_banks::BankDefinition = api::named_banks::BankDefinition {
         name: "Shilo Village",
         tile: api::snapshot::WorldTile {
@@ -5339,6 +5345,9 @@ export default class T extends LoopingBot {{
 
 #[test]
 fn isolate_banking_open_logs_known_bank_access_for_obstacle_no_path() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     assert_npc_access_log_for_walk_result(
         r#"["  Door  ", "   "]"#,
         script::native::WalkEnd::NoPath,
@@ -5348,6 +5357,9 @@ fn isolate_banking_open_logs_known_bank_access_for_obstacle_no_path() {
 
 #[test]
 fn isolate_banking_open_skips_known_bank_access_for_blocked_walk_without_obstacles() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     assert_npc_access_log_for_walk_result(r#"["   "]"#, script::native::WalkEnd::Blocked, false);
 }
 
@@ -5370,6 +5382,9 @@ static DRAYNOR_BANK: api::named_banks::BankDefinition = api::named_banks::BankDe
 
 #[test]
 fn isolate_banking_open_logs_explicit_fallback_destination() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -5428,6 +5443,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_banking_open_logs_selected_fallback_bank() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -5509,6 +5527,9 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_banking_open_logs_visible_booth_tile() {
+    if !crate::local_game_data::local_game_data_available(289) {
+        return;
+    }
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
