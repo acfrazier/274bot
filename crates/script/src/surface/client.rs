@@ -82,7 +82,7 @@ pub enum SeatCompletion {
     Progress(ProgressPage),
     Walk(WalkCompletion),
     NextTick,
-    Aborted(AbortReason),
+    Aborted { awaited: Awaited, reason: AbortReason },
 }
 
 #[derive(Debug, Clone)]
@@ -177,11 +177,16 @@ impl SeatClient {
     /// even while Pause or a host hold delays its coroutine.
     pub fn reset(&mut self, execution: Option<ExecutionId>) -> u64 {
         self.clear_session_work(execution);
-        if self.awaiting.is_some() && self.stored.is_none() {
-            self.stored = Some(StoredCompletion {
-                value: SeatCompletion::Aborted(AbortReason::Reset),
-                terminal_seq: 0,
-            });
+        if self.stored.is_none() {
+            if let Some(awaited) = self.awaiting {
+                self.stored = Some(StoredCompletion {
+                    value: SeatCompletion::Aborted {
+                        awaited,
+                        reason: AbortReason::Reset,
+                    },
+                    terminal_seq: 0,
+                });
+            }
         }
         self.work_generation
     }
@@ -710,7 +715,7 @@ impl SeatClient {
         self.rearm_walk_on_tick = false;
         if matches!(
             stored.value,
-            SeatCompletion::Walk(_) | SeatCompletion::Aborted(_)
+            SeatCompletion::Walk(_) | SeatCompletion::Aborted { .. }
         ) {
             self.walk.reset();
             self.walk_request = None;

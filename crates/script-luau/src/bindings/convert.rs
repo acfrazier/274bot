@@ -14,7 +14,7 @@ use script::interact::InteractReq;
 use script::native::seat::SeatTerminal;
 use script::native::snapshot_source::TileInput;
 use script::native::WalkCancelReason;
-use script::surface::client::{ClientError, SeatCompletion, WalkCompletion};
+use script::surface::client::{Awaited, ClientError, SeatCompletion, WalkCompletion};
 
 /// The most arguments that a fixed-arity binding takes.
 pub(crate) const MAX_ARGS: usize = 5;
@@ -479,9 +479,13 @@ pub(crate) fn completion(lua: &Lua, completion: &SeatCompletion) -> mlua::Result
             bank_result(lua, result.outcome, value.as_deref()).map(Value::Table)
         }
         SeatCompletion::Walk(walk) => walk_result(lua, walk).map(Value::Table),
-        SeatCompletion::Aborted(reason) => {
-            bank_result(lua, SeatTerminal::Aborted(*reason), None).map(Value::Table)
-        }
+        SeatCompletion::Aborted { awaited, reason } => match awaited {
+            Awaited::NextTick => Ok(Value::Nil),
+            Awaited::Walk { .. } => walk_aborted_result(lua, *reason).map(Value::Table),
+            Awaited::Seat { .. } => {
+                bank_result(lua, SeatTerminal::Aborted(*reason), None).map(Value::Table)
+            }
+        },
         SeatCompletion::NextTick
         | SeatCompletion::Gather(_)
         | SeatCompletion::Combat(_)
@@ -562,6 +566,17 @@ fn walk_result(lua: &Lua, walk: &WalkCompletion) -> mlua::Result<Table> {
     result.raw_set("request_id", walk.id.get() as f64)?;
     result.raw_set("generation", walk.generation as f64)?;
     result.raw_set("seq", walk.sequence as f64)?;
+    Ok(result)
+}
+
+fn walk_aborted_result(
+    lua: &Lua,
+    reason: api::script_contract::AbortReason,
+) -> mlua::Result<Table> {
+    let result = lua.create_table()?;
+    result.raw_set("ok", false)?;
+    result.raw_set("failed", true)?;
+    result.raw_set("aborted", abort_reason(reason))?;
     Ok(result)
 }
 

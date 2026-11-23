@@ -48,6 +48,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   Choose **Never** in Nav config or TUI Settings when a low-level bot must avoid
   aggressive monsters. For example, choose **Never** near the King Scorpion
   zones by Falador East.
+- Luau walk awaits aborted by a session reset return failed walk results,
+  preserving the awaited operation's result shape.
 
 ### Scenario observations
 

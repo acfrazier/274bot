@@ -886,7 +886,7 @@ fn test_completion_table(
             result.set("token", request_token)?;
             result.set("status", "done")?;
         }
-        SeatCompletion::Aborted(reason) => {
+        SeatCompletion::Aborted { reason, .. } => {
             result.set("kind", "aborted")?;
             result.set("token", request_token)?;
             result.set("status", "aborted")?;

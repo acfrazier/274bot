@@ -536,7 +536,13 @@ fn reset_discards_stale_starts_cancels_and_restored_rows() {
     assert!(client.drain_lifecycle().is_empty());
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Aborted(AbortReason::Reset))
+        Some(SeatCompletion::Aborted {
+            awaited: Awaited::Seat {
+                id,
+                kind: NativeKind::BankPlan,
+            },
+            reason: AbortReason::Reset,
+        })
     );
 }
 
@@ -577,7 +583,13 @@ fn reset_advances_the_work_generation_for_new_batches() {
     assert_eq!(new_generation, old_generation + 1);
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Aborted(AbortReason::Reset))
+        Some(SeatCompletion::Aborted {
+            awaited: Awaited::Seat {
+                id: old_id,
+                kind: NativeKind::BankPlan,
+            },
+            reason: AbortReason::Reset,
+        })
     );
     let new_id = client
         .start_awaited(NativeKind::BankPlan, SeatStartArgs::Empty, None)
