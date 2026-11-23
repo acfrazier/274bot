@@ -157,3 +157,52 @@ fn follow_does_not_spend_the_send_budget_while_a_route_limit_holds_it() {
     );
     assert_eq!(driver.walked, [(0, 2)]);
 }
+
+#[test]
+fn a_route_limit_that_regresses_under_a_sent_hop_restarts_its_unsent_clock() {
+    let mut client = scene_client();
+    let mut snapshot = snap_at(&mut client, 0, 0);
+    snapshot.seed_tick(1);
+    let mut driver = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let route = Route {
+        legs: vec![walk_leg(&[
+            (3200, 3200),
+            (3200, 3201),
+            (3200, 3202),
+            (3200, 3203),
+        ])],
+        dest: WorldTile {
+            x: 3200,
+            z: 3203,
+            level: 0,
+        },
+        ticks: 3.0,
+    };
+    let mut options = TravelOptions {
+        close_enough: 0,
+        budget_ticks_per_hop: 3,
+        ..TravelOptions::default()
+    };
+    // The hop is sent to the last tile on tick 1 and the player does not move.
+    assert_eq!(
+        traveller.follow(&mut driver, &snapshot, route.clone(), &mut options),
+        None
+    );
+    assert_eq!(driver.walked, [(0, 3)]);
+    // On tick 4 the hop's clock has run its whole budget (3), and the owner
+    // lowers the route limit under the sent aim. The hop becomes unsent: its
+    // unsent clock starts here, so it sends the lower aim at once and does
+    // not stall on the clock it had as a sent hop.
+    snapshot.seed_tick(4);
+    options.route_index_limit = Some(1);
+    assert_eq!(
+        traveller.follow(&mut driver, &snapshot, route, &mut options),
+        None,
+        "the unsent clock restarts when the limit regresses"
+    );
+    assert_eq!(driver.walked, [(0, 3), (0, 1)]);
+}

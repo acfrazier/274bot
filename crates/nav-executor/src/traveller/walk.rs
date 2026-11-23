@@ -519,6 +519,13 @@ impl FollowRun {
         // Refusals happen before a packet is sent, but must not leave the
         // route armed forever. Reuse the configured hop allowance (60 game
         // ticks by default); accepted movement gets its own planned budget.
+        // Basis: a map-rebuild refusal (`SceneUnavailable`) ends when the
+        // client has its map squares. In the revision-289 live receipt of
+        // CLIENT-PIN-F09FFBB (review-opus, pass 2) each of 8 rebuilds during a
+        // walk showed the refusing scene state on one sampled tick, so 60 is
+        // about 60 times that. `OffScene` and `Unreachable` refusals have no
+        // engine timer (another player can keep a door closed): any finite
+        // bound for them is policy, not content.
         if hop.ticks_waited.observe(snapshot.tick()) >= self.budget {
             self.log_walk_stall(&hop, snapshot, here, HopFailure::Dropped);
             fire_leg(options, &hop.leg(), LegPhase::Failed);
