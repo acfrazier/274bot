@@ -586,7 +586,8 @@ fn per_bot_memory_is_small() {
          thread-local SlotRecorder {recorder} B, total {} B per bot",
         shared + entry + recorder
     );
-    assert!(shared + entry + recorder <= 512);
+    // The last-service receipt adds 16 B: measured 520 B plus 64 B headroom.
+    assert!(shared + entry + recorder <= 584);
 }
 
 /// Live receipts read every counted service's delay, short ones too.

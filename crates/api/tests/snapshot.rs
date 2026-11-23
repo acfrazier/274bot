@@ -4549,6 +4549,29 @@ fn full_snapshot_counts_player_info_not_player_invalidations() {
 }
 
 #[test]
+fn drain_after_a_lazy_player_read_does_not_count_packets_twice() {
+    let mut c = client_with_npc();
+    let mut snap = GameSnapshot::new();
+    for _ in 0..2 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+    }
+    assert!(snap.rebuild_family(&c, Family::Player));
+    assert_eq!(snap.tick(), 2);
+
+    for _ in 0..3 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+    }
+    snap.rebuild_from_drain(&c, 5);
+    assert_eq!(snap.tick(), 5, "only the three unseen packets advance the view");
+    assert_eq!(snap.tick_health().server_ticks, 5);
+    assert_eq!(snap.tick_health().packet_delta, 5);
+
+    snap.rebuild_from_drain(&c, 5);
+    assert_eq!(snap.tick(), 5, "republication cannot count the drain twice");
+    assert_eq!(snap.tick_health().packet_delta, 0);
+}
+
+#[test]
 fn walk_diagnostic_history_uses_observed_scene_and_server_movement() {
     let mut c = client_with_npc();
     c.ingame = true;

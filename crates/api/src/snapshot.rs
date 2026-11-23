@@ -995,7 +995,12 @@ impl GameSnapshot {
             client.ingame && client.last_login_reconnect == Some(false),
             login_player_info,
         );
-        let player_info_ticks = packet_delta;
+        // A lazy player-family read may already have counted part of this drain.
+        let player_info_ticks = if packet_delta != 0 {
+            client.gens.player_info.wrapping_sub(self.gens.player_info)
+        } else {
+            0
+        };
         self.refresh_native_facts(client);
         self.loc_bits_prelude = Some(loc_dirty_bits(client));
         let mut dirty = false;
