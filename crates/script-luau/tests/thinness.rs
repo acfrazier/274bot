@@ -1592,33 +1592,52 @@ struct LiveCell {
 }
 
 fn live_cell(map: &str, cell_id: &str) -> Result<LiveCell, String> {
-    let marker = format!("\"{cell_id}|");
-    let mut matches = map.split("[[cover]]").skip(1).filter_map(|cover| {
-        let (before_cells, cells) = cover.split_once("cells =")?;
-        let globs = before_cells.split_once("globs =")?.1;
-        let covers_luau_source = globs.contains("\"crates/script-luau/src/**\"");
-        let line = cells.lines().find(|line| line.contains(&marker))?;
-        let command = line
-            .split_once(&marker)?
-            .1
-            .split('"')
-            .next()?
-            .split('|')
-            .next()?;
-        Some(LiveCell {
-            command: command.to_owned(),
-            covers_luau_source,
-        })
-    });
-    let cell = matches
-        .next()
+    let document = map
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| format!("tools/live-map/map.toml is invalid TOML: {error}"))?;
+    let covers = document
+        .get("cover")
+        .and_then(|item| item.as_array_of_tables())
         .ok_or_else(|| format!("`{cell_id}` does not name a cell of tools/live-map/map.toml"))?;
-    if matches.next().is_some() {
-        return Err(format!(
-            "cell id `{cell_id}` is not unique in tools/live-map/map.toml"
-        ));
+    let mut cell: Option<LiveCell> = None;
+
+    for cover in covers.iter() {
+        let covers_luau_source = cover
+            .get("globs")
+            .and_then(|item| item.as_array())
+            .is_some_and(|globs| {
+                globs
+                    .iter()
+                    .any(|glob| glob.as_str() == Some("crates/script-luau/src/**"))
+            });
+        let Some(cells) = cover.get("cells").and_then(|item| item.as_array()) else {
+            continue;
+        };
+        for spec in cells.iter().filter_map(|value| value.as_str()) {
+            let Some((name, fields)) = spec.split_once('|') else {
+                continue;
+            };
+            if name.trim() != cell_id {
+                continue;
+            }
+            let command = fields.split('|').next().unwrap_or_default().trim();
+            if let Some(previous) = &mut cell {
+                if previous.command != command {
+                    return Err(format!(
+                        "cell id `{cell_id}` has conflicting commands in tools/live-map/map.toml"
+                    ));
+                }
+                previous.covers_luau_source |= covers_luau_source;
+            } else {
+                cell = Some(LiveCell {
+                    command: command.to_owned(),
+                    covers_luau_source,
+                });
+            }
+        }
     }
-    Ok(cell)
+
+    cell.ok_or_else(|| format!("`{cell_id}` does not name a cell of tools/live-map/map.toml"))
 }
 
 fn exception_cell_error(
@@ -1779,6 +1798,92 @@ fn every_t6_cell_requirement_fails_closed_in_negative_fixtures() {
             .expect_err(name);
         assert!(error.contains(expected), "{name}: {error}");
     }
+}
+
+#[test]
+fn commented_or_out_of_array_map_values_do_not_count() {
+    let fixtures = [
+        (
+            "a commented-out cell",
+            r#"
+[[cover]]
+globs = ["crates/script-luau/src/**"]
+cells = [
+    # "host.luau-lifecycle|LIVE=1 cargo test --test script_api_live",
+]
+"#,
+            "does not name a cell",
+        ),
+        (
+            "a commented-out glob",
+            r#"
+[[cover]]
+# globs = ["crates/script-luau/src/**"]
+globs = ["crates/host-play/src/**"]
+cells = ["host.luau-lifecycle|LIVE=1 cargo test --test script_api_live"]
+"#,
+            "does not include `crates/script-luau/src/**`",
+        ),
+        (
+            "cell text outside the cells array",
+            r#"
+[[cover]]
+globs = ["crates/script-luau/src/**"]
+cells = []
+other = ["host.luau-lifecycle|LIVE=1 cargo test --test script_api_live"]
+"#,
+            "does not name a cell",
+        ),
+        (
+            "glob text outside the globs array",
+            r#"
+[[cover]]
+globs = ["crates/host-play/src/**"]
+extra_globs = ["crates/script-luau/src/**"]
+cells = ["host.luau-lifecycle|LIVE=1 cargo test --test script_api_live"]
+"#,
+            "does not include `crates/script-luau/src/**`",
+        ),
+    ];
+    for (name, map, expected) in fixtures {
+        let error = exception_cell_error("wait", "host.luau-lifecycle", map, |_| {
+            Some("api.wait()".to_owned())
+        })
+        .expect_err(name);
+        assert!(error.contains(expected), "{name}: {error}");
+    }
+}
+
+#[test]
+fn repeated_live_cell_with_identical_command_is_accepted() {
+    let command = "LIVE=1 cargo test --test script_api_live";
+    let map = format!(
+        "{}{}",
+        live_map_fixture(command, "crates/host-play/src/**"),
+        live_map_fixture(command, "crates/script-luau/src/**")
+    );
+    exception_cell_error("wait", "host.luau-lifecycle", &map, |_| {
+        Some("api.wait()".to_owned())
+    })
+    .unwrap_or_else(|error| panic!("identical cell commands should be accepted: {error}"));
+}
+
+#[test]
+fn repeated_live_cell_with_conflicting_command_is_refused() {
+    let map = format!(
+        "{}{}",
+        live_map_fixture(
+            "LIVE=1 cargo test --test script_api_live",
+            "crates/script-luau/src/**"
+        ),
+        live_map_fixture(
+            "LIVE=1 cargo test --test script_api_live -- --ignored",
+            "crates/script-luau/src/**"
+        )
+    );
+    let error = live_cell(&map, "host.luau-lifecycle")
+        .expect_err("a duplicated cell id with different commands must be refused");
+    assert!(error.contains("conflicting commands"), "{error}");
 }
 
 /// `Interface.member` is a member line of that interface block;
