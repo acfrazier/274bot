@@ -353,12 +353,20 @@ impl Counters {
     /// the released lines therefore never allocates while the old buffer is
     /// alive, and storage stays within [`STDERR_QUEUE_BYTES`].
     fn finish(&self, entry: Entry, write_failed: bool) {
+        self.finish_then(entry, write_failed, || {});
+    }
+
+    /// [`Counters::finish`], then `after_release` runs: the point at which a
+    /// producer on another thread may reserve the released lines. A test runs
+    /// that producer here to check that the buffer is already freed.
+    fn finish_then(&self, entry: Entry, write_failed: bool, after_release: impl FnOnce()) {
         if write_failed {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
         let lines = entry.lines;
         drop(entry);
         self.release(lines);
+        after_release();
     }
 }
 

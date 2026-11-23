@@ -727,20 +727,21 @@ fn split_entries_stay_within_the_bound_and_a_refusal_allocates_nothing() {
 #[test]
 fn a_writer_that_drains_while_producers_refill_never_exceeds_the_bound() {
     // Every entry is sixteen full lines, so sixteen of them fill the queue and
-    // the whole bound is in use. The writer takes an entry, writes it, frees
-    // its buffer and releases its lines (`write_entry`); the producer that
-    // reserves those lines allocates at once. The buffer must be gone first.
+    // the whole bound is in use. The writer takes an entry, frees its buffer
+    // and releases its lines (`Counters::finish`); the producer that reserves
+    // those lines allocates at once. The buffer must be gone first.
     let text = "w".repeat(STDERR_ENTRY_LINES * STDERR_PIECE_BYTES);
     let (output, receiver) = StderrOutput::channel();
-    let mut sink = |_: &str| Ok(());
     let measured = allocation_counter::measure(|| {
         for _ in 0..STDERR_QUEUE_LINES / STDERR_ENTRY_LINES {
             output.enqueue(format_args!("{text}"));
         }
         for _ in 0..64 {
             let entry = receiver.try_recv().expect("a queued entry");
-            write_entry(entry, &output.counters, &mut sink);
-            output.enqueue(format_args!("{text}"));
+            // The producer that takes the released lines runs at once.
+            output
+                .counters
+                .finish_then(entry, false, || output.enqueue(format_args!("{text}")));
         }
     });
     assert_eq!(output.dropped(), 0, "every refill found room");
