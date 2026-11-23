@@ -1,5 +1,5 @@
 // MarketMaker helper surface is not impl — every member throws on use.
-const notImpl = (name) => new Error('not impl: ' + name);
+import { notImpl } from '../../shim/_kernel.js';
 
 export const MarketMaker = new Proxy(
     {},

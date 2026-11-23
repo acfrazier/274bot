@@ -1388,3 +1388,65 @@ globalThis.__clientHelperFacts = {
         })
     );
 }
+
+#[test]
+fn compat_v1_runtime_market_maker_missing_member_has_not_implemented_kind() {
+    let src = bot(
+        "import { MarketMaker } from '../../api/market/MarketMaker.js';",
+        r#"
+let missing;
+try {
+    MarketMaker.__compat_census_unknown;
+} catch (error) {
+    missing = { kind: error.kind, message: error.message };
+}
+globalThis.__missing = missing;
+"#,
+    );
+    assert_eq!(
+        run(&src, "globalThis.__missing"),
+        serde_json::json!({
+            "kind": "not-implemented",
+            "message": "not impl: MarketMaker.__compat_census_unknown",
+        })
+    );
+}
+
+#[test]
+fn compat_v1_runtime_execution_invalid_waits_have_not_implemented_kind() {
+    let src = async_bot(
+        "import { Execution } from '../../api/execution/Execution.js';",
+        r#"
+globalThis.__errors = [];
+try {
+    await Execution.delayUntil(null);
+} catch (error) {
+    globalThis.__errors.push({ kind: error.kind, message: error.message });
+}
+try {
+    await Execution.delayUntilTicks(null, 1);
+} catch (error) {
+    globalThis.__errors.push({ kind: error.kind, message: error.message });
+}
+"#,
+    );
+    let iso = spawn(&src);
+    iso.on_game_tick(1);
+    let errors = iso
+        .probe("globalThis.__errors")
+        .expect("read Execution errors");
+    iso.join();
+    assert_eq!(
+        errors,
+        serde_json::json!([
+            {
+                "kind": "not-implemented",
+                "message": "not impl: Execution.delayUntil: requires a function",
+            },
+            {
+                "kind": "not-implemented",
+                "message": "not impl: Execution.delayUntilTicks: requires a function",
+            },
+        ])
+    );
+}

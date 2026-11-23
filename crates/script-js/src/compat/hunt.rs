@@ -702,9 +702,9 @@ impl<K: Kind> Hunt<K> {
                     self.reply = Some(ack);
                 }
                 None => {
-                    return Ok(Some(
-                        self.fail(Thrown::new(format!("not impl: hunt effect {kind:?}"))),
-                    ));
+                    return Ok(Some(self.fail(Thrown::not_implemented(format!(
+                        "not impl: hunt effect {kind:?}"
+                    )))));
                 }
             },
         }

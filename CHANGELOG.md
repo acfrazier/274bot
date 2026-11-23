@@ -20,6 +20,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Native `Banking.open` reports known-bank access, fallback destinations, and
   visible booths through its optional log callback.
 
+- JavaScript compatibility errors for unimplemented features expose
+  `kind: 'not-implemented'`. Bank-operation refusals identify the member.
+
 ### Quester
 
 - Unsupported combat stages size food from available damage facts instead of
@@ -373,6 +376,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   - AccountLeveler, unchanged, ran ten game ticks without a script error on a
     test server, once on a new Tutorial Island account and once on a mainland
     account. That was a start-and-run check, not a full training session.
+
+- `Bank.depositAllMatching` sets `error.kind` to `refused` when the operation is
+  refused. The message says `cannot do that now` and keeps the member name and
+  reason. A missing member sets `error.kind` to `not-implemented` and keeps its
+  `not impl` message.
 
 - A native script's manifest supplies its description, category, tags and
   settings. The picker shows them for a loaded file. The card keeps the

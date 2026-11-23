@@ -3,10 +3,9 @@ import { parkMachine } from '../api/execution/Execution.js';
 
 export const host = () => globalThis.__rs2b0t_host || {};
 export const snap = () => host().snapshot || {};
-export const notImpl = (name, reason) =>
-    new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
-export const refused = (reason) =>
-    new Error(reason ? 'cannot do that now: ' + reason : 'cannot do that now');
+// The PRELUDE in modules.rs defines these before compatibility modules load.
+export const notImpl = globalThis.__rs2b0t_not_impl;
+export const refused = globalThis.__rs2b0t_refused;
 export const queue = (req) => {
     const h = host();
     const interact = h.interact ?? (h.interact = []);
