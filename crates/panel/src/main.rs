@@ -10,7 +10,7 @@ fn parse_args() -> panel::PanelArgs {
         Ok(args) => args,
         Err((code, msg)) => {
             eprintln!("{msg}");
-            std::process::exit(code);
+            api::hostlog::exit_process(code);
         }
     }
 }

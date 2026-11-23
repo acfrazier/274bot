@@ -633,15 +633,36 @@ pub fn stderr_drain() -> StderrDrain {
 
 impl Drop for StderrDrain {
     fn drop(&mut self) {
-        let lost = shutdown_stderr_writer();
-        if lost > 0 {
-            crate::host_log!(
-                Category::Lifecycle,
-                Level::Warn,
-                "stderr: {lost} log entries were still pending at exit and are counted as dropped"
-            );
-        }
+        drain_stderr();
     }
+}
+
+/// The bounded drain of [`StderrDrain`]; idempotent.
+fn drain_stderr() {
+    let lost = shutdown_stderr_writer();
+    if lost > 0 {
+        crate::host_log!(
+            Category::Lifecycle,
+            Level::Warn,
+            "stderr: {lost} log entries were still pending at exit and are counted as dropped"
+        );
+    }
+}
+
+/// Drain the stderr queue (bounded, as [`StderrDrain`]), then end the process
+/// with `code`. Use it instead of `std::process::exit` in a binary that logs
+/// through the host log: `exit` skips the guard's drop, so a line queued just
+/// before it would be lost.
+pub fn exit_process(code: i32) -> ! {
+    drain_stderr();
+    std::process::exit(code)
+}
+
+/// Drain the stderr queue (bounded), then abort the process; the abort
+/// counterpart of [`exit_process`].
+pub fn abort_process() -> ! {
+    drain_stderr();
+    std::process::abort()
 }
 
 /// Number of log entries dropped because the sender lock was busy, the queue

@@ -10,7 +10,10 @@ fn bad_flag_prints_error_and_exits_without_hanging() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("start panel-play");
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // A start on a loaded host took over five seconds in three full-suite runs,
+    // while a warm run takes 10 ms: the deadline separates a slow start from a
+    // hang.
+    let deadline = Instant::now() + Duration::from_secs(30);
 
     loop {
         if child.try_wait().expect("poll panel-play").is_some() {
@@ -19,7 +22,7 @@ fn bad_flag_prints_error_and_exits_without_hanging() {
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("panel-play did not exit after rejecting a bad flag within five seconds");
+            panic!("panel-play did not exit after rejecting a bad flag within thirty seconds");
         }
         std::thread::park_timeout(Duration::from_millis(10));
     }

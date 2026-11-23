@@ -34,7 +34,7 @@ fn usage() -> ! {
          [--vault-pass-stdin] [--lowmem|--highmem] [--mainland] [--debug] \
          [--user USER]... (default user: test)"
     );
-    std::process::exit(2);
+    api::hostlog::exit_process(2);
 }
 
 fn parse_args_from<I>(args: I) -> Result<Args, String>

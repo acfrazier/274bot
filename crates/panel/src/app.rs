@@ -410,7 +410,8 @@ fn exit_after_work_shutdown(code: i32) -> ! {
             1
         }
     };
-    std::process::exit(code)
+    // `exit` skips the guard of `main`: drain the stderr queue first.
+    api::hostlog::exit_process(code)
 }
 
 fn fail_startup(session: &mut Session, fatal: bool, error: String) -> Option<window::PanelError> {

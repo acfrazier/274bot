@@ -137,7 +137,8 @@ fn exit_after_work_shutdown(code: i32) -> ! {
             1
         }
     };
-    std::process::exit(code)
+    // `exit` skips the guard of `main`: drain the stderr queue first.
+    api::hostlog::exit_process(code)
 }
 
 /// Usage on stderr for a bad invocation (exit 2, the CLI family's convention).
