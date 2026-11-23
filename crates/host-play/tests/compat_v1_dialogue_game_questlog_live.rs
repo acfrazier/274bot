@@ -5,6 +5,9 @@
 
 #![cfg(feature = "live-harness")]
 
+#[path = "support/test_executable.rs"]
+mod test_executable;
+
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -1463,7 +1466,7 @@ fn run_captured(test_name: &str, cell: Cell, body: fn()) {
     }
 
     let trace = evidence.join(format!("{}-driver-trace.txt", cell.name()));
-    let status = Command::new(std::env::current_exe().expect("test executable"))
+    let status = Command::new(test_executable::executable().expect("test executable"))
         .args([
             "--exact",
             test_name,

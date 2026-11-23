@@ -12,19 +12,13 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+#[path = "../tests/support/test_executable.rs"]
+mod test_executable;
+
 static STATE_AND_SPAWN: Mutex<()> = Mutex::new(());
 
-/// Use the running image even if another Cargo invocation relinks its path.
 pub(crate) fn executable() -> PathBuf {
-    #[cfg(target_os = "linux")]
-    {
-        // A PID also works when a shell launches the child on our behalf.
-        PathBuf::from(format!("/proc/{}/exe", std::process::id()))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        std::env::current_exe().expect("the current test executable has a path")
-    }
+    test_executable::executable().expect("the current test executable has a path")
 }
 
 /// Hold through a state test, including its service and root teardown.
