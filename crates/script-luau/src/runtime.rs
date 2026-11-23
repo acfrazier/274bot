@@ -7,14 +7,12 @@ use mlua::thread::ThreadStatus;
 use mlua::{Error, Function, Lua, LuaOptions, LuaString, MultiValue, StdLib, Table, Thread, Value};
 #[cfg(feature = "test-hooks")]
 use script::api_progress::ProgressPage;
+use script::bank::request::BankSeatArgs;
 use script::native::recovery_hints::RecoveryHintsCell;
-#[cfg(feature = "test-hooks")]
 use script::native::request::NativeKind;
 #[cfg(feature = "test-hooks")]
 use script::native::seat::SeatTerminal;
-use script::native::seat_rows::QueuedSeatBatch;
-#[cfg(feature = "test-hooks")]
-use script::native::seat_rows::SeatStartArgs;
+use script::native::seat_rows::{QueuedSeatBatch, SeatStartArgs};
 use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
 #[cfg(feature = "test-hooks")]
 use script::native::WalkCancelReason;
@@ -1333,6 +1331,38 @@ impl RunState {
             frame.input,
         )?;
         self.wait_armed.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Starts a typed bank operation through the native seat.
+    pub(crate) fn await_bank(
+        &self,
+        args: BankSeatArgs,
+        frame: Option<&Frame<'_>>,
+    ) -> Result<(), Refusal> {
+        if self.phase() != PHASE_TICK {
+            return Err(Refusal::Run("is only available during tick"));
+        }
+        let _ = frame.ok_or(Refusal::NoInput)?;
+        args.validate(NativeKind::BankPlan)
+            .map_err(|_| Refusal::Run("native bank request is invalid"))?;
+        self.client_lock()?
+            .start_awaited(NativeKind::BankPlan, SeatStartArgs::Bank(args), None)?;
+        self.wait_armed.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Queues one typed entity interaction through the native seat.
+    pub(crate) fn queue_interaction(
+        &self,
+        request: InteractReq,
+        frame: Option<&Frame<'_>>,
+    ) -> Result<(), Refusal> {
+        if self.phase() != PHASE_TICK {
+            return Err(Refusal::Run("is only available during tick"));
+        }
+        let _ = frame.ok_or(Refusal::NoInput)?;
+        self.client_lock()?.queue_interaction(request)?;
         Ok(())
     }
 

@@ -39,6 +39,8 @@ pub enum ClientError {
     IdExhausted,
     #[error("only walk and walk-near requests can start a walk wait")]
     NotWalk,
+    #[error("only NPC, loc, ground-item, player and held requests are interactions")]
+    NotInteraction,
 }
 
 /// One awaited operation; only one tick coroutine exists in a run.
@@ -397,6 +399,33 @@ impl SeatClient {
         });
         self.lifecycle.push(InteractReq::WaitEnqueued);
         Ok(id)
+    }
+
+    /// Queue one native interaction row. The slot remains the only authority
+    /// that resolves and admits its target.
+    pub fn queue_interaction(&mut self, request: InteractReq) -> Result<(), ClientError> {
+        if self.awaiting.is_some() {
+            return Err(ClientError::AlreadyWaiting);
+        }
+        if !matches!(
+            &request,
+            InteractReq::Npc { .. }
+                | InteractReq::Loc { .. }
+                | InteractReq::Obj { .. }
+                | InteractReq::Player { .. }
+                | InteractReq::Held { .. }
+        ) {
+            return Err(ClientError::NotInteraction);
+        }
+        if self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS {
+            return Err(ClientError::RowsFull);
+        }
+        self.reqs.push(SeatInteractDecoded {
+            lineage: None,
+            mirror_owner: None,
+            request,
+        });
+        Ok(())
     }
 
     /// Abort only the walk whose token this client owns. A later walk cannot

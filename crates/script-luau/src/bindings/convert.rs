@@ -7,6 +7,7 @@
 //! (ADR 0023 item 26).
 
 use mlua::{BorrowedStr, Lua, LuaString, MultiValue, Table, Value};
+use script::bank::request::{BankSeatArgs, BankSeatOperation};
 use script::interact::InteractReq;
 use script::native::snapshot_source::TileInput;
 use script::native::WalkCancelReason;
@@ -392,8 +393,74 @@ pub(crate) fn walk_request(args: &Args, shape: WalkShape) -> Result<InteractReq,
     }
 }
 
-/// The value that resumes an awaited binding. `api.wait` resumes with
-/// nothing; a walk resumes with its result table.
+fn required_text(value: &Value, argument: &'static str) -> Result<String, Refusal> {
+    match value {
+        Value::String(text) => match text.to_str() {
+            Ok(text) => Ok(text.to_owned()),
+            Err(_) => Err(refuse(argument, "UTF-8 text")),
+        },
+        _ => Err(refuse(argument, "a string")),
+    }
+}
+
+fn optional_nonnegative(value: &Value, argument: &'static str) -> Result<Option<i32>, Refusal> {
+    match value {
+        Value::Nil => Ok(None),
+        _ => nonnegative(value, argument).map(Some),
+    }
+}
+
+pub(crate) fn bank_request(operation: BankSeatOperation) -> BankSeatArgs {
+    BankSeatArgs::new(operation)
+}
+
+pub(crate) fn npc_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::Npc {
+        name: required_text(args.first(), "name")?,
+        action: required_text(args.second(), "action")?,
+        index: optional_nonnegative(args.third(), "index")?,
+    })
+}
+
+pub(crate) fn loc_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::Loc {
+        x: integer(args.first(), "x")?,
+        z: integer(args.second(), "z")?,
+        level: integer(args.third(), "level")?,
+        action: required_text(args.fourth(), "action")?,
+        id: Some(nonnegative(args.fifth(), "id")?),
+    })
+}
+
+pub(crate) fn obj_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::Obj {
+        x: integer(args.first(), "x")?,
+        z: integer(args.second(), "z")?,
+        level: integer(args.third(), "level")?,
+        name: None,
+        action: required_text(args.fourth(), "action")?,
+        id: Some(nonnegative(args.fifth(), "id")?),
+    })
+}
+
+pub(crate) fn player_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::Player {
+        name: required_text(args.first(), "name")?,
+        action: required_text(args.second(), "action")?,
+    })
+}
+
+pub(crate) fn held_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::Held {
+        name: required_text(args.first(), "name")?,
+        action: required_text(args.second(), "action")?,
+        slot: Some(nonnegative(args.third(), "slot")?),
+        target_item_id: Some(nonnegative(args.fourth(), "target_item_id")?),
+    })
+}
+
+/// The value that resumes an awaited binding. `api.wait` and bank operations
+/// resume with nil; a walk resumes with its result table.
 pub(crate) fn completion(lua: &Lua, completion: &SeatCompletion) -> mlua::Result<Value> {
     match completion {
         SeatCompletion::Walk(walk) => walk_result(lua, walk).map(Value::Table),
@@ -404,8 +471,8 @@ pub(crate) fn completion(lua: &Lua, completion: &SeatCompletion) -> mlua::Result
             result.raw_set("aborted", abort_reason(*reason))?;
             Ok(Value::Table(result))
         }
-        // No member of this API awaits a seat start; `api.wait` resumes with
-        // nothing.
+        // Bank starts and `api.wait` have no result value. The current surface
+        // has no binding that awaits the other handled native families.
         SeatCompletion::NextTick
         | SeatCompletion::Terminal(_)
         | SeatCompletion::Gather(_)

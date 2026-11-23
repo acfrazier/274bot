@@ -98,6 +98,24 @@ struct Fixture {
     observed_tick: u32,
     started: bool,
     start_tile: Option<WorldTile>,
+    #[cfg(feature = "luau")]
+    bank_booth: Option<L4bBankBooth>,
+    #[cfg(feature = "luau")]
+    seed_bank_axe: bool,
+    #[cfg(feature = "luau")]
+    bank_axe_seeded: bool,
+    #[cfg(feature = "luau")]
+    bank_axe_visible: bool,
+    #[cfg(feature = "luau")]
+    bank_axe_inventory_before: Option<i32>,
+    #[cfg(feature = "luau")]
+    bank_axe_inventory_after_seed: Option<i32>,
+    #[cfg(feature = "luau")]
+    bank_axe_before: Option<i32>,
+    #[cfg(feature = "luau")]
+    bank_axe_after: Option<i32>,
+    #[cfg(feature = "luau")]
+    bank_open: bool,
     /// Seed combat stats when the fixture needs combat-level routing.
     seed_combat_stats: bool,
     walk_arrival: Option<WorldTile>,
@@ -118,6 +136,14 @@ struct Fixture {
     tutorial_reseed_baseline: i32,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
+#[cfg(feature = "luau")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct L4bBankBooth {
+    id: i32,
+    tile: WorldTile,
+    op: i32,
+    distance: i32,
+}
 
 fn cheat(client: &mut Client, command: &str) -> Result<(), String> {
     if interact::cheat(client, command).is_sent() {
@@ -135,6 +161,36 @@ fn chat_has(snapshot: &GameSnapshot, needle: &str) -> bool {
             .chat_modal_texts()
             .iter()
             .any(|line| line.contains(needle))
+}
+
+#[cfg(feature = "luau")]
+fn nearby_bank_booth(snapshot: &GameSnapshot) -> Option<L4bBankBooth> {
+    snapshot
+        .locs()
+        .iter()
+        .filter_map(|loc| {
+            if loc.distance > 8
+                || !loc
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("Bank booth"))
+            {
+                return None;
+            }
+            let action_index = loc.actions.iter().position(|action| {
+                action
+                    .as_deref()
+                    .is_some_and(|action| action.eq_ignore_ascii_case("Use-quickly"))
+            })?;
+            let op = i32::try_from(action_index + 1).ok()?;
+            (1..=5).contains(&op).then_some(L4bBankBooth {
+                id: loc.id,
+                tile: loc.tile,
+                op,
+                distance: loc.distance,
+            })
+        })
+        .min_by_key(|booth| booth.distance)
 }
 
 /// Which pre-relog `getvar tutorial` reply the gate is waiting for.
@@ -243,6 +299,10 @@ fn fixture_frame(
     state.observed_tile = snapshot
         .tile()
         .map(|(x, z, level)| WorldTile { x, z, level });
+    #[cfg(feature = "luau")]
+    if state.seed_bank_axe && !state.started {
+        state.bank_booth = nearby_bank_booth(&snapshot);
+    }
     if state.start_tile.is_some() {
         if let Some((x, z, level)) = snapshot.tile() {
             let tile = WorldTile { x, z, level };
@@ -252,6 +312,22 @@ fn fixture_frame(
         }
     }
     if state.started {
+        #[cfg(feature = "luau")]
+        if state.seed_bank_axe && !state.bank_axe_seeded && !held {
+            state.bank_axe_inventory_before = Some(
+                snapshot
+                    .inventory()
+                    .iter()
+                    .filter(|item| item.def.id == AXE)
+                    .map(|item| item.count)
+                    .sum(),
+            );
+            if let Err(error) = cheat(client, "give bronze_axe 1") {
+                state.error = Some(error);
+                return;
+            }
+            state.bank_axe_seeded = true;
+        }
         let inventory = snapshot
             .inventory()
             .iter()
@@ -267,6 +343,34 @@ fn fixture_frame(
             .collect::<Vec<_>>();
         state.emptied.extend(emptied);
         state.inventory = inventory;
+        #[cfg(feature = "luau")]
+        if state.seed_bank_axe && state.bank_axe_seeded {
+            let axe_count = snapshot
+                .inventory()
+                .iter()
+                .filter(|item| item.def.id == AXE)
+                .map(|item| item.count)
+                .sum::<i32>();
+            if state.bank_axe_inventory_after_seed.is_none()
+                && state
+                    .bank_axe_inventory_before
+                    .is_some_and(|before| axe_count > before)
+            {
+                state.bank_axe_inventory_after_seed = Some(axe_count);
+                state.bank_axe_visible = true;
+            }
+            state.bank_open = snapshot.bank_component_id() >= 0;
+            if state.bank_open && snapshot.bank_loaded() {
+                let bank_axe_count = snapshot
+                    .bank()
+                    .iter()
+                    .filter(|item| item.def.id == AXE)
+                    .map(|item| item.count)
+                    .sum();
+                state.bank_axe_before.get_or_insert(bank_axe_count);
+                state.bank_axe_after = Some(bank_axe_count);
+            }
+        }
         if client.main_modal_id == JOURNAL_ROOT && client.journal_paint_hidden() {
             state.hidden_journals += 1;
             state.normal_closed = false;
@@ -1236,6 +1340,13 @@ const LUAU_WALK_START: WorldTile = WorldTile {
     z: 3222,
     level: 0,
 };
+/// Draynor approach tile used to exercise the nearby Bank booth on Engine A.
+#[cfg(feature = "luau")]
+const LUAU_BANK_START: WorldTile = WorldTile {
+    x: 3093,
+    z: 3243,
+    level: 0,
+};
 #[cfg(feature = "luau")]
 const LUAU_WALK_DEST: WorldTile = WorldTile {
     x: 3220,
@@ -1351,6 +1462,221 @@ fn luau_walk_cell() {
                 "walk_path":"api.walk.to -> SeatClient::queue_walk -> seat batch -> SlotScript seat admission -> host route job -> lent walk outcome -> coroutine resume",
                 "host_commit":build_stamp::COMMIT,"host_dirty":build_stamp::DIRTY,
                 "receipt":receipt}),
+    );
+}
+
+#[cfg(feature = "luau")]
+fn luau_bank_interact_cell() {
+    let (play, account, fixture) = start_fixture_with_options(false, Some(LUAU_BANK_START), false);
+    fixture.lock().unwrap().seed_bank_axe = true;
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        fixture.lock().unwrap().bank_booth.is_some()
+    });
+    let booth = fixture
+        .lock()
+        .unwrap()
+        .bank_booth
+        .expect("the fixture found a nearby Bank booth");
+    assert_eq!(booth.op, 2, "Use-quickly is the booth's second action");
+    fixture.lock().unwrap().started = true;
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        let state = fixture.lock().unwrap();
+        state.bank_axe_visible && state.bank_axe_inventory_after_seed.is_some()
+    });
+    let (inventory_before_seed, inventory_after_seed) = {
+        let state = fixture.lock().unwrap();
+        (
+            state
+                .bank_axe_inventory_before
+                .expect("fixture recorded the pack before seeding"),
+            state
+                .bank_axe_inventory_after_seed
+                .expect("fixture observed the seeded axe"),
+        )
+    };
+    assert!(
+        inventory_after_seed > inventory_before_seed,
+        "the fixture added a bronze axe to its own pack"
+    );
+    let interaction_source = format!(
+        r#"
+local started = false
+return {{
+    tick = function(api)
+        if started then return end
+        started = true
+        api.log("l4b:interact", api.status.tick())
+        api.interact.loc({}, {}, {}, "Use-quickly", {})
+        api.wait()
+        api.log("l4b:interaction-wait", api.status.tick())
+        api.stop("l4b interaction complete")
+    end,
+}}
+"#,
+        booth.tile.x, booth.tile.z, booth.tile.level, booth.id
+    );
+    let mut logs = Vec::new();
+    play.script_start_luau(&account, interaction_source, None)
+        .expect("start real Luau Bank booth interaction");
+    wait_for(&play, &account, &fixture, Duration::from_secs(60), |play| {
+        take_logs(play, &account, &mut logs);
+        play.script_state(&account) == script::RunState::Idle
+            && play
+                .script_lifecycle_receipt(&account)
+                .is_some_and(|receipt| receipt.state == script::slot::ScriptTerminalState::Stopped)
+    });
+    take_logs(&play, &account, &mut logs);
+    let interaction_receipt = play
+        .script_lifecycle_receipt(&account)
+        .expect("interaction self-stop receipt");
+    assert_eq!(
+        interaction_receipt.reason, "l4b interaction complete",
+        "logs={logs:?}"
+    );
+    let interaction_stop_reason = interaction_receipt.reason.clone();
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        let state = fixture.lock().unwrap();
+        state.bank_open && state.bank_axe_before.is_some()
+    });
+    let bank_open_after_interaction = fixture.lock().unwrap().bank_open;
+    assert!(
+        bank_open_after_interaction,
+        "OPLOC2 opened the real Bank booth before the native bank plan"
+    );
+
+    let bank_source = r#"
+local started = false
+return {
+    tick = function(api)
+        if started then return end
+        started = true
+        api.log("l4b:bank-close-before-open", api.status.tick())
+        api.bank.close()
+        api.log("l4b:bank-open", api.status.tick())
+        api.bank.openNearest()
+        api.log("l4b:deposit-all", api.status.tick())
+        api.bank.depositAll()
+        api.log("l4b:bank-close", api.status.tick())
+        api.bank.close()
+        api.stop("l4b bank operations complete")
+    end,
+}
+"#;
+    play.script_start_luau(&account, bank_source.into(), None)
+        .expect("start real Luau bank operations");
+    wait_for(&play, &account, &fixture, Duration::from_secs(60), |play| {
+        take_logs(play, &account, &mut logs);
+        logs.iter()
+            .any(|line| line.starts_with("l4b:bank-close-before-open\t"))
+    });
+    wait_for(
+        &play,
+        &account,
+        &fixture,
+        Duration::from_secs(240),
+        |play| {
+            take_logs(play, &account, &mut logs);
+            play.script_state(&account) == script::RunState::Idle
+                && play
+                    .script_lifecycle_receipt(&account)
+                    .is_some_and(|receipt| {
+                        receipt.state == script::slot::ScriptTerminalState::Stopped
+                    })
+        },
+    );
+    take_logs(&play, &account, &mut logs);
+    let receipt = play
+        .script_lifecycle_receipt(&account)
+        .expect("bank self-stop receipt");
+    assert_eq!(
+        receipt.reason, "l4b bank operations complete",
+        "logs={logs:?}"
+    );
+    let marker_position = |prefix: &str| {
+        logs.iter()
+            .position(|line| line.starts_with(prefix))
+            .unwrap_or_else(|| panic!("missing marker {prefix:?}: {logs:?}"))
+    };
+    assert!(
+        marker_position("l4b:interact\t") < marker_position("l4b:interaction-wait\t")
+            && marker_position("l4b:interaction-wait\t")
+                < marker_position("l4b:bank-close-before-open\t")
+            && marker_position("l4b:bank-close-before-open\t")
+                < marker_position("l4b:bank-open\t")
+            && marker_position("l4b:bank-open\t") < marker_position("l4b:deposit-all\t")
+            && marker_position("l4b:deposit-all\t") < marker_position("l4b:bank-close\t"),
+        "the script interacted, confirmed the open bank, then closed, opened, deposited and closed it: {logs:?}"
+    );
+    let interaction = logged_fields(&logs, "l4b:interact");
+    let interaction_tick = interaction[0]
+        .parse::<u64>()
+        .expect("interaction marker reports its game tick");
+    let (bank_axe_before, bank_axe_after, bank_open, inventory_has_axe, observed_tile) = {
+        let state = fixture.lock().unwrap();
+        (
+            state
+                .bank_axe_before
+                .expect("fixture observed the open bank before deposit"),
+            state
+                .bank_axe_after
+                .expect("fixture observed the deposited axe"),
+            state.bank_open,
+            state.inventory.values().any(|&id| id == AXE),
+            state.observed_tile,
+        )
+    };
+    assert_eq!(
+        bank_axe_after,
+        bank_axe_before + (inventory_after_seed - inventory_before_seed),
+        "the bank gained the bronze axe the fixture seeded"
+    );
+    assert!(!bank_open, "the script closed the bank");
+    assert!(
+        !inventory_has_axe,
+        "the pack no longer contains a bronze axe"
+    );
+    no_drops(&account);
+    save(
+        "luau-bank-interact-receipt.json",
+        &json!({
+            "cell": "luau_bank_interact",
+            "account": account,
+            "logs": logs,
+            "interaction_tick": interaction_tick,
+            "interaction_stop_reason": interaction_stop_reason,
+            "bank_open_after_interaction": bank_open_after_interaction,
+            "bank_booth": {
+                "name": "Bank booth",
+                "id": booth.id,
+                "tile": [booth.tile.x, booth.tile.z, booth.tile.level],
+                "action": "Use-quickly",
+                "operation": booth.op,
+                "distance": booth.distance,
+            },
+            "seeded_axe": {
+                "id": AXE,
+                "inventory_before": inventory_before_seed,
+                "inventory_after_seed": inventory_after_seed,
+                "increase": inventory_after_seed - inventory_before_seed,
+            },
+            "bank_axe": {
+                "count_before": bank_axe_before,
+                "count_after": bank_axe_after,
+                "expected_count_after": bank_axe_before + inventory_after_seed,
+                "inventory_contains_axe_after": inventory_has_axe,
+                "bank_open_after": bank_open,
+            },
+            "observed_tile": observed_tile.map(|tile| [tile.x, tile.z, tile.level]),
+            "content_evidence": {
+                "loc_config": "content/scripts/interface_bank/configs/bank_booth.loc:2,5-6",
+                "loc_script": "content/scripts/interface_bank/scripts/bank_booth.rs2:7",
+                "deposit_ui": "content/scripts/interface_bank/scripts/bank_deposit.rs2:1-5,8-27",
+                "deposit_effect": "content/scripts/interface_bank/scripts/bank.rs2:87-107",
+            },
+            "host_commit": build_stamp::COMMIT,
+            "host_dirty": build_stamp::DIRTY,
+            "receipt": receipt,
+        }),
     );
 }
 
@@ -1672,6 +1998,63 @@ fn start_during_catalogue_refresh_cell() {
     std::fs::remove_dir_all(&root).expect("remove isolated catalogue fixture");
 }
 
+fn bank_interaction_trace_matches(
+    trace: &str,
+    tick: u64,
+    x: i64,
+    z: i64,
+    level: i64,
+    id: i64,
+) -> bool {
+    let lines = trace.lines().collect::<Vec<_>>();
+    let marker = format!("l4b:interact\t{tick}");
+    let Some(start) = lines.iter().position(|line| line.ends_with(&marker)) else {
+        return false;
+    };
+    let Some(end) = lines
+        .iter()
+        .position(|line| line.contains("l4b:interaction-wait\t"))
+    else {
+        return false;
+    };
+    if start >= end {
+        return false;
+    }
+    let request = format!(
+        "interact Loc {{ x: {x}, z: {z}, level: {level}, action: \"Use-quickly\", id: Some({id}) }}"
+    );
+    lines[start + 1..end]
+        .iter()
+        .any(|line| line.contains(&request))
+}
+
+#[test]
+fn bank_interaction_trace_requires_exact_tick_action_and_target() {
+    let trace = "[echo] l4b:interact\t10\n[interact] interact Loc { x: 3091, z: 3242, level: 0, action: \"Use-quickly\", id: Some(2213) }\n[echo] l4b:interaction-wait\t11\n";
+    assert!(bank_interaction_trace_matches(
+        trace, 10, 3091, 3242, 0, 2213
+    ));
+    assert!(!bank_interaction_trace_matches(
+        trace, 11, 3091, 3242, 0, 2213
+    ));
+    assert!(!bank_interaction_trace_matches(
+        &trace.replace("Use-quickly", "Open"),
+        10,
+        3091,
+        3242,
+        0,
+        2213
+    ));
+    assert!(!bank_interaction_trace_matches(
+        &trace.replace("Some(2213)", "Some(2214)"),
+        10,
+        3091,
+        3242,
+        0,
+        2213
+    ));
+}
+
 fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
     assert_eq!(
         std::env::var("LIVE").as_deref(),
@@ -1780,6 +2163,42 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
         );
         assert!(drops >= 54 && !drop_batches.is_empty());
         receipt["driver"] = json!({"trace":trace,"accepted_requests":requests,"drop_packets":drops,"drop_batches":drop_batches,"max_packets_on_drop_tick":packets.values().filter(|rows| rows.contains(&drop_opcode)).map(Vec::len).max()});
+    } else if cell == "luau_bank_interact" {
+        let interaction_tick = receipt["interaction_tick"].as_u64().unwrap();
+        assert_eq!(
+            receipt["bank_booth"]["operation"].as_i64(),
+            Some(2),
+            "the selected Bank booth uses its Use-quickly OPLOC2 action"
+        );
+        assert_eq!(
+            receipt["bank_booth"]["action"].as_str(),
+            Some("Use-quickly")
+        );
+        let tile = receipt["bank_booth"]["tile"].as_array().unwrap();
+        let id = receipt["bank_booth"]["id"].as_i64().unwrap();
+        assert!(
+            bank_interaction_trace_matches(
+                &text,
+                interaction_tick,
+                tile[0].as_i64().unwrap(),
+                tile[1].as_i64().unwrap(),
+                tile[2].as_i64().unwrap(),
+                id,
+            ),
+            "the driver trace records the exact Bank booth interaction on tick {interaction_tick}"
+        );
+        assert_eq!(
+            receipt["bank_open_after_interaction"].as_bool(),
+            Some(true),
+            "the real Bank booth opened before the native bank plan"
+        );
+        receipt["driver"] = json!({
+            "trace": trace,
+            "accepted_requests": requests,
+            "interaction_tick": interaction_tick,
+            "interaction_log_matches": true,
+            "bank_open_after_interaction": true,
+        });
     } else if matches!(
         cell,
         "script_api_gather_walk_options"
@@ -1849,6 +2268,17 @@ fn luau_lifecycle() {
 #[ignore = "requires LIVE=1, disposable HOME/cache, Engine A and the real R289 nav pack"]
 fn luau_walk() {
     run_captured("luau_walk", "luau-walk-receipt.json", luau_walk_cell);
+}
+
+#[cfg(feature = "luau")]
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache, Engine A and the real R289 nav pack"]
+fn luau_bank_interact() {
+    run_captured(
+        "luau_bank_interact",
+        "luau-bank-interact-receipt.json",
+        luau_bank_interact_cell,
+    );
 }
 
 #[test]

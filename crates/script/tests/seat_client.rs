@@ -1038,3 +1038,51 @@ fn model_trace_drives_the_client_terminal_receipt() {
     }
     assert_eq!(client.take_completion(), expected);
 }
+#[test]
+fn queued_interactions_are_exact_rows_and_stay_inside_the_seat_bound() {
+    let request = InteractReq::Loc {
+        x: 3200,
+        z: 3201,
+        level: 0,
+        action: "Use-quickly".into(),
+        id: Some(42),
+    };
+    let mut queued = client();
+    queued.queue_interaction(request.clone()).unwrap();
+    let batch = queued.drain_seat_batches().pop().unwrap();
+    assert_eq!(batch.batch.reqs.len(), 1);
+    assert_eq!(batch.batch.reqs[0].request, request);
+    assert_eq!(batch.batch.reqs[0].lineage, None);
+    assert_eq!(batch.batch.reqs[0].mirror_owner, None);
+    assert_eq!(
+        queued.queue_interaction(walk_request()),
+        Err(ClientError::NotInteraction)
+    );
+
+    let mut full = client();
+    for _ in 0..MAX_SEAT_GAMEPLAY_ROWS {
+        full.queue_interaction(InteractReq::Npc {
+            name: "Banker".into(),
+            action: "Bank".into(),
+            index: None,
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        full.queue_interaction(InteractReq::Player {
+            name: "bob".into(),
+            action: "Trade".into(),
+        }),
+        Err(ClientError::RowsFull)
+    );
+
+    let mut waiting = client();
+    waiting.await_next_tick().unwrap();
+    assert_eq!(
+        waiting.queue_interaction(InteractReq::Player {
+            name: "bob".into(),
+            action: "Trade".into(),
+        }),
+        Err(ClientError::AlreadyWaiting)
+    );
+}

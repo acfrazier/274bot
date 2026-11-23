@@ -13,6 +13,7 @@ pub(crate) use host::{Frame, Host};
 
 use convert::{Args, Out, Reply, WalkShape};
 use mlua::{Lua, MultiValue};
+use script::bank::request::BankSeatOperation;
 
 /// The member classes of `design-r3.md` 7.1 item 1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,6 +220,79 @@ pub(crate) static BINDINGS: &[Binding] = &[
         doc: "Walk to within `radius` tiles and wait for the walk outcome.",
         js: Some("NativeOp:walk-near"),
     },
+    Binding {
+        path: "bank.openNearest",
+        kind: Kind::Await,
+        arity: 0,
+        call: Call::Host(bank_open_nearest),
+        signature: "() -> ()",
+        doc: "Open the nearest world bank through the native bank seat.",
+        js: None,
+    },
+    Binding {
+        path: "bank.depositAll",
+        kind: Kind::Await,
+        arity: 0,
+        call: Call::Host(bank_deposit_all),
+        signature: "() -> ()",
+        doc: "Deposit all bankable items from the backpack into the open bank.",
+        js: None,
+    },
+    Binding {
+        path: "bank.close",
+        kind: Kind::Await,
+        arity: 0,
+        call: Call::Host(bank_close),
+        signature: "() -> ()",
+        doc: "Close the current bank through the native bank seat.",
+        js: Some("NativeOp:close"),
+    },
+    Binding {
+        path: "interact.npc",
+        kind: Kind::Request,
+        arity: 3,
+        call: Call::Host(interact_npc),
+        signature: "(name: string, action: string, index: number?) -> ()",
+        doc: "Queue one NPC action by name, optionally at an exact index.",
+        js: None,
+    },
+    Binding {
+        path: "interact.loc",
+        kind: Kind::Request,
+        arity: 5,
+        call: Call::Host(interact_loc),
+        signature: "(x: number, z: number, level: number, action: string, id: number) -> ()",
+        doc: "Queue one loc action at the exact tile and loc id.",
+        js: None,
+    },
+    Binding {
+        path: "interact.obj",
+        kind: Kind::Request,
+        arity: 5,
+        call: Call::Host(interact_obj),
+        signature: "(x: number, z: number, level: number, action: string, id: number) -> ()",
+        doc: "Queue one ground-item action at the exact tile and item id.",
+        js: None,
+    },
+    Binding {
+        path: "interact.player",
+        kind: Kind::Request,
+        arity: 2,
+        call: Call::Host(interact_player),
+        signature: "(name: string, action: string) -> ()",
+        doc: "Queue one player action by name.",
+        js: None,
+    },
+    Binding {
+        path: "interact.held",
+        kind: Kind::Request,
+        arity: 4,
+        call: Call::Host(interact_held),
+        signature:
+            "(name: string, action: string, slot: number, target_item_id: number) -> ()",
+        doc: "Queue one held-item action by exact item slot and target id.",
+        js: None,
+    },
 ];
 
 fn log(_lua: &Lua, host: Host<'_>, args: &MultiValue) -> Reply {
@@ -296,4 +370,42 @@ fn walk_near(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
     Ok(Out::from(
         host.walk(convert::walk_request(args, WalkShape::Near)?)?,
     ))
+}
+
+fn bank_open_nearest(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
+    Ok(Out::from(host.bank(convert::bank_request(
+        BankSeatOperation::OpenNearestWorld,
+    ))?))
+}
+
+fn bank_deposit_all(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
+    Ok(Out::from(host.bank(convert::bank_request(
+        BankSeatOperation::DepositAll,
+    ))?))
+}
+
+fn bank_close(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
+    Ok(Out::from(
+        host.bank(convert::bank_request(BankSeatOperation::Close))?,
+    ))
+}
+
+fn interact_npc(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.interact(convert::npc_request(args)?)?))
+}
+
+fn interact_loc(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.interact(convert::loc_request(args)?)?))
+}
+
+fn interact_obj(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.interact(convert::obj_request(args)?)?))
+}
+
+fn interact_player(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.interact(convert::player_request(args)?)?))
+}
+
+fn interact_held(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.interact(convert::held_request(args)?)?))
 }

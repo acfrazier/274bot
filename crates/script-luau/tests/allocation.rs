@@ -1,14 +1,15 @@
-//! The allocation gates of `LUAU-DESIGN-1114/design-r3.md` 8.1 for plan slice
-//! L4a: G2 (a suspended tick with no completion) and G3 (a tick that reads
-//! one scalar through the lent frame), with G3 held as the accepted limit of
-//! configuration S (operator decision D22(a)). Each dispatch is measured
-//! alone; the seat batch and the tick outcome that the slot drains between
-//! two ticks are drained outside the measurement, as the slot does.
+//! Allocation gates for slices L4a and L4b (design-r3.md 8.1).
+//! G2 and G3 use the accepted configuration-S limit from decision D22(a).
+//! Each dispatch is measured alone. The slot drains batches and tick outcomes
+//! outside the measurement.
 
 pub mod support;
 
 use std::collections::BTreeMap;
 
+use script::bank::request::BankSeatOperation;
+use script::native::request::NativeKind;
+use script::native::seat_rows::SeatStartArgs;
 use script::surface::{LentOutcome, SurfaceRun};
 use support::{snapshot, spawn, tick};
 
@@ -211,4 +212,71 @@ fn g3_scalar_read_tick_stays_within_the_accepted_limit() {
         empty.minimum(),
         "the scalar read itself makes a Rust allocation"
     );
+}
+
+const L4B_INTERACTIONS: &str = r#"
+    return { tick = function(api)
+        api.interact.npc("Banker", "Bank", 1)
+        api.interact.loc(3093, 3243, 0, "Use-quickly", 2214)
+        api.interact.obj(3093, 3243, 0, "Take", 995)
+        api.interact.player("alice", "Trade")
+        api.interact.held("Bronze axe", "Wield", 0, 1351)
+    end }
+"#;
+
+fn bank_start_allocations(member: &str, expected: BankSeatOperation) -> u64 {
+    let source = format!("return {{ tick=function(api) api.bank.{member}() end }}");
+    let mut run = spawn(&source);
+    let input = snapshot(1);
+    let mut outcome = LentOutcome::Refused;
+    let info = allocation_counter::measure(|| {
+        outcome = tick(&mut *run, &input);
+    });
+    assert_eq!(outcome, LentOutcome::Accepted);
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1);
+    let starts = &batches[0].batch.starts;
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0].kind, NativeKind::BankPlan);
+    let SeatStartArgs::Bank(args) = &starts[0].args else {
+        panic!("bank binding starts typed bank arguments");
+    };
+    args.validate(starts[0].kind)
+        .expect("bank arguments validate");
+    assert_eq!(args.operation(), expected);
+    drop(run.drain_tick_outcomes());
+    assert!(run.drain_logs().is_empty());
+    info.count_total
+}
+
+#[test]
+fn l4b_bank_and_interaction_ticks_stay_within_the_allocation_budget() {
+    let interactions = profile(L4B_INTERACTIONS, TICKS);
+    interactions.print("L4b five interaction requests");
+    // Keep the 10-allocation cushion; these five rows own eight text strings.
+    let interaction_limit = G3_ACCEPTED_RUST_ALLOCATIONS_PER_TICK + 10 + 8;
+    assert!(
+        interactions.maximum() <= interaction_limit,
+        "L4b interaction tick made {} Rust allocations, limit {interaction_limit}",
+        interactions.maximum()
+    );
+    assert!(
+        interactions.peak_growth() <= G3_ACCEPTED_VM_GROWTH_BYTES,
+        "L4b interaction VM grew {} bytes above warm-up",
+        interactions.peak_growth()
+    );
+
+    for (member, operation) in [
+        ("openNearest", BankSeatOperation::OpenNearestWorld),
+        ("depositAll", BankSeatOperation::DepositAll),
+        ("close", BankSeatOperation::Close),
+    ] {
+        let allocations = bank_start_allocations(member, operation);
+        let limit = G3_ACCEPTED_RUST_ALLOCATIONS_PER_TICK + 2;
+        println!("L4b api.bank.{member}: {allocations} Rust allocations (limit {limit})");
+        assert!(
+            allocations <= limit,
+            "L4b api.bank.{member} made {allocations} Rust allocations, limit {limit}"
+        );
+    }
 }

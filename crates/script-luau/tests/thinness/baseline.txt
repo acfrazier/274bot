@@ -1,4 +1,5 @@
 # Size baseline of rule T10. A rise needs a new line here with its reason.
+# L4b adds bounded interaction and native bank request conversions to convert.rs.
 mean_binding_lines = 4
-convert_lines = 452
+convert_lines = 518
 prelude_lines = 706
