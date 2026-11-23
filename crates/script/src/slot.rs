@@ -370,6 +370,9 @@ pub enum StartLoadError {
     /// No saved loadouts exist for a required saved selection.
     #[error("{0}")]
     NoLoadouts(String),
+    /// The saved value does not match the current schema.
+    #[error("{0}")]
+    SettingValue(#[from] crate::SavedSettingValueError),
     #[error("{0}")]
     RuntimeLoad(String),
     #[error("{0}")]

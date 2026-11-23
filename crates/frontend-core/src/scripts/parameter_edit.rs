@@ -3,6 +3,8 @@ use super::{CompiledCardId, ScriptChoice};
 use crate::operations::OperationId;
 use crate::session::OperatorSession;
 use serde_json::Value;
+#[cfg(feature = "js")]
+use serde_json::Map;
 
 /// Options shared by the panel and TUI, including read-time aliases and
 /// preserved values that are no longer present in the selected facts.
@@ -955,13 +957,27 @@ impl Scripts {
         profile: Option<&str>,
         selection: &ScriptChoice,
         field: &str,
-        baseline: (&str, Option<Value>),
         def: super::SettingView<'_>,
+        baseline: (&str, Option<Value>),
         options: &[String],
     ) -> Result<Value, String> {
         let def = def.def();
         let field_label = super::SettingView::new(def).display_label();
         let selection = selection.as_script();
+        #[cfg(feature = "js")]
+        let loadout_uses_manifest_resolver = match selection {
+            script::ScriptSel::Loaded(source, lookup) if field == "loadout" => self
+                .js
+                .get(*source, lookup)
+                .is_some_and(|card| card.manifest.is_some()),
+            _ => false,
+        };
+        #[cfg(feature = "js")]
+        let options = if loadout_uses_manifest_resolver {
+            &[][..]
+        } else {
+            options
+        };
         #[cfg(feature = "js")]
         let js = &self.js;
         let (baseline_text, baseline_value) = baseline;
@@ -987,8 +1003,9 @@ impl Scripts {
         validate_edit(edit, def, options)
     }
 
-    pub(crate) fn validate_staged_parameter_validation(
+    pub(crate) fn validate_staged_parameter_validation<Io>(
         &mut self,
+        _core: &OperatorSession<Io>,
         staged: super::StagedParameterValidation,
     ) -> Result<(ParameterEditKey, ScriptChoice, String, Value, Option<Value>), String> {
         if !staged
@@ -1000,26 +1017,66 @@ impl Scripts {
         let key = staged.key;
         let field_label = super::SettingView::new(&staged.definition).display_label();
         #[cfg(feature = "js")]
+        let strict_manifest = match staged.selection.as_script() {
+            script::ScriptSel::Loaded(source, lookup) => self
+                .js
+                .get(*source, lookup)
+                .is_some_and(|card| card.manifest.is_some()),
+            script::ScriptSel::Compiled(_) => false,
+        };
+        #[cfg(feature = "js")]
         let js = &self.js;
-        let edit = edit_mut_or_insert(
-            &mut self.parameter_edits,
-            &key,
-            &staged.baseline_text,
-            &staged.baseline_value,
-        );
-        if edit.card_label.is_empty() || edit.field_label.is_empty() {
-            if let Some((card_label, _)) = setting_labels_for_selection(
-                #[cfg(feature = "js")]
-                js,
-                staged.selection.as_script(),
-                &staged.field,
-            ) {
-                edit.remember_labels(&card_label, field_label);
+        let value = {
+            let edit = edit_mut_or_insert(
+                &mut self.parameter_edits,
+                &key,
+                &staged.baseline_text,
+                &staged.baseline_value,
+            );
+            if edit.card_label.is_empty() || edit.field_label.is_empty() {
+                if let Some((card_label, _)) = setting_labels_for_selection(
+                    #[cfg(feature = "js")]
+                    js,
+                    staged.selection.as_script(),
+                    &staged.field,
+                ) {
+                    edit.remember_labels(&card_label, field_label);
+                } else {
+                    edit.remember_labels("Script settings", field_label);
+                }
+            }
+            #[cfg(feature = "js")]
+            let options = if strict_manifest {
+                &[][..]
             } else {
-                edit.remember_labels("Script settings", field_label);
+                staged.options.as_slice()
+            };
+            #[cfg(not(feature = "js"))]
+            let options = staged.options.as_slice();
+            validate_edit(edit, &staged.definition, options)?
+        };
+        #[cfg(feature = "js")]
+        if strict_manifest {
+            if let script::ScriptSel::Loaded(source, lookup) = staged.selection.as_script() {
+                if let Err(error) = self.validate_manifest_setting_value(
+                    _core,
+                    *source,
+                    lookup,
+                    &staged.field,
+                    &value,
+                ) {
+                    if let Some(edit) = self.parameter_edits.get_mut(&key) {
+                        edit.error = Some(error.clone());
+                        edit.dirty =
+                            edit.pending.is_some() || edit.text != edit.baseline_text;
+                    }
+                    return Err(error);
+                }
+                if let Some(edit) = self.parameter_edits.get_mut(&key) {
+                    edit.error = None;
+                }
             }
         }
-        let value = validate_edit(edit, &staged.definition, &staged.options)?;
         Ok((
             key,
             staged.selection,
@@ -1028,6 +1085,136 @@ impl Scripts {
             staged.baseline_value,
         ))
     }
+
+    #[cfg(feature = "js")]
+    pub(crate) fn validate_manifest_setting_value<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        source: script::ScriptSource,
+        lookup: &str,
+        field: &str,
+        value: &Value,
+    ) -> Result<(), String> {
+        let card = self
+            .js
+            .get(source, lookup)
+            .ok_or_else(|| "parameters unavailable".to_string())?;
+        if card.manifest.is_none() {
+            return Ok(());
+        }
+        let def = card
+            .settings_schema
+            .iter()
+            .find(|setting| setting.id == field)
+            .ok_or_else(|| format!("unknown setting: {field}"))?;
+        let loadouts = core
+            .local_state()
+            .map(super::Loadouts::operator)
+            .unwrap_or_default();
+        let resolved = if def.options_from.is_some() {
+            Some(
+                script::resolve_setting_options_with_labels(def, loadouts.store(), None)
+                    .map_err(|error| error.to_string())?,
+            )
+        } else {
+            None
+        };
+        let options = resolved
+            .as_ref()
+            .map_or(&[][..], |options| options.values.as_slice());
+        script::validate_saved_setting_value(def, value, options, loadouts.loadouts())
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(feature = "js")]
+    pub(crate) fn validate_manifest_profile_settings<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        card: &script_js::JsCard,
+        overrides: &Map<String, Value>,
+    ) -> Result<(), script::StartLoadError> {
+        if card.manifest.is_none() {
+            return Ok(());
+        }
+        let loadouts = core
+            .local_state()
+            .map(super::Loadouts::operator)
+            .unwrap_or_default();
+        for def in &card.settings_schema {
+            let default = if overrides.contains_key(&def.id) {
+                None
+            } else {
+                Some(script::setting_default_value(def).ok_or_else(|| {
+                    script::StartLoadError::SettingValue(script::SavedSettingValueError {
+                        setting: def.id.clone(),
+                        kind: script::SavedSettingValueErrorKind::MissingDefault,
+                    })
+                })?)
+            };
+            let value = overrides.get(&def.id).or(default.as_ref()).ok_or_else(|| {
+                script::StartLoadError::SettingValue(script::SavedSettingValueError {
+                    setting: def.id.clone(),
+                    kind: script::SavedSettingValueErrorKind::MissingDefault,
+                })
+            })?;
+            let resolved = if def.options_from.is_some() {
+                Some(
+                    script::resolve_setting_options_with_labels(def, loadouts.store(), None)
+                        .map_err(|error| {
+                            script::StartLoadError::Refused(error.to_string())
+                        })?,
+                )
+            } else {
+                None
+            };
+            let options = resolved
+                .as_ref()
+                .map_or(&[][..], |options| options.values.as_slice());
+            if let Err(error) = script::validate_saved_setting_value(
+                def,
+                value,
+                options,
+                loadouts.loadouts(),
+            ) {
+                if def.id == "loadout"
+                    && matches!(
+                        &error.kind,
+                        script::SavedSettingValueErrorKind::Loadout(
+                            script::loadouts_store::LoadoutResolutionError::NoLoadouts { .. }
+                        )
+                    )
+                {
+                    return Err(script::StartLoadError::NoLoadouts(error.to_string()));
+                }
+                return Err(script::StartLoadError::SettingValue(error));
+            }
+            if def.id == "loadout" {
+                let selected = value
+                    .as_str()
+                    .expect("validated loadout setting is a string");
+                if selected.trim().is_empty() {
+                    if let Err(error) = script::loadouts_store::resolve_script_loadout_setting(
+                        loadouts.loadouts(),
+                        Some(selected),
+                    ) {
+                        return match error {
+                            error @ script::loadouts_store::LoadoutResolutionError::NoLoadouts {
+                                ..
+                            } => Err(script::StartLoadError::NoLoadouts(error.to_string())),
+                            error => Err(script::StartLoadError::SettingValue(
+                                script::SavedSettingValueError {
+                                    setting: def.id.clone(),
+                                    kind: script::SavedSettingValueErrorKind::Loadout(error),
+                                },
+                            )),
+                        };
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
 
     pub fn parameter_text_error(&self, key: &ParameterEditKey) -> Option<&str> {
         self.parameter_edits

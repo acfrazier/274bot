@@ -465,6 +465,8 @@ export interface NativeSettings {
   str(name: string, fallback?: string): string;
   num(name: string, fallback?: number): number;
   bool(name: string, fallback?: boolean): boolean;
+  list(name: string, fallback?: readonly string[]): readonly string[];
+  tile(name: string, fallback?: WorldTile | null): WorldTile | null;
 }
 
 /** Recording paint frame. end() publishes the host overlay. */

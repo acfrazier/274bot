@@ -2564,6 +2564,8 @@ impl Scripts {
         value: Value,
     ) -> Result<OperationId, String> {
         let source = source.to_script();
+        let lookup = lookup_name(source, name, path);
+        self.validate_manifest_setting_value(core, source, &lookup, id, &value)?;
         let key = script::card_identity_key(source, path, name);
         self.claim_legacy_for(core, profile, &key, name);
         let mut bag = core
@@ -2572,7 +2574,6 @@ impl Scripts {
             .and_then(|p| p.settings.script_settings.get(&key).cloned())
             .unwrap_or_default();
         let migrated = script::migrate_legacy_setting_value(name, id, &value);
-        let lookup = lookup_name(source, name, path);
         let migrated = self
             .js
             .get(source, &lookup)
