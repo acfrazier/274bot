@@ -96,46 +96,68 @@ fn slow_proof_followed_by_claimed_speed_idle_does_not_count() {
 
 #[test]
 fn proof_window_too_short_is_unmeasured() {
-    let check = steady(MIN_CLEAN_INTERVALS - 1, 600).check(600);
+    // Five 600 ms ticks are 3.0 s, six are 3.6 s; the minimum is 3.5 s.
+    let check = steady(5, 600).check(600);
     assert_eq!(check.verdict(), EngineSpeedVerdict::Unmeasured);
+    assert_eq!(check.engine_speed_ms(), None);
+    assert_eq!(check.receipt()["window"]["ticks"], 5);
     assert_eq!(
-        steady(MIN_CLEAN_INTERVALS, 600).check(600).verdict(),
+        steady(6, 600).check(600).verdict(),
         EngineSpeedVerdict::Match
     );
-    // Batched intervals carry ticks but no clean sample.
+}
+
+#[test]
+fn batched_intervals_count_their_ticks() {
     let mut batched = ProofWindow::default();
-    for _ in 0..40 {
+    for _ in 0..10 {
         batched.push(interval(2, 1200));
     }
-    assert_eq!(batched.check(600).verdict(), EngineSpeedVerdict::Unmeasured);
+    let check = batched.check(600);
+    assert_eq!(check.engine_speed_ms(), Some(600.0));
+    assert_eq!(check.verdict(), EngineSpeedVerdict::Match);
 }
 
 #[test]
 fn a_minority_part_of_the_proof_at_another_speed_does_not_count() {
-    // 30 ticks at 600 ms and 9 at 200 ms: the median is 600 ms, but 9 of
-    // 39 ticks (23 %) are outside the band.
+    // 30 ticks at 600 ms and 9 at 200 ms: the mean moves to 507.7 ms.
     let mut window = steady(30, 600);
     for _ in 0..9 {
         window.push(interval(1, 200));
     }
     let check = window.check(600);
+    assert_eq!(check.verdict(), EngineSpeedVerdict::Mismatch);
+}
+
+#[test]
+fn parts_at_other_speeds_that_average_to_the_claim_do_not_count() {
+    let mut window = ProofWindow::default();
+    for _ in 0..10 {
+        window.push(interval(1, 400));
+        window.push(interval(1, 800));
+    }
+    let check = window.check(600);
     assert_eq!(check.engine_speed_ms(), Some(600.0));
+    assert_eq!(check.receipt()["window"]["in_band_ticks"], 0);
     assert_eq!(check.verdict(), EngineSpeedVerdict::Mismatch);
 }
 
 #[test]
 fn a_client_stall_and_its_catch_up_still_count() {
-    // A measured login trace: a 1.4 s stall, then the
-    // queued ticks read 22 ms apart, inside a proof of 30 ticks with 0-34 ms
-    // receive jitter.
+    // Thirty ticks with 0-59 ms receive jitter around the schedule, then a
+    // 1.2 s client stall: the three ticks due in it are read at its end,
+    // 22 and 23 ms apart, and the next tick is on schedule again.
     let mut window = ProofWindow::default();
+    let mut lateness = 0_u64;
     for step in 0..30_u64 {
-        window.push(interval(1, 575 + (step * 7) % 60));
+        let next = (step * 7) % 60;
+        window.push(interval(1, 600 + next - lateness));
+        lateness = next;
     }
-    window.push(interval(1, 1_400));
+    window.push(interval(1, 1_800 - lateness));
     window.push(interval(1, 22));
-    window.push(interval(1, 53));
-    window.push(interval(2, 410));
+    window.push(interval(1, 23));
+    window.push(interval(1, 555));
     let check = window.check(600);
     assert_eq!(
         check.verdict(),
@@ -143,6 +165,7 @@ fn a_client_stall_and_its_catch_up_still_count() {
         "{}",
         check.receipt()
     );
+    assert_eq!(check.engine_speed_ms(), Some(600.0));
 }
 
 #[test]
@@ -162,7 +185,7 @@ fn tolerance_is_two_percent_of_the_claim() {
 
 #[test]
 fn empty_drains_add_nothing() {
-    let mut window = steady(MIN_CLEAN_INTERVALS - 1, 600);
+    let mut window = steady(5, 600);
     for _ in 0..50 {
         window.push(interval(0, 20));
     }
