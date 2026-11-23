@@ -42,8 +42,10 @@ pub(super) fn record(samples: &mut Samples, class: &str, took: Duration) {
     samples.entry(class.to_string()).or_default().push(ms(took));
 }
 
-/// `{samples, max_ms, p99_ms}` of one class.
+/// `{samples, max_ms, p99_ms, over_limit}` for one class. `over_limit`
+/// counts the samples strictly above the shared job threshold.
 pub(super) fn summary(values: &[f64]) -> Value {
+    let over_limit = values.iter().filter(|&&value| value > THRESHOLD_MS).count();
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     let max = sorted.last().copied().unwrap_or_default();
@@ -51,7 +53,12 @@ pub(super) fn summary(values: &[f64]) -> Value {
         .get((sorted.len() * 99).div_ceil(100).saturating_sub(1))
         .copied()
         .unwrap_or_default();
-    json!({ "samples": sorted.len(), "max_ms": max, "p99_ms": p99 })
+    json!({
+        "samples": sorted.len(),
+        "max_ms": max,
+        "p99_ms": p99,
+        "over_limit": over_limit
+    })
 }
 
 pub(super) fn summarize(samples: &Samples) -> Value {
