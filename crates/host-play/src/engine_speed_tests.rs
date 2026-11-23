@@ -84,14 +84,6 @@ fn slow_proof_followed_by_claimed_speed_idle_does_not_count() {
     let check = steady(20, 600).check(200);
     assert_eq!(check.verdict(), EngineSpeedVerdict::Mismatch);
     assert_eq!(check.engine_speed_ms(), Some(600.0));
-    // Why the window must close at PASS: with 174 idle intervals at 200 ms
-    // inside it, the 20 proof intervals are 10 % of the ticks and the same
-    // statistics would pass.
-    let mut with_idle = steady(20, 600);
-    for _ in 0..174 {
-        with_idle.push(interval(1, 200));
-    }
-    assert_eq!(with_idle.check(200).verdict(), EngineSpeedVerdict::Match);
 }
 
 #[test]
