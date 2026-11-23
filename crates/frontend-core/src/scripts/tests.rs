@@ -483,8 +483,8 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
                 Some("alice"),
                 &selection,
                 "count",
-                ("1", Some(current.clone())),
                 SettingView::new(def),
+                ("1", Some(current.clone())),
                 &[],
             ),
             Ok(json!(text.parse::<u64>().unwrap()))
@@ -507,8 +507,8 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             Some("alice"),
             &selection,
             "count",
-            ("1", Some(current.clone())),
             SettingView::new(def),
+            ("1", Some(current.clone())),
             &[],
         )
         .is_err());
@@ -535,8 +535,8 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             Some("alice"),
             &selection,
             "count",
-            ("1", Some(current.clone())),
             SettingView::new(def),
+            ("1", Some(current.clone())),
             &[],
         ),
         Ok(json!(123))
@@ -1079,8 +1079,8 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
                 Some("alice"),
                 &selection,
                 "miningResources",
-                (&initial_text, Some(current.clone())),
                 SettingView::new(def),
+                (&initial_text, Some(current.clone())),
                 &[],
             )
             .unwrap(),
@@ -1159,8 +1159,8 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
             Some("alice"),
             &selection,
             "radius",
-            (&initial_radius_text, Some(current_radius.clone())),
             SettingView::new(radius_def),
+            (&initial_radius_text, Some(current_radius.clone())),
             &[],
         )
         .unwrap();
