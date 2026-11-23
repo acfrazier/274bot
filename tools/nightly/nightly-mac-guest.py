@@ -154,13 +154,19 @@ def engine_commit(repo: Path) -> Optional[str]:
     return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else None
 
 
-def engine_commits(engine_root: Path) -> Optional[Dict[str, str]]:
-    """The engine and content commits that NIGHTLY_ENGINE_COMMITS carries: both, or neither."""
+def engine_commits(engine_root: Path) -> Optional[Dict[str, object]]:
+    """The engine and content commits that NIGHTLY_ENGINE_COMMITS carries. Separate repositories
+    give each tree its own HEAD. One repository holding both trees gives both its HEAD and sets
+    same_repository. Anything else records neither."""
     engine = engine_commit(engine_root / "engine")
     content = engine_commit(engine_root / "content")
-    if engine is None or content is None:
-        return None
-    return {"engine": engine, "content": content}
+    if engine is not None and content is not None:
+        return {"engine": engine, "content": content}
+    if engine is None and content is None and (engine_root / "engine").is_dir() and (engine_root / "content").is_dir():
+        head = engine_commit(engine_root)
+        if head is not None:
+            return {"engine": head, "content": head, "same_repository": True}
+    return None
 
 
 def fetch_branch_tip(repo: Path, timeout: Optional[float] = FETCH_TIMEOUT_S) -> str:
@@ -1504,7 +1510,7 @@ class NightlyOrchestrator:
         self.input_root: Optional[Path] = None
         self.control_root: Optional[Path] = None
         self.pins: Dict[str, str] = {}
-        self.engine_commits: Dict[str, Dict[str, str]] = {}
+        self.engine_commits: Dict[str, Dict[str, object]] = {}
         self.previous_runs_root: Optional[Path] = None
         self.input_unavailable: Optional[str] = None
         self.owned_lock = False

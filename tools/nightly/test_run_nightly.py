@@ -4012,6 +4012,13 @@ class EngineCommitsTests(unittest.TestCase):
             self.assertEqual(rn.engine_commits(None),
                              {"engine": self.engine, "content": self.content})
 
+    def test_same_repository_flag_is_kept_when_both_names_are_one_commit(self):
+        raw = json.dumps({"engine": self.engine, "content": self.engine,
+                          "same_repository": True})
+        with mock.patch.object(rn, "ENGINE_COMMITS_RAW", raw):
+            self.assertEqual(rn.engine_commits(None), {
+                "engine": self.engine, "content": self.engine, "same_repository": True})
+
     def test_absent_or_malformed_dispatcher_commits_are_not_recorded(self):
         cases = [
             "",
@@ -4022,6 +4029,14 @@ class EngineCommitsTests(unittest.TestCase):
             json.dumps({"engine": "ab" * 19, "content": self.content}),
             json.dumps({"engine": 1, "content": self.content}),
             json.dumps([self.engine, self.content]),
+            json.dumps({"engine": self.engine, "content": self.content,
+                        "same_repository": True}),
+            json.dumps({"engine": self.engine, "content": self.engine,
+                        "same_repository": False}),
+            json.dumps({"engine": self.engine, "content": self.engine,
+                        "same_repository": "yes"}),
+            json.dumps({"engine": self.engine, "content": self.engine,
+                        "same_repository": 1}),
         ]
         for raw in cases:
             with self.subTest(raw=raw), \
@@ -4034,6 +4049,12 @@ class EngineCommitsTests(unittest.TestCase):
         self.assertEqual(
             rn.engine_commits_text({"engine": self.engine, "content": self.content}),
             f"engine `{self.engine}`, content `{self.content}`")
+
+    def test_commits_text_says_when_one_repository_holds_both_trees(self):
+        self.assertEqual(
+            rn.engine_commits_text({"engine": self.engine, "content": self.engine,
+                                    "same_repository": True}),
+            f"engine `{self.engine}`, content `{self.engine}` (same repository)")
 
 
 class RunDeadlineDefaultTests(unittest.TestCase):

@@ -95,6 +95,14 @@ def git(*args, cwd=None):
     ).stdout.strip()
 
 
+def commit_all(repo: Path) -> str:
+    """Commit every file under an initialized repository and return its HEAD."""
+    git("add", ".", cwd=repo)
+    git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
+        "commit", "-qm", "initial", cwd=repo)
+    return git("rev-parse", "HEAD", cwd=repo)
+
+
 def make_source(root: Path) -> Path:
     source = root / "source"
     subprocess.run(["git", "init", "-q", str(source)], check=True)
@@ -732,7 +740,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
                 nightly.make_writable_and_remove(share / "input")
                 nightly.make_writable_and_remove(share / "control")
 
-    def test_guest_jobs_receive_engine_and_content_commits_only_for_repositories(self):
+    def test_guest_jobs_receive_engine_and_content_commits_for_each_layout(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             settings = self.make_settings(root)
@@ -741,10 +749,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
                 path.mkdir(parents=True, exist_ok=True)
                 git("init", "-q", str(path))
                 (path / "source.txt").write_text(f"{path.name}\n", encoding="utf-8")
-                git("add", ".", cwd=path)
-                git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
-                    "commit", "-qm", "initial", cwd=path)
-                return git("rev-parse", "HEAD", cwd=path)
+                return commit_all(path)
 
             quest_engine = commit_repository(settings.engine_q / "engine")
             quest_content = commit_repository(settings.engine_q / "content")
@@ -752,9 +757,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
             (settings.engine_a / "content").mkdir()
             (settings.engine_a / "content/source.txt").write_text("content\n", encoding="utf-8")
             git("init", "-q", str(settings.engine_a))
-            git("add", ".", cwd=settings.engine_a)
-            git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
-                "commit", "-qm", "initial", cwd=settings.engine_a)
+            same_repository = commit_all(settings.engine_a)
 
             share = root / "share"
             share.mkdir()
@@ -771,7 +774,11 @@ class NightlyOrchestrationTests(unittest.TestCase):
                 with mock.patch.object(nightly, "runner_head", return_value="c" * 40):
                     main_environment = controller.job_environment("dev", "main", tools)
                     quest_environment = controller.job_environment("dev", "quest", tools)
-                self.assertNotIn("NIGHTLY_ENGINE_COMMITS", main_environment)
+                self.assertEqual(
+                    json.loads(main_environment["NIGHTLY_ENGINE_COMMITS"]),
+                    {"engine": same_repository, "content": same_repository,
+                     "same_repository": True},
+                )
                 self.assertEqual(
                     json.loads(quest_environment["NIGHTLY_ENGINE_COMMITS"]),
                     {"engine": quest_engine, "content": quest_content},
@@ -779,6 +786,36 @@ class NightlyOrchestrationTests(unittest.TestCase):
             finally:
                 nightly.make_writable_and_remove(share / "input")
                 nightly.make_writable_and_remove(share / "control")
+
+    def test_engine_commits_name_one_repository_only_when_it_holds_both_trees(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            both = root / "both"
+            (both / "engine").mkdir(parents=True)
+            (both / "content").mkdir()
+            (both / "engine/source.txt").write_text("engine\n", encoding="utf-8")
+            (both / "content/source.txt").write_text("content\n", encoding="utf-8")
+            git("init", "-q", str(both))
+            head = commit_all(both)
+            self.assertEqual(nightly.engine_commits(both),
+                             {"engine": head, "content": head, "same_repository": True})
+
+            # engine/ alone is not a tree pair: nothing is recorded.
+            only_engine = root / "only-engine"
+            (only_engine / "engine").mkdir(parents=True)
+            (only_engine / "engine/source.txt").write_text("engine\n", encoding="utf-8")
+            git("init", "-q", str(only_engine))
+            commit_all(only_engine)
+            self.assertIsNone(nightly.engine_commits(only_engine))
+
+            # engine/ is its own repository but content/ is a plain directory: nothing is recorded.
+            split = root / "split"
+            (split / "engine").mkdir(parents=True)
+            (split / "content").mkdir()
+            (split / "engine/source.txt").write_text("engine\n", encoding="utf-8")
+            git("init", "-q", str(split / "engine"))
+            commit_all(split / "engine")
+            self.assertIsNone(nightly.engine_commits(split))
 
     def test_missing_configured_inputs_complete_the_controller_with_named_reasons(self):
         for name in ("NIGHTLY_MAC_NAV_SNAPSHOT", "NIGHTLY_MAC_MULTIWAY_CSV",

@@ -3651,7 +3651,7 @@ def local_engine_identity() -> dict[str, dict[str, object]] | None:
     return {"engine": engine, "content": content}
 
 
-def engine_commits(local_identity: dict | None) -> dict[str, str] | None:
+def engine_commits(local_identity: dict | None) -> dict[str, object] | None:
     """Name the engine and content commits: the local git heads when the identity names them,
     else the dispatcher's NIGHTLY_ENGINE_COMMITS; None when neither names them."""
     parts = [local_identity.get(name) if local_identity else None for name in ("engine", "content")]
@@ -3660,26 +3660,34 @@ def engine_commits(local_identity: dict | None) -> dict[str, str] | None:
     return parse_engine_commits(ENGINE_COMMITS_RAW)
 
 
-def parse_engine_commits(raw: str) -> dict[str, str] | None:
-    """Accept only {"engine": <40 hex>, "content": <40 hex>}; anything else is logged and ignored."""
+def parse_engine_commits(raw: str) -> dict[str, object] | None:
+    """Accept {"engine": <40 hex>, "content": <40 hex>}, with "same_repository": true only when
+    both name the same commit; anything else is logged and ignored."""
     if not raw:
         return None
     try:
         value = json.loads(raw)
     except ValueError:
         value = None
-    if (not isinstance(value, dict) or set(value) != {"engine", "content"}
+    if (not isinstance(value, dict)
+            or set(value) not in ({"engine", "content"}, {"engine", "content", "same_repository"})
             or not all(isinstance(value[key], str)
-                       and re.fullmatch(r"[0-9a-f]{40}", value[key]) for key in value)):
+                       and re.fullmatch(r"[0-9a-f]{40}", value[key]) for key in ("engine", "content"))
+            or ("same_repository" in value
+                and (value["same_repository"] is not True or value["engine"] != value["content"]))):
         log(f"NIGHTLY_ENGINE_COMMITS ignored: expected {{\"engine\": sha, \"content\": sha}}, got {raw!r}")
         return None
-    return {"engine": value["engine"], "content": value["content"]}
+    commits: dict[str, object] = {"engine": value["engine"], "content": value["content"]}
+    if "same_repository" in value:
+        commits["same_repository"] = True
+    return commits
 
 
 def engine_commits_text(commits: dict | None) -> str:
     if not commits:
         return "not recorded"
-    return f"engine `{commits['engine']}`, content `{commits['content']}`"
+    text = f"engine `{commits['engine']}`, content `{commits['content']}`"
+    return f"{text} (same repository)" if commits.get("same_repository") else text
 
 
 def engine_summary(status: str, local_identity: dict | None) -> dict:
