@@ -9300,8 +9300,10 @@ fn executor_state_size_pins() {
     );
     // Route indices: the same +48 B as the NavBot reason in host-play/src/script_native_walk_tests.rs.
     // The walk-packet budget's +8 B reaches both through the active follow.
-    assert_eq!(std::mem::size_of::<Traveller>(), 1112);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 1072);
+    // +8 B: the transport leg's loc wait counts server ticks (`TickCount`)
+    // like every other follower clock, not polls.
+    assert_eq!(std::mem::size_of::<Traveller>(), 1120);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 1080);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,

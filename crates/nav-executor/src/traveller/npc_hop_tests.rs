@@ -488,11 +488,12 @@ fn an_npc_wait_counts_every_server_tick_of_a_sparse_or_batched_poll() {
             matches!(outcome, Some(TravelOutcome::Blocked { .. })),
             "{packets_per_poll} packets per poll: {outcome:?}"
         );
-        // The first read counted 1 tick; the leg ends at the first read that
-        // brings the count past 3, the first poll at or after 3 more ticks.
+        // The clock counts every packet since the vanish; the leg ends at the
+        // first read that brings it past the budget of 3, that is at the
+        // first poll at or after 4 ticks.
         assert_eq!(
             elapsed,
-            3_u32.div_ceil(packets_per_poll) * packets_per_poll,
+            4_u32.div_ceil(packets_per_poll) * packets_per_poll,
             "{packets_per_poll} packets per poll"
         );
     }
