@@ -37,7 +37,7 @@ pub(crate) fn materialize_snapshot(
         .expect("entity page mapping installed before snapshot materialization");
     // Open the cached templates briefly; rows are instantiated from them
     // while no state borrow is held.
-    let (common_row, npc_network_row) = {
+    let (common_row, npc_network_row, ground_row) = {
         let pages = pages_state.borrow();
         let shapes = pages
             .shapes
@@ -46,6 +46,7 @@ pub(crate) fn materialize_snapshot(
         (
             v8::Local::new(&mut scope, &shapes.common),
             v8::Local::new(&mut scope, &shapes.npc_network),
+            v8::Local::new(&mut scope, &shapes.ground),
         )
     };
     let generation = if snap.has_npcs()
@@ -806,7 +807,7 @@ pub(crate) fn materialize_snapshot(
             &mut scope,
             snap.ground(),
             EntityCategory::Ground,
-            common_row,
+            ground_row,
             npc_network_row,
         )?;
         staged_entity_pages.ground = Some(rows);
@@ -1938,13 +1939,13 @@ fn scene_entity_object<'s>(
     scope: &mut v8::HandleScope<'s>,
     ent: &crate::wire::SceneEntity<'_>,
     category: EntityCategory,
-    common_row: v8::Local<'s, v8::ObjectTemplate>,
+    base_row: v8::Local<'s, v8::ObjectTemplate>,
     npc_network_row: v8::Local<'s, v8::ObjectTemplate>,
 ) -> Result<v8::Local<'s, v8::Object>, String> {
     // The template creates every field as an ordinary data property, so the
     // stores below update a fast-property row instead of growing a dictionary.
     let network = matches!(category, EntityCategory::Npcs) && ent.size() >= 1;
-    let template = if network { npc_network_row } else { common_row };
+    let template = if network { npc_network_row } else { base_row };
     let o = template
         .new_instance(scope)
         .ok_or_else(|| "v8 entity row instantiate failed".to_string())?;
@@ -2040,20 +2041,27 @@ fn scene_entity_object<'s>(
         let network_z = num(scope, ent.nz().saturating_add(offset) as f64);
         set(scope, o, "network_z", network_z)?;
     }
+    if matches!(category, EntityCategory::Ground) {
+        let count = match ent.ground_count() {
+            Some(count) => num(scope, count as f64),
+            None => v8::undefined(scope).into(),
+        };
+        set(scope, o, "count", count)?;
+    }
     Ok(o)
 }
 fn scene_entity_array<'s, 'a>(
     scope: &mut v8::HandleScope<'s>,
     ents: TableVector<'a, crate::wire::SceneEntity<'a>>,
     category: EntityCategory,
-    common_row: v8::Local<'s, v8::ObjectTemplate>,
+    base_row: v8::Local<'s, v8::ObjectTemplate>,
     npc_network_row: v8::Local<'s, v8::ObjectTemplate>,
 ) -> Result<(v8::Local<'s, v8::Value>, Vec<v8::Global<v8::Object>>), String> {
     let len = ents.as_ref().map_or(0, |ents| ents.len());
     let arr = v8::Array::new(scope, len as i32);
     let mut rows = Vec::with_capacity(len);
     for (i, ent) in ents.into_iter().flat_map(|ents| ents.iter()).enumerate() {
-        let ent = scene_entity_object(scope, &ent, category, common_row, npc_network_row)?;
+        let ent = scene_entity_object(scope, &ent, category, base_row, npc_network_row)?;
         rows.push(v8::Global::new(scope, ent));
         arr.set_index(scope, i as u32, ent.into())
             .ok_or_else(|| "v8 array set failed".to_string())?;

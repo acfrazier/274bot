@@ -251,8 +251,8 @@ struct Scene<'a> {
     locs: &'a [script::native::snapshot_source::SceneEntityInput<'a>],
     hold: bool,
     ours: bool,
-    /// The posted ground page: the same `SceneEntity` shape as `locs`.
-    ground: &'a [script::native::snapshot_source::SceneEntityInput<'a>],
+    /// The posted ground page.
+    ground: &'a [script::native::snapshot_source::GroundItemInput<'a>],
     /// The posted main modal id on this keyframe.
     main_modal_id: i32,
     /// Display names for the page rows, by obj id. The identify page stays the

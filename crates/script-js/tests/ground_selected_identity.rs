@@ -1,7 +1,9 @@
 use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 use {
-    script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput},
+    script::native::snapshot_source::{
+        GroundItemInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    },
     script_js::wire::{decode_interact_batch, encode_interact_batch},
 };
 
@@ -85,31 +87,34 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
     }
 }
 
-fn ground_row<'a>(id: i32, name: &'a str, actions: &'a [String]) -> SceneEntityInput<'a> {
-    SceneEntityInput {
-        index: id,
-        id,
-        name: Some(name),
-        x: 2737,
-        z: 3440,
-        level: 0,
-        distance: 1,
-        health: -1,
-        max_health: -1,
-        in_combat: false,
-        animating: false,
-        actions,
-        reachable: true,
-        reachable_adj: true,
-        combat_level: 0,
-        target_kind: 0,
-        target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
-        shape: 0,
-        angle: 0,
-    }
+fn ground_row<'a>(id: i32, name: &'a str, actions: &'a [String]) -> GroundItemInput<'a> {
+    GroundItemInput::new(
+        SceneEntityInput {
+            index: id,
+            id,
+            name: Some(name),
+            x: 2737,
+            z: 3440,
+            level: 0,
+            distance: 1,
+            health: -1,
+            max_health: -1,
+            in_combat: false,
+            animating: false,
+            actions,
+            reachable: true,
+            reachable_adj: true,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
+            size: 0,
+            nx: 0,
+            nz: 0,
+            shape: 0,
+            angle: 0,
+        },
+        1,
+    )
 }
 
 fn posted_ground_interactions() -> Vec<InteractReq> {

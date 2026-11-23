@@ -1,11 +1,13 @@
 use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 use {
-    script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput},
+    script::native::snapshot_source::{
+        GroundItemInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    },
     script_js::wire::encode_snapshot,
 };
 
-fn snapshot<'a>(ground: &'a [SceneEntityInput<'a>]) -> SnapshotInput<'a> {
+fn snapshot<'a>(ground: &'a [GroundItemInput<'a>]) -> SnapshotInput<'a> {
     SnapshotInput {
         tick: 1,
         here: Some(TileInput {
@@ -85,34 +87,37 @@ fn snapshot<'a>(ground: &'a [SceneEntityInput<'a>]) -> SnapshotInput<'a> {
     }
 }
 
-fn row(id: i32, level: i32, actions: &[String]) -> SceneEntityInput<'_> {
-    SceneEntityInput {
-        index: id,
-        id,
-        name: Some("Halloween mask"),
-        x: 3201,
-        z: 3200,
-        level,
-        distance: 1,
-        health: -1,
-        max_health: -1,
-        in_combat: false,
-        animating: false,
-        actions,
-        reachable: true,
-        reachable_adj: true,
-        combat_level: 0,
-        target_kind: 0,
-        target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
-        shape: 0,
-        angle: 0,
-    }
+fn row(id: i32, level: i32, actions: &[String]) -> GroundItemInput<'_> {
+    GroundItemInput::new(
+        SceneEntityInput {
+            index: id,
+            id,
+            name: Some("Halloween mask"),
+            x: 3201,
+            z: 3200,
+            level,
+            distance: 1,
+            health: -1,
+            max_health: -1,
+            in_combat: false,
+            animating: false,
+            actions,
+            reachable: true,
+            reachable_adj: true,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
+            size: 0,
+            nx: 0,
+            nz: 0,
+            shape: 0,
+            angle: 0,
+        },
+        1,
+    )
 }
 
-fn run(expression: &str, ground: &[SceneEntityInput<'_>]) -> (serde_json::Value, Vec<InteractReq>) {
+fn run(expression: &str, ground: &[GroundItemInput<'_>]) -> (serde_json::Value, Vec<InteractReq>) {
     let source = format!(
         "import {{ Input }} from '../../input/Input.js';\n\
          export default class T extends LoopingBot {{\n\

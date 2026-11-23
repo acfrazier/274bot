@@ -105,6 +105,74 @@ fn post(snap: &GameSnapshot, tick: u64) -> Vec<u8> {
     .0
 }
 
+#[test]
+fn ground_item_reader_keeps_stack_count_on_keyframe_and_delta() {
+    use api::obj_names::ItemDefView;
+    use api::snapshot::{GroundItemView, WorldTile};
+    use script_js::{LoadIsolate, LoadShape};
+    use serde_json::json;
+
+    let source = r#"
+import { reader } from '../../adapter/ClientAdapter.js';
+globalThis.readGround = () => reader.groundItems().map(({ id, count, distance, tile }) =>
+    ({ id, count, distance, tile }));
+export default class GroundStackProbe extends LoopingBot {
+    loop() {}
+}
+"#;
+    let isolate = LoadIsolate::spawn(source.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let tile = WorldTile {
+        x: 2780,
+        z: 3050,
+        level: 0,
+    };
+    let mut stack = GroundItemView {
+        def: ItemDefView {
+            id: 995,
+            name: Some("Coins".into()),
+            stackable: true,
+            members: false,
+            base_value: 1,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        count: 450,
+        actions: vec![None, None, Some("Take".into())],
+        tile,
+        distance: 1,
+    };
+    let mut snapshot = GameSnapshot::new();
+    let mut last = None;
+    for (tick, count) in [(1, 450), (2, 451), (3, 451)] {
+        stack.count = count;
+        snapshot.seed_ground_items(vec![stack.clone()]);
+        let (bytes, fingerprint) = script_snapshot_fb(
+            last.as_ref(),
+            false,
+            tick,
+            Some((2781, 3050, 0)),
+            true,
+            None,
+            Some(&snapshot),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        isolate.post_snapshot(bytes);
+        assert_eq!(
+            isolate.probe("readGround()").unwrap(),
+            json!([{"id": 995, "count": count, "distance": 1,
+                "tile": {"x": 2780, "z": 3050, "level": 0}}]),
+            "tick {tick}"
+        );
+        last = Some(fingerprint);
+    }
+    isolate.join();
+}
+
 /// Direct catalog callers use each chat option's exact BUTTON_OK component,
 /// not its list position. Keep that identity across the host FlatBuffer.
 #[test]

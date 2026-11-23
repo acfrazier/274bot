@@ -1985,6 +1985,7 @@ impl<'a> SceneEntity<'a> {
   pub const VT_NZ: ::flatbuffers::VOffsetT = 42;
   pub const VT_SHAPE: ::flatbuffers::VOffsetT = 44;
   pub const VT_ANGLE: ::flatbuffers::VOffsetT = 46;
+  pub const VT_GROUND_COUNT: ::flatbuffers::VOffsetT = 48;
 
   #[inline]
   pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -1996,6 +1997,7 @@ impl<'a> SceneEntity<'a> {
     args: &'args SceneEntityArgs<'args>
   ) -> ::flatbuffers::WIPOffset<SceneEntity<'bldr>> {
     let mut builder = SceneEntityBuilder::new(_fbb);
+    if let Some(x) = args.ground_count { builder.add_ground_count(x); }
     builder.add_angle(args.angle);
     builder.add_shape(args.shape);
     builder.add_nz(args.nz);
@@ -2176,6 +2178,13 @@ impl<'a> SceneEntity<'a> {
     // which contains a valid value in this slot
     unsafe { self._tab.get::<i32>(SceneEntity::VT_ANGLE, Some(0)).unwrap()}
   }
+  #[inline]
+  pub fn ground_count(&self) -> Option<i32> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(SceneEntity::VT_GROUND_COUNT, None)}
+  }
 }
 
 impl ::flatbuffers::Verifiable for SceneEntity<'_> {
@@ -2206,6 +2215,7 @@ impl ::flatbuffers::Verifiable for SceneEntity<'_> {
      .visit_field::<i32>("nz", Self::VT_NZ, false)?
      .visit_field::<i32>("shape", Self::VT_SHAPE, false)?
      .visit_field::<i32>("angle", Self::VT_ANGLE, false)?
+     .visit_field::<i32>("ground_count", Self::VT_GROUND_COUNT, false)?
      .finish();
     Ok(())
   }
@@ -2233,6 +2243,7 @@ pub struct SceneEntityArgs<'a> {
     pub nz: i32,
     pub shape: i32,
     pub angle: i32,
+    pub ground_count: Option<i32>,
 }
 impl<'a> Default for SceneEntityArgs<'a> {
   #[inline]
@@ -2260,6 +2271,7 @@ impl<'a> Default for SceneEntityArgs<'a> {
       nz: 0,
       shape: 0,
       angle: 0,
+      ground_count: None,
     }
   }
 }
@@ -2358,6 +2370,10 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> SceneEntityBuilder<'a, 'b, A>
     self.fbb_.push_slot::<i32>(SceneEntity::VT_ANGLE, angle, 0);
   }
   #[inline]
+  pub fn add_ground_count(&mut self, ground_count: i32) {
+    self.fbb_.push_slot_always::<i32>(SceneEntity::VT_GROUND_COUNT, ground_count);
+  }
+  #[inline]
   pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> SceneEntityBuilder<'a, 'b, A> {
     let start = _fbb.start_table();
     SceneEntityBuilder {
@@ -2397,6 +2413,7 @@ impl ::core::fmt::Debug for SceneEntity<'_> {
       ds.field("nz", &self.nz());
       ds.field("shape", &self.shape());
       ds.field("angle", &self.angle());
+      ds.field("ground_count", &self.ground_count());
       ds.finish()
   }
 }

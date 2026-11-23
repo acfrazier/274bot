@@ -307,8 +307,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
 ) -> R {
     use script::native::snapshot_source::{
         BankApproachInput, BankStandInput, ChatLineInput, ChatModalTextsInput, ChatOptionInput,
-        ClientAdapterFactsInput, CollisionViewInput, CombatStyleInput, ItemRowInput,
-        MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput,
+        ClientAdapterFactsInput, CollisionViewInput, CombatStyleInput, GroundItemInput,
+        ItemRowInput, MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput,
         NearestBoothInput, ProjectionSceneInput, PuzzleBoardInput, QuestStatusInput,
         ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
         VarpInput, WidgetFactInput, WidgetTextInput,
@@ -681,7 +681,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         Vec::new()
     };
     let ground_action_store: Vec<Vec<String>>;
-    let ground: Vec<SceneEntityInput<'_>> = if let Some(s) = snapshot {
+    let ground: Vec<GroundItemInput<'_>> = if let Some(s) = snapshot {
         ground_action_store = s
             .ground_items()
             .iter()
@@ -698,30 +698,33 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
             .map(|(i, item)| {
                 let (reachable, reachable_adj) =
                     entity_reach(item.tile.x, item.tile.z, item.tile.level);
-                SceneEntityInput {
-                    index: item.def.id,
-                    id: item.def.id,
-                    name: obj_names.and_then(|names| names.name(item.def.id)),
-                    x: item.tile.x,
-                    z: item.tile.z,
-                    level: item.tile.level,
-                    distance: item.distance,
-                    health: -1,
-                    max_health: -1,
-                    in_combat: false,
-                    animating: false,
-                    actions: &ground_action_store[i],
-                    reachable,
-                    reachable_adj,
-                    combat_level: 0,
-                    target_kind: 0,
-                    target_index: -1,
-                    size: 0,
-                    nx: 0,
-                    nz: 0,
-                    shape: 0,
-                    angle: 0,
-                }
+                GroundItemInput::new(
+                    SceneEntityInput {
+                        index: item.def.id,
+                        id: item.def.id,
+                        name: obj_names.and_then(|names| names.name(item.def.id)),
+                        x: item.tile.x,
+                        z: item.tile.z,
+                        level: item.tile.level,
+                        distance: item.distance,
+                        health: -1,
+                        max_health: -1,
+                        in_combat: false,
+                        animating: false,
+                        actions: &ground_action_store[i],
+                        reachable,
+                        reachable_adj,
+                        combat_level: 0,
+                        target_kind: 0,
+                        target_index: -1,
+                        size: 0,
+                        nx: 0,
+                        nz: 0,
+                        shape: 0,
+                        angle: 0,
+                    },
+                    item.count,
+                )
             })
             .collect()
     } else {

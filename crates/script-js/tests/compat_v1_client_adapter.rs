@@ -2,10 +2,10 @@
 
 use script::interact::InteractReq;
 use script::native::snapshot_source::{
-    ChatLineInput, ChatOptionInput, ClientAdapterFactsInput, CollisionViewInput, ItemRowInput,
-    MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput, NpcBoxInput,
-    ProjectionSceneInput, PuzzleBoardInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
-    TileInput, VarpInput, WidgetFactInput, WidgetTextInput,
+    ChatLineInput, ChatOptionInput, ClientAdapterFactsInput, CollisionViewInput, GroundItemInput,
+    ItemRowInput, MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput,
+    NpcBoxInput, ProjectionSceneInput, PuzzleBoardInput, SceneEntityInput, SideTabIfaceInput,
+    SnapshotInput, TileInput, VarpInput, WidgetFactInput, WidgetTextInput,
 };
 use script_js::{LoadIsolate, LoadShape, Ready};
 use serde_json::{json, Value};
@@ -285,7 +285,10 @@ fn reader_catalog() -> &'static Value {
         let npcs = [entity(7, 1234, "Goblin", 3224, 3222, 2, &npc_actions)];
         let locs = [entity(4, 900, "Tree", 3223, 3222, 0, &loc_actions)];
         let players = [entity(3, 55, "Friend", 3221, 3222, 0, &player_actions)];
-        let ground = [entity(0, 995, "Coins", 3222, 3221, 0, &ground_actions)];
+        let ground = [GroundItemInput::new(
+            entity(0, 995, "Coins", 3222, 3221, 0, &ground_actions),
+            450,
+        )];
         let chat_options = [
             ChatOptionInput {
                 text: "Yes",
@@ -881,6 +884,7 @@ reader_contract!(
     {
         assert_eq!(value[0]["id"], 995);
         assert_eq!(value[0]["name"], "Coins");
+        assert_eq!(value[0]["count"], 450);
     }
 );
 reader_contract!(
