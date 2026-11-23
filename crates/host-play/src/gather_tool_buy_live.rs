@@ -2145,14 +2145,17 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         }
         match stage {
             RunStage::Prepare => {
-                let clock = trace.lock().clock.clone();
-                if clock.median_ms.is_some() && !clock.accepted() {
+                let clock = trace.lock().clock;
+                let accepted = clock
+                    .median_ms
+                    .is_some_and(|median| (570..=630).contains(&median));
+                if clock.median_ms.is_some() && !accepted {
                     cell_failure = Some(format!("Engine L tick clock is not 600 ms: {clock:?}"));
                     break;
                 }
                 let begin = {
                     let mut guard = cell.lock();
-                    if clock.accepted()
+                    if accepted
                         && guard.phase == Prep::Ready
                         && guard.script_started.is_none()
                         && Instant::now().duration_since(guard.last_action)
@@ -2638,7 +2641,11 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     }
                     let settled = relog_park_settled(
                         &observation,
-                        trace.lock().clock.accepted(),
+                        trace
+                            .lock()
+                            .clock
+                            .median_ms
+                            .is_some_and(|median| (570..=630).contains(&median)),
                         since.elapsed(),
                     );
                     {
@@ -2675,7 +2682,12 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     }
     play.script_stop(&account);
 
-    if !trace.lock().clock.accepted() {
+    if !trace
+        .lock()
+        .clock
+        .median_ms
+        .is_some_and(|median| (570..=630).contains(&median))
+    {
         cell_failure.get_or_insert_with(|| {
             format!(
                 "Engine L PLAYER_INFO clock failed: {:?}",
