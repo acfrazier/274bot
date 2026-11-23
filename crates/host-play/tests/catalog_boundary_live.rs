@@ -457,7 +457,7 @@ fn selected_profile(
     revision: u16,
     nav_pack: PathBuf,
     catalog_root: PathBuf,
-    temp: &Path,
+    _temp: &Path,
 ) -> Result<(Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>), String> {
     let options = ProfileOptions {
         profile: Some(format!("local-{revision}")),
@@ -476,7 +476,7 @@ fn selected_profile(
         nav_flags: std::env::var_os("CATALOG_NAV_FLAGS").map(PathBuf::from),
         engine_dir: std::env::var_os("CATALOG_ENGINE_DIR").map(PathBuf::from),
         #[cfg(feature = "test-support")]
-        vault_path: Some(temp.join("vault")),
+        vault_path: Some(_temp.join("vault")),
         catalog_root: Some(catalog_root),
         ..ProfileOptions::default()
     };
