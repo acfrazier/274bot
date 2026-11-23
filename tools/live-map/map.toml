@@ -493,12 +493,13 @@ cells = [
 # and shutdown are checked against a bounded model (tools/hostlog-model), and
 # the real queue is replayed on every state and edge of that model.
 [[cover]]
-globs = ["Cargo.lock", "crates/api/Cargo.toml", "crates/api/src/hostlog.rs", "crates/api/src/hostlog_conformance_tests.rs", "tools/hostlog-model/Cargo.toml", "tools/hostlog-model/src/lib.rs", "tools/hostlog-model/tests/model.rs"]
+globs = ["Cargo.lock", "crates/api/Cargo.toml", "crates/api/src/hostlog.rs", "crates/api/src/hostlog_conformance_tests.rs", "crates/api/tests/stderr_drain.rs", "tools/hostlog-model/Cargo.toml", "tools/hostlog-model/src/lib.rs", "tools/hostlog-model/tests/model.rs"]
 cells = [
   "api.hostlog-stalled-pipe-live|${ISOHOME:?} nice -n 10 cargo test --locked -p api --test stalled_stderr -- --ignored --exact stalled_pipe_does_not_block_slot_progress_or_shutdown --nocapture",
   "api.hostlog-idle-lock-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --features test-support --lib stderr_lock_is_available_while_the_process_writer_waits",
   "api.hostlog-model-conformance-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --features test-support --lib hostlog::conformance_tests",
   "tools.hostlog-model-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p hostlog-model",
+  "api.hostlog-drain-guard-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --features test-support --test stderr_drain",
 ]
 # The bounded queue drives a real drop into the process counter and both
 # views show it. A real panel-play bad flag checks that stderr returns.

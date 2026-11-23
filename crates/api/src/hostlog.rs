@@ -615,6 +615,35 @@ pub fn shutdown_stderr_writer() -> u64 {
     LazyLock::get(&STDERR_OUTPUT).map_or(0, |output| output.shutdown(STDERR_SHUTDOWN_WAIT))
 }
 
+/// Starts the stderr writer now and drains it when dropped, so a binary
+/// cannot forget to: hold it for the whole of `main` (`let _drain =
+/// api::hostlog::stderr_drain();`). Every return path of `main`, and a panic
+/// that unwinds, runs the drop; `std::process::exit` does not, so drop the
+/// guard before calling it. The wait is the bounded one of
+/// [`shutdown_stderr_writer`]; entries given up are counted in
+/// [`stderr_dropped`] and noted in the structured log.
+#[must_use = "the stderr writer drains when this guard is dropped; bind it to a variable"]
+pub struct StderrDrain(());
+
+/// Start the stderr writer and return the guard that drains it on drop.
+pub fn stderr_drain() -> StderrDrain {
+    start_stderr_writer();
+    StderrDrain(())
+}
+
+impl Drop for StderrDrain {
+    fn drop(&mut self) {
+        let lost = shutdown_stderr_writer();
+        if lost > 0 {
+            crate::host_log!(
+                Category::Lifecycle,
+                Level::Warn,
+                "stderr: {lost} log entries were still pending at exit and are counted as dropped"
+            );
+        }
+    }
+}
+
 /// Number of log entries dropped because the sender lock was busy, the queue
 /// was full or closed, the entry was longer than [`STDERR_ENTRY_LINES`] lines,
 /// the writer could not start, a stderr write failed, or the process exited

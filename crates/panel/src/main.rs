@@ -16,6 +16,8 @@ fn parse_args() -> panel::PanelArgs {
 }
 
 fn main() -> std::process::ExitCode {
+    // Drains the stderr writer on every return path.
+    let _drain = api::hostlog::stderr_drain();
     // `state preferences …` maintenance commands run before any frontend,
     // vault or Play startup, and exit.
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -31,7 +33,6 @@ fn main() -> std::process::ExitCode {
             api::hostlog::Level::Error,
             "panel: {error}"
         );
-        api::hostlog::shutdown_stderr_writer();
         return std::process::ExitCode::FAILURE;
     }
     let args = parse_args();
@@ -52,13 +53,5 @@ fn main() -> std::process::ExitCode {
     } else {
         std::process::ExitCode::SUCCESS
     };
-    let lost = api::hostlog::shutdown_stderr_writer();
-    if lost > 0 {
-        api::host_log!(
-            api::hostlog::Category::Lifecycle,
-            api::hostlog::Level::Warn,
-            "stderr: {lost} log entries were still pending at exit and are counted as dropped"
-        );
-    }
     result
 }

@@ -76,6 +76,9 @@ where
 }
 
 fn main() -> ExitCode {
+    // Drains the stderr writer on every return path: a line logged right
+    // before `return ExitCode::FAILURE` must reach stderr.
+    let _drain = api::hostlog::stderr_drain();
     let args = match parse_args_from(env::args().skip(1)) {
         Ok(args) => args,
         Err(msg) => {

@@ -10,6 +10,8 @@ static ALLOCATOR: frontend_core::process::BenchmarkAllocator =
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // Drains the stderr writer on every return path.
+    let _drain = api::hostlog::stderr_drain();
     // `state preferences …` maintenance commands run before any frontend,
     // vault or Play startup, and exit.
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -20,7 +22,6 @@ fn main() -> ExitCode {
     }
     if let Err(error) = frontend_core::process::bootstrap() {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
-        api::hostlog::shutdown_stderr_writer();
         return ExitCode::FAILURE;
     }
     // Before any slot starts: macOS defaults the soft limit to 256 open files.
@@ -33,13 +34,5 @@ fn main() -> ExitCode {
     } else {
         result
     };
-    let lost = api::hostlog::shutdown_stderr_writer();
-    if lost > 0 {
-        api::host_log!(
-            api::hostlog::Category::Lifecycle,
-            api::hostlog::Level::Warn,
-            "stderr: {lost} log entries were still pending at exit and are counted as dropped"
-        );
-    }
     result
 }
