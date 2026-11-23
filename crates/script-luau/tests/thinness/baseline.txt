@@ -1,6 +1,6 @@
 # Size baseline of rule T10. A rise needs a new line here with its reason.
 # L4b adds bounded interaction and native bank request conversions to convert.rs.
 mean_binding_lines = 4
-# L4b review returns bank terminal values and bounds interaction text before copying.
-convert_lines = 576
+# L4b reset retains the awaited operation and returns its typed aborted result.
+convert_lines = 591
 prelude_lines = 706

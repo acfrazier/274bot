@@ -82,7 +82,10 @@ pub enum SeatCompletion {
     Progress(ProgressPage),
     Walk(WalkCompletion),
     NextTick,
-    Aborted { awaited: Awaited, reason: AbortReason },
+    Aborted {
+        awaited: Awaited,
+        reason: AbortReason,
+    },
 }
 
 #[derive(Debug, Clone)]
