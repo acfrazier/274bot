@@ -3895,7 +3895,7 @@ mod tests {
                     1,
                     generation,
                     0,
-                    start + Duration::from_millis(u64::from(generation - 1) * milliseconds),
+                    start + Duration::from_millis((generation - 1) * milliseconds),
                     None,
                 );
             }
