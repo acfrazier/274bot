@@ -4,7 +4,7 @@
 //! follower's own terminal outcome comes first.
 //!
 //! Each term is an allowance that the follower enforces, with its source,
-//! except the one marked as policy. All counts are observed game ticks.
+//! except the ones marked as policy. All counts are observed game ticks.
 //!
 //! **Walk hops.** A hop's clock lapses when it has waited more than its
 //! moving budget `b + ceil(b / 4)`, `b = max(budget, planned steps)`
@@ -19,12 +19,22 @@
 //! of a whole route are `min(sum over the legs, max_hops)`. A stalled-walk
 //! recovery re-sends inside the same clock (`walk.rs:360-380`).
 //!
-//! **Walk legs waiting unsent (policy).** A hop that the client refuses
-//! because the scene is not ready, or whose route is held by the owner's
-//! `route_index_limit`, waits with no tick bound in this follower
-//! (`walk.rs:502-505,595-604`). The allowance grants one hop clock per walk
-//! leg for it. This is a policy allowance, not a bound the follower enforces:
-//! a walk that waits unsent longer ends at its owner's deadline.
+//! **Walk hops waiting unsent.** A hop that the client refuses (the scene is
+//! not ready) waits unsent under the hop budget: the follow ends `Stalled`
+//! when the clock that restarts at each new hop reaches `budget`
+//! (`walk.rs:513-525`, commit `0b19f36ec`). That is one more clock of
+//! `budget + 1` before each send, and before the first send of each walk leg.
+//!
+//! **Limitation: route-safety holds.** While the owner's `route_index_limit`
+//! holds the walk at its limit, the unsent clock restarts on every poll
+//! (`walk.rs:503-511`): the hold is intentional and lasts as long as its
+//! owner keeps it. It is not bounded here, so it suspends the deadline.
+//!
+//! **Limitation: off-route growth.** A hop's budget is
+//! `max(budget, planned steps)` (`walk.rs:575-577`) with no cap other than
+//! the leg's length. A player who is off the route when a hop is planned
+//! gets a longer budget, up to the leg's length, which this allowance does
+//! not add: it assumes the player follows the route.
 //!
 //! **Transport legs.** A leg runs at most three phases in sequence, each
 //! under its own enforced clock: the wait for its loc or npc to appear
@@ -141,11 +151,12 @@ pub(super) fn route_allowance_ticks(
         }
     }
     let hop = hop_ticks(budget);
-    // The unsent wait of each walk leg is one more hop clock (policy).
-    let walk = walk_hops
-        .min(u64::from(max_hops))
-        .saturating_add(walk_legs)
-        .saturating_mul(hop);
+    // Each send waits unsent first, under one more clock, and so does the
+    // first send of each walk leg.
+    let sends = walk_hops.min(u64::from(max_hops));
+    let walk = sends
+        .saturating_mul(hop)
+        .saturating_add(sends.saturating_add(walk_legs).saturating_mul(clock));
     let once = u64::from(SCENE_SETTLE_TRIES * SCENE_SETTLE_TICKS)
         + u64::from(THIEVING_STUN_WINDOW)
         + clock

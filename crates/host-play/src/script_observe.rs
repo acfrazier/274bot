@@ -2312,6 +2312,12 @@ where
                                     &request,
                                     &snapshot,
                                 );
+                                api::host_log!(
+                                    api::hostlog::Category::NavTrace,
+                                    api::hostlog::Level::Debug,
+                                    "native-walk-request tick={tick} request_id={}",
+                                    authority.request_id().get()
+                                );
                                 let prereq_allow = super::walk_permissions::native_prereq_allow(
                                     navs,
                                     name,
@@ -2721,6 +2727,12 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
             .as_ref()
             .filter(|owner| owner.live() && owner.request_id().get() == bot.walk_request_id)
         {
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "native-walk-allowance tick={tick} request_id={} ticks={ticks}",
+                owner.request_id().get()
+            );
             slot.post_native_walk_allowance(owner, ticks);
         }
     }

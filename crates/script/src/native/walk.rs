@@ -89,15 +89,19 @@ pub fn resolve_destination(name: &str) -> Option<&'static WalkDestination> {
         .find(|destination| destination.name.eq_ignore_ascii_case(key))
 }
 
-/// Observed ticks that a walk request may wait for the host to plan its route
-/// and start following it, before the follower's own allowance replaces this
-/// ([`ActionContext::walk_allowance`]). Policy, not a measured bound: route
-/// planning is cooperative host work with no tick bound
-/// (`nav_planner::router::NODE_BUDGET` counts places, not ticks), and the
-/// host has no receipt for a request it never plans. 183 is three hop clocks
-/// of the route follower's default budget, 3 x (60 + 1)
-/// (`nav-executor/src/traveller.rs:548`).
-pub const WALK_PLAN_WAIT_TICKS: u32 = 3 * (60 + 1);
+/// Observed ticks that a walk request may wait for the host to take it, plan
+/// its route and start following it, before the follower's own allowance
+/// replaces this ([`ActionContext::walk_allowance`]). Measured: six native
+/// walks of the `nav_arrival_live_tests` cells on Engine A (Varrock to Port
+/// Sarim, yew grove, tower top and basement, Lumbridge door, Gnome maze) all
+/// had their route followed one observed tick after the request
+/// (`N6-1123/plan-wait/*/cell.log`, `native-walk-request` and
+/// `native-walk-allowance` lines; maximum 1 tick). The margin is 60 ticks,
+/// one hop clock of the route follower's default budget
+/// (`nav-executor/src/traveller.rs:548`), for planning that is cooperative
+/// host work with no tick bound (`nav_planner::router::NODE_BUDGET` counts
+/// places). The measured set is small, so the margin is a policy.
+pub const WALK_PLAN_WAIT_TICKS: u32 = 1 + 60;
 
 /// No allowance has been read yet. The ledger numbers its posts from 0 and
 /// wraps before it reaches this value.

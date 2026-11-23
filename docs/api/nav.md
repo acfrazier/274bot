@@ -1343,13 +1343,14 @@ The walk's deadline is the route follower's tick allowance for the route the
 host planned: the sum of the clocks the follower enforces on each leg of that
 route (`crates/nav-executor/src/traveller/allowance.rs`), counted in eligible
 observed game ticks from the observation that carries it. A replan recomputes
-it. Before the host plans, a walk waits 183 ticks. A hold, a pause and a
-blocked interval do not spend it. Known limitations: the guardian's hold kinds
-that have no tick bound (Dialog, Pick, Mime, Box, Lamp, Hazard, LostTool,
-LostGear and trapped) suspend the deadline for as long as the hold lasts, and
-their owner bounds them (GH-001); a walk hop that waits unsent and a slashable
-web that keeps failing have no bound in the follower, so the allowance grants
-a fixed policy for them.
+it. Before the host plans, a walk waits 61 ticks (measured: 1). A hold, a pause and a
+blocked interval do not spend it. Known limitations: the guardian's hold kinds that have no tick bound (Dialog,
+Pick, Mime, Box, Lamp, Hazard, LostTool, LostGear and trapped) suspend the
+deadline for as long as the hold lasts, and their owner bounds them (GH-001).
+A route-safety hold of the walk's owner (`route_index_limit`) does the same.
+A slashable web allows 16 failed cuts. A hop planned while the player is off
+the route can get a budget up to its leg's length, which the allowance does
+not add.
 `NeedsEvidence` preserves its typed quest gates through native walk adapters.
 Quester Stops with a `needs-evidence` failure; it does not retain an unused
 copy of the gates after reporting that terminal block.

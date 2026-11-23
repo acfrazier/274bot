@@ -406,14 +406,15 @@ fn the_allowance_of_a_long_multi_transport_route_is_the_sum_of_its_legs() {
         &crate::traveller::RouteLegSource::Legacy(route.legs.iter().cloned().collect()),
     );
     // Walk hops: 100 tiles 1 + ceil(80/15) = 7, 40 tiles 3, 21 tiles 2,
-    // 2 tiles 1; the one-tile leg sends nothing. 13 hops and one unsent
-    // clock for each of the 4 walk legs: (13 + 4) x 76 = 1,292.
+    // 2 tiles 1; the one-tile leg sends nothing. 13 hops of 76 = 988, and
+    // an unsent clock of 61 before each of 13 sends and each of 4 legs:
+    // 17 x 61 = 1,037.
     // Transport: (9 + 3 + 35) clocks x 61 = 2,867.
     // Once: settle 3 x 2, stun window 11, one approach clock 61 and one hop
     // clock 76 = 154. Delivery 2.
-    let sum = 1_292 + 2_867 + 154 + 2;
+    let sum = 988 + 1_037 + 2_867 + 154 + 2;
     assert_eq!(route_allowance_ticks(shapes, 60, 60), sum);
-    assert_eq!(sum, 4_315);
+    assert_eq!(sum, 5_048);
 }
 
 #[test]
@@ -423,7 +424,7 @@ fn the_hop_cap_bounds_the_walk_hops_of_the_allowance() {
     let legs = vec![LegShape::Walk { tiles: 100 }; 40];
     let uncapped = route_allowance_ticks(legs.clone(), 60, u32::MAX);
     let capped = route_allowance_ticks(legs, 60, 60);
-    assert_eq!(uncapped - capped, (280 - 60) * hop_ticks(60));
+    assert_eq!(uncapped - capped, (280 - 60) * (hop_ticks(60) + 61));
 }
 
 #[test]
@@ -441,9 +442,12 @@ fn the_follower_reports_the_allowance_of_each_route_it_starts() {
     assert!(traveller
         .follow(&mut driver, &snapshot, first.clone(), &mut options)
         .is_none());
-    // One walk leg of 100 tiles: (7 hops + 1 unsent clock) x 76, once 154,
-    // delivery 2.
-    assert_eq!(traveller.take_follow_allowance(), Some(8 * 76 + 154 + 2));
+    // One walk leg of 100 tiles: 7 hops of 76, 8 unsent clocks of 61, once
+    // 154, delivery 2.
+    assert_eq!(
+        traveller.take_follow_allowance(),
+        Some(7 * 76 + 8 * 61 + 154 + 2)
+    );
     assert_eq!(traveller.take_follow_allowance(), None, "reported once");
     // Later polls of the same follow report nothing.
     assert!(traveller
@@ -456,5 +460,8 @@ fn the_follower_reports_the_allowance_of_each_route_it_starts() {
     assert!(traveller
         .follow(&mut driver, &snapshot, second, &mut options)
         .is_none());
-    assert_eq!(traveller.take_follow_allowance(), Some(3 * 76 + 154 + 2));
+    assert_eq!(
+        traveller.take_follow_allowance(),
+        Some(2 * 76 + 3 * 61 + 154 + 2)
+    );
 }
