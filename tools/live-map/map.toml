@@ -623,6 +623,28 @@ globs = [
 cells = [
   "panel.headed-nav-script|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p panel --lib app::frame_tests::",
 ]
+
+# Update-server readers need real cold downloads and complete TCP/TLS response cases.
+[[cover]]
+globs = [
+  "vendor/fr-client-rust/crates/client/src/client/client.rs",
+  "vendor/fr-client-rust/crates/client/src/client/http_reply.rs",
+  "vendor/fr-client-rust/crates/client/src/client/mod.rs",
+  "vendor/fr-client-rust/crates/client/src/client/reply_server.rs",
+  "vendor/fr-client-rust/crates/client/src/unpack/http.rs",
+  "vendor/fr-client-rust/crates/client/src/unpack/mod.rs",
+  "vendor/fr-client-rust/crates/client/src/unpack/runtime.rs",
+  "crates/host-play/tests/cache_live.rs",
+  "crates/host-play/tests/update_server_public_live.rs",
+]
+cells = [
+  "host.cache-cold-fill-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_LIVE_REVISION=289 BOT_CACHE_LIVE_ROOT=${LIVE_EVIDENCE_DIR:?}/cold-cache BOT_CACHE_LIVE_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test cache_live -- --ignored --exact cache_live --nocapture --test-threads=1",
+  "host.login-key-live|LIVE=1 WORLD_HTTP_PORT=1080 ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test cache_live -- --ignored --exact login_key_live --nocapture --test-threads=1",
+  "client.update-server-readers-headless|${ISOHOME:?} nice -n 10 cargo test --locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --lib -- --nocapture http_reply:: public_login_key_tests unpack::http --test-threads=1",
+  "host.public-update-w1-live|LIVE=1 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test update_server_public_live -- --ignored --exact public_update_w1 --nocapture --test-threads=1",
+  "host.public-update-w2-live|LIVE=1 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test update_server_public_live -- --ignored --exact public_update_w2 --nocapture --test-threads=1",
+  "host.public-update-w3-live|LIVE=1 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test update_server_public_live -- --ignored --exact public_update_w3 --nocapture --test-threads=1",
+]
 # `panel.client-game-shell-click-live` is quarantined: it chooses local NPC Examine and expects a movement takeover; use the staged GameInput minimap click below for active GameShell coverage.
 [[cover]]
 globs = ["vendor/fr-client-rust/crates/client/src/client/game_shell.rs"]
