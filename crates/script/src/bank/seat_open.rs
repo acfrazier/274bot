@@ -2069,7 +2069,9 @@ impl BankingOpen {
                         }
                         Err(_) => {
                             self.open_target(next);
-                            self.queue_access_log_after_walk(log, false);
+                            if self.queue_access_log_after_walk(log, false) {
+                                return Poll::Pending;
+                            }
                             continue;
                         }
                     }
@@ -3206,5 +3208,96 @@ mod tests {
         assert_eq!(line.len(), MAX_LOG_TEXT_BYTES - 1);
         assert!(line.is_char_boundary(line.len()));
         assert!(encoded_len(line) <= api::script_contract::PROMPT_ARGS_MAX_BYTES);
+    }
+    #[test]
+    fn refused_obstacle_walk_logs_access_before_emitting_access_interaction() {
+        static BANK: api::named_banks::BankDefinition = api::named_banks::BankDefinition {
+            name: "Shilo Village",
+            tile: WorldTile {
+                x: 300,
+                z: 100,
+                level: 0,
+            },
+            approach: None,
+            skill: None,
+            quest: None,
+            setting: None,
+            object: None,
+            open_first: None,
+            npc: Some(api::named_banks::BankOperation {
+                name: "Banker",
+                op: "Bank",
+            }),
+            choose: None,
+        };
+        let bank_tile = BANK.tile;
+        let facts = Arc::new(NamedBankFacts::from_banks(vec![NamedBank {
+            name: BANK.name,
+            tile: bank_tile,
+            definition: Some(&BANK),
+            routable: true,
+        }]));
+        let hooks = Arc::new(Mutex::new(TransferHooks::default()));
+        let mut request = BankSeatArgs::new(BankSeatOperation::Open);
+        request.stand = Some(bank_tile);
+        request.obstacles = vec!["Door".into()];
+        request.hooks_present = HOOK_LOG;
+        let args = OpeningArgs {
+            request,
+            facts,
+            preferences: BankPreferences::default(),
+            hooks: Arc::clone(&hooks),
+            selection_refused: false,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(tile(100, 100)));
+        let mut ledger = None;
+        let (_owner, mut opening, action_id) = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let owner = tick
+                .actions
+                .begin::<Opening>(args.clone(), &mut tick.cx)
+                .expect("opening owner");
+            let action_id = tick.cx.action_id;
+            let mut opening = Opening::begin(args, &mut tick.cx).expect("opening machine");
+            // The slot hold gate skips this machine; drive it directly to exercise a refused walk.
+            tick.cx.eligible = false;
+            let refused = walk_request(&tick.cx, bank_tile, 2, world_walk_options());
+            assert!(matches!(tick.cx.walk(refused), Err(ActionError::Held)));
+            assert!(opening.poll(&mut tick.cx).is_pending());
+            (owner, opening, action_id)
+        });
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        let mut events = Vec::new();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.action_id = action_id;
+            assert!(opening.poll(&mut tick.cx).is_pending());
+        });
+        let call = lock_hooks(&hooks)
+            .pending
+            .take()
+            .expect("the access log reaches the caller before access");
+        assert_eq!(call.hook, "log");
+        assert_eq!(
+            call.args,
+            vec![Value::String("bank: Shilo Village uses npc access".into())]
+        );
+        events.push("log");
+        lock_hooks(&hooks).answer = Some(TransferAnswer::Value(Value::Null));
+
+        snapshot.seed_npcs(vec![bank_npc(7, bank_tile, bank_tile)]);
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.action_id = action_id;
+            assert!(opening.poll(&mut tick.cx).is_pending());
+        });
+        events.push("access");
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert_eq!(outbox.len(), 1);
+        assert!(matches!(
+            &outbox[0].effect,
+            HostEffect::Interaction(InteractReq::Npc { action, .. }) if action == "Bank"
+        ));
+        assert_eq!(events, ["log", "access"]);
     }
 }
