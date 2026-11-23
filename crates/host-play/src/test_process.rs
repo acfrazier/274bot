@@ -8,10 +8,18 @@
 //! retain a lock until exec, even after the owning test drops its descriptor.
 
 use std::io;
+use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+#[path = "../tests/support/test_executable.rs"]
+mod test_executable;
+
 static STATE_AND_SPAWN: Mutex<()> = Mutex::new(());
+
+pub(crate) fn executable() -> PathBuf {
+    test_executable::executable().expect("the current test executable has a path")
+}
 
 /// Hold through a state test, including its service and root teardown.
 pub(crate) fn state() -> MutexGuard<'static, ()> {
@@ -54,7 +62,7 @@ pub(crate) fn isolate(full_name: &str) -> bool {
 /// lease. Preserve output on failure and require exactly one passed test.
 pub(crate) fn run(test: &str, envs: &[(&str, &str)]) {
     let _state_lease = state();
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::new(executable());
     command
         .args(["--include-ignored", "--exact", test, "--nocapture"])
         .env(ISOLATED_TEST, test)

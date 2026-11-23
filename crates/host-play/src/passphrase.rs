@@ -462,7 +462,7 @@ mod tests {
         use super::{MAX_PASSPHRASE_BYTES, TYPED};
 
         fn child(mode: &str) -> Command {
-            let mut command = Command::new(std::env::current_exe().unwrap());
+            let mut command = Command::new(crate::test_process::executable());
             command
                 .args([
                     "--exact",

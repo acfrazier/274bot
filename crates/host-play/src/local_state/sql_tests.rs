@@ -316,7 +316,7 @@ fn running_as_root() -> bool {
 
 /// Run one ignored child test of this binary with `envs`; its exit status.
 fn child(test: &str, envs: &[(&str, &std::path::Path)]) -> std::process::ExitStatus {
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    let mut command = std::process::Command::new(crate::test_process::executable());
     command
         .args(["--ignored", "--exact", test, "--nocapture"])
         .stdout(std::process::Stdio::null());
@@ -1700,7 +1700,7 @@ fn export_crash_child() {
 }
 
 fn crash_export_at(root: &StateRoot, point: &str) {
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let status = std::process::Command::new(crate::test_process::executable())
         .args([
             "--ignored",
             "--exact",
@@ -2914,7 +2914,7 @@ fn versions_epochs_and_keys_never_repeat_across_two_processes() {
     let children: Vec<_> = (0..2)
         .map(|n| {
             let marker = scratch.home.join(format!("accepted-{n}"));
-            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            let mut command = std::process::Command::new(crate::test_process::executable());
             command
                 .args([
                     "--ignored",
@@ -3031,7 +3031,7 @@ fn panel_and_tui_processes_share_one_root_in_every_pairing() {
         let children: Vec<_> = [(first, 0), (second, 1)]
             .into_iter()
             .map(|(frontend, n)| {
-                std::process::Command::new(std::env::current_exe().unwrap())
+                std::process::Command::new(crate::test_process::executable())
                     .args([
                         "--ignored",
                         "--exact",
@@ -3103,7 +3103,7 @@ fn crash_child() {
 }
 
 fn crash_at(scratch: &IsolatedEnv, point: &str) {
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let status = std::process::Command::new(crate::test_process::executable())
         .args([
             "--ignored",
             "--exact",
@@ -3243,7 +3243,7 @@ fn a_process_that_dies_in_a_save_leaves_all_of_it_or_none_of_it() {
             save(&preferences, "kept", json!(1)).unwrap();
         }
         let before = save_rows(&root);
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let status = std::process::Command::new(crate::test_process::executable())
             .args([
                 "--ignored",
                 "--exact",
@@ -3432,7 +3432,7 @@ fn private_files_stay_private_under_both_umasks() {
             .arg(format!(
                 "umask {mask} && exec \"$0\" --ignored --exact local_state::sql_tests::umask_child"
             ))
-            .arg(std::env::current_exe().unwrap())
+            .arg(crate::test_process::executable())
             .env("T53_ROOT", root.path())
             .output()
             .unwrap();
@@ -4255,7 +4255,7 @@ fn sqlite_heap_stays_within_eight_documents_at_the_maximum_state() {
     );
     let scratch = IsolatedEnv::enter("t53s4-heap-tripwire");
     let root = root_of(&scratch);
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = std::process::Command::new(crate::test_process::executable())
         .args([
             "--ignored",
             "--exact",

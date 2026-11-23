@@ -515,9 +515,8 @@ mod tests {
     }
 
     fn spawn_holder(mode: &str, home: &std::path::Path) -> HolderProc {
-        let exe = std::env::current_exe().unwrap();
         let mut child = crate::test_process::spawn(
-            Command::new(exe)
+            Command::new(crate::test_process::executable())
                 .args([
                     "--ignored",
                     "--exact",
