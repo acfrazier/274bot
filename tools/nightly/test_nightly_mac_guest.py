@@ -732,6 +732,54 @@ class NightlyOrchestrationTests(unittest.TestCase):
                 nightly.make_writable_and_remove(share / "input")
                 nightly.make_writable_and_remove(share / "control")
 
+    def test_guest_jobs_receive_engine_and_content_commits_only_for_repositories(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.make_settings(root)
+
+            def commit_repository(path: Path) -> str:
+                path.mkdir(parents=True, exist_ok=True)
+                git("init", "-q", str(path))
+                (path / "source.txt").write_text(f"{path.name}\n", encoding="utf-8")
+                git("add", ".", cwd=path)
+                git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
+                    "commit", "-qm", "initial", cwd=path)
+                return git("rev-parse", "HEAD", cwd=path)
+
+            quest_engine = commit_repository(settings.engine_q / "engine")
+            quest_content = commit_repository(settings.engine_q / "content")
+            # engine-a is one repository holding both trees, so neither tree is its own repository.
+            (settings.engine_a / "content").mkdir()
+            (settings.engine_a / "content/source.txt").write_text("content\n", encoding="utf-8")
+            git("init", "-q", str(settings.engine_a))
+            git("add", ".", cwd=settings.engine_a)
+            git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
+                "commit", "-qm", "initial", cwd=settings.engine_a)
+
+            share = root / "share"
+            share.mkdir()
+            vm = FakeVM(settings, lambda: 1000)
+            vm.session = {"id": "commits", "share": str(share), "guest_home": "/guest"}
+            controller = nightly.NightlyOrchestrator(settings, ["dev"], vm_factory=lambda *_: vm)
+            try:
+                with mock.patch.object(controller, "check_disk", return_value=1000):
+                    controller.stage_inputs()
+                tools = dict.fromkeys(
+                    ("home", "tmp", "node_bin", "cargo_home", "rustup_home", "isohome",
+                     "python", "typescript_runner"), "/guest/tool"
+                )
+                with mock.patch.object(nightly, "runner_head", return_value="c" * 40):
+                    main_environment = controller.job_environment("dev", "main", tools)
+                    quest_environment = controller.job_environment("dev", "quest", tools)
+                self.assertNotIn("NIGHTLY_ENGINE_COMMITS", main_environment)
+                self.assertEqual(
+                    json.loads(quest_environment["NIGHTLY_ENGINE_COMMITS"]),
+                    {"engine": quest_engine, "content": quest_content},
+                )
+            finally:
+                nightly.make_writable_and_remove(share / "input")
+                nightly.make_writable_and_remove(share / "control")
+
     def test_missing_configured_inputs_complete_the_controller_with_named_reasons(self):
         for name in ("NIGHTLY_MAC_NAV_SNAPSHOT", "NIGHTLY_MAC_MULTIWAY_CSV",
                      "NIGHTLY_MAC_NAV_FIXTURE", "NIGHTLY_MAC_FROZEN_CATALOG",
