@@ -110,12 +110,19 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, (Vec<u8>, SystemTime)> {
             if entry.file_type().unwrap().is_dir() {
                 visit(root, &path, files);
             } else {
+                let metadata = entry.metadata().unwrap();
+                let bytes = if metadata.len() == 0 {
+                    // Windows can deny reads even at EOF on a locked file.
+                    // Its zero length already proves that it has no bytes.
+                    Vec::new()
+                } else {
+                    std::fs::read(&path).unwrap_or_else(|error| {
+                        panic!("Cannot snapshot {}: {error}", path.display())
+                    })
+                };
                 files.insert(
                     path.strip_prefix(root).unwrap().to_path_buf(),
-                    (
-                        std::fs::read(&path).unwrap(),
-                        entry.metadata().unwrap().modified().unwrap(),
-                    ),
+                    (bytes, metadata.modified().unwrap()),
                 );
             }
         }
