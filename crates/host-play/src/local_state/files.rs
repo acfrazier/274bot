@@ -104,8 +104,8 @@ impl StateRoot {
         self.state_dir().join("state.sqlite3")
     }
 
-    /// `<root>/instance.lock`: the root-use lease every new-version user
-    /// holds shared, and an explicit maintenance command exclusive.
+    /// `<root>/instance.lock`: the exclusive product-startup and
+    /// maintenance lock. Library contention tests can hold shared leases.
     pub fn instance_lock_file(&self) -> PathBuf {
         self.0.join("instance.lock")
     }

@@ -943,11 +943,11 @@ impl LocalStateService {
         Self::open_process_with(root, Frontend::Headless, None)
     }
 
-    /// [`Self::open_process`] for a shipped `frontend` (its refusals name
-    /// that binary's maintenance commands), holding `root_use` (the
-    /// instance permit's lease of this root, so the process keeps one
-    /// descriptor for it) when the permit holds one. Without it the
-    /// database takes its own shared lease when it first opens.
+    /// [`Self::open_process`] with `frontend`'s maintenance commands.
+    /// Product composition roots must pass their startup permit's
+    /// `root_use` so the service shares the locked descriptor. `None` is
+    /// for unbound library compositions, which take a shared lease and
+    /// cannot coexist with an exclusive startup lock on another descriptor.
     pub fn open_process_with(
         root: StateRoot,
         frontend: Frontend,

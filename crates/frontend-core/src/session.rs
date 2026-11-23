@@ -704,7 +704,7 @@ pub struct OperatorSession<Io> {
     /// What [`Self::project_startup_error`] last put on a front end's message.
     shown_startup_error: Option<String>,
     initial_preference_failure: Option<crate::prefs::PreferenceError>,
-    /// Process-lifetime single-instance lock (or an explicit skip).
+    /// Process-lifetime exclusive root lock (unbound only in library tests).
     _instance: InstancePermit,
     /// Shared host-capacity warning; both front ends read [`Self::capacity_notice`].
     capacity: Option<CapacityNotice>,
@@ -776,8 +776,7 @@ enum CapacityKind {
 }
 
 impl<Io> OperatorSession<Io> {
-    /// A session holding `permit` (the instance lock or the decision to run
-    /// without it).
+    /// A session that retains the product startup's exclusive root permit.
     pub fn open(permit: crate::launch::InstancePermit) -> Self {
         Self::new(permit.into_host())
     }
@@ -1054,8 +1053,8 @@ impl<Io> OperatorSession<Io> {
     /// Open the process local-state service over the operator's state
     /// root (`<bot home>/.274bot`) and bind it: the composition root's one
     /// writer of preferences and loadouts. Its refusals name `frontend`'s
-    /// maintenance commands, and it shares the instance permit's root-use
-    /// lease when the permit holds the lock.
+    /// maintenance commands. The service shares the instance permit's
+    /// locked descriptor instead of opening a competing lease.
     pub fn open_process_state(&mut self, frontend: host_play::local_state::Frontend) {
         let root = host_play::local_state::StateRoot::new(script::bot_home().join(".274bot"));
         let root_use = self._instance.root_use();

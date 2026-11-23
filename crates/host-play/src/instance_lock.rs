@@ -1,518 +1,88 @@
-//! Process-lifetime advisory lock on `~/.274bot/instance.lock`.
-//!
-//! Uses [`std::fs::File::try_lock`] (POSIX `flock` / Windows `LockFileEx`).
-//! The lock is explicitly released when its owner drops, even if a child
-//! briefly inherited the file descriptor during process creation.
-//!
-//! Holder identity (`panel|tui` + pid) is a separate plain file,
-//! `~/.274bot/instance.holder`, published after the lock is taken (tmp +
-//! fsync + rename) and removed when [`InstanceLock`] drops. Windows
-//! `LockFileEx` is mandatory, so another process cannot read bytes covered
-//! by the lock; a same-file marker would always look like `pid unknown`
-//! there. A contested reader accepts only a complete newline-terminated
-//! marker whose pid is still alive; anything else is retried for 500 ms,
-//! then `pid unknown`. A crash can leave a marker; liveness rejects it.
-
-use std::fs::{File, OpenOptions, TryLockError};
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+//! The mandatory startup permit over the local-state root's exclusive lock.
 
 use crate::local_state::{RootUse, StateRoot, StateRootLockError};
 
-/// Which frontend holds `~/.274bot`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstanceKind {
-    Panel,
-    Tui,
-}
-
-impl InstanceKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Panel => "panel",
-            Self::Tui => "tui",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Panel => "panel",
-            Self::Tui => "TUI",
-        }
-    }
-
-    fn parse(s: &str) -> Option<Self> {
-        match s {
-            "panel" => Some(Self::Panel),
-            "tui" => Some(Self::Tui),
-            _ => None,
-        }
-    }
-}
-
-/// Identity recorded in `instance.holder` by the process that holds
-/// `instance.lock`. `pid`/`kind` are `None` when the OS lock is held but
-/// the marker is missing, empty, partial, or unreadable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InstanceHolder {
-    pub pid: Option<u32>,
-    pub kind: Option<InstanceKind>,
-}
-
-impl InstanceHolder {
-    pub fn unknown() -> Self {
-        Self {
-            pid: None,
-            kind: None,
-        }
-    }
-}
-
-/// The exclusive instance lock, held until the process and its state service stop.
-#[derive(Debug)]
-pub struct InstanceLock {
-    _file: Arc<File>,
-}
-
-impl InstanceLock {
-    /// The root-use lease over this lock's descriptor, for the process
-    /// service of the same root.
-    pub fn root_use(&self) -> RootUse {
-        RootUse::from_locked(Arc::clone(&self._file))
-    }
-}
-
-impl Drop for InstanceLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(instance_holder_path());
-        // The service may still hold the lease: the last holder unlocks.
-        if Arc::strong_count(&self._file) == 1 {
-            let _ = self._file.unlock();
-        }
-    }
-}
-
-/// Outcome of an exclusive lock attempt. A held lock is always
-/// [`Self::Contested`], even when the marker cannot be parsed.
-#[derive(Debug)]
-pub enum InstanceLockResult {
-    Acquired(InstanceLock),
-    Contested(InstanceHolder),
-}
-
-/// The process's instance lock, or an unbound library-test session.
+/// The process's exclusive root lock, or an unbound library-test session.
 #[derive(Debug)]
 pub enum InstancePermit {
-    Locked(InstanceLock),
+    Locked(RootUse),
+    #[cfg(any(test, feature = "test-support"))]
     SkipLock,
 }
 
 impl InstancePermit {
+    /// Construct an unbound library-test session, not a product startup.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn skip() -> Self {
         Self::SkipLock
     }
 
-    pub fn locked(lock: InstanceLock) -> Self {
-        Self::Locked(lock)
-    }
-
-    /// The held lock's root-use lease, when this permit holds the lock.
+    /// Share the locked descriptor with this process's state service.
     pub fn root_use(&self) -> Option<RootUse> {
         match self {
-            Self::Locked(lock) => Some(lock.root_use()),
+            Self::Locked(root_use) => Some(root_use.clone()),
+            #[cfg(any(test, feature = "test-support"))]
             Self::SkipLock => None,
         }
     }
 }
 
 /// Acquire the mandatory startup lock before opening any saved state.
-pub fn resolve_instance_permit(kind: InstanceKind) -> Result<InstancePermit, StateRootLockError> {
+pub fn resolve_instance_permit() -> Result<InstancePermit, StateRootLockError> {
     let root = StateRoot::new(script::bot_home().join(".274bot"));
-    match try_acquire_instance_lock(kind).map_err(|source| StateRootLockError::Io {
-        root: root.path().to_path_buf(),
-        source,
-    })? {
-        InstanceLockResult::Acquired(lock) => Ok(InstancePermit::Locked(lock)),
-        InstanceLockResult::Contested(_) => Err(StateRootLockError::InUse {
-            root: root.path().to_path_buf(),
-        }),
-    }
-}
-
-/// `~/.274bot/instance.lock` — exclusive OS lock, not the pid/kind marker.
-pub fn instance_lock_path() -> PathBuf {
-    script::bot_file("instance.lock")
-}
-
-/// `~/.274bot/instance.holder` — plain `kind pid` line, always readable.
-fn instance_holder_path() -> PathBuf {
-    script::bot_file("instance.holder")
-}
-
-pub fn instance_conflict_message(holder: &InstanceHolder) -> String {
-    let lock = instance_lock_path();
-    let dir = lock
-        .parent()
-        .expect("instance.lock lives in the bot directory")
-        .display();
-    match (holder.kind, holder.pid) {
-        (Some(kind), Some(pid)) => format!(
-            "Another 274bot {} (pid {}) is using state root {}. Close that process before starting 274bot.",
-            kind.label(),
-            pid,
-            dir
-        ),
-        _ => format!(
-            "Another 274bot process (pid unknown) is using state root {}. Close that process before starting 274bot.",
-            dir
-        ),
-    }
-}
-
-/// Take the exclusive instance lock, or report who holds it.
-pub fn try_acquire_instance_lock(kind: InstanceKind) -> io::Result<InstanceLockResult> {
-    let path = instance_lock_path();
-    if let Some(parent) = path.parent() {
-        vault::create_private_dir(parent)?;
-    }
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)?;
-    match file.try_lock() {
-        Ok(()) => {
-            write_holder(kind)?;
-            Ok(InstanceLockResult::Acquired(InstanceLock {
-                _file: Arc::new(file),
-            }))
-        }
-        Err(TryLockError::WouldBlock) => Ok(InstanceLockResult::Contested(read_holder_retry())),
-        Err(TryLockError::Error(e)) => Err(e),
-    }
-}
-
-const MARKER_WAIT: Duration = Duration::from_millis(500);
-const MARKER_STEP: Duration = Duration::from_millis(20);
-
-fn write_holder(kind: InstanceKind) -> io::Result<()> {
-    let dest = instance_holder_path();
-    let tmp = script::bot_file(&format!("instance.holder.{}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&tmp)?;
-    let synced = (|| {
-        writeln!(file, "{} {}", kind.as_str(), std::process::id())?;
-        file.sync_all()
-    })();
-    drop(file);
-    if let Err(e) = synced {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    // `rename` replaces an existing marker on every platform (Windows uses
-    // MOVEFILE_REPLACE_EXISTING), so a failure here is a real error.
-    if let Err(err) = std::fs::rename(&tmp, &dest) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(err);
-    }
-    Ok(())
-}
-
-fn read_holder_retry() -> InstanceHolder {
-    let deadline = Instant::now() + MARKER_WAIT;
-    loop {
-        if let Some(holder) = read_holder_once() {
-            return holder;
-        }
-        if Instant::now() >= deadline {
-            return InstanceHolder::unknown();
-        }
-        std::thread::sleep(MARKER_STEP);
-    }
-}
-
-fn read_holder_once() -> Option<InstanceHolder> {
-    let text = std::fs::read_to_string(instance_holder_path()).ok()?;
-    let holder = parse_holder(&text)?;
-    let pid = holder.pid?;
-    pid_alive(pid).then_some(holder)
-}
-
-/// Complete marker: `kind pid` plus a terminating newline, nothing after.
-fn parse_holder(text: &str) -> Option<InstanceHolder> {
-    let (line, rest) = text.split_once('\n')?;
-    if !rest.is_empty() {
-        return None;
-    }
-    let mut parts = line.split_whitespace();
-    let kind = InstanceKind::parse(parts.next()?)?;
-    let pid = parts.next()?.parse().ok()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some(InstanceHolder {
-        pid: Some(pid),
-        kind: Some(kind),
-    })
-}
-
-/// The client's process probe.
-///
-/// A pid this lock did not query stays dead: pid 0 on Unix and Windows, and a
-/// Unix value that does not fit in `i32`. The client treats those as alive so
-/// a staging directory is kept. That client reading is unchanged.
-///
-/// On Windows the probe follows the client. Only `ERROR_INVALID_PARAMETER`
-/// from `OpenProcess` means dead. Access denied and every other error mean
-/// alive, including a lock held by another user's live process.
-fn pid_alive(pid: u32) -> bool {
-    if cfg!(any(unix, windows)) && pid == 0 {
-        return false;
-    }
-    if cfg!(unix) && i32::try_from(pid).is_err() {
-        return false;
-    }
-    client::unpack::process_is_alive(pid)
+    RootUse::acquire(&root).map(InstancePermit::Locked)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{BufRead, BufReader, Read};
-    use std::process::{Command, Stdio};
-    use std::sync::{mpsc, Mutex, MutexGuard};
-
-    #[test]
-    fn pid_alive_accepts_this_process_and_rejects_pid_zero() {
-        assert!(pid_alive(std::process::id()));
-        assert!(!pid_alive(0));
-        if cfg!(unix) {
-            assert!(!pid_alive(u32::MAX));
-        }
-    }
-
-    fn lock_test_guard() -> MutexGuard<'static, ()> {
-        static LOCK: Mutex<()> = Mutex::new(());
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     #[test]
     fn startup_permit_holds_an_exclusive_lock() {
         let _iso = script::IsolatedEnv::enter("instance-permit");
-        let permit = resolve_instance_permit(InstanceKind::Panel).unwrap();
+        let permit = resolve_instance_permit().unwrap();
         assert!(matches!(permit, InstancePermit::Locked(_)));
         let root = StateRoot::new(script::bot_home().join(".274bot"));
         assert!(RootUse::shared(&root).unwrap().is_none());
         assert!(matches!(
-            resolve_instance_permit(InstanceKind::Tui),
+            resolve_instance_permit(),
             Err(StateRootLockError::InUse { .. })
         ));
     }
 
     #[test]
     fn lock_is_reacquired_after_the_holder_drops() {
-        let _guard = lock_test_guard();
         let _iso = script::IsolatedEnv::enter("instance-lock-drop");
-        let first = try_acquire_instance_lock(InstanceKind::Panel).unwrap();
-        assert!(matches!(first, InstanceLockResult::Acquired(_)));
-        assert!(instance_holder_path().is_file());
+        let first = resolve_instance_permit().unwrap();
         drop(first);
-        assert!(!instance_holder_path().exists());
-        let second = try_acquire_instance_lock(InstanceKind::Tui).unwrap();
-        match second {
-            InstanceLockResult::Acquired(_) => {}
-            InstanceLockResult::Contested(h) => panic!("lock survived drop: {h:?}"),
-        }
+        let _second = resolve_instance_permit().expect("the first permit released the lock");
     }
 
     #[test]
-    fn contested_empty_marker_is_unknown_not_an_error() {
-        let _guard = lock_test_guard();
-        let iso = script::IsolatedEnv::enter("instance-lock-empty");
-        let path = instance_lock_path();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let holder = spawn_holder("empty", &iso.home);
-        match try_acquire_instance_lock(InstanceKind::Tui).unwrap() {
-            InstanceLockResult::Contested(h) => {
-                assert_eq!(h, InstanceHolder::unknown());
-                assert!(
-                    instance_conflict_message(&h).contains("pid unknown"),
-                    "{}",
-                    instance_conflict_message(&h)
-                );
-            }
-            InstanceLockResult::Acquired(_) => panic!("expected contest"),
-        }
-        holder.reap();
-        let _iso = iso;
+    fn service_lease_keeps_the_lock_after_the_permit_drops() {
+        let _iso = script::IsolatedEnv::enter("instance-lock-service");
+        let permit = resolve_instance_permit().unwrap();
+        let lease = permit.root_use().expect("the startup permit holds the lock");
+        drop(permit);
+        assert!(matches!(
+            resolve_instance_permit(),
+            Err(StateRootLockError::InUse { .. })
+        ));
+        drop(lease);
+        let _next = resolve_instance_permit().expect("the last lease released the lock");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn contested_stale_complete_marker_is_unknown() {
-        let _guard = lock_test_guard();
-        let iso = script::IsolatedEnv::enter("instance-lock-stale");
-        std::fs::create_dir_all(instance_lock_path().parent().unwrap()).unwrap();
-        std::fs::write(instance_holder_path(), "panel 424242\n").unwrap();
-        let holder = spawn_holder("empty", &iso.home);
-        match try_acquire_instance_lock(InstanceKind::Tui).unwrap() {
-            InstanceLockResult::Contested(h) => {
-                assert_eq!(h, InstanceHolder::unknown());
-                assert_ne!(h.pid, Some(424242));
-            }
-            InstanceLockResult::Acquired(_) => panic!("expected contest"),
-        }
-        holder.reap();
-        let _iso = iso;
-    }
+    fn startup_lock_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
 
-    #[test]
-    fn contested_partial_marker_is_unknown() {
-        let _guard = lock_test_guard();
-        let iso = script::IsolatedEnv::enter("instance-lock-partial");
-        std::fs::create_dir_all(instance_lock_path().parent().unwrap()).unwrap();
-        std::fs::write(instance_holder_path(), "tui 12").unwrap();
-        let holder = spawn_holder("empty", &iso.home);
-        match try_acquire_instance_lock(InstanceKind::Tui).unwrap() {
-            InstanceLockResult::Contested(h) => {
-                assert_eq!(h, InstanceHolder::unknown());
-                assert_ne!(h.pid, Some(12));
-            }
-            InstanceLockResult::Acquired(_) => panic!("expected contest"),
-        }
-        holder.reap();
-        let _iso = iso;
-    }
-
-    #[test]
-    fn second_acquirer_sees_holder_pid_and_kind() {
-        let _guard = lock_test_guard();
-        let iso = script::IsolatedEnv::enter("instance-lock-hold");
-        let holder = spawn_holder("panel", &iso.home);
-        let pid = holder.pid;
-        let marker = std::fs::read_to_string(instance_holder_path()).expect("plain holder");
-        assert!(
-            marker.contains(&pid.to_string()) && marker.contains("panel") && marker.ends_with('\n'),
-            "{marker:?}"
-        );
-        match try_acquire_instance_lock(InstanceKind::Tui).unwrap() {
-            InstanceLockResult::Contested(h) => {
-                assert_eq!(h.pid, Some(pid));
-                assert_eq!(h.kind, Some(InstanceKind::Panel));
-                assert!(instance_conflict_message(&h).contains(&pid.to_string()));
-            }
-            InstanceLockResult::Acquired(_) => panic!("expected contest"),
-        }
-        holder.reap();
-        match try_acquire_instance_lock(InstanceKind::Tui).unwrap() {
-            InstanceLockResult::Acquired(_) => {}
-            InstanceLockResult::Contested(h) => panic!("child drop left the lock: {h:?}"),
-        }
-        let _iso = iso;
-    }
-
-    #[test]
-    #[ignore = "lock-holder child"]
-    fn hold_instance_lock_until_stdin_closes() {
-        let mode = std::env::var("274BOT_LOCK_HOLDER").unwrap_or_default();
-        let path = instance_lock_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .unwrap();
-        file.try_lock().expect("child lock");
-        if mode != "empty" {
-            let kind = if mode == "tui" {
-                InstanceKind::Tui
-            } else {
-                InstanceKind::Panel
-            };
-            write_holder(kind).unwrap();
-        }
-        println!("\nholder-ready {}", std::process::id());
-        let mut buf = [0u8; 1];
-        let _ = std::io::stdin().read(&mut buf);
-        file.unlock().expect("release child lock");
-    }
-
-    struct HolderProc {
-        child: std::process::Child,
-        reader: Option<std::thread::JoinHandle<()>>,
-        pid: u32,
-    }
-
-    impl HolderProc {
-        fn reap(mut self) {
-            drop(self.child.stdin.take());
-            let deadline = Instant::now() + Duration::from_secs(10);
-            let status = loop {
-                if let Some(status) = self.child.try_wait().expect("wait holder") {
-                    break status;
-                }
-                assert!(Instant::now() < deadline, "holder child exit timed out");
-                std::thread::sleep(Duration::from_millis(10));
-            };
-            assert!(status.success(), "holder child {status:?}");
-        }
-    }
-
-    impl Drop for HolderProc {
-        fn drop(&mut self) {
-            if self.child.try_wait().ok().flatten().is_none() {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
-            }
-            if let Some(reader) = self.reader.take() {
-                reader.join().expect("holder stdout reader");
-            }
-        }
-    }
-
-    fn spawn_holder(mode: &str, home: &std::path::Path) -> HolderProc {
-        let mut child = crate::test_process::spawn(
-            Command::new(crate::test_process::executable())
-                .args([
-                    "--ignored",
-                    "--exact",
-                    "--nocapture",
-                    "instance_lock::tests::hold_instance_lock_until_stdin_closes",
-                ])
-                .env("274BOT_LOCK_HOLDER", mode)
-                .env("HOME", home)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit()),
-        )
-        .unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let (ready_tx, ready_rx) = mpsc::channel();
-        let reader = std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let line = line.expect("holder line");
-                if let Some(rest) = line.trim_end().strip_prefix("holder-ready ") {
-                    let _ = ready_tx.send(rest.parse::<u32>().expect("holder pid"));
-                }
-            }
-        });
-        let mut holder = HolderProc {
-            child,
-            reader: Some(reader),
-            pid: 0,
-        };
-        holder.pid = ready_rx
-            .recv_timeout(Duration::from_secs(10))
-            .expect("holder-ready within timeout");
-        holder
+        let _iso = script::IsolatedEnv::enter("instance-lock-mode");
+        let _permit = resolve_instance_permit().unwrap();
+        let root = StateRoot::new(script::bot_home().join(".274bot"));
+        let permissions = std::fs::metadata(root.instance_lock_file())
+            .unwrap()
+            .permissions();
+        assert_eq!(permissions.mode() & 0o077, 0);
     }
 }

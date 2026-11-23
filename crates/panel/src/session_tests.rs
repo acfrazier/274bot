@@ -26,8 +26,8 @@ use client::dash3d::CollisionFlag;
 use client::io::{Packet, ServerProt};
 use client::render::nav_debug::{CORNER_NE, FACE_N, FACE_S};
 use frontend_core::launch::{
-    InstanceKind, InstancePermit, ProfileArgs, ProfileClass, ProfileEnv, ProfileTemplate,
-    ValidatedProfile, ValidationPending,
+    InstancePermit, ProfileArgs, ProfileClass, ProfileEnv, ProfileTemplate, ValidatedProfile,
+    ValidationPending,
 };
 use frontend_core::scripts::{CardSource, CompiledCardId, Loadouts, ScriptChoice, ScriptRunState};
 #[cfg(feature = "js")]
@@ -10582,22 +10582,14 @@ fn background_ack_closes_when_the_last_other_bot_retires() {
 }
 
 #[test]
-fn skip_lock_session_takes_the_root_lease_but_no_instance_lock() {
-    let iso = IsolatedStores::enter("session-skip-lock");
+fn unbound_test_session_takes_a_shared_root_lease() {
+    let iso = IsolatedStores::enter("session-unbound-lease");
     let s = Session::with_instance(InstancePermit::skip())
         .expect("isolated script settings are readable");
-    // The state database holds the root-use lease shared on its own
-    // `instance.lock` (every SQL user does; a skip permit skips only the
-    // warning), so the file exists. No exclusive instance lock is taken and
-    // no holder is recorded.
+    // This test-only unbound session lets the database take a shared lease.
     s.preferences.reload().unwrap();
-    let lock = host_play::instance_lock_path();
-    assert!(lock.exists(), "the root-use lease is the file's holder");
-    assert!(
-        !lock.with_file_name("instance.holder").exists(),
-        "a skip permit records no instance holder"
-    );
     let root = thread_state_root();
+    assert!(root.instance_lock_file().exists());
     assert!(
         host_play::local_state::RootUse::exclusive(&root)
             .unwrap()
@@ -10608,29 +10600,23 @@ fn skip_lock_session_takes_the_root_lease_but_no_instance_lock() {
         host_play::local_state::RootUse::shared(&root)
             .unwrap()
             .is_some(),
-        "the lease is shared, not an exclusive instance lock"
+        "the test session's lease is shared"
     );
     drop(s);
-    match host_play::try_acquire_instance_lock(host_play::InstanceKind::Tui).unwrap() {
-        host_play::InstanceLockResult::Acquired(_) => {}
-        host_play::InstanceLockResult::Contested(h) => {
-            panic!("the instance probe still works after the session: {h:?}")
-        }
-    }
+    let _next = host_play::local_state::RootUse::acquire(&root)
+        .expect("the session released its root lease");
     let _iso = iso;
 }
 
 #[test]
 fn locked_session_releases_the_instance_lock_on_drop() {
     let iso = IsolatedStores::enter("session-hold-lock");
-    let permit = frontend_core::launch::acquire_instance(InstanceKind::Panel)
-        .expect("the isolated root is free");
+    let permit =
+        frontend_core::launch::acquire_instance().expect("the isolated root is free");
     let session = Session::with_instance(permit).expect("isolated script settings are readable");
     drop(session);
-    match host_play::try_acquire_instance_lock(host_play::InstanceKind::Tui).unwrap() {
-        host_play::InstanceLockResult::Acquired(_) => {}
-        host_play::InstanceLockResult::Contested(h) => panic!("session drop left the lock: {h:?}"),
-    }
+    let _next = host_play::local_state::RootUse::acquire(&thread_state_root())
+        .expect("the session released its root lock");
     let _iso = iso;
 }
 

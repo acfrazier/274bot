@@ -1533,27 +1533,12 @@ pub fn warn_legacy_passphrase_env(program: &str) {
     host_play::passphrase::warn_legacy_env(program);
 }
 
-/// Which front end holds the single-instance lock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstanceKind {
-    Panel,
-    Tui,
-}
-
-impl InstanceKind {
-    fn to_host(self) -> host_play::InstanceKind {
-        match self {
-            Self::Panel => host_play::InstanceKind::Panel,
-            Self::Tui => host_play::InstanceKind::Tui,
-        }
-    }
-}
-
 /// The instance lock retained by the operator session.
 pub struct InstancePermit(host_play::InstancePermit);
 
 impl InstancePermit {
     /// Construct an unbound library-test session, not a product startup.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn skip() -> Self {
         Self(host_play::InstancePermit::skip())
     }
@@ -1561,13 +1546,17 @@ impl InstancePermit {
     pub(crate) fn into_host(self) -> host_play::InstancePermit {
         self.0
     }
+
+    pub(crate) fn root_use(&self) -> Option<host_play::local_state::RootUse> {
+        self.0.root_use()
+    }
 }
 
 pub use host_play::local_state::StateRootLockError;
 
 /// Take the exclusive state-root lock before opening saved state.
-pub fn acquire_instance(kind: InstanceKind) -> Result<InstancePermit, StateRootLockError> {
-    host_play::resolve_instance_permit(kind.to_host()).map(InstancePermit)
+pub fn acquire_instance() -> Result<InstancePermit, StateRootLockError> {
+    host_play::resolve_instance_permit().map(InstancePermit)
 }
 
 #[cfg(test)]

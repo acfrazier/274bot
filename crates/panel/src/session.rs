@@ -1832,7 +1832,7 @@ impl Session {
     }
 
     /// Product startup passes the exclusive root permit before loading saved
-    /// state. Isolated library tests can pass [`InstancePermit::SkipLock`].
+    /// state. Isolated library tests can pass `InstancePermit::skip()`.
     pub fn with_instance(
         instance: frontend_core::launch::InstancePermit,
     ) -> Result<Self, SessionStartupError> {

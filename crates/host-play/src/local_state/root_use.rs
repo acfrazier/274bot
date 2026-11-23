@@ -24,10 +24,10 @@ pub enum StateRootLockError {
     },
 }
 
-/// One holder of a root's `instance.lock`, shared or exclusive. Clones of
-/// the instance permit's file share one descriptor; the lock is released
-/// when the last holder drops.
-#[derive(Debug)]
+/// One holder of a root's `instance.lock`, shared or exclusive. Clones
+/// share one locked descriptor; the lock is released when the last holder
+/// drops.
+#[derive(Clone, Debug)]
 pub struct RootUse {
     file: Arc<File>,
 }
@@ -45,13 +45,8 @@ impl RootUse {
             })
     }
 
-    /// The lease over an already locked instance file.
-    pub(crate) fn from_locked(file: Arc<File>) -> Self {
-        Self { file }
-    }
-
-    /// Take `root`'s lease shared, without waiting: `Ok(None)` while a
-    /// maintenance command holds it exclusive.
+    /// Take `root`'s lease shared, without waiting: `Ok(None)` while an
+    /// independent startup or maintenance lock holds it exclusive.
     pub fn shared(root: &StateRoot) -> io::Result<Option<Self>> {
         let file = open(root)?;
         match file.try_lock_shared() {
