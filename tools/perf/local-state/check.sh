@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# This benchmark measures local-state SQL, not navigation. Skip nav asset staging by default.
+export BOT_NAV_BUILD="${BOT_NAV_BUILD-skip}"
 
 usage() {
   printf 'usage: %s <report.json> [json-baseline.json]\n' "$0" >&2
