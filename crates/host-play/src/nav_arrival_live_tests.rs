@@ -65,6 +65,7 @@ const LUMBRIDGE_DOOR_CLOSED_ID: i32 = 1533;
 const LUMBRIDGE_DOOR_OPEN_ID: i32 = 1534;
 const LUMBRIDGE_DOOR_CLOSE_TICKS: u32 = 500;
 const LUMBRIDGE_DOOR_WAIT_TIMEOUT: Duration = Duration::from_secs(6 * 60);
+const GNOME_MAINLAND: (i32, i32, i32) = (3220, 3220, 0);
 const GNOME_MAZE_START: WorldTile = WorldTile {
     x: 2517,
     z: 3179,
@@ -236,10 +237,12 @@ struct SceneProof {
 #[derive(Clone, Copy, Default)]
 enum GnomeSetup {
     #[default]
-    SkipTutorial,
-    ReadTutorial,
+    HopMainland,
+    AwaitHop,
     AwaitTutorial,
-    AwaitMainland,
+    AwaitRelog {
+        from_session: u64,
+    },
     Seed(usize),
     AwaitFacts,
     Ready,
@@ -574,14 +577,24 @@ fn prepare_gnome_account(
     }
     let ingame = client.ingame && client.scene_state == 2;
     match state.gnome_setup {
-        GnomeSetup::SkipTutorial if ingame => {
+        GnomeSetup::HopMainland if ingame => {
             state.gnome_initial_facts = Some(combat_facts_json(diagnostic_view(snapshot)));
-            api::interact::mainland_hop(client);
-            state.gnome_setup = GnomeSetup::ReadTutorial;
+            let (x, z, level) = GNOME_MAINLAND;
+            if !api::interact::cheat(client, &api::interact::tele_args(level, x, z)).is_sent() {
+                state.setup_error = Some("Gnome mainland teleport was refused".into());
+                return false;
+            }
+            state.gnome_setup = GnomeSetup::AwaitHop;
         }
-        GnomeSetup::ReadTutorial => {
-            if !api::interact::cheat(client, "getvar tutorial").is_sent() {
-                state.setup_error = Some("Gnome tutorial proof command was refused".into());
+        GnomeSetup::AwaitHop if ingame && snapshot.tile() == Some(GNOME_MAINLAND) => {
+            // The hop closes player_kit. Its queued stage-1 write runs before the
+            // mainland observation (tutorial.rs2:136-141, World.ts:351-409).
+            for command in ["setvar tutorial 1000", "getvar tutorial"] {
+                if !api::interact::cheat(client, command).is_sent() {
+                    state.setup_error =
+                        Some(format!("Gnome tutorial command was refused: {command}"));
+                    return false;
+                }
             }
             state.gnome_setup = GnomeSetup::AwaitTutorial;
         }
@@ -602,11 +615,14 @@ fn prepare_gnome_account(
                 // Tutorial clears both item tabs. A varp cheat alone does not
                 // restore them: login.rs2 initalltabs transmits inventory/worn.
                 arm.arm_explicit_login();
-                state.gnome_setup = GnomeSetup::AwaitMainland;
+                state.gnome_setup = GnomeSetup::AwaitRelog {
+                    from_session: client.gens.session,
+                };
             }
         }
-        GnomeSetup::AwaitMainland
+        GnomeSetup::AwaitRelog { from_session }
             if ingame
+                && client.gens.session != from_session
                 && diagnostic_view(snapshot).inventory().is_some()
                 && diagnostic_view(snapshot).equipment().is_some() =>
         {
@@ -1306,6 +1322,85 @@ fn write_capture_flushes_its_json_without_a_frame() {
 }
 
 #[test]
+fn gnome_tutorial_write_waits_for_the_mainland_scene() {
+    let mut client = client::client::Client::new_with_revision(
+        client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 44594,
+            cache_dir: "unused".into(),
+            members: true,
+            lowmem: true,
+        },
+        client::client::ClientRevision::R289,
+    );
+    client.set_cheat_admission(client::CheatAdmission::Granted);
+    client.ingame = true;
+    client.scene_state = 2;
+    client.gens.player = 1;
+    client.gens.player_info = 1;
+    client.gens.session = 1;
+    client.map_build_base_x = 3072;
+    client.map_build_base_z = 3072;
+    client.local_player = Some(client::client::ClientPlayer::at(22, 34));
+
+    let arm = SlotArm::new(1, true);
+    let mut state = LiveState::default();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(!prepare_gnome_account(
+        &mut client,
+        &snapshot,
+        &arm,
+        &mut state
+    ));
+    assert_eq!(client.cheat_packets_sent(), 1, "only the mainland teleport");
+    assert!(!prepare_gnome_account(
+        &mut client,
+        &snapshot,
+        &arm,
+        &mut state
+    ));
+    assert_eq!(client.cheat_packets_sent(), 1, "still on Tutorial Island");
+
+    client.scene_state = 1;
+    client.map_build_base_x = 3200;
+    client.map_build_base_z = 3200;
+    client.local_player = Some(client::client::ClientPlayer::at(20, 20));
+    client.gens.player += 1;
+    client.gens.player_info += 1;
+    snapshot.rebuild(&client);
+    assert_eq!(snapshot.tile(), Some((3220, 3220, 0)));
+    assert!(!prepare_gnome_account(
+        &mut client,
+        &snapshot,
+        &arm,
+        &mut state
+    ));
+    assert_eq!(
+        client.cheat_packets_sent(),
+        1,
+        "mainland scene still loading"
+    );
+
+    client.scene_state = 2;
+    assert!(!prepare_gnome_account(
+        &mut client,
+        &snapshot,
+        &arm,
+        &mut state
+    ));
+    assert_eq!(client.cheat_packets_sent(), 3, "write and read tutorial");
+    assert!(!prepare_gnome_account(
+        &mut client,
+        &snapshot,
+        &arm,
+        &mut state
+    ));
+    assert_eq!(client.cheat_packets_sent(), 3, "await the tutorial reply");
+    assert!(state.setup_error.is_none());
+}
+
+#[test]
 fn gnome_maze_keeps_the_real_food_guard_and_complete_giant_facts() {
     let walk = WalkSpec::gnome_walk();
     let request = walk.request(api::quest_progress::EvidenceStamp {
@@ -1495,7 +1590,7 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     let frame_account = account.clone();
     let mut play = run_with_template(
         template,
-        false,
+        false, // The fixture owns its teleports, including across the Gnome relog.
         vec![],
         move |username| {
             if username == frame_account {
