@@ -43,6 +43,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   Choose **Never** in Nav config or TUI Settings when a low-level bot must avoid
   aggressive monsters. For example, choose **Never** near the King Scorpion
   zones by Falador East.
+- A native walk that gets no host result now ends after 1,000 observed game
+  ticks (ten minutes of 600 ms ticks). It no longer reads the wall clock. A
+  random-event hold, a pause or a blocked interval does not spend the limit,
+  and several polls in one game tick count once.
 
 ### Scenario observations
 

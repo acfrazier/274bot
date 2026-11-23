@@ -11,7 +11,6 @@ use nav_planner::contract::{WalkDestination, WALK_DESTINATIONS};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::task::Poll;
-use std::time::Duration;
 
 #[cfg(test)]
 mod anchor_policy_tests {
@@ -90,11 +89,23 @@ pub fn resolve_destination(name: &str) -> Option<&'static WalkDestination> {
         .find(|destination| destination.name.eq_ignore_ascii_case(key))
 }
 
-/// Eligible time a native walk may stay unsettled without a host terminal
-/// receipt before it ends `Failed` and revokes its host follow. The backstop
-/// uses the active clock, so pause, hold, not-ready and Blocked intervals do
-/// not spend it.
-pub const WALK_DEADLINE: Duration = Duration::from_secs(10 * 60);
+/// Observed game ticks a native walk may stay unsettled without a host
+/// terminal receipt before it ends `Failed` and revokes its host follow.
+/// 1,000 ticks of the 600 ms server tick are the ten minutes of the earlier
+/// backstop. The walk counts each distinct observed tick on which its owner
+/// polled it while eligible, so a guardian hold, a pause, a not-ready frame
+/// and a Blocked interval do not spend it, and it never reads a clock
+/// (`AGENTS.md` content-timed waits).
+pub const WALK_DEADLINE_TICKS: u32 = (10 * 60 * 1000 / crate::bank::ops::SERVER_TICK_MS) as u32;
+/// The `detail` of the receipt that ends a walk at [`WALK_DEADLINE_TICKS`].
+const DEADLINE_DETAIL: &str =
+    "walk receipt deadline expired before the host reported a terminal result";
+
+/// Whether this receipt is the one that [`Walk`] makes when it reaches
+/// [`WALK_DEADLINE_TICKS`], not one that the host reported.
+pub fn is_deadline_receipt(receipt: &WalkReceipt) -> bool {
+    receipt.end == WalkEnd::Failed && receipt.detail.as_deref() == Some(DEADLINE_DETAIL)
+}
 /// Login's `initalltabs` opens the quest tab and calls `update_questlist`.
 /// Give unresolved gates one later tick for quest-list colour updates to
 /// reach the snapshot before reporting missing evidence.
@@ -136,7 +147,10 @@ pub struct Walk {
     replay: Box<WalkReplay>,
     quest_list_wait_since: Option<u64>,
     quest_list_retry_used: bool,
-    deadline: Duration,
+    /// Observed ticks left before [`WALK_DEADLINE_TICKS`] ends the walk.
+    ticks_left: u32,
+    /// The last observed tick that the walk counted.
+    last_tick: u64,
     wait: WalkSlot,
 }
 
@@ -308,9 +322,7 @@ fn deadline_failure_receipt(
         evidence,
         end: WalkEnd::Failed,
         blocked: None,
-        detail: Some(std::sync::Arc::from(
-            "walk receipt deadline expired before the host reported a terminal result",
-        )),
+        detail: Some(std::sync::Arc::from(DEADLINE_DETAIL)),
         refusal: None,
         assessment: None,
         escape: None,
@@ -319,6 +331,17 @@ fn deadline_failure_receipt(
 }
 
 impl Walk {
+    /// Spend one tick of the deadline when `tick` is a new observed tick, and
+    /// report whether the deadline is spent. Only a poll calls it, so a tick
+    /// on which the owner did not poll the walk is not spent.
+    fn spend_observed_tick(&mut self, tick: u64) -> bool {
+        if tick != self.last_tick {
+            self.last_tick = tick;
+            self.ticks_left = self.ticks_left.saturating_sub(1);
+        }
+        self.ticks_left == 0
+    }
+
     /// The current host walk request. Dropping the machine does not revoke
     /// the host follow, so an owner that abandons it passes this ID to
     /// [`ActionContext::cancel_request`] before it cancels the machine.
@@ -376,7 +399,8 @@ impl NativeMachine for Walk {
             replay,
             quest_list_wait_since: None,
             quest_list_retry_used: false,
-            deadline: cx.active_now().saturating_add(WALK_DEADLINE),
+            ticks_left: WALK_DEADLINE_TICKS,
+            last_tick: cx.evidence().tick,
             wait,
         })
     }
@@ -432,8 +456,9 @@ impl NativeMachine for Walk {
         {
             return Poll::Ready(Ok(receipt.clone()));
         }
+        let expired = self.spend_observed_tick(cx.evidence().tick);
         if !cx.evidence().meets(self.replay.required_after) {
-            if cx.active_now() >= self.deadline {
+            if expired {
                 cx.cancel_request(request_id);
                 return Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())));
             }
@@ -445,7 +470,7 @@ impl NativeMachine for Walk {
                 && matches!(&receipt.end, WalkEnd::NeedsEvidence(_))
         });
         if needs_quest_evidence {
-            if cx.active_now() >= self.deadline {
+            if expired {
                 cx.cancel_request(request_id);
                 return Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())));
             }
@@ -530,7 +555,7 @@ impl NativeMachine for Walk {
             goal: receipt.and_then(|receipt| receipt.goal),
         };
         if !self.wait.poll(request_id, &frame) {
-            if cx.active_now() >= self.deadline {
+            if expired {
                 cx.cancel_request(request_id);
                 return Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())));
             }
@@ -545,7 +570,7 @@ impl NativeMachine for Walk {
         // the next tick: this tick's locs can still be the old ones, and the
         // owner's next click would choose from them.
         if cx.entered_scene() {
-            if cx.active_now() >= self.deadline {
+            if expired {
                 cx.cancel_request(request_id);
                 return Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())));
             }
@@ -569,7 +594,7 @@ impl NativeMachine for Walk {
         }
         match receipt {
             Some(receipt) => Poll::Ready(Ok(receipt.clone())),
-            None if cx.active_now() >= self.deadline => {
+            None if expired => {
                 cx.cancel_request(request_id);
                 Poll::Ready(Ok(deadline_failure_receipt(request_id, cx.evidence())))
             }
@@ -590,8 +615,29 @@ mod tests {
     use api::selected::RunKey;
     use api::snapshot::{GameSnapshot, WorldTile};
 
-    /// The retained per-walk state: 88 B inline, including the quest-list
-    /// wait state, and one 128 B boxed replay: the incoming avoid list adds 16 B.
+    /// Poll the walk on each observed tick of `ticks`, in order, and require
+    /// that it stays pending on every one.
+    fn poll_pending(
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        handle: &crate::native::ActionHandle<Walk>,
+        ticks: std::ops::RangeInclusive<u64>,
+    ) {
+        for tick in ticks {
+            assert!(
+                with_tick(snapshot, ledger, tick, |native| {
+                    native.actions.poll(handle, &mut native.cx)
+                })
+                .is_pending(),
+                "the walk must stay pending on tick {tick}"
+            );
+        }
+    }
+
+    /// The retained per-walk state: 80 B inline, including the quest-list
+    /// wait state and the observed-tick deadline (8 B less than the clock
+    /// deadline), and one 128 B boxed replay: the incoming avoid list adds
+    /// 16 B.
     /// The correlation core keeps the target, radius and request id. A walk the
     /// host dropped unsent in a guardian hold is sent again from the replay,
     /// field for field.
@@ -610,7 +656,7 @@ mod tests {
             std::mem::size_of::<WalkReplay>(),
             std::mem::size_of::<Walk>() + std::mem::size_of::<WalkReplay>(),
         );
-        assert_eq!(std::mem::size_of::<Walk>(), 88);
+        assert_eq!(std::mem::size_of::<Walk>(), 80);
         assert_eq!(std::mem::size_of::<WalkReplay>(), 128);
 
         for cure_only in [false, true] {
@@ -1231,6 +1277,7 @@ mod tests {
                 )
                 .unwrap()
         });
+        poll_pending(&snapshot, &mut ledger, &handle, 2..=1000);
         let request_id = post_user_input_walk_receipt(&mut ledger, 1001);
         let detail = "host proved that no route exists";
         {
@@ -1298,10 +1345,7 @@ mod tests {
                 },
             ));
         }
-        assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
-            tick.actions.poll(&handle, &mut tick.cx)
-        })
-        .is_pending());
+        poll_pending(&snapshot, &mut ledger, &handle, 2..=1000);
         let result = with_tick(&snapshot, &mut ledger, 1001, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
@@ -1348,6 +1392,7 @@ mod tests {
                 .unwrap()
         });
 
+        poll_pending(&snapshot, &mut ledger, &handle, 2..=1000);
         let result = with_tick(&snapshot, &mut ledger, 1001, |tick| {
             tick.actions.poll(&handle, &mut tick.cx)
         });
@@ -1358,6 +1403,132 @@ mod tests {
         assert_eq!(
             receipt.failure_detail().as_deref(),
             Some("walk receipt deadline expired before the host reported a terminal result")
+        );
+        assert!(is_deadline_receipt(&receipt));
+    }
+
+    /// Open a walk to a far tile that no receipt ever answers, on tick 1.
+    fn silent_walk(
+        snapshot: &GameSnapshot,
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+    ) -> crate::native::ActionHandle<Walk> {
+        let required_after = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let target = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        with_tick(snapshot, ledger, 1, |tick| {
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(target, 1, None, required_after),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        })
+    }
+
+    #[test]
+    fn the_deadline_is_observed_ticks_not_polls_and_not_the_clock() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let handle = silent_walk(&snapshot, &mut ledger);
+        // Many polls inside one observed tick, with a clock far past the old
+        // ten minutes, spend nothing.
+        for _ in 0..5000 {
+            assert!(with_tick(&snapshot, &mut ledger, 2, |tick| {
+                tick.cx.active_now = std::time::Duration::from_secs(100_000);
+                tick.actions.poll(&handle, &mut tick.cx)
+            })
+            .is_pending());
+        }
+        // 998 more distinct ticks bring the count to 999 of 1000.
+        poll_pending(&snapshot, &mut ledger, &handle, 3..=999);
+        let result = with_tick(&snapshot, &mut ledger, 1000, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        assert!(result.is_pending(), "999 observed ticks are not 1000");
+        let result = with_tick(&snapshot, &mut ledger, 1001, |tick| {
+            tick.actions.poll(&handle, &mut tick.cx)
+        });
+        let Poll::Ready(Ok(receipt)) = result else {
+            panic!("the 1000th observed tick must end the walk: {result:?}");
+        };
+        assert!(is_deadline_receipt(&receipt));
+        assert_eq!(WALK_DEADLINE_TICKS, 1000);
+    }
+
+    #[test]
+    fn a_guardian_hold_does_not_spend_the_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use crate::native::ledger::TickBudget;
+        use crate::quester::families::tests::{host_drops_queued_work, with_tick_budget};
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let (mut ledger, mut budget) = (None, TickBudget::default());
+        let handle = with_tick_budget(&snapshot, &mut ledger, &mut budget, 1, |tick| {
+            let required_after = tick.cx.evidence();
+            tick.actions
+                .begin::<Walk>(
+                    crate::quester::families::reach::walk_request(
+                        WorldTile {
+                            x: 3200,
+                            z: 3200,
+                            level: 0,
+                        },
+                        1,
+                        None,
+                        required_after,
+                    ),
+                    &mut tick.cx,
+                )
+                .unwrap()
+        });
+        macro_rules! poll {
+            ($tick:expr) => {
+                with_tick_budget(&snapshot, &mut ledger, &mut budget, $tick, |native| {
+                    native.actions.poll(&handle, &mut native.cx)
+                })
+            };
+        }
+        for tick in 2..=400 {
+            assert!(poll!(tick).is_pending());
+        }
+        // A random-event hold takes 1,300 observed ticks: the owner is not
+        // polled, and the host drops the queued walk unsent.
+        budget.hold_begin();
+        assert_eq!(host_drops_queued_work(&mut ledger), 1);
+        budget.hold_end();
+        let mut polled = 399_u32;
+        let mut tick = 1701;
+        let ended = loop {
+            match poll!(tick) {
+                Poll::Pending => {}
+                Poll::Ready(result) => break result,
+            }
+            polled += 1;
+            tick += 1;
+            assert!(polled < 2000, "the deadline must end the walk");
+        };
+        let receipt = ended.expect("the deadline ends the walk with a receipt");
+        assert!(is_deadline_receipt(&receipt));
+        assert!(
+            (WALK_DEADLINE_TICKS - 3..WALK_DEADLINE_TICKS + 3).contains(&polled),
+            "only the polled ticks count: {polled}"
         );
     }
 }

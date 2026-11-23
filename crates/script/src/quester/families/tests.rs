@@ -9548,12 +9548,7 @@ fn anchored_interact_wall_walk_preserves_no_path_detail_at_deadline_after_one_fa
             with_step(tick, |step| run.poll(step))
         })
         .is_pending());
-        let mut final_walk_deadline = Duration::ZERO;
         assert!(with_tick(&snapshot, &mut ledger, 7, |tick| {
-            final_walk_deadline = tick
-                .cx
-                .active_now
-                .saturating_add(crate::native::walk::WALK_DEADLINE);
             with_step(tick, |step| run.poll(step))
         })
         .is_pending());
@@ -9581,7 +9576,6 @@ fn anchored_interact_wall_walk_preserves_no_path_detail_at_deadline_after_one_fa
             receipt.detail = Some(Arc::from("final fallback route failure"));
         }
         let result = with_tick(&snapshot, &mut ledger, 8, |tick| {
-            tick.cx.active_now = final_walk_deadline;
             with_step(tick, |step| run.poll(step))
         });
         assert!(matches!(

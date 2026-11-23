@@ -76,7 +76,6 @@ use script::native::{
 use script::paint::{host_control_buttons, ScriptPaint};
 use script::registry::CompiledId;
 use std::task::Poll;
-use std::time::Duration;
 
 static CLUE_LIFECYCLE: script::native::CardLifecycle = script::native::CardLifecycle {
     on_stop: crate::compat::clue::on_stop,
@@ -281,7 +280,6 @@ pub struct Sherlock {
     blocked: Option<ScriptFailure>,
     block_user_input: bool,
     clue_walk: Option<ActionHandle<script::native::walk::Walk>>,
-    clue_walk_deadline: Option<Duration>,
 }
 
 impl Script for Sherlock {
@@ -292,7 +290,6 @@ impl Script for Sherlock {
             if let Some(handle) = self.clue_walk.take() {
                 tick.actions.cancel(handle);
             }
-            self.clue_walk_deadline = None;
             self.run = Some(run);
             self.dirty = true;
         }
@@ -457,7 +454,6 @@ impl Script for Sherlock {
             }
             self.fight = None;
             self.clue_walk = None;
-            self.clue_walk_deadline = None;
             self.hygiene_pending = !self.hygiene_owned.is_empty();
         }
     }
@@ -484,11 +480,8 @@ impl Sherlock {
         match tick.actions.poll(handle, &mut tick.cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(receipt)) => {
-                let timed_out = self
-                    .clue_walk_deadline
-                    .is_some_and(|deadline| tick.cx.active_now() >= deadline);
+                let timed_out = script::native::walk::is_deadline_receipt(&receipt);
                 self.clue_walk = None;
-                self.clue_walk_deadline = None;
                 if receipt.end != script::native::WalkEnd::Arrived {
                     self.blocked = Some(clue_walk_receipt_failure(receipt, timed_out));
                 }
@@ -496,12 +489,10 @@ impl Sherlock {
             }
             Poll::Ready(Err(ActionError::Stale | ActionError::Cancelled)) => {
                 self.clue_walk = None;
-                self.clue_walk_deadline = None;
                 Poll::Ready(())
             }
             Poll::Ready(Err(error)) => {
                 self.clue_walk = None;
-                self.clue_walk_deadline = None;
                 self.blocked = Some(clue_walk_action_failure(error));
                 Poll::Ready(())
             }
@@ -898,11 +889,6 @@ impl Sherlock {
             .begin::<script::native::walk::Walk>(request, &mut tick.cx)
         {
             Ok(handle) => {
-                self.clue_walk_deadline = Some(
-                    tick.cx
-                        .active_now()
-                        .saturating_add(script::native::walk::WALK_DEADLINE),
-                );
                 self.clue_walk = Some(handle);
             }
             Err(ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted) => {}
@@ -924,7 +910,6 @@ impl Sherlock {
         if let Some(handle) = self.clue_walk.take() {
             actions.cancel(handle);
         }
-        self.clue_walk_deadline = None;
         // Death turns prayers off. A later activation belongs to the user,
         // not to the Combat owner that died.
         self.hygiene_owned = RaisedPrayers::empty();
@@ -2306,9 +2291,15 @@ mod tests {
         crate::compat::clue::on_reset();
         let (flow, _) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1);
         assert_eq!(flow, ScriptFlow::Continue);
-        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1000);
-        assert_eq!(flow, ScriptFlow::Continue, "not yet ten active minutes");
-        assert!(interacts.is_empty());
+        for tick in 2..=1000 {
+            let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, tick);
+            assert_eq!(
+                flow,
+                ScriptFlow::Continue,
+                "not yet 1,000 observed ticks, tick {tick}"
+            );
+            assert!(interacts.is_empty());
+        }
         assert_eq!(ledger.as_ref().unwrap().test_outbox().len(), 1);
         let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1001);
         let ScriptFlow::Blocked(failure) = flow else {
@@ -2318,7 +2309,6 @@ mod tests {
         assert_eq!(failure.message.as_ref(), "clue walk timed out");
         assert!(interacts.is_empty());
         assert!(script.clue_walk.is_none());
-        assert!(script.clue_walk_deadline.is_none());
         let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1002);
         assert!(matches!(flow, ScriptFlow::Blocked(_)));
         assert!(interacts.is_empty());

@@ -1751,18 +1751,29 @@ mod tests {
         snapshot: Option<&api::snapshot::GameSnapshot>,
         f: impl FnOnce(&mut ActionContext<'_>) -> R,
     ) -> R {
+        with_snapshot_frame_at(ledger, active_now, 1, snapshot, f)
+    }
+
+    /// An eligible frame on observed tick `tick`.
+    fn with_snapshot_frame_at<R>(
+        ledger: &mut Option<Box<ledger::Ledger>>,
+        active_now: Duration,
+        tick: u64,
+        snapshot: Option<&api::snapshot::GameSnapshot>,
+        f: impl FnOnce(&mut ActionContext<'_>) -> R,
+    ) -> R {
         let evidence = EvidenceStamp {
             run: RunKey {
                 slot: 1,
                 run: 1,
                 session: 1,
             },
-            tick: 1,
-            sequence: 1,
+            tick,
+            sequence: tick,
         };
         let mut retained = RetainedMemory::default();
         let mut budget = ledger::TickBudget::default();
-        budget.observe(1);
+        budget.observe(tick);
         let mut cx = ActionContext {
             stage_cross: None,
             protected_items: None,
@@ -2804,7 +2815,7 @@ mod tests {
     }
 
     #[test]
-    fn a_walk_without_a_host_terminal_fails_at_its_active_deadline() {
+    fn a_walk_without_a_host_terminal_fails_at_its_observed_tick_deadline() {
         let mut actions = NativeActions { _private: () };
         let mut ledger = None;
         let (handle, authority) = with_frame(&mut ledger, Duration::ZERO, |cx| {
@@ -2835,9 +2846,22 @@ mod tests {
             (handle, authority)
         });
         assert!(authority.live());
-        // A day of eligible time: far past any walk deadline, and no host
-        // receipt ever arrived.
-        with_frame(&mut ledger, Duration::from_secs(24 * 60 * 60), |cx| {
+        // A day of wall time on the active clock spends nothing: the walk
+        // counts observed game ticks, and no host receipt ever arrived.
+        for tick in 2..=u64::from(super::walk::WALK_DEADLINE_TICKS) {
+            with_snapshot_frame_at(
+                &mut ledger,
+                Duration::from_secs(24 * 60 * 60),
+                tick,
+                None,
+                |cx| {
+                    assert!(actions.poll(&handle, cx).is_pending(), "tick {tick}");
+                },
+            );
+        }
+        assert!(authority.live());
+        let last = u64::from(super::walk::WALK_DEADLINE_TICKS) + 1;
+        with_snapshot_frame_at(&mut ledger, Duration::ZERO, last, None, |cx| {
             let ended = actions.poll(&handle, cx);
             assert!(
                 matches!(
@@ -2953,20 +2977,44 @@ mod tests {
                     authority.live(),
                     "pending movement retains its action authority"
                 );
-                let (tile, still_moving, now) = match final_end {
-                    WalkEnd::Arrived => (target, true, Duration::from_secs(1)),
-                    WalkEnd::RouteEnded => (short, false, Duration::from_secs(1)),
-                    WalkEnd::Failed => (short, true, super::walk::WALK_DEADLINE),
+                let (tile, still_moving, tick) = match final_end {
+                    WalkEnd::Arrived => (target, true, 1),
+                    WalkEnd::RouteEnded => (short, false, 1),
+                    // The walk is still moving at the last observed tick of
+                    // its budget: 999 ticks after the first are not enough.
+                    WalkEnd::Failed => {
+                        (short, true, u64::from(super::walk::WALK_DEADLINE_TICKS) + 1)
+                    }
                     _ => unreachable!(),
                 };
                 let final_snapshot = walking_snapshot(tile, still_moving);
-                with_snapshot_frame(&mut ledger, now, Some(&final_snapshot), |cx| {
-                    let result = actions.poll(&handle, cx);
-                    assert!(
-                        matches!(&result, Poll::Ready(Ok(receipt)) if receipt.end == final_end),
-                        "radius {radius}, expected {final_end:?}, got {result:?}"
+                for before in 2..tick {
+                    with_snapshot_frame_at(
+                        &mut ledger,
+                        Duration::ZERO,
+                        before,
+                        Some(&final_snapshot),
+                        |cx| {
+                            assert!(
+                                actions.poll(&handle, cx).is_pending(),
+                                "radius {radius}: a moving walk stays pending on tick {before}"
+                            );
+                        },
                     );
-                });
+                }
+                with_snapshot_frame_at(
+                    &mut ledger,
+                    Duration::ZERO,
+                    tick,
+                    Some(&final_snapshot),
+                    |cx| {
+                        let result = actions.poll(&handle, cx);
+                        assert!(
+                            matches!(&result, Poll::Ready(Ok(receipt)) if receipt.end == final_end),
+                            "radius {radius}, expected {final_end:?}, got {result:?}"
+                        );
+                    },
+                );
                 assert!(
                     !authority.live(),
                     "settled or expired movement revokes its authority"
