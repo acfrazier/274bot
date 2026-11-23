@@ -81,6 +81,19 @@ Cells behind Cargo features do not build without them. `quester_dev_paths_live`,
 other `*_live*` modules) run under `cargo test`. Each cell file's header lists
 its own environment.
 
+A `world_boundary_live` cell counts only at the game tick it claims. The
+cell measures the mean tick from its `PLAYER_INFO` receive times while in
+game. In each session of at least 30 ticks it measures between the
+least-late tick of the first third and that of the last third, so a client
+stall (a scene load at login) does not shorten the span. The spans must
+cover at least 20 s, and the mean must be within 2 % of
+`WORLD_CLAIMED_TICK_MS` (default 600 ms, the engine's
+`World.TICKRATE`). A cell whose proof ends sooner stays idle in game until
+the 20 s are covered. A cell with no measurement, or with a different
+measured tick, fails. The PASS receipt's `engine_speed` object records
+`claimed_engine_speed_ms` and the measured `engine_speed_ms`. The oracle is
+`host_play::engine_speed`.
+
 The expected-combat Quester cell seeds Tourist Trap (`desertrescue`) at stage
 3. The loc-dialogue cell seeds Priest in Peril (`priestperil`) at stage 1.
 These permanent server variables are not transmitted to the client. After

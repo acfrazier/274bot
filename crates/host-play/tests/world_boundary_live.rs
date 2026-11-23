@@ -3,6 +3,8 @@
 //! This is intentionally an ignored, source-only harness.  It binds one
 //! selected local revision, prepares a disposable account on the mainland,
 //! and then drives the existing ScenarioRunner/Traveller or Guardian.
+//! Every PASS also needs the measured engine tick to match the claimed tick
+//! (`host_play::engine_speed`); the receipt records both values.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,9 +14,10 @@ use api::interact::{self, Interactions, SendResult};
 use api::snapshot::GameSnapshot;
 use client::client::Client;
 use host::{Guardian, Pump};
+use host_play::engine_speed::{parse_claimed_tick_ms, TickPeriodMeter, MIN_MEASURED_WINDOW};
 use host_play::{ProfileOptions, SharedClientTemplate};
 use scenario::{RunnerStatus, ScenarioRunner};
-use serde_json::json;
+use serde_json::{json, Value};
 use vault::ProfileSettings;
 
 const MAINLAND: (i32, i32, i32) = (3220, 3212, 0);
@@ -27,6 +30,55 @@ const STRENGTH: i32 = 2;
 
 fn required(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("{name} is required"))
+}
+
+/// The game-tick duration this run claims: `WORLD_CLAIMED_TICK_MS`, or the
+/// engine default of 600 ms. No cell here sends `::speed`, so the claim
+/// covers the whole run.
+fn claimed_tick_ms() -> u32 {
+    let name = "WORLD_CLAIMED_TICK_MS";
+    parse_claimed_tick_ms(name, std::env::var(name).ok().as_deref())
+        .unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// The client pump plus the engine-speed measurement of every poll.
+struct CellPump {
+    pump: Pump,
+    speed: TickPeriodMeter,
+}
+
+impl CellPump {
+    fn new() -> Self {
+        Self {
+            pump: Pump::new(),
+            speed: TickPeriodMeter::default(),
+        }
+    }
+}
+
+/// The engine-speed receipt when the measured speed matches the claim.
+///
+/// A cell whose proof finished before the measured span covers
+/// [`MIN_MEASURED_WINDOW`] stays idle in game and keeps measuring. The span of
+/// the current session covers at least the middle third of its ticks, and
+/// in-game time accrues at wall-clock rate, so four times the window bounds
+/// that wait at any tick duration. A run without a measurement or at another
+/// speed does not count.
+fn counted_speed(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut CellPump,
+    case: &str,
+) -> Value {
+    let deadline = Instant::now() + 4 * MIN_MEASURED_WINDOW;
+    while pump.speed.measurement().is_none() && snapshot.ingame() && Instant::now() < deadline {
+        pump_once(client, snapshot, pump);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    pump.speed
+        .check(claimed_tick_ms())
+        .into_result()
+        .unwrap_or_else(|error| panic!("{case}: {error}"))
 }
 
 fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
@@ -74,20 +126,23 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
             "profile": profile.label(),
             "cache_id": profile.cache_id(),
             "nav_pack": profile.nav_pack(),
+            "claimed_engine_speed_ms": claimed_tick_ms(),
         })
     );
     (profile, template)
 }
 
-fn pump_once(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) {
+fn pump_once(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut CellPump) {
     client.mainloop();
-    host::publish_snapshot(snapshot, client, pump.drain_client(client));
+    host::publish_snapshot(snapshot, client, pump.pump.drain_client(client));
+    pump.speed
+        .observe(snapshot.tick(), snapshot.ingame(), Instant::now());
 }
 
 fn wait_for(
     client: &mut Client,
     snapshot: &mut GameSnapshot,
-    pump: &mut Pump,
+    pump: &mut CellPump,
     timeout: Duration,
     phase: &str,
     ready: impl Fn(&GameSnapshot) -> bool,
@@ -113,7 +168,7 @@ fn wait_for(
 fn logout_and_relogin(
     client: &mut Client,
     snapshot: &mut GameSnapshot,
-    pump: &mut Pump,
+    pump: &mut CellPump,
     name: &str,
 ) {
     let ifaces = Arc::clone(&client.ifaces);
@@ -140,7 +195,12 @@ fn logout_and_relogin(
     );
 }
 
-fn prepare_mainland(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump, name: &str) {
+fn prepare_mainland(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut CellPump,
+    name: &str,
+) {
     client.draw = false;
     client.maininit();
     assert!(!client.error_loading, "asset initialization failed");
@@ -187,7 +247,7 @@ fn door(snapshot: &GameSnapshot) -> Option<(api::snapshot::WorldTile, i32)> {
         .map(|loc| (loc.tile, loc.id))
 }
 
-fn prepare_door(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) {
+fn prepare_door(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut CellPump) {
     // Reuse the production nav_door tele fixture, but do not use its closer
     // companion. This puts the single account at the outside stand.
     assert!(interact::cheat(client, "tele 0,43,53,61,44").is_sent());
@@ -238,11 +298,14 @@ fn run_nav(
         .prepare_client((serial % 1_000_000_000) as i32, true)
         .expect("prepare selected client");
     let mut snapshot = GameSnapshot::new();
-    let mut pump = Pump::new();
+    let mut pump = CellPump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
 
     let mut scenario = scenario::get(case).expect("registered navigation scenario");
     scenario.settings.require_mainland_base = true;
+    // No `::speed` request: the engine keeps the tick the run claims for the
+    // whole cell, and the receipt checks that claim against the measurement.
+    scenario.settings.nav.engine_speed_ms = None;
     if case == "nav_door" {
         scenario.seed.profiles.truncate(1);
         scenario.companions.clear();
@@ -255,9 +318,6 @@ fn run_nav(
         // The first production step is only the outside tele; preparation
         // above already established that fixture, so proof starts at Follow.
         scenario.steps.remove(0);
-    } else {
-        scenario.settings.nav.engine_speed_ms = None;
-        println!("{{\"phase\":\"nav_full-fixture\",\"engine_speed_ms\":null}}");
     }
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_map_members(profile.map_members());
@@ -290,19 +350,15 @@ fn run_nav(
         runner.tick(&mut client);
         match runner.status() {
             RunnerStatus::Passed => {
-                if case == "nav_door" {
+                let mut proof = if case == "nav_door" {
                     assert!(opened, "route did not cause observed door opening");
                     assert!(arrival, "inside arrival was not observed");
-                    println!(
-                        "PASS: nav_door: {}",
-                        json!({"before_door": before_door, "after_door": door(&snapshot), "traveller_runner": runner.evidence()})
-                    );
+                    json!({"before_door": before_door, "after_door": door(&snapshot), "traveller_runner": runner.evidence()})
                 } else {
-                    println!(
-                        "PASS: nav_full: {}",
-                        json!({"engine_speed_ms": null, "evidence": runner.evidence()})
-                    );
-                }
+                    json!({"evidence": runner.evidence()})
+                };
+                proof["engine_speed"] = counted_speed(&mut client, &mut snapshot, &mut pump, case);
+                println!("PASS: {case}: {proof}");
                 break;
             }
             RunnerStatus::Failed(msg) => panic!("{case}: {msg}; evidence={:?}", runner.evidence()),
@@ -337,7 +393,7 @@ fn strength_xp(snapshot: &GameSnapshot) -> Option<i32> {
 fn follow_to(
     client: &mut Client,
     snapshot: &mut GameSnapshot,
-    pump: &mut Pump,
+    pump: &mut CellPump,
     template: &SharedClientTemplate,
     name: &str,
     dest: api::snapshot::WorldTile,
@@ -458,7 +514,7 @@ fn run_bank_return(template: Arc<SharedClientTemplate>, profile: Arc<host_play::
         .prepare_client((serial % 1_000_000_000) as i32, true)
         .expect("selected client");
     let mut snapshot = GameSnapshot::new();
-    let mut pump = Pump::new();
+    let mut pump = CellPump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
     assert!(interact::cheat(&mut client, "givebank lobster 20").is_sent());
     assert!(interact::cheat(&mut client, "give coins 100").is_sent());
@@ -562,10 +618,9 @@ fn run_bank_return(template: Arc<SharedClientTemplate>, profile: Arc<host_play::
         },
     );
     assert_eq!(item_count(snapshot.inventory(), LOBSTER), 5);
-    println!(
-        "PASS: bank_return: {}",
-        json!({"inventory_before": inventory_before, "inventory_after": snapshot.inv(), "bank_before": bank_before, "bank_after": bank_after, "returned_to": snapshot.tile(), "bank_loaded_after_close": snapshot.bank_loaded()})
-    );
+    let mut proof = json!({"inventory_before": inventory_before, "inventory_after": snapshot.inv(), "bank_before": bank_before, "bank_after": bank_after, "returned_to": snapshot.tile(), "bank_loaded_after_close": snapshot.bank_loaded()});
+    proof["engine_speed"] = counted_speed(&mut client, &mut snapshot, &mut pump, "bank_return");
+    println!("PASS: bank_return: {proof}");
     if client.ingame {
         client.logout();
     }
@@ -581,7 +636,7 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
         .prepare_client((serial % 1_000_000_000) as i32, true)
         .expect("prepare selected client");
     let mut snapshot = GameSnapshot::new();
-    let mut pump = Pump::new();
+    let mut pump = CellPump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
     assert!(
         interact::cheat(&mut client, "give macro_genilamp").is_sent(),
@@ -646,10 +701,10 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
             && saw_consumed
             && saw_xp_gain
         {
-            println!(
-                "PASS: guardian_lamp: {}",
-                json!({"inventory_before": inventory_before, "xp_before": xp_before, "interface": saw_interface, "hold": saw_hold, "consumed": saw_consumed, "xp_gain": saw_xp_gain, "resumed_from": resumed_from, "walk_to": walk_target})
-            );
+            let mut proof = json!({"inventory_before": inventory_before, "xp_before": xp_before, "interface": saw_interface, "hold": saw_hold, "consumed": saw_consumed, "xp_gain": saw_xp_gain, "resumed_from": resumed_from, "walk_to": walk_target});
+            proof["engine_speed"] =
+                counted_speed(&mut client, &mut snapshot, &mut pump, "guardian_lamp");
+            println!("PASS: guardian_lamp: {proof}");
             if client.ingame {
                 client.logout();
             }
@@ -691,7 +746,7 @@ fn run_guardian_lamp_pair(
         .prepare_client((serial % 1_000_000_000) as i32, true)
         .expect("prepare selected client");
     let mut snapshot = GameSnapshot::new();
-    let mut pump = Pump::new();
+    let mut pump = CellPump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
     assert!(
         interact::cheat(&mut client, "give macro_genilamp 2").is_sent(),
@@ -741,10 +796,10 @@ fn run_guardian_lamp_pair(
             );
         }
         if lamps == 0 && opens >= 2 && xp.is_some_and(|xp| xp > xp_before) && !status.hold {
-            println!(
-                "PASS: guardian_lamp_pair: {}",
-                json!({"skill": SKILL, "xp_before": xp_before, "xp_after": xp, "interface_opens": opens, "hold_seen": hold_seen, "lamps_after": lamps})
-            );
+            let mut proof = json!({"skill": SKILL, "xp_before": xp_before, "xp_after": xp, "interface_opens": opens, "hold_seen": hold_seen, "lamps_after": lamps});
+            proof["engine_speed"] =
+                counted_speed(&mut client, &mut snapshot, &mut pump, "guardian_lamp_pair");
+            println!("PASS: guardian_lamp_pair: {proof}");
             if client.ingame {
                 client.logout();
             }
@@ -776,7 +831,7 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
         .prepare_client((serial % 1_000_000_000) as i32, true)
         .expect("prepare selected client");
     let mut snapshot = GameSnapshot::new();
-    let mut pump = Pump::new();
+    let mut pump = CellPump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
     // The content's own `[debugproc,maze]`: the same teleport, reward and
     // briefing as `start_macro_maze`, without waiting for the RNG.
@@ -818,10 +873,11 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
             );
         }
         if saw_hold && !in_maze(snapshot.tile()) && snapshot.scene_state() == 2 {
-            println!(
-                "PASS: guardian_maze: {}",
-                json!({"spawn": spawn, "returned_to": snapshot.tile(), "hold": saw_hold})
-            );
+            let mut proof =
+                json!({"spawn": spawn, "returned_to": snapshot.tile(), "hold": saw_hold});
+            proof["engine_speed"] =
+                counted_speed(&mut client, &mut snapshot, &mut pump, "guardian_maze");
+            println!("PASS: guardian_maze: {proof}");
             if client.ingame {
                 client.logout();
             }
