@@ -241,6 +241,23 @@ globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {
         await globalThis.__rs2b0t_tree_loop(this);
     }
 };
+// One typed constructor serves kernel shims and the paint context.
+globalThis.__rs2b0t_make_shim_error = (kind, message) => {
+    const error = new Error(message);
+    error.kind = kind;
+    return error;
+};
+globalThis.__rs2b0t_not_impl = (name, reason) =>
+    globalThis.__rs2b0t_make_shim_error(
+        'not-implemented',
+        reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name,
+    );
+globalThis.__rs2b0t_refused = (reason) =>
+    globalThis.__rs2b0t_make_shim_error(
+        'refused',
+        reason ? 'cannot do that now: ' + reason : 'cannot do that now',
+    );
+
 // Paint ctx: records its calls into a Float64Array op tape plus a
 // deduplicated string table and flushes them in one typed crossing. Op codes
 // and arity mirror `load/canvas_tape.rs`. `measureText` needs recorder state,
@@ -353,7 +370,7 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
         get shadowOffsetY() { flush(); return fn.__rs2b0t_canvas_get_num('shadowOffsetY'); },
         fillRect(x, y, w, h) { put(FILL_RECT); put(num(x)); put(num(y)); put(num(w)); put(num(h)); },
         fillText(text, x, y) {
-            if (arguments.length >= 4) throw new Error('not impl: Canvas.fillText.maxWidth');
+            if (arguments.length >= 4) throw globalThis.__rs2b0t_not_impl('Canvas.fillText.maxWidth');
             put(FILL_TEXT);
             put(s(text));
             put(num(x));
@@ -427,14 +444,14 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
             if (typeof prop === 'symbol') return target[prop];
             if (prop === 'canvas') return undefined;
             if (prop in target) return target[prop];
-            throw new Error('not impl: Canvas.' + String(prop));
+            throw globalThis.__rs2b0t_not_impl('Canvas.' + String(prop));
         },
         set(target, prop, value) {
             if (typeof prop === 'string' && styleProps[prop]) {
                 target[prop] = value;
                 return true;
             }
-            throw new Error('not impl: Canvas.' + String(prop));
+            throw globalThis.__rs2b0t_not_impl('Canvas.' + String(prop));
         },
         has(target, prop) {
             if (prop === 'canvas') return false;

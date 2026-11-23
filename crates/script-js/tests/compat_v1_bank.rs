@@ -438,3 +438,26 @@ fn compat_v1_bank_deposit_all_matching_distinguishes_refusal() {
         })
     );
 }
+
+#[test]
+fn compat_v1_banking_missing_member_has_not_implemented_kind() {
+    let src = bot(
+        "import { Banking } from '../../api/bank/Banking.js';",
+        r#"
+let missing;
+try {
+    Banking.__compat_census_unknown;
+} catch (error) {
+    missing = { kind: error.kind, message: error.message };
+}
+globalThis.__missing = missing;
+"#,
+    );
+    assert_eq!(
+        run(&src, "globalThis.__missing"),
+        serde_json::json!({
+            "kind": "not-implemented",
+            "message": "not impl: Banking.__compat_census_unknown",
+        })
+    );
+}

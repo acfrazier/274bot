@@ -94,7 +94,7 @@ export const Execution = {
 
     delayUntil(cond, timeoutMs = 6000) {
         if (typeof cond !== 'function') {
-            return Promise.reject(new Error('not impl: Execution.delayUntil: requires a function'));
+            return Promise.reject(globalThis.__rs2b0t_not_impl('Execution.delayUntil', 'requires a function'));
         }
         return park.enqueue({
             kind: 'cond',
@@ -106,7 +106,7 @@ export const Execution = {
     delayUntilTicks(cond, maxTicks) {
         if (typeof cond !== 'function') {
             return Promise.reject(
-                new Error('not impl: Execution.delayUntilTicks: requires a function'),
+                globalThis.__rs2b0t_not_impl('Execution.delayUntilTicks', 'requires a function'),
             );
         }
         return park.enqueue({
