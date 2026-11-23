@@ -33,16 +33,20 @@ const ZANARIS_CONTENT_STATS: [(u8, i32); 2] = [
     (8, 36),  // `Skill::names[8]` is Woodcutting.
     (12, 31), // `Skill::names[12]` is Crafting.
 ];
-// `zanaris.json:196-198,289-291` estimates the axe and 10 breads at base stock.
-// The shared shop can charge more as stock falls:
-// axe: axes.obj:38 cost 16, lumbridge.inv:10 stock 10, lumbridge.npc:130-132
-// sell multiplier 1000/delta 20; bread: dough.obj:40 cost 12,
-// ardougne_east.inv:24 stock 10, ardougne_east.npc:411-413
-// sell multiplier 1000/delta 20.
-// shop.rs2:65-75 prices at live stock; :131-147,182-187 calculate the
-// zero-stock factor 1000 - ((0 - 10) * 20), then scale it by item cost.
+// The R289 Path estimates these buys at base stock (`zanaris.json:196-198,289-291`).
+// Shop purchases recalculate each unit at live stock (`shop.rs2:65-75`):
+// axe cost 16, stock 10, multiplier 1000/delta 20
+// (`axes.obj:35-38`, `lumbridge.inv:1-10`, `lumbridge.npc:129-132`);
+// bread cost 12, stock 10, multiplier 1000/delta 20
+// (`dough.obj:39-50`, `ardougne_east.inv:15-24`, `ardougne_east.npc:383-413`).
+// `shop.rs2:131-147,182-187` gives a zero-stock factor of
+// 1000 - ((0 - 10) * 20) = 1200, scaled by base cost.
+// The live route to the Baker uses two Port Sarim/Karamja ferries;
+// `sailors.rs2:10-31` charges 30 coins per trip.
 const ZANARIS_SHOP_SELL_MULTIPLIER: i32 = 1000;
 const ZANARIS_SHOP_DELTA: i32 = 20;
+const ZANARIS_ROUTE_FARE_GP: i32 = 30;
+const ZANARIS_ROUTE_FARE_COUNT: i32 = 2;
 const EXTRA_ITEMS: [(&str, i32); 1] = [("knife", 1)];
 type ZanarisFixtureItems = Vec<(&'static str, i32)>;
 
@@ -128,7 +132,13 @@ fn zanaris_purchase_budget(path: &PathDocument) -> Result<(i32, i32), String> {
 }
 
 fn zanaris_fixture_items(path: &PathDocument) -> Result<(ZanarisFixtureItems, i32), String> {
-    let (_, coin_seed) = zanaris_purchase_budget(path)?;
+    let (_, purchase_seed) = zanaris_purchase_budget(path)?;
+    let route_fares = ZANARIS_ROUTE_FARE_GP
+        .checked_mul(ZANARIS_ROUTE_FARE_COUNT)
+        .ok_or_else(|| "Zanaris route fares exceed i32".to_owned())?;
+    let coin_seed = purchase_seed
+        .checked_add(route_fares)
+        .ok_or_else(|| "Zanaris fixture coin seed exceeds i32".to_owned())?;
     let mut items = EXTRA_ITEMS.to_vec();
     items.push(("coins", coin_seed));
     Ok((items, coin_seed))
@@ -392,7 +402,7 @@ fn live_zanaris_entrana_dungeon_entry() {
 mod tests {
     use super::{
         zanaris_fixture_items, zanaris_max_unit_price_at_zero_stock, zanaris_purchase_budget,
-        PathDocument,
+        PathDocument, ZANARIS_ROUTE_FARE_COUNT, ZANARIS_ROUTE_FARE_GP,
     };
     use serde_json::Value;
 
@@ -456,13 +466,18 @@ mod tests {
     }
 
     #[test]
-    fn zanaris_fixture_coin_seed_covers_path_worst_case_shop_prices() {
+    fn zanaris_fixture_coin_seed_covers_path_worst_case_prices_and_route_fares() {
         let path: PathDocument =
             serde_json::from_str(include_str!("../../script/paths/289/zanaris.json"))
                 .expect("embedded Zanaris Path is valid JSON");
         let raw_path = serde_json::to_value(&path).expect("Zanaris Path serializes");
         let required_estimate = sum_buy_estimates(&raw_path);
         let required_worst_case = sum_buy_worst_case(&raw_path);
+        let route_fares = u64::try_from(ZANARIS_ROUTE_FARE_GP * ZANARIS_ROUTE_FARE_COUNT)
+            .expect("route fare budget is nonnegative");
+        let required_with_fares = required_worst_case
+            .checked_add(route_fares)
+            .expect("Zanaris fixture coin budget does not overflow");
         let (path_estimate, _) =
             zanaris_purchase_budget(&path).expect("Path purchases have content-backed prices");
         let (items, coin_seed) = zanaris_fixture_items(&path).expect("Path purchases are priced");
@@ -482,6 +497,10 @@ mod tests {
         assert!(
             seeded >= required_worst_case,
             "Zanaris fixture seeds {seeded} coins but depleted-shop purchases need {required_worst_case}"
+        );
+        assert!(
+            seeded >= required_with_fares,
+            "Zanaris fixture seeds {seeded} coins but depleted-shop purchases and route fares need {required_with_fares}"
         );
     }
 }
