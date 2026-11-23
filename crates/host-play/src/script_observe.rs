@@ -2718,10 +2718,10 @@ where
 /// or abort that ended the follow), and the published outcome of the route
 /// the owner still holds. A revoked owner receives neither.
 fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick: u64) {
-    // A route the host started to follow carries the tick allowance that the
-    // follower sums for it. Only the walk that the host is routing reads it;
-    // a replan reports its own.
-    if let Some(ticks) = bot.traveller.take_follow_allowance() {
+    // The route follower started an enforced clock: progress for the walk
+    // that the host is routing. The owner's deadline moves to this tick plus
+    // the longest clock in force plus one.
+    if let Some(clock) = bot.traveller.take_clock_progress() {
         if let Some(owner) = bot
             .native_walk
             .as_ref()
@@ -2730,10 +2730,10 @@ fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick
             api::host_log!(
                 api::hostlog::Category::NavTrace,
                 api::hostlog::Level::Debug,
-                "native-walk-allowance tick={tick} request_id={} ticks={ticks}",
+                "native-walk-progress tick={tick} request_id={} clock={clock}",
                 owner.request_id().get()
             );
-            slot.post_native_walk_allowance(owner, ticks);
+            slot.post_native_walk_progress(owner, clock, tick);
         }
     }
     for (owner, event) in bot.walk_guard_events.drain(..) {

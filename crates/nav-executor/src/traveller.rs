@@ -29,16 +29,16 @@ use nav_planner::router::{Leg, Route};
 use nav_planner::transport::{DoorDir, TransportEdge, TransportKind};
 use thiserror::Error;
 
-mod allowance;
 mod dialog;
 mod npc_hop;
+mod progress;
 mod snapshot;
 mod transport_hop;
 mod walk;
 
-use allowance::*;
 use dialog::*;
 use npc_hop::*;
+use progress::*;
 use snapshot::*;
 pub use transport_hop::TickCount;
 use transport_hop::*;
@@ -581,9 +581,10 @@ pub struct Traveller {
     /// wizard. Survives across routes (the game's `%exit_essence_mine_coord`
     /// varp persists too); a new entry overwrites it.
     essence: Option<EssenceSession>,
-    /// The tick allowance of the follow that started last
-    /// ([`Self::take_follow_allowance`]), saturated; zero when none is waiting.
-    follow_allowance: u32,
+    /// The longest enforced clock, in observed ticks, now running in the
+    /// follow, set when a clock starts ([`Self::take_clock_progress`]); zero
+    /// when none is waiting.
+    clock_progress: u32,
 }
 
 impl Traveller {
@@ -593,17 +594,20 @@ impl Traveller {
             follow: None,
             follow_terminal_leg: None,
             essence: None,
-            follow_allowance: 0,
+            clock_progress: 0,
         }
     }
 
-    /// The observed ticks that the follow started last may take, once: the
-    /// sum of the allowances this follower grants each leg of its route
-    /// ([`allowance`] module). A native walk owner reads it as its backstop.
-    /// `None` until a new follow starts, so a replan reports its own.
-    pub fn take_follow_allowance(&mut self) -> Option<u64> {
-        let ticks = std::mem::take(&mut self.follow_allowance);
-        (ticks != 0).then_some(u64::from(ticks))
+    /// Progress of the follow, once: `Some(ticks)` when the follower started a
+    /// new enforced clock (a new follow, leg, hop, send, approach, wait or
+    /// stun window) since the last call. `ticks` is the longest clock now in
+    /// force: the follower ends its own follow when any clock passes its
+    /// bound, so it ends within `ticks + 1` observed ticks of this progress
+    /// unless it starts another clock. A native walk owner uses it as a
+    /// progress watchdog ([`progress`] module).
+    pub fn take_clock_progress(&mut self) -> Option<u32> {
+        let ticks = std::mem::take(&mut self.clock_progress);
+        (ticks != 0).then_some(ticks)
     }
 
     /// Drop the active follow run and its terminal-leg record.
@@ -792,21 +796,22 @@ impl Traveller {
         options: &mut TravelOptions<'a>,
         start_run: impl FnOnce(&TravelOptions<'a>) -> FollowRun,
     ) -> Option<TravelOutcome> {
-        if self.follow.is_none() {
+        let started = clock_starts();
+        let new_run = self.follow.is_none();
+        if new_run {
             self.follow_terminal_leg = None;
-            let run = start_run(options);
-            self.follow_allowance = u32::try_from(route_allowance_ticks(
-                leg_shapes(&run.legs),
-                run.budget,
-                run.max_hops,
-            ))
-            .unwrap_or(u32::MAX);
-            self.follow = Some(run);
+            self.follow = Some(start_run(options));
         }
+        let marks = self.follow.as_ref().map(FollowRun::progress_marks);
         let outcome = self
             .follow
             .as_mut()
             .and_then(|run| run.step(d, snapshot, options, &mut self.essence));
+        if let Some(run) = self.follow.as_ref().filter(|_| outcome.is_none()) {
+            if new_run || clock_starts() != started || marks != Some(run.progress_marks()) {
+                self.clock_progress = run.longest_clock_ticks();
+            }
+        }
         if api::hostlog::debug_enabled() {
             let run = self.follow.as_ref();
             api::host_log!(
@@ -1136,6 +1141,7 @@ impl FollowRun {
                     {
                         self.stun_recovery_used = true;
                         self.stun_wait = Some(observed);
+                        clock_started();
                         if let Some(cb) = options.on_event.as_mut() {
                             cb(TravelEvent::StunDeferred {
                                 observed_tick: observed,
@@ -1283,7 +1289,7 @@ impl FollowRun {
                             TeleportSend::Sent => {
                                 let to = edge.to;
                                 let pass_watch = gate_pass_watch(snapshot, edge, options);
-                                self.loc_wait = 0;
+                                self.restart_loc_wait();
                                 self.transport = Some(TransportHop {
                                     leg,
                                     to,
@@ -1345,7 +1351,7 @@ impl FollowRun {
                         match ix.walk(to) {
                             SendResult::Sent { .. } => {
                                 let pass_watch = gate_pass_watch(snapshot, edge, options);
-                                self.loc_wait = 0;
+                                self.restart_loc_wait();
                                 self.transport = Some(TransportHop {
                                     leg,
                                     to,
@@ -1482,7 +1488,7 @@ impl FollowRun {
                                     last_tick: Some(snapshot.tick()),
                                     ..Default::default()
                                 };
-                                self.loc_wait = 0;
+                                self.restart_loc_wait();
                                 self.transport = Some(TransportHop {
                                     leg,
                                     to,
@@ -1526,6 +1532,7 @@ impl FollowRun {
                                 self.settle_left -= 1;
                                 self.settle_until =
                                     Some(snapshot.tick().saturating_add(SCENE_SETTLE_TICKS));
+                                clock_started();
                                 self.requeue_transport(leg);
                                 return None;
                             }
@@ -1604,7 +1611,7 @@ impl FollowRun {
                                         target_name,
                                         options,
                                     );
-                                    self.loc_wait = 0;
+                                    self.restart_loc_wait();
                                     self.transport = Some(TransportHop {
                                         leg,
                                         to,

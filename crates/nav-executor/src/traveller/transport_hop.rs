@@ -498,6 +498,7 @@ pub struct TickCount {
 impl TickCount {
     /// A count that starts after `tick`, the tick an interaction was sent on.
     pub fn sent_at(tick: u32) -> Self {
+        clock_started();
         Self {
             count: 0,
             last: Some(tick),
@@ -960,7 +961,7 @@ impl FollowRun {
                                     hop.sent_tile = Some(here);
                                     hop.arrival_footprint = arrival_footprint;
                                     hop.pass_watch = gate_pass_watch(snapshot, edge, options);
-                                    self.loc_wait = 0;
+                                    self.restart_loc_wait();
                                     self.transport = Some(hop);
                                     Poll::Watching
                                 }
@@ -1099,7 +1100,7 @@ impl FollowRun {
                         &mut options.on_event,
                     ) {
                         SendResult::Sent { .. } => {
-                            self.loc_wait = 0;
+                            self.restart_loc_wait();
                             hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                             hop.sent_tile = Some(here);
                             hop.arrival_footprint = arrival_footprint;
@@ -1596,7 +1597,7 @@ impl FollowRun {
                 hop.arrival_footprint = arrival_footprint;
                 hop.tries = hop.tries.saturating_add(1);
                 hop.pass_watch = gate_pass_watch(snapshot, action, options);
-                self.loc_wait = 0;
+                self.restart_loc_wait();
                 Poll::Watching
             }
             SendResult::Refused { reason, .. } => {
@@ -1856,7 +1857,7 @@ impl FollowRun {
         // us back. Use the same directional/level evidence as arrival;
         // directionless edges cannot establish crossing from position.
         if crossed {
-            self.loc_wait = 0;
+            self.restart_loc_wait();
             if cheb(here, hop.to) <= self.close_enough {
                 return None; // Let the normal settle arm finish the leg.
             }
@@ -1980,7 +1981,7 @@ impl FollowRun {
             }
             return None;
         };
-        self.loc_wait = 0;
+        self.restart_loc_wait();
         let mut ix = Interactions::new(snapshot, d);
         if api::hostlog::debug_enabled() {
             api::host_log!(

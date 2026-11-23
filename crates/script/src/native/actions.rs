@@ -556,18 +556,20 @@ impl ActionContext<'_> {
         })
     }
 
-    /// The route follower's tick allowance for this walk request, with the
-    /// sequence number of its post: `(seq, ticks)`. A replan posts a new one.
-    pub fn walk_allowance(&self, request_id: u64) -> Option<(u32, u32)> {
+    /// The route follower's latest progress for this walk request:
+    /// `(seq, baseline, clock)`. A new post has a new `seq`; `baseline` is
+    /// the eligible-tick count at the post, and `clock` the longest enforced
+    /// clock then in force.
+    pub fn walk_progress(&self, request_id: u64) -> Option<(u32, u64, u32)> {
         let ledger = self.ledger.as_ref()?;
         let owner = ledger.owner.as_ref()?;
         if owner.run != self.run() || owner.id.get() != self.action_id || !owner.live() {
             return None;
         }
         ledger
-            .walk_allowance
-            .filter(|allowance| allowance.request.get() == request_id)
-            .map(|allowance| (allowance.seq, allowance.ticks))
+            .walk_progress
+            .filter(|progress| progress.request.get() == request_id)
+            .map(|progress| (progress.seq, progress.baseline, progress.clock))
     }
 
     pub fn interaction_receipt(&self, request_id: u64) -> Option<&InteractionReceipt> {

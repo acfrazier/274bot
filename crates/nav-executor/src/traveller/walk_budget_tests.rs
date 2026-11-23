@@ -1,4 +1,6 @@
 use super::*;
+use crate::traveller::clock_starts;
+use crate::TickCount;
 
 fn detour(width: i32, height: i32, end_z: i32) -> Vec<WorldTile> {
     let tile = |x, z| WorldTile {
@@ -354,114 +356,124 @@ fn line(length: i32) -> Vec<WorldTile> {
         .collect()
 }
 
-fn web_edge() -> TransportEdge {
-    TransportEdge {
-        loc_id: 733,
-        open_loc_id: Some(734),
-        dir: Some(DoorDir::E),
-        option: 1,
-        ..door_edge()
-    }
-}
-
 #[test]
-fn the_allowance_of_a_long_multi_transport_route_is_the_sum_of_its_legs() {
-    use crate::traveller::allowance::{hop_ticks, route_allowance_ticks, transport_clocks};
-    // The Traveller's own defaults: a 60-tick hop clock and 60 hops.
-    let options = TravelOptions::default();
-    assert_eq!((options.budget_ticks_per_hop, options.max_hops), (60, 60));
-    // A hop: 60 + ceil(60 / 4) moving budget, plus the poll that finds it
-    // lapsed. A phase clock: 60 + 1.
-    assert_eq!(hop_ticks(60), 76);
-    // Clocks: Npc, Boat and Glider 3 attempts of 3; a slashable web 3 and
-    // 16 retries of 2; others 3.
-    assert_eq!(transport_clocks(&cart_edge()), 9);
-    assert_eq!(transport_clocks(&web_edge()), 35);
-    assert_eq!(transport_clocks(&door_edge()), 3);
-    let route = Route {
-        dest: WorldTile {
-            x: 3299,
-            z: 3200,
-            level: 0,
-        },
-        ticks: 0.0,
-        legs: vec![
-            Leg::Walk { tiles: line(100) },
-            Leg::Transport {
-                edge: Box::new(cart_edge()),
-            },
-            Leg::Walk { tiles: line(40) },
-            Leg::Transport {
-                edge: Box::new(door_edge()),
-            },
-            Leg::Walk { tiles: line(21) },
-            Leg::Transport {
-                edge: Box::new(web_edge()),
-            },
-            Leg::Walk { tiles: line(1) },
-            Leg::Walk { tiles: line(2) },
-        ],
-    };
-    let shapes = crate::traveller::allowance::leg_shapes(
-        &crate::traveller::RouteLegSource::Legacy(route.legs.iter().cloned().collect()),
-    );
-    // Walk hops: 100 tiles 1 + ceil(80/15) = 7, 40 tiles 3, 21 tiles 2,
-    // 2 tiles 1; the one-tile leg sends nothing. 13 hops of 76 = 988, and
-    // an unsent clock of 61 before each of 13 sends and each of 4 legs:
-    // 17 x 61 = 1,037.
-    // Transport: (9 + 3 + 35) clocks x 61 = 2,867.
-    // Once: settle 3 x 2, stun window 11, one approach clock 61 and one hop
-    // clock 76 = 154. Delivery 2.
-    let sum = 988 + 1_037 + 2_867 + 154 + 2;
-    assert_eq!(route_allowance_ticks(shapes, 60, 60), sum);
-    assert_eq!(sum, 5_048);
-}
-
-#[test]
-fn the_hop_cap_bounds_the_walk_hops_of_the_allowance() {
-    use crate::traveller::allowance::{hop_ticks, route_allowance_ticks, LegShape};
-    // 40 legs of 100 tiles need 280 hops; the follow ends at 60.
-    let legs = vec![LegShape::Walk { tiles: 100 }; 40];
-    let uncapped = route_allowance_ticks(legs.clone(), 60, u32::MAX);
-    let capped = route_allowance_ticks(legs, 60, 60);
-    assert_eq!(uncapped - capped, (280 - 60) * (hop_ticks(60) + 61));
-}
-
-#[test]
-fn the_follower_reports_the_allowance_of_each_route_it_starts() {
+fn a_clock_start_is_progress_and_a_running_clock_is_not() {
     let mut client = scene_client();
-    let snapshot = snap_at(&mut client, 0, 0);
+    let mut snapshot = snap_at(&mut client, 0, 0);
+    snapshot.seed_tick(1);
     let mut driver = FollowRec {
         route: Some((0, 0)),
         ..FollowRec::default()
     };
     let mut traveller = Traveller::new();
     let mut options = TravelOptions::default();
-    assert_eq!(traveller.take_follow_allowance(), None, "no follow yet");
-    let first = walk_route(line(100));
+    assert_eq!(traveller.take_clock_progress(), None, "no follow yet");
+    let route = walk_route(line(40));
+    // The first hop is sent: a sent hop's clock is its moving budget,
+    // 60 + 15 at the default budget.
     assert!(traveller
-        .follow(&mut driver, &snapshot, first.clone(), &mut options)
+        .follow(&mut driver, &snapshot, route.clone(), &mut options)
         .is_none());
-    // One walk leg of 100 tiles: 7 hops of 76, 8 unsent clocks of 61, once
-    // 154, delivery 2.
-    assert_eq!(
-        traveller.take_follow_allowance(),
-        Some(7 * 76 + 8 * 61 + 154 + 2)
-    );
-    assert_eq!(traveller.take_follow_allowance(), None, "reported once");
-    // Later polls of the same follow report nothing.
+    assert_eq!(traveller.take_clock_progress(), Some(75));
+    assert_eq!(traveller.take_clock_progress(), None, "reported once");
+    // Polls on the same and on later ticks that start no clock are not
+    // progress.
+    for tick in [1, 2, 20, 60] {
+        snapshot.seed_tick(tick);
+        assert!(traveller
+            .follow(&mut driver, &snapshot, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(traveller.take_clock_progress(), None, "tick {tick}");
+    }
+    // The player reaches the aim: the next hop is sent, a new clock.
+    let aim = driver.walked[0];
+    plant_player(&mut client, aim.0, aim.1);
+    bump_rebuild(&mut client, &mut snapshot);
     assert!(traveller
-        .follow(&mut driver, &snapshot, first, &mut options)
+        .follow(&mut driver, &snapshot, route, &mut options)
         .is_none());
-    assert_eq!(traveller.take_follow_allowance(), None);
-    // A replan starts a new follow with its own route and allowance.
-    traveller.clear();
-    let second = walk_route(line(21));
+    assert_eq!(traveller.take_clock_progress(), Some(75));
+}
+
+#[test]
+fn the_progress_names_the_longest_clock_in_force() {
+    let mut client = scene_client();
+    let mut snapshot = snap_at(&mut client, 0, 0);
+    snapshot.seed_tick(1);
+    let mut driver = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    // A custom budget of 100: the hop's moving budget is 100 + 25.
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 100,
+        ..TravelOptions::default()
+    };
     assert!(traveller
-        .follow(&mut driver, &snapshot, second, &mut options)
+        .follow(&mut driver, &snapshot, walk_route(line(5)), &mut options)
         .is_none());
-    assert_eq!(
-        traveller.take_follow_allowance(),
-        Some(2 * 76 + 3 * 61 + 154 + 2)
-    );
+    assert_eq!(traveller.take_clock_progress(), Some(125));
+    // A short custom budget never names less than the default floor of the
+    // moving clock or the 11-tick stun window.
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 3,
+        ..TravelOptions::default()
+    };
+    assert!(traveller
+        .follow(&mut driver, &snapshot, walk_route(line(5)), &mut options)
+        .is_none());
+    assert_eq!(traveller.take_clock_progress(), Some(60));
+}
+
+#[test]
+fn an_unsent_hop_posts_progress_once_and_ends_within_its_clock() {
+    let mut client = scene_client();
+    let mut snapshot = snap_at(&mut client, 0, 0);
+    snapshot.seed_tick(1);
+    let mut driver = FollowRec {
+        route: Some((0, 0)),
+        reject_far: true,
+        reject_to: Some((0, 1)),
+        ..FollowRec::default()
+    };
+    let mut traveller = Traveller::new();
+    let mut options = TravelOptions::default();
+    let route = walk_route(line(4));
+    assert!(traveller
+        .follow(&mut driver, &snapshot, route.clone(), &mut options)
+        .is_none());
+    // The unsent hop's clock is the budget: 60.
+    assert_eq!(traveller.take_clock_progress(), Some(60));
+    for tick in [2, 30, 60] {
+        snapshot.seed_tick(tick);
+        assert!(traveller
+            .follow(&mut driver, &snapshot, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(traveller.take_clock_progress(), None, "tick {tick}");
+    }
+    // The follower ends the hop when its clock reaches the budget: on tick
+    // 61, one tick before the owner's deadline (progress tick 1 + 60 + 1).
+    snapshot.seed_tick(61);
+    assert!(matches!(
+        traveller.follow(&mut driver, &snapshot, route, &mut options),
+        Some(TravelOutcome::Stalled { .. })
+    ));
+}
+
+#[test]
+fn every_start_of_a_clock_counts_as_progress() {
+    let before = clock_starts();
+    let _ = TickCount::sent_at(9);
+    assert_eq!(clock_starts(), before.wrapping_add(1));
+    let mut run = FollowRun::start(walk_route(line(3)), &TravelOptions::default());
+    let before = clock_starts();
+    run.restart_loc_wait();
+    assert_eq!(clock_starts(), before.wrapping_add(1));
+    // Reading a clock starts none.
+    let mut count = TickCount::sent_at(1);
+    let before = clock_starts();
+    count.observe(5);
+    assert_eq!(clock_starts(), before);
 }

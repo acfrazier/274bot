@@ -14,7 +14,16 @@ const END_BLOCKED_STALL_TICKS: u32 = 5;
 /// budget: WALK-STALL-1029/r1/budget-ratios.json. A 5/4 cap leaves 21.64%
 /// above that observed maximum for server-path turns and recovery delays.
 /// This is a finite policy margin, not another engine timing constant.
-pub(super) const WALK_MOVEMENT_MARGIN_DIVISOR: u32 = 4;
+const WALK_MOVEMENT_MARGIN_DIVISOR: u32 = 4;
+
+/// The ticks a moving hop of `budget_ticks` may wait: the budget plus 25%,
+/// never below the default hop budget. The follower ends the hop when its
+/// clock passes this.
+pub(super) fn moving_budget_ticks(budget_ticks: u32) -> u32 {
+    budget_ticks
+        .saturating_add(budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR))
+        .max(DEFAULT_HOP_BUDGET_TICKS)
+}
 
 /// The client is still walking an accepted click: its actor has queued
 /// route steps and the map flag of that click is still set.
@@ -230,10 +239,7 @@ impl FollowRun {
                 let counted = hop.ticks_waited.get();
                 let spent = hop.ticks_waited.observe(snapshot.tick());
                 let moved = hop.stall_idle_at.is_some_and(|last| last != here);
-                let moving_budget = hop
-                    .budget_ticks
-                    .saturating_add(hop.budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR))
-                    .max(DEFAULT_HOP_BUDGET_TICKS);
+                let moving_budget = moving_budget_ticks(hop.budget_ticks);
                 if spent != counted && spent > hop.budget_ticks && (!moved || spent > moving_budget)
                 {
                     let why = if hop.sent_tile == Some(here) {

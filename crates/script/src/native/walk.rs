@@ -90,20 +90,20 @@ pub fn resolve_destination(name: &str) -> Option<&'static WalkDestination> {
 }
 
 /// Observed ticks that a walk request may wait for the host to take it, plan
-/// its route and start following it, before the follower's own allowance
-/// replaces this ([`ActionContext::walk_allowance`]). Measured: six native
+/// its route and start following it, before the follower's first progress
+/// replaces this ([`ActionContext::walk_progress`]). Measured: six native
 /// walks of the `nav_arrival_live_tests` cells on Engine A (Varrock to Port
 /// Sarim, yew grove, tower top and basement, Lumbridge door, Gnome maze) all
 /// had their route followed one observed tick after the request
 /// (`N6-1123/plan-wait/*/cell.log`, `native-walk-request` and
-/// `native-walk-allowance` lines; maximum 1 tick). The margin is 60 ticks,
+/// `native-walk-allowance` lines of the earlier build; maximum 1 tick). The margin is 60 ticks,
 /// one hop clock of the route follower's default budget
 /// (`nav-executor/src/traveller.rs:548`), for planning that is cooperative
 /// host work with no tick bound (`nav_planner::router::NODE_BUDGET` counts
 /// places). The measured set is small, so the margin is a policy.
 pub const WALK_PLAN_WAIT_TICKS: u32 = 1 + 60;
 
-/// No allowance has been read yet. The ledger numbers its posts from 0 and
+/// No progress has been read yet. The ledger numbers its posts from 0 and
 /// wraps before it reaches this value.
 const NO_POST: u32 = u32::MAX;
 
@@ -157,17 +157,19 @@ pub struct Walk {
     replay: Box<WalkReplay>,
     quest_list_wait_since: Option<u64>,
     quest_list_retry_used: bool,
-    /// The [`ActionContext::eligible_ticks`] count at which the walk ends: the
-    /// route follower's allowance for the route the host planned
-    /// (`nav-executor/src/traveller/allowance.rs`), counted from the
-    /// observation that carried it, or [`WALK_PLAN_WAIT_TICKS`] before the
-    /// host plans. A guardian hold, a pause, a not-ready frame and a Blocked
-    /// interval are not eligible ticks, and a walk that is polled rarely
-    /// spends them at the same rate as one polled every tick. It never reads
-    /// a clock (`AGENTS.md` content-timed waits).
+    /// The [`ActionContext::eligible_ticks`] count at which the walk ends: a
+    /// progress watchdog. The route follower ends its own follow within
+    /// `clock + 1` observed ticks of starting an enforced clock, so the
+    /// deadline is the eligible count at the follower's last progress post
+    /// plus the longest clock in force plus one, and each new post moves it.
+    /// Before the first post it is [`WALK_PLAN_WAIT_TICKS`] from the request.
+    /// A guardian hold, a pause, a not-ready frame and a Blocked interval are
+    /// not eligible ticks, and a walk that is polled rarely reads the same
+    /// count as one polled every tick. It never reads a clock (`AGENTS.md`
+    /// content-timed waits).
     deadline: u64,
-    /// The allowance post that `deadline` was last set from, or [`NO_POST`].
-    allowance_seq: u32,
+    /// The progress post that `deadline` was last set from, or [`NO_POST`].
+    progress_seq: u32,
     wait: WalkSlot,
 }
 
@@ -349,8 +351,8 @@ fn deadline_failure_receipt(
 
 impl Walk {
     /// A new host request replaces the old one: its route is not planned yet,
-    /// so the walk waits [`WALK_PLAN_WAIT_TICKS`] for the follower's
-    /// allowance, which then replaces this deadline.
+    /// so the walk waits [`WALK_PLAN_WAIT_TICKS`] for the follower's first
+    /// progress, which then replaces this deadline.
     fn await_plan(&mut self, cx: &ActionContext<'_>) {
         self.deadline = cx
             .eligible_ticks()
@@ -418,7 +420,7 @@ impl NativeMachine for Walk {
             deadline: cx
                 .eligible_ticks()
                 .saturating_add(u64::from(WALK_PLAN_WAIT_TICKS)),
-            allowance_seq: NO_POST,
+            progress_seq: NO_POST,
             wait,
         })
     }
@@ -475,13 +477,13 @@ impl NativeMachine for Walk {
         {
             return Poll::Ready(Ok(receipt.clone()));
         }
-        // Each route the host starts to follow carries its own allowance: the
-        // walk's deadline is that many eligible ticks from the observation
-        // that carries it, so a replan recomputes it.
-        if let Some((seq, ticks)) = cx.walk_allowance(request_id) {
-            if self.allowance_seq != seq {
-                self.allowance_seq = seq;
-                self.deadline = cx.eligible_ticks().saturating_add(u64::from(ticks));
+        // Each start of an enforced clock in the follower is a progress post
+        // with the eligible count of the post itself, so a late read of the
+        // post does not stretch the deadline.
+        if let Some((seq, baseline, clock)) = cx.walk_progress(request_id) {
+            if self.progress_seq != seq {
+                self.progress_seq = seq;
+                self.deadline = baseline.saturating_add(u64::from(clock)).saturating_add(1);
             }
         }
         let expired = cx.eligible_ticks() >= self.deadline;
@@ -1519,15 +1521,20 @@ mod tests {
         }
     }
 
-    /// Post the follower's allowance for the live walk request.
-    fn post_allowance(ledger: &mut Option<Box<crate::native::ledger::Ledger>>, ticks: u64) {
+    /// The route follower started a clock of `clock` ticks while the owner's
+    /// eligible count was `baseline`: post it for the live walk request.
+    fn post_progress(
+        ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
+        baseline: u64,
+        clock: u32,
+    ) {
         let ledger = ledger.as_mut().unwrap();
         let authority = ledger.outbox.last().unwrap().authority();
-        assert!(ledger.post_walk_allowance(&authority, ticks));
+        assert!(ledger.post_walk_progress(&authority, baseline, clock));
     }
 
     #[test]
-    fn a_posted_route_allowance_is_the_deadline_to_the_eligible_tick() {
+    fn a_follower_that_keeps_starting_clocks_never_trips_the_deadline() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -1535,55 +1542,66 @@ mod tests {
         snapshot.seed_ingame(2);
         let mut ledger = None;
         let handle = silent_walk(&snapshot, &mut ledger);
-        // The host plans on tick 2: its route may take 5,000 eligible ticks,
-        // counted from the observation that carries it.
-        post_allowance(&mut ledger, 5_000);
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 2, 2).is_pending());
-        // One eligible tick short of the sum: still walking. The plan-wait
-        // deadline of a walk with no allowance has long passed.
-        let before = 2 + 5_000 - 1;
-        assert!(before > AT_DEADLINE);
-        assert!(poll_at(&snapshot, &mut ledger, &handle, before, before).is_pending());
-        // One eligible tick over: the walk fails.
-        let result = poll_at(&snapshot, &mut ledger, &handle, before + 1, before + 1);
+        // A hop clock of 75 ticks starts every 70 ticks, 200 times: 14,000
+        // eligible ticks, far past the plan wait and any single clock.
+        let mut tick = 1;
+        for _ in 0..200 {
+            tick += 70;
+            post_progress(&mut ledger, tick, 75);
+            assert!(poll_at(&snapshot, &mut ledger, &handle, tick, tick).is_pending());
+            assert!(
+                poll_at(&snapshot, &mut ledger, &handle, tick + 69, tick + 69).is_pending(),
+                "before the next clock starts, at {tick}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_follower_that_stops_posting_trips_at_exactly_baseline_plus_clock_plus_one() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let handle = silent_walk(&snapshot, &mut ledger);
+        post_progress(&mut ledger, 500, 75);
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 500, 500).is_pending());
+        // The follower's own clock of 75 ticks lapses on the 76th tick.
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 575, 575).is_pending());
+        let result = poll_at(&snapshot, &mut ledger, &handle, 576, 576);
         let Poll::Ready(Ok(receipt)) = result else {
-            panic!("one eligible tick over the allowance must end the walk: {result:?}");
+            panic!("baseline + clock + 1 must end the walk: {result:?}");
         };
         assert!(is_deadline_receipt(&receipt));
     }
 
     #[test]
-    fn a_replan_recomputes_the_deadline_from_its_own_allowance() {
+    fn a_late_read_of_a_post_does_not_stretch_the_deadline() {
         if !api::test_support::game_data_available() {
             return;
         }
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_ingame(2);
+        // Initial post: made at eligible 2 with a clock of 50, first read at
+        // eligible 100 (the machine was not polled in between). The deadline
+        // is 53, so the walk ends on that read, not at 151.
         let mut ledger = None;
         let handle = silent_walk(&snapshot, &mut ledger);
-        // First route: 100 ticks, adopted on tick 2 (deadline 102).
-        post_allowance(&mut ledger, 100);
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 2, 2).is_pending());
-        // The host replans on tick 90 to a longer route of 1,000 ticks. The
-        // old deadline at 102 no longer applies; the new one is 1,090.
-        post_allowance(&mut ledger, 1_000);
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 90, 90).is_pending());
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 102, 102).is_pending());
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 1_089, 1_089).is_pending());
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 1_090, 1_090).is_ready());
-        // A replan to a shorter route shortens the deadline too.
+        post_progress(&mut ledger, 2, 50);
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 100, 100).is_ready());
+        // Refresh: the first post is read on time, the second (baseline 10,
+        // clock 20) is first read at eligible 80.
         let mut ledger = None;
         let handle = silent_walk(&snapshot, &mut ledger);
-        post_allowance(&mut ledger, 1_000);
+        post_progress(&mut ledger, 2, 100);
         assert!(poll_at(&snapshot, &mut ledger, &handle, 2, 2).is_pending());
-        post_allowance(&mut ledger, 50);
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 10, 10).is_pending());
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 59, 59).is_pending());
-        assert!(poll_at(&snapshot, &mut ledger, &handle, 60, 60).is_ready());
+        post_progress(&mut ledger, 10, 20);
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 80, 80).is_ready());
     }
 
     #[test]
-    fn an_allowance_for_another_request_does_not_move_the_deadline() {
+    fn a_replan_refreshes_the_deadline_from_its_own_progress() {
         if !api::test_support::game_data_available() {
             return;
         }
@@ -1591,13 +1609,41 @@ mod tests {
         snapshot.seed_ingame(2);
         let mut ledger = None;
         let handle = silent_walk(&snapshot, &mut ledger);
-        post_allowance(&mut ledger, 5_000);
-        // The walk sends another request (the plan wait applies again until
-        // the host posts for it): the old request's allowance is not read.
+        post_progress(&mut ledger, 2, 60);
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 2, 2).is_pending());
+        // The follower replans on tick 50 and starts a hop clock of 125: the
+        // old deadline at 63 no longer applies; the new one is 176.
+        post_progress(&mut ledger, 50, 125);
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 50, 50).is_pending());
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 63, 63).is_pending());
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 175, 175).is_pending());
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 176, 176).is_ready());
+        // A replan with a shorter clock shortens it.
+        let mut ledger = None;
+        let handle = silent_walk(&snapshot, &mut ledger);
+        post_progress(&mut ledger, 2, 125);
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 2, 2).is_pending());
+        post_progress(&mut ledger, 10, 20);
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 30, 30).is_pending());
+        assert!(poll_at(&snapshot, &mut ledger, &handle, 31, 31).is_ready());
+    }
+
+    #[test]
+    fn progress_for_another_request_does_not_move_the_deadline() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        let mut ledger = None;
+        let handle = silent_walk(&snapshot, &mut ledger);
+        post_progress(&mut ledger, 2, 5_000);
+        // The walk sent another request: the old request's progress is not
+        // read, and the plan wait applies again.
         ledger
             .as_mut()
             .unwrap()
-            .walk_allowance
+            .walk_progress
             .as_mut()
             .unwrap()
             .request = std::num::NonZeroU64::new(u64::MAX).unwrap();
@@ -1648,14 +1694,9 @@ mod tests {
                 })
             };
         }
-        // The host plans on tick 2: the route may take 5,000 eligible ticks,
-        // so the deadline is at eligible tick 5,002.
-        {
-            let ledger = ledger.as_mut().unwrap();
-            let authority = ledger.outbox.last().unwrap().authority();
-            assert!(ledger.post_walk_allowance(&authority, 5_000));
-        }
-        assert!(poll!(2, 2).is_pending());
+        // The follower starts a clock of 75 at eligible tick 400: the
+        // deadline is 476.
+        post_progress(&mut ledger, 400, 75);
         assert!(poll!(400, 400).is_pending());
         // A random-event hold takes 1,300 observed ticks: no frame of it is
         // eligible, so the count stays at 400, and the host drops the queued
@@ -1665,17 +1706,12 @@ mod tests {
         budget.hold_end();
         assert!(poll!(1701, 401).is_pending());
         assert!(poll!(1702, 402).is_pending());
-        // The walk sent its request again after the hold: the host plans the
-        // new request on tick 1703 and posts its allowance, which counts from
-        // there (eligible tick 403).
-        {
-            let ledger = ledger.as_mut().unwrap();
-            let authority = ledger.outbox.last().unwrap().authority();
-            assert!(ledger.post_walk_allowance(&authority, 5_000));
-        }
+        // The walk sent its request again after the hold: the follower starts
+        // a clock for it on tick 1703 (eligible tick 403): deadline 479.
+        post_progress(&mut ledger, 403, 75);
         assert!(poll!(1703, 403).is_pending());
-        assert!(poll!(1704, 5_402).is_pending());
-        let ended = poll!(1705, 5_403);
+        assert!(poll!(1704, 478).is_pending());
+        let ended = poll!(1705, 479);
         let Poll::Ready(Ok(receipt)) = ended else {
             panic!("the eligible count must end the walk: {ended:?}");
         };
@@ -1693,7 +1729,24 @@ mod tests {
         let handle = silent_walk(&snapshot, &mut ledger);
         // Warm the path once; then measure each new observed tick.
         assert!(poll_at(&snapshot, &mut ledger, &handle, 2, 2).is_pending());
+        let mut eligible = crate::native::ledger::EligibleTicks::default();
         for tick in 3..40 {
+            // The follower starts a clock on every tick: the post, the
+            // eligible-tick accounting and the poll that adopts it allocate
+            // nothing.
+            let authority = ledger.as_ref().unwrap().outbox.last().unwrap().authority();
+            let mut posted = false;
+            let allocations = allocation_counter::measure(|| {
+                eligible.set_open(true);
+                eligible.observe(tick);
+                let baseline = eligible.count_through(tick);
+                posted = ledger
+                    .as_mut()
+                    .unwrap()
+                    .post_walk_progress(&authority, baseline, 75);
+            });
+            assert!(posted);
+            assert_eq!(allocations.count_total, 0, "post on tick {tick}");
             with_tick(&snapshot, &mut ledger, tick, |native| {
                 let mut polled = None;
                 let allocations = allocation_counter::measure(|| {

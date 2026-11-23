@@ -125,6 +125,16 @@ impl EligibleTicks {
     pub fn count(&self) -> u64 {
         self.banked
     }
+
+    /// The eligible observed ticks through `tick`: those banked, and those of
+    /// an open span since its last frame. A host pass that runs before this
+    /// tick's script frame reads the count of its own tick with it.
+    pub fn count_through(&self, tick: u64) -> u64 {
+        match self.last {
+            SPAN_CLOSED | SPAN_OPENED => self.banked,
+            last => self.banked.saturating_add(tick.saturating_sub(last)),
+        }
+    }
 }
 
 /// The host walk outcome the slot observed last: its sequence and its cancel
@@ -418,16 +428,17 @@ impl PickReceipt {
     }
 }
 
-/// The observed ticks that the route follower may take for the route that the
-/// host planned for one walk request, as the follower sums them for that
-/// route. The host posts one for every route it starts to follow, so a replan
-/// posts a new one; `seq` tells the owner which it has read. Ticks saturate at
-/// `u32::MAX`.
+/// Progress of the route follower for one walk request: it started a new
+/// enforced clock, the longest one in force lasts `clock` observed ticks, and
+/// the owner's eligible-tick count was `baseline` at the host's post. The
+/// follower ends its own follow within `clock + 1` ticks of the post unless it
+/// posts again; `seq` tells the owner which post it has read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct WalkAllowance {
+pub(crate) struct WalkProgress {
     pub(crate) request: NonZeroU64,
+    pub(crate) baseline: u64,
     pub(crate) seq: u32,
-    pub(crate) ticks: u32,
+    pub(crate) clock: u32,
 }
 
 /// Allocated only on first native admission. There is one foreground owner,
@@ -438,9 +449,9 @@ pub struct Ledger {
     pub(crate) outbox: Vec<HostAction>,
     pub(crate) walk: Option<WalkReceipt>,
     pub(crate) walk_prereq_allow: Option<(NonZeroU64, super::PrereqAllow)>,
-    /// The tick allowance of the route the host follows for the live walk
-    /// request ([`WalkAllowance`]).
-    pub(crate) walk_allowance: Option<WalkAllowance>,
+    /// The latest progress of the route follower for the live walk request
+    /// ([`WalkProgress`]).
+    pub(crate) walk_progress: Option<WalkProgress>,
     pub(crate) walk_events: Vec<WalkEvent>,
     pub(crate) interaction: Option<InteractionReceipt>,
     pub(crate) interaction_request: Option<NonZeroU64>,
@@ -491,7 +502,7 @@ impl Default for Ledger {
             outbox: Vec::with_capacity(6),
             walk: None,
             walk_prereq_allow: None,
-            walk_allowance: None,
+            walk_progress: None,
             walk_events: Vec::new(),
             interaction: None,
             interaction_request: None,
@@ -514,8 +525,13 @@ impl Default for Ledger {
 }
 
 impl Ledger {
-    /// Record the allowance of the route followed for this live walk request.
-    pub(crate) fn post_walk_allowance(&mut self, authority: &HostAuthority, ticks: u64) -> bool {
+    /// Record the follower's progress for this live walk request.
+    pub(crate) fn post_walk_progress(
+        &mut self,
+        authority: &HostAuthority,
+        baseline: u64,
+        clock: u32,
+    ) -> bool {
         if !authority.walk
             || !authority.live()
             || !self.owner.as_ref().is_some_and(|owner| {
@@ -525,12 +541,13 @@ impl Ledger {
             return false;
         }
         let seq = self
-            .walk_allowance
-            .map_or(0, |last| last.seq.wrapping_add(1));
-        self.walk_allowance = Some(WalkAllowance {
+            .walk_progress
+            .map_or(0, |last| last.seq.wrapping_add(1) % u32::MAX);
+        self.walk_progress = Some(WalkProgress {
             request: authority.request_id(),
+            baseline,
             seq,
-            ticks: u32::try_from(ticks).unwrap_or(u32::MAX),
+            clock,
         });
         true
     }
@@ -711,7 +728,7 @@ impl Ledger {
             .retain(|action| matches!(action.effect, HostEffect::AssessWalk(_)));
         self.walk = None;
         self.walk_prereq_allow = None;
-        self.walk_allowance = None;
+        self.walk_progress = None;
         self.walk_events.clear();
         self.interaction = None;
         self.interaction_request = None;

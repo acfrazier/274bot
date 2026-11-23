@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const NPC_HOP_ATTEMPTS: u32 = 3;
+const NPC_HOP_ATTEMPTS: u32 = 3;
 
 #[derive(Default)]
 pub(super) struct NpcRecovery {
@@ -282,7 +282,7 @@ impl FollowRun {
                 hop.sent_tile = Some(here);
                 hop.approach = None;
                 hop.dialog_page = None;
-                self.loc_wait = 0;
+                self.restart_loc_wait();
                 Poll::Watching
             }
             SendResult::Refused { reason, .. } => {

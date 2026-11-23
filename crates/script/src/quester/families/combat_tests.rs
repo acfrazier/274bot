@@ -1758,7 +1758,7 @@ fn pending_walk(ledger: &TestLedger) -> Option<WalkOut> {
 fn host_plans_the_walk(ledger: &mut TestLedger) {
     let ledger = ledger.as_mut().expect("native ledger");
     let authority = ledger.outbox.last().expect("a queued walk").authority();
-    assert!(ledger.post_walk_allowance(&authority, 100_000));
+    assert!(ledger.post_walk_progress(&authority, 0, 100_000));
 }
 
 fn last_walk(ledger: &TestLedger) -> WalkOut {

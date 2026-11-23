@@ -46,14 +46,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   Choose **Never** in Nav config or TUI Settings when a low-level bot must avoid
   aggressive monsters. For example, choose **Never** near the King Scorpion
   zones by Falador East.
-- A native walk that gets no host result now ends after the observed game
-  ticks that its route follower allows for the planned route, summed leg by
-  leg, and a replan recomputes them. It no longer reads the wall clock or
+- A native walk that gets no host result now ends when its route follower
+  makes no progress for the longest enforced clock it has running (60 observed
+  ticks for a hop at the default budget, plus one), and each new clock the
+  follower starts moves that deadline. It no longer reads the wall clock or
   ends a long, healthy walk after ten minutes. The count covers the ticks the
   bot was eligible to act: a random-event hold, a pause or a blocked interval
   does not spend it, and polling less often does not stretch it. Hold kinds
-  that have no tick bound can still suspend the deadline for as long as they
-  last.
+  that have no tick bound, and a follower that keeps starting clocks, can
+  still suspend the deadline for as long as they last.
 
 ### Scenario observations
 
