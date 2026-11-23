@@ -3,9 +3,10 @@
 //! Run with `NAV_ARRIVAL_SCENARIO` set to `return`, `yew`, `tower-top`,
 //! `tower-basement`, `lumbridge-door`, or `gnome-maze`. Each run requires the
 //! copied cache and the caller-supplied throwaway HOME under `BOT_EVIDENCE_DIR`.
-//! Gnome maze relogs after the tutorial skip, then proves 80 Hitpoints,
-//! 40 Defence and six lobsters before Start. Its real danger request must pass
-//! the 1% assessment; no global danger override replaces the timing check.
+//! Lumbridge door, tower top and gnome maze observe the tutorial skip before
+//! seeding. Tower top and gnome maze relog to restore the item tabs. Gnome maze
+//! proves 80 Hitpoints, 40 Defence and six lobsters before Start. Its real danger
+//! request must pass the 1% assessment without a global danger override.
 
 use super::*;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -65,6 +66,12 @@ const LUMBRIDGE_DOOR_CLOSED_ID: i32 = 1533;
 const LUMBRIDGE_DOOR_OPEN_ID: i32 = 1534;
 const LUMBRIDGE_DOOR_CLOSE_TICKS: u32 = 500;
 const LUMBRIDGE_DOOR_WAIT_TIMEOUT: Duration = Duration::from_secs(6 * 60);
+const MAINLAND: (i32, i32, i32) = (3220, 3220, 0);
+const TOWER_PRIME_START: WorldTile = WorldTile {
+    x: 3106,
+    z: 3161,
+    level: 0,
+};
 const GNOME_MAZE_START: WorldTile = WorldTile {
     x: 2517,
     z: 3179,
@@ -233,16 +240,29 @@ struct SceneProof {
     lumbridge_door: Option<DoorObservation>,
 }
 
-#[derive(Clone, Copy, Default)]
-enum GnomeSetup {
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum MainlandSetup {
     #[default]
-    SkipTutorial,
-    ReadTutorial,
+    HopMainland,
+    AwaitHop,
     AwaitTutorial,
-    AwaitMainland,
+    AwaitRelog {
+        from_session: u64,
+    },
+    Ready,
+}
+
+#[derive(Clone, Copy)]
+enum GnomeSetup {
     Seed(usize),
     AwaitFacts,
     Ready,
+}
+
+impl Default for GnomeSetup {
+    fn default() -> Self {
+        Self::Seed(0)
+    }
 }
 
 #[derive(Default)]
@@ -255,6 +275,7 @@ struct LiveState {
     ready: bool,
     setup_error: Option<String>,
     door_close_wait: Option<Value>,
+    mainland_setup: MainlandSetup,
     gnome_setup: GnomeSetup,
     gnome_initial_facts: Option<Value>,
     gnome_ready_facts: Option<Value>,
@@ -557,61 +578,90 @@ fn gnome_facts_ready(snapshot: &GameSnapshot) -> bool {
     })
 }
 
-fn prepare_gnome_account(
+fn prepare_mainland_account(
     client: &mut client::client::Client,
     snapshot: &GameSnapshot,
     arm: &SlotArm,
     state: &mut LiveState,
+    restore_item_tabs: bool,
 ) -> bool {
-    const SEEDS: [&str; 4] = [
-        "setvar tutorial 1000",
-        "setstat hitpoints 80",
-        "setstat defence 40",
-        "give lobster 6",
-    ];
     if state.setup_error.is_some() {
         return false;
     }
     let ingame = client.ingame && client.scene_state == 2;
-    match state.gnome_setup {
-        GnomeSetup::SkipTutorial if ingame => {
-            state.gnome_initial_facts = Some(combat_facts_json(diagnostic_view(snapshot)));
-            api::interact::mainland_hop(client);
-            state.gnome_setup = GnomeSetup::ReadTutorial;
-        }
-        GnomeSetup::ReadTutorial => {
-            if !api::interact::cheat(client, "getvar tutorial").is_sent() {
-                state.setup_error = Some("Gnome tutorial proof command was refused".into());
+    match state.mainland_setup {
+        MainlandSetup::HopMainland if ingame => {
+            let (x, z, level) = MAINLAND;
+            if !api::interact::cheat(client, &api::interact::tele_args(level, x, z)).is_sent() {
+                state.setup_error = Some("Mainland teleport was refused".into());
+                return false;
             }
-            state.gnome_setup = GnomeSetup::AwaitTutorial;
+            state.mainland_setup = MainlandSetup::AwaitHop;
         }
-        GnomeSetup::AwaitTutorial
-            if snapshot.chat_lines().iter().any(|line| {
-                line.text
-                    .to_ascii_lowercase()
-                    .contains("get tutorial: 1000")
-            }) || snapshot
-                .chat_modal_texts()
-                .iter()
-                .any(|line| line.to_ascii_lowercase().contains("get tutorial: 1000")) =>
+        MainlandSetup::AwaitHop if ingame && snapshot.tile() == Some(MAINLAND) => {
+            // The hop closes player_kit. Its queued stage-1 write runs before the
+            // mainland observation (tutorial.rs2:136-141, World.ts:351-409).
+            for command in ["setvar tutorial 1000", "getvar tutorial"] {
+                if !api::interact::cheat(client, command).is_sent() {
+                    state.setup_error = Some(format!("Tutorial command was refused: {command}"));
+                    return false;
+                }
+            }
+            state.mainland_setup = MainlandSetup::AwaitTutorial;
+        }
+        MainlandSetup::AwaitTutorial
+            if ingame
+                && (snapshot
+                    .chat_lines()
+                    .iter()
+                    .any(|line| line.text.eq_ignore_ascii_case("get tutorial: 1000"))
+                    || snapshot
+                        .chat_modal_texts()
+                        .iter()
+                        .any(|line| line.eq_ignore_ascii_case("get tutorial: 1000"))) =>
         {
+            if !restore_item_tabs {
+                state.mainland_setup = MainlandSetup::Ready;
+                return true;
+            }
             let ifaces = Arc::clone(&client.ifaces);
             if !api::interact::logout(client, &ifaces) {
-                state.setup_error = Some("Gnome tutorial logout interface was unavailable".into());
+                state.setup_error = Some("Tutorial logout interface was unavailable".into());
             } else {
                 // Tutorial clears both item tabs. A varp cheat alone does not
                 // restore them: login.rs2 initalltabs transmits inventory/worn.
                 arm.arm_explicit_login();
-                state.gnome_setup = GnomeSetup::AwaitMainland;
+                state.mainland_setup = MainlandSetup::AwaitRelog {
+                    from_session: client.gens.session,
+                };
             }
         }
-        GnomeSetup::AwaitMainland
+        MainlandSetup::AwaitRelog { from_session }
             if ingame
+                && client.gens.session != from_session
                 && diagnostic_view(snapshot).inventory().is_some()
                 && diagnostic_view(snapshot).equipment().is_some() =>
         {
-            state.gnome_setup = GnomeSetup::Seed(0);
+            state.mainland_setup = MainlandSetup::Ready;
         }
+        MainlandSetup::Ready => return true,
+        _ => {}
+    }
+    false
+}
+
+fn prepare_gnome_account(
+    client: &mut client::client::Client,
+    snapshot: &GameSnapshot,
+    state: &mut LiveState,
+) -> bool {
+    const SEEDS: [&str; 3] = [
+        "setstat hitpoints 80",
+        "setstat defence 40",
+        "give lobster 6",
+    ];
+    let ingame = client.ingame && client.scene_state == 2;
+    match state.gnome_setup {
         GnomeSetup::Seed(index) if ingame => {
             if !api::interact::cheat(client, SEEDS[index]).is_sent() {
                 state.setup_error = Some(format!("Gnome seed was refused: {}", SEEDS[index]));
@@ -632,14 +682,25 @@ fn prepare_gnome_account(
     false
 }
 
+fn teleport_to_seed(client: &mut client::client::Client, seed: WorldTile, state: &mut LiveState) {
+    let command = api::interact::tele_args(seed.level, seed.x, seed.z);
+    if !api::interact::cheat(client, &command).is_sent() {
+        state.setup_error = Some(format!("Teleport to {seed:?} was refused"));
+    }
+}
+
 fn frame_hook(
     state: Arc<parking_lot::Mutex<LiveState>>,
     account: String,
     scenario: Scenario,
     door_state_changed: Arc<parking_lot::Condvar>,
     arm: Arc<SlotArm>,
+    prime_tower_door: bool,
 ) -> impl Fn(&mut client::client::Client, &str, crate::SlotFrameInput) + Send + Sync + 'static {
-    let prime_tower_door = std::env::var("NAV_ARRIVAL_PRIME_TOWER_DOOR").as_deref() == Ok("1");
+    let prepare_mainland = matches!(
+        scenario,
+        Scenario::GnomeMaze | Scenario::LumbridgeDoor | Scenario::TowerTop
+    );
     move |client, username, _hold| {
         if username != account {
             return;
@@ -725,8 +786,25 @@ fn frame_hook(
             }
             state.samples.push(sample);
         }
-        if scenario == Scenario::GnomeMaze
-            && !prepare_gnome_account(client, &snapshot, &arm, &mut state)
+        if prepare_mainland {
+            if scenario == Scenario::GnomeMaze
+                && state.mainland_setup == MainlandSetup::HopMainland
+                && client.ingame
+                && client.scene_state == 2
+            {
+                state.gnome_initial_facts = Some(combat_facts_json(diagnostic_view(&snapshot)));
+            }
+            if !prepare_mainland_account(
+                client,
+                &snapshot,
+                &arm,
+                &mut state,
+                scenario != Scenario::LumbridgeDoor,
+            ) {
+                return;
+            }
+        }
+        if scenario == Scenario::GnomeMaze && !prepare_gnome_account(client, &snapshot, &mut state)
         {
             return;
         }
@@ -738,7 +816,12 @@ fn frame_hook(
             && !state.prime_complete
         {
             if !state.prime_seed_sent {
-                api::interact::seed_at(client, 0, 3106, 3161);
+                if prepare_mainland {
+                    teleport_to_seed(client, TOWER_PRIME_START, &mut state);
+                } else {
+                    let WorldTile { x, z, level } = TOWER_PRIME_START;
+                    api::interact::seed_at(client, level, x, z);
+                }
                 state.prime_seed_sent = true;
                 return;
             }
@@ -754,14 +837,7 @@ fn frame_hook(
                 // Preserve the prior tower-entry door state, as in the quest.
                 // Never Close or reset a shared-engine door.
                 state.prime_complete = true;
-            } else if !state.prime_open_sent
-                && tile
-                    == Some(WorldTile {
-                        x: 3106,
-                        z: 3161,
-                        level: 0,
-                    })
-            {
+            } else if !state.prime_open_sent && tile == Some(TOWER_PRIME_START) {
                 if let Some(door) = snapshot.locs().iter().find(|loc| {
                     loc.id == 1536
                         && loc.tile
@@ -792,7 +868,11 @@ fn frame_hook(
                     assert!(api::interact::cheat(client, command).is_sent());
                 }
             }
-            api::interact::seed_at(client, seed.level, seed.x, seed.z);
+            if prepare_mainland {
+                teleport_to_seed(client, seed, &mut state);
+            } else {
+                api::interact::seed_at(client, seed.level, seed.x, seed.z);
+            }
             state.teleport_sent = true;
             return;
         }
@@ -1306,6 +1386,128 @@ fn write_capture_flushes_its_json_without_a_frame() {
 }
 
 #[test]
+fn arrival_scenes_wait_for_observed_tutorial_completion() {
+    for (scenario, prime_tower_door) in [
+        (Scenario::LumbridgeDoor, false),
+        (Scenario::TowerTop, true),
+        (Scenario::GnomeMaze, false),
+    ] {
+        let mut client = client::client::Client::new_with_revision(
+            client::client::ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 44594,
+                cache_dir: "unused".into(),
+                members: true,
+                lowmem: true,
+            },
+            client::client::ClientRevision::R289,
+        );
+        client.set_cheat_admission(client::CheatAdmission::Granted);
+        client.ingame = true;
+        client.scene_state = 2;
+        client.gens.player = 1;
+        client.gens.player_info = 1;
+        client.gens.session = 1;
+        client.map_build_base_x = 3072;
+        client.map_build_base_z = 3072;
+        client.local_player = Some(client::client::ClientPlayer::at(22, 34));
+
+        let state = Arc::new(parking_lot::Mutex::new(LiveState::default()));
+        let frame = frame_hook(
+            Arc::clone(&state),
+            "alice".into(),
+            scenario,
+            Arc::new(parking_lot::Condvar::new()),
+            SlotArm::new(1, true),
+            prime_tower_door,
+        );
+        let advance = |client: &mut client::client::Client| {
+            frame(client, "alice", crate::SlotFrameInput::default());
+        };
+        advance(&mut client);
+        assert_eq!(
+            client.cheat_packets_sent(),
+            1,
+            "{scenario:?}: only the mainland teleport"
+        );
+        advance(&mut client);
+        assert_eq!(
+            client.cheat_packets_sent(),
+            1,
+            "{scenario:?}: still on the island"
+        );
+
+        client.scene_state = 1;
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3200;
+        client.local_player = Some(client::client::ClientPlayer::at(20, 20));
+        client.gens.player += 1;
+        client.gens.player_info += 1;
+        advance(&mut client);
+        assert_eq!(
+            client.cheat_packets_sent(),
+            1,
+            "{scenario:?}: scene still loading"
+        );
+
+        client.scene_state = 2;
+        advance(&mut client);
+        assert_eq!(
+            client.cheat_packets_sent(),
+            3,
+            "{scenario:?}: write and read tutorial"
+        );
+        client.add_chat(0, "Get tutorial: 1", "");
+        client.gens.chat += 1;
+        advance(&mut client);
+        assert_eq!(
+            client.cheat_packets_sent(),
+            3,
+            "{scenario:?}: tutorial is not complete"
+        );
+        {
+            let state = state.lock();
+            assert!(!state.prime_seed_sent && !state.teleport_sent);
+            assert!(state.setup_error.is_none());
+        }
+
+        client.add_chat(0, "Get tutorial: 1000", "");
+        client.gens.chat += 1;
+        if scenario == Scenario::LumbridgeDoor {
+            advance(&mut client);
+            assert_eq!(
+                client.cheat_packets_sent(),
+                4,
+                "only the door-seed teleport"
+            );
+            assert!(state.lock().teleport_sent);
+        } else {
+            client.set_iface(
+                100,
+                client::config::IfType {
+                    id: 100,
+                    client_code: api::interact::CC_LOGOUT,
+                    ..Default::default()
+                },
+            );
+            advance(&mut client);
+            advance(&mut client);
+            let state = state.lock();
+            assert!(matches!(
+                state.mainland_setup,
+                MainlandSetup::AwaitRelog { from_session: 1 }
+            ));
+            assert!(!state.prime_seed_sent && !state.teleport_sent);
+            assert_eq!(
+                client.cheat_packets_sent(),
+                3,
+                "{scenario:?}: awaiting relog"
+            );
+        }
+    }
+}
+
+#[test]
 fn gnome_maze_keeps_the_real_food_guard_and_complete_giant_facts() {
     let walk = WalkSpec::gnome_walk();
     let request = walk.request(api::quest_progress::EvidenceStamp {
@@ -1495,7 +1697,7 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     let frame_account = account.clone();
     let mut play = run_with_template(
         template,
-        false,
+        false, // The fixture owns its teleports, including across the Gnome relog.
         vec![],
         move |username| {
             if username == frame_account {
@@ -1510,6 +1712,7 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
             scenario,
             frame_door_state_changed,
             Arc::clone(&arm),
+            std::env::var("NAV_ARRIVAL_PRIME_TOWER_DOOR").as_deref() == Ok("1"),
         ),
     )
     .expect("start one-slot live Play");
