@@ -127,7 +127,7 @@ fn await_ready(preferences: &Preferences) {
 /// (the edits contend), odd saves write members of their own (disjoint).
 /// Each save rewrites the whole D-sized document, whichever backend stores
 /// it, because the root starts with a D-sized document ([`seed_document`]).
-fn patch(round: usize, save: usize, index: usize) -> PreferencePatch {
+pub(super) fn patch(round: usize, save: usize, index: usize) -> PreferencePatch {
     let mut patch = PreferencePatch::new();
     let (first, count) = if save.is_multiple_of(2) {
         (0, 25)
@@ -381,7 +381,7 @@ impl LoadReport {
 /// A D-sized legacy document (250 members of about 4 KiB) at the root's
 /// `panel-ui.json`, so both backends start from, and rewrite on every save,
 /// the largest document they hold.
-fn seed_document(root: &StateRoot) {
+pub(super) fn seed_document(root: &StateRoot) {
     let bulk: serde_json::Map<String, Value> = (0..250)
         .map(|member| {
             (

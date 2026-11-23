@@ -5215,3 +5215,155 @@ fn sync_count_steady_commits_load() {
     let (resets, busy, _) = service.truncate_counts_for_test();
     println!("T53_SYNC_LOAD commits={commits} truncates={resets} busy={busy}");
 }
+
+/// The bound of the file-store lane: 24 queued bank readbacks run ahead of a
+/// queued preference save, but only `FILE_JOB_BURST` in a row. Without the
+/// bound the save waits for all 24.
+#[test]
+fn a_stream_of_bank_jobs_cannot_starve_a_queued_preference_save() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("bank-burst");
+    let root = root_of(&scratch);
+    let service = LocalStateService::open_process(root.clone());
+    let preferences = service.preferences();
+    ready(&preferences);
+    let timeline = Timeline::attach(&service);
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let released = std::sync::Mutex::new(released);
+    let hold = Arc::new(AtomicBool::new(true));
+    let armed = Arc::clone(&hold);
+    service.set_write_stall_for_test(Arc::new(move || {
+        if armed.swap(false, Ordering::SeqCst) {
+            let _ = entered_tx.send(());
+            let _ = released.lock().unwrap().recv_timeout(WAIT);
+        }
+    }));
+    let mut updates = Vec::new();
+    for n in 0..2 {
+        let mut patch = PreferencePatch::new();
+        patch
+            .set_member(&["bulk", &format!("m{n}")], Some(json!(format!("value-{n}"))))
+            .unwrap();
+        match preferences.begin_patch(patch) {
+            Ok(Update::Queued(update)) => updates.push(update),
+            other => panic!("the save is queued: {other:?}"),
+        }
+        if n == 0 {
+            entered.recv_timeout(WAIT).expect("the first save is held");
+        }
+    }
+    let readers: Vec<_> = (0..24)
+        .map(|n| {
+            let service = Arc::clone(&service);
+            std::thread::spawn(move || {
+                service.readback_lease(&bank_identity(&format!("b{n:02}")), WAIT)
+            })
+        })
+        .collect();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let queued = service
+            .shared
+            .state
+            .lock()
+            .stores
+            .iter()
+            .filter(|(key, store)| {
+                matches!(key, StoreKey::BankHint { .. }) && store.readback == Readback::Queued
+            })
+            .count();
+        if queued == 24 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "only {queued} bank readbacks queued");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    release.send(()).unwrap();
+    for reader in readers {
+        assert_eq!(reader.join().unwrap().unwrap(), None);
+    }
+    for update in &mut updates {
+        update.wait(WAIT).expect("the save settles").expect("the save is durable");
+    }
+    let classes: Vec<&str> = timeline.take().into_iter().map(|(class, _)| class).collect();
+    let second_save = classes
+        .iter()
+        .enumerate()
+        .filter(|(_, class)| **class == "pref-save")
+        .nth(1)
+        .map(|(position, _)| position)
+        .expect("the second preference save ran");
+    // The held save, then at most eight file-lane jobs, then the second save.
+    assert!(
+        second_save <= 9,
+        "the queued preference save ran after {second_save} jobs: {classes:?}"
+    );
+    assert_eq!(FILE_JOB_BURST, 8, "the bound this test states");
+    assert_eq!(
+        classes.iter().filter(|class| **class == "bank-readback").count(),
+        24,
+        "every bank readback still ran: {classes:?}"
+    );
+    drop(preferences);
+    drop(service);
+    let reopened = LocalStateService::open_process(root);
+    let snapshot = ready(&reopened.preferences());
+    assert_eq!(snapshot.document()["bulk"]["m0"], json!("value-0"));
+    assert_eq!(snapshot.document()["bulk"]["m1"], json!("value-1"));
+}
+
+/// A bank job of one service takes the database's write lock between the
+/// preference saves of another, instead of waiting until its whole burst
+/// ends (the gate's 500 ms residence at 1 MiB per save).
+#[test]
+fn a_bank_job_takes_the_lock_between_another_services_preference_saves() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("bank-between-saves");
+    let root = root_of(&scratch);
+    occupancy_tests::seed_document(&root);
+    let busy = LocalStateService::open_process(root.clone());
+    let other = LocalStateService::open_process(root.clone());
+    let busy_preferences = busy.preferences();
+    ready(&busy_preferences);
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let released = std::sync::Mutex::new(released);
+    let hold = Arc::new(AtomicBool::new(false));
+    let armed = Arc::clone(&hold);
+    busy.set_write_stall_for_test(Arc::new(move || {
+        if armed.swap(false, Ordering::SeqCst) {
+            let _ = entered_tx.send(());
+            let _ = released.lock().unwrap().recv_timeout(WAIT);
+        }
+    }));
+    for round in 0..3 {
+        hold.store(true, Ordering::SeqCst);
+        let mut updates = Vec::new();
+        for save in 0..9 {
+            match busy_preferences.begin_patch(occupancy_tests::patch(round, save, 0)) {
+                Ok(Update::Queued(update)) => updates.push(update),
+                other => panic!("the save is queued: {other:?}"),
+            }
+            if save == 0 {
+                entered.recv_timeout(WAIT).expect("the first save is held");
+            }
+        }
+        release.send(()).unwrap();
+        let account = format!("gap{round}");
+        other
+            .readback_lease(&bank_identity(&account), WAIT)
+            .expect("the bank read completes");
+        let still_queued = updates
+            .iter()
+            .filter(|update| !update.wait_for_completion(Duration::ZERO))
+            .count();
+        assert!(
+            still_queued >= 3,
+            "round {round}: the bank read waited for the other service's burst ({still_queued} of 9 saves still pending)"
+        );
+        for update in &mut updates {
+            update.wait(WAIT).expect("the save settles").expect("the save is durable");
+        }
+    }
+}
