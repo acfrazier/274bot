@@ -164,6 +164,8 @@ fn measured_combat_owner_has_fixed_state_size() {
     assert!(std::mem::size_of::<Option<Box<CombatObserver>>>() <= 72);
     assert!(std::mem::size_of::<CombatSample>() <= 192);
     assert!(std::mem::size_of::<CombatObserver>() <= 280);
+    // Measured 328 B, including eleven fixed u64 receive intervals (88 B).
+    assert!(std::mem::size_of::<api::tick_health::TickHealth>() <= 328);
     // Measured 6,288 B + 64 B headroom. GameSnapshot owns its fixed-size
     // TickHealth state inline; the optional actor owners stay unallocated.
     assert!(std::mem::size_of::<scenario::ScenarioRunner>() <= 6_352);
