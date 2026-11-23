@@ -248,6 +248,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   file after its import, or by 0.2.9, is not read; this conversion is one way.
   A preferences recovery keeps the bank hints. The database holds at most
   1,024 hints and never evicts one: a new account past that is refused as busy.
+  A database written by another or a newer version refuses bank hints too,
+  and leaves them where they are.
 - The headless `host-play` and the panel and terminal apps run their game
   slots over the one state service they open, so a process has one writer and
   one database connection.
