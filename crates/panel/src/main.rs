@@ -10,12 +10,14 @@ fn parse_args() -> panel::PanelArgs {
         Ok(args) => args,
         Err((code, msg)) => {
             eprintln!("{msg}");
-            std::process::exit(code);
+            api::hostlog::exit_process(code);
         }
     }
 }
 
 fn main() -> std::process::ExitCode {
+    // Drains the stderr writer on every return path.
+    let _drain = api::hostlog::stderr_drain();
     // `state preferences …` maintenance commands run before any frontend,
     // vault or Play startup, and exit.
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -24,7 +26,15 @@ fn main() -> std::process::ExitCode {
     {
         return std::process::ExitCode::from(code as u8);
     }
-    frontend_core::process::bootstrap().expect("protected V8 bootstrap on process main thread");
+    if let Err(error) = frontend_core::process::bootstrap() {
+        api::host_log!(
+            stderr;
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Error,
+            "panel: {error}"
+        );
+        return std::process::ExitCode::FAILURE;
+    }
     let args = parse_args();
     // Before any slot starts: a Finder-launched app gets 256 open files.
     // The session log records the result when it opens.

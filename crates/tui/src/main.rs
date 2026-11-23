@@ -10,6 +10,8 @@ static ALLOCATOR: frontend_core::process::BenchmarkAllocator =
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // Drains the stderr writer on every return path.
+    let _drain = api::hostlog::stderr_drain();
     // `state preferences …` maintenance commands run before any frontend,
     // vault or Play startup, and exit.
     let argv: Vec<String> = std::env::args().skip(1).collect();

@@ -146,3 +146,18 @@ fn unread_counts_only_rows_newer_than_the_last_look() {
     state.mark_seen();
     assert_eq!(state.unread(), (0, 0));
 }
+
+#[test]
+fn log_header_shows_a_real_process_stderr_queue_drop() {
+    let before = frontend_core::log::stderr_dropped();
+    let dropped = api::hostlog::test_fill_stderr_queue_and_drop_one_line();
+    assert!(
+        dropped > before,
+        "the full queue did not record a real drop"
+    );
+
+    let state = LogPaneState::default();
+    assert!(state
+        .header(Some("tuilog-dropped"))
+        .contains(&format!("stderr dropped:{dropped}")));
+}

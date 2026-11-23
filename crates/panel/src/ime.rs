@@ -130,6 +130,6 @@ pub(super) unsafe extern "C" fn physical_ime_set_data(
     }));
     if result.is_err() {
         eprintln!("panel: panic in physical IME callback");
-        std::process::abort();
+        api::hostlog::abort_process();
     }
 }
