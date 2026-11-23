@@ -5040,8 +5040,8 @@ fn main_script_recovery_names_the_hidden_card_and_field() {
             Some("alice"),
             &selection,
             def.id(),
-            ("12", Some(serde_json::json!(12))),
             def,
+            ("12", Some(serde_json::json!(12))),
             &[],
         )
         .unwrap_err();

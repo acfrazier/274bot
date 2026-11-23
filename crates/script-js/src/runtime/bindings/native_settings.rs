@@ -187,8 +187,10 @@ mod tests {
     use rustyscript::{Runtime, RuntimeOptions};
 
     const CHILD_ENV: &str = "SCRIPT_NATIVE_SETTINGS_TEST_CHILD";
-    const FAST_TEST_NAME: &str = "runtime::bindings::native_settings::tests::settings_results_have_fast_properties";
-    const HEAP_TEST_NAME: &str = "runtime::bindings::native_settings::tests::settings_reads_have_bounded_v8_heap";
+    const FAST_TEST_NAME: &str =
+        "runtime::bindings::native_settings::tests::settings_results_have_fast_properties";
+    const HEAP_TEST_NAME: &str =
+        "runtime::bindings::native_settings::tests::settings_reads_have_bounded_v8_heap";
 
     fn run_in_child(name: &str) -> bool {
         if std::env::var_os(CHILD_ENV).is_some() {
@@ -246,7 +248,10 @@ mod tests {
                 })()"#,
             )
             .expect("inspect NativeSettings result shapes");
-        assert!(fast, "NativeSettings returns fast-property tiles and arrays");
+        assert!(
+            fast,
+            "NativeSettings returns fast-property tiles and arrays"
+        );
     }
 
     #[test]

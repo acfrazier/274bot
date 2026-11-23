@@ -292,10 +292,7 @@ pub fn validate_saved_setting_value(
                 let is_loadout = def.id == "loadout";
                 let blank_loadouts =
                     def.options_from.as_deref() == Some("loadouts") && text.is_empty();
-                if !blank_loadouts
-                    && !is_loadout
-                    && !choices.iter().any(|choice| choice == text)
-                {
+                if !blank_loadouts && !is_loadout && !choices.iter().any(|choice| choice == text) {
                     return Err(error(SavedSettingValueErrorKind::InvalidOption));
                 }
             }
@@ -341,7 +338,6 @@ pub fn validate_saved_setting_value(
     }
     Ok(())
 }
-
 
 /// Serde rejects `12.0` for integer settings even though it is an exact
 /// integer. Preserve fractional and out-of-range numbers for typed consumers
@@ -718,13 +714,8 @@ mod tests {
         assert_eq!(error.kind, SavedSettingValueErrorKind::InvalidListOption);
 
         let legacy_list = setting("legacy", "list", Some(""));
-        validate_saved_setting_value(
-            &legacy_list,
-            &serde_json::json!(["old-value"]),
-            &[],
-            &[],
-        )
-        .unwrap();
+        validate_saved_setting_value(&legacy_list, &serde_json::json!(["old-value"]), &[], &[])
+            .unwrap();
 
         let tile = setting("destination", "tile", Some(r#"{"x":1,"z":2,"level":0}"#));
         validate_saved_setting_value(
@@ -787,13 +778,9 @@ mod tests {
                 crate::loadouts_store::LoadoutResolutionError::Unknown { .. }
             )
         ));
-        let error = validate_saved_setting_value(
-            &selected,
-            &Value::String("missing".into()),
-            &[],
-            &[],
-        )
-        .unwrap_err();
+        let error =
+            validate_saved_setting_value(&selected, &Value::String("missing".into()), &[], &[])
+                .unwrap_err();
         assert!(matches!(
             error.kind,
             SavedSettingValueErrorKind::Loadout(
@@ -807,12 +794,11 @@ mod tests {
 
         let mut bank = setting("bank", "string", Some(""));
         bank.options_from = Some("named-banks".into());
-        let error = validate_saved_setting_value(&bank, &Value::String("".into()), &[], &[])
-            .unwrap_err();
+        let error =
+            validate_saved_setting_value(&bank, &Value::String("".into()), &[], &[]).unwrap_err();
         assert_eq!(error.setting, "bank");
         assert_eq!(error.kind, SavedSettingValueErrorKind::InvalidOption);
     }
-
 
     #[test]
     fn merge_bag_applies_defaults_then_overrides_then_inject() {

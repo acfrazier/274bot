@@ -3241,7 +3241,10 @@ fn manifest_profile_edits_validate_values_and_preserve_saved_overrides() {
             json!(11),
         )
         .expect_err("an out-of-range manifest setting must not be saved");
-    assert!(error.contains("invalid saved value for setting `count`"), "{error}");
+    assert!(
+        error.contains("invalid saved value for setting `count`"),
+        "{error}"
+    );
     assert!(error.contains("outside its declared range"), "{error}");
     assert_eq!(f.core.last_operation().map(|report| report.id()), before);
     assert_eq!(f.saved_bag("alice", &key), None);

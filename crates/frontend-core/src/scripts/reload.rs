@@ -1952,12 +1952,8 @@ impl Scripts {
                 };
                 let identity = card.identity_key();
                 if card.manifest.is_some() {
-                    let overrides = self.peek_profile_overrides(
-                        core,
-                        &profile,
-                        &identity,
-                        &card.name,
-                    );
+                    let overrides =
+                        self.peek_profile_overrides(core, &profile, &identity, &card.name);
                     if let Err(error) =
                         self.validate_manifest_profile_settings(core, &card, &overrides)
                     {

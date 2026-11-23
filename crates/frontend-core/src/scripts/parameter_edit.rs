@@ -2,9 +2,9 @@ use super::Scripts;
 use super::{CompiledCardId, ScriptChoice};
 use crate::operations::OperationId;
 use crate::session::OperatorSession;
-use serde_json::Value;
 #[cfg(feature = "js")]
 use serde_json::Map;
+use serde_json::Value;
 
 /// Options shared by the panel and TUI, including read-time aliases and
 /// preserved values that are no longer present in the selected facts.
@@ -1067,8 +1067,7 @@ impl Scripts {
                 ) {
                     if let Some(edit) = self.parameter_edits.get_mut(&key) {
                         edit.error = Some(error.clone());
-                        edit.dirty =
-                            edit.pending.is_some() || edit.text != edit.baseline_text;
+                        edit.dirty = edit.pending.is_some() || edit.text != edit.baseline_text;
                     }
                     return Err(error);
                 }
@@ -1160,9 +1159,7 @@ impl Scripts {
             let resolved = if def.options_from.is_some() {
                 Some(
                     script::resolve_setting_options_with_labels(def, loadouts.store(), None)
-                        .map_err(|error| {
-                            script::StartLoadError::Refused(format!("{error:?}"))
-                        })?,
+                        .map_err(|error| script::StartLoadError::Refused(format!("{error:?}")))?,
                 )
             } else {
                 None
@@ -1170,12 +1167,9 @@ impl Scripts {
             let options = resolved
                 .as_ref()
                 .map_or(&[][..], |options| options.values.as_slice());
-            if let Err(error) = script::validate_saved_setting_value(
-                def,
-                value,
-                options,
-                loadouts.loadouts(),
-            ) {
+            if let Err(error) =
+                script::validate_saved_setting_value(def, value, options, loadouts.loadouts())
+            {
                 if def.id == "loadout"
                     && matches!(
                         &error.kind,
@@ -1198,7 +1192,8 @@ impl Scripts {
                         Some(selected),
                     ) {
                         return match error {
-                            error @ script::loadouts_store::LoadoutResolutionError::NoLoadouts {
+                            error
+                            @ script::loadouts_store::LoadoutResolutionError::NoLoadouts {
                                 ..
                             } => Err(script::StartLoadError::NoLoadouts(error.to_string())),
                             error => Err(script::StartLoadError::SettingValue(
@@ -1214,7 +1209,6 @@ impl Scripts {
         }
         Ok(())
     }
-
 
     pub fn parameter_text_error(&self, key: &ParameterEditKey) -> Option<&str> {
         self.parameter_edits
