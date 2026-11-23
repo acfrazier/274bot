@@ -4671,8 +4671,8 @@ fn occupancy_gate_every_sql_job_class() {
         "load/pref-save",
         "load/pref-readback",
         "load/wal-truncate",
-        "load/file-write",
-        "load/file-readback",
+        "load/bank-write",
+        "load/bank-readback",
         "load/bank-exit-save-residence",
         "load/start-loadout-readback-residence",
         "load/bank-load-residence",
@@ -4712,17 +4712,22 @@ fn occupancy_gate_every_sql_job_class() {
     if let Some(path) = std::env::var_os("T53_JSON_BASELINE") {
         let baseline: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        for class in [
-            "pref-save",
-            "pref-readback",
-            "file-write",
-            "file-readback",
-            "bank-exit-save-residence",
-            "start-loadout-readback-residence",
-            "bank-load-residence",
-            "service-close-shutdown",
+        // The JSON build's `file-*` classes were the bank hint file jobs;
+        // they are the `bank-*` classes of the SQL build.
+        for (json_class, class) in [
+            ("pref-save", "pref-save"),
+            ("pref-readback", "pref-readback"),
+            ("file-write", "bank-write"),
+            ("file-readback", "bank-readback"),
+            ("bank-exit-save-residence", "bank-exit-save-residence"),
+            (
+                "start-loadout-readback-residence",
+                "start-loadout-readback-residence",
+            ),
+            ("bank-load-residence", "bank-load-residence"),
+            ("service-close-shutdown", "service-close-shutdown"),
         ] {
-            let json_build = &baseline["classes"][class];
+            let json_build = &baseline["classes"][json_class];
             if json_build.is_null() {
                 continue;
             }

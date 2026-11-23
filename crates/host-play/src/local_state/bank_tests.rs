@@ -1330,7 +1330,7 @@ fn ceiling_document(
     size: usize,
 ) -> Vec<u8> {
     let rows: Vec<(i32, i32)> = (0..rows as i32)
-        .map(|id| (i32::MAX - 1_000 + id, i32::MAX))
+        .map(|id| (i32::MAX - 1_100 + id, i32::MAX))
         .collect();
     let compact = legacy_document(account, scope, 1_759_700_123, &rows, &[]);
     assert!(
@@ -1391,7 +1391,15 @@ fn bank_budget_report() {
         record(&mut residence, "bank-import-residence", started.elapsed());
         assert_eq!(lease.snapshot().as_bank_hints().unwrap().len(), 1_024);
     }
-    assert_eq!(held_stores(&service), accounts, "the resident cap is full");
+    let resident_banks = service
+        .shared
+        .state
+        .lock()
+        .stores
+        .keys()
+        .filter(|key| matches!(key, StoreKey::BankHint { .. }))
+        .count();
+    assert_eq!(resident_banks, accounts, "the resident cap is full");
 
     // A held in-flight save with a replacement queued behind it for every
     // account: the writer holds the first at its start while 255 more and a
@@ -1419,14 +1427,22 @@ fn bank_budget_report() {
             entered.recv_timeout(WAIT).unwrap();
         }
     }
+    let mut replacements = Vec::new();
     for n in 0..accounts {
         let identity = bank_identity(&format!("b{n:03}"));
-        request(service.submit(bank_hint_at_width(&identity, 1_000, at + 1_000 + n as u64)));
+        replacements.push(request(service.submit(bank_hint_at_width(
+            &identity,
+            1_000,
+            at + 1_000 + n as u64,
+        ))));
     }
     release.send(()).unwrap();
     for (started, request) in &requests {
         let _ = settlement(&service, *request);
         record(&mut residence, "bank-save-residence", started.elapsed());
+    }
+    for request in &replacements {
+        let _ = settlement(&service, *request);
     }
     let drained = submitted.elapsed();
 
