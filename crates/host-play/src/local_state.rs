@@ -3469,8 +3469,8 @@ impl Shared {
                 }
                 Job::Checkpoint => self.checkpoint(&mut db),
             }));
-            let pref_save_done = matches!(job, Job::Write(StoreKey::Preferences, _))
-                && matches!(outcome, Ok(None));
+            let pref_save_done =
+                matches!(job, Job::Write(StoreKey::Preferences, _)) && matches!(outcome, Ok(None));
             match outcome {
                 Ok(None) => {
                     if matches!(job, Job::Write(StoreKey::Preferences, _)) {
@@ -3529,8 +3529,12 @@ impl Shared {
                 if let Some(store) = state.stores.get_mut(&key) {
                     store.readback = Readback::Queued;
                 }
-                state.bank_readback_retry.first.get_or_insert(now);
-                state.bank_readback_retry.delay_polling(now);
+                if cause == sql::WaitCause::Busy {
+                    state.bank_readback_retry.first.get_or_insert(now);
+                    state.bank_readback_retry.delay_polling(now);
+                } else {
+                    state.bank_readback_retry.delay(now);
+                }
             }
             Job::Readback(key) => {
                 let expired_writes = {
@@ -3584,7 +3588,7 @@ impl Shared {
                     self.settle_waited(&mut state, &key, vec![terminal], cause);
                     return;
                 }
-                if matches!(key, StoreKey::BankHint { .. }) {
+                if matches!(key, StoreKey::BankHint { .. }) && cause == sql::WaitCause::Busy {
                     queued.retry.first.get_or_insert(now);
                     queued.retry.delay_polling(now);
                 } else {
@@ -5185,12 +5189,18 @@ fn schema_failure(domain: LocalStateDomain) -> WriteSettlement {
 /// Whether a preference job (its readback, or the save at the front of its
 /// queue) could be taken now.
 fn preference_job_due(state: &State, now: Instant) -> bool {
-    state.stores.get(&StoreKey::Preferences).is_some_and(|store| {
-        (store.readback == Readback::Queued && state.preference_readback_retry.due(now))
-            || (store.in_flight.is_none()
-                && !matches!(store.file, FileState::Cold)
-                && store.queue.front().is_some_and(|queued| queued.retry.due(now)))
-    })
+    state
+        .stores
+        .get(&StoreKey::Preferences)
+        .is_some_and(|store| {
+            (store.readback == Readback::Queued && state.preference_readback_retry.due(now))
+                || (store.in_flight.is_none()
+                    && !matches!(store.file, FileState::Cold)
+                    && store
+                        .queue
+                        .front()
+                        .is_some_and(|queued| queued.retry.due(now)))
+        })
 }
 
 /// The next job, or (as `Err`) when the earliest delayed retry falls due.

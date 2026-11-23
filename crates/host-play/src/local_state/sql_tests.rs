@@ -5243,7 +5243,10 @@ fn a_stream_of_bank_jobs_cannot_starve_a_queued_preference_save() {
     for n in 0..2 {
         let mut patch = PreferencePatch::new();
         patch
-            .set_member(&["bulk", &format!("m{n}")], Some(json!(format!("value-{n}"))))
+            .set_member(
+                &["bulk", &format!("m{n}")],
+                Some(json!(format!("value-{n}"))),
+            )
             .unwrap();
         match preferences.begin_patch(patch) {
             Ok(Update::Queued(update)) => updates.push(update),
@@ -5276,7 +5279,10 @@ fn a_stream_of_bank_jobs_cannot_starve_a_queued_preference_save() {
         if queued == 24 {
             break;
         }
-        assert!(Instant::now() < deadline, "only {queued} bank readbacks queued");
+        assert!(
+            Instant::now() < deadline,
+            "only {queued} bank readbacks queued"
+        );
         std::thread::sleep(Duration::from_millis(2));
     }
     release.send(()).unwrap();
@@ -5284,9 +5290,16 @@ fn a_stream_of_bank_jobs_cannot_starve_a_queued_preference_save() {
         assert_eq!(reader.join().unwrap().unwrap(), None);
     }
     for update in &mut updates {
-        update.wait(WAIT).expect("the save settles").expect("the save is durable");
+        update
+            .wait(WAIT)
+            .expect("the save settles")
+            .expect("the save is durable");
     }
-    let classes: Vec<&str> = timeline.take().into_iter().map(|(class, _)| class).collect();
+    let classes: Vec<&str> = timeline
+        .take()
+        .into_iter()
+        .map(|(class, _)| class)
+        .collect();
     let second_save = classes
         .iter()
         .enumerate()
@@ -5301,7 +5314,10 @@ fn a_stream_of_bank_jobs_cannot_starve_a_queued_preference_save() {
     );
     assert_eq!(FILE_JOB_BURST, 8, "the bound this test states");
     assert_eq!(
-        classes.iter().filter(|class| **class == "bank-readback").count(),
+        classes
+            .iter()
+            .filter(|class| **class == "bank-readback")
+            .count(),
         24,
         "every bank readback still ran: {classes:?}"
     );
@@ -5363,7 +5379,10 @@ fn a_bank_job_takes_the_lock_between_another_services_preference_saves() {
             "round {round}: the bank read waited for the other service's burst ({still_queued} of 9 saves still pending)"
         );
         for update in &mut updates {
-            update.wait(WAIT).expect("the save settles").expect("the save is durable");
+            update
+                .wait(WAIT)
+                .expect("the save settles")
+                .expect("the save is durable");
         }
     }
 }
