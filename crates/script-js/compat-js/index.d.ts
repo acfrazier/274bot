@@ -5189,8 +5189,8 @@ export interface MachineResult {
 }
 export function host(): Record<string, unknown>;
 export function snap(): Record<string, unknown>;
-export function notImpl(name: string, reason?: string): Error;
-export function refused(reason?: string): Error;
+export function notImpl(name: string, reason?: string): Error & { kind: 'not-implemented' };
+export function refused(reason?: string): Error & { kind: 'refused' };
 export function queue(req: unknown): void;
 export function runMachine(family: string, args: unknown, hooks?: unknown): Promise<MachineResult>;
 export function machineNow(family: string, args: unknown): MachineResult;

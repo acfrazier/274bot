@@ -20,6 +20,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Native `Banking.open` reports known-bank access, fallback destinations, and
   visible booths through its optional log callback.
 
+- JavaScript compatibility errors for unimplemented features expose
+  `kind: 'not-implemented'`. Bank-operation refusals identify the member.
+
 ### Quester
 
 - Unsupported combat stages size food from available damage facts instead of

@@ -703,7 +703,7 @@ impl<K: Kind> Hunt<K> {
                 }
                 None => {
                     return Ok(Some(
-                        self.fail(Thrown::new(format!("not impl: hunt effect {kind:?}"))),
+                        self.fail(Thrown::not_implemented(format!("not impl: hunt effect {kind:?}"))),
                     ));
                 }
             },

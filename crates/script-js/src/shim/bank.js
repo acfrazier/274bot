@@ -16,10 +16,18 @@ async function driveBankOpen(input) {
 // and awaits the host result. Arguments Rust cannot read are refused.
 async function bankOp(args) {
     const out = await runMachine('bank_op', args);
-    if (out.kind === 'refused') throw refused(out.reason);
+    if (out.kind === 'refused') {
+        const member = {
+            deposit: 'Bank.deposit',
+            withdraw: 'Bank.withdraw',
+            'withdraw-id': 'Bank.withdrawById',
+            'withdraw-x': 'Bank.withdrawX',
+            'withdraw-x-id': 'Bank.withdrawXById',
+        }[args.kind];
+        throw refused(out.reason ? member + ': ' + out.reason : member);
+    }
     return out.kind === 'done' && out.value === true;
 }
-
 // One Rust deposit loop (frozen depositAllMatching).
 async function deposit(args, hooks = {}) {
     const out = await runMachine('bank_deposit', args, hooks);

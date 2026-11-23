@@ -10292,7 +10292,7 @@ export default class T extends LoopingBot {
         try {
             globalThis.__countById = Bank.countById(526);
         } catch (error) {
-            globalThis.__countById = error.message;
+            globalThis.__countById = { message: error.message, kind: error.kind };
         }
     }
 }
@@ -10305,7 +10305,10 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     assert_eq!(
         iso.probe("__countById").unwrap(),
-        "not impl: Bank.countById"
+        serde_json::json!({
+            "message": "not impl: Bank.countById",
+            "kind": "not-implemented",
+        })
     );
 
     snap.tick = 2;
