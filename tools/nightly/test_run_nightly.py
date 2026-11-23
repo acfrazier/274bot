@@ -22,6 +22,7 @@ Run on Linux or Windows with the standard library only:
   python3 -B tools/nightly/test_run_nightly.py
 """
 
+import errno
 import contextlib
 import json
 import io
@@ -2221,22 +2222,30 @@ class MacQuietLockTests(unittest.TestCase):
                                  platform="macos-arm64")
             command = [
                 sys.executable, "-c",
-                "import json,time; time.sleep(0.7); "
-                "print(json.dumps({'scenario':'quester_path','outcome':'FAIL','message':'late failure'}))",
+                "import json; print(json.dumps({'scenario':'quester_path', "
+                "'outcome':'FAIL', 'message':'late failure'}), flush=True)",
             ]
             for frontend in ("tui", "panel"):
                 with self.subTest(frontend=frontend):
                     lock = root / f"fast-{frontend}-MAC-QUIET.lock"
                     processes = []
-                    timers = []
+                    exit_watchers = []
+                    process_exited = threading.Event()
                     original_popen = rn.popen_group
 
                     def start_cell(cmd, **kwargs):
                         process = original_popen(cmd, **kwargs)
                         processes.append(process)
-                        timer = threading.Timer(0.55, lock.touch)
-                        timer.start()
-                        timers.append(timer)
+
+                        def notify_exit():
+                            process.wait()
+                            process_exited.set()
+
+                        watcher = threading.Thread(target=notify_exit, daemon=True)
+                        watcher.start()
+                        exit_watchers.append(watcher)
+                        self.assertTrue(process_exited.wait(timeout=5), "cell did not exit")
+                        lock.touch()
                         return process
 
                     patches = [
@@ -2260,8 +2269,8 @@ class MacQuietLockTests(unittest.TestCase):
                     finally:
                         for patch in reversed(patches):
                             patch.stop()
-                        for timer in timers:
-                            timer.join(timeout=1)
+                        for watcher in exit_watchers:
+                            watcher.join(timeout=1)
 
                     self.assertEqual(result.result, "UNAVAILABLE")
                     self.assertTrue(result.reason.startswith("MAC-QUIET:"))
@@ -2269,6 +2278,41 @@ class MacQuietLockTests(unittest.TestCase):
                     self.assertIsNone(result.receipt)
                     self.assertEqual(len(processes), 1)
                     self.assertEqual(processes[0].returncode, 0)
+                    self.assertTrue(all(not watcher.is_alive() for watcher in exit_watchers))
+
+    @unittest.skipUnless(os.name == "posix", "process-group permission test requires POSIX")
+    def test_stop_cell_process_only_tolerates_eperm_after_leader_exit(self):
+        pid = 43210
+
+        def permission_error(number):
+            return PermissionError(number, "Operation not permitted")
+
+        def always_eperm(_pid, _signal):
+            raise permission_error(errno.EPERM)
+
+        cases = (
+            ("term-after-exit", 0, always_eperm, False, 2),
+            ("kill-after-exit", 0, [None, permission_error(errno.EPERM)], False, 2),
+            ("term-while-live", None, always_eperm, True, 1),
+            ("other-permission-error", 0, permission_error(errno.EACCES), True, 1),
+        )
+        for name, returncode, signal_effect, raises, calls in cases:
+            with self.subTest(name=name):
+                process = mock.Mock()
+                process.poll.return_value = returncode
+                process.wait.return_value = returncode
+                with mock.patch.object(rn, "_children", {pid: lambda: None}), \
+                        mock.patch.object(rn, "IS_WINDOWS", False), \
+                        mock.patch.object(rn.os, "killpg", side_effect=signal_effect) as killpg, \
+                        mock.patch.object(rn, "log") as log:
+                    if raises:
+                        with self.assertRaises(PermissionError):
+                            rn.stop_cell_process(pid, process)
+                    else:
+                        rn.stop_cell_process(pid, process)
+                self.assertEqual(killpg.call_count, calls)
+                if not raises:
+                    self.assertTrue(any("EPERM" in call.args[0] for call in log.call_args_list))
 
     @unittest.skipUnless(os.name == "posix", "untracked process-group test requires POSIX")
     def test_quiet_stop_ignores_an_untracked_process_group(self):
