@@ -152,10 +152,11 @@ fn unchanged_armed_window_polls_allocate_nothing_on_the_producer_thread() {
 #[test]
 fn measured_combat_owner_has_fixed_state_size() {
     println!(
-        "CombatSample={} CombatObserver={} ScenarioRunner={} actor_observer={} evidence.actors={}",
+        "CombatSample={} CombatObserver={} ScenarioRunner={} TickHealth={} actor_observer={} evidence.actors={}",
         std::mem::size_of::<CombatSample>(),
         std::mem::size_of::<CombatObserver>(),
         std::mem::size_of::<scenario::ScenarioRunner>(),
+        std::mem::size_of::<api::tick_health::TickHealth>(),
         std::mem::size_of::<Option<Box<scenario::actor::ActorObserver>>>(),
         std::mem::size_of::<Option<Box<scenario::actor::ActorEvidence>>>()
     );
@@ -163,8 +164,7 @@ fn measured_combat_owner_has_fixed_state_size() {
     assert!(std::mem::size_of::<Option<Box<CombatObserver>>>() <= 72);
     assert!(std::mem::size_of::<CombatSample>() <= 192);
     assert!(std::mem::size_of::<CombatObserver>() <= 280);
-    // Measured 5,896 B + 64 B headroom. The optional actor_observer and
-    // evidence.actors Box owners (8 B each) add 16 B over the 5,880 B base
-    // so disarmed actor state stays unallocated.
-    assert!(std::mem::size_of::<scenario::ScenarioRunner>() <= 5_960);
+    // Measured 6,288 B + 64 B headroom. GameSnapshot owns its fixed-size
+    // TickHealth state inline; the optional actor owners stay unallocated.
+    assert!(std::mem::size_of::<scenario::ScenarioRunner>() <= 6_352);
 }
