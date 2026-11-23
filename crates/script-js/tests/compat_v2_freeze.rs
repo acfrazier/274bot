@@ -1,9 +1,13 @@
 //! Freeze the JavaScript v2 surface that still enters the compatibility layer.
+//! The checked-in list may only shrink from `FROZEN_MEMBERS`; growth requires
+//! an explicit reviewed change to this test. The source rule checks the literal
+//! `crate::compat::` text, so an import alias hides a compat registration. A
+//! listed member then disappears from the derived set and this test fails loudly.
 
 use deno_ast::swc::ast::{
     AssignExpr, AssignTarget, BinaryOp, BlockStmtOrExpr, Callee, Decl, Expr, FnDecl, ForHead,
-    ForOfStmt, Function, Lit, MemberProp, Module, ModuleItem, ObjectLit, Pat, Prop, PropName,
-    PropOrSpread, SimpleAssignTarget, Stmt, VarDeclarator,
+    ForOfStmt, Function, Lit, MemberExpr, MemberProp, Module, ModuleItem, ObjectLit, Pat, Prop,
+    PropName, PropOrSpread, SimpleAssignTarget, Stmt, VarDeclarator,
 };
 use deno_ast::swc::ecma_visit::{Visit, VisitWith};
 use deno_ast::ProgramRef;
@@ -14,21 +18,61 @@ use std::path::{Path, PathBuf};
 const BINDINGS_SOURCE: &str = include_str!("../src/runtime/bindings.rs");
 const MACHINE_SOURCE: &str = include_str!("../src/machine/mod.rs");
 const CLOSED_MEMBERS: &str = include_str!("compat_v2_freeze.members");
+const FROZEN_MEMBERS: &[&str] = &[
+    "NativeApi.bankRun",
+    "NativeApi.cellRun",
+    "NativeApi.clue.begin",
+    "NativeApi.clue.retry",
+    "NativeApi.clue.run",
+    "NativeApi.enterBegin",
+    "NativeApi.enterRun",
+    "NativeApi.enterValidate",
+    "NativeApi.fightBegin",
+    "NativeApi.fightBlocksLoot",
+    "NativeApi.fightInterruptWatch",
+    "NativeApi.fightReset",
+    "NativeApi.fightRun",
+    "NativeApi.fightValidate",
+    "NativeApi.holdBegin",
+    "NativeApi.holdRun",
+    "NativeApi.holdValidate",
+    "NativeApi.keyRun",
+    "NativeApi.leaveRun",
+    "NativeApi.prayerActive",
+    "NativeApi.prayerAvailable",
+    "NativeApi.prayerClear",
+    "NativeApi.prayerFull",
+    "NativeApi.prayerKnown",
+    "NativeApi.prayerMax",
+    "NativeApi.prayerPoints",
+    "NativeApi.prayerSet",
+    "NativeApi.questJournalBegin",
+    "NativeApi.questJournalRun",
+    "NativeApi.retreatBegin",
+    "NativeApi.retreatRun",
+    "NativeApi.retreatValidate",
+    "NativeApi.walkspotBegin",
+    "NativeApi.walkspotRun",
+    "NativeApi.walkspotValidate",
+];
 const FREEZE_RULE: &str = "JavaScript v2 gets no new compat-backed member, and a new capability is a native row (ADR 0023 item 31).";
 
 #[test]
 fn compat_backed_native_v2_members_match_the_closed_list() {
     let sources = rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))
         .expect("read script-js Rust sources");
-    let compat_sources = sources
-        .iter()
-        .filter(|(path, _)| path.components().any(|part| part.as_os_str() == "compat"))
-        .map(|(_, source)| source.as_str())
-        .collect::<Vec<_>>();
-    let actual =
-        compat_members_from_source(BINDINGS_SOURCE, &sources, MACHINE_SOURCE, &compat_sources)
-            .expect("derive compat-backed members from source");
+    let actual = compat_members_from_source(BINDINGS_SOURCE, &sources, MACHINE_SOURCE)
+        .expect("derive compat-backed members from source");
     let closed = parse_closed_members(CLOSED_MEMBERS).expect("parse checked-in closed list");
+    let frozen = FROZEN_MEMBERS
+        .iter()
+        .map(|member| (*member).to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(frozen.len(), FROZEN_MEMBERS.len(), "frozen member names are unique");
+    assert!(
+        closed.is_subset(&frozen),
+        "the checked-in list may only shrink from FROZEN_MEMBERS; {FREEZE_RULE}"
+    );
 
     assert_eq!(
         compare_closed_members(&closed, &actual),
@@ -85,6 +129,47 @@ impl Family for Prayer {
     assert!(actual.contains("NativeApi.addedMachine"));
     assert!(compare_closed_members(&closed, &actual).is_err());
 }
+#[test]
+fn real_sources_reject_all_reviewed_compat_member_forms() {
+    let mut bootstrap = native_v2_main(BINDINGS_SOURCE)
+        .expect("NATIVE_V2_MAIN is present")
+        .to_string();
+    bootstrap.push_str(
+        r#"
+api.addedNow = () => machineNow('prayer', {});
+api.addedMachineStart = () => globalThis.__rs2b0t_machine_start('prayer', {}, {});
+api.addedAlias = (payload) => {
+  const prayer = globalThis.rustyscript.functions.__rs2b0t_prayer;
+  return prayer(payload);
+};
+function addedPrayerReference(payload) {
+  return globalThis.rustyscript.functions.__rs2b0t_prayer(payload);
+}
+api.addedReference = addedPrayerReference;
+api.clue.addedNested = (payload) => globalThis.rustyscript.functions.__rs2b0t_clue(payload);
+"#,
+    );
+    let sources = rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))
+        .expect("read script-js Rust sources");
+    let family_sources = sources
+        .iter()
+        .map(|(_, source)| source.as_str())
+        .collect::<Vec<_>>();
+    let actual = compat_members(&bootstrap, &sources, MACHINE_SOURCE, &family_sources)
+        .expect("derive members with real registrations and machine table");
+    let closed = parse_closed_members(CLOSED_MEMBERS).expect("parse checked-in closed list");
+    for member in [
+        "NativeApi.addedNow",
+        "NativeApi.addedMachineStart",
+        "NativeApi.addedAlias",
+        "NativeApi.addedReference",
+        "NativeApi.clue.addedNested",
+    ] {
+        assert!(actual.contains(member), "missed {member}");
+    }
+    assert!(compare_closed_members(&closed, &actual).is_err());
+}
+
 
 #[test]
 fn closed_list_rejects_a_member_that_is_no_longer_compat_backed() {
@@ -156,7 +241,8 @@ struct CallFact {
 struct FunctionFacts {
     params: Vec<Option<String>>,
     calls: Vec<CallFact>,
-    compat_globals: BTreeSet<String>,
+    global_references: BTreeSet<String>,
+    global_calls: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -168,6 +254,7 @@ struct MemberFunction {
 #[derive(Default)]
 struct CallCollector {
     facts: FunctionFacts,
+    aliases: BTreeMap<String, String>,
 }
 
 impl Visit for CallCollector {
@@ -179,16 +266,27 @@ impl Visit for CallCollector {
                 .map(|arg| simple_arg(&arg.expr))
                 .collect::<Vec<_>>();
             match &**callee {
-                Expr::Ident(ident) => self.facts.calls.push(CallFact {
-                    target: ident.sym.to_string(),
-                    args,
-                }),
+                Expr::Ident(ident) => {
+                    let target = ident.sym.to_string();
+                    if let Some(global) = self.aliases.get(&target).cloned() {
+                        self.facts.global_calls.insert(global.clone());
+                        if global == "__rs2b0t_machine_start" {
+                            self.facts.calls.push(CallFact { target: global, args });
+                        }
+                    } else {
+                        self.facts.calls.push(CallFact { target, args });
+                    }
+                }
                 Expr::Member(_) => {
                     if let Some(path) = api_call_path(callee) {
                         self.facts.calls.push(CallFact { target: path, args });
-                    } else if let Some(name) = last_member_name(callee) {
-                        if name.starts_with("__rs2b0t_") {
-                            self.facts.compat_globals.insert(name);
+                    } else if let Some(global) = global_member_name(callee) {
+                        self.facts.global_calls.insert(global.clone());
+                        if global == "__rs2b0t_machine_start" {
+                            self.facts.calls.push(CallFact {
+                                target: global,
+                                args,
+                            });
                         }
                     }
                 }
@@ -196,6 +294,26 @@ impl Visit for CallCollector {
             }
         }
         call.visit_children_with(self);
+    }
+
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if let (Pat::Ident(ident), Some(value)) =
+            (&declarator.name, declarator.init.as_deref())
+        {
+            if let Some(global) = global_member_name(value) {
+                self.aliases.insert(ident.id.sym.to_string(), global);
+            }
+        }
+        declarator.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, member: &MemberExpr) {
+        if let Some(name) = member_prop_name(&member.prop) {
+            if name.starts_with("__rs2b0t_") {
+                self.facts.global_references.insert(name);
+            }
+        }
+        member.visit_children_with(self);
     }
 }
 
@@ -207,11 +325,8 @@ fn simple_arg(expr: &Expr) -> ArgValue {
     }
 }
 
-fn last_member_name(expr: &Expr) -> Option<String> {
-    let Expr::Member(member) = expr else {
-        return None;
-    };
-    match &member.prop {
+fn member_prop_name(prop: &MemberProp) -> Option<String> {
+    match prop {
         MemberProp::Ident(ident) => Some(ident.sym.to_string()),
         MemberProp::Computed(computed) => match computed.expr.as_ref() {
             Expr::Lit(Lit::Str(value)) => Some(value.value.to_string()),
@@ -219,6 +334,13 @@ fn last_member_name(expr: &Expr) -> Option<String> {
         },
         MemberProp::PrivateName(_) => None,
     }
+}
+
+fn global_member_name(expr: &Expr) -> Option<String> {
+    member_parts(expr)?
+        .last()
+        .filter(|name| name.starts_with("__rs2b0t_"))
+        .cloned()
 }
 
 fn api_call_path(expr: &Expr) -> Option<String> {
@@ -235,15 +357,7 @@ fn member_parts(expr: &Expr) -> Option<Vec<String>> {
         Expr::Ident(ident) => Some(vec![ident.sym.to_string()]),
         Expr::Member(member) => {
             let mut parts = member_parts(&member.obj)?;
-            let name = match &member.prop {
-                MemberProp::Ident(ident) => ident.sym.to_string(),
-                MemberProp::Computed(computed) => match computed.expr.as_ref() {
-                    Expr::Lit(Lit::Str(value)) => value.value.to_string(),
-                    _ => return None,
-                },
-                MemberProp::PrivateName(_) => return None,
-            };
-            parts.push(name);
+            parts.push(member_prop_name(&member.prop)?);
             Some(parts)
         }
         Expr::Paren(paren) => member_parts(&paren.expr),
@@ -261,6 +375,7 @@ fn function_facts(function: &Function) -> FunctionFacts {
                 .collect(),
             ..FunctionFacts::default()
         },
+        ..CallCollector::default()
     };
     if let Some(body) = &function.body {
         body.visit_with(&mut collector);
@@ -277,6 +392,7 @@ fn function_expr_facts(expr: &Expr) -> Option<FunctionFacts> {
                     params: arrow.params.iter().map(pat_name).collect(),
                     ..FunctionFacts::default()
                 },
+                ..CallCollector::default()
             };
             match arrow.body.as_ref() {
                 BlockStmtOrExpr::BlockStmt(body) => body.visit_with(&mut collector),
@@ -323,41 +439,67 @@ impl Visit for HelperCollector {
     }
 }
 
-fn collect_api_members(module: &Module) -> Result<BTreeMap<String, Vec<MemberFunction>>, String> {
-    let mut members = BTreeMap::new();
-    for item in &module.body {
-        let ModuleItem::Stmt(statement) = item else {
-            continue;
-        };
-        match statement {
-            Stmt::Decl(Decl::Var(declaration)) => {
-                for item in &declaration.decls {
-                    if matches!(&item.name, Pat::Ident(ident) if ident.id.sym.as_ref() == "api") {
-                        if let Some(Expr::Object(object)) = item.init.as_deref() {
-                            collect_object_members("NativeApi", object, &mut members);
-                        }
-                    }
-                }
-            }
-            Stmt::Expr(expression) => {
-                if let Expr::Assign(assign) = expression.expr.as_ref() {
-                    if let Some(path) = api_assignment_path(&assign.left) {
-                        collect_member_value(&path, &assign.right, &mut members);
-                    }
-                }
-            }
-            Stmt::ForOf(loop_statement) => {
-                collect_generated_members(loop_statement, &mut members)?;
-            }
-            _ => {}
-        }
+fn collect_api_members(
+    module: &Module,
+    helpers: &BTreeMap<String, Vec<FunctionFacts>>,
+) -> Result<BTreeMap<String, Vec<MemberFunction>>, String> {
+    let mut collector = ApiMemberCollector {
+        helpers,
+        members: BTreeMap::new(),
+        error: None,
+    };
+    module.visit_with(&mut collector);
+    match collector.error {
+        Some(error) => Err(error),
+        None => Ok(collector.members),
     }
-    Ok(members)
+}
+
+struct ApiMemberCollector<'a> {
+    helpers: &'a BTreeMap<String, Vec<FunctionFacts>>,
+    members: BTreeMap<String, Vec<MemberFunction>>,
+    error: Option<String>,
+}
+
+impl Visit for ApiMemberCollector<'_> {
+    fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        if matches!(&declarator.name, Pat::Ident(ident) if ident.id.sym.as_ref() == "api") {
+            if let Some(Expr::Object(object)) = declarator.init.as_deref() {
+                collect_object_members(
+                    "NativeApi",
+                    object,
+                    self.helpers,
+                    &mut self.members,
+                );
+            }
+        }
+        declarator.visit_children_with(self);
+    }
+
+    fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        if let Some(path) = api_assignment_path(&assignment.left) {
+            collect_member_value(
+                &path,
+                &assignment.right,
+                self.helpers,
+                &mut self.members,
+            );
+        }
+        assignment.visit_children_with(self);
+    }
+
+    fn visit_for_of_stmt(&mut self, loop_statement: &ForOfStmt) {
+        if let Err(error) = collect_generated_members(loop_statement, &mut self.members) {
+            self.error = Some(error);
+        }
+        loop_statement.visit_children_with(self);
+    }
 }
 
 fn collect_member_value(
     path: &str,
     value: &Expr,
+    helpers: &BTreeMap<String, Vec<FunctionFacts>>,
     members: &mut BTreeMap<String, Vec<MemberFunction>>,
 ) {
     if let Some(facts) = function_expr_facts(value) {
@@ -368,14 +510,27 @@ fn collect_member_value(
                 facts,
                 captured: BTreeMap::new(),
             });
+    } else if let Expr::Ident(ident) = value {
+        if let Some(functions) = helpers.get(ident.sym.as_ref()) {
+            for facts in functions {
+                members
+                    .entry(path.to_string())
+                    .or_default()
+                    .push(MemberFunction {
+                        facts: facts.clone(),
+                        captured: BTreeMap::new(),
+                    });
+            }
+        }
     } else if let Expr::Object(object) = value {
-        collect_object_members(path, object, members);
+        collect_object_members(path, object, helpers, members);
     }
 }
 
 fn collect_object_members(
     parent: &str,
     object: &ObjectLit,
+    helpers: &BTreeMap<String, Vec<FunctionFacts>>,
     members: &mut BTreeMap<String, Vec<MemberFunction>>,
 ) {
     for property in &object.props {
@@ -396,7 +551,12 @@ fn collect_object_members(
             }
             Prop::KeyValue(value) => {
                 if let Some(name) = prop_name(&value.key) {
-                    collect_member_value(&format!("{parent}.{name}"), &value.value, members);
+                    collect_member_value(
+                        &format!("{parent}.{name}"),
+                        &value.value,
+                        helpers,
+                        members,
+                    );
                 }
             }
             _ => {}
@@ -421,18 +581,13 @@ fn api_assignment_path(target: &AssignTarget) -> Option<String> {
     let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = target else {
         return None;
     };
-    if !matches!(member.obj.as_ref(), Expr::Ident(ident) if ident.sym.as_ref() == "api") {
+    let mut parts = member_parts(&member.obj)?;
+    if parts.first().map(String::as_str) != Some("api") {
         return None;
     }
-    let name = match &member.prop {
-        MemberProp::Ident(ident) => ident.sym.to_string(),
-        MemberProp::Computed(computed) => match computed.expr.as_ref() {
-            Expr::Lit(Lit::Str(value)) => value.value.to_string(),
-            _ => return None,
-        },
-        MemberProp::PrivateName(_) => return None,
-    };
-    Some(format!("NativeApi.{name}"))
+    parts.push(member_prop_name(&member.prop)?);
+    parts.remove(0);
+    Some(format!("NativeApi.{}", parts.join(".")))
 }
 
 #[derive(Default)]
@@ -574,9 +729,9 @@ fn compat_members(
 
     let mut helper_collector = HelperCollector::default();
     module.visit_with(&mut helper_collector);
-    let members = collect_api_members(module)?;
+    let members = collect_api_members(module, &helper_collector.helpers)?;
     let compat_globals = compat_registered_globals(rust_sources);
-    let compat_families = compat_family_names(machine_source, compat_sources);
+    let families = compat_family_names(machine_source, compat_sources)?;
     let mut found = BTreeSet::new();
     for (path, functions) in &members {
         for function in functions {
@@ -586,8 +741,8 @@ fn compat_members(
                 &helper_collector.helpers,
                 &members,
                 &compat_globals,
-                &compat_families,
-            ) {
+                &families,
+            )? {
                 found.insert(path.clone());
                 break;
             }
@@ -602,27 +757,41 @@ fn reaches_compat(
     helpers: &BTreeMap<String, Vec<FunctionFacts>>,
     members: &BTreeMap<String, Vec<MemberFunction>>,
     compat_globals: &BTreeSet<String>,
-    compat_families: &BTreeSet<String>,
-) -> bool {
+    families: &FamilyNames,
+) -> Result<bool, String> {
     let mut pending = VecDeque::from([(start.clone(), captured.clone())]);
     let mut visited = BTreeSet::new();
     while let Some((facts, environment)) = pending.pop_front() {
         if facts
-            .compat_globals
+            .global_references
             .iter()
             .any(|global| compat_globals.contains(global))
         {
-            return true;
+            return Ok(true);
         }
         for call in &facts.calls {
-            if call.target == "runMachine" {
-                if call
+            if matches!(
+                call.target.as_str(),
+                "runMachine" | "machineNow" | "__rs2b0t_machine_start"
+            ) {
+                let family = call
                     .args
                     .first()
                     .and_then(|arg| resolve_arg(arg, &environment))
-                    .is_some_and(|family| compat_families.contains(&family))
-                {
-                    return true;
+                    .ok_or_else(|| {
+                        format!(
+                            "unresolved family argument to {}",
+                            call.target
+                        )
+                    })?;
+                if !families.all.contains(&family) {
+                    return Err(format!(
+                        "unknown machine family {family:?} passed to {}",
+                        call.target
+                    ));
+                }
+                if families.compat.contains(&family) {
+                    return Ok(true);
                 }
                 continue;
             }
@@ -647,7 +816,7 @@ fn reaches_compat(
             }
         }
     }
-    false
+    Ok(false)
 }
 
 fn bind_arguments(
@@ -672,59 +841,114 @@ fn resolve_arg(arg: &ArgValue, environment: &BTreeMap<String, String>) -> Option
     }
 }
 
-fn compat_family_names(machine_source: &str, compat_sources: &[&str]) -> BTreeSet<String> {
-    let Some(table) = machine_source
-        .split_once("const FAMILIES:")
-        .and_then(|(_, rest)| rest.split_once("];"))
-        .map(|(table, _)| table)
-    else {
-        return BTreeSet::new();
-    };
-
-    let mut names = BTreeSet::new();
-    for line in table.lines() {
-        let Some((_, path)) = line.split_once("entry::<crate::compat::") else {
-            continue;
-        };
-        let Some(type_path) = path.split(">()").next() else {
-            continue;
-        };
-        let (trait_name, type_name) = if let Some((_, arguments)) = type_path.split_once('<') {
-            let Some(type_name) = arguments
-                .rsplit("::")
-                .next()
-                .map(|name| name.trim_end_matches('>'))
-            else {
-                continue;
-            };
-            ("HuntKind", type_name)
-        } else {
-            let Some(type_name) = type_path.rsplit("::").next() else {
-                continue;
-            };
-            ("Family", type_name)
-        };
-        let marker = format!("impl {trait_name} for {type_name}");
-        for source in compat_sources {
-            if let Some(name) = literal_name_for_impl(source, &marker) {
-                names.insert(name);
-            }
-        }
-    }
-    names
+#[derive(Default)]
+struct FamilyNames {
+    all: BTreeSet<String>,
+    compat: BTreeSet<String>,
 }
 
-fn literal_name_for_impl(source: &str, marker: &str) -> Option<String> {
-    let rest = source.split_once(marker)?.1;
-    let body = rest.split_once("\nimpl ").map_or(rest, |(body, _)| body);
-    let declaration = body.split_once("const NAME")?.1.split_once(';')?.0;
-    let name = declaration
-        .split_once('=')?
-        .1
-        .trim()
-        .strip_prefix('"')?
-        .strip_suffix('"')?;
-    Some(name.to_string())
+fn compat_family_names(
+    machine_source: &str,
+    family_sources: &[&str],
+) -> Result<FamilyNames, String> {
+    let Some((_, rest)) = machine_source.split_once("const FAMILIES:") else {
+        return Ok(FamilyNames::default());
+    };
+    let (table, _) = rest
+        .split_once("];")
+        .ok_or_else(|| "machine FAMILIES table is unterminated".to_string())?;
+
+    let mut families = FamilyNames::default();
+    for (line_number, line) in table.lines().enumerate() {
+        let Some((_, rest)) = line.split_once("entry::<") else {
+            continue;
+        };
+        let type_path = rest.split_once(">()").map(|(path, _)| path).ok_or_else(|| {
+            format!(
+                "machine FAMILIES line {} has an unrecognized entry",
+                line_number + 1
+            )
+        })?;
+        let (trait_name, type_name, is_compat) = family_impl_identity(type_path)?;
+        let marker = format!("impl {trait_name} for {type_name}");
+        let name = literal_name_for_impl(family_sources, &marker)?;
+        if !families.all.insert(name.clone()) {
+            return Err(format!(
+                "machine FAMILIES contains duplicate family name {name:?}"
+            ));
+        }
+        if is_compat {
+            families.compat.insert(name);
+        }
+    }
+    Ok(families)
+}
+
+fn family_impl_identity(type_path: &str) -> Result<(&'static str, String, bool), String> {
+    let type_path = type_path.trim();
+    let is_compat = type_path.contains("crate::compat::");
+    if let Some((family_type, arguments)) = type_path.split_once('<') {
+        let family_type = family_type.rsplit("::").next().unwrap_or(family_type);
+        if family_type != "Hunt" {
+            return Err(format!(
+                "unrecognized generic machine family type {type_path:?}"
+            ));
+        }
+        let arguments = arguments
+            .strip_suffix('>')
+            .ok_or_else(|| format!("unterminated machine family type {type_path:?}"))?;
+        let kind = arguments
+            .rsplit("::")
+            .next()
+            .ok_or_else(|| format!("missing HuntKind in machine family type {type_path:?}"))?
+            .trim_end_matches('>');
+        if kind.is_empty() {
+            return Err(format!("missing HuntKind in machine family type {type_path:?}"));
+        }
+        return Ok(("HuntKind", kind.to_string(), is_compat));
+    }
+    let type_name = type_path
+        .rsplit("::")
+        .next()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format!("missing type in machine family entry {type_path:?}"))?;
+    Ok(("Family", type_name.to_string(), is_compat))
+}
+
+fn literal_name_for_impl(sources: &[&str], marker: &str) -> Result<String, String> {
+    let mut names = BTreeSet::new();
+    for source in sources {
+        let Some(rest) = source.split_once(marker).map(|(_, rest)| rest) else {
+            continue;
+        };
+        let end = rest
+            .split_inclusive('\n')
+            .scan(0usize, |offset, line| {
+                let current = *offset;
+                *offset += line.len();
+                Some((current, line))
+            })
+            .skip(1)
+            .find(|(_, line)| line.trim_start().starts_with("impl "))
+            .map_or(rest.len(), |(offset, _)| offset);
+        let body = &rest[..end];
+        let declaration = body
+            .split_once("const NAME")
+            .and_then(|(_, rest)| rest.split_once(';').map(|(declaration, _)| declaration))
+            .ok_or_else(|| format!("{marker} has no NAME declaration"))?;
+        let name = declaration
+            .split_once('=')
+            .map(|(_, value)| value.trim())
+            .and_then(|value| value.strip_prefix('"'))
+            .and_then(|value| value.strip_suffix('"'))
+            .ok_or_else(|| format!("{marker} has a non-literal NAME"))?;
+        names.insert(name.to_string());
+    }
+    match names.len() {
+        0 => Err(format!("no NAME implementation for {marker}")),
+        1 => Ok(names.into_iter().next().expect("one family name")),
+        _ => Err(format!("multiple NAME implementations for {marker}")),
+    }
 }
 
 fn compat_registered_globals(sources: &[(PathBuf, String)]) -> BTreeSet<String> {
@@ -837,9 +1061,12 @@ fn compat_members_from_source(
     bootstrap_source: &str,
     rust_sources: &[(PathBuf, String)],
     machine_source: &str,
-    compat_sources: &[&str],
 ) -> Result<BTreeSet<String>, String> {
     let bootstrap =
         native_v2_main(bootstrap_source).ok_or_else(|| "NATIVE_V2_MAIN is missing".to_string())?;
-    compat_members(bootstrap, rust_sources, machine_source, compat_sources)
+    let family_sources = rust_sources
+        .iter()
+        .map(|(_, source)| source.as_str())
+        .collect::<Vec<_>>();
+    compat_members(&bootstrap, rust_sources, machine_source, &family_sources)
 }
