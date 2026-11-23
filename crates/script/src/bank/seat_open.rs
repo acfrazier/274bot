@@ -3253,7 +3253,7 @@ mod tests {
             let mut opening = Opening::begin(args, &mut tick.cx).expect("opening machine");
             // The slot hold gate skips this machine; drive it directly to exercise a refused walk.
             tick.cx.eligible = false;
-            let refused = walk_request(&tick.cx, bank_tile, 2, world_walk_options());
+            let refused = walk_request(&tick.cx, bank_tile, 2, access_walk_options());
             assert!(matches!(tick.cx.walk(refused), Err(ActionError::Held)));
             assert!(opening.poll(&mut tick.cx).is_pending());
             (owner, opening, action_id)
