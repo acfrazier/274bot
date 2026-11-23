@@ -407,7 +407,7 @@ impl Session {
 }
 
 fn stderr_drop_notice(dropped: u64) -> Option<String> {
-    (dropped > 0).then(|| format!("stderr output dropped: {dropped} line(s)"))
+    (dropped > 0).then(|| format!("stderr log entries dropped: {dropped}"))
 }
 fn process_stderr_drop_notice() -> Option<String> {
     stderr_drop_notice(frontend_core::log::stderr_dropped())
@@ -428,7 +428,7 @@ mod stderr_drop_tests {
             "the full queue did not record a real drop"
         );
 
-        let expected = format!("stderr output dropped: {dropped} line(s)");
+        let expected = format!("stderr log entries dropped: {dropped}");
         assert_eq!(
             process_stderr_drop_notice().as_deref(),
             Some(expected.as_str())

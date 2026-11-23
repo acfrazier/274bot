@@ -55,12 +55,14 @@ The first time the map opens, it may ask to bake terrain with **Bake now**,
 The **log** section of the strip shows the messages of the focused bot.
 The **Log** button beside the title row opens the same view as a dockable
 tab. The tab and section share filters, follow state and history. The bounded
-stderr queue accepts up to 256 lines capped at 1 KiB each. A producer that
-cannot get the short sender lock at once drops its line rather than wait; the
-queue also drops lines when full or closed, the writer cannot start, or a
-stderr write fails. The peak line storage is 257 KiB: the 256 reserved queue
-lines plus the one line the writer may be writing. The log view shows the
-number of dropped lines.
+stderr queue holds up to 256 lines of at most 1 KiB each. A log entry longer
+than one line is split into numbered `[i/n]` lines and is kept or dropped as a
+whole; nothing is cut. A producer that cannot get the short sender lock at
+once drops its entry rather than wait; the queue also drops entries when it
+cannot hold all their lines, when it is closed, when the writer cannot start,
+or when a stderr write fails. The line storage never exceeds 256 KiB. At exit the
+app waits up to 250 ms for the writer; entries still pending after that are
+counted as dropped. The log view shows the number of dropped entries.
 
 To keep the log of a whole session in a file, tick **session log file** in
 **General config**. While it is on, the row reads `writing <path>` under

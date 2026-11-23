@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 type Captured = (Option<String>, Option<u32>, Source, Level, String);
 
@@ -424,19 +425,31 @@ impl std::io::Write for FullDisk {
     }
 }
 
-#[derive(Default)]
-struct FailOnceWriter {
-    failed_once: bool,
-    bytes: Vec<u8>,
+/// Writes into a shared buffer; the first write fails when `fail_first` is set.
+struct SharedWriter {
+    fail_first: bool,
+    bytes: Arc<Mutex<Vec<u8>>>,
 }
 
-impl std::io::Write for FailOnceWriter {
+impl SharedWriter {
+    fn new(fail_first: bool) -> (Self, Arc<Mutex<Vec<u8>>>) {
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                fail_first,
+                bytes: Arc::clone(&bytes),
+            },
+            bytes,
+        )
+    }
+}
+
+impl std::io::Write for SharedWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if !self.failed_once {
-            self.failed_once = true;
+        if std::mem::take(&mut self.fail_first) {
             return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
         }
-        self.bytes.extend_from_slice(bytes);
+        self.bytes.lock().unwrap().extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
@@ -445,47 +458,54 @@ impl std::io::Write for FailOnceWriter {
     }
 }
 
+/// An output whose writer thread writes into `writer`.
+fn output_writing_to(mut writer: impl std::io::Write + Send + 'static) -> StderrOutput {
+    StderrOutput::start_with(move |rx, counters| {
+        run_stderr_writer(rx, counters, || {}, |text| write_line(&mut writer, text));
+    })
+}
+
+const LONG_WAIT: Duration = Duration::from_secs(5);
+
 #[test]
 fn a_failed_debug_write_is_dropped_instead_of_panicking() {
-    let (output, receiver) = StderrOutput::channel();
-    let dropped = Arc::clone(&output.dropped);
-    let queued = Arc::clone(&output.queued);
-    let worker = std::thread::spawn(move || {
-        let mut writer = FailOnceWriter::default();
-        run_stderr_writer(
-            receiver,
-            dropped,
-            queued,
-            || {},
-            |line| write_line(&mut writer, line),
-        );
-        writer
-    });
-
+    let (writer, bytes) = SharedWriter::new(true);
+    let output = output_writing_to(writer);
     output.enqueue(format_args!("[nav-trace slot] debug first"));
+    // The writer finishes the first entry before it takes the second.
+    wait_until(|| output.counters.pending.load(Ordering::Acquire) == 0);
     output.enqueue(format_args!("[nav-trace slot] debug second"));
-    output.shutdown();
-    let writer = worker.join().unwrap();
+    assert_eq!(output.shutdown(LONG_WAIT), 0);
     assert_eq!(output.dropped(), 1);
-    assert_eq!(writer.bytes, b"[nav-trace slot] debug second\n");
+    assert_eq!(&*bytes.lock().unwrap(), b"[nav-trace slot] debug second\n");
+}
+
+fn wait_until(mut done: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + LONG_WAIT;
+    while !done() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "condition not reached"
+        );
+        std::thread::yield_now();
+    }
 }
 
 #[test]
 fn stderr_lock_is_available_while_the_process_writer_waits() {
     let (output, receiver) = StderrOutput::channel();
-    let dropped = Arc::clone(&output.dropped);
-    let queued = Arc::clone(&output.queued);
+    let counters = Arc::clone(&output.counters);
     let (waiting_tx, waiting_rx) = std::sync::mpsc::sync_channel(1);
     let worker = std::thread::spawn(move || {
         let mut waiting_tx = Some(waiting_tx);
-        run_process_stderr_writer(receiver, dropped, queued, || {
+        run_process_stderr_writer(receiver, counters, || {
             if let Some(waiting_tx) = waiting_tx.take() {
                 let _ = waiting_tx.send(());
             }
         });
     });
     waiting_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
+        .recv_timeout(LONG_WAIT)
         .expect("process writer did not reach its idle wait");
 
     let (probe_tx, probe_rx) = std::sync::mpsc::sync_channel(1);
@@ -496,10 +516,8 @@ fn stderr_lock_is_available_while_the_process_writer_waits() {
         let _ = writeln!(stderr, "stderr write probe");
         let _ = probe_tx.send(());
     });
-    let probe_returned = probe_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .is_ok();
-    output.shutdown();
+    let probe_returned = probe_rx.recv_timeout(LONG_WAIT).is_ok();
+    output.shutdown(LONG_WAIT);
     probe.join().unwrap();
     worker.join().unwrap();
     assert!(
@@ -508,12 +526,120 @@ fn stderr_lock_is_available_while_the_process_writer_waits() {
     );
 }
 
+/// The text of `entry` with its `[i/n] ` markers removed and its lines joined.
+fn unnumbered(entry: &Entry) -> String {
+    let n = entry.lines;
+    entry
+        .text
+        .lines()
+        .enumerate()
+        .map(|(index, line)| {
+            let marker = format!("[{}/{n}] ", index + 1);
+            line.strip_prefix(&marker)
+                .unwrap_or_else(|| panic!("line {index} lacks marker {marker}: {line:?}"))
+                .to_owned()
+        })
+        .collect()
+}
+
 #[test]
-fn stderr_lines_keep_utf8_and_never_exceed_the_byte_limit() {
-    let line = format_stderr_line(format_args!("[nav-trace] {}", "é".repeat(1_000)));
-    assert!(line.len() <= STDERR_LINE_BYTES);
-    assert!(line.ends_with(TRUNCATION_MARKER));
-    assert!(line.is_char_boundary(line.len()));
+fn a_text_that_fits_one_line_is_not_numbered_and_a_longer_one_is_split_not_cut() {
+    let fits = "a".repeat(STDERR_LINE_BYTES);
+    let entry = format_entry(format_args!("{fits}")).unwrap();
+    assert_eq!((entry.lines, entry.text.as_str()), (1, fits.as_str()));
+
+    // One byte over: two numbered lines, and every byte survives.
+    let over = "b".repeat(STDERR_LINE_BYTES + 1);
+    let entry = format_entry(format_args!("{over}")).unwrap();
+    assert_eq!(entry.lines, 2);
+    assert!(entry
+        .text
+        .lines()
+        .all(|line| line.len() <= STDERR_LINE_BYTES));
+    assert!(entry.text.starts_with("[1/2] "));
+    assert_eq!(unnumbered(&entry), over);
+
+    // Multi-byte characters stay whole at every cut.
+    for unit in ["é", "€", "😀"] {
+        let text = unit.repeat(2_500);
+        let entry = format_entry(format_args!("[nav-trace] {text}")).unwrap();
+        assert!(entry.lines > 1);
+        assert_eq!(entry.text.lines().count(), entry.lines);
+        assert!(entry
+            .text
+            .lines()
+            .all(|line| line.len() <= STDERR_LINE_BYTES));
+        assert_eq!(unnumbered(&entry), format!("[nav-trace] {text}"));
+    }
+}
+
+#[test]
+fn the_largest_entry_fits_its_line_budget_and_a_larger_one_is_refused_whole() {
+    for unit in ["a", "é", "€", "😀"] {
+        let text = unit.repeat(STDERR_ENTRY_BYTES / unit.len());
+        assert!(text.len() <= STDERR_ENTRY_BYTES);
+        let entry = format_entry(format_args!("{text}")).expect("an entry at the cap");
+        assert!(
+            entry.lines <= STDERR_ENTRY_LINES,
+            "{unit}: {} lines",
+            entry.lines
+        );
+        assert_eq!(unnumbered(&entry), text);
+    }
+
+    let (output, _receiver) = StderrOutput::channel();
+    let too_long = "x".repeat(STDERR_ENTRY_BYTES + 1);
+    output.enqueue(format_args!("{too_long}"));
+    assert_eq!(output.dropped(), 1, "a refused entry counts once");
+    assert_eq!(output.counters.queued.load(Ordering::Acquire), 0);
+    assert_eq!(output.counters.pending.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn a_split_entry_holds_all_its_lines_or_is_refused_whole() {
+    let (output, _receiver) = StderrOutput::channel();
+    let three_lines = "z".repeat(3 * STDERR_PIECE_BYTES - 10);
+    output.enqueue(format_args!("{three_lines}"));
+    assert_eq!(output.counters.queued.load(Ordering::Acquire), 3);
+    assert_eq!(output.counters.pending.load(Ordering::Acquire), 1);
+
+    for _ in 0..STDERR_QUEUE_LINES - 4 {
+        output.enqueue(format_args!("filler"));
+    }
+    assert_eq!(
+        output.counters.queued.load(Ordering::Acquire),
+        STDERR_QUEUE_LINES - 1
+    );
+    // One line is free, two are needed: nothing stays reserved.
+    let two_lines = "y".repeat(STDERR_LINE_BYTES + 1);
+    output.enqueue(format_args!("{two_lines}"));
+    assert_eq!(output.dropped(), 1);
+    assert_eq!(
+        output.counters.queued.load(Ordering::Acquire),
+        STDERR_QUEUE_LINES - 1
+    );
+    assert_eq!(
+        output.counters.pending.load(Ordering::Acquire),
+        STDERR_QUEUE_LINES - 3
+    );
+}
+
+#[test]
+fn a_split_entry_reaches_the_sink_in_one_piece_between_other_entries() {
+    let (writer, bytes) = SharedWriter::new(false);
+    let output = output_writing_to(writer);
+    let long = "w".repeat(2 * STDERR_PIECE_BYTES);
+    output.enqueue(format_args!("before"));
+    output.enqueue(format_args!("{long}"));
+    output.enqueue(format_args!("after"));
+    assert_eq!(output.shutdown(LONG_WAIT), 0);
+    let written = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+    let lines: Vec<&str> = written.lines().collect();
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines[0], "before");
+    assert!(lines[1].starts_with("[1/2] ") && lines[2].starts_with("[2/2] "));
+    assert_eq!(lines[3], "after");
+    assert_eq!(output.dropped(), 0);
 }
 
 #[test]
@@ -525,6 +651,7 @@ fn stderr_queue_allocation_and_size_stay_within_the_process_bound() {
         3 * std::mem::size_of::<usize>()
     );
     assert!(std::mem::size_of::<StderrOutput>() <= 128);
+    assert!(std::mem::size_of::<Entry>() <= 32);
 
     let init = allocation_counter::measure(|| {
         let (output, receiver) = StderrOutput::channel();
@@ -547,7 +674,10 @@ fn stderr_queue_allocation_and_size_stay_within_the_process_bound() {
     assert_eq!(queued.count_total, STDERR_QUEUE_LINES as u64);
     assert_eq!(queued.bytes_total, max_line_storage as u64);
     assert_eq!(queued.bytes_current, max_line_storage as i64);
-    assert_eq!(output.queued.load(Ordering::Acquire), STDERR_QUEUE_LINES);
+    assert_eq!(
+        output.counters.queued.load(Ordering::Acquire),
+        STDERR_QUEUE_LINES
+    );
     assert_eq!(output.dropped(), 0);
 
     let full_queue_drop = allocation_counter::measure(|| {
@@ -559,12 +689,14 @@ fn stderr_queue_allocation_and_size_stay_within_the_process_bound() {
 }
 
 #[test]
-fn a_closed_stderr_queue_counts_the_refused_line() {
+fn a_closed_stderr_queue_counts_the_refused_entry() {
     let (output, receiver) = StderrOutput::channel();
     drop(receiver);
     output.enqueue(format_args!("closed"));
     assert_eq!(output.dropped(), 1);
-    output.shutdown();
+    assert_eq!(output.counters.queued.load(Ordering::Acquire), 0);
+    assert_eq!(output.counters.pending.load(Ordering::Acquire), 0);
+    output.shutdown(LONG_WAIT);
     output.enqueue(format_args!("after shutdown"));
     assert_eq!(output.dropped(), 2);
 }
@@ -582,7 +714,7 @@ fn stderr_queue_submission_drops_instead_of_waiting_for_sender_lock() {
     });
 
     let completed = completed_rx
-        .recv_timeout(std::time::Duration::from_millis(100))
+        .recv_timeout(Duration::from_millis(100))
         .is_ok();
     drop(locked_sender);
     worker.join().unwrap();
@@ -590,63 +722,32 @@ fn stderr_queue_submission_drops_instead_of_waiting_for_sender_lock() {
     assert_eq!(output.dropped(), 1);
 }
 
-struct CaptureWriter(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for CaptureWriter {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 #[test]
-fn stderr_shutdown_drains_accepted_lines_when_the_sink_is_writable() {
-    let (output, receiver) = StderrOutput::channel();
-    let bytes = Arc::new(Mutex::new(Vec::new()));
-    let mut writer = CaptureWriter(Arc::clone(&bytes));
-    let dropped = Arc::clone(&output.dropped);
-    let queued = Arc::clone(&output.queued);
-    let worker = std::thread::spawn(move || {
-        run_stderr_writer(
-            receiver,
-            dropped,
-            queued,
-            || {},
-            |line| write_line(&mut writer, line),
-        );
-    });
-
+fn shutdown_drains_every_accepted_entry_when_the_sink_is_writable() {
+    let (writer, bytes) = SharedWriter::new(false);
+    let output = output_writing_to(writer);
+    let long = "l".repeat(STDERR_LINE_BYTES + 1);
     output.enqueue(format_args!("first"));
+    output.enqueue(format_args!("{long}"));
     output.enqueue(format_args!("second"));
-    output.shutdown();
-    worker.join().unwrap();
-    assert_eq!(&*bytes.lock().unwrap(), b"first\nsecond\n");
+    assert_eq!(output.shutdown(LONG_WAIT), 0, "nothing is lost at exit");
+    let written = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+    assert!(written.starts_with("first\n[1/2] "));
+    assert!(written.ends_with("\nsecond\n"));
     assert_eq!(output.dropped(), 0);
+    assert_eq!(output.counters.pending.load(Ordering::Acquire), 0);
+    assert_eq!(output.counters.queued.load(Ordering::Acquire), 0);
+    // A second shutdown is a no-op.
+    assert_eq!(output.shutdown(LONG_WAIT), 0);
 }
 
 #[test]
-fn stderr_io_failure_is_counted_and_does_not_panic_the_worker() {
-    let (output, receiver) = StderrOutput::channel();
-    let dropped = Arc::clone(&output.dropped);
-    let queued = Arc::clone(&output.queued);
-    let worker = std::thread::spawn(move || {
-        let mut writer = FullDisk;
-        run_stderr_writer(
-            receiver,
-            dropped,
-            queued,
-            || {},
-            |line| write_line(&mut writer, line),
-        );
-    });
+fn a_failed_write_is_counted_once_per_entry_and_does_not_panic_the_worker() {
+    let output = output_writing_to(FullDisk);
+    let long = "l".repeat(STDERR_LINE_BYTES + 1);
     output.enqueue(format_args!("first"));
-    output.enqueue(format_args!("second"));
-    output.shutdown();
-    worker.join().unwrap();
+    output.enqueue(format_args!("{long}"));
+    assert_eq!(output.shutdown(LONG_WAIT), 0);
     assert_eq!(output.dropped(), 2);
 }
 
@@ -661,7 +762,7 @@ impl std::io::Write for BlockingWriter {
         if !self.blocked_once {
             self.blocked_once = true;
             let _ = self.entered.send(());
-            self.release.recv().unwrap();
+            let _ = self.release.recv();
         }
         Ok(bytes.len())
     }
@@ -672,69 +773,37 @@ impl std::io::Write for BlockingWriter {
 }
 
 #[test]
-fn shutdown_does_not_wait_for_a_blocked_stderr_pipe() {
-    let (output, receiver) = StderrOutput::channel();
-    let dropped = Arc::clone(&output.dropped);
-    let queued = Arc::clone(&output.queued);
+fn shutdown_gives_up_on_a_stalled_sink_within_its_wait_and_counts_the_lost_entries() {
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let (worker_done_tx, worker_done_rx) = std::sync::mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        let mut writer = BlockingWriter {
-            entered: entered_tx,
-            release: release_rx,
-            blocked_once: false,
-        };
-        run_stderr_writer(
-            receiver,
-            dropped,
-            queued,
-            || {},
-            |line| write_line(&mut writer, line),
-        );
-        let _ = worker_done_tx.send(());
+    let output = output_writing_to(BlockingWriter {
+        entered: entered_tx,
+        release: release_rx,
+        blocked_once: false,
     });
-    output.enqueue(format_args!("blocked"));
-    let writer_entered = entered_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .is_ok();
+    output.enqueue(format_args!("blocked in the sink"));
+    entered_rx
+        .recv_timeout(LONG_WAIT)
+        .expect("stderr writer did not reach the blocked sink");
+    // Two more entries, one of them split, wait behind the blocked write.
+    let long = "q".repeat(STDERR_LINE_BYTES + 1);
+    output.enqueue(format_args!("queued behind it"));
+    output.enqueue(format_args!("{long}"));
+    assert_eq!(output.dropped(), 0);
 
-    let (shutdown_done_tx, shutdown_done_rx) = std::sync::mpsc::channel();
-    let shutdown = std::thread::spawn(move || {
-        output.shutdown();
-        let _ = shutdown_done_tx.send(());
-    });
-    let shutdown_returned = shutdown_done_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .is_ok();
+    let started = std::time::Instant::now();
+    let lost = output.shutdown(Duration::from_millis(50));
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "shutdown waited for the blocked sink: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(lost, 3, "the blocked entry and the two queued entries");
+    assert_eq!(output.dropped(), 3);
 
+    // The sink recovers: the abandoned thread still drains and ends.
     let _ = release_tx.send(());
-    let worker_returned = worker_done_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .is_ok();
-    if shutdown_returned {
-        shutdown.join().unwrap();
-    } else {
-        drop(shutdown);
-    }
-    if worker_returned {
-        worker.join().unwrap();
-    } else {
-        drop(worker);
-    }
-
-    assert!(
-        writer_entered,
-        "stderr writer did not reach the blocked sink"
-    );
-    assert!(
-        shutdown_returned,
-        "shutdown waited for the blocked stderr sink"
-    );
-    assert!(
-        worker_returned,
-        "stderr worker did not exit after the blocked sink was released"
-    );
+    wait_until(|| output.counters.pending.load(Ordering::Acquire) == 0);
 }
 
 #[test]

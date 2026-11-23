@@ -28,6 +28,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, LazyLock, OnceLock};
 use std::thread;
+use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
 
@@ -206,68 +207,177 @@ pub trait Sink: Send + Sync {
     }
 }
 
-/// Maximum number of stderr lines reserved or queued for writing.
+/// Maximum number of stderr lines reserved, queued or being written.
 pub const STDERR_QUEUE_LINES: usize = 256;
 /// Maximum bytes in one stderr line, excluding its newline.
 pub const STDERR_LINE_BYTES: usize = 1_024;
+/// Most lines one log entry may become. A longer entry is refused whole and
+/// counted, never cut.
+pub const STDERR_ENTRY_LINES: usize = 16;
+/// Width of the `[i/n] ` marker that numbers the lines of a split entry
+/// (`[16/16] ` at most).
+const STDERR_MARKER_BYTES: usize = 8;
+/// Bytes of an entry that one numbered line carries.
+const STDERR_PIECE_BYTES: usize = STDERR_LINE_BYTES - STDERR_MARKER_BYTES;
+/// Largest entry in bytes. A split at character boundaries leaves every
+/// piece but the last at least `STDERR_PIECE_BYTES - 3` long, so an entry of
+/// this size needs at most [`STDERR_ENTRY_LINES`] lines.
+const STDERR_ENTRY_BYTES: usize = STDERR_ENTRY_LINES * (STDERR_PIECE_BYTES - 3);
+/// How long process shutdown waits for the writer to drain accepted entries.
+const STDERR_SHUTDOWN_WAIT: Duration = Duration::from_millis(250);
 /// A numbered, packed log line (at most [`LINE_BYTES`]) plus its `[tag slot] `
-/// head always fits one stderr line, so the writer never cuts a packed line.
+/// head always fits one stderr line, so a packed line is never split.
 const _: () = assert!(LINE_BYTES * 2 <= STDERR_LINE_BYTES);
 
-/// One reserved queue slot. Dropping an uncommitted reservation releases it.
-struct QueueSlot<'a> {
-    queued: &'a AtomicUsize,
+/// One log entry ready for the writer: one stderr line, or up to
+/// [`STDERR_ENTRY_LINES`] numbered lines joined by `\n`. The writer delivers
+/// or drops it as a whole, so the lines of one entry stay together.
+struct Entry {
+    text: String,
+    lines: usize,
+}
+
+/// The shared counters of one stderr queue.
+struct Counters {
+    /// The line cap: [`STDERR_QUEUE_LINES`] in the product.
+    cap: usize,
+    /// Lines reserved by producers, queued, or being written. Never above
+    /// [`STDERR_QUEUE_LINES`], so the line storage never exceeds
+    /// `STDERR_QUEUE_LINES * STDERR_LINE_BYTES`.
+    queued: AtomicUsize,
+    /// Entries reserved, queued or being written.
+    pending: AtomicUsize,
+    /// Entries refused, failed, or lost at exit.
+    dropped: AtomicU64,
+}
+
+impl Counters {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            queued: AtomicUsize::new(0),
+            pending: AtomicUsize::new(0),
+            dropped: AtomicU64::new(0),
+        }
+    }
+
+    /// Add `extra` lines if the queue still has room for all of them.
+    fn try_add_lines(&self, extra: usize) -> bool {
+        let mut queued = self.queued.load(Ordering::Acquire);
+        loop {
+            if queued + extra > self.cap {
+                return false;
+            }
+            match self.queued.compare_exchange_weak(
+                queued,
+                queued + extra,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => queued = actual,
+            }
+        }
+    }
+
+    /// The writer is done with `entry`: release its lines, and count it
+    /// when the write failed.
+    fn finish(&self, entry: &Entry, write_failed: bool) {
+        if write_failed {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
+        }
+        self.queued.fetch_sub(entry.lines, Ordering::AcqRel);
+        self.pending.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// The lines one producer holds for an entry. Dropping an uncommitted
+/// reservation releases them.
+struct Reservation<'a> {
+    counters: &'a Counters,
+    lines: usize,
     committed: bool,
 }
 
-impl QueueSlot<'_> {
+impl Reservation<'_> {
+    /// Hold `extra` more lines, all or none.
+    fn grow(&mut self, extra: usize) -> bool {
+        if self.counters.try_add_lines(extra) {
+            self.lines += extra;
+            true
+        } else {
+            false
+        }
+    }
+
     fn commit(mut self) {
         self.committed = true;
     }
 }
 
-impl Drop for QueueSlot<'_> {
+impl Drop for Reservation<'_> {
     fn drop(&mut self) {
         if !self.committed {
-            self.queued.fetch_sub(1, Ordering::Release);
+            self.counters.queued.fetch_sub(self.lines, Ordering::AcqRel);
+            self.counters.pending.fetch_sub(1, Ordering::AcqRel);
         }
     }
 }
 
-/// Process-owned, bounded stderr output. Producers do not wait for queue space
-/// or for the sender lock; sender-lock contention drops the line.
+/// The detached writer thread, and the signal that it has ended.
+struct Worker {
+    handle: thread::JoinHandle<()>,
+    /// Disconnects when the thread ends.
+    ended: Receiver<()>,
+}
+
+/// Process-owned, bounded stderr output. Producers do not wait for queue
+/// space, for the sender lock or for the sink; a refused entry is counted.
 struct StderrOutput {
-    tx: Mutex<Option<SyncSender<String>>>,
-    queued: Arc<AtomicUsize>,
-    dropped: Arc<AtomicU64>,
+    tx: Mutex<Option<SyncSender<Entry>>>,
+    counters: Arc<Counters>,
+    worker: Mutex<Option<Worker>>,
 }
 
 impl StderrOutput {
-    fn channel() -> (Self, Receiver<String>) {
-        Self::channel_with_dropped(Arc::new(AtomicU64::new(0)))
+    fn channel() -> (Self, Receiver<Entry>) {
+        Self::channel_with_cap(STDERR_QUEUE_LINES)
     }
 
-    fn channel_with_dropped(dropped: Arc<AtomicU64>) -> (Self, Receiver<String>) {
-        let (tx, rx) = mpsc::sync_channel(STDERR_QUEUE_LINES);
+    /// A queue of `cap` lines. The product uses [`STDERR_QUEUE_LINES`]; the
+    /// conformance tests use a small cap so the cap binds.
+    fn channel_with_cap(cap: usize) -> (Self, Receiver<Entry>) {
+        let (tx, rx) = mpsc::sync_channel(cap);
         (
             Self {
                 tx: Mutex::new(Some(tx)),
-                queued: Arc::new(AtomicUsize::new(0)),
-                dropped,
+                counters: Arc::new(Counters::new(cap)),
+                worker: Mutex::new(None),
             },
             rx,
         )
     }
 
     fn start() -> Self {
+        Self::start_with(|rx, counters| run_process_stderr_writer(rx, counters, || {}))
+    }
+
+    /// An output whose detached writer thread runs `run`. A thread that
+    /// cannot start leaves the queue closed, so every entry is counted.
+    fn start_with(run: impl FnOnce(Receiver<Entry>, Arc<Counters>) + Send + 'static) -> Self {
         let (output, rx) = Self::channel();
-        let dropped = Arc::clone(&output.dropped);
-        let queued = Arc::clone(&output.queued);
+        let counters = Arc::clone(&output.counters);
+        let (ended_tx, ended) = mpsc::sync_channel::<()>(0);
         match thread::Builder::new()
             .name("host-log".into())
-            .spawn(move || run_process_stderr_writer(rx, dropped, queued, || {}))
-        {
-            Ok(_detached) => output,
+            .spawn(move || {
+                run(rx, counters);
+                drop(ended_tx);
+            }) {
+            Ok(handle) => {
+                *output.worker.lock() = Some(Worker { handle, ended });
+                output
+            }
             Err(_) => {
                 output.tx.lock().take();
                 output
@@ -275,56 +385,146 @@ impl StderrOutput {
         }
     }
 
-    fn enqueue(&self, line: fmt::Arguments<'_>) {
-        let Some(tx) = self.tx.try_lock().and_then(|tx| tx.as_ref().cloned()) else {
-            self.note_drop();
-            return;
-        };
-        let Some(reservation) = self.reserve_queue_slot() else {
-            self.note_drop();
-            return;
-        };
-        let line = format_stderr_line(line);
-        if tx.try_send(line).is_ok() {
-            reservation.commit();
-        } else {
-            self.note_drop();
-        }
+    /// A sender for one entry, or `None` when the sender lock is busy or the
+    /// queue is closed.
+    fn sender(&self) -> Option<SyncSender<Entry>> {
+        self.tx.try_lock().and_then(|tx| tx.as_ref().cloned())
     }
 
-    fn reserve_queue_slot(&self) -> Option<QueueSlot<'_>> {
-        let mut queued = self.queued.load(Ordering::Acquire);
-        loop {
-            if queued >= STDERR_QUEUE_LINES {
-                return None;
-            }
-            match self.queued.compare_exchange_weak(
-                queued,
-                queued + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    return Some(QueueSlot {
-                        queued: &self.queued,
-                        committed: false,
-                    });
-                }
-                Err(actual) => queued = actual,
-            }
+    /// The first line of an entry, or `None` when the queue is full. No
+    /// allocation happens before this succeeds.
+    fn reserve_first(&self) -> Option<Reservation<'_>> {
+        if !self.counters.try_add_lines(1) {
+            return None;
         }
+        self.counters.pending.fetch_add(1, Ordering::AcqRel);
+        Some(Reservation {
+            counters: &self.counters,
+            lines: 1,
+            committed: false,
+        })
+    }
+
+    fn enqueue(&self, line: fmt::Arguments<'_>) {
+        let mut steps = Enqueue::new(self);
+        while steps.step(line) {}
     }
 
     fn note_drop(&self) {
-        self.dropped.fetch_add(1, Ordering::Relaxed);
+        self.counters.dropped.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn shutdown(&self) {
+    /// Count a refused entry and end its sequence.
+    fn refused<'a>(&self) -> EnqueuePhase<'a> {
+        self.note_drop();
+        EnqueuePhase::Done
+    }
+
+    /// Close the queue: no new entry is accepted, and the writer ends once it
+    /// has taken what was accepted.
+    fn close(&self) {
         self.tx.lock().take();
     }
 
+    /// Give up on the writer: every entry still pending is counted as dropped.
+    /// Returns that count.
+    fn give_up(&self) -> u64 {
+        let lost = self.counters.pending.load(Ordering::Acquire) as u64;
+        self.counters.dropped.fetch_add(lost, Ordering::Relaxed);
+        lost
+    }
+
+    /// Close the queue and wait up to `wait` for the writer to drain it.
+    /// Returns the entries given up: with a stalled sink the writer cannot
+    /// finish, so the wait ends and every entry still pending is counted as
+    /// dropped. Never waits for the sink beyond `wait`.
+    fn shutdown(&self, wait: Duration) -> u64 {
+        self.close();
+        let Some(worker) = self.worker.lock().take() else {
+            return 0;
+        };
+        match worker.ended.recv_timeout(wait) {
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = worker.handle.join();
+                0
+            }
+            Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => self.give_up(),
+        }
+    }
+
     fn dropped(&self) -> u64 {
-        self.dropped.load(Ordering::Relaxed)
+        self.counters.dropped.load(Ordering::Relaxed)
+    }
+}
+
+/// Where one entry is on its way into the queue. Each step is one atomic
+/// operation of the producer; `tools/hostlog-model` has the same phases.
+enum EnqueuePhase<'a> {
+    /// Nothing held.
+    Start,
+    /// A sender clone is held.
+    Cloned(SyncSender<Entry>),
+    /// The first line is reserved.
+    Reserved(SyncSender<Entry>, Reservation<'a>),
+    /// The entry is formatted.
+    Formatted(SyncSender<Entry>, Reservation<'a>, Entry),
+    /// All the entry's lines are reserved.
+    Held(SyncSender<Entry>, Reservation<'a>, Entry),
+    Done,
+}
+
+/// The producer side of the queue as explicit steps. [`StderrOutput::enqueue`]
+/// runs them to the end; the conformance tests step them one at a time and
+/// compare each state with the model. No step waits: a refusal drops the
+/// entry, counts it, and ends the sequence.
+struct Enqueue<'a> {
+    output: &'a StderrOutput,
+    phase: EnqueuePhase<'a>,
+}
+
+impl<'a> Enqueue<'a> {
+    fn new(output: &'a StderrOutput) -> Self {
+        Self {
+            output,
+            phase: EnqueuePhase::Start,
+        }
+    }
+
+    /// Run one step; `line` is the entry, formatted in the `Reserved` step.
+    /// Returns false once the entry is finished.
+    fn step(&mut self, line: fmt::Arguments<'_>) -> bool {
+        let output = self.output;
+        self.phase = match std::mem::replace(&mut self.phase, EnqueuePhase::Done) {
+            EnqueuePhase::Start => match output.sender() {
+                Some(tx) => EnqueuePhase::Cloned(tx),
+                None => output.refused(),
+            },
+            EnqueuePhase::Cloned(tx) => match output.reserve_first() {
+                Some(reservation) => EnqueuePhase::Reserved(tx, reservation),
+                None => output.refused(),
+            },
+            EnqueuePhase::Reserved(tx, reservation) => match format_entry(line) {
+                Some(entry) => EnqueuePhase::Formatted(tx, reservation, entry),
+                None => output.refused(),
+            },
+            EnqueuePhase::Formatted(tx, mut reservation, entry) => {
+                if entry.lines > 1 && !reservation.grow(entry.lines - 1) {
+                    output.refused()
+                } else {
+                    EnqueuePhase::Held(tx, reservation, entry)
+                }
+            }
+            EnqueuePhase::Held(tx, reservation, entry) => {
+                if tx.try_send(entry).is_ok() {
+                    reservation.commit();
+                } else {
+                    output.note_drop();
+                }
+                EnqueuePhase::Done
+            }
+            EnqueuePhase::Done => EnqueuePhase::Done,
+        };
+        !matches!(self.phase, EnqueuePhase::Done)
     }
 }
 
@@ -341,108 +541,125 @@ pub fn start_stderr_writer() {
     let _ = stderr_output();
 }
 
-/// Close the stderr queue at process exit. The detached writer drains accepted
-/// lines when the sink works; it is not joined because a pipe can be blocked.
-pub fn shutdown_stderr_writer() {
-    if let Some(output) = LazyLock::get(&STDERR_OUTPUT) {
-        output.shutdown();
-    }
+/// Close the stderr queue at process exit and wait a short, fixed time for the
+/// writer to write what it accepted. A sink that does not finish in that time
+/// (a pipe nobody reads) is abandoned: the entries still pending are counted
+/// in [`stderr_dropped`] and returned. A working sink returns 0.
+pub fn shutdown_stderr_writer() -> u64 {
+    LazyLock::get(&STDERR_OUTPUT).map_or(0, |output| output.shutdown(STDERR_SHUTDOWN_WAIT))
 }
 
-/// Number of stderr lines dropped because the sender lock was busy, the queue
-/// was full or closed, the worker could not start, or the stderr write failed.
+/// Number of log entries dropped because the sender lock was busy, the queue
+/// was full or closed, the entry was longer than [`STDERR_ENTRY_LINES`] lines,
+/// the writer could not start, a stderr write failed, or the process exited
+/// before the writer finished. An entry that needs several lines counts once.
 pub fn stderr_dropped() -> u64 {
     LazyLock::get(&STDERR_OUTPUT).map_or(0, StderrOutput::dropped)
 }
+
 #[cfg(feature = "test-support")]
 /// Test hook that fills an isolated queue and records one process drop.
 #[doc(hidden)]
 pub fn test_fill_stderr_queue_and_drop_one_line() -> u64 {
     let global = stderr_output();
-    let (output, receiver) = StderrOutput::channel_with_dropped(Arc::clone(&global.dropped));
+    let (output, receiver) = StderrOutput::channel();
     for _ in 0..STDERR_QUEUE_LINES {
         output.enqueue(format_args!("test"));
     }
     output.enqueue(format_args!("overflow"));
+    global
+        .counters
+        .dropped
+        .fetch_add(output.dropped(), Ordering::Relaxed);
     drop(output);
     drop(receiver);
     global.dropped()
 }
 
-const TRUNCATION_MARKER: &str = "…";
-
-struct BoundedLine {
-    line: String,
-    truncated: bool,
+/// Collects one formatted entry and refuses one over [`STDERR_ENTRY_BYTES`].
+struct BoundedEntry {
+    text: String,
 }
 
-impl fmt::Write for BoundedLine {
+impl fmt::Write for BoundedEntry {
     fn write_str(&mut self, value: &str) -> fmt::Result {
-        if self.truncated {
+        if value.len() > STDERR_ENTRY_BYTES - self.text.len() {
             return Err(fmt::Error);
         }
-        if value.len() <= STDERR_LINE_BYTES - self.line.len() {
-            self.line.push_str(value);
-            return Ok(());
-        }
-        let content_cap = STDERR_LINE_BYTES - TRUNCATION_MARKER.len();
-        if self.line.len() > content_cap {
-            let mut end = content_cap;
-            while !self.line.is_char_boundary(end) {
-                end -= 1;
-            }
-            self.line.truncate(end);
-        } else {
-            let mut end = (content_cap - self.line.len()).min(value.len());
-            while !value.is_char_boundary(end) {
-                end -= 1;
-            }
-            self.line.push_str(&value[..end]);
-        }
-        self.line.push_str(TRUNCATION_MARKER);
-        self.truncated = true;
-        Err(fmt::Error)
+        self.text.push_str(value);
+        Ok(())
     }
 }
 
-fn format_stderr_line(line: fmt::Arguments<'_>) -> String {
-    let mut bounded = BoundedLine {
-        line: String::with_capacity(STDERR_LINE_BYTES),
-        truncated: false,
+/// Format one log entry. A text that fits one line stays one line. A longer
+/// one is split at character boundaries into lines of at most
+/// [`STDERR_LINE_BYTES`] bytes, each numbered `[i/n] `, and nothing is cut.
+/// `None`: the text is over [`STDERR_ENTRY_BYTES`] (a formatting error counts
+/// the same way), so the caller counts the whole entry as dropped.
+fn format_entry(line: fmt::Arguments<'_>) -> Option<Entry> {
+    let mut whole = BoundedEntry {
+        text: String::with_capacity(STDERR_LINE_BYTES),
     };
-    let _ = fmt::write(&mut bounded, line);
-    bounded.line
+    fmt::write(&mut whole, line).ok()?;
+    let text = whole.text;
+    if text.len() <= STDERR_LINE_BYTES {
+        return Some(Entry { text, lines: 1 });
+    }
+    let lines = split_lines(&text).count();
+    let mut out = String::with_capacity(text.len() + lines * (STDERR_MARKER_BYTES + 1));
+    for (index, piece) in split_lines(&text).enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push('[');
+        out.push_str(&(index + 1).to_string());
+        out.push('/');
+        out.push_str(&lines.to_string());
+        out.push_str("] ");
+        out.push_str(piece);
+    }
+    Some(Entry { text: out, lines })
+}
+
+/// `text` in pieces of at most [`STDERR_PIECE_BYTES`] bytes, cut only at
+/// character boundaries.
+fn split_lines(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let mut end = STDERR_PIECE_BYTES.min(rest.len());
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        let (piece, tail) = rest.split_at(end);
+        rest = tail;
+        Some(piece)
+    })
 }
 
 fn run_stderr_writer(
-    rx: Receiver<String>,
-    dropped: Arc<AtomicU64>,
-    queued: Arc<AtomicUsize>,
+    rx: Receiver<Entry>,
+    counters: Arc<Counters>,
     mut on_wait: impl FnMut(),
     mut write: impl FnMut(&str) -> std::io::Result<()>,
 ) {
     loop {
         on_wait();
-        let Ok(line) = rx.recv() else {
+        let Ok(entry) = rx.recv() else {
             break;
         };
-        queued.fetch_sub(1, Ordering::AcqRel);
-        if write(&line).is_err() {
-            dropped.fetch_add(1, Ordering::Relaxed);
-        }
+        let failed = write(&entry.text).is_err();
+        counters.finish(&entry, failed);
     }
 }
 
-fn run_process_stderr_writer(
-    rx: Receiver<String>,
-    dropped: Arc<AtomicU64>,
-    queued: Arc<AtomicUsize>,
-    on_wait: impl FnMut(),
-) {
+fn run_process_stderr_writer(rx: Receiver<Entry>, counters: Arc<Counters>, on_wait: impl FnMut()) {
     let stderr = std::io::stderr();
-    run_stderr_writer(rx, dropped, queued, on_wait, |line| {
+    run_stderr_writer(rx, counters, on_wait, |text| {
         let mut stderr = stderr.lock();
-        write_line(&mut stderr, line)
+        write_line(&mut stderr, text)
     });
 }
 
@@ -820,7 +1037,14 @@ thread_local! {
 
 #[cfg(test)]
 fn write_stderr(line: fmt::Arguments<'_>) {
-    STDERR.with(|lines| lines.borrow_mut().push(format_stderr_line(line)));
+    // A refused (oversized) entry reaches no sink, as in production.
+    if let Some(entry) = format_entry(line) {
+        STDERR.with(|lines| {
+            lines
+                .borrow_mut()
+                .extend(entry.text.lines().map(str::to_owned))
+        });
+    }
 }
 
 /// Log one host line through the routing facade.
@@ -869,3 +1093,7 @@ macro_rules! host_log {
 #[cfg(test)]
 #[path = "hostlog_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "hostlog_conformance_tests.rs"]
+mod conformance_tests;

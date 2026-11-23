@@ -52,6 +52,13 @@ fn main() -> std::process::ExitCode {
     } else {
         std::process::ExitCode::SUCCESS
     };
-    api::hostlog::shutdown_stderr_writer();
+    let lost = api::hostlog::shutdown_stderr_writer();
+    if lost > 0 {
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Warn,
+            "stderr: {lost} log entries were still pending at exit and are counted as dropped"
+        );
+    }
     result
 }

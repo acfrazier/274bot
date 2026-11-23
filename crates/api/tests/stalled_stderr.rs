@@ -1,7 +1,7 @@
 #[cfg(unix)]
 use std::io::{Read, Write};
 #[cfg(unix)]
-use std::os::fd::FromRawFd;
+use std::os::fd::AsFd;
 #[cfg(unix)]
 use std::process::{Command, Stdio};
 #[cfg(unix)]
@@ -75,17 +75,16 @@ fn run_stalled_child() -> ! {
     let filler_written = Arc::clone(&written);
     let filler_done_flag = Arc::clone(&filler_done);
     let filler = thread::spawn(move || {
-        // Write through a duplicate so the host logger can acquire Rust's
-        // stderr lock and block in the pipe write itself.
-        // SAFETY: `STDERR_FILENO` is the child process's open stderr pipe.
-        let fd = unsafe { libc::dup(libc::STDERR_FILENO) };
-        if fd < 0 {
+        // Write through a duplicate of descriptor 2 (`AsFd` borrows it without
+        // Rust's stderr lock), so the host logger can acquire that lock and
+        // block in the pipe write itself. The `File` owns the duplicate; the
+        // process exit closes it, because this thread stays blocked in `write`.
+        let Ok(fd) = std::io::stderr().as_fd().try_clone_to_owned() else {
             let _ = started_tx.send(());
             filler_done_flag.store(true, Ordering::Release);
             return;
-        }
-        // SAFETY: `dup` returned a new descriptor, and this File takes it over.
-        let mut stderr = unsafe { std::fs::File::from_raw_fd(fd) };
+        };
+        let mut stderr = std::fs::File::from(fd);
         let chunk = [b'!'; FILL_CHUNK];
         let _ = started_tx.send(());
         let mut total = 0;
@@ -173,16 +172,27 @@ fn run_stalled_child() -> ! {
     }
 
     let shutdown_start = Instant::now();
-    api::hostlog::shutdown_stderr_writer();
+    let lost = api::hostlog::shutdown_stderr_writer();
     let shutdown_ms = shutdown_start.elapsed().as_millis();
     if shutdown_ms >= 1_000 {
         child_fail(format!("shutdown waited {shutdown_ms} ms"));
     }
+    // The entries still pending behind the stalled sink are given up and counted.
+    if lost == 0 || api::hostlog::stderr_dropped() != dropped + lost {
+        child_fail(format!(
+            "lost {lost} at exit; drop counter {} was {dropped} before",
+            api::hostlog::stderr_dropped()
+        ));
+    }
 
     println!(
-        "pipe_bytes={pipe_bytes} progress=4096 tick={tick} dropped={dropped} shutdown_ms={shutdown_ms}",
+        "pipe_bytes={pipe_bytes} progress=4096 tick={tick} dropped={dropped} lost_at_exit={lost} shutdown_ms={shutdown_ms}",
     );
     std::io::stdout().flush().unwrap();
+    // The filler thread is still blocked in `write` on the full pipe and its
+    // `File` is never dropped. Dropping the handle only detaches the thread; the
+    // process exit closes the duplicated descriptor. Joining would deadlock,
+    // because the parent reads stderr only after this process has exited.
     drop(filler);
     std::process::exit(0)
 }

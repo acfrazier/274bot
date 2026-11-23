@@ -37,13 +37,19 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Logging
 
-- Host stderr uses a bounded process queue (256 lines, 1 KiB per line). The
-  writer holds the stderr lock only while it writes a line; producers never
-  wait for queue space or that lock. A line is dropped if the queue is full or
-  closed, the short sender lock is contended, the writer cannot start, or a
-  stderr write fails. The peak line storage is 257 KiB, including the one line
-  the writer may be writing. Both log views show dropped-line counts; the
-  optional session file remains a separate sink.
+- Host stderr uses a bounded process queue of 256 lines, each at most 1 KiB.
+  The writer holds the stderr lock only while it writes one entry; producers
+  never wait for queue space, that lock or the sink. A log entry longer than
+  one line is split into numbered `[i/n]` lines (up to 16) and is written
+  or dropped as a whole; no entry is cut. An entry is dropped and counted if the
+  queue cannot hold all its lines, the queue is closed, the short sender lock
+  is contended, the writer cannot start, the entry needs more than 16 lines, or
+  the stderr write fails. The line storage never exceeds 256 KiB, the one entry
+  being written included. At exit the app waits up to 250 ms for the writer to
+  finish; a sink that does not finish (a pipe nobody reads) is abandoned, and
+  the entries still pending are counted as dropped and noted in the session
+  log. Both log views show the dropped-entry count; the optional session file
+  remains a separate sink.
 
 ### Navigation
 
