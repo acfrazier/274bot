@@ -97,9 +97,10 @@ impl Source {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Category {
     /// Slot worker lifecycle: thread up, world/handshake, spawn failures,
-    /// welcome-screen notices, mainland hop.
+    /// welcome-screen notices, mainland hop, and mid-session scene loads.
     Lifecycle,
-    /// Login and startup phases, login responses, queue permits.
+    /// Login preparation and connection phases, login responses, queue
+    /// permits. Scene-load phases belong to `Lifecycle`.
     Login,
     /// Script start/compile/failure.
     ScriptLifecycle,
@@ -588,7 +589,7 @@ fn write_stderr(line: fmt::Arguments<'_>) {
 /// Log one host line through the routing facade.
 ///
 /// ```ignore
-/// host_log!(Category::Login, Level::Info, "startup phase {phase:?}");
+/// host_log!(Category::Lifecycle, Level::Debug, "startup phase {phase:?}");
 /// host_log!(Category::Lifecycle, Level::Warn, slot = name, "maininit failed");
 /// host_log!(stderr; Category::Lifecycle, Level::Error, "{error}");
 /// ```

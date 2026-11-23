@@ -32,9 +32,17 @@ For a real candidate, provide all four local generator roots and the actual
 `RS2B0T` query source. Revision 289 also requires the decoded snapshot used
 for its map and terrain bundle:
 
+Keep `WORK` and `ARTIFACTS` under the request evidence directory, outside the
+local home directory. Set `RELEASE_LINUX_ROOT` and `RELEASE_WINDOWS_ROOT` to
+absolute, request-specific evidence directories outside each builder's home
+directory (for example, `/evidence/request/linux` and
+`D:/evidence/request/windows`). Remote operations use those roots verbatim.
+
 ```sh
 python3 tools/release/release.py build \
   --commit "$COMMIT" --platform all --work-dir "$WORK" \
+  --linux-remote-root "$RELEASE_LINUX_ROOT" \
+  --windows-remote-root "$RELEASE_WINDOWS_ROOT" \
   --game-data-274-engine "$GAME_DATA_274_ENGINE" \
   --game-data-274-content "$GAME_DATA_274_CONTENT" \
   --game-data-289-engine "$GAME_DATA_289_ENGINE" \
@@ -122,12 +130,14 @@ unqualified `stable` to qualify a release.
   `/Applications/*.app/Contents/Developer` (`xcrun` finds the Apple
   toolchain through it; any other value is dropped), plus the keys the
   worker itself pins. Everything else -- `LIBRARY_PATH`, `PKG_CONFIG*`,
-  `DYLD_*`, compiler/flag overrides, `RUSTFLAGS`, and in particular
-  `CARGO_HOME`, `RUSTUP_HOME` and `RUSTUP_TOOLCHAIN` (the toolchain comes from
-  `rust-toolchain.toml`) -- is not inherited. None of the dropped
+  `DYLD_*`, compiler/flag overrides, `RUSTFLAGS`, `RUSTUP_HOME` and
+  `RUSTUP_TOOLCHAIN` (the toolchain comes from `rust-toolchain.toml`) -- is not
+  inherited. Each worker constructs `CARGO_HOME` as
+  `<worker_root>/cache/cargo`, so Cargo uses request-local config and cache
+  files rather than the builder account's `~/.cargo`. None of the dropped
   variables was set in the environment that produced the known-good
-  0.2.1 package. Linux and Windows environment construction is
-  unchanged.
+  0.2.1 package. Linux and Windows retain their platform-specific inherited
+  environment but also use this worker-local `CARGO_HOME`.
 - Linux x64 uses the SSH target `274bot-builder` by default. Override it with
   `--linux-host` or `RELEASE_LINUX_HOST`.
 - Windows x64 runs over the promoted `windows-ssh.py` transport.
@@ -139,11 +149,14 @@ unqualified `stable` to qualify a release.
   `--windows-identity`/`--windows-known-hosts` parameters (with matching
   `RELEASE_*` environment variables). Batch mode and strict host-key checking
   are always enabled.
-- Remote work roots default to the home-relative `274bot-release` and can be
-  changed with `--linux-remote-root` / `--windows-remote-root` (or
-  `RELEASE_LINUX_ROOT` / `RELEASE_WINDOWS_ROOT`). Cargo output is
-  cached below the platform's per-commit workspace, so artifacts from different
-  commits cannot mix. Remote roots must stay below the remote home directory.
+- Remote roots are required for real Linux and Windows operations. Set
+  `--linux-remote-root` / `--windows-remote-root` (or
+  `RELEASE_LINUX_ROOT` / `RELEASE_WINDOWS_ROOT`) to absolute request-evidence
+  directories: a POSIX path such as `/evidence/request/linux` on Linux and a
+  drive-qualified path such as `D:/evidence/request/windows` on Windows. The
+  controller uses these paths directly and never joins them to remote `$HOME`.
+  Cargo output is cached below each platform's per-commit workspace, so
+  artifacts from different commits cannot mix.
 - `--jobs` defaults to 4, `--revision` to 289, and the macOS app profile to
   `rs2b2t`.
 
@@ -395,3 +408,86 @@ lane), never by the builder.
 The Linux package is checked with `package.py --check --platform linux` on the
 builder. A real launch of the staged `panel-play` needs a display and Vulkan
 driver as listed above; `tui-play` needs neither.
+
+## Saved-data upgrade gate
+
+`upgrade_test.py control` tests historical startup without logging in to a game.
+Use tmux and Python with `cryptography`. Supply the preserved **test** snapshot from the
+0.2.8 build. Never supply an operator profile or vault. Run the command once
+with the TUI at `0dd33c2ed` and once with the TUI at `eaff8cbc9`:
+
+```sh
+python3 upgrade_test.py control --binary "$TUI" --snapshot "$SNAPSHOT_028" \
+  --pass-file "$TEST_PASSPHRASE_FILE" --account "$TEST_ACCOUNT" --cache "$CACHE" \
+  --crc-file "$ARCHIVED_CRC" --work "$NEW_DIR"
+```
+
+Set `ENGINE_DIR` for the historical local profile. Supply the complete revision-289
+client cache and its original 40-byte `/crc` response. The control serves only
+that response on loopback. It does not use a running engine or edit the cache.
+The startup probe checks admission and vault unlock. Startup alone does not
+prove that loadouts or sparse UI preferences were parsed. On the positive run,
+the tool reads the unassigned Bronze axe, Lobster quantity one and the manual
+movement preference in the TUI. The unscoped hint is tested for startup
+admission, not for bank contents. A separate encrypted vault contains sparse
+profile settings, a schema-4 Gatherer entry and an empty compiled envelope.
+The tool supplies existing profile names before an absent name. Only that
+last lookup proves that startup and unlock completed. A timeout is an error.
+The tool also presses Start on the real 0.2.8 Gatherer. It checks the schema-4
+refusal or successful admission and restoration of `Mining`. The old binary
+must return 1 for a format refusal. The fixed binary must return 0. An
+infrastructure failure returns 2 and cannot satisfy the negative control.
+Repeat `control` with the candidate executable and a new work directory. Require
+exit 0. Keep this result and the two historical controls with the live verdict.
+None of these offline results qualifies a live login or bank visit.
+
+For the release gate, use the **full shipped 0.2.9 package**, not a source
+build. Verify the package against its published checksum. Obtain both
+executable checksums from that verified package. Start from an interactive
+terminal outside tmux. The tool requires tmux, a display, and the release
+test engine. Use two disposable test accounts and leave `RS2B0T` unset. Keep
+the work directory private. It contains an encrypted test vault and session logs.
+
+```sh
+python3 upgrade_test.py live --shipped "$OLD_TUI" --shipped-panel "$OLD_PANEL" \
+  --shipped-sha256 "$OLD_TUI_SHA" --panel-sha256 "$OLD_PANEL_SHA" \
+  --candidate "$NEW_TUI" --account "$TEST_ACCOUNT" --shared-account "$SECOND_ACCOUNT" \
+  --cache "$CACHE" --work "$NEW_DIR"
+```
+
+1. In the shipped panel, open Browse and choose **Not now** at the catalog
+   prompt. Load the `UpgradeProbe.ts` file at the path printed by the tool.
+   With no profile focused, set its `mode` to `shared`. Enable session-file
+   logging and quit. Do not import the catalog yet.
+2. The tool renames the shipped loopback entry in `servers.json` to `upgrade-289`.
+   In 0.2.9 the user edits that file directly (see `docs/reference/server-profiles.md`).
+   The rename preserves the local endpoints, revision and vault. It creates
+   a name that the candidate cannot resolve from built-in defaults.
+3. In the shipped TUI, create both test accounts. Enable automatic login.
+   Do not edit or start a script on the second account. Focus the primary
+   account and log in. Disable “Pause script on manual movement.” Create
+   just one loadout, named `upgrade`, with carry item `Lobster` and quantity `7`.
+4. Open a real bank with at least one item, then close it. Keep logging enabled.
+5. On the primary account select `UpgradeProbe` from **File**, set `mode` to
+   `seed`, start it, then stop it after its `UPGRADE_READ` log appears. Set
+   `mode` to `profile`. This gives the runtime store and the per-profile
+   setting distinct values. The probe makes no game actions.
+6. Set Gatherer `skill` to `Mining`, Grinch `radius` to `7`, and Quester
+   `Maximum deaths` to `3`. Leave unqualified guides off. Turn global teleport
+   permission off and turn Sherlock's `Allow teleports` on. A global override
+   is not evidence that the card kept its setting.
+7. Close all dialogs. Leave the primary account focused and the script idle.
+   Detach with the tmux prefix followed by `d`. Do not quit the TUI.
+8. The tool tests the deferred catalog on a private copy before import. The
+   candidate must show the deferred-import row and start the file card with
+   the shared setting on the second account. When the shipped panel opens
+   again, import the printed `upgrade-catalog` directory and quit. Import
+   clears the defer marker, so the two checks require distinct writer states.
+
+The final candidate must show the custom endpoint, restored loadout, movement
+preference and catalog card. Its new session log must report the writer's bank
+row count and observation time before another bank visit. The file script must
+read both its profile setting and its scoped raw runtime value on Start. The tool
+also checks the compiled settings and requires each compiled script to reach
+working or waiting. The candidate receives no setting edits. A move-aside or a
+missing observation fails the gate. No candidate database schema is assumed.

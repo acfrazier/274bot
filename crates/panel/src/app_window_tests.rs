@@ -85,6 +85,23 @@ fn activate_profiles_row(name: &str) {
     }
 }
 
+/// Activate a control in the Profiles form footer, under the edit generation.
+fn activate_profiles_editor(label: &str, generation: i32) {
+    // SAFETY: the caller binds the frame's context; the window is read only
+    // after the lookup found it, and the label outlives the call.
+    unsafe {
+        let profiles = sys::igFindWindowByName(c"Profiles".as_ptr());
+        assert!(!profiles.is_null(), "Profiles was drawn");
+        let form_id = sys::igGetIDWithSeed_Int(generation, (*profiles).ID);
+        let label = CString::new(label).unwrap();
+        sys::igActivateItemByID(sys::igGetIDWithSeed_Str(
+            label.as_ptr(),
+            std::ptr::null(),
+            form_id,
+        ));
+    }
+}
+
 /// Every opener target, in the app's per-frame order; each returns early
 /// while closed. WalkTo draws inside a Game pane as in production.
 fn target_windows(ui: &Ui, state: &mut PanelState) {
@@ -116,6 +133,8 @@ struct FrameInput<'a> {
     press: Option<(&'a str, &'a str)>,
     /// Activate this Profiles list row.
     row: Option<&'a str>,
+    /// Activate a button in the Profiles form footer.
+    profiles_editor_press: Option<&'a str>,
     /// Give this window the focus before it draws, as the operator's
     /// click into it does.
     focus: Option<&'a str>,
@@ -137,6 +156,11 @@ fn frame(
         }
         if let Some(row) = input.row {
             ui.with_bound_context(|| activate_profiles_row(row));
+        }
+        if let Some(label) = input.profiles_editor_press {
+            ui.with_bound_context(|| {
+                activate_profiles_editor(label, state.session.profile_editor.generation() as i32)
+            });
         }
         if let Some(window) = input.focus {
             ui.set_window_focus(Some(window));
@@ -615,10 +639,10 @@ fn rail_profiles_button_opens_focuses_and_reopens_profiles() {
 
 /// The operator's sequence with real ImGui input: MultiBox while the vault
 /// is locked, unlock (auto-login on both profiles), then pick the other
-/// profile and back. Both bots join the rail, the Game view and the script
-/// card follow the pick, and nothing starts a script.
+/// profile and back. Both bots join the rail. Saving a new profile also
+/// loads it onto the wall, and nothing starts a script.
 #[test]
-fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
+fn multibox_before_unlock_then_picks_and_saves_profiles_without_starting_a_script() {
     let _guard = crate::test_support::imgui_context_guard();
     let dir = TestDir::new("multibox-unlock-real-input");
     let path = dir.join("vault");
@@ -752,6 +776,73 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         }
         assert_no_start(s, pick);
     }
+    step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some(("Profiles", "New profile")),
+            ..FrameInput::default()
+        },
+    );
+    assert_eq!(
+        state.session.profile_editor.target(),
+        Some(""),
+        "New profile opens a blank editor"
+    );
+    *state.session.profile_editor.draft_mut().username_mut() = "carol".into();
+    *state.session.profile_editor.draft_mut().password_mut() = "pw".into();
+    *state
+        .session
+        .profile_editor
+        .draft_mut()
+        .settings_mut()
+        .auto_login_mut() = true;
+    frames(&mut ctx, &mut state, panel, 2);
+    step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            profiles_editor_press: Some("Save"),
+            ..FrameInput::default()
+        },
+    );
+    state.session.core.flush_writes();
+    step(&mut ctx, &mut state, FrameInput::default());
+    state.session.core.poll();
+    state.session.fleet_model.refresh(&state.session.core);
+
+    let s = &state.session;
+    assert!(
+        s.core.profile("carol").is_some(),
+        "the saved profile row is available"
+    );
+    assert!(
+        !s.core.profile_saving("carol"),
+        "the new profile's first write is durable"
+    );
+    assert!(
+        s.core
+            .profile("carol")
+            .is_some_and(|profile| profile.auto_login()),
+        "the saved profile's auto-login setting is durable"
+    );
+    assert!(
+        ["alice", "bob", "carol"]
+            .into_iter()
+            .all(|name| s.core.fleet().contains(name)),
+        "saving a profile in MultiBox loads it without removing the other members"
+    );
+    assert!(
+        s.fleet_model
+            .rows()
+            .iter()
+            .any(|row| row.name() == "carol" && row.loaded()),
+        "the saved auto-login profile has a loaded wall tile"
+    );
+    assert_eq!(s.focused_name().as_deref(), Some("carol"));
+    assert_eq!(s.tv_name().as_deref(), Some("carol"));
+    assert_eq!(s.core.slots().len(), 3);
+    assert_no_start(s, "save a new profile");
 }
 
 /// The rail's mark checkbox mentions Debug actions only when the profile's
@@ -950,4 +1041,76 @@ fn a_rail_cap_world_marker_is_a_button_only_while_the_server_has_worlds() {
         assert!(selected.select && !selected.world);
         assert!(!session.world_picker.is_open());
     }
+}
+
+/// KI:69: after undocking, the Script prefs window fits its contents. It
+/// opens shorter than the old fixed 360×480 for a short body, grows when
+/// more rows draw, stops at the 720 px cap, and scrolls past it.
+#[test]
+fn script_prefs_window_fits_its_contents() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = context();
+    let mut state = panel_state(Session::new());
+    state.session.persist_ui = false;
+    state.session.script_prefs_open = true;
+
+    /// Four frames of the floating Script prefs window: its outer size and
+    /// the vertical scroll range.
+    fn script_prefs_size(ctx: &mut Context, state: &mut PanelState) -> ([f32; 2], f32) {
+        let mut size = [0.0; 2];
+        let mut scroll_max_y = 0.0;
+        for _ in 0..4 {
+            ctx.prepare_frame(
+                FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures(),
+            );
+            {
+                let ui = ctx.frame();
+                target_windows(ui, state);
+                (size, scroll_max_y) = ui.with_bound_context(|| {
+                    // SAFETY: the caller binds the frame's context; the name
+                    // is a NUL-terminated copy that outlives the call, and the
+                    // window is read only after the lookup found it.
+                    unsafe {
+                        let name = CString::new("Script prefs").unwrap();
+                        let window = sys::igFindWindowByName(name.as_ptr());
+                        assert!(!window.is_null(), "Script prefs was drawn");
+                        ([(*window).Size.x, (*window).Size.y], (*window).ScrollMax.y)
+                    }
+                });
+            }
+            ctx.render();
+        }
+        (size, scroll_max_y)
+    }
+
+    let (short, _) = script_prefs_size(&mut ctx, &mut state);
+    assert!(
+        short[0] >= 360.0 - 0.5 && short[0] <= 480.0 + 0.5,
+        "the width stays readable: {short:?}"
+    );
+    assert!(
+        short[1] < 480.0,
+        "a short body does not open at the old fixed height: {short:?}"
+    );
+
+    state.session.script_sel = Some(ScriptChoice::compiled(CompiledCardId::QUESTER));
+    let (tall, _) = script_prefs_size(&mut ctx, &mut state);
+    assert!(
+        tall[1] > short[1] + 20.0,
+        "more rows grow the window: {short:?} -> {tall:?}"
+    );
+
+    // Far more rows than the cap holds: the window must stop at 720 and
+    // scroll the rest instead of growing. A missing cap grows past 720.
+    super::TEST_SCRIPT_PREFS_FILLER_ROWS.set(80);
+    let (capped, scroll_max_y) = script_prefs_size(&mut ctx, &mut state);
+    super::TEST_SCRIPT_PREFS_FILLER_ROWS.set(0);
+    assert!(
+        (capped[1] - 720.0).abs() <= 0.5,
+        "the height is the cap: {capped:?}"
+    );
+    assert!(
+        scroll_max_y > 0.0,
+        "content past the cap scrolls: ScrollMax.y={scroll_max_y}"
+    );
 }

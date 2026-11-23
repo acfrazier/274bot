@@ -7804,7 +7804,7 @@ mod tests {
         let mut children = Vec::new();
         for index in 0..2u8 {
             let child = crate::test_process::spawn(
-                Command::new(std::env::current_exe().unwrap())
+                Command::new(crate::test_process::executable())
                     .args([
                         "--exact",
                         "map_cache::tests::different_key_stress_child",
@@ -7912,7 +7912,7 @@ mod tests {
 
     fn spawn_test_child(test: &str, env: (&str, &Path)) -> std::process::Child {
         crate::test_process::spawn(
-            Command::new(std::env::current_exe().unwrap())
+            Command::new(crate::test_process::executable())
                 .args(["--exact", test, "--nocapture"])
                 .env(env.0, env.1)
                 .stdout(Stdio::piped())
@@ -8170,7 +8170,7 @@ mod tests {
         let root = temp_root("lock-process");
         let lock_path = root.path().join("process.publish.lock");
         let mut child = crate::test_process::spawn(
-            Command::new(std::env::current_exe().unwrap())
+            Command::new(crate::test_process::executable())
                 .args([
                     "--exact",
                     "map_cache::tests::publish_lock_child",

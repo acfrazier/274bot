@@ -206,6 +206,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Panel and terminal app
 
+- Region changes during a session no longer appear under the login source.
+  The `startup phase LoadingScene` and `startup phase Ready` lines carry the
+  host source, so the login filter shows login work.
 - The per-event Guardian policy is now Flee or Fight in both apps; the
   Ignore choice is gone. A policy saved as Ignore by 0.2.9 loads as Flee,
   and the next settings save writes Flee. A saved Fight stays Fight.
@@ -213,6 +216,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
 - Fixed unbounded memory growth when a CPU-rendered panel is minimized or occluded.
 - On KDE Plasma with Wayland, a locked screen no longer slows the panel to about 20 frames per second. While the screen was locked, the focused account's client also ran its frames, which include bot logic and drawing, at 100 ms or more each instead of 20 ms. The change applies when the graphics driver supports Mailbox presentation.
+- The Game view now fits the Game pane, so it grows when you stretch the
+  panel window and shrinks with it. Before, it stayed at 765×503 and left
+  spare space at any other size.
+- A floating Script prefs window now fits its contents: it opens as tall
+  as its rows, grows and shrinks as they change, and scrolls after 720
+  logical pixels. Its width stays between 360 and 480 logical pixels so
+  labels stay readable. A docked Script prefs tab keeps the panel's size.
 
 ### Preferences and saved state
 

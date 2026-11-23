@@ -1544,7 +1544,7 @@ fn a_writer_in_another_process_holding_the_lock_makes_the_write_wait() {
         .unwrap()
         .version();
     let ready = scratch.home.join("child-ready");
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+    let mut child = std::process::Command::new(crate::test_process::executable())
         .args([
             "--ignored",
             "--exact",

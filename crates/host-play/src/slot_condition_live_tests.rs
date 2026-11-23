@@ -58,6 +58,7 @@ struct PoisonOracle {
     last_mark: Option<u16>,
     last_tick: Option<u32>,
     immune_origin: Option<u32>,
+    dose_drop_deadline: Option<u32>,
 }
 
 impl PoisonOracle {
@@ -70,6 +71,7 @@ impl PoisonOracle {
             last_mark: None,
             last_tick: None,
             immune_origin: None,
+            dose_drop_deadline: None,
         }
     }
 
@@ -133,13 +135,32 @@ impl PoisonOracle {
                 }
             }
         }
-        if let PoisonState::Immune { .. } = condition.poison {
-            self.immune_origin
-                .get_or_insert(tick.saturating_sub(elapsed.max(1) - 1));
-            if !drink_line || dose_held {
+        if let Some(deadline) = self.dose_drop_deadline {
+            if tick >= deadline && dose_held {
                 return Err(format!(
-                    "immunity lacks matching drink and dose drop at {tick}"
+                    "dose still held at tick {tick} (deadline {deadline})"
                 ));
+            }
+            if !dose_held {
+                self.dose_drop_deadline = None;
+            }
+        }
+        if let PoisonState::Immune { .. } = condition.poison {
+            if !drink_line {
+                return Err(format!("immunity lacks matching drink at {tick}"));
+            }
+            if self.immune_origin.is_none() {
+                self.immune_origin = Some(tick.saturating_sub(elapsed.max(1) - 1));
+                // anti_poison.rs2:5-9 changes the slot in the drink cycle.
+                // Player.ts:2304-2306 sends the message immediately
+                // (NetworkPlayer.ts:221-226). World.ts:1108-1116 then
+                // sends PLAYER_INFO before inventory, so the dose must be
+                // gone at the first sample at or after the next tick.
+                if dose_held {
+                    self.dose_drop_deadline = Some(tick + 1);
+                }
+            } else if dose_held && self.dose_drop_deadline.is_none() {
+                return Err(format!("dose held again during immunity at {tick}"));
             }
         }
         if let Some(origin) = self.immune_origin {
@@ -557,6 +578,20 @@ mod oracle_tests {
     }
 
     #[test]
+    fn condition_oracle_accepts_dose_drop_by_the_next_tick_sample() {
+        let mut oracle = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
+        let immune = condition(PoisonState::Immune { until_lower: 311 });
+        assert_eq!(oracle.observe(191, immune, true, true), Ok(false));
+        for tick in 192..=311 {
+            assert_eq!(oracle.observe(tick, immune, true, false), Ok(false));
+        }
+        assert_eq!(
+            oracle.observe(312, condition(PoisonState::Clear), true, false),
+            Ok(true)
+        );
+    }
+
+    #[test]
     fn condition_oracle_accepts_super_credit_past_ordinary_expiry() {
         let mut oracle = before_drink(SUPER_ANTIPOISON_IMMUNITY_TICKS);
         let origin = 191;
@@ -625,14 +660,14 @@ mod oracle_tests {
     }
 
     #[test]
-    fn condition_oracle_rejects_missing_drink_drop_super_credit_and_early_or_late_expiry() {
-        for (line, held, until) in [(false, false, 311), (true, true, 311), (true, false, 761)] {
+    fn condition_oracle_rejects_missing_drink_super_credit_and_early_or_late_expiry() {
+        for (line, until) in [(false, 311), (true, 761)] {
             assert!(before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS)
                 .observe(
                     191,
                     condition(PoisonState::Immune { until_lower: until }),
                     line,
-                    held
+                    false
                 )
                 .is_err());
         }
@@ -645,6 +680,28 @@ mod oracle_tests {
         let mut late = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
         late.observe(191, immune, true, false).unwrap();
         assert!(late.observe(312, immune, true, false).is_err());
+    }
+
+    #[test]
+    fn condition_oracle_checks_dose_at_or_after_the_next_tick() {
+        let immune = condition(PoisonState::Immune { until_lower: 311 });
+        for tick in [192, 193] {
+            let mut oracle = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
+            assert_eq!(oracle.observe(191, immune, true, true), Ok(false));
+            assert!(oracle.observe(tick, immune, true, true).is_err());
+        }
+
+        let mut skipped = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
+        assert_eq!(skipped.observe(191, immune, true, true), Ok(false));
+        assert_eq!(skipped.observe(193, immune, true, false), Ok(false));
+    }
+
+    #[test]
+    fn condition_oracle_rejects_a_dose_returning_during_immunity() {
+        let immune = condition(PoisonState::Immune { until_lower: 311 });
+        let mut oracle = before_drink(ORDINARY_ANTIPOISON_IMMUNITY_TICKS);
+        assert_eq!(oracle.observe(191, immune, true, false), Ok(false));
+        assert!(oracle.observe(192, immune, true, true).is_err());
     }
 
     #[test]
