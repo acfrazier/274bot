@@ -49,7 +49,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::walk_permissions::WalkGlobals;
-use api::bank_memory::{HintRowsError, MAX_HINT_ROWS};
+use api::bank_memory::HintRowsError;
 use api::identity::DurableTimestamp;
 use api::loadout::{parse_loadout, Loadout};
 use api::local_state::{
@@ -455,8 +455,8 @@ pub(super) enum ReadError {
     #[error("file names profile {profile:?} account {account:?}")]
     Identity { profile: String, account: String },
     #[error(
-        "file was observed under revision {revision:?} content {content:?}; \
-         remove it to start a hint for this content"
+        "file records a content scope with only one of its two parts (revision {revision:?}, \
+         content {content:?})"
     )]
     Scope {
         revision: Option<i32>,
@@ -552,7 +552,7 @@ impl ReadError {
 /// A schema 1 document without `revision` and `content` is also in the
 /// 0.2.8 format: 0.2.8 read it under the scope that asks and stamped the
 /// scope on its next write. This build does the same.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 struct HintDocument {
     schema_version: u32,
     profile: String,
@@ -881,82 +881,10 @@ pub(super) fn read(
             }))
         }
         StoreKey::Preferences => Err(ReadError::NotAnObject),
-        StoreKey::BankHint {
-            profile,
-            account,
-            revision,
-            content,
-        } => {
-            let (value, duplicate) = value_and_duplicate_fields(&raw)?;
-            // Keep strict rejection limited to recognized hint documents so
-            // malformed legacy data retains its existing classification.
-            if value.is_object() {
-                if let Some(duplicate) = duplicate {
-                    return Err(duplicate);
-                }
-            }
-            if let Some((found_profile, found_account)) = unversioned_hint_identity(&value) {
-                if found_profile != profile || found_account != account {
-                    return Err(ReadError::Identity {
-                        profile: found_profile.to_owned(),
-                        account: found_account.to_owned(),
-                    });
-                }
-                return Err(ReadError::UnsupportedSavedFormat);
-            }
-            // A field this build does not know is content a rewrite would
-            // drop: the hint is read, but never rewritten (the loadouts
-            // rule).
-            let unknown = value.as_object().map_or(0, |fields| {
-                fields
-                    .keys()
-                    .filter(|field| !HINT_FIELDS.contains(&field.as_str()))
-                    .count()
-            });
-            let document: HintDocument = serde_json::from_value(value)?;
-            if document.schema_version != HINT_SCHEMA_VERSION {
-                return Err(ReadError::Schema {
-                    found: document.schema_version,
-                });
-            }
-            if document.profile != *profile || document.account != *account {
-                return Err(ReadError::Identity {
-                    profile: document.profile,
-                    account: document.account,
-                });
-            }
-            match (&document.revision, &document.content) {
-                (Some(found_revision), Some(found_content))
-                    if found_revision == revision && found_content == content => {}
-                // No scope recorded: read it under the scope that asks.
-                // The next write stamps the scope.
-                (None, None) => {}
-                _ => {
-                    return Err(ReadError::Scope {
-                        revision: document.revision,
-                        content: document.content,
-                    })
-                }
-            }
-            if document.rows.len() > MAX_HINT_ROWS {
-                return Err(HintRowsError::TooManyRows.into());
-            }
-            Ok(Some(ReadDocument {
-                snapshot: LeaseSnapshot::bank_hints(document.rows)?,
-                preferences: None,
-                at: DurableTimestamp::from_unix_seconds(document.observed_at_unix),
-                digest,
-                written_len: raw.len(),
-                rewrite: if unknown == 0 {
-                    Rewrite::Lossless
-                } else {
-                    Rewrite::Refused {
-                        unreadable: 0,
-                        lossy: unknown,
-                    }
-                },
-            }))
-        }
+        StoreKey::BankHint { .. } => Err(ReadError::Io(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "bank hints are read from the state database",
+        ))),
         StoreKey::ScriptRuntimeSettings {
             profile,
             account,
@@ -1042,6 +970,88 @@ pub(super) fn read(
             }))
         }
     }
+}
+
+/// A schema-1 hint file as the first import reads it, whole.
+pub(super) struct HintSource {
+    /// The rows, under the row contract of a bank hint.
+    pub(super) snapshot: LeaseSnapshot,
+    /// The scope the file records. `None` for a schema-1 file from before
+    /// scopes: 0.2.8 read it under the scope that asked and stamped it on
+    /// its next write, and the import does the same.
+    pub(super) scope: Option<(i32, String)>,
+    /// When the rows were observed: the hint's own stamp.
+    pub(super) observed_at_unix: u64,
+    /// How many fields this build does not know: content a stored hint
+    /// cannot hold, so the hint is stored read-only.
+    pub(super) omitted_fields: usize,
+    /// The digest of the bytes read.
+    pub(super) digest: ContentDigest,
+}
+
+/// Read the hint file of `profile` and `account` at `path` for the first
+/// import: `Ok(None)` only for a file that is confirmed absent. A file that
+/// names a field twice, another account, another schema, a scope with one
+/// half, rows that break the row contract, or a shape from before schema 1,
+/// is refused whole, never read as absent and never changed.
+pub(super) fn read_hint_source(
+    path: &Path,
+    profile: &str,
+    account: &str,
+) -> Result<Option<HintSource>, ReadError> {
+    let raw = match read_private_file(path, MAX_HINT_BYTES) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let digest = digest(raw.as_bytes());
+    let (value, duplicate) = value_and_duplicate_fields(&raw)?;
+    // Keep strict rejection limited to recognized hint documents so
+    // malformed legacy data retains its existing classification.
+    if value.is_object() {
+        if let Some(duplicate) = duplicate {
+            return Err(duplicate);
+        }
+    }
+    if let Some((found_profile, found_account)) = unversioned_hint_identity(&value) {
+        if found_profile != profile || found_account != account {
+            return Err(ReadError::Identity {
+                profile: found_profile.to_owned(),
+                account: found_account.to_owned(),
+            });
+        }
+        return Err(ReadError::UnsupportedSavedFormat);
+    }
+    let unknown = value.as_object().map_or(0, |fields| {
+        fields
+            .keys()
+            .filter(|field| !HINT_FIELDS.contains(&field.as_str()))
+            .count()
+    });
+    let document: HintDocument = serde_json::from_value(value)?;
+    if document.schema_version != HINT_SCHEMA_VERSION {
+        return Err(ReadError::Schema {
+            found: document.schema_version,
+        });
+    }
+    if document.profile != profile || document.account != account {
+        return Err(ReadError::Identity {
+            profile: document.profile,
+            account: document.account,
+        });
+    }
+    let scope = match (document.revision, document.content) {
+        (Some(revision), Some(content)) => Some((revision, content)),
+        (None, None) => None,
+        (revision, content) => return Err(ReadError::Scope { revision, content }),
+    };
+    Ok(Some(HintSource {
+        snapshot: LeaseSnapshot::bank_hints(document.rows)?,
+        scope,
+        observed_at_unix: document.observed_at_unix,
+        omitted_fields: unknown,
+        digest,
+    }))
 }
 
 /// Whether `raw` is a complete hint document from before schema 1: the
@@ -1238,33 +1248,6 @@ pub(super) fn quarantine_copy(path: &Path, bytes: &[u8], kind: &str) -> io::Resu
         io::ErrorKind::AlreadyExists,
         format!("{name}.{kind}-{stamp}: no free name"),
     ))
-}
-
-/// The bytes a hint write publishes: the schema-1 document, stamped with
-/// the store's content scope.
-pub(super) fn hint_bytes(
-    key: &StoreKey,
-    rows: &[(i32, i32)],
-    observed_at: DurableTimestamp,
-) -> Result<Vec<u8>, serde_json::Error> {
-    let StoreKey::BankHint {
-        profile,
-        account,
-        revision,
-        content,
-    } = key
-    else {
-        unreachable!("a bank hint writes a bank-hint store");
-    };
-    serde_json::to_vec(&HintDocument {
-        schema_version: HINT_SCHEMA_VERSION,
-        profile: profile.clone(),
-        account: account.clone(),
-        revision: Some(*revision),
-        content: Some(content.clone()),
-        observed_at_unix: observed_at.unix_seconds(),
-        rows: rows.to_vec(),
-    })
 }
 
 /// The bytes a script settings write publishes in canonical namespace/key order.

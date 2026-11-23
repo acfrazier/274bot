@@ -929,16 +929,20 @@ impl<Io> OperatorSession<Io> {
         ));
         let per_frame = crate::frames::slot_frame(Arc::clone(&self.frames), hook, ops);
         let mut play = match parts {
-            LaunchParts::Validated(validated, mainland) => host_play::run_prepared_template(
-                validated,
-                mainland,
-                Vec::new(),
-                |_| (None, None),
-                per_frame,
-            )?,
-            LaunchParts::Template(template, mainland) => host_play::run_with_template(
+            LaunchParts::Validated(validated, mainland) => {
+                host_play::run_prepared_template_and_state(
+                    validated,
+                    mainland,
+                    self.local_state.clone(),
+                    Vec::new(),
+                    |_| (None, None),
+                    per_frame,
+                )?
+            }
+            LaunchParts::Template(template, mainland) => host_play::run_with_template_and_state(
                 template,
                 mainland,
+                self.local_state.clone(),
                 Vec::new(),
                 |_| (None, None),
                 per_frame,

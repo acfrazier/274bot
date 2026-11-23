@@ -22,6 +22,7 @@ use api::hostlog::{Category, Level};
 use api::local_state::StoreVersion;
 use serde_json::Map;
 
+use super::bank;
 use super::files::{self, StateRoot};
 use super::root_use::RootUse;
 use super::sql::{self, Frontend, Legacy, SqlFailure};
@@ -39,6 +40,11 @@ pub enum MaintenanceAction {
     /// `state preferences recover --defaults`: preserve the database set,
     /// then start a new preference history with default preferences.
     RecoverDefaults,
+    /// `state bank-hints accept-projection <profile>/<account>/<revision>/<content>`:
+    /// after the operator confirms, clear the read-only refusal of an
+    /// imported bank hint whose file held fields this build does not know,
+    /// so later saves hold the usable rows only.
+    AcceptBankProjection(String),
 }
 
 /// Why a maintenance command did nothing (or stopped), in the operator's
@@ -60,7 +66,9 @@ pub fn maintenance_help(frontend: Frontend) -> String {
     format!(
         "usage:\n  {bin} state preferences export --same-root\n  {bin} state preferences recover \
          --source \"/absolute/path/private-valid.json\"\n  {bin} state preferences recover \
-         --defaults\n\nStop every 274bot process for this root first; the command refuses while \
+         --defaults\n  {bin} state bank-hints accept-projection \
+         <profile>/<account>/<revision>/<content>\n\nStop every 274bot process for this root \
+         first; the command refuses while \
          another new-version process uses it. The root is the one normal use resolves \
          (<home>/.274bot).\n\nexport --same-root writes the latest saved preferences as \
          panel-ui.json in the same root, for 0.2.9. A changed file there is imported once at \
@@ -69,7 +77,11 @@ pub fn maintenance_help(frontend: Frontend) -> String {
          state/preserved-<time> directory, then starts a new preference history: its version \
          numbers restart and are not comparable with the preserved ones. --source imports a \
          private, valid JSON object; --defaults discards the saved preferences (they stay in \
-         the preserved set).\n"
+         the preserved set).\n\naccept-projection: a bank hint file with fields this build does \
+         not know is imported read-only, and its original is kept as .migrated evidence. The \
+         command shows the hint, its version, the evidence file and how many fields were \
+         omitted, and asks for confirmation (a terminal is required) before later saves hold \
+         the usable rows only.\n"
     )
 }
 
@@ -92,6 +104,9 @@ pub fn parse_maintenance(
             Ok(MaintenanceAction::RecoverSource(PathBuf::from(source)))
         }
         ["state", "preferences", "recover", "--defaults"] => Ok(MaintenanceAction::RecoverDefaults),
+        ["state", "bank-hints", "accept-projection", key] => {
+            Ok(MaintenanceAction::AcceptBankProjection((*key).to_string()))
+        }
         _ => Err(format!(
             "not one maintenance command (one action per run; export and recovery cannot be \
              combined)\n{}",
@@ -107,7 +122,8 @@ pub fn parse_maintenance(
 pub fn maintenance_command(frontend: Frontend, args: &[String]) -> Option<i32> {
     use std::io::Write as _;
     if args.len() >= 3
-        && args[..2] == ["state".to_string(), "preferences".to_string()]
+        && args[0] == "state"
+        && matches!(args[1].as_str(), "preferences" | "bank-hints")
         && matches!(args[2].as_str(), "--help" | "-h" | "help")
     {
         let _ = write!(std::io::stdout(), "{}", maintenance_help(frontend));
@@ -122,7 +138,7 @@ pub fn maintenance_command(frontend: Frontend, args: &[String]) -> Option<i32> {
     };
     let root = StateRoot::new(script::bot_home().join(".274bot"));
     Some(
-        match run_preferences_maintenance(&root, frontend, &action) {
+        match run_maintenance(&root, frontend, &action, &confirm_on_terminal) {
             Ok(report) => {
                 let _ = writeln!(std::io::stdout(), "{report}");
                 0
@@ -136,18 +152,46 @@ pub fn maintenance_command(frontend: Frontend, args: &[String]) -> Option<i32> {
 }
 
 /// Run `action` at `root` for the `frontend` binary. `Ok` is the report
-/// the command prints.
+/// the command prints. An action that needs the operator's confirmation
+/// (accepting a bank hint's projection) is refused: use
+/// [`run_maintenance`] with a way to ask.
 pub fn run_preferences_maintenance(
     root: &StateRoot,
     frontend: Frontend,
     action: &MaintenanceAction,
+) -> Result<String, MaintenanceError> {
+    run_maintenance(root, frontend, action, &|_| false)
+}
+
+/// [`run_preferences_maintenance`] with `confirm`, the operator's answer to
+/// the question an action asks before it changes anything.
+pub fn run_maintenance(
+    root: &StateRoot,
+    frontend: Frontend,
+    action: &MaintenanceAction,
+    confirm: &dyn Fn(&str) -> bool,
 ) -> Result<String, MaintenanceError> {
     run(
         root,
         frontend,
         action,
         sql::Db::new(root.clone(), frontend, None),
+        confirm,
     )
+}
+
+/// Ask on the terminal: `true` only for the answer `yes` typed on a
+/// terminal. A command run without a terminal never confirms.
+fn confirm_on_terminal(question: &str) -> bool {
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return false;
+    }
+    let _ = write!(std::io::stderr(), "{question}\nType yes to continue: ");
+    let _ = std::io::stderr().flush();
+    let mut answer = String::new();
+    stdin.lock().read_line(&mut answer).is_ok() && answer.trim() == "yes"
 }
 
 /// [`run_preferences_maintenance`] with a test's seams in the database
@@ -161,7 +205,7 @@ pub(super) fn run_preferences_maintenance_with_seams(
 ) -> Result<String, MaintenanceError> {
     let mut db = sql::Db::new(root.clone(), frontend, None);
     db.seams = seams;
-    run(root, frontend, action, db)
+    run(root, frontend, action, db, &|_| false)
 }
 
 fn run(
@@ -169,6 +213,7 @@ fn run(
     frontend: Frontend,
     action: &MaintenanceAction,
     mut db: sql::Db,
+    confirm: &dyn Fn(&str) -> bool,
 ) -> Result<String, MaintenanceError> {
     let display = root.path().display().to_string();
     let Some(lease) = RootUse::exclusive(root).map_err(|error| {
@@ -193,11 +238,92 @@ fn run(
         MaintenanceAction::ExportSameRoot => export(&mut db, &display, &guard),
         MaintenanceAction::RecoverSource(source) => recover(&mut db, root, Some(source), &guard),
         MaintenanceAction::RecoverDefaults => recover(&mut db, root, None, &guard),
+        MaintenanceAction::AcceptBankProjection(name) => {
+            accept_bank_projection(&mut db, root, name, &guard, confirm)
+        }
     };
     db.close();
     drop(guard);
     drop(lease);
     result
+}
+
+/// Accept the read-only projection of one imported bank hint (see
+/// [`MaintenanceAction::AcceptBankProjection`]): show what is read, ask, and
+/// only then clear the refusal. Nothing changes without the evidence kept
+/// beside the source and the operator's yes.
+fn accept_bank_projection(
+    db: &mut sql::Db,
+    root: &StateRoot,
+    name: &str,
+    guard: &files::WriteLock,
+    confirm: &dyn Fn(&str) -> bool,
+) -> Result<String, MaintenanceError> {
+    let Some(key) = bank::BankKey::parse(name) else {
+        return Err(MaintenanceError(format!(
+            "{name:?} is not a bank hint key. Name it as <profile>/<account>/<revision>/<content>, \
+             for example local-289/alice/289/lostcity-289. Nothing was changed."
+        )));
+    };
+    let opened = db.open_for_maintenance(guard).map_err(refusal)?;
+    if !opened {
+        return Err(MaintenanceError(
+            "There is no state database in this root; nothing was changed.".to_string(),
+        ));
+    }
+    let Some((row, ledger)) = db.bank_report(&key).map_err(refusal)? else {
+        return Err(MaintenanceError(format!(
+            "There is no stored bank hint {name}; nothing was changed. Names are listed in the \
+             log line 'bank-hints hint ... has N omitted field(s)'."
+        )));
+    };
+    if row.omitted == 0 {
+        return Err(MaintenanceError(format!(
+            "The bank hint {name} has no read-only projection to accept; nothing was changed."
+        )));
+    }
+    let evidence = key.evidence_file(root, ledger.digest).ok_or_else(|| {
+        MaintenanceError(format!(
+            "The original of the bank hint {name} is not kept as a .migrated file beside \
+             {}, so its omitted fields cannot be accepted away. Restore the original there, \
+             or leave the hint read-only. Nothing was changed.",
+            root.bank_hint_file(&key.profile, &key.account).display()
+        ))
+    })?;
+    let question = format!(
+        "Bank hint {name} is read-only at {}: {} usable row(s), {} omitted field(s) kept in \
+         the original {}. Accepting means every later save of this hint holds the usable \
+         rows only, and the omitted fields stay only in that file.",
+        row.version,
+        row.snapshot.as_bank_hints().map_or(0, <[_]>::len),
+        row.omitted,
+        evidence.display()
+    );
+    if !confirm(&question) {
+        return Err(MaintenanceError(format!(
+            "{question} Not confirmed (a terminal and the answer yes are required); nothing was \
+             changed."
+        )));
+    }
+    db.accept_bank_projection(guard, &key, row.version)
+        .map_err(refusal)?;
+    host_log!(
+        Category::Lifecycle,
+        Level::Info,
+        "audit domain=bank-hints profile={} account={} action=bank-hint-accept-projection \
+         origin=maintenance from={} omitted={} evidence={}",
+        key.profile,
+        key.account,
+        row.version,
+        row.omitted,
+        evidence.display()
+    );
+    Ok(format!(
+        "Accepted the projection of bank hint {name}: later saves hold its {} usable row(s) only. \
+         The original stays in {}.",
+        row.snapshot.as_bank_hints().map_or(0, <[_]>::len),
+        evidence.display()
+    ))
 }
 
 fn export(
@@ -298,6 +424,10 @@ fn recover(
             "defaults".to_string(),
         ),
     };
+    // The bank hints and the other domains' import ledger belong to the
+    // database too, and a preferences recovery must not reset them: read
+    // them from the old database before it is preserved.
+    let carry = db.read_bank_carry();
     let preserved = preserve(root).map_err(|error| {
         MaintenanceError(format!(
             "Recovery stopped at {:?}: the old database files could not be preserved ({error}). \
@@ -312,6 +442,29 @@ fn recover(
     let version = db
         .start_new_history(guard, &body, accounted, kind, &from)
         .map_err(refusal)?;
+    let bank_note = match carry {
+        Ok(carry) => {
+            db.restore_bank_carry(guard, carry.as_ref())
+                .map_err(refusal)?;
+            match carry {
+                Some(carry) => {
+                    format!("{} bank hint(s) were carried over unchanged", carry.hints())
+                }
+                None => "there were no bank hints to carry over".to_string(),
+            }
+        }
+        Err(failure) => {
+            db.mark_bank_sources_unknown(guard).map_err(refusal)?;
+            let why = match failure {
+                SqlFailure::Wait(cause) => cause.reason().to_string(),
+                SqlFailure::Refused { detail, .. } => detail.to_string(),
+            };
+            format!(
+                "the bank hints could not be read from the old database ({why}); they stay in \
+                 the preserved set, and no legacy bank hint file is imported again"
+            )
+        }
+    };
     let kept = preserved
         .as_ref()
         .map(|dir| format!("the old database set is preserved in {}", dir.display()))
@@ -328,7 +481,8 @@ fn recover(
         )
     );
     Ok(format!(
-        "Preferences recovered from {from} at {version}: preferences history restarted; {kept}."
+        "Preferences recovered from {from} at {version}: preferences history restarted; \
+         {kept}; {bank_note}."
     ))
 }
 
@@ -439,6 +593,11 @@ fn lease_conflict(root: &str, frontend: Frontend, action: &MaintenanceAction) ->
             text.push_str(&format!(
                 " Run '{bin} state preferences recover --source \"<private-valid-json>\"' or \
                  '{bin} state preferences recover --defaults'."
+            ));
+        }
+        MaintenanceAction::AcceptBankProjection(name) => {
+            text.push_str(&format!(
+                " Run '{bin} state bank-hints accept-projection {name}' again."
             ));
         }
     }

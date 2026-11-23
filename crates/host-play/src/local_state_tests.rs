@@ -395,49 +395,6 @@ fn loadouts_store_and_service_exchange_identical_rows_and_pretty_json() {
 }
 
 #[test]
-fn bank_hint_submission_writes_schema_one_and_readback_preserves_rows_and_time() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-bank-format");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[LocalStateDomain::BankHints],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let alice = bank_identity("alice");
-    let at = 1_759_700_123;
-    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
-    let request =
-        request(service.submit(hint_edit(&alice, None, vec![(379, 12), (995, 3400)], at)));
-    let receipt = completed(&service, request);
-    let path = root.bank_hint_file(PROFILE, "alice");
-    let written: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    assert_eq!(written["schema_version"], serde_json::json!(1));
-    assert_eq!(written["profile"], serde_json::json!(PROFILE));
-    assert_eq!(written["account"], serde_json::json!("alice"));
-    assert_eq!(written["revision"], serde_json::json!(289));
-    assert_eq!(written["content"], serde_json::json!(CONTENT));
-    assert_eq!(written["observed_at_unix"], serde_json::json!(at));
-    assert_eq!(written["rows"], serde_json::json!([[379, 12], [995, 3400]]));
-    assert_eq!(
-        receipt.version(),
-        StoreVersion::INITIAL.checked_next().unwrap()
-    );
-
-    let bob = bank_identity("bob");
-    let bob_at = 1_759_700_456;
-    let bob_rows = [(526, 5), (995, 70)];
-    let bob_path = root.bank_hint_file(PROFILE, "bob");
-    write_private(
-        &bob_path,
-        &hint_document(PROFILE, "bob", HINT_SCHEMA_VERSION, bob_at, &bob_rows),
-    );
-    let lease = service.readback_lease(&bob, WAIT).unwrap().unwrap();
-    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), bob_rows);
-    assert_eq!(lease.at().unix_seconds(), bob_at);
-}
-
-#[test]
 fn expected_version_conflict_settles_without_touching_the_file() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-conflict");
@@ -470,164 +427,6 @@ fn expected_version_conflict_settles_without_touching_the_file() {
         })
     );
     assert_eq!(std::fs::read(path).unwrap(), before);
-}
-
-#[test]
-fn a_new_queued_hint_supersedes_the_old_one_which_follows_it_to_durability() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-superseded");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[
-            LocalStateDomain::BankHints,
-            LocalStateDomain::LoadoutsReferences,
-        ],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let bank = bank_identity("alice");
-    let loadouts = loadouts_identity();
-    let _ = service.readback_lease(&bank, WAIT).unwrap();
-    let _ = service.readback_lease(&loadouts, WAIT).unwrap();
-    let blocker_path = root.loadouts_file();
-    let bank_path = root.bank_hint_file(PROFILE, "alice");
-    let hook_bank_path = bank_path.clone();
-    let (entered_tx, entered_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel::<()>();
-    let release_rx = std::sync::Mutex::new(release_rx);
-    let bank_writes = Arc::new(AtomicUsize::new(0));
-    let counted_bank_writes = Arc::clone(&bank_writes);
-    service.set_write_hook(Arc::new(move |path, bytes| {
-        if path == blocker_path {
-            entered_tx
-                .send(())
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-            release_rx
-                .lock()
-                .unwrap()
-                .recv()
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-        }
-        if path == hook_bank_path {
-            counted_bank_writes.fetch_add(1, Ordering::SeqCst);
-        }
-        vault::write_private_file(path, bytes)
-    }));
-
-    let blocker = request(service.submit(loadout_edit(
-        None,
-        Loadout::new("blocker").with_carry("Coins", 1),
-    )));
-    entered_rx.recv_timeout(WAIT).unwrap();
-    let first = request(service.submit(hint_edit(&bank, None, vec![(995, 1)], 100)));
-    let second = request(service.submit(hint_edit(&bank, None, vec![(995, 2)], 101)));
-    assert_eq!(
-        service.observe(first),
-        Some(Settlement::Cancelled(Cancellation::Superseded))
-    );
-    assert_eq!(service.observe(second), None, "the newest hint is queued");
-    assert_eq!(
-        service.wait_durable(first, Duration::from_millis(50)),
-        Durability::Pending,
-        "a superseded hint is durable only when its replacement is"
-    );
-
-    release_tx.send(()).unwrap();
-    assert!(matches!(
-        settlement(&service, blocker),
-        Settlement::Completed(_)
-    ));
-    let durable = service.wait_durable(first, WAIT);
-    assert!(
-        matches!(&durable, Durability::Durable(receipt) if receipt.request() == Some(second)),
-        "{durable:?}"
-    );
-    assert_eq!(
-        bank_writes.load(Ordering::SeqCst),
-        1,
-        "only the newest queued hint was written"
-    );
-    let written: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(bank_path).unwrap()).unwrap();
-    assert_eq!(written["rows"], serde_json::json!([[995, 2]]));
-}
-
-#[test]
-fn identical_hint_bytes_complete_at_the_existing_version_without_a_write() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-identical");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[LocalStateDomain::BankHints],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let identity = bank_identity("alice");
-    assert_eq!(service.readback_lease(&identity, WAIT).unwrap(), None);
-    let writes = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&writes);
-    service.set_write_hook(Arc::new(move |path, bytes| {
-        counted.fetch_add(1, Ordering::SeqCst);
-        vault::write_private_file(path, bytes)
-    }));
-    let rows = vec![(995, 3400)];
-    let at = 1_759_700_123;
-    let first = request(service.submit(hint_edit(&identity, None, rows.clone(), at)));
-    let first_receipt = completed(&service, first);
-    assert_eq!(writes.load(Ordering::SeqCst), 1);
-
-    let second = request(service.submit(hint_edit(&identity, None, rows, at)));
-    let second_receipt = completed(&service, second);
-    assert_eq!(second_receipt.version(), first_receipt.version());
-    assert_eq!(writes.load(Ordering::SeqCst), 1);
-}
-
-#[test]
-fn failed_write_keeps_previous_rows_and_a_following_submission_can_succeed() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-write-failure");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[LocalStateDomain::BankHints],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let identity = bank_identity("alice");
-    assert_eq!(service.readback_lease(&identity, WAIT).unwrap(), None);
-    let original = request(service.submit(hint_edit(&identity, None, vec![(995, 20)], 200)));
-    completed(&service, original);
-    let path = root.bank_hint_file(PROFILE, "alice");
-    let calls = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&calls);
-    service.set_write_hook(Arc::new(move |path, bytes| {
-        if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-            return Err(std::io::Error::other("disk full"));
-        }
-        vault::write_private_file(path, bytes)
-    }));
-
-    let failed = request(service.submit(hint_edit(&identity, None, vec![(995, 25)], 201)));
-    assert_eq!(
-        settlement(&service, failed),
-        Settlement::Failed(ErrorCode::Failed {
-            domain: LocalStateDomain::BankHints,
-            reason: FailureReason::Io,
-        })
-    );
-    assert_eq!(
-        service
-            .lease(&identity)
-            .unwrap()
-            .snapshot()
-            .as_bank_hints()
-            .unwrap(),
-        &[(995, 20)]
-    );
-    let before_retry = std::fs::read(&path).unwrap();
-    let retry = request(service.submit(hint_edit(&identity, None, vec![(995, 25)], 201)));
-    completed(&service, retry);
-    assert_ne!(std::fs::read(path).unwrap(), before_retry);
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
 #[test]
@@ -1023,64 +822,6 @@ fn a_loadouts_file_the_service_cannot_round_trip_is_read_but_never_rewritten() {
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
 }
 
-/// r2 item 5: a refused file is read again on demand; once repaired, it is
-/// leased and written normally.
-#[test]
-fn a_repaired_file_is_accepted_again() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-repaired");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[LocalStateDomain::BankHints],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let alice = bank_identity("alice");
-    let path = root.bank_hint_file(PROFILE, "alice");
-    write_private(&path, b"{oops");
-    assert!(service.readback_lease(&alice, WAIT).is_err());
-    std::fs::remove_file(&path).unwrap();
-    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
-    let written = request(service.submit(hint_edit(&alice, None, vec![(995, 5)], 5)));
-    completed(&service, written);
-    assert!(std::fs::read_to_string(&path)
-        .unwrap()
-        .contains("[[995,5]]"));
-}
-
-/// r2 item 4 (sol probe 1): after another writer replaced the hint, an
-/// identical resubmission is not a success over bytes it never wrote.
-#[test]
-fn a_hint_resubmitted_after_an_outside_write_conflicts_and_keeps_the_outside_bytes() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-outside-hint");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[LocalStateDomain::BankHints],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let alice = bank_identity("alice");
-    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
-    let ten = hint_edit(&alice, None, vec![(995, 10)], 10);
-    completed(&service, request(service.submit(ten.clone())));
-    let path = root.bank_hint_file(PROFILE, "alice");
-    let outside = hint_document(PROFILE, "alice", HINT_SCHEMA_VERSION, 20, &[(995, 20)]);
-    write_private(&path, &outside);
-
-    let again = request(service.submit(ten));
-    assert!(
-        matches!(
-            settlement(&service, again),
-            Settlement::Failed(ErrorCode::Conflict { .. })
-        ),
-        "the resubmission did not fabricate a write"
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), outside);
-    let lease = service.lease(&alice).unwrap();
-    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 20)]);
-}
-
 /// r2 item 4 (sol probe 2): a loadout edit written against the cached
 /// version after the form saved another row conflicts; the saved row stays.
 #[test]
@@ -1112,135 +853,6 @@ fn a_loadout_edit_after_a_form_saved_a_row_conflicts_and_keeps_the_row() {
         lease.snapshot().as_loadouts().unwrap(),
         &[Loadout::new("frontend-saved")]
     );
-}
-
-/// r2 item 4: an edit accepted before another writer changed the file
-/// conflicts instead of writing over the change, also when a readback saw
-/// the change first (the precondition then matches the cache, but the edit
-/// was accepted against what came before).
-#[test]
-fn an_edit_accepted_before_an_outside_change_conflicts() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-accepted-then-changed");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[
-            LocalStateDomain::BankHints,
-            LocalStateDomain::LoadoutsReferences,
-        ],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let alice = bank_identity("alice");
-    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
-    let _ = service.readback_lease(&loadouts_identity(), WAIT).unwrap();
-    let stall = stall_on(&service, root.loadouts_file());
-    let blocker = request(service.submit(loadout_edit(None, Loadout::new("blocker"))));
-    stall.entered.recv_timeout(WAIT).unwrap();
-    let queued = request(service.submit(hint_edit(&alice, None, vec![(995, 1)], 1)));
-    let path = root.bank_hint_file(PROFILE, "alice");
-    let outside = hint_document(PROFILE, "alice", HINT_SCHEMA_VERSION, 2, &[(995, 2)]);
-    write_private(&path, &outside);
-    // A session boundary asks for the file while the writer is held: its
-    // readback runs before the queued write and adopts the change.
-    let reader = {
-        let service = Arc::clone(&service);
-        let alice = alice.clone();
-        std::thread::spawn(move || service.readback_lease(&alice, WAIT))
-    };
-    let key = files::StoreKey::of(&alice).unwrap();
-    while service.shared.state.lock().stores[&key].readback != Readback::Queued {
-        std::thread::yield_now();
-    }
-    stall.release.send(()).unwrap();
-    let seen = reader.join().unwrap().unwrap().unwrap();
-    assert_eq!(seen.snapshot().as_bank_hints().unwrap(), &[(995, 2)]);
-    completed(&service, blocker);
-    assert!(matches!(
-        settlement(&service, queued),
-        Settlement::Failed(ErrorCode::Conflict { .. })
-    ));
-    assert_eq!(std::fs::read(&path).unwrap(), outside);
-}
-
-/// r2 item 6 (sol probe): rows observed under one content scope are never
-/// leased, or overwritten, under another.
-#[test]
-fn a_hint_written_under_one_content_scope_is_refused_under_another() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-content-scope");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[LocalStateDomain::BankHints],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let under_a = scoped(LocalStateDomain::BankHints, "alice", "content-a");
-    let under_b = scoped(LocalStateDomain::BankHints, "alice", "content-b");
-    assert_eq!(service.readback_lease(&under_a, WAIT).unwrap(), None);
-    completed(
-        &service,
-        request(service.submit(hint_edit(&under_a, None, vec![(995, 7)], 7))),
-    );
-    let path = root.bank_hint_file(PROFILE, "alice");
-    let written = std::fs::read(&path).unwrap();
-
-    let identity_refusal = ErrorCode::Failed {
-        domain: LocalStateDomain::BankHints,
-        reason: FailureReason::Identity,
-    };
-    assert_eq!(
-        service.readback_lease(&under_b, WAIT),
-        Err(identity_refusal)
-    );
-    assert_eq!(service.lease(&under_b), Err(identity_refusal));
-    assert_eq!(
-        service.submit(hint_edit(&under_b, None, vec![(995, 8)], 8)),
-        SubmitReceipt::Refused(identity_refusal)
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), written);
-    let lease = service.lease(&under_a).unwrap();
-    assert_eq!(lease.identity(), &under_a);
-    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 7)]);
-}
-
-/// A schema 1 hint without a scope is in the 0.2.8 format: 0.2.8 read it
-/// under the scope that asks and stamped the scope on its next write. 0.2.9
-/// does the same.
-#[test]
-fn a_schema_1_hint_without_scope_is_read_then_stamped() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-schema-1-unscoped-hint");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.bank_hint_file(PROFILE, "alice");
-    let bytes = serde_json::to_vec(&serde_json::json!({
-        "schema_version": HINT_SCHEMA_VERSION,
-        "profile": PROFILE,
-        "account": "alice",
-        "observed_at_unix": 3,
-        "rows": [[995, 3]],
-    }))
-    .unwrap();
-    write_private(&path, &bytes);
-    let service = service(&scratch, &[LocalStateDomain::BankHints]);
-    let alice = bank_identity("alice");
-
-    let lease = service.readback_lease(&alice, WAIT).unwrap().unwrap();
-    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 3)]);
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        bytes,
-        "a read changes nothing"
-    );
-    completed(
-        &service,
-        request(service.submit(hint_edit(&alice, None, vec![(995, 4)], 4))),
-    );
-    let written: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(written["revision"], serde_json::json!(289));
-    assert_eq!(written["content"], serde_json::json!(CONTENT));
-    assert_eq!(written["rows"], serde_json::json!([[995, 4]]));
 }
 
 /// The envelope from before schema 1 (no `schema_version`) is older than
@@ -1332,79 +944,6 @@ fn a_write_whose_directory_entry_cannot_be_flushed_is_not_durable() {
     );
 }
 
-/// r2 item 1: nothing acknowledges a write until its directory entries
-/// are flushed: the receipt and the audit line both follow the flush, and
-/// a file created in new directories flushes every entry up to the root's
-/// parent.
-#[test]
-fn the_receipt_and_audit_follow_the_directory_flush() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-flush-order");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[LocalStateDomain::BankHints],
-        Arc::new(RequestIdMinter::new()),
-    );
-    let alice = bank_identity("alice");
-    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
-    let events = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let (entered_tx, entered) = mpsc::channel();
-    let (release, release_rx) = mpsc::channel::<()>();
-    let release_rx = std::sync::Mutex::new(release_rx);
-    let synced = Arc::clone(&events);
-    service.set_sync_hook(Arc::new(move |dir| {
-        if synced.lock().unwrap().is_empty() {
-            let _ = entered_tx.send(());
-            let _ = release_rx.lock().unwrap().recv();
-        }
-        synced.lock().unwrap().push(dir.display().to_string());
-        files::sync_directory(dir)
-    }));
-    let audited = Arc::clone(&events);
-    service.set_audit_hook(Arc::new(move |audit| {
-        audited
-            .lock()
-            .unwrap()
-            .push(format!("audit {}", audit.version()));
-    }));
-
-    let write = request(service.submit(hint_edit(&alice, None, vec![(995, 1)], 1)));
-    entered.recv_timeout(WAIT).unwrap();
-    assert_eq!(
-        service.request_state(write),
-        RequestState::Pending,
-        "renamed but not flushed: not acknowledged"
-    );
-    release.send(()).unwrap();
-    let receipt = completed(&service, write);
-    let hint_dir = root.path().join("bank-hints").join(PROFILE);
-    assert_eq!(
-        *events.lock().unwrap(),
-        vec![
-            hint_dir.display().to_string(),
-            root.path().join("bank-hints").display().to_string(),
-            root.path().display().to_string(),
-            scratch.home.display().to_string(),
-            format!("audit {}", receipt.version()),
-        ]
-    );
-
-    // A later write of the same file flushes its own directory only.
-    events.lock().unwrap().clear();
-    let second = request(service.submit(hint_edit(&alice, None, vec![(995, 2)], 2)));
-    entered.recv_timeout(WAIT).unwrap();
-    release.send(()).unwrap();
-    let receipt = completed(&service, second);
-    assert_eq!(
-        *events.lock().unwrap(),
-        vec![
-            hint_dir.display().to_string(),
-            format!("audit {}", receipt.version()),
-        ]
-    );
-}
-
 /// r2 item 2 (sol P1, grok probe): dropping the last service handle
 /// finishes every accepted write, queued or in flight, and joins the
 /// writer before it returns.
@@ -1446,10 +985,17 @@ fn dropping_the_service_finishes_every_accepted_write_and_joins_the_writer() {
     assert!(std::fs::read_to_string(root.loadouts_file())
         .unwrap()
         .contains("blocker"));
+    let reopened = LocalStateService::open(
+        root.clone(),
+        &[LocalStateDomain::BankHints],
+        Arc::new(RequestIdMinter::new()),
+    );
     for (account, coins) in [("alice", 64), ("bob", 65)] {
-        let raw = std::fs::read_to_string(root.bank_hint_file(PROFILE, account))
-            .unwrap_or_else(|error| panic!("{account}'s queued hint was dropped: {error}"));
-        assert!(raw.contains(&format!("[[995,{coins}]]")), "{raw}");
+        let lease = reopened
+            .readback_lease(&bank_identity(account), WAIT)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{account}'s queued hint was dropped"));
+        assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, coins)]);
     }
 }
 
@@ -1470,12 +1016,14 @@ fn a_panicking_write_fails_its_request_and_the_writer_keeps_serving() {
     assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
     let panicked = Arc::new(AtomicBool::new(false));
     let once = Arc::clone(&panicked);
-    service.set_write_hook(Arc::new(move |path, bytes| {
-        if !once.swap(true, Ordering::SeqCst) {
-            panic!("injected writer panic");
-        }
-        vault::write_private_file(path, bytes)
-    }));
+    service.set_sql_seams_for_test(sql::Seams {
+        point: Some(Arc::new(move |name| {
+            if name == "before-commit" && !once.swap(true, Ordering::SeqCst) {
+                panic!("injected writer panic");
+            }
+        })),
+        ..sql::Seams::default()
+    });
     let doomed = request(service.submit(hint_edit(&alice, None, vec![(995, 1)], 1)));
     assert_eq!(
         settlement(&service, doomed),
@@ -1484,13 +1032,22 @@ fn a_panicking_write_fails_its_request_and_the_writer_keeps_serving() {
             reason: FailureReason::Dirty,
         })
     );
-    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
+    assert_eq!(
+        service.readback_lease(&alice, WAIT).unwrap(),
+        None,
+        "the panicked save rolled back"
+    );
     let next = request(service.submit(hint_edit(&alice, None, vec![(995, 2)], 2)));
     completed(&service, next);
-    assert!(
-        std::fs::read_to_string(root.bank_hint_file(PROFILE, "alice"))
+    assert_eq!(
+        service
+            .readback_lease(&alice, WAIT)
             .unwrap()
-            .contains("[[995,2]]")
+            .unwrap()
+            .snapshot()
+            .as_bank_hints()
+            .unwrap(),
+        &[(995, 2)]
     );
 }
 
@@ -1544,17 +1101,16 @@ fn with_every_held_store_busy_a_new_identity_is_refused() {
     for identity in &others {
         assert_eq!(service.readback_lease(identity, WAIT), Ok(None));
     }
+    // Hold the first write at its start; every other save queues behind it.
     let (entered_tx, entered) = mpsc::channel();
     let (release, release_rx) = mpsc::channel::<()>();
     let release_rx = std::sync::Mutex::new(release_rx);
-    let blocker_path = root.bank_hint_file(PROFILE, "blocker");
-    service.set_sync_hook(Arc::new(|_| Ok(())));
-    service.set_write_hook(Arc::new(move |path, bytes| {
-        if path == blocker_path {
+    let once = AtomicBool::new(false);
+    service.set_write_stall_for_test(Arc::new(move || {
+        if !once.swap(true, Ordering::SeqCst) {
             let _ = entered_tx.send(());
             let _ = release_rx.lock().unwrap().recv();
         }
-        cheap_write(path, bytes)
     }));
     let held = request(service.submit(hint_edit(&blocker, None, vec![(995, 1)], 1)));
     entered.recv_timeout(WAIT).unwrap();
@@ -1832,65 +1388,6 @@ fn terminals(service: &LocalStateService) -> Arc<std::sync::Mutex<Vec<String>>> 
     seen
 }
 
-/// A schema-1 hint document stamped for `identity`, as another writer of
-/// this build would leave it.
-fn stamped_hint(identity: &DomainIdentity, rows: &[(i32, i32)], at: u64) -> Vec<u8> {
-    files::hint_bytes(
-        &StoreKey::of(identity).unwrap(),
-        rows,
-        DurableTimestamp::from_unix_seconds(at),
-    )
-    .unwrap()
-}
-
-/// T5.2 r3 (grok P1 "between read and rename"): a writer that does not take
-/// the lock (a hand edit, a build before r3) replaces the hint while this
-/// service stages its write. The write is not acknowledged, nothing is
-/// audited for it, the file keeps the other writer's bytes, and the
-/// service now holds them.
-#[test]
-fn an_outside_write_while_a_write_is_staged_conflicts_and_keeps_the_outside_bytes() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-r3-staged-race");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = service(&scratch, &[LocalStateDomain::BankHints]);
-    let alice = bank_identity("alice");
-    let path = root.bank_hint_file(PROFILE, "alice");
-    assert!(service.readback_lease(&alice, WAIT).unwrap().is_none());
-    completed(
-        &service,
-        request(service.submit(hint_edit(&alice, None, vec![(995, 10)], 10))),
-    );
-    let audits = audits(&service);
-    let outside = stamped_hint(&alice, &[(995, 77)], 77);
-    let once = AtomicBool::new(false);
-    let written = outside.clone();
-    service.set_publish_hook(Arc::new(move |path| {
-        if !once.swap(true, Ordering::SeqCst) {
-            // An editor saving in place, taking no lock.
-            cheap_write(path, &written).unwrap();
-        }
-    }));
-
-    let edit = request(service.submit(hint_edit(&alice, None, vec![(995, 20)], 20)));
-    let settled = settlement(&service, edit);
-    assert!(
-        matches!(settled, Settlement::Failed(ErrorCode::Conflict { .. })),
-        "an outside replace during staging must conflict, not complete: {settled:?}"
-    );
-    assert_eq!(
-        std::fs::read(&path).unwrap(),
-        outside,
-        "the outside bytes stay"
-    );
-    assert!(
-        audits.lock().unwrap().is_empty(),
-        "nothing committed, nothing audited"
-    );
-    let lease = service.lease(&alice).unwrap();
-    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 77)]);
-}
-
 /// T5.2 r3 (sol F1): a form of a build before r3 (or a hand edit) saves a
 /// loadout row while the service stages its own edit. The service never
 /// writes over the saved row: its edit conflicts and the row stays.
@@ -1928,61 +1425,6 @@ fn a_form_save_during_a_service_publication_is_never_overwritten() {
         rows,
         [Loadout::new("original"), Loadout::new("frontend-saved")],
         "the saved row is never overwritten"
-    );
-}
-
-/// T5.2 r3 (grok P1 "during the directory flush"): another writer replaces
-/// the file after the rename, while the directory entry is being flushed.
-/// The service reads the file back before acknowledging: it no longer holds
-/// the written bytes, so the write is a conflict, never `Completed`, and no
-/// audit line names it.
-#[test]
-fn an_outside_write_during_the_directory_flush_is_not_acknowledged() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-r3-flush-race");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = service(&scratch, &[LocalStateDomain::BankHints]);
-    let alice = bank_identity("alice");
-    let path = root.bank_hint_file(PROFILE, "alice");
-    assert!(service.readback_lease(&alice, WAIT).unwrap().is_none());
-    completed(
-        &service,
-        request(service.submit(hint_edit(&alice, None, vec![(995, 10)], 10))),
-    );
-    let audits = audits(&service);
-    let outside = stamped_hint(&alice, &[(995, 88)], 88);
-    let once = AtomicBool::new(false);
-    let (hint_file, written) = (path.clone(), outside.clone());
-    service.set_sync_hook(Arc::new(move |dir| {
-        if !once.swap(true, Ordering::SeqCst) {
-            write_private(&hint_file, &written);
-        }
-        files::sync_directory(dir)
-    }));
-
-    let edit = request(service.submit(hint_edit(&alice, None, vec![(995, 20)], 20)));
-    let settled = settlement(&service, edit);
-    assert!(
-        !matches!(settled, Settlement::Completed(_)),
-        "a receipt for bytes the file no longer holds is a false acknowledgement: {settled:?}"
-    );
-    assert!(
-        matches!(settled, Settlement::Failed(ErrorCode::Conflict { .. })),
-        "{settled:?}"
-    );
-    assert!(
-        audits.lock().unwrap().is_empty(),
-        "no audit for an unheld commit"
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), outside);
-    assert_eq!(
-        service
-            .lease(&alice)
-            .unwrap()
-            .snapshot()
-            .as_bank_hints()
-            .unwrap(),
-        &[(995, 88)]
     );
 }
 
@@ -2138,68 +1580,10 @@ fn a_writer_in_another_process_holding_the_lock_makes_the_write_wait() {
     assert_eq!(rows, [Loadout::new("original"), Loadout::new("child-row")]);
 }
 
-/// T5.2 r3 (sol F2): the first write of a new hint fails flushing the state
-/// root. The retry, though its bytes and digest match what the failed
-/// attempt left, must flush every link of the chain again (profile
-/// directory, `bank-hints`, the root, the root's parent) before it is
-/// acknowledged and audited.
-#[test]
-fn a_retry_after_a_failed_ancestor_flush_flushes_the_whole_chain() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-r3-flush-retry");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = service(&scratch, &[LocalStateDomain::BankHints]);
-    let alice = bank_identity("alice");
-    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
-    let flushed = Arc::new(std::sync::Mutex::new(Vec::<std::path::PathBuf>::new()));
-    let fail_root = Arc::new(AtomicBool::new(true));
-    let (seen, fail, state_root) = (
-        Arc::clone(&flushed),
-        Arc::clone(&fail_root),
-        root.path().to_path_buf(),
-    );
-    service.set_sync_hook(Arc::new(move |dir| {
-        seen.lock().unwrap().push(dir.to_path_buf());
-        if dir == state_root && fail.swap(false, Ordering::SeqCst) {
-            return Err(std::io::Error::other("root flush failed"));
-        }
-        files::sync_directory(dir)
-    }));
-    let audits = audits(&service);
-
-    let first = request(service.submit(hint_edit(&alice, None, vec![(995, 5)], 5)));
-    assert!(matches!(
-        settlement(&service, first),
-        Settlement::Failed(ErrorCode::Failed {
-            reason: FailureReason::Io,
-            ..
-        })
-    ));
-    assert!(audits.lock().unwrap().is_empty());
-
-    flushed.lock().unwrap().clear();
-    let retry = request(service.submit(hint_edit(&alice, None, vec![(995, 5)], 5)));
-    let receipt = completed(&service, retry);
-    let hint_dir = root.path().join("bank-hints").join(PROFILE);
-    assert_eq!(
-        *flushed.lock().unwrap(),
-        vec![
-            hint_dir,
-            root.path().join("bank-hints"),
-            root.path().to_path_buf(),
-            scratch.home.clone(),
-        ],
-        "the retry re-flushes the unfinished chain"
-    );
-    let audits = audits.lock().unwrap();
-    assert_eq!(audits.len(), 1);
-    assert_eq!(audits[0].version(), receipt.version());
-}
-
 /// T5.2 r3 (grok P2): past the shutdown bound no accepted write is dropped
-/// silently. A write the writer holds short of its rename and a write
+/// silently. A write the writer holds short of its transaction and a write
 /// queued behind it each settle `Cancelled(Shutdown)` with their own
-/// terminal line; the held one is never renamed into place afterwards.
+/// terminal line; the held one is never committed afterwards.
 #[test]
 fn past_the_shutdown_bound_every_accepted_write_settles_with_its_own_line() {
     let _state_lease = crate::test_process::state();
@@ -2212,7 +1596,7 @@ fn past_the_shutdown_bound_every_accepted_write_settles_with_its_own_line() {
     let (entered_tx, entered) = mpsc::channel();
     let (release, release_rx) = mpsc::channel::<()>();
     let release_rx = std::sync::Mutex::new(release_rx);
-    service.set_publish_hook(Arc::new(move |_| {
+    service.set_write_stall_for_test(Arc::new(move || {
         let _ = entered_tx.send(());
         let _ = release_rx.lock().unwrap().recv();
     }));
@@ -2259,77 +1643,72 @@ fn past_the_shutdown_bound_every_accepted_write_settles_with_its_own_line() {
         RequestState::Settled(Settlement::Cancelled(Cancellation::Shutdown)),
         "one terminal per request"
     );
-    assert!(
-        !root.bank_hint_file(PROFILE, "alice").exists(),
-        "never renamed"
+    let reopened = LocalStateService::open(
+        root,
+        &[LocalStateDomain::BankHints],
+        Arc::new(RequestIdMinter::new()),
     );
-    assert!(!root.bank_hint_file(PROFILE, "bob").exists());
+    for identity in [&alice, &bob] {
+        assert_eq!(
+            reopened.readback_lease(identity, WAIT).unwrap(),
+            None,
+            "never committed"
+        );
+    }
 }
 
-/// T5.2 r3: a write already being renamed into place when the shutdown
-/// bound passes is not cancelled: it settles when it finishes, durable and
+/// T5.2 r3: a write whose transaction has begun when the shutdown bound
+/// passes is not cancelled: it settles when its COMMIT is known, durable and
 /// audited.
 #[test]
-fn a_write_being_renamed_at_the_shutdown_bound_settles_when_it_finishes() {
+fn a_write_in_its_transaction_at_the_shutdown_bound_settles_when_it_finishes() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r3-shutdown-publishing");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
     service.set_shutdown_timeout(Duration::from_millis(300));
     let alice = bank_identity("alice");
-    let path = root.bank_hint_file(PROFILE, "alice");
     assert!(service.readback_lease(&alice, WAIT).unwrap().is_none());
-    let stall = stall_on(&service, path.clone());
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    service.set_sql_seams_for_test(sql::Seams {
+        point: Some(Arc::new(move |name| {
+            if name == "before-commit" {
+                let _ = entered_tx.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        })),
+        ..sql::Seams::default()
+    });
     let audits = audits(&service);
     let write = request(service.submit(hint_edit(&alice, None, vec![(995, 3)], 3)));
-    stall.entered.recv_timeout(WAIT).unwrap();
+    entered.recv_timeout(WAIT).unwrap();
     let ledger = service.ledger();
     drop(service);
     assert_eq!(ledger.request_state(write), RequestState::Pending);
-    stall.release.send(()).unwrap();
+    release.send(()).unwrap();
     assert!(ledger.wait_writer_exit(WAIT));
     assert!(matches!(
         ledger.request_state(write),
         RequestState::Settled(Settlement::Completed(_))
     ));
     assert_eq!(audits.lock().unwrap().len(), 1);
-    assert!(path.exists());
-}
-
-/// T5.2 r3 (grok P2): a hint carrying a field this build does not know is
-/// read, but never rewritten (the loadouts rule): the submission is refused
-/// and the field stays.
-#[test]
-fn a_hint_with_a_field_this_build_does_not_know_is_read_but_never_rewritten() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-r3-hint-field");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = service(&scratch, &[LocalStateDomain::BankHints]);
-    let alice = bank_identity("alice");
-    let path = root.bank_hint_file(PROFILE, "alice");
-    let document = serde_json::to_vec(&serde_json::json!({
-        "schema_version": HINT_SCHEMA_VERSION,
-        "profile": PROFILE,
-        "account": "alice",
-        "revision": 289,
-        "content": CONTENT,
-        "observed_at_unix": 7,
-        "rows": [[995, 7]],
-        "note": "keep",
-    }))
-    .unwrap();
-    write_private(&path, &document);
-    let lease = service.readback_lease(&alice, WAIT).unwrap().unwrap();
-    assert_eq!(lease.snapshot().as_bank_hints().unwrap(), &[(995, 7)]);
-
-    assert_eq!(
-        service.submit(hint_edit(&alice, None, vec![(995, 8)], 8)),
-        SubmitReceipt::Refused(ErrorCode::Failed {
-            domain: LocalStateDomain::BankHints,
-            reason: FailureReason::Schema,
-        })
+    let reopened = LocalStateService::open(
+        root,
+        &[LocalStateDomain::BankHints],
+        Arc::new(RequestIdMinter::new()),
     );
-    assert_eq!(std::fs::read(&path).unwrap(), document, "the note is kept");
+    assert_eq!(
+        reopened
+            .readback_lease(&alice, WAIT)
+            .unwrap()
+            .unwrap()
+            .snapshot()
+            .as_bank_hints()
+            .unwrap(),
+        &[(995, 3)]
+    );
 }
 
 fn preferences(scratch: &IsolatedEnv) -> Preferences {
@@ -4357,3 +3736,6 @@ fn preference_snapshot_versions_move_once_per_durable_change() {
         "no change, no new version"
     );
 }
+
+#[path = "local_state/bank_tests.rs"]
+mod bank_hints;

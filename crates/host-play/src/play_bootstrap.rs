@@ -528,15 +528,18 @@ impl Play {
         Self::assemble(
             PlayConnection::Direct(options.clone()),
             None,
-            cache,
-            Arc::new(ifaces),
-            Arc::new(ifaces_mut_template),
+            (cache, Arc::new(ifaces), Arc::new(ifaces_mut_template)),
             world,
             wilderness_rules,
+            None,
         )
     }
 
-    pub(super) fn from_template(template: Arc<SharedClientTemplate>, mainland: bool) -> Play {
+    pub(super) fn from_template(
+        template: Arc<SharedClientTemplate>,
+        mainland: bool,
+        state: Option<Arc<super::local_state::LocalStateService>>,
+    ) -> Play {
         let wilderness_rules = template.wilderness_rules();
         Self::assemble(
             PlayConnection::Bound {
@@ -544,22 +547,24 @@ impl Play {
                 mainland,
             },
             template.game_data.clone(),
-            Arc::clone(&template.tables.cache),
-            Arc::clone(&template.tables.ifaces),
-            Arc::clone(&template.tables.ifaces_mut),
+            (
+                Arc::clone(&template.tables.cache),
+                Arc::clone(&template.tables.ifaces),
+                Arc::clone(&template.tables.ifaces_mut),
+            ),
             template.world.clone(),
             wilderness_rules,
+            state,
         )
     }
 
     fn assemble(
         connection: PlayConnection,
         game_data: Option<Arc<api::game_data::SelectedGameData>>,
-        cache: Arc<Cache>,
-        ifaces: Arc<Vec<Option<Box<IfType>>>>,
-        ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
+        (cache, ifaces, ifaces_mut_template): SharedTableHandles,
         world: Option<Arc<NavWorld>>,
         wilderness_rules: Arc<dyn script::surface::WildernessLevels>,
+        state: Option<Arc<super::local_state::LocalStateService>>,
     ) -> Play {
         // Only the js Start path reads the rules.
         #[cfg(not(feature = "js"))]
@@ -576,10 +581,11 @@ impl Play {
                 world.named_bank_facts().cloned().unwrap_or_default()
             })
             .unwrap_or_default();
-        // The process local-state service (T5.2): opened once here, at the
-        // bound profile's explicit state root, for the domains the current
-        // files back. The legacy direct connection has no launch profile
-        // and opens none.
+        // The local state of the bound profile's explicit state root: over
+        // the process service the caller injected (one writer and one
+        // connection for the process), or over a provisional service of this
+        // Play's own when there is none. The legacy direct connection has no
+        // launch profile and opens none.
         let local_state = connection.profile().and_then(|profile| {
             let scope = match api::local_state::ContentScope::try_new(
                 profile.revision(),
@@ -595,20 +601,12 @@ impl Play {
                     return None;
                 }
             };
-            let service = super::local_state::LocalStateService::open(
-                super::local_state::StateRoot::new(profile.state_root().to_path_buf()),
-                &[
-                    api::local_state::LocalStateDomain::LoadoutsReferences,
-                    api::local_state::LocalStateDomain::BankHints,
-                    api::local_state::LocalStateDomain::ScriptRuntimeSettings,
-                ],
-                Arc::new(api::identity::RequestIdMinter::new()),
-            );
-            Some(Arc::new(super::local_state::StateComposition::new(
-                service,
+            Some(super::local_state::StateComposition::for_play(
+                profile.state_root(),
                 profile.name(),
                 scope,
-            )))
+                state,
+            ))
         });
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
@@ -692,9 +690,29 @@ where
 
 /// Checked production path. Callers can load the template before opening a
 /// vault, then hand the same shared resources to this function after unlock.
+/// The `Play` keeps its own provisional local state; a caller with the
+/// process's state service passes it through [`run_with_template_and_state`].
 pub fn run_with_template<F, G>(
     template: Arc<SharedClientTemplate>,
     mainland: bool,
+    profiles: Vec<Profile>,
+    per_slot: F,
+    per_frame: G,
+) -> Result<Play, String>
+where
+    F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
+    G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
+{
+    run_with_template_and_state(template, mainland, None, profiles, per_slot, per_frame)
+}
+
+/// [`run_with_template`] over the process's local-state service `state`: the
+/// `Play` runs over that one writer and one connection and opens no
+/// provisional service of its own. `None` is [`run_with_template`].
+pub fn run_with_template_and_state<F, G>(
+    template: Arc<SharedClientTemplate>,
+    mainland: bool,
+    state: Option<Arc<super::local_state::LocalStateService>>,
     profiles: Vec<Profile>,
     per_slot: F,
     per_frame: G,
@@ -707,7 +725,7 @@ where
         template.profile().require_bot_operation()?;
     }
     let validated = template.validate_for_play()?;
-    run_prepared_template(validated, mainland, profiles, per_slot, per_frame)
+    run_prepared_template_and_state(validated, mainland, state, profiles, per_slot, per_frame)
 }
 
 /// Construct Play from a one-use template handoff. The public checked
@@ -724,11 +742,28 @@ where
     F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
     G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
 {
+    run_prepared_template_and_state(validated, mainland, None, profiles, per_slot, per_frame)
+}
+
+/// [`run_prepared_template`] over the process's local-state service `state`
+/// (see [`run_with_template_and_state`]).
+pub fn run_prepared_template_and_state<F, G>(
+    validated: ValidatedTemplate,
+    mainland: bool,
+    state: Option<Arc<super::local_state::LocalStateService>>,
+    profiles: Vec<Profile>,
+    per_slot: F,
+    per_frame: G,
+) -> Result<Play, String>
+where
+    F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
+    G: Fn(&mut Client, &str, crate::SlotFrameInput) + Send + Sync + 'static,
+{
     let template = validated.template;
     if !profiles.is_empty() {
         template.profile().require_bot_operation()?;
     }
-    let mut play = Play::from_template(template, mainland);
+    let mut play = Play::from_template(template, mainland, state);
     play.per_frame = Arc::new(per_frame);
     for profile in profiles {
         let (input, mailbox) = per_slot(&profile.username);
@@ -804,6 +839,13 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
         Err(e) => Err(e),
     }
 }
+
+/// The shared cache and interface tables a `Play` holds.
+type SharedTableHandles = (
+    Arc<Cache>,
+    Arc<Vec<Option<Box<IfType>>>>,
+    Arc<Vec<Option<Arc<IfTypeMut>>>>,
+);
 
 /// Decode config/interfaces with the selected revision's decoder and retain
 /// every revision-specific sidecar. No 377 input reaches a legacy unpacker.
@@ -960,11 +1002,14 @@ mod tests {
                 mainland: false,
             }),
             Some(data),
-            Arc::new(Cache::default()),
-            Arc::new(Vec::new()),
-            Arc::new(Vec::new()),
+            (
+                Arc::new(Cache::default()),
+                Arc::new(Vec::new()),
+                Arc::new(Vec::new()),
+            ),
             Some(Arc::clone(&world)),
             wilderness_levels_of(Some(&world)),
+            None,
         );
         assert!(play.handles.is_empty(), "no slot or frame has started");
         assert!(

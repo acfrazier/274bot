@@ -431,8 +431,8 @@ fn live_bank_memory_hint_and_relog_at_draynor() {
     // here (the test thread shares the process `HOME`).
     let identity = api::local_state::AccountKey::try_new(PROFILE, &account)
         .expect("a minted live name is a login identity");
-    let hint_path = crate::local_state::StateRoot::new(PathBuf::from(&home).join(".274bot"))
-        .bank_hint_file(PROFILE, identity.account());
+    let hint_path =
+        crate::local_state::StateRoot::new(PathBuf::from(&home).join(".274bot")).database_file();
     assert!(
         hint_path.starts_with(&home),
         "the hint path {} must sit under HOME {home}",
@@ -575,8 +575,8 @@ fn live_bank_memory_hint_and_relog_at_draynor() {
                     }
                 }
                 Stage::AwaitHint { since } => {
-                    if hint_path.is_file() {
-                        match read_hint(&hint_path, &account) {
+                    if hint_stored(&hint_path, identity.account()) {
+                        match read_hint(&hint_path, identity.account()) {
                             Ok(HintRead {
                                 contents,
                                 rows,
@@ -761,24 +761,37 @@ struct HintRead {
     mode: Option<u32>,
 }
 
+/// The state root a database path sits in (`<root>/state/state.sqlite3`).
+fn state_root_of(database: &std::path::Path) -> Result<crate::local_state::StateRoot, String> {
+    database
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(|root| crate::local_state::StateRoot::new(root.to_path_buf()))
+        .ok_or_else(|| format!("{} is not a state database path", database.display()))
+}
+
+/// Whether a hint of `account` is stored in the database at `path`.
+fn hint_stored(path: &std::path::Path, account: &str) -> bool {
+    state_root_of(path)
+        .and_then(|root| root.stored_bank_hint(PROFILE, account))
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+/// The hint as stored, with its time, rows and the mode of the database
+/// file.
 fn read_hint(path: &std::path::Path, account: &str) -> Result<HintRead, String> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|error| format!("read {}: {error}", path.display()))?;
-    let document: serde_json::Value = serde_json::from_str(&contents)
-        .map_err(|error| format!("parse {}: {error}", path.display()))?;
-    if document["schema_version"] != serde_json::json!(crate::local_state::HINT_SCHEMA_VERSION) {
-        return Err(format!("schema_version: {contents}"));
-    }
-    if document["profile"] != serde_json::json!(PROFILE)
-        || document["account"] != serde_json::json!(account)
-    {
-        return Err(format!("identity: {contents}"));
-    }
-    let rows: Vec<(i32, i32)> = serde_json::from_value(document["rows"].clone())
-        .map_err(|error| format!("rows: {error}: {contents}"))?;
-    let observed_at = document["observed_at_unix"]
-        .as_u64()
-        .ok_or_else(|| format!("observed_at_unix: {contents}"))?;
+    let stored = state_root_of(path)?
+        .stored_bank_hint(PROFILE, account)?
+        .ok_or_else(|| format!("no hint of {account} is stored in {}", path.display()))?;
+    let contents = serde_json::json!({
+        "profile": PROFILE,
+        "account": account,
+        "observed_at_unix": stored.observed_at_unix,
+        "rows": stored.rows,
+    })
+    .to_string();
     #[cfg(unix)]
     let mode = {
         use std::os::unix::fs::PermissionsExt;
@@ -794,8 +807,8 @@ fn read_hint(path: &std::path::Path, account: &str) -> Result<HintRead, String> 
     let mode = None;
     Ok(HintRead {
         contents,
-        rows,
-        observed_at,
+        rows: stored.rows,
+        observed_at: stored.observed_at_unix,
         mode,
     })
 }

@@ -233,6 +233,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   object, and tells you to edit the file to remove the duplicate. The file
   stays unchanged. The service will not use the hint or write an empty hint
   until you fix the file.
+- Bank hints now live in the same state database. Each account's hint is
+  stored under the content it was observed under, so a hint for other content
+  no longer blocks the account: it starts empty. The first read of an
+  account's `bank-hints/<profile>/<account>.json` imports it once, whichever
+  of the two 0.2.8 and 0.2.9 forms it is (with or without a recorded content),
+  keeps the original as `<account>.json.migrated`, and never reads the file
+  again. A hint file that cannot be read (a field named twice, another account,
+  a format from before 0.2.8, broken rows) is refused with its path, cause and
+  remedy and is not changed. A hint file with a field this build does not know
+  imports read-only: run `panel-play state bank-hints accept-projection
+  <profile>/<account>/<revision>/<content>` (or the `tui-play` form) and
+  confirm to let later saves hold the usable rows only. A change to a hint
+  file after its import, or by 0.2.9, is not read; this conversion is one way.
+  A preferences recovery keeps the bank hints. The database holds at most
+  1,024 hints and never evicts one: a new account past that is refused as busy.
+- The headless `host-play` and the panel and terminal apps run their game
+  slots over the one state service they open, so a process has one writer and
+  one database connection.
 - Preferences now live in a SQLite database, `.274bot/state/state.sqlite3`
   (with its `-wal` and `-shm` files), instead of `panel-ui.json`. The first
   start of this version imports the whole `panel-ui.json`, members it does not

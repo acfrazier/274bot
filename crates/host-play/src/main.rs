@@ -4,11 +4,12 @@
 use std::env;
 use std::process::ExitCode;
 
-use host_play::local_state::StateRoot;
+use host_play::local_state::{LocalStateService, StateRoot};
 use host_play::passphrase::{self, Purpose};
 use host_play::saved_data::{SavedDataChoice, SavedDataRefusal, SavedDataStartup};
 use host_play::{
-    open_vault, parse_profile_args, profile_password, run_with_template, set_debug, ProfileOptions,
+    open_vault, parse_profile_args, profile_password, run_with_template_and_state, set_debug,
+    ProfileOptions,
 };
 use vault::{Profile, ProfileSettings, VaultError};
 
@@ -209,9 +210,13 @@ fn main() -> ExitCode {
             profile.label()
         );
     }
-    let play = match run_with_template(
+    // One writer and one connection for the process: this launch owns the
+    // root's state service, and the `Play` runs over it.
+    let state = LocalStateService::open_process(root);
+    let play = match run_with_template_and_state(
         template,
         args.mainland,
+        Some(state),
         profiles,
         |_| (None, None),
         |_, _, _| {},
