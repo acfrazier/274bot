@@ -338,7 +338,9 @@ fn tick_health_receipt_accepts_engine_l_cadence_and_rejects_engine_q() {
         assert_eq!(receipt.clean_interval_samples, 11);
         assert_eq!(receipt.median_ms, Some(milliseconds));
         assert_eq!(
-            receipt.median_ms.is_some_and(|median| (570..=630).contains(&median)),
+            receipt
+                .median_ms
+                .is_some_and(|median| (570..=630).contains(&median)),
             accepted
         );
     }

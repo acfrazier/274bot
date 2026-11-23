@@ -990,7 +990,9 @@ fn tick_health_receipt_excludes_duplicates_and_batches_and_resets_by_session() {
     assert_eq!(receipt.median_ms, Some(600));
     assert_eq!(receipt.total_coalesced_observations, 1);
     assert_eq!(receipt.session_resets, 1);
-    assert!(receipt.median_ms.is_some_and(|value| (570..=630).contains(&value)));
+    assert!(receipt
+        .median_ms
+        .is_some_and(|value| (570..=630).contains(&value)));
 }
 
 #[test]
