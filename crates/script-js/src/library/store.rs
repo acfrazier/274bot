@@ -414,8 +414,22 @@ impl JsLibrary {
                 return Err(error);
             }
         };
+        let (document, duplicate) = api::json::value_and_duplicate_fields(&raw)
+            .map_err(|e| format!("js-scripts.json: {e}"))?;
+        if !document.is_array() {
+            let error = match serde_json::from_value::<Vec<StoreEntry>>(document) {
+                Ok(_) => "expected a JSON array".to_owned(),
+                Err(error) => error.to_string(),
+            };
+            return Err(format!("js-scripts.json: {error}"));
+        }
+        if let Some(duplicate) = duplicate {
+            let error = format!("js-scripts.json: {duplicate}");
+            self.store_refusal = Some(error.clone());
+            return Err(error);
+        }
         let entries: Vec<StoreEntry> =
-            serde_json::from_str(&raw).map_err(|e| format!("js-scripts.json: {e}"))?;
+            serde_json::from_value(document).map_err(|e| format!("js-scripts.json: {e}"))?;
         self.cards.clear();
         for entry in entries {
             let path = match restorable_path(&entry.path) {
