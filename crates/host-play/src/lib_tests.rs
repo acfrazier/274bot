@@ -4575,6 +4575,17 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
         let mut all = navs.lock().unwrap();
         let bot = all.get_mut("bank").unwrap();
         bot.publish_route(1, 7, false, RouteOutcome::Routed(route_to(a)));
+        bot.door_crossing = Some((
+            7,
+            Arc::new(nav_executor::DoorCrossing {
+                tile: a,
+                name: "Door".into(),
+                open_sent: 1,
+                opened: 2,
+                stepped: 2,
+                crossed: 3,
+            }),
+        ));
         // A find is still in flight, so B's retarget coalesces onto it and
         // B's route is not installed yet: the retarget window.
         bot.set_route_work_preparing_for_test();
@@ -4592,6 +4603,10 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
     let mut all = navs.lock().unwrap();
     let bot = all.get_mut("bank").unwrap();
     assert_eq!(bot.walk_request_id, 8, "B is the armed walk");
+    assert!(
+        bot.door_crossing.is_none(),
+        "B must not inherit A's crossing"
+    );
     assert_eq!(bot.route_destination(), Some(a), "A still followed");
     apply_nav_follow_outcome(
         bot,
@@ -5114,6 +5129,7 @@ fn park_walk_isolate(
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id,
+            track_door_crossing: false,
             avoid: _,
             cross: _,
         }] if *dx == x && *dz == z && *dr == radius => *request_id,
@@ -5147,6 +5163,7 @@ fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> 
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: first,
+            track_door_crossing: false,
             avoid: _,
             cross: _,
         }, script::interact::InteractReq::WalkNear {
@@ -5161,6 +5178,7 @@ fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> 
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: second,
+            track_door_crossing: false,
             avoid: _,
             cross: _,
         }] if *dx0 == x
@@ -15566,6 +15584,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: 0,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         }],
@@ -15603,6 +15622,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: 0,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         }],
@@ -15643,6 +15663,7 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: 7,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         }]
@@ -15801,6 +15822,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: 1,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         }],
@@ -15838,6 +15860,7 @@ fn dispatch_script_interact_walk_honors_wilderness_and_bank_fetch_bits() {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: 2,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         }],
@@ -15991,6 +16014,7 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: 77,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         }],
@@ -24830,6 +24854,7 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
         allow_prereq_dialogue: None,
         allow_quest_start: None,
         request_id,
+        track_door_crossing: false,
         avoid: Vec::new(),
         cross: Vec::new(),
     }]);
@@ -25402,6 +25427,7 @@ fn a_scene_load_hold_keeps_the_script_walk_abort_and_drops_its_gameplay() {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: 777,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         },
@@ -28146,6 +28172,7 @@ impl script::native::Script for WalkProbe {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: 0,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         });
@@ -28756,6 +28783,7 @@ export function tick(api) {
             allow_prereq_dialogue: None,
             allow_quest_start: None,
             request_id: 0,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         }],

@@ -841,6 +841,7 @@ fn walk(request_id: u64) -> InteractReq {
         allow_prereq_dialogue: None,
         allow_quest_start: None,
         request_id,
+        track_door_crossing: false,
         avoid: Vec::new(),
         cross: Vec::new(),
     }

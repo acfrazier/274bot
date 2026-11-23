@@ -8,7 +8,7 @@ pub(super) enum TransportTarget<'s> {
     Npc(&'s NpcView),
 }
 
-impl TransportTarget<'_> {
+impl<'s> TransportTarget<'s> {
     pub(super) fn footprint(&self) -> Option<(WorldTile, i32, i32)> {
         match self {
             Self::Loc(loc) => Some((
@@ -16,6 +16,13 @@ impl TransportTarget<'_> {
                 loc.footprint_width.max(1),
                 loc.footprint_length.max(1),
             )),
+            Self::Npc(_) => None,
+        }
+    }
+
+    pub(super) fn name(&self) -> Option<&'s str> {
+        match self {
+            Self::Loc(loc) => loc.name.as_deref(),
             Self::Npc(_) => None,
         }
     }
@@ -769,6 +776,28 @@ fn hop_stalled(here: WorldTile, hop: &TransportHop) -> TravelOutcome {
 }
 
 impl FollowRun {
+    pub(super) fn observe_door_crossing(
+        &self,
+        snapshot: &GameSnapshot,
+        tracker: &mut DoorCrossings,
+    ) {
+        if let Some(hop) = self.transport.as_ref() {
+            let Leg::Transport { edge } = &hop.leg else {
+                return;
+            };
+            let at = here(snapshot);
+            if !hop.troll
+                || edge.kind != TransportKind::Door
+                || edge.dir.is_none()
+                || at.level != edge.to.level
+                || !door_crossed(edge, at)
+            {
+                return;
+            }
+            tracker.complete(edge.at, snapshot.tick());
+        }
+    }
+
     /// One transport-hop settle step: match the positional `arrived(edge.to)`
     /// arm (level + proximity, so a level-changing transport completes only
     /// within `close_enough` of `to` on the destination level), recover an
@@ -1033,6 +1062,7 @@ impl FollowRun {
                         || has_authored_crossing_metadata(&edge, options))
                     .then(|| chat_seq(snapshot));
                     let arrival_footprint = target.footprint();
+                    let target_name = target.name();
                     let mut ix = Interactions::new(snapshot, d);
                     match interact_transport(
                         snapshot,
@@ -1054,6 +1084,7 @@ impl FollowRun {
                             hop.approach = None;
                             if edge.kind == TransportKind::Door {
                                 hop.open_sent_tick = Some(snapshot.tick());
+                                note_door_open_sent(&edge, snapshot.tick(), target_name, options);
                                 if !is_slashable_web(&edge) {
                                     hop.tries = hop.tries.saturating_add(1);
                                     hop.door_retry.sent(snapshot.tick());
@@ -1770,6 +1801,12 @@ impl FollowRun {
             Leg::Walk { .. } => unreachable!("troll hop holds a transport leg"),
         };
         let here = here(snapshot);
+        let crossed = edge.dir.is_some() && here.level == edge.to.level && door_crossed(edge, here);
+        if crossed {
+            if let Some(tracker) = options.door_crossings.as_deref_mut() {
+                tracker.complete(edge.at, snapshot.tick());
+            }
+        }
         // Arrival is still polled below, but a lapsed hop must not send an
         // Open that has no remaining observation window.
         if hop.ticks_waited.get() >= self.budget {
@@ -1789,7 +1826,6 @@ impl FollowRun {
         // Once on the destination side, a closer behind us must not pull
         // us back. Use the same directional/level evidence as arrival;
         // directionless edges cannot establish crossing from position.
-        let crossed = edge.dir.is_some() && here.level == edge.to.level && door_crossed(edge, here);
         if crossed {
             self.loc_wait = 0;
             if cheb(here, hop.to) <= self.close_enough {
@@ -1817,6 +1853,15 @@ impl FollowRun {
             None => edge_loc_open(snapshot, edge),
         };
         hop.door_retry.observe(open);
+        if open {
+            if let Some(progress) = options
+                .door_crossings
+                .as_deref_mut()
+                .and_then(DoorCrossings::progress)
+            {
+                progress.observe_open(snapshot.tick(), leaf.and_then(|loc| loc.name.as_deref()));
+            }
+        }
         if let Some(sent_tick) = hop.open_sent_tick.take() {
             if snapshot.tick() == sent_tick {
                 hop.open_sent_tick = Some(sent_tick);
@@ -1830,7 +1875,16 @@ impl FollowRun {
                 let result = ix.pending_door_step(edge.to);
                 report_walk(options, snapshot, here, edge.to, &result);
                 return match result {
-                    SendResult::Sent { .. } => None,
+                    SendResult::Sent { .. } => {
+                        if let Some(progress) = options
+                            .door_crossings
+                            .as_deref_mut()
+                            .and_then(DoorCrossings::progress)
+                        {
+                            progress.step_sent(snapshot.tick());
+                        }
+                        None
+                    }
                     SendResult::Refused { reason, .. } => {
                         fire_leg(options, &hop.leg, LegPhase::Failed);
                         Some(TravelOutcome::Refused { at: here, reason })
@@ -1926,6 +1980,7 @@ impl FollowRun {
             ) {
                 SendResult::Sent { .. } => {
                     hop.open_sent_tick = Some(snapshot.tick());
+                    note_door_open_sent(edge, snapshot.tick(), loc.name.as_deref(), options);
                     hop.tries = hop.tries.saturating_add(1);
                     hop.door_retry.sent(snapshot.tick());
                     api::host_log!(Category::NavEvent, Level::Info, "door open sent");
@@ -1941,6 +1996,13 @@ impl FollowRun {
         report_walk(options, snapshot, here, hop.to, &result);
         match result {
             SendResult::Sent { .. } => {
+                if let Some(progress) = options
+                    .door_crossings
+                    .as_deref_mut()
+                    .and_then(DoorCrossings::progress)
+                {
+                    progress.step_sent(snapshot.tick());
+                }
                 api::host_log!(
                     Category::NavTrace,
                     Level::Debug,

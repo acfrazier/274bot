@@ -1104,10 +1104,18 @@ fn arrived_in_area(snapshot: &GameSnapshot, here: WorldTile, to: WorldTile, radi
     })
 }
 
+fn retain_door_crossing(bot: &mut NavBot, crossing: nav_executor::DoorCrossing) {
+    // Do not attribute an old route's crossing to a pending retarget.
+    if bot.tracks_door_crossing() {
+        bot.door_crossing = Some((bot.route_request_id, Arc::new(crossing)));
+    }
+}
+
 /// The armed walk's route ended (arrived, or frozen `'blocked'`): clear it
 /// and publish the settled outcome for the armed request.
 fn settle_route_end(bot: &mut NavBot, blocked: bool) {
     bot.clear_route();
+    bot.crossing_tracker = Default::default();
     if bot.bank_fetch.is_none() {
         if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
             if bot.walk_request_id != 0
@@ -1650,6 +1658,13 @@ pub(crate) fn step_nav_bot<D: Driver>(
             if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
                 owe_walk_guard_off(bot);
                 finish_walk_guard(driver, snapshot, bot, Some(name));
+                if bot.tracks_door_crossing() {
+                    bot.traveller
+                        .observe_door_crossing(snapshot, &mut bot.crossing_tracker);
+                    if let Some(crossing) = bot.crossing_tracker.take() {
+                        retain_door_crossing(bot, crossing);
+                    }
+                }
                 bot.traveller.clear();
                 settle_route_end(bot, false);
             } else if !suppress_follow {
@@ -1708,6 +1723,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
                             let mut options = TravelOptions {
                                 // Exact arrival matches the armed walk's destination.
                                 close_enough: 0,
+                                door_crossings: bot
+                                    .tracks_door_crossing()
+                                    .then_some(&mut bot.crossing_tracker),
                                 teleports: borrowed_world
                                     .map(|world| world.graph.teleports.as_slice()),
                                 edges: borrowed_world.map(|world| world.graph.edges.as_slice()),
@@ -1808,6 +1826,9 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                 }),
                             }
                         };
+                        if let Some(crossing) = bot.crossing_tracker.take() {
+                            retain_door_crossing(bot, crossing);
+                        }
                         let owned_estimated_end = defer_estimated_end
                             && bot.requested_route == armed
                             && bot.route_request_id == bot.walk_request_id
@@ -2745,3 +2766,67 @@ mod zone_diagnostic_tests {
 #[cfg(test)]
 #[path = "script_walk_no_progress_tests.rs"]
 mod no_progress_tests;
+
+#[cfg(test)]
+mod door_crossing_tests {
+    use super::*;
+
+    fn measured() -> nav_executor::DoorCrossing {
+        nav_executor::DoorCrossing {
+            tile: WorldTile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+            name: "Door".into(),
+            open_sent: 1,
+            opened: 2,
+            stepped: 2,
+            crossed: 3,
+        }
+    }
+
+    #[test]
+    fn retain_door_crossing_requires_the_opted_in_route_owner() {
+        let mut bot = NavBot {
+            walk_request_id: 7,
+            route_request_id: 7,
+            ..Default::default()
+        };
+        assert!(
+            !bot.tracks_door_crossing(),
+            "an ordinary walk receives no tracker"
+        );
+        retain_door_crossing(&mut bot, measured());
+        assert!(bot.door_crossing.is_none(), "an ordinary walk posts no row");
+        bot.walk_request_id = 8;
+        bot.arm_door_crossing(8, true);
+        retain_door_crossing(&mut bot, measured());
+        assert!(
+            bot.door_crossing.is_none(),
+            "a retarget cannot claim the old crossing"
+        );
+        bot.route_request_id = 8;
+        retain_door_crossing(&mut bot, measured());
+        let (owner, row) = bot.door_crossing.as_ref().expect("owned crossing");
+        assert_eq!((*owner, row.as_ref()), (8, &measured()));
+        bot.walk_outcome_seq = 3;
+        bot.walk_outcome_request_id = 7;
+        bot.mark_walk_outcome_posted(3);
+        assert!(
+            bot.door_crossing.is_some(),
+            "an unrelated terminal post keeps the row"
+        );
+        bot.walk_outcome_request_id = 8;
+        bot.mark_walk_outcome_posted(2);
+        assert!(
+            bot.door_crossing.is_some(),
+            "a stale post keeps the final row"
+        );
+        bot.mark_walk_outcome_posted(3);
+        assert!(
+            bot.door_crossing.is_none(),
+            "the accepted terminal post releases the row"
+        );
+    }
+}

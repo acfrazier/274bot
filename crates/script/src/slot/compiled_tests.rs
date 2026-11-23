@@ -3067,6 +3067,7 @@ mod api_gather_seat {
             allow_prereq_dialogue: None,
             allow_quest_start: Some(false),
             request_id: token,
+            track_door_crossing: false,
             avoid: Vec::new(),
             cross: Vec::new(),
         };

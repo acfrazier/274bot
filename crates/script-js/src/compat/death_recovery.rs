@@ -274,6 +274,7 @@ impl Family for DeathRecovery {
                         allow_wilderness: true,
                         allow_bank_fetch: true,
                         request_id: 0,
+                        track_door_crossing: false,
                         avoid: Vec::new(),
                         cross: Vec::new(),
                         allow_prereq_dialogue: None,

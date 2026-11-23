@@ -843,6 +843,7 @@ export default class T extends LoopingBot {
                 allow_prereq_dialogue: None,
                 allow_quest_start: None,
                 request_id,
+                track_door_crossing: false,
                 avoid: _,
                 cross: _,
             } if *request_id != 0

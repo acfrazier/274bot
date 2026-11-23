@@ -811,52 +811,10 @@ pub(crate) struct Walk {
     allow_teleports: bool,
     options: Option<Box<WalkOptions>>,
     compat_tile_intent: bool,
+    track_door_crossing: bool,
 }
 
 impl Walk {
-    /// `Err(arrived)` when no walk was needed (or no tile is posted).
-    pub(crate) fn begin(
-        dest: WorldTile,
-        radius: i32,
-        timeout_ms: u64,
-        allow_teleports: bool,
-        cx: &mut Cx<'_>,
-    ) -> Result<Self, bool> {
-        Self::begin_avoiding(
-            dest,
-            radius,
-            timeout_ms,
-            allow_teleports,
-            Vec::new(),
-            Vec::new(),
-            cx,
-        )
-    }
-
-    /// [`Self::begin`] with rectangle/catalog avoids and named zone exemptions.
-    pub(crate) fn begin_avoiding(
-        dest: WorldTile,
-        radius: i32,
-        timeout_ms: u64,
-        allow_teleports: bool,
-        avoid: Vec<InspectAvoidWire>,
-        cross: Vec<String>,
-        cx: &mut Cx<'_>,
-    ) -> Result<Self, bool> {
-        Self::begin_with_intent(
-            dest,
-            radius,
-            timeout_ms,
-            allow_teleports,
-            avoid,
-            cross,
-            None,
-            None,
-            false,
-            cx,
-        )
-    }
-
     /// Compat `Traversal` walks preserve a walkable requested tile as route end.
     #[expect(
         clippy::too_many_arguments,
@@ -883,6 +841,29 @@ impl Walk {
             allow_prereq_dialogue,
             allow_quest_start,
             true,
+            false,
+            cx,
+        )
+    }
+
+    fn begin_opening_segment(
+        dest: WorldTile,
+        radius: i32,
+        timeout_ms: u64,
+        compat_tile_intent: bool,
+        cx: &mut Cx<'_>,
+    ) -> Result<Self, bool> {
+        Self::begin_with_intent(
+            dest,
+            radius,
+            timeout_ms,
+            false,
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            compat_tile_intent,
+            cx.has(LOG),
             cx,
         )
     }
@@ -901,6 +882,7 @@ impl Walk {
         allow_prereq_dialogue: Option<bool>,
         allow_quest_start: Option<bool>,
         compat_tile_intent: bool,
+        track_door_crossing: bool,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
         walk_wait::take_repath();
@@ -944,6 +926,7 @@ impl Walk {
             allow_teleports,
             options,
             compat_tile_intent,
+            track_door_crossing,
         };
         cx.emit(walk.request());
         cx.clock().arm(timeout_ms);
@@ -1035,6 +1018,7 @@ impl Walk {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: self.token,
+                track_door_crossing: self.track_door_crossing,
                 cross,
                 avoid,
                 allow_prereq_dialogue,
@@ -1049,6 +1033,7 @@ impl Walk {
                 allow_wilderness: true,
                 allow_bank_fetch: true,
                 request_id: self.token,
+                track_door_crossing: self.track_door_crossing,
                 avoid,
                 cross,
                 allow_prereq_dialogue,
@@ -1982,6 +1967,13 @@ pub(crate) struct WalkOpeningArgs {
     radius: i32,
     #[serde(default)]
     obstacles: Vec<String>,
+    opts: Option<WalkOpeningOptions>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WalkOpeningOptions {
+    door_step_ticks: Option<f64>,
 }
 
 enum OpeningPhase {
@@ -1996,8 +1988,8 @@ enum OpeningPhase {
 /// then an openable obstacle within 14. Frozen prefers toward-dest
 /// (`walkOpening.ts:127–136`); operator refinement uses the same
 /// path-relevant counterfactual as unstick (toward-dest is weaker).
-/// `doorStepTicks` / `stepThrough` is not ported; the next segment walks
-/// the opened passage (frozen's default when that opt is omitted).
+/// The route-less fallback leaves the opened passage to the next segment.
+/// Positive `doorStepTicks` requests are refused: the native traveller does not delay the step.
 pub(crate) struct WalkOpening {
     dest: WorldTile,
     radius: i32,
@@ -2005,6 +1997,7 @@ pub(crate) struct WalkOpening {
     segment: u32,
     phase: OpeningPhase,
     logs: VecDeque<String>,
+    last_crossing: Option<(u64, u64)>,
     result: Option<bool>,
     waiting: bool,
 }
@@ -2019,6 +2012,7 @@ impl WalkOpening {
             segment: 0,
             phase: OpeningPhase::NeedWalk,
             logs: VecDeque::new(),
+            last_crossing: None,
             result: None,
             waiting: false,
         }
@@ -2035,6 +2029,35 @@ impl WalkOpening {
         self.logs.pop_front()
     }
 
+    fn queue_measured_crossing(&mut self) {
+        let token = match &self.phase {
+            OpeningPhase::Walking(walk) | OpeningPhase::Approach { walk, .. } => walk.token,
+            _ => return,
+        };
+        observed::with(|scene| {
+            let lens = scene.since_login();
+            let Some(row) = lens.door_crossing() else {
+                return;
+            };
+            let key = (row.request_id, row.open_sent);
+            if row.request_id != token || self.last_crossing == Some(key) {
+                return;
+            }
+            let (Some(opened), Some(stepped), Some(crossed)) = (
+                row.opened.checked_sub(row.open_sent),
+                row.stepped.checked_sub(row.open_sent),
+                row.crossed.checked_sub(row.open_sent),
+            ) else {
+                return;
+            };
+            self.last_crossing = Some(key);
+            self.logs.push_back(format!(
+                "  crossed '{}' at ({},{}) (Open sent tick {}, open +{opened}, stepped +{stepped}, crossed +{crossed})",
+                row.name, row.tile.x, row.tile.z, row.open_sent,
+            ));
+        });
+    }
+
     /// `Some(result)` once the frozen `walkOpening` returned; `None` waits.
     pub(crate) fn advance(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         if interrupted(cx) {
@@ -2042,6 +2065,10 @@ impl WalkOpening {
             self.logs
                 .push_back("walk interrupted by a runtime event — yielding to the runtime".into());
             return Some(false);
+        }
+        // The arrival page can also carry the crossing that finished this segment.
+        if cx.has(LOG) {
+            self.queue_measured_crossing();
         }
         if arrived(self.dest, self.radius) {
             return Some(true);
@@ -2052,15 +2079,11 @@ impl WalkOpening {
                     if self.segment >= OPENING_SEGMENTS {
                         return Some(arrived(self.dest, self.radius));
                     }
-                    match Walk::begin_compat_avoiding(
+                    match Walk::begin_opening_segment(
                         self.dest,
                         self.radius,
                         BAKED_TIMEOUT_MS,
-                        false,
-                        Vec::new(),
-                        Vec::new(),
-                        None,
-                        None,
+                        true,
                         cx,
                     ) {
                         Ok(walk) => {
@@ -2095,7 +2118,13 @@ impl WalkOpening {
                                 tile.x,
                                 tile.z
                             ));
-                            match Walk::begin(tile, 1, OPENING_DOOR_WALK_MS, false, cx) {
+                            match Walk::begin_opening_segment(
+                                tile,
+                                1,
+                                OPENING_DOOR_WALK_MS,
+                                false,
+                                cx,
+                            ) {
                                 Ok(walk) => {
                                     self.phase = OpeningPhase::Approach { door: tile, walk };
                                     return None;
@@ -2162,6 +2191,15 @@ impl Family for WalkOpening {
     type Output = bool;
 
     fn begin(args: WalkOpeningArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        if args
+            .opts
+            .and_then(|opts| opts.door_step_ticks)
+            .is_some_and(|ticks| ticks > 0.0)
+        {
+            return Begin::Refuse(
+                "positive doorStepTicks is not supported by the native traveller".into(),
+            );
+        }
         if interrupted(_cx) {
             return Begin::Done(false);
         }
@@ -4023,6 +4061,20 @@ pub(crate) mod tests {
             }] if *x == dest_x => *request_id,
             other => panic!("expected the opening walk to {dest_x}, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn walk_opening_refuses_a_requested_door_step_delay() {
+        reset();
+        post_here(0, 0);
+        let args = json!({
+            "dest": { "x": 10, "z": 0 },
+            "opts": { "doorStepTicks": 2 }
+        });
+        assert!(matches!(
+            machine::start("walk-opening", args, Vec::new(), 0),
+            Started::Refused(reason) if reason.contains("doorStepTicks")
+        ));
     }
 
     #[test]

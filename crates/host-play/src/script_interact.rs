@@ -665,6 +665,7 @@ where
                 allow_prereq_dialogue,
                 allow_quest_start,
                 request_id,
+                track_door_crossing,
                 avoid,
                 cross,
             } => {
@@ -727,8 +728,9 @@ where
                     snapshot, x, z, level, opts, request_id, exclusions, danger,
                 );
                 if queued {
-                    if let Some(prereq_allow) = prereq_allow {
-                        if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
+                    if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
+                        bot.arm_door_crossing(request_id, track_door_crossing);
+                        if let Some(prereq_allow) = prereq_allow {
                             bot.retain_compat_walk(
                                 request_id,
                                 script::native::WalkOptions {
@@ -768,6 +770,7 @@ where
                 allow_prereq_dialogue,
                 allow_quest_start,
                 request_id,
+                track_door_crossing,
                 avoid,
                 cross,
             } => {
@@ -839,8 +842,9 @@ where
                     danger,
                 );
                 if queued {
-                    if let Some(prereq_allow) = prereq_allow {
-                        if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
+                    if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
+                        bot.arm_door_crossing(request_id, track_door_crossing);
+                        if let Some(prereq_allow) = prereq_allow {
                             bot.retain_compat_walk(
                                 request_id,
                                 script::native::WalkOptions {

@@ -1230,6 +1230,7 @@ impl Script for Walker {
                 allow_prereq_dialogue: None,
                 allow_quest_start: None,
                 request_id: 0,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
             });
@@ -1250,6 +1251,7 @@ fn walker_walk() -> crate::interact::InteractReq {
         allow_prereq_dialogue: None,
         allow_quest_start: None,
         request_id: 0,
+        track_door_crossing: false,
         avoid: Vec::new(),
         cross: Vec::new(),
     }
@@ -1467,6 +1469,7 @@ fn queued_stub_walk_batch(generation: u64) -> crate::native::seat_rows::QueuedSe
                     allow_prereq_dialogue: None,
                     allow_quest_start: None,
                     request_id: 0,
+                    track_door_crossing: false,
                     avoid: Vec::new(),
                     cross: Vec::new(),
                 },

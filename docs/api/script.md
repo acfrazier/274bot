@@ -40,6 +40,8 @@ gathering, fishing and banking data helpers. The generated
 `crates/script-js/compat-js/overlay-not-impl.json` list the unconditional ones. A
 helper that refuses one request at run time (for example `Traversal.walkTo`
 given `pathFollow`) raises the same `not impl` error with the reason.
+For example, `walkOpening` refuses a positive `doorStepTicks` value because the
+native traveller cannot delay the step after it observes the open door.
 
 ## Build modes
 

@@ -2553,6 +2553,7 @@ mod kept_reconnect_release_tests {
                 allow_wilderness: false,
                 allow_bank_fetch: false,
                 request_id: id as u64 + 1,
+                track_door_crossing: false,
                 avoid: Vec::new(),
                 cross: Vec::new(),
                 allow_prereq_dialogue: None,

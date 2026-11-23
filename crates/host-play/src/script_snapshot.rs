@@ -255,6 +255,7 @@ pub(crate) fn with_script_snapshot_input<R>(
         bank_op_result,
         canlight,
         walk_outcome,
+        None,
         &[],
         inspect,
         script::native::snapshot_source::BankSelectionInput::default(),
@@ -292,6 +293,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     bank_op_result: bool,
     canlight: Option<&[u64]>,
     walk_outcome: PostedWalkOutcome,
+    door_crossing: Option<script::native::snapshot_source::DoorCrossingInput<'_>>,
     walk_missing_carry: &[script::native::snapshot_source::CarryInput<'_>],
     inspect: route_inspect::PostedInspect,
     bank_selection: script::native::snapshot_source::BankSelectionInput,
@@ -1648,6 +1650,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         walk_outcome_no_path: walk_outcome.no_path,
         walk_remaining_request_id: walk_outcome.remaining_request_id,
         walk_remaining: walk_outcome.remaining,
+        door_crossing,
         walk_missing_carry,
         route_inspect: script::native::snapshot_source::RouteInspectFactsInput {
             latest: latest_in,
