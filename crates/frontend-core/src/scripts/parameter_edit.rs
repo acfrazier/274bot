@@ -1114,7 +1114,7 @@ impl Scripts {
         let resolved = if def.options_from.is_some() {
             Some(
                 script::resolve_setting_options_with_labels(def, loadouts.store(), None)
-                    .map_err(|error| error.to_string())?,
+                    .map_err(|error| format!("{error:?}"))?,
             )
         } else {
             None
@@ -1161,7 +1161,7 @@ impl Scripts {
                 Some(
                     script::resolve_setting_options_with_labels(def, loadouts.store(), None)
                         .map_err(|error| {
-                            script::StartLoadError::Refused(error.to_string())
+                            script::StartLoadError::Refused(format!("{error:?}"))
                         })?,
                 )
             } else {
