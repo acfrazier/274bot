@@ -68,6 +68,15 @@ cells = [
   "host.upstream-e2e-adopted|LIVE=1 BOT_CPU=1 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 UEP_CASES=${UEP_CASES:?} UEP_UPSTREAM=${UEP_UPSTREAM:?} UEP_OUTPUT=${UEP_OUTPUT:?} UEP_HOST_COMMIT=${UEP_HOST_COMMIT:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture|--locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture",
 ]
 
+# SmithingBot exercises walkOpening's measured crossing callback in the adopted
+# corpus. The isolate regressions cover the shim's native request and callback.
+[[cover]]
+globs = ["crates/script-js/src/shim/walk_opening.js"]
+cells = [
+  "compat.walk-opening-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test load_isolate isolate_walk_opening -- --nocapture",
+  "host.upstream-e2e-adopted|LIVE=1 BOT_CPU=1 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 UEP_CASES=${UEP_CASES:?} UEP_UPSTREAM=${UEP_UPSTREAM:?} UEP_OUTPUT=${UEP_OUTPUT:?} UEP_HOST_COMMIT=${UEP_HOST_COMMIT:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture|--locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture",
+]
+
 # The named walk destinations are planner data exposed to the compatibility walk through the
 # nav contract facade; the walking witness and the contract tests read them.
 [[cover]]
