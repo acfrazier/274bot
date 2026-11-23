@@ -440,7 +440,16 @@ fn an_unsent_hop_posts_progress_once_and_ends_within_its_clock() {
     };
     let mut traveller = Traveller::new();
     let mut options = TravelOptions::default();
-    let route = walk_route(line(4));
+    // The refused tile (0, 1) lies on the route's z axis.
+    let route = walk_route(
+        (0..4)
+            .map(|z| WorldTile {
+                x: 3200,
+                z: 3200 + z,
+                level: 0,
+            })
+            .collect(),
+    );
     assert!(traveller
         .follow(&mut driver, &snapshot, route.clone(), &mut options)
         .is_none());
