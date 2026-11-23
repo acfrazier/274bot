@@ -86,8 +86,9 @@ impl ProofWindow {
         }
     }
 
-    /// The window's statistics, or `None` with fewer than
-    /// [`MIN_CLEAN_INTERVALS`] clean intervals.
+    /// The window's statistics, or `None` without a clean interval. A
+    /// window with fewer than [`MIN_CLEAN_INTERVALS`] clean intervals has
+    /// statistics for its receipt but no measured speed.
     pub fn measurement(&self) -> Option<WindowMeasurement> {
         let mut clean: Vec<Duration> = self
             .intervals
@@ -95,7 +96,7 @@ impl ProofWindow {
             .filter(|interval| interval.packets == 1)
             .map(|interval| interval.gap)
             .collect();
-        if clean.len() < MIN_CLEAN_INTERVALS {
+        if clean.is_empty() {
             return None;
         }
         clean.sort_unstable();
@@ -219,14 +220,22 @@ impl EngineSpeedCheck {
         self.claimed_ms
     }
 
+    /// The window statistics when they are a measurement: at least
+    /// [`MIN_CLEAN_INTERVALS`] clean intervals.
+    fn counted(&self) -> Option<&WindowMeasurement> {
+        self.measured
+            .as_ref()
+            .filter(|measured| measured.clean >= MIN_CLEAN_INTERVALS)
+    }
+
     /// The measured speed: the median clean interval in milliseconds; `None`
     /// without a measurement.
     pub fn engine_speed_ms(&self) -> Option<f64> {
-        self.measured.as_ref().map(|measured| ms(measured.median))
+        self.counted().map(|measured| ms(measured.median))
     }
 
     pub fn verdict(&self) -> EngineSpeedVerdict {
-        let Some(measured) = &self.measured else {
+        let Some(measured) = self.counted() else {
             return EngineSpeedVerdict::Unmeasured;
         };
         let median_matches = within_percent(
@@ -255,11 +264,15 @@ impl EngineSpeedCheck {
                 "ticks": measured.ticks(),
                 "elapsed_ms": ms(measured.elapsed()),
                 "mean_tick_ms": ms(measured.elapsed()) / measured.ticks() as f64,
+                "clean_median_ms": ms(measured.median),
                 "clean_min_ms": ms(measured.min),
                 "clean_p10_ms": ms(measured.p10),
                 "clean_p90_ms": ms(measured.p90),
                 "clean_max_ms": ms(measured.max),
                 "in_band_ticks": measured.in_band_ticks(self.claimed_ms),
+                "gaps_ms": measured.intervals.iter().map(|interval| {
+                    json!([interval.packets, ms(interval.gap)])
+                }).collect::<Vec<_>>(),
             })),
             "tolerance_percent": TOLERANCE_PERCENT,
             "interval_band_percent": INTERVAL_BAND_PERCENT,

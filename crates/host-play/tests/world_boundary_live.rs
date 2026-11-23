@@ -92,9 +92,9 @@ impl CellPump {
         }
     }
 
-    /// Open the proof window at the cell's start action. Intervals before
-    /// this point are preparation and never count.
-    fn begin_proof(&mut self) {
+    /// Open the proof window. Intervals before this point are preparation
+    /// and never count. Cells call [`begin_proof`].
+    fn open_proof(&mut self) {
         assert!(self.proof.is_none(), "one proof window per cell");
         self.proof = Some(ProofWindow::default());
     }
@@ -198,6 +198,29 @@ fn wait_for(
         "{phase}: readiness predicate failed; tile={:?}",
         snapshot.tile()
     );
+}
+
+/// Ticks a cell lets pass before it opens its proof window. After a login or
+/// a teleport the client applies the `PLAYER_INFO` packets queued during its
+/// scene load in a burst (a measured 1.4 s load gave three such ticks), and
+/// those receive intervals are not the engine's. Five ticks move the window
+/// start past that burst. The wait counts packets, not time, so it holds at
+/// any engine speed; it is preparation, not proof.
+const SETTLE_TICKS: u32 = 5;
+
+/// Let the client settle, then open the proof window at the cell's start
+/// action.
+fn begin_proof(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut CellPump) {
+    let from = snapshot.tick();
+    wait_for(
+        client,
+        snapshot,
+        pump,
+        Duration::from_secs(30),
+        "proof-settle",
+        |s| s.ingame() && s.tick() >= from + SETTLE_TICKS,
+    );
+    pump.open_proof();
 }
 
 fn logout_and_relogin(
@@ -355,7 +378,7 @@ fn run_nav(
         scenario.steps.remove(0);
     }
     // The runner is the start action; the preparation above is not proof.
-    pump.begin_proof();
+    begin_proof(&mut client, &mut snapshot, &mut pump);
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_map_members(profile.map_members());
     // Preparation above independently proved the exact mainland landing;
@@ -572,7 +595,7 @@ fn run_bank_return(template: Arc<SharedClientTemplate>, profile: Arc<host_play::
     );
     let inventory_before = snapshot.inv().to_vec();
     // The bank trip is the proof; the seeding and tele above are not.
-    pump.begin_proof();
+    begin_proof(&mut client, &mut snapshot, &mut pump);
     follow_to(
         &mut client,
         &mut snapshot,
@@ -678,7 +701,7 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
     let mut pump = CellPump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
     // The lamp the cell gives is its start action.
-    pump.begin_proof();
+    begin_proof(&mut client, &mut snapshot, &mut pump);
     assert!(
         interact::cheat(&mut client, "give macro_genilamp").is_sent(),
         "local give command refused"
@@ -789,7 +812,7 @@ fn run_guardian_lamp_pair(
     let mut pump = CellPump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
     // The lamps the cell gives are its start action.
-    pump.begin_proof();
+    begin_proof(&mut client, &mut snapshot, &mut pump);
     assert!(
         interact::cheat(&mut client, "give macro_genilamp 2").is_sent(),
         "local give command refused"
@@ -877,7 +900,7 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
     // The content's own `[debugproc,maze]`: the same teleport, reward and
     // briefing as `start_macro_maze`, without waiting for the RNG.
     // The maze the cell starts is its start action.
-    pump.begin_proof();
+    begin_proof(&mut client, &mut snapshot, &mut pump);
     assert!(
         interact::cheat(&mut client, "~maze").is_sent(),
         "local maze command refused"
