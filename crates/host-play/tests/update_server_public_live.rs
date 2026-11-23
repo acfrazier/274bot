@@ -1,6 +1,7 @@
 //! Read each public update endpoint once without logging in or using a warm cache.
 
-use client::{Client, Transport};
+use client::client::Client;
+use client::Transport;
 
 fn public_readers(host: &str) {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
@@ -11,7 +12,10 @@ fn public_readers(host: &str) {
     .join(host);
     assert!(!root.exists(), "the public JAG proof requires a cold cache");
     let key = Client::fetch_login_modulus_checked(Transport::Wss, host, 443);
-    println!("{host}: login-key digits={:?}", key.as_ref().map(String::len));
+    println!(
+        "{host}: login-key digits={:?}",
+        key.as_ref().map(String::len)
+    );
     let checksums = Client::get_jag_checksums_checked(Transport::Wss, host, 443)
         .expect("the public /crc body must pass its checksum");
     println!("{host}: /crc valid, title CRC={}", checksums[1]);
@@ -34,7 +38,10 @@ fn public_readers(host: &str) {
     let key = key.expect("the public client.js must provide a complete login key");
     assert_eq!(key.len(), 309);
     assert!(key.bytes().all(|byte| byte.is_ascii_digit()));
-    println!("PASS: {host}: login-key digits=309, /crc valid, title bytes={}", title.len());
+    println!(
+        "PASS: {host}: login-key digits=309, /crc valid, title bytes={}",
+        title.len()
+    );
 }
 
 #[test]

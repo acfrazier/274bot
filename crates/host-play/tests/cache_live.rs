@@ -255,7 +255,7 @@ fn login_key_live() {
     // must refuse that body so the host can retain its existing fallback.
     let port = host_play::live_ports::env_port("WORLD_HTTP_PORT", 1080);
     assert_eq!(
-        client::Client::fetch_login_modulus_checked(client::Transport::Tcp, "127.0.0.1", port),
+        client::client::Client::fetch_login_modulus_checked(client::Transport::Tcp, "127.0.0.1", port),
         Err(client::client::client::AssetFetchError::Checksum)
     );
     println!("PASS: login_key_live: Engine A's client.js has no usable login modulus");
