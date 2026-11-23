@@ -3,10 +3,23 @@ import { parkMachine } from '../api/execution/Execution.js';
 
 export const host = () => globalThis.__rs2b0t_host || {};
 export const snap = () => host().snapshot || {};
+class ShimError extends Error {
+    constructor(kind, message) {
+        super(message);
+        this.kind = kind;
+    }
+}
+
 export const notImpl = (name, reason) =>
-    new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
+    new ShimError(
+        'not-implemented',
+        reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name,
+    );
 export const refused = (reason) =>
-    new Error(reason ? 'cannot do that now: ' + reason : 'cannot do that now');
+    new ShimError(
+        'refused',
+        reason ? 'cannot do that now: ' + reason : 'cannot do that now',
+    );
 export const queue = (req) => {
     const h = host();
     const interact = h.interact ?? (h.interact = []);

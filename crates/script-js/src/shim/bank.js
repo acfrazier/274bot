@@ -23,7 +23,12 @@ async function bankOp(args) {
 // One Rust deposit loop (frozen depositAllMatching).
 async function deposit(args, hooks = {}) {
     const out = await runMachine('bank_deposit', args, hooks);
-    if (out.kind === 'refused') throw notImpl('Bank.depositAllMatching', out.reason);
+    if (out.kind === 'refused') {
+        const reason = out.reason
+            ? 'Bank.depositAllMatching: ' + out.reason
+            : 'Bank.depositAllMatching';
+        throw refused(reason);
+    }
 }
 
 // Frozen `withdrawOp`: the row's own op matching the amount, in Rust.

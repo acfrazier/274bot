@@ -360,6 +360,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
     test server, once on a new Tutorial Island account and once on a mainland
     account. That was a start-and-run check, not a full training session.
 
+- `Bank.depositAllMatching` sets `error.kind` to `refused` when the operation is
+  refused. The message says `cannot do that now` and keeps the member name and
+  reason. A missing member sets `error.kind` to `not-implemented` and keeps its
+  `not impl` message.
+
 - A native script's manifest supplies its description, category, tags and
   settings. The picker shows them for a loaded file. The card keeps the
   file name as its name, so its saved settings and assignments still apply.
