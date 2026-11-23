@@ -139,6 +139,36 @@ def runner_head(repo: Path) -> str:
     return result.stdout.strip() or "unknown"
 
 
+def engine_commit(repo: Path) -> Optional[str]:
+    """The HEAD commit of a source root that is its own Git repository, or None."""
+    try:
+        toplevel = git(["-C", str(repo), "rev-parse", "--show-toplevel"], check=False)
+        head = git(["-C", str(repo), "rev-parse", "--verify", "HEAD^{commit}"], check=False)
+    except OSError:
+        return None
+    if toplevel.returncode or head.returncode:
+        return None
+    if Path(toplevel.stdout.strip()).resolve() != repo.resolve():
+        return None
+    commit = head.stdout.strip()
+    return commit if re.fullmatch(r"[0-9a-f]{40}", commit) else None
+
+
+def engine_commits(engine_root: Path) -> Optional[Dict[str, object]]:
+    """The engine and content commits that NIGHTLY_ENGINE_COMMITS carries. Separate repositories
+    give each tree its own HEAD. One repository holding both trees gives both its HEAD and sets
+    same_repository. Anything else records neither."""
+    engine = engine_commit(engine_root / "engine")
+    content = engine_commit(engine_root / "content")
+    if engine is not None and content is not None:
+        return {"engine": engine, "content": content}
+    if engine is None and content is None and (engine_root / "engine").is_dir() and (engine_root / "content").is_dir():
+        head = engine_commit(engine_root)
+        if head is not None:
+            return {"engine": head, "content": head, "same_repository": True}
+    return None
+
+
 def fetch_branch_tip(repo: Path, timeout: Optional[float] = FETCH_TIMEOUT_S) -> str:
     """Fetch origin's dev into the runner checkout; return the tip SHA."""
     git(["-C", str(repo), "fetch", "--prune", "origin",
@@ -1480,6 +1510,7 @@ class NightlyOrchestrator:
         self.input_root: Optional[Path] = None
         self.control_root: Optional[Path] = None
         self.pins: Dict[str, str] = {}
+        self.engine_commits: Dict[str, Dict[str, object]] = {}
         self.previous_runs_root: Optional[Path] = None
         self.input_unavailable: Optional[str] = None
         self.owned_lock = False
@@ -1564,6 +1595,12 @@ class NightlyOrchestrator:
         copy_tree(self.settings.catalog, self.input_root / "catalog", kind="catalog")
         copy_tree(self.settings.engine_a, self.input_root / "engine-a", kind="engine")
         copy_tree(self.settings.engine_q, self.input_root / "engine-q", kind="engine")
+        self.engine_commits = {
+            job: commits
+            for job, commits in (("main", engine_commits(self.settings.engine_a)),
+                                 ("quest", engine_commits(self.settings.engine_q)))
+            if commits is not None
+        }
         if self.settings.purged_data.is_dir():
             copy_tree(self.settings.purged_data, self.input_root / "purged-data", kind="purged")
         for source, name in (
@@ -1817,6 +1854,9 @@ class NightlyOrchestrator:
         if rerun_override is not None:
             env["NIGHTLY_RERUN_UNCHANGED"] = rerun_override
         env["NIGHTLY_RUNNER_COMMIT"] = runner_head(self.settings.runner)
+        commits = self.engine_commits.get(job)
+        if commits is not None:
+            env["NIGHTLY_ENGINE_COMMITS"] = json.dumps(commits, sort_keys=True)
         env["NIGHTLY_SELF_UPDATE"] = "0"
         if self.self_update_info is not None:
             env["NIGHTLY_SELF_UPDATE_INFO"] = json.dumps(

@@ -3737,6 +3737,42 @@ class BranchListSummaryTests(unittest.TestCase):
             self.assertIn("Runner self-update", md)
             self.assertTrue((run_dir / "DONE").is_file())
 
+    def test_run_branch_summary_names_the_engine_commits_from_the_dispatcher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_update_tree(_branch, tree, _build_log):
+                catalog = tree / rn.CATALOG_RS
+                catalog.parent.mkdir(parents=True)
+                catalog.write_text(
+                    'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n];\n',
+                    encoding="utf-8")
+                return "c" * 40, "c" * 9
+
+            commits = {"engine": "e" * 40, "content": "f" * 40}
+            patches = [
+                mock.patch.object(rn, "ROOT", root),
+                mock.patch.object(rn, "STEPS", ["tui"]),
+                mock.patch.object(rn, "FRESH_TREES", False),
+                mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+                mock.patch.object(rn, "ENGINE_MODE", "remote"),
+                mock.patch.object(rn, "ENGINE_COMMITS_RAW", json.dumps(commits)),
+                mock.patch.object(rn, "update_tree", fake_update_tree),
+                mock.patch.object(rn, "log", lambda _message: None),
+            ]
+            for patch in patches:
+                patch.start()
+            try:
+                run_dir = rn.run_branch("dev", 1, None, None, unavailable="probe reason",
+                                        summary_only=True)
+            finally:
+                for patch in patches:
+                    patch.stop()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["engine"]["commits"], commits)
+            md = (run_dir / "summary.md").read_text(encoding="utf-8")
+            self.assertIn("- Engine commits: engine `" + "e" * 40 + "`, content `"
+                          + "f" * 40 + "`", md)
 
 
 class UnchangedRunTests(unittest.TestCase):
@@ -3994,6 +4030,77 @@ class LocalEngineIdentityTests(unittest.TestCase):
                 extra.write_text("second\n", encoding="utf-8")
                 second_untracked = rn.local_engine_identity()
                 self.assertNotEqual(first_untracked, second_untracked)
+
+    def test_local_git_heads_name_the_commits_before_the_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pristine = Path(tmp) / "engine-pristine"
+            self.make_git_root(pristine / "engine")
+            self.make_git_root(pristine / "content")
+            with mock.patch.object(rn, "ENGINE_PRISTINE", pristine), \
+                    mock.patch.object(rn, "ENGINE_MODE", "local"), \
+                    mock.patch.object(rn, "ENGINE_COMMITS_RAW",
+                                      json.dumps({"engine": "e" * 40, "content": "f" * 40})):
+                identity = rn.local_engine_identity()
+            self.assertIsNotNone(identity)
+            self.assertEqual(rn.engine_commits(identity), {
+                "engine": identity["engine"]["head"],
+                "content": identity["content"]["head"],
+            })
+
+
+class EngineCommitsTests(unittest.TestCase):
+    engine = "ab" * 20
+    content = "cd" * 20
+
+    def test_dispatcher_commits_are_used_without_a_local_identity(self):
+        raw = json.dumps({"engine": self.engine, "content": self.content})
+        with mock.patch.object(rn, "ENGINE_COMMITS_RAW", raw):
+            self.assertEqual(rn.engine_commits(None),
+                             {"engine": self.engine, "content": self.content})
+
+    def test_same_repository_flag_is_kept_when_both_names_are_one_commit(self):
+        raw = json.dumps({"engine": self.engine, "content": self.engine,
+                          "same_repository": True})
+        with mock.patch.object(rn, "ENGINE_COMMITS_RAW", raw):
+            self.assertEqual(rn.engine_commits(None), {
+                "engine": self.engine, "content": self.engine, "same_repository": True})
+
+    def test_absent_or_malformed_dispatcher_commits_are_not_recorded(self):
+        cases = [
+            "",
+            "not json",
+            json.dumps({"engine": self.engine}),
+            json.dumps({"engine": self.engine, "content": self.content, "extra": self.engine}),
+            json.dumps({"engine": self.engine.upper(), "content": self.content}),
+            json.dumps({"engine": "ab" * 19, "content": self.content}),
+            json.dumps({"engine": 1, "content": self.content}),
+            json.dumps([self.engine, self.content]),
+            json.dumps({"engine": self.engine, "content": self.content,
+                        "same_repository": True}),
+            json.dumps({"engine": self.engine, "content": self.engine,
+                        "same_repository": False}),
+            json.dumps({"engine": self.engine, "content": self.engine,
+                        "same_repository": "yes"}),
+            json.dumps({"engine": self.engine, "content": self.engine,
+                        "same_repository": 1}),
+        ]
+        for raw in cases:
+            with self.subTest(raw=raw), \
+                    mock.patch.object(rn, "ENGINE_COMMITS_RAW", raw), \
+                    mock.patch.object(rn, "log", lambda _message: None):
+                self.assertIsNone(rn.engine_commits(None))
+
+    def test_commits_text_says_when_nothing_is_recorded(self):
+        self.assertEqual(rn.engine_commits_text(None), "not recorded")
+        self.assertEqual(
+            rn.engine_commits_text({"engine": self.engine, "content": self.content}),
+            f"engine `{self.engine}`, content `{self.content}`")
+
+    def test_commits_text_says_when_one_repository_holds_both_trees(self):
+        self.assertEqual(
+            rn.engine_commits_text({"engine": self.engine, "content": self.engine,
+                                    "same_repository": True}),
+            f"engine `{self.engine}`, content `{self.engine}` (same repository)")
 
 
 class RunDeadlineDefaultTests(unittest.TestCase):
