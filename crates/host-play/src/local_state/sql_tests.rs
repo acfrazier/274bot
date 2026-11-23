@@ -4375,11 +4375,7 @@ fn occupancy_class_verdict(p99_ms: f64, max_ms: f64, diagnostic: bool) -> &'stat
 #[test]
 fn occupancy_class_verdict_uses_p99_and_hard_ceiling() {
     assert_eq!(
-        occupancy_class_verdict(
-            OCCUPANCY_P99_LIMIT_MS,
-            OCCUPANCY_HARD_CEILING_MS,
-            false
-        ),
+        occupancy_class_verdict(OCCUPANCY_P99_LIMIT_MS, OCCUPANCY_HARD_CEILING_MS, false),
         "pass"
     );
     assert_eq!(
@@ -4407,7 +4403,6 @@ fn occupancy_class_verdict_uses_p99_and_hard_ceiling() {
         "diagnostic"
     );
 }
-
 
 /// A11's CI microbenchmark entrypoint runs the local-state SQL occupancy gate
 /// in a locked release build and preserves its JSON report. The gate measures
