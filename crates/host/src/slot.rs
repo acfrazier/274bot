@@ -128,7 +128,9 @@ impl Pump {
             session_start_gens.player_info,
         );
         let npc_rows_coherent = gens.npc_info.wrapping_sub(session_start_gens.npc_info)
-            == gens.player_info.wrapping_sub(session_start_gens.player_info);
+            == gens
+                .player_info
+                .wrapping_sub(session_start_gens.player_info);
         self.last = gens;
         DrainResult {
             packet_delta,

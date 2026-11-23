@@ -415,7 +415,8 @@ impl SlotCondition {
             self.reset_window(WindowReset::Modal);
             // Preserve same-drain ordinary hits before TimerPaused advances last_mark.
             // The normal scan below still owns hit_seen and latch ordering.
-            if drain.packet_delta != 0 && self.tables.is_some() && snapshot.local_player().is_some() {
+            if drain.packet_delta != 0 && self.tables.is_some() && snapshot.local_player().is_some()
+            {
                 if let Some(marks) = snapshot.hitmarks() {
                     let tick = snapshot.tick() as u16;
                     for (slot, mark) in marks.marks.iter().enumerate() {

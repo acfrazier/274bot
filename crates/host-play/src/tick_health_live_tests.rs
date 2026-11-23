@@ -18,9 +18,8 @@ struct Observations {
 #[ignore = "requires LIVE=1 and a local revision-289 engine"]
 fn tick_health_engine_a_receipt() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    let root = std::path::PathBuf::from(
-        std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"),
-    );
+    let root =
+        std::path::PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
     let scratch = root.join("tick-health-cell");
     std::fs::create_dir_all(&scratch).unwrap();
     let profile = super::bank_core_live::live_profile(&scratch)
@@ -84,11 +83,16 @@ fn tick_health_engine_a_receipt() {
         serde_json::to_vec_pretty(&receipt).unwrap(),
     )
     .unwrap();
-    assert!(complete, "cell wall watchdog ended before eight packet drains");
+    assert!(
+        complete,
+        "cell wall watchdog ended before eight packet drains"
+    );
     for pair in receipts.windows(2) {
         if pair[0].session == pair[1].session {
             assert_eq!(
-                pair[1].packet_generation.wrapping_sub(pair[0].packet_generation),
+                pair[1]
+                    .packet_generation
+                    .wrapping_sub(pair[0].packet_generation),
                 pair[1].packet_delta,
             );
             assert_eq!(

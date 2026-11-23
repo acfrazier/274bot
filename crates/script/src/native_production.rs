@@ -1116,13 +1116,20 @@ mod tests {
                     tick.actions.poll(&handle, &mut tick.cx)
                 });
                 if let Poll::Ready(Err(ActionError::Failed(reason))) = result {
-                    assert_eq!(reason.as_ref(), "production menu did not expose the product");
+                    assert_eq!(
+                        reason.as_ref(),
+                        "production menu did not expose the product"
+                    );
                     expired_at = Some(script_tick);
                 } else {
                     assert!(result.is_pending());
                 }
             }
-            assert_eq!(expired_at, Some(3), "packet grouping must not extend the budget");
+            assert_eq!(
+                expired_at,
+                Some(3),
+                "packet grouping must not extend the budget"
+            );
         }
     }
 

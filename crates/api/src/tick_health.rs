@@ -138,14 +138,17 @@ impl TickHealth {
             receipt.interval_samples = receipt.interval_samples.saturating_add(1);
             receipt.sampled_game_ticks = receipt.sampled_game_ticks.saturating_add(delta);
             let per_packet = gap.as_secs_f64() * 1000.0 / delta as f64;
-            receipt.mean_tick_ms = Some(
-                self.elapsed.as_secs_f64() * 1000.0 / receipt.sampled_game_ticks as f64,
-            );
+            receipt.mean_tick_ms =
+                Some(self.elapsed.as_secs_f64() * 1000.0 / receipt.sampled_game_ticks as f64);
             receipt.minimum_tick_ms = Some(
-                receipt.minimum_tick_ms.map_or(per_packet, |old| old.min(per_packet)),
+                receipt
+                    .minimum_tick_ms
+                    .map_or(per_packet, |old| old.min(per_packet)),
             );
             receipt.maximum_tick_ms = Some(
-                receipt.maximum_tick_ms.map_or(per_packet, |old| old.max(per_packet)),
+                receipt
+                    .maximum_tick_ms
+                    .map_or(per_packet, |old| old.max(per_packet)),
             );
             if delta == 1 && receipt.clean_interval_samples < CLEAN_SAMPLES {
                 self.clean_ms[receipt.clean_interval_samples] = gap_ms;
@@ -185,7 +188,11 @@ mod tests {
         let empty = health.observe(1, 41, 40, start + Duration::from_millis(20), None);
         assert_eq!(empty.packet_delta, 0);
         let batch = health.observe(
-            1, 46, 40, start + Duration::from_secs(3), Some(Duration::from_millis(7)),
+            1,
+            46,
+            40,
+            start + Duration::from_secs(3),
+            Some(Duration::from_millis(7)),
         );
         assert_eq!(batch.packet_delta, 5);
         assert_eq!(batch.server_ticks, 6);
@@ -217,7 +224,11 @@ mod tests {
         health.observe(1, 20, 0, start, None);
         health.observe(1, 21, 0, start + Duration::from_secs(1), None);
         let receipt = health.observe(
-            2, 50, 48, start + Duration::from_secs(10), Some(Duration::from_secs(4)),
+            2,
+            50,
+            48,
+            start + Duration::from_secs(10),
+            Some(Duration::from_secs(4)),
         );
         assert_eq!(receipt.packet_delta, 2);
         assert_eq!(receipt.server_ticks, 2);
@@ -261,7 +272,11 @@ mod tests {
         let allocations = allocation_counter::measure(|| {
             for tick in 0..1000 {
                 std::hint::black_box(health.observe(
-                    1, tick, 0, start + Duration::from_millis(tick * 600), None,
+                    1,
+                    tick,
+                    0,
+                    start + Duration::from_millis(tick * 600),
+                    None,
                 ));
                 std::hint::black_box(health.receipt());
             }

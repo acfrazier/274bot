@@ -515,7 +515,9 @@ impl HoldRig {
                 observe_seen.lock().unwrap().push(run_sends);
                 let delta = observer_pump.drain_client(c).packet_delta;
                 let edge = delta != 0;
-                let tick = observe_tick.fetch_add(delta, Ordering::Relaxed).wrapping_add(delta);
+                let tick = observe_tick
+                    .fetch_add(delta, Ordering::Relaxed)
+                    .wrapping_add(delta);
                 let inv: [(i32, i32); 0] = [];
                 script_observe_cached(
                     c,
@@ -680,6 +682,30 @@ fn auto_run_hold_survives_full_five_packet_drains() {
         21,
         "script time counts every packet, not the five nonempty drains"
     );
+}
+
+#[test]
+fn native_wait_budget_expires_at_server_tick_thirteen_with_single_or_batched_drains() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    for deltas in [vec![1_u32; PAGE_WAIT_TICKS as usize], vec![5, 5, 2]] {
+        let mut rig = HoldRig::new();
+        let mut frames = vec![click_frame(1, -1)];
+        frames.extend(deltas.into_iter().map(|delta| frame(delta, -1)));
+        rig.run(&frames);
+        let expired = rig.expired_after.lock().unwrap();
+        let index = expired
+            .iter()
+            .position(|&expired| expired)
+            .expect("the native owner expires at its packet-count deadline");
+        let server_tick: u64 = frames[..=index]
+            .iter()
+            .map(|frame| u64::from(frame.drain))
+            .sum();
+        assert_eq!(server_tick, 13);
+        assert!(expired[..index].iter().all(|&expired| !expired));
+    }
 }
 
 #[test]

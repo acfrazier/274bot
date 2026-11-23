@@ -646,9 +646,9 @@ pub mod bank_npc_live;
 #[cfg(test)]
 mod slot_condition_live_tests;
 #[cfg(test)]
-mod tick_health_live_tests;
-#[cfg(test)]
 mod survival_eat_live_tests;
+#[cfg(test)]
+mod tick_health_live_tests;
 
 #[cfg(all(target_os = "linux", feature = "test-support"))]
 pub use script_runtime::measures_captured_native_bank_pick_cpu;
