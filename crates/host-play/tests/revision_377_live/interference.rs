@@ -518,7 +518,7 @@ fn measured_windows_377() -> Result<(), String> {
     }
     for mode in ["outside", "inside"] {
         let executable = crate::test_executable::executable().map_err(|error| error.to_string())?;
-        let output = Command::new(executable)
+        let output = Command::new(&executable)
             .args([
                 "--ignored",
                 "--exact",
