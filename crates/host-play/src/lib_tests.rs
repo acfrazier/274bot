@@ -7205,7 +7205,10 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
     };
 
     let mut finished = 0;
-    for _ in 0..70 {
+    // The follower's wait for the boat counts observed server ticks, so each
+    // step is one tick: the 60-tick budget lapses within the 70 steps.
+    for tick in 1..=70 {
+        snapshot.seed_tick(tick);
         finished += usize::from(step_walk_arm_follow(
             &mut client,
             &snapshot,

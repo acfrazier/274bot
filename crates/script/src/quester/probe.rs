@@ -140,6 +140,7 @@ impl Probe<'_> {
             retained: &mut retained,
             action_id: 0,
             active_now: Duration::from_millis(evidence.tick * 600),
+            eligible_ticks: evidence.tick,
             wall_now: Instant::now(),
             ledger: &mut ledger,
             pending_note_progress: None,

@@ -31,12 +31,14 @@ use thiserror::Error;
 
 mod dialog;
 mod npc_hop;
+mod progress;
 mod snapshot;
 mod transport_hop;
 mod walk;
 
 use dialog::*;
 use npc_hop::*;
+use progress::*;
 use snapshot::*;
 pub use transport_hop::TickCount;
 use transport_hop::*;
@@ -579,6 +581,10 @@ pub struct Traveller {
     /// wizard. Survives across routes (the game's `%exit_essence_mine_coord`
     /// varp persists too); a new entry overwrites it.
     essence: Option<EssenceSession>,
+    /// The longest enforced clock, in observed ticks, now running in the
+    /// follow, set when a clock starts ([`Self::take_clock_progress`]); zero
+    /// when none is waiting.
+    clock_progress: u32,
 }
 
 impl Traveller {
@@ -588,7 +594,20 @@ impl Traveller {
             follow: None,
             follow_terminal_leg: None,
             essence: None,
+            clock_progress: 0,
         }
+    }
+
+    /// Progress of the follow, once: `Some(ticks)` when the follower started a
+    /// new enforced clock (a new follow, leg, hop, send, approach, wait or
+    /// stun window) since the last call. `ticks` is the longest clock now in
+    /// force: the follower ends its own follow when any clock passes its
+    /// bound, so it ends within `ticks + 1` observed ticks of this progress
+    /// unless it starts another clock. A native walk owner uses it as a
+    /// progress watchdog ([`progress`] module).
+    pub fn take_clock_progress(&mut self) -> Option<u32> {
+        let ticks = std::mem::take(&mut self.clock_progress);
+        (ticks != 0).then_some(ticks)
     }
 
     /// Drop the active follow run and its terminal-leg record.
@@ -777,14 +796,22 @@ impl Traveller {
         options: &mut TravelOptions<'a>,
         start_run: impl FnOnce(&TravelOptions<'a>) -> FollowRun,
     ) -> Option<TravelOutcome> {
-        if self.follow.is_none() {
+        let started = clock_starts();
+        let new_run = self.follow.is_none();
+        if new_run {
             self.follow_terminal_leg = None;
             self.follow = Some(start_run(options));
         }
+        let marks = self.follow.as_ref().map(FollowRun::progress_marks);
         let outcome = self
             .follow
             .as_mut()
             .and_then(|run| run.step(d, snapshot, options, &mut self.essence));
+        if let Some(run) = self.follow.as_ref().filter(|_| outcome.is_none()) {
+            if new_run || clock_starts() != started || marks != Some(run.progress_marks()) {
+                self.clock_progress = run.longest_clock_ticks();
+            }
+        }
         if api::hostlog::debug_enabled() {
             let run = self.follow.as_ref();
             api::host_log!(
@@ -978,8 +1005,9 @@ struct FollowRun {
     budget: u32,
     /// Shared by every walk hop and stalled resend in this follow.
     walk_packet_budget: WalkPacketBudget,
-    /// Ticks the current transport leg has waited for its loc to appear.
-    loc_wait: u32,
+    /// Observed ticks the current transport leg has waited for its loc to
+    /// appear: one per `PLAYER_INFO` packet, as every follower clock counts.
+    loc_wait: TickCount,
     /// Refused clicks this follow may still sit out while nothing was
     /// clicked yet (frozen `CANDIDATE_SETTLE_TRIES`, one budget per walk).
     settle_left: u32,
@@ -1021,7 +1049,7 @@ impl FollowRun {
             close_enough: options.close_enough,
             budget: options.budget_ticks_per_hop,
             walk_packet_budget: WalkPacketBudget::default(),
-            loc_wait: 0,
+            loc_wait: TickCount::default(),
             settle_left: SCENE_SETTLE_TRIES,
             settle_until: None,
             walk: None,
@@ -1114,6 +1142,7 @@ impl FollowRun {
                     {
                         self.stun_recovery_used = true;
                         self.stun_wait = Some(observed);
+                        clock_started();
                         if let Some(cb) = options.on_event.as_mut() {
                             cb(TravelEvent::StunDeferred {
                                 observed_tick: observed,
@@ -1261,7 +1290,7 @@ impl FollowRun {
                             TeleportSend::Sent => {
                                 let to = edge.to;
                                 let pass_watch = gate_pass_watch(snapshot, edge, options);
-                                self.loc_wait = 0;
+                                self.restart_loc_wait();
                                 self.transport = Some(TransportHop {
                                     leg,
                                     to,
@@ -1288,8 +1317,7 @@ impl FollowRun {
                                 return Some(TravelOutcome::Refused { at: here, reason });
                             }
                             TeleportSend::Wait(reason) => {
-                                self.loc_wait += 1;
-                                if self.loc_wait > self.budget {
+                                if self.loc_wait.observe(snapshot.tick()) > self.budget {
                                     fire_leg(options, &leg, LegPhase::Failed);
                                     return Some(TravelOutcome::Blocked {
                                         at: here,
@@ -1323,7 +1351,7 @@ impl FollowRun {
                         match ix.walk(to) {
                             SendResult::Sent { .. } => {
                                 let pass_watch = gate_pass_watch(snapshot, edge, options);
-                                self.loc_wait = 0;
+                                self.restart_loc_wait();
                                 self.transport = Some(TransportHop {
                                     leg,
                                     to,
@@ -1366,8 +1394,7 @@ impl FollowRun {
                                 npc.network
                             }
                             None => {
-                                self.loc_wait += 1;
-                                if self.loc_wait > self.budget {
+                                if self.loc_wait.observe(snapshot.tick()) > self.budget {
                                     fire_leg(options, &leg, LegPhase::Failed);
                                     return Some(TravelOutcome::Blocked {
                                         at: here,
@@ -1433,8 +1460,7 @@ impl FollowRun {
                             // the loaded scene: keep waiting, bounded by
                             // the hop budget. The leg stays on the front
                             // while waiting.
-                            self.loc_wait += 1;
-                            if self.loc_wait > self.budget {
+                            if self.loc_wait.observe(snapshot.tick()) > self.budget {
                                 fire_leg(options, &leg, LegPhase::Failed);
                                 return Some(TravelOutcome::Blocked {
                                     at: here,
@@ -1456,11 +1482,11 @@ impl FollowRun {
                         match result {
                             SendResult::Sent { .. } => {
                                 let npc_recovery = NpcRecovery {
-                                    waited: self.loc_wait,
+                                    waited: self.loc_wait.get(),
                                     last_tick: Some(snapshot.tick()),
                                     ..Default::default()
                                 };
-                                self.loc_wait = 0;
+                                self.restart_loc_wait();
                                 self.transport = Some(TransportHop {
                                     leg,
                                     to,
@@ -1504,6 +1530,7 @@ impl FollowRun {
                                 self.settle_left -= 1;
                                 self.settle_until =
                                     Some(snapshot.tick().saturating_add(SCENE_SETTLE_TICKS));
+                                clock_started();
                                 self.requeue_transport(leg);
                                 return None;
                             }
@@ -1570,7 +1597,7 @@ impl FollowRun {
                                     let open_sent_tick =
                                         (edge.kind == TransportKind::Door).then(|| snapshot.tick());
                                     let npc_recovery = NpcRecovery {
-                                        waited: self.loc_wait,
+                                        waited: self.loc_wait.get(),
                                         last_tick: Some(snapshot.tick()),
                                         ..Default::default()
                                     };
@@ -1582,7 +1609,7 @@ impl FollowRun {
                                         target_name,
                                         options,
                                     );
-                                    self.loc_wait = 0;
+                                    self.restart_loc_wait();
                                     self.transport = Some(TransportHop {
                                         leg,
                                         to,
@@ -1615,8 +1642,7 @@ impl FollowRun {
                             // scene yet: keep waiting, bounded by the hop
                             // budget. The leg stays on the front while
                             // waiting.
-                            self.loc_wait += 1;
-                            if self.loc_wait > self.budget {
+                            if self.loc_wait.observe(snapshot.tick()) > self.budget {
                                 fire_leg(options, &leg, LegPhase::Failed);
                                 return Some(TravelOutcome::Blocked {
                                     at: here,

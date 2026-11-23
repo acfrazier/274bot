@@ -239,6 +239,7 @@ mod tests {
             shop_keepers: None,
             wilderness: None,
             active_now: Duration::ZERO,
+            eligible_ticks: 0,
             wall_now: Instant::now(),
             ledger: &mut ledger,
             pending_note_progress: None,

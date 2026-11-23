@@ -2314,6 +2314,12 @@ where
                                     &request,
                                     &snapshot,
                                 );
+                                api::host_log!(
+                                    api::hostlog::Category::NavTrace,
+                                    api::hostlog::Level::Debug,
+                                    "native-walk-request tick={tick} request_id={}",
+                                    authority.request_id().get()
+                                );
                                 let prereq_allow = super::walk_permissions::native_prereq_allow(
                                     navs,
                                     name,
@@ -2714,6 +2720,24 @@ where
 /// or abort that ended the follow), and the published outcome of the route
 /// the owner still holds. A revoked owner receives neither.
 fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick: u64) {
+    // The route follower started an enforced clock: progress for the walk
+    // that the host is routing. The owner's deadline moves to this tick plus
+    // the longest clock in force plus one.
+    if let Some(clock) = bot.traveller.take_clock_progress() {
+        if let Some(owner) = bot
+            .native_walk
+            .as_ref()
+            .filter(|owner| owner.live() && owner.request_id().get() == bot.walk_request_id)
+        {
+            api::host_log!(
+                api::hostlog::Category::NavTrace,
+                api::hostlog::Level::Debug,
+                "native-walk-progress tick={tick} request_id={} clock={clock}",
+                owner.request_id().get()
+            );
+            slot.post_native_walk_progress(owner, clock, tick);
+        }
+    }
     for (owner, event) in bot.walk_guard_events.drain(..) {
         slot.notify_native_walk(&owner, event);
     }

@@ -1723,7 +1723,8 @@ impl SlotScript {
         self.want_run = false;
         self.evidence_wait_run = None;
         self.native_runtime.clear_note_progress();
-        self.native_runtime.clock.observe(Instant::now(), false);
+        self.native_runtime
+            .observe_eligibility(Instant::now(), false);
         self.revoke_native_input();
         self.interrupt_compiled(Interrupt::Pause);
 
@@ -1995,7 +1996,8 @@ impl SlotScript {
         self.guardian_revoke(FightCancel::SessionEnded);
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
-        self.native_runtime.clock.observe(Instant::now(), false);
+        self.native_runtime
+            .observe_eligibility(Instant::now(), false);
         self.manual_route_run = None;
         self.manual_route_bank_fetch = None;
         self.on_is_up(false);
@@ -2218,7 +2220,7 @@ impl SlotScript {
         let _ = self.native_quiet_read(now);
         // Pause, hold, not-ready, recovery hold and Blocked freeze the clock.
         let eligible = self.dispatch_open() && !held;
-        self.native_runtime.clock.observe(now, eligible);
+        self.native_runtime.observe_eligibility(now, eligible);
         if self.surface_active() {
             return;
         }
@@ -2953,6 +2955,19 @@ impl SlotScript {
     ) -> bool {
         self.ledger_of(authority.run())
             .is_some_and(|ledger| ledger.capture_walk_prereq_allow(authority, allow))
+    }
+
+    /// Record the route follower's progress for this native walk: it started
+    /// an enforced clock of at most `clock` observed ticks on host `tick`.
+    pub fn post_native_walk_progress(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        clock: u32,
+        tick: u64,
+    ) -> bool {
+        let baseline = self.native_runtime.eligible_ticks.count_through(tick);
+        self.ledger_of(authority.run())
+            .is_some_and(|ledger| ledger.post_walk_progress(authority, baseline, clock))
     }
 
     pub fn complete_native_walk(

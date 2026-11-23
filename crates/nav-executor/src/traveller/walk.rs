@@ -16,6 +16,15 @@ const END_BLOCKED_STALL_TICKS: u32 = 5;
 /// This is a finite policy margin, not another engine timing constant.
 const WALK_MOVEMENT_MARGIN_DIVISOR: u32 = 4;
 
+/// The ticks a moving hop of `budget_ticks` may wait: the budget plus 25%,
+/// never below the default hop budget. The follower ends the hop when its
+/// clock passes this.
+pub(super) fn moving_budget_ticks(budget_ticks: u32) -> u32 {
+    budget_ticks
+        .saturating_add(budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR))
+        .max(DEFAULT_HOP_BUDGET_TICKS)
+}
+
 /// The client is still walking an accepted click: its actor has queued
 /// route steps and the map flag of that click is still set.
 pub(super) fn walk_is_live(snapshot: &GameSnapshot) -> bool {
@@ -230,10 +239,7 @@ impl FollowRun {
                 let counted = hop.ticks_waited.get();
                 let spent = hop.ticks_waited.observe(snapshot.tick());
                 let moved = hop.stall_idle_at.is_some_and(|last| last != here);
-                let moving_budget = hop
-                    .budget_ticks
-                    .saturating_add(hop.budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR))
-                    .max(DEFAULT_HOP_BUDGET_TICKS);
+                let moving_budget = moving_budget_ticks(hop.budget_ticks);
                 if spent != counted && spent > hop.budget_ticks && (!moved || spent > moving_budget)
                 {
                     let why = if hop.sent_tile == Some(here) {
@@ -435,9 +441,11 @@ impl FollowRun {
             *refused = (0, None);
             return false;
         }
-        if refused.1 != Some(tick) {
-            *refused = (refused.0.saturating_add(1), Some(tick));
-        }
+        // One tick per `PLAYER_INFO` packet since the last credit.
+        let credit = refused
+            .1
+            .map_or(1, |last| TickCount::credit_since(last, tick));
+        *refused = (refused.0.saturating_add(credit), Some(tick));
         refused.0 >= END_BLOCKED_STALL_TICKS
     }
 
