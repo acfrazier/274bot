@@ -23,6 +23,7 @@ use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, RunKey};
 use api::service_pick::ShopKeeperFacts;
 use api::snapshot::{GameSnapshot, WorldTile};
+use api::tick_health::TickHealthReceipt;
 use client::client::Client;
 use host::{FrameBuf, Pump};
 use parking_lot::Mutex;
@@ -42,7 +43,6 @@ use super::combat_proof::{
     self, CaptureRegistration, CombatCapture, DriverPacketCounts, DriverPacketTrace,
     MAX_DRIVER_PACKETS_PER_TICK,
 };
-use super::gather_bait_live::PlayerInfoClock;
 use super::{run_with_template, ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 
 const KEEPER_CONFIG: &str = "gerrant";
@@ -554,7 +554,7 @@ struct ProbeTrace {
     failure: Option<String>,
     samples: Vec<Sample>,
     observations: Vec<Value>,
-    player_info_clock: PlayerInfoClock,
+    player_info_clock: TickHealthReceipt,
     last_observation_signature: Option<String>,
     batch_started_utc: Option<String>,
     batch_ended_utc: Option<String>,
@@ -2384,11 +2384,7 @@ impl LiveState {
             self.packet_counts.observe(client, self.snapshot.tick());
         }
         if client.ingame && client.scene_state == 2 {
-            self.trace.lock().player_info_clock.observe(
-                client.gens.session,
-                client.gens.player_info,
-                Instant::now(),
-            );
+            self.trace.lock().player_info_clock = self.snapshot.tick_health();
         }
 
         if self.runner.on_start_script() && !self.started {
@@ -2396,7 +2392,10 @@ impl LiveState {
                 let trace = self.trace.lock();
                 (
                     trace.player_info_clock.median_ms,
-                    trace.player_info_clock.accepted(),
+                    trace
+                        .player_info_clock
+                        .median_ms
+                        .is_some_and(|median| (570..=630).contains(&median)),
                 )
             };
             if !clock_accepted {

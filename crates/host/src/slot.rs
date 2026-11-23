@@ -6,13 +6,13 @@
 
 use client::client::{Client, ClientGens};
 
-/// Outcome of one drain (one 20 ms frame): whether a `PLAYER_INFO` packet
-/// applied this frame, whether the NPC rows match the newest applied
-/// `PLAYER_INFO` in the session, the generation snapshot the frame ended on,
-/// and the families that moved **this** drain.
+/// Outcome of one drain. Packet count is independent of dirty families.
+/// Intermediate states in a multi-packet drain are not separately observed.
 #[derive(Clone, Copy)]
 pub struct DrainResult {
-    pub player_info: bool,
+    pub packet_delta: u64,
+    /// Monotonic instant at which applied packets were observed after draining.
+    pub received_at: std::time::Instant,
     pub npc_rows_coherent: bool,
     pub session_changed: bool,
     pub gens: ClientGens,
@@ -21,8 +21,8 @@ pub struct DrainResult {
 
 /// A `PLAYER_INFO` applied this drain — synthesize `on_server_tick` (274 has
 /// no tick-end packet; the dedicated packet counter is the tick edge).
-pub fn should_emit_tick(player_info_this_drain: bool) -> bool {
-    player_info_this_drain
+pub fn should_emit_tick(packet_delta: u64) -> bool {
+    packet_delta != 0
 }
 
 /// Snapshot families; each field is true when that family's gen moved
@@ -104,18 +104,37 @@ impl Pump {
     /// supplied session watermark when the session changed. The watermark is
     /// also used to determine whether NPC rows match the newest PLAYER_INFO.
     pub fn drain(&mut self, gens: ClientGens, session_start_gens: ClientGens) -> DrainResult {
+        self.drain_at(gens, session_start_gens, std::time::Instant::now())
+    }
+
+    /// Observe a drain at its monotonic receive-observation instant.
+    pub fn drain_at(
+        &mut self,
+        gens: ClientGens,
+        session_start_gens: ClientGens,
+        received_at: std::time::Instant,
+    ) -> DrainResult {
         let session_changed = self.last.session != gens.session;
         if session_changed {
             self.last = session_start_gens;
         }
         let previous = self.last;
         let dirty = dirty_families(previous, gens);
-        let player_info = gens.player_info != previous.player_info;
-        let npc_rows_coherent = gens.npc_info - session_start_gens.npc_info
-            == gens.player_info - session_start_gens.player_info;
+        let packet_delta = api::tick_health::packet_delta(
+            previous.session,
+            previous.player_info,
+            gens.session,
+            gens.player_info,
+            session_start_gens.player_info,
+        );
+        let npc_rows_coherent = gens.npc_info.wrapping_sub(session_start_gens.npc_info)
+            == gens
+                .player_info
+                .wrapping_sub(session_start_gens.player_info);
         self.last = gens;
         DrainResult {
-            player_info,
+            packet_delta,
+            received_at,
             npc_rows_coherent,
             session_changed,
             gens,
@@ -154,7 +173,7 @@ mod tests {
     fn quiet_frame_emits_no_tick() {
         let mut pump = Pump::new();
         let result = drain_from_zero(&mut pump, gens());
-        assert!(!should_emit_tick(result.player_info));
+        assert!(!should_emit_tick(result.packet_delta));
     }
 
     #[test]
@@ -164,7 +183,7 @@ mod tests {
         g.player_info = 1;
         let mut pump = Pump::new();
         let result = drain_from_zero(&mut pump, g);
-        assert!(should_emit_tick(result.player_info));
+        assert!(should_emit_tick(result.packet_delta));
         assert_eq!(result.gens.player, 1);
     }
 
@@ -189,7 +208,7 @@ mod tests {
 
         let mut pump = Pump::new();
         let result = drain_from_zero(&mut pump, after);
-        assert!(!should_emit_tick(result.player_info));
+        assert!(!should_emit_tick(result.packet_delta));
         assert!(
             result.dirty.npc,
             "post-drain DrainResult.dirty must see the npc bump"
@@ -238,13 +257,13 @@ mod tests {
         let mut g = gens();
         g.player = 1;
         g.player_info = 1;
-        assert!(should_emit_tick(drain_from_zero(&mut pump, g).player_info));
+        assert!(should_emit_tick(drain_from_zero(&mut pump, g).packet_delta));
 
         // NPC gen moves this drain; player did not: no tick, npc dirty.
         let mut quiet = g;
         quiet.npc = 1;
         let result = drain_from_zero(&mut pump, quiet);
-        assert!(!should_emit_tick(result.player_info));
+        assert!(!should_emit_tick(result.packet_delta));
         assert!(result.dirty.npc);
         assert!(!result.dirty.player);
     }
@@ -258,7 +277,7 @@ mod tests {
         drain_from_zero(&mut pump, g);
         // Same snapshot again: no new tick, no dirty families.
         let result = drain_from_zero(&mut pump, g);
-        assert!(!should_emit_tick(result.player_info));
+        assert!(!should_emit_tick(result.packet_delta));
         assert_eq!(result.dirty, DirtyFamilies::default());
     }
 
@@ -283,14 +302,14 @@ mod tests {
         let result = drain_from_zero(&mut pump, reset);
         assert!(result.dirty.npc && result.dirty.player && result.dirty.world);
         assert!(
-            !result.player_info,
+            result.packet_delta == 0,
             "REBUILD/logout invalidation must not invent a game tick"
         );
 
         let mut player_packet = reset;
         player_packet.player += 1;
         player_packet.player_info += 1;
-        assert!(drain_from_zero(&mut pump, player_packet).player_info);
+        assert_eq!(drain_from_zero(&mut pump, player_packet).packet_delta, 1);
     }
 
     #[test]
@@ -313,7 +332,7 @@ mod tests {
 
         let result = drain_from_zero(&mut pump, reset_and_inventory);
         assert!(result.dirty.player && result.dirty.inv);
-        assert!(!result.player_info);
+        assert_eq!(result.packet_delta, 0);
     }
 
     #[test]
@@ -335,7 +354,10 @@ mod tests {
             ..ClientGens::default()
         };
 
-        assert!(drain_from_zero(&mut pump, every_family_and_player_info).player_info);
+        assert_eq!(
+            drain_from_zero(&mut pump, every_family_and_player_info).packet_delta,
+            1
+        );
     }
 
     #[test]
@@ -360,11 +382,11 @@ mod tests {
         let mut pump = Pump::new();
         let started = pump.drain(prior_session, prior_session);
         assert!(started.session_changed);
-        assert!(!started.player_info);
+        assert_eq!(started.packet_delta, 0);
         assert!(started.npc_rows_coherent);
 
         let quiet = pump.drain(prior_session, prior_session);
-        assert!(!quiet.player_info);
+        assert_eq!(quiet.packet_delta, 0);
         assert!(!quiet.session_changed);
         assert_eq!(quiet.dirty, DirtyFamilies::default());
 
@@ -372,14 +394,14 @@ mod tests {
         next_tick.player += 1;
         next_tick.player_info += 1;
         let edge = pump.drain(next_tick, prior_session);
-        assert!(edge.player_info);
+        assert_eq!(edge.packet_delta, 1);
         assert!(!edge.npc_rows_coherent);
 
         let mut reconnect = next_tick;
         reconnect.session += 1;
         let reconnect = pump.drain(reconnect, reconnect);
         assert!(reconnect.session_changed);
-        assert!(!reconnect.player_info);
+        assert_eq!(reconnect.packet_delta, 0);
         assert!(reconnect.npc_rows_coherent);
     }
 
@@ -423,7 +445,7 @@ mod tests {
         let next_session_start = next_session;
         let rebased = pump.drain(next_session_start, next_session_start);
         assert!(rebased.session_changed);
-        assert!(!rebased.player_info);
+        assert_eq!(rebased.packet_delta, 0);
         assert!(rebased.npc_rows_coherent);
 
         next_session.player += 1;
@@ -433,6 +455,42 @@ mod tests {
                 .drain(next_session, next_session_start)
                 .npc_rows_coherent
         );
+    }
+
+    #[test]
+    fn packet_delta_counts_batches_and_wrap_without_poll_ticks() {
+        let start = ClientGens {
+            player_info: u64::MAX - 1,
+            npc_info: u64::MAX - 1,
+            ..gens()
+        };
+        let mut pump = Pump::from_gens(start);
+        let mut current = start;
+        current.player_info = 3;
+        current.npc_info = 3;
+        let at = std::time::Instant::now();
+        let result = pump.drain_at(current, start, at);
+        assert_eq!(result.packet_delta, 5);
+        assert_eq!(result.received_at, at);
+        assert!(result.npc_rows_coherent);
+        assert_eq!(pump.drain_at(current, start, at).packet_delta, 0);
+    }
+
+    #[test]
+    fn pump_drain_has_fixed_storage_and_no_allocations() {
+        assert!(std::mem::size_of::<Pump>() <= 184);
+        assert!(std::mem::size_of::<DrainResult>() <= 232);
+        let mut pump = Pump::default();
+        let mut current = gens();
+        let at = std::time::Instant::now();
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..1000 {
+                current.player_info = current.player_info.wrapping_add(5);
+                std::hint::black_box(pump.drain_at(current, gens(), at));
+            }
+        });
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(allocations.bytes_total, 0);
     }
 
     #[test]

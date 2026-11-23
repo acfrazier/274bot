@@ -107,7 +107,8 @@ fn npc(ident: usize, index: usize) -> NpcView {
 
 fn drain(edge: bool, coherent: bool) -> DrainResult {
     DrainResult {
-        player_info: edge,
+        packet_delta: u64::from(edge),
+        received_at: std::time::Instant::now(),
         npc_rows_coherent: coherent,
         session_changed: false,
         gens: Default::default(),

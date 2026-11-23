@@ -78,11 +78,10 @@ fn disarmed_receipts_allocate_nothing_on_tick_and_paint_producer() {
 
 #[test]
 fn scenario_runner_quantity_baseline_storage_stays_within_ceiling() {
-    // Measured 5,896 B + 64 B headroom. The optional actor_observer and
-    // evidence.actors Box owners (8 B each) add 16 B over the 5,880 B base
-    // so disarmed actor state stays unallocated.
+    // Measured 6,288 B + 64 B headroom, including GameSnapshot's inline
+    // TickHealth state. Keep this bound in sync with interference_alloc.rs.
     assert!(
-        std::mem::size_of::<ScenarioRunner>() <= 5_960,
-        "ScenarioRunner exceeded its 5,896 B measurement + 64 B headroom"
+        std::mem::size_of::<ScenarioRunner>() <= 6_352,
+        "ScenarioRunner exceeded its 6,288 B measurement + 64 B headroom"
     );
 }

@@ -401,6 +401,18 @@ impl ProgressWatchdog {
         self.warned_no_game_packets = false;
     }
 
+    /// Refresh freshness only for actual server packets. This timestamp does
+    /// not spend a semantic tick budget or reconstruct batched states.
+    pub fn observe_tick_health(
+        &mut self,
+        receipt: &api::tick_health::TickHealthReceipt,
+        now: Instant,
+    ) {
+        if receipt.packet_delta != 0 {
+            self.stamp_game_packet_tick(now);
+        }
+    }
+
     pub fn stamp_gameplay(&mut self, now: Instant) {
         if self.state == WatchdogState::Idle {
             return;
@@ -925,6 +937,26 @@ mod tests {
             WatchdogAction::None,
             "fresh packet input clears the quiet-period warning"
         );
+    }
+
+    #[test]
+    fn tick_health_empty_drains_do_not_refresh_packet_freshness() {
+        let now = t0();
+        let mut watchdog = ProgressWatchdog::new();
+        watchdog.arm_fresh(now);
+        let mut health = api::tick_health::TickHealth::default();
+        let empty = health.observe(1, 0, 0, now + SCHEDULER_WARN, None);
+        watchdog.observe_tick_health(&empty, now + SCHEDULER_WARN);
+        assert_eq!(
+            watchdog.observe(now + SCHEDULER_WARN, true),
+            WatchdogAction::WarnNoGamePackets
+        );
+        let at = now + SCHEDULER_WARN + Duration::from_secs(1);
+        let batch = health.observe(1, 5, 0, at, None);
+        watchdog.observe_tick_health(&batch, at);
+        assert_eq!(watchdog.game_packet_elapsed(at), Duration::ZERO);
+        assert_eq!(watchdog.observe(at, true), WatchdogAction::None);
+        assert_eq!(batch.packet_delta, 5);
     }
 
     #[test]

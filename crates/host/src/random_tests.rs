@@ -576,7 +576,7 @@ fn evade_survives_expired_hit_without_player_generation_advance() {
     // current target index keeps the event alive.
     c.loop_cycle += 70;
     let player_gen_before = c.gens.player;
-    assert!(!snap.rebuild_from_drain(&c, false));
+    assert!(!snap.rebuild_from_drain(&c, 0));
     assert_eq!(c.gens.player, player_gen_before);
     assert!(!snap.taking_damage());
     assert_eq!(
@@ -4686,7 +4686,7 @@ fn lost_tool_pickup_waits_for_delayed_inventory_update() {
         },
     );
     c.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
-    snap.rebuild_from_drain(&c, false);
+    snap.rebuild_from_drain(&c, 0);
     let second = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
 
     tick_at(&mut c, &mut snap);
@@ -4722,7 +4722,7 @@ fn lost_tool_spawn_grace_includes_packet_delivery_tick() {
 
     plant_ground_obj(&mut c, 1, 0, 508, Some("Axe head"));
     c.gens.scene = c.gens.scene.wrapping_add(1);
-    snap.rebuild_from_drain(&c, false);
+    snap.rebuild_from_drain(&c, 0);
     guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);
     tick_at(&mut c, &mut snap);
     let event_plus_three = guardian_tick_with_data(&mut g, &mut drv, &snap, &settings, &data);

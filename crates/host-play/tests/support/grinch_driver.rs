@@ -1636,7 +1636,7 @@ impl Runtime {
         };
         let drain = self.actors[index].pump.drain_client(client);
         host::publish_snapshot(&mut self.actors[index].snapshot, client, drain);
-        let raw = if drain.player_info {
+        let raw = if drain.packet_delta != 0 {
             let raw = match capture_raw_frame(
                 &self.actors[index],
                 client,
@@ -1657,7 +1657,7 @@ impl Runtime {
             None
         };
         if self.case.is_c() && index == self.main_index {
-            if let Err(error) = record_bank_callback(self, client, drain.player_info) {
+            if let Err(error) = record_bank_callback(self, client, drain.packet_delta != 0) {
                 self.error = Some(error);
                 return;
             }

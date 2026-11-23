@@ -397,6 +397,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Scripts
 
+- Script tick budgets now count every received server tick in a batched drain.
+  Shared tick-health receipts distinguish incomplete sampled-state coverage,
+  long receive intervals, and host scheduling delay. Wall watchdogs remain separate.
+
 - Scripts can use the Zanaris bank after the account completes Lost City.
   Eligibility for the Mage Arena bank follows the account's wilderness
   permission. Neither bank needs a separate setting. Native, JS v2, and

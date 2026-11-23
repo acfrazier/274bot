@@ -786,9 +786,7 @@ impl Host {
             )
         };
         slot.guardian_status = status.clone();
-        if should_emit_tick(result.player_info) {
-            slot.tick_n = slot.tick_n.wrapping_add(1);
-        }
+        slot.tick_n = slot.tick_n.wrapping_add(result.packet_delta);
         // Publish actual render demand before the frontend observe hook.
         // A GPU-requested head may have fallen back to CpuPix3D, so the
         // head's backend kind — not the request — controls nav
@@ -1739,17 +1737,20 @@ pub fn publish_snapshot(snapshot: &mut GameSnapshot, client: &Client, result: Dr
         snapshot.reset_session(result.gens);
         return;
     }
-    let player_info = if result.session_changed {
-        // A drain can contain packets on both sides of a reconnect. The
-        // client records the exact grant watermark; only later generations
-        // may republish a family, including packets later in this same drain.
-        let start = client.session_start_gens();
-        snapshot.reset_session(start);
-        result.gens.player_info != start.player_info
-    } else {
-        result.player_info
-    };
-    snapshot.rebuild_from_drain(client, player_info);
+    if result.session_changed {
+        // A reconnect drain may include old-session packets before its grant.
+        snapshot.reset_session(client.session_start_gens());
+    }
+    snapshot.rebuild_from_drain_at(
+        client,
+        result.packet_delta,
+        result.received_at,
+        if result.session_changed {
+            None
+        } else {
+            capacity::last_service_delay()
+        },
+    );
 }
 
 /// Result of publishing a frontend-owned snapshot from the client's real
