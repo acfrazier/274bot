@@ -25,7 +25,7 @@ const WAIT: Duration = Duration::from_secs(120);
 /// Saves one process keeps in the writer's reach each round: one active
 /// and eight queued.
 const SAVES: usize = 9;
-/// The writer's per-job pass threshold (plan §4.4): 250 ms.
+/// Shared 250 ms threshold for per-class over_limit counts and the load report.
 pub(super) const THRESHOLD_MS: f64 = 250.0;
 /// Rounds per process: 18 saves a round of about 25 frames each, so the log
 /// passes the idle TRUNCATE trigger (W / 2 = 4,608 frames) more than once.

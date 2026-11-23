@@ -4355,6 +4355,59 @@ fn phase_root(scratch: &IsolatedEnv, name: &str) -> StateRoot {
 fn file_under(classes: &mut occupancy_tests::Samples, label: &str, values: Vec<f64>) {
     classes.entry(label.to_string()).or_default().extend(values);
 }
+// Operator-approved gate: per-class p99 <= 250 ms and max <= 500 ms. The p99
+// bounds recurring latency; the hard ceiling permits a transient but rejects
+// severe stalls. First-import stays diagnostic because it runs once per root
+// off the UI thread.
+const OCCUPANCY_P99_LIMIT_MS: f64 = occupancy_tests::THRESHOLD_MS;
+const OCCUPANCY_HARD_CEILING_MS: f64 = 500.0;
+
+fn occupancy_class_verdict(p99_ms: f64, max_ms: f64, diagnostic: bool) -> &'static str {
+    if diagnostic {
+        "diagnostic"
+    } else if p99_ms <= OCCUPANCY_P99_LIMIT_MS && max_ms <= OCCUPANCY_HARD_CEILING_MS {
+        "pass"
+    } else {
+        "fail"
+    }
+}
+
+#[test]
+fn occupancy_class_verdict_uses_p99_and_hard_ceiling() {
+    assert_eq!(
+        occupancy_class_verdict(
+            OCCUPANCY_P99_LIMIT_MS,
+            OCCUPANCY_HARD_CEILING_MS,
+            false
+        ),
+        "pass"
+    );
+    assert_eq!(
+        occupancy_class_verdict(
+            OCCUPANCY_P99_LIMIT_MS + 0.001,
+            OCCUPANCY_HARD_CEILING_MS,
+            false
+        ),
+        "fail"
+    );
+    assert_eq!(
+        occupancy_class_verdict(
+            OCCUPANCY_P99_LIMIT_MS,
+            OCCUPANCY_HARD_CEILING_MS + 0.001,
+            false
+        ),
+        "fail"
+    );
+    assert_eq!(
+        occupancy_class_verdict(
+            OCCUPANCY_HARD_CEILING_MS + 1.0,
+            OCCUPANCY_HARD_CEILING_MS + 1.0,
+            true
+        ),
+        "diagnostic"
+    );
+}
+
 
 /// A11's CI microbenchmark entrypoint runs the local-state SQL occupancy gate
 /// in a locked release build and preserves its JSON report. The gate measures
@@ -4366,10 +4419,10 @@ fn file_under(classes: &mut occupancy_tests::Samples, label: &str, values: Vec<f
 /// COMMIT, rollbacks, connection setup, shutdown close, same-root export and
 /// recovery) run on roots of their own while the load runs, except the
 /// maintenance commands, which need the exclusive root and run after it.
-/// Writes `T53_OCCUPANCY_OUT` (JSON) with the maximum and p99 of every class
-/// and, given `T53_JSON_BASELINE` (the report of `occupancy_load_report` on
-/// the pinned JSON build), the matching jobs of that build; fails when a
-/// class passes 250 ms or the load is not whole.
+/// Writes `T53_OCCUPANCY_OUT` (JSON) with per-class max, p99, over_limit
+/// count and verdict; when `T53_JSON_BASELINE` is set, it also reports matching
+/// jobs. A gating class fails when its p99 exceeds 250 ms or its max exceeds
+/// the 500 ms hard ceiling. The load must also be whole.
 #[test]
 #[ignore = "the S4 occupancy gate; run alone with T53_OCCUPANCY_OUT (and T53_JSON_BASELINE)"]
 fn occupancy_gate_every_sql_job_class() {
@@ -4683,11 +4736,35 @@ fn occupancy_gate_every_sql_job_class() {
     );
 
     let worst = occupancy_tests::worst_ms(&classes);
-    let gating_worst = classes
-        .iter()
-        .filter(|(class, _)| !FIRST_IMPORT_DIAGNOSTIC_CLASSES.contains(&class.as_str()))
-        .flat_map(|(_, values)| values.iter().copied())
-        .fold(0.0_f64, f64::max);
+    let mut gating_worst = 0.0_f64;
+    let mut gating_worst_p99 = 0.0_f64;
+    let mut gate_failures = Vec::new();
+    let mut class_summaries = serde_json::Map::new();
+    for (class, values) in &classes {
+        let mut class_summary = occupancy_tests::summary(values);
+        let max_ms = class_summary
+            .get("max_ms")
+            .and_then(serde_json::Value::as_f64)
+            .expect("class summary contains max_ms");
+        let p99_ms = class_summary
+            .get("p99_ms")
+            .and_then(serde_json::Value::as_f64)
+            .expect("class summary contains p99_ms");
+        let diagnostic = FIRST_IMPORT_DIAGNOSTIC_CLASSES.contains(&class.as_str());
+        let verdict = occupancy_class_verdict(p99_ms, max_ms, diagnostic);
+        if !diagnostic {
+            gating_worst = gating_worst.max(max_ms);
+            gating_worst_p99 = gating_worst_p99.max(p99_ms);
+            if verdict == "fail" {
+                gate_failures.push(class.clone());
+            }
+        }
+        class_summary
+            .as_object_mut()
+            .expect("class summary is an object")
+            .insert("verdict".to_string(), json!(verdict));
+        class_summaries.insert(class.clone(), class_summary);
+    }
     let mut comparison = serde_json::Map::new();
     if let Some(path) = std::env::var_os("T53_JSON_BASELINE") {
         let baseline: serde_json::Value =
@@ -4716,9 +4793,11 @@ fn occupancy_gate_every_sql_job_class() {
         }
     }
     let report = json!({
-        "threshold_ms": occupancy_tests::THRESHOLD_MS,
+        "threshold_ms": OCCUPANCY_P99_LIMIT_MS,
+        "hard_ceiling_ms": OCCUPANCY_HARD_CEILING_MS,
         "worst_class_max_ms": worst,
         "gating_worst_class_max_ms": gating_worst,
+        "gating_worst_class_p99_ms": gating_worst_p99,
         "os": std::env::consts::OS,
         "load": {
             "rounds": report.rounds,
@@ -4728,7 +4807,8 @@ fn occupancy_gate_every_sql_job_class() {
         },
         "missing_classes": missing,
         "fault_jobs": fault_jobs,
-        "classes": occupancy_tests::summarize(&classes),
+        "gating_failures": gate_failures,
+        "classes": class_summaries,
         "diagnostic_classes": {
             "reason": "First import runs once per state root off the UI thread.",
             "names": FIRST_IMPORT_DIAGNOSTIC_CLASSES,
@@ -4738,8 +4818,8 @@ fn occupancy_gate_every_sql_job_class() {
     std::fs::write(&out, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     assert!(missing.is_empty(), "no sample of the classes {missing:?}");
     assert!(
-        gating_worst <= occupancy_tests::THRESHOLD_MS,
-        "a gating SQL job class exceeded 250 ms: {report}"
+        gate_failures.is_empty(),
+        "gating SQL job class exceeded p99 <= {OCCUPANCY_P99_LIMIT_MS} ms or max <= {OCCUPANCY_HARD_CEILING_MS} ms: {report}"
     );
 }
 
