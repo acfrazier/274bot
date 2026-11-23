@@ -554,6 +554,75 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
         ):
             self.assertNotIn(obsolete, linux)
 
+
+class BuildWorkerTests(unittest.TestCase):
+    def test_worker_preserves_mise_bun_shim_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shim_dir = root / "shims"
+            shim_dir.mkdir()
+            suffix = ".EXE" if os.name == "nt" else ""
+            multi_call = root / f"mise{suffix}"
+            multi_call.write_bytes(b"multi-call binary")
+            multi_call.chmod(0o755)
+            shim = shim_dir / f"bun{suffix}"
+            try:
+                shim.symlink_to(multi_call)
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"file symlinks are unavailable: {error}")
+            self.assertTrue(shim.is_symlink())
+            self.assertEqual(shim.resolve(), multi_call.resolve())
+
+            if os.name == "nt":
+                platform = "windows"
+            elif sys.platform == "darwin":
+                platform = "macos"
+            else:
+                platform = "linux"
+            expect = {
+                "host_commit": "a" * 40,
+                "client_commit": "b" * 40,
+                "revision": 289,
+                "jobs": 1,
+                "archives": {},
+            }
+            args = argparse.Namespace(
+                worker_root=root,
+                commit="a" * 40,
+                platform=platform,
+                rusty_v8_archive="/unused" if platform == "windows" else None,
+            )
+            environment = {"PATH": str(shim_dir)}
+            if os.name == "nt":
+                environment["PATHEXT"] = suffix
+
+            def extract(_archive, destination):
+                Path(destination).mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.dict(os.environ, environment), \
+                    mock.patch.object(release, "worker_expect", return_value=expect), \
+                    mock.patch.object(
+                        release,
+                        "safe_extract_tar",
+                        side_effect=extract,
+                    ), \
+                    mock.patch.object(
+                        release.subprocess,
+                        "run",
+                        return_value=subprocess.CompletedProcess([], 1),
+                    ) as run:
+                with self.assertRaisesRegex(
+                    release.ReleaseError, "local data bootstrap failed"
+                ):
+                    release.build_worker(args)
+
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(
+                run.call_args.kwargs["env"]["BUN_EXECUTABLE"],
+                str(shim),
+            )
+
+
 OTOOL_L = """\
 /pkg/panel-play:
 \t/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit (compatibility version 45.0.0, current version 2775.10.103)

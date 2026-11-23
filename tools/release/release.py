@@ -743,12 +743,12 @@ def build_worker(args):
         expect, inputs, target, args.platform, args.rusty_v8_archive
     )
 
-    # Resolve Bun before the macOS linker environment removes package-manager
+    # Find Bun before the macOS linker environment removes package-manager
     # directories from PATH. Cargo keeps that restricted PATH during bootstrap.
     bootstrap_environment = environment.copy()
     bun = shutil.which("bun")
     if bun is not None:
-        bootstrap_environment["BUN_EXECUTABLE"] = str(Path(bun).resolve())
+        bootstrap_environment["BUN_EXECUTABLE"] = bun
 
     bootstrap_log = root / f"{args.platform}-local-data.log"
     bootstrap_command = [
