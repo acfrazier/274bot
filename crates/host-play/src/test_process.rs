@@ -8,10 +8,24 @@
 //! retain a lock until exec, even after the owning test drops its descriptor.
 
 use std::io;
+use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 static STATE_AND_SPAWN: Mutex<()> = Mutex::new(());
+
+/// Use the running image even if another Cargo invocation relinks its path.
+pub(crate) fn executable() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        // A PID also works when a shell launches the child on our behalf.
+        PathBuf::from(format!("/proc/{}/exe", std::process::id()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::current_exe().expect("the current test executable has a path")
+    }
+}
 
 /// Hold through a state test, including its service and root teardown.
 pub(crate) fn state() -> MutexGuard<'static, ()> {
@@ -54,7 +68,7 @@ pub(crate) fn isolate(full_name: &str) -> bool {
 /// lease. Preserve output on failure and require exactly one passed test.
 pub(crate) fn run(test: &str, envs: &[(&str, &str)]) {
     let _state_lease = state();
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::new(executable());
     command
         .args(["--include-ignored", "--exact", test, "--nocapture"])
         .env(ISOLATED_TEST, test)

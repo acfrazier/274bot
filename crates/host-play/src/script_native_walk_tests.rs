@@ -5225,7 +5225,7 @@ fn takeover_is_taken_for_a_live_native_owner_without_a_walk() {
     const CHILD: &str = "S2_NATIVE_TAKEOVER_LOG_TEST";
     if std::env::var(CHILD).as_deref() != Ok("1") {
         let output = crate::test_process::output(
-            std::process::Command::new(std::env::current_exe().unwrap())
+            std::process::Command::new(crate::test_process::executable())
                 .args([
                     "--exact",
                     "tests::native_walk::takeover_is_taken_for_a_live_native_owner_without_a_walk",

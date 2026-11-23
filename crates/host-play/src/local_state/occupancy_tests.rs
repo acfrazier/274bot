@@ -398,7 +398,7 @@ pub(super) fn start_load(root: &StateRoot, dir: &Path, rounds: usize) -> Load {
         let out = dir.join(format!("occupancy-out-{index}.json"));
         children.push(
             crate::test_process::spawn(
-                std::process::Command::new(std::env::current_exe().unwrap())
+                std::process::Command::new(crate::test_process::executable())
                     .args([
                         "--ignored",
                         "--exact",
