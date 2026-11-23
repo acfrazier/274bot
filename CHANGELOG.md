@@ -428,6 +428,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 - A bank trip now waits for withdrawn items to arrive in your pack before it ends.
 
+#### Update server downloads
+
+- Downloads of the login key, `/crc` and the cache files over HTTPS no longer
+  fail when the server ends a complete response without a TLS `close_notify`.
+  OpenSSL 4 (a Linux client built on a system with it) reported that end as an
+  error, so every such download failed; the same happened after a connection
+  reset that followed a complete response. A response with a `Content-Length`
+  now succeeds when its body has that length, however the connection ended,
+  and fails as a connection problem when the body is shorter, so a cut-off
+  file is no longer cached. The login key must now have its full length (309
+  digits) however the response ended, so a cut-off key is never accepted or
+  saved, also when the server closed the connection in order.
+  When a response has no `Content-Length` and the connection breaks at its end,
+  it counts only if the body proves itself whole: its CRC matches, or the
+  login key has the full length. Complete responses that end cleanly are read
+  as before.
+
 ### Fixed during development
 
 #### Survival
