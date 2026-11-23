@@ -948,15 +948,13 @@ fn the_game_blit_follows_a_window_resize() {
         return;
     };
     publish_ingame(rig.session(), "alice");
-    for _ in 0..3 {
-        assert!(!rig.frame(Pointer::Away));
-    }
-    let before = game_blit();
+    let before = settled_game_blit(&mut rig, "default display", |blit| {
+        blit.avail[0] > 100.0 && blit.avail[1] > 100.0 && blit.size[1] > 100.0
+    });
     rig.display = [1920.0, 1200.0];
-    for _ in 0..3 {
-        assert!(!rig.frame(Pointer::Away));
-    }
-    let after = game_blit();
+    let after = settled_game_blit(&mut rig, "enlarged display", |blit| {
+        blit.avail[0] > before.avail[0] + 100.0 && blit.avail[1] > before.avail[1] + 100.0
+    });
     assert!(
         after.avail[0] > before.avail[0] + 100.0 && after.avail[1] > before.avail[1] + 100.0,
         "the Game pane grows with the window: {:?} -> {:?}",
@@ -991,26 +989,53 @@ fn game_blit() -> super::GameBlitRecord {
         .expect("the Game pane drew")
 }
 
+/// Frames until the Game blit is `ready` and unchanged for two consecutive
+/// frames. The first frames can draw before the dock layout settles, so a
+/// fixed frame count is not enough.
+fn settled_game_blit(
+    rig: &mut Rig,
+    what: &str,
+    ready: impl Fn(&super::GameBlitRecord) -> bool,
+) -> super::GameBlitRecord {
+    let close = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01;
+    let mut previous: Option<super::GameBlitRecord> = None;
+    for _ in 0..60 {
+        assert!(!rig.frame(Pointer::Away));
+        let current = game_blit();
+        if ready(&current) {
+            if previous.is_some_and(|prev| {
+                close(prev.size, current.size) && close(prev.avail, current.avail)
+            }) {
+                return current;
+            }
+            previous = Some(current);
+        } else {
+            previous = None;
+        }
+    }
+    panic!("{what}: the Game blit did not settle in 60 frames");
+}
+
 /// A click on the scaled single-bot Game image maps back to the 765×503
 /// applet: the capture must use the fitted blit size, not the native one.
 #[test]
 fn a_click_on_the_scaled_game_view_maps_to_applet_coordinates() {
     let (session, _dir) = session_with_play("game-click-map", &["alice"]);
+    // Capture before the first frame: the focus sync attaches its own sender
+    // on that frame, and the probe below must replace it afterwards, as the
+    // other frame click tests do.
+    session.focus.lock().unwrap().capture = true;
     let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
         return;
     };
     publish_ingame(rig.session(), "alice");
-    rig.session().focus.lock().unwrap().capture = true;
     rig.display = [1920.0, 1200.0];
-    for _ in 0..3 {
-        assert!(!rig.frame(Pointer::Away));
-    }
+    let blit = settled_game_blit(&mut rig, "enlarged display", |blit| {
+        blit.avail[0] > 100.0 && blit.avail[1] > 100.0 && blit.size[1] > 503.0
+    });
     let (sender, probe) = InputSender::probe();
     rig.session().map_desk.set_input_sender(Some(sender));
-    for _ in 0..3 {
-        assert!(!rig.frame(Pointer::Away));
-    }
-    let blit = game_blit();
+    drain(&probe);
     let scale = blit.size[0] / 765.0;
     assert!(
         (scale - scale.round()).abs() > 0.01,
@@ -1045,6 +1070,10 @@ fn a_click_on_the_scaled_game_view_maps_to_applet_coordinates() {
         }
         assert!(hovered, "{label}: the pointer reaches the image");
         assert!(!rig.frame_buttons_at(at, true, false, Pointer::Over));
+        assert!(
+            game_blit().hovered,
+            "{label}: the press frame draws a hovered Image"
+        );
         let down = drain(&probe)
             .into_iter()
             .find_map(|event| match event {

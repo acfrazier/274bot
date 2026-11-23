@@ -1632,9 +1632,9 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // longer guaranteed to be the Image.
         let min = ui.item_rect_min();
         image_min = min;
-        #[cfg(test)]
-        record_test_game_blit(avail, size, min);
         image_hovered = ui.is_item_hovered();
+        #[cfg(test)]
+        record_test_game_blit(avail, size, min, image_hovered);
         #[cfg(feature = "render-diagnostics")]
         {
             let fb = ui.io().display_framebuffer_scale();
@@ -6354,8 +6354,8 @@ std::thread_local! {
         const { std::cell::Cell::new(0) };
 }
 
-/// The single-bot Game blit's pane, display size and Image origin as a test
-/// sees it.
+/// The single-bot Game blit's pane, display size, Image origin and hover
+/// state as a test sees it.
 #[cfg(test)]
 #[derive(Debug, Clone, Copy)]
 struct GameBlitRecord {
@@ -6363,11 +6363,18 @@ struct GameBlitRecord {
     size: [f32; 2],
     /// The Image item's top-left corner (screen coordinates).
     min: [f32; 2],
+    /// Whether ImGui reported the Image item hovered this frame.
+    hovered: bool,
 }
 
 #[cfg(test)]
-fn record_test_game_blit(avail: [f32; 2], size: [f32; 2], min: [f32; 2]) {
-    TEST_GAME_BLIT.set(Some(GameBlitRecord { avail, size, min }));
+fn record_test_game_blit(avail: [f32; 2], size: [f32; 2], min: [f32; 2], hovered: bool) {
+    TEST_GAME_BLIT.set(Some(GameBlitRecord {
+        avail,
+        size,
+        min,
+        hovered,
+    }));
 }
 
 #[cfg(test)]
