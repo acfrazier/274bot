@@ -81,17 +81,18 @@ Cells behind Cargo features do not build without them. `quester_dev_paths_live`,
 other `*_live*` modules) run under `cargo test`. Each cell file's header lists
 its own environment.
 
-A `world_boundary_live` cell counts only at the game tick it claims. The
-cell measures the mean tick from its `PLAYER_INFO` receive times while in
-game. In each session of at least 30 ticks it measures between the
-least-late tick of the first third and that of the last third, so a client
-stall (a scene load at login) does not shorten the span. The spans must
-cover at least 20 s, and the mean must be within 2 % of
-`WORLD_CLAIMED_TICK_MS` (default 600 ms, the engine's
-`World.TICKRATE`). A cell whose proof ends sooner stays idle in game until
-the 20 s are covered. A cell with no measurement, or with a different
-measured tick, fails. The PASS receipt's `engine_speed` object records
-`claimed_engine_speed_ms` and the measured `engine_speed_ms`. The oracle is
+A `world_boundary_live` cell counts only at the game tick it claims
+(`WORLD_CLAIMED_TICK_MS`, default 600 ms, the engine's `World.TICKRATE`), and
+only for the span in which its proof ran. The cell opens a proof window at
+its start action and checks it at its PASS evidence; preparation before the
+window and idle time after it never count. The window holds the
+`PLAYER_INFO` receive intervals of its nonempty drains. It needs at least 11
+one-packet intervals, otherwise the speed is unmeasured and the cell fails.
+The median one-packet interval must be within 2 % of the claim, and at
+least 80 % of the window's ticks must lie in intervals within 25 % of the
+claim, so a part of the proof at another speed fails too. The PASS receipt's
+`engine_speed` object records `claimed_engine_speed_ms`, the measured
+`engine_speed_ms` (the median) and the window statistics. The oracle is
 `host_play::engine_speed`.
 
 The expected-combat Quester cell seeds Tourist Trap (`desertrescue`) at stage

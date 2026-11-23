@@ -1,10 +1,18 @@
 //! Engine-speed oracle for the live cells.
 //!
-//! A live cell counts as proof only at the game-tick duration it claims. The
-//! cell measures the duration from the client's own `PLAYER_INFO` receive
-//! times and compares it with its claim before it prints PASS. A cell with no
-//! measurement fails, and a cell whose measurement differs from its claim
-//! fails. The receipt records the claimed and the measured value.
+//! A live cell counts as proof only at the game-tick duration it claims, and
+//! only for the span in which its proof ran. The cell opens a [`ProofWindow`]
+//! at its start action and checks it at its PASS evidence. Receive intervals
+//! from before the start action or after the PASS never enter the window, so
+//! idle time cannot stand for the proof. A window with too few intervals is
+//! [`EngineSpeedVerdict::Unmeasured`] and the cell fails. The receipt records
+//! the claimed and the measured value.
+//!
+//! Input is one record per nonempty client drain: the `PLAYER_INFO` packets
+//! it applied and the receive time since the previous nonempty drain of the
+//! same session. This is the shape of the TickHealth receipt
+//! (`packet_delta`, `drain_gap_ms`), so a cell can feed the window from that
+//! receipt without a second clock.
 //!
 //! Engine facts (revision 289 engine `ddd01b3`, revision 274 engine
 //! `4c95f87`, `src/engine/World.ts`; line numbers are for 289):
@@ -12,17 +20,13 @@
 //!   `::speed N` replaces `World.tickRate` for the whole world and refuses
 //!   `N < 20` (`network/game/client/handler/ClientCheatHandler.ts:160-167`).
 //! - Each cycle sends `PLAYER_INFO` to every connected player
-//!   (`World.ts:1096-1110`). The snapshot tick counts those packets
-//!   (`api::snapshot::GameSnapshot::tick`), so one counter step is one
-//!   engine tick.
-//! - The cycle runs on a fixed schedule: `nextTick += tickRate` each cycle,
-//!   and the next timeout subtracts the drift from that schedule
-//!   (`World.ts:344,505,509`). Timer lateness therefore does not
-//!   accumulate, and the mean period over a window is `tickRate`. A
-//!   sustained cycle overrun makes the mean longer; that is a slower engine
-//!   and the oracle correctly fails it.
+//!   (`World.ts:1096-1110`), so one packet is one engine tick.
+//! - The next cycle is scheduled `tickRate` after the planned start of this
+//!   one, less the drift (`World.ts:344,505,509`). The engine does not bound
+//!   timer lateness, client stalls or receive delay; the oracle therefore
+//!   uses order statistics of the observed intervals, not a model of them.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
@@ -32,177 +36,157 @@ pub const ENGINE_DEFAULT_TICK_MS: u32 = 600;
 /// The smallest duration `::speed` accepts (`ClientCheatHandler.ts:160-163`).
 pub const MIN_ENGINE_TICK_MS: u32 = 20;
 
-/// Shortest tick span a measurement must cover before it counts.
-///
-/// [`TickPeriodMeter`] measures each in-game session between its two
-/// earliest-observed ticks (see there), so the error of one session is the
-/// difference of two small receive latencies: at most one cell poll interval
-/// (20 ms in the live cells) plus one engine timer lateness, which the drift
-/// correction keeps from accumulating. Two sessions (login and the fixture
-/// relog) give at most four such ends, about 120 ms in total. Over 20 s that
-/// is 0.6 % of the span, under a third of [`TOLERANCE_PERCENT`].
-pub const MIN_MEASURED_WINDOW: Duration = Duration::from_secs(20);
+/// Fewest clean (one-packet) intervals a proof window needs before it has a
+/// measurement. The same count as the TickHealth clean-interval median.
+pub const MIN_CLEAN_INTERVALS: usize = 11;
 
-/// Largest accepted difference between the measured mean and the claim, as a
-/// percentage of the claim. Over three times the bound of
-/// [`MIN_MEASURED_WINDOW`]; the speeds used in the lab (600, 300 and 200 ms)
-/// differ by at least 33 %.
+/// Largest accepted difference between the median clean interval of the
+/// proof window and the claim, as a percentage of the claim. The lab speeds
+/// (600, 300 and 200 ms) differ by at least 33 %. The measured spread that
+/// this value must cover is in the A3 evidence report.
 pub const TOLERANCE_PERCENT: u32 = 2;
 
-/// Fewest observed ticks a session needs before it contributes, ten per
-/// third.
-///
-/// After a login the client loads the scene while `PLAYER_INFO` packets
-/// queue, then reads them a few per poll. A live trace on a 600 ms engine
-/// showed three late ticks after a 1.4 s load. Ten points per third keep at
-/// least one on-schedule point in the first third for a load of several
-/// seconds; a shorter session gives no span at all rather than a wrong one.
-pub const MIN_SESSION_TICKS: usize = 30;
+/// Per-interval band, as a percentage of the claim, inside which an
+/// interval's per-packet time counts as at the claimed speed.
+pub const INTERVAL_BAND_PERCENT: u32 = 25;
 
-/// Mean game-tick duration over the in-game windows a cell observed.
+/// Smallest share of the proof window's ticks, as a percentage, that must lie
+/// in intervals inside [`INTERVAL_BAND_PERCENT`]. The ticks outside are
+/// client stalls and their catch-up, or a part of the proof that ran at
+/// another speed; the median alone would not see a minority part.
+pub const MIN_COVERAGE_PERCENT: u32 = 80;
+
+/// One nonempty drain: packets applied and the receive time since the
+/// previous nonempty drain of the same session (TickHealth `packet_delta`
+/// and `drain_gap_ms`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TickMeasurement {
-    ticks: u64,
-    elapsed: Duration,
-    sessions: u32,
+pub struct ReceiveInterval {
+    pub packets: u64,
+    pub gap: Duration,
 }
 
-impl TickMeasurement {
-    /// A measurement of `ticks` engine ticks over `elapsed` in-game time.
-    pub fn new(ticks: u64, elapsed: Duration, sessions: u32) -> Self {
-        Self {
-            ticks,
-            elapsed,
-            sessions,
-        }
-    }
-
-    /// Mean milliseconds per engine tick.
-    pub fn mean_ms(&self) -> f64 {
-        self.elapsed.as_secs_f64() * 1000.0 / self.ticks as f64
-    }
-
-    pub fn ticks(&self) -> u64 {
-        self.ticks
-    }
-
-    pub fn elapsed(&self) -> Duration {
-        self.elapsed
+impl ReceiveInterval {
+    pub fn new(packets: u64, gap: Duration) -> Self {
+        Self { packets, gap }
     }
 }
 
-/// Measures the game-tick duration from snapshot polls.
-///
-/// Each in-game session is a separate series of the first poll that saw each
-/// new tick: a logout, a disconnect or a tick counter that goes back (a new
-/// session) ends the series, and time out of game is not counted. Tick 0 is
-/// the session before its first `PLAYER_INFO` (`GameSnapshot::tick`), so it is
-/// not a tick observation and is not recorded.
-///
-/// A poll sees a tick late when the client stalls, for example while it loads
-/// a scene after login, and then catches up on the queued packets. A late
-/// first or last point would shorten or stretch the span (a live run measured
-/// 571.7 ms on a 600 ms engine that way). So the span of a session runs
-/// between the point with the least lateness in its first third and the one
-/// in its last third: a lower envelope of (tick, time). Lateness is never
-/// negative, so these points lie on the engine's own schedule within one
-/// poll interval.
+/// The receive intervals of one proof, from its start action to its PASS.
 #[derive(Debug, Default, Clone)]
-pub struct TickPeriodMeter {
-    closed: Vec<Vec<(u32, Instant)>>,
-    current: Vec<(u32, Instant)>,
+pub struct ProofWindow {
+    intervals: Vec<ReceiveInterval>,
 }
 
-impl TickPeriodMeter {
-    /// Record one poll: the snapshot tick, whether the client is in game, and
-    /// the poll time.
-    pub fn observe(&mut self, tick: u32, ingame: bool, at: Instant) {
-        if !ingame || tick == 0 {
-            self.close_session();
-            return;
-        }
-        match self.current.last().map(|&(previous, _)| previous) {
-            Some(previous) if tick == previous => {}
-            Some(previous) if tick < previous => {
-                self.close_session();
-                self.current.push((tick, at));
-            }
-            _ => self.current.push((tick, at)),
+impl ProofWindow {
+    /// Add one interval observed inside the proof. Empty drains carry no
+    /// interval and are ignored.
+    pub fn push(&mut self, interval: ReceiveInterval) {
+        if interval.packets > 0 {
+            self.intervals.push(interval);
         }
     }
 
-    fn close_session(&mut self) {
-        if !self.current.is_empty() {
-            self.closed.push(std::mem::take(&mut self.current));
+    /// The window's statistics, or `None` with fewer than
+    /// [`MIN_CLEAN_INTERVALS`] clean intervals.
+    pub fn measurement(&self) -> Option<WindowMeasurement> {
+        let mut clean: Vec<Duration> = self
+            .intervals
+            .iter()
+            .filter(|interval| interval.packets == 1)
+            .map(|interval| interval.gap)
+            .collect();
+        if clean.len() < MIN_CLEAN_INTERVALS {
+            return None;
         }
+        clean.sort_unstable();
+        let middle = clean.len() / 2;
+        let median = if clean.len() % 2 == 1 {
+            clean[middle]
+        } else {
+            (clean[middle - 1] + clean[middle]) / 2
+        };
+        let rank = |percent: usize| clean[(clean.len() - 1) * percent / 100];
+        Some(WindowMeasurement {
+            intervals: self.intervals.clone(),
+            clean: clean.len(),
+            median,
+            p10: rank(10),
+            p90: rank(90),
+            min: clean[0],
+            max: clean[clean.len() - 1],
+        })
     }
 
-    /// The measurement, or `None` until the session spans cover
-    /// [`MIN_MEASURED_WINDOW`].
-    pub fn measurement(&self) -> Option<TickMeasurement> {
-        let mut total = TickMeasurement::new(0, Duration::ZERO, 0);
-        for session in self.closed.iter().chain(std::iter::once(&self.current)) {
-            if let Some((ticks, elapsed)) = envelope_span(session) {
-                total.ticks += ticks;
-                total.elapsed += elapsed;
-                total.sessions += 1;
-            }
-        }
-        (total.ticks > 0 && total.elapsed >= MIN_MEASURED_WINDOW).then_some(total)
-    }
-
-    /// The claimed duration checked against this meter's measurement.
+    /// The claimed duration checked against this window.
     pub fn check(&self, claimed_ms: u32) -> EngineSpeedCheck {
         EngineSpeedCheck::new(claimed_ms, self.measurement())
     }
 }
 
-/// Ticks and time between the least-late point of the first third of one
-/// session and the least-late point of its last third.
-///
-/// Lateness is measured against the line through the two chosen points; the
-/// choice starts from the whole span and is repeated until it is stable
-/// (four rounds; one point move per round is the usual case).
-fn envelope_span(points: &[(u32, Instant)]) -> Option<(u64, Duration)> {
-    if points.len() < MIN_SESSION_TICKS {
-        return None;
+/// Order statistics of one proof window's receive intervals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowMeasurement {
+    intervals: Vec<ReceiveInterval>,
+    clean: usize,
+    median: Duration,
+    p10: Duration,
+    p90: Duration,
+    min: Duration,
+    max: Duration,
+}
+
+impl WindowMeasurement {
+    pub fn median(&self) -> Duration {
+        self.median
     }
-    let third = points.len() / 3;
-    let (first_tick, first_at) = points[0];
-    let x = |i: usize| f64::from(points[i].0 - first_tick);
-    let y = |i: usize| points[i].1.duration_since(first_at).as_secs_f64();
-    let least_late = |range: std::ops::Range<usize>, slope: f64| {
-        range
-            .min_by(|&i, &j| (y(i) - slope * x(i)).total_cmp(&(y(j) - slope * x(j))))
-            .expect("each third holds at least one point")
-    };
-    let (mut start, mut end) = (0, points.len() - 1);
-    for _ in 0..4 {
-        let slope = (y(end) - y(start)) / (x(end) - x(start));
-        let next = (
-            least_late(0..third, slope),
-            least_late(points.len() - third..points.len(), slope),
-        );
-        if next == (start, end) {
-            break;
-        }
-        (start, end) = next;
+
+    fn ticks(&self) -> u64 {
+        self.intervals.iter().map(|interval| interval.packets).sum()
     }
-    let ((start_tick, start_at), (end_tick, end_at)) = (points[start], points[end]);
-    Some((
-        u64::from(end_tick - start_tick),
-        end_at.duration_since(start_at),
-    ))
+
+    fn elapsed(&self) -> Duration {
+        self.intervals.iter().map(|interval| interval.gap).sum()
+    }
+
+    /// Ticks in intervals whose per-packet time is within the band of the
+    /// claim. Exact integer nanoseconds.
+    fn in_band_ticks(&self, claimed_ms: u32) -> u64 {
+        self.intervals
+            .iter()
+            .filter(|interval| {
+                within_percent(
+                    interval.gap.as_nanos(),
+                    u128::from(interval.packets) * nanos(claimed_ms),
+                    INTERVAL_BAND_PERCENT,
+                )
+            })
+            .map(|interval| interval.packets)
+            .sum()
+    }
+}
+
+fn nanos(ms: u32) -> u128 {
+    u128::from(ms) * 1_000_000
+}
+
+/// `|measured - expected| <= expected * percent / 100`, exactly.
+fn within_percent(measured: u128, expected: u128, percent: u32) -> bool {
+    measured.abs_diff(expected) * 100 <= expected * u128::from(percent)
+}
+
+fn ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
 }
 
 /// The oracle verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineSpeedVerdict {
-    /// The measured mean is within [`TOLERANCE_PERCENT`] of the claim.
+    /// The median is within [`TOLERANCE_PERCENT`] of the claim and the
+    /// coverage is at least [`MIN_COVERAGE_PERCENT`].
     Match,
-    /// There is no measurement (`engine_speed_ms: null`).
+    /// The proof window has no measurement (`engine_speed_ms: null`).
     Unmeasured,
-    /// The measured mean differs from the claim by more than the tolerance.
+    /// The median or the coverage fails.
     Mismatch,
 }
 
@@ -216,15 +200,15 @@ impl EngineSpeedVerdict {
     }
 }
 
-/// One claimed speed and one measurement.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// One claimed speed and one proof-window measurement.
+#[derive(Debug, Clone, PartialEq)]
 pub struct EngineSpeedCheck {
     claimed_ms: u32,
-    measured: Option<TickMeasurement>,
+    measured: Option<WindowMeasurement>,
 }
 
 impl EngineSpeedCheck {
-    pub fn new(claimed_ms: u32, measured: Option<TickMeasurement>) -> Self {
+    pub fn new(claimed_ms: u32, measured: Option<WindowMeasurement>) -> Self {
         Self {
             claimed_ms,
             measured,
@@ -235,30 +219,24 @@ impl EngineSpeedCheck {
         self.claimed_ms
     }
 
-    /// The measurement, if it has at least one tick.
-    fn counted(&self) -> Option<TickMeasurement> {
-        self.measured.filter(|measured| measured.ticks > 0)
-    }
-
-    /// The measured mean in milliseconds; `None` without a measurement.
+    /// The measured speed: the median clean interval in milliseconds; `None`
+    /// without a measurement.
     pub fn engine_speed_ms(&self) -> Option<f64> {
-        self.counted().map(|measured| measured.mean_ms())
-    }
-
-    /// Largest accepted difference, in milliseconds.
-    pub fn tolerance_ms(&self) -> f64 {
-        f64::from(self.claimed_ms) * f64::from(TOLERANCE_PERCENT) / 100.0
+        self.measured.as_ref().map(|measured| ms(measured.median))
     }
 
     pub fn verdict(&self) -> EngineSpeedVerdict {
-        let Some(measured) = self.counted() else {
+        let Some(measured) = &self.measured else {
             return EngineSpeedVerdict::Unmeasured;
         };
-        // Exact integer form of |elapsed / ticks - claimed| <= claimed * p / 100,
-        // in nanoseconds, so the tolerance edge has no rounding.
-        let claimed_window = u128::from(measured.ticks) * u128::from(self.claimed_ms) * 1_000_000;
-        let difference = measured.elapsed.as_nanos().abs_diff(claimed_window);
-        if difference * 100 <= claimed_window * u128::from(TOLERANCE_PERCENT) {
+        let median_matches = within_percent(
+            measured.median.as_nanos(),
+            nanos(self.claimed_ms),
+            TOLERANCE_PERCENT,
+        );
+        let covered = u128::from(measured.in_band_ticks(self.claimed_ms)) * 100
+            >= u128::from(measured.ticks()) * u128::from(MIN_COVERAGE_PERCENT);
+        if median_matches && covered {
             EngineSpeedVerdict::Match
         } else {
             EngineSpeedVerdict::Mismatch
@@ -267,16 +245,27 @@ impl EngineSpeedCheck {
 
     /// Receipt fields: the claim, the measurement and the verdict.
     pub fn receipt(&self) -> Value {
-        let measured = self.counted();
+        let measured = self.measured.as_ref();
         json!({
             "claimed_engine_speed_ms": self.claimed_ms,
             "engine_speed_ms": self.engine_speed_ms(),
-            "sampled_ticks": measured.map(|measured| measured.ticks),
-            "sampled_ms": measured.map(|measured| measured.elapsed.as_millis() as u64),
-            "sessions": measured.map(|measured| measured.sessions),
-            "tolerance_ms": self.tolerance_ms(),
-            "min_window_ms": MIN_MEASURED_WINDOW.as_millis() as u64,
-            "source": "PLAYER_INFO receive times while in game",
+            "window": measured.map(|measured| json!({
+                "intervals": measured.intervals.len(),
+                "clean_intervals": measured.clean,
+                "ticks": measured.ticks(),
+                "elapsed_ms": ms(measured.elapsed()),
+                "mean_tick_ms": ms(measured.elapsed()) / measured.ticks() as f64,
+                "clean_min_ms": ms(measured.min),
+                "clean_p10_ms": ms(measured.p10),
+                "clean_p90_ms": ms(measured.p90),
+                "clean_max_ms": ms(measured.max),
+                "in_band_ticks": measured.in_band_ticks(self.claimed_ms),
+            })),
+            "tolerance_percent": TOLERANCE_PERCENT,
+            "interval_band_percent": INTERVAL_BAND_PERCENT,
+            "min_coverage_percent": MIN_COVERAGE_PERCENT,
+            "min_clean_intervals": MIN_CLEAN_INTERVALS,
+            "source": "PLAYER_INFO receive intervals from the proof start action to PASS",
             "verdict": self.verdict().label(),
         })
     }
@@ -288,11 +277,11 @@ impl EngineSpeedCheck {
         match self.verdict() {
             EngineSpeedVerdict::Match => Ok(receipt),
             EngineSpeedVerdict::Unmeasured => Err(format!(
-                "engine speed was not measured (claimed {} ms); the cell does not count: {receipt}",
+                "engine speed was not measured in the proof window (claimed {} ms); the cell does not count: {receipt}",
                 self.claimed_ms
             )),
             EngineSpeedVerdict::Mismatch => Err(format!(
-                "engine ran at {:.1} ms per tick, not the claimed {} ms; the cell does not count: {receipt}",
+                "the proof ran at a median {:.1} ms per tick or partly at another speed, not the claimed {} ms; the cell does not count: {receipt}",
                 self.engine_speed_ms().unwrap_or_default(),
                 self.claimed_ms
             )),
