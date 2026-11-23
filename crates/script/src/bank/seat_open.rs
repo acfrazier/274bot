@@ -1792,11 +1792,17 @@ fn nearest_use_quickly(rows: &[LocView], here: WorldTile, level: i32) -> Option<
         .min_by_key(|row| row.tile.x.abs_diff(here.x).max(row.tile.z.abs_diff(here.z)))
 }
 
+#[derive(Clone, Copy)]
+struct SceneBooth {
+    distance: i32,
+    tile: WorldTile,
+}
+
 fn nearest_scene_booth_distance(
     cx: &ActionContext<'_>,
     booth_name: &str,
     booth_op: &str,
-) -> Option<i32> {
+) -> Option<SceneBooth> {
     let snapshot = cx.snapshot();
     let rows = snapshot.locs()?.value;
     let here = current_tile(cx);
@@ -1812,8 +1818,11 @@ fn nearest_scene_booth_distance(
                         .is_some_and(|op| !op.is_empty() && op != "hidden")
                 })
         })
-        .map(|row| row.distance)
-        .min();
+        .min_by_key(|row| row.distance)
+        .map(|row| SceneBooth {
+            distance: row.distance,
+            tile: row.tile,
+        });
     let nearest = here.and_then(|here| {
         nearest_use_quickly(rows, here, here.level)
             .filter(|row| {
@@ -1825,9 +1834,15 @@ fn nearest_scene_booth_distance(
                             .is_some_and(|op| op.eq_ignore_ascii_case(booth_op))
                     })
             })
-            .map(|row| row.tile.x.abs_diff(here.x).max(row.tile.z.abs_diff(here.z)) as i32)
+            .map(|row| SceneBooth {
+                distance: row.tile.x.abs_diff(here.x).max(row.tile.z.abs_diff(here.z)) as i32,
+                tile: row.tile,
+            })
     });
-    row_distance.into_iter().chain(nearest).min()
+    row_distance
+        .into_iter()
+        .chain(nearest)
+        .min_by_key(|booth| booth.distance)
 }
 
 struct SelectionResult {
@@ -1925,6 +1940,8 @@ struct BankingOpen {
     prefer_nearby: bool,
     nearby_radius: f64,
     preferences: BankPreferences,
+    access_log_after_walk: Option<(&'static str, &'static str)>,
+    log_access_on_walk_failure: bool,
 }
 
 impl BankingOpen {
@@ -1955,6 +1972,11 @@ impl BankingOpen {
             prefer_nearby: request.prefer_nearby != Some(false),
             nearby_radius: request.nearby_radius.unwrap_or(14.0),
             preferences,
+            access_log_after_walk: None,
+            log_access_on_walk_failure: request
+                .obstacles
+                .iter()
+                .any(|obstacle| !obstacle.trim().is_empty()),
         }
     }
 
@@ -1989,6 +2011,20 @@ impl BankingOpen {
                             4,
                             WorldTarget::Access(Some(AccessSpec::from_bank(selection.bank))),
                         );
+                        if log_enabled {
+                            let tile = selection
+                                .bank
+                                .definition
+                                .map_or(selection.bank.tile, |definition| definition.tile);
+                            log.queue(
+                                format!(
+                                    "no booth in scene — web-walking to the {} bank at ({}, {}, {})",
+                                    selection.bank.name, tile.x, tile.z, tile.level
+                                ),
+                                true,
+                            );
+                            return Poll::Pending;
+                        }
                     }
                 },
                 BankingPhase::WalkStart {
@@ -1998,6 +2034,9 @@ impl BankingOpen {
                 } => {
                     if walk_arrived(cx, target, radius) {
                         self.open_target(next);
+                        if self.queue_access_log_after_walk(log, true) {
+                            return Poll::Pending;
+                        }
                         continue;
                     }
                     match cx.walk(walk_request(cx, target, radius, access_walk_options())) {
@@ -2021,23 +2060,35 @@ impl BankingOpen {
                         }
                         Err(_) => {
                             self.open_target(next);
+                            if self.queue_access_log_after_walk(log, false) {
+                                return Poll::Pending;
+                            }
                             continue;
                         }
                     }
                 }
                 BankingPhase::Walk(mut walk) => {
-                    let terminal = walk.follow.session == cx.run().session
-                        && cx
-                            .walk_receipt(walk.follow.request_id)
-                            .is_some_and(|receipt| receipt.end != WalkEnd::Cancelled);
-                    if walk_arrived(cx, walk.target, walk.radius)
-                        || terminal
-                        || walk.deadline.reached(cx)
-                    {
-                        if walk.deadline.reached(cx) {
+                    let (terminal, receipt_arrived) = if walk.follow.session == cx.run().session {
+                        cx.walk_receipt(walk.follow.request_id)
+                            .map_or((false, false), |receipt| {
+                                (
+                                    receipt.end != WalkEnd::Cancelled,
+                                    receipt.end == WalkEnd::Arrived,
+                                )
+                            })
+                    } else {
+                        (false, false)
+                    };
+                    let arrived = walk_arrived(cx, walk.target, walk.radius);
+                    let deadline_reached = walk.deadline.reached(cx);
+                    if arrived || terminal || deadline_reached {
+                        if deadline_reached {
                             cx.cancel_request(walk.follow.request_id);
                         }
                         self.open_target(walk.next);
+                        if self.queue_access_log_after_walk(log, arrived || receipt_arrived) {
+                            return Poll::Pending;
+                        }
                         continue;
                     }
                     if let Err(error) =
@@ -2104,7 +2155,7 @@ impl BankingOpen {
         let nearest =
             here.and_then(|here| nearest_eligible_bank(facts, self.preferences, cx, here));
         if self.prefer_nearby
-            && scene_booth.is_some_and(|distance| f64::from(distance) <= self.nearby_radius)
+            && scene_booth.is_some_and(|booth| f64::from(booth.distance) <= self.nearby_radius)
         {
             self.phase = BankingPhase::Access(self.default_access());
             if log_enabled {
@@ -2149,25 +2200,75 @@ impl BankingOpen {
             let known = nearest_eligible_bank(facts, self.preferences, cx, stand)
                 .filter(|bank| within_radius(stand, bank.tile, self.nearby_radius));
             let access = known.map(AccessSpec::from_bank);
-            let target = if access
+            let uses_npc_access = access.as_ref().is_some_and(|access| access.npc.is_some());
+            let access_kind = if uses_npc_access {
+                Some("npc")
+            } else if access
                 .as_ref()
-                .is_some_and(|access| access.npc.is_some() || access.object.is_some())
+                .is_some_and(|access| access.object.is_some())
             {
+                Some("object")
+            } else {
+                None
+            };
+            let target = if access_kind.is_some() {
                 WorldTarget::Access(access)
             } else {
                 WorldTarget::Preset(stand)
             };
             self.walk_to(cx, stand, 2, target);
-        } else if scene_booth.is_some() {
+            if let (Some(access_kind), Some(bank)) = (access_kind, known) {
+                if log_enabled {
+                    self.access_log_after_walk = Some((bank.name, access_kind));
+                }
+            }
+        } else if let Some(scene_booth) = scene_booth {
             self.phase = BankingPhase::Access(self.default_access());
+            if log_enabled {
+                log.queue(
+                    format!(
+                        "bank: opening visible '{}' at ({}, {}, {})",
+                        self.booth_name,
+                        scene_booth.tile.x,
+                        scene_booth.tile.z,
+                        scene_booth.tile.level
+                    ),
+                    true,
+                );
+                return Poll::Pending;
+            }
         } else if let Some(destination) = self.destination.take() {
             let tile = destination.tile;
+            // The wire drops the upstream label, so log only a unique catalog match.
+            let destination_name = if log_enabled {
+                let mut matching = facts.banks().iter().filter(|bank| {
+                    bank.definition
+                        .map_or(bank.tile, |definition| definition.tile)
+                        == tile
+                });
+                match (matching.next(), matching.next()) {
+                    (Some(bank), None) => Some(bank.name),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             self.walk_to(
                 cx,
                 tile,
                 4,
                 WorldTarget::Access(Some(AccessSpec::from_wire(&destination))),
             );
+            if let Some(destination_name) = destination_name {
+                log.queue(
+                    format!(
+                        "no booth in scene — web-walking to the {destination_name} bank at ({}, {}, {})",
+                        tile.x, tile.z, tile.level
+                    ),
+                    true,
+                );
+                return Poll::Pending;
+            }
         } else if let Some(from) = here {
             match SelectorCore::begin(
                 Arc::clone(facts),
@@ -2193,6 +2294,18 @@ impl BankingOpen {
             None,
             default_access(&self.booth_name, &self.booth_op),
         )
+    }
+
+    fn queue_access_log_after_walk(&mut self, log: &mut LogCall, walk_arrived: bool) -> bool {
+        let Some((bank_name, access_kind)) = self.access_log_after_walk.take() else {
+            return false;
+        };
+        if walk_arrived || self.log_access_on_walk_failure {
+            log.queue(format!("bank: {bank_name} uses {access_kind} access"), true);
+            true
+        } else {
+            false
+        }
     }
 
     fn walk_to(
@@ -3086,5 +3199,96 @@ mod tests {
         assert_eq!(line.len(), MAX_LOG_TEXT_BYTES - 1);
         assert!(line.is_char_boundary(line.len()));
         assert!(encoded_len(line) <= api::script_contract::PROMPT_ARGS_MAX_BYTES);
+    }
+    #[test]
+    fn refused_obstacle_walk_logs_access_before_emitting_access_interaction() {
+        static BANK: api::named_banks::BankDefinition = api::named_banks::BankDefinition {
+            name: "Shilo Village",
+            tile: WorldTile {
+                x: 300,
+                z: 100,
+                level: 0,
+            },
+            approach: None,
+            skill: None,
+            quest: None,
+            setting: None,
+            object: None,
+            open_first: None,
+            npc: Some(api::named_banks::BankOperation {
+                name: "Banker",
+                op: "Bank",
+            }),
+            choose: None,
+        };
+        let bank_tile = BANK.tile;
+        let facts = Arc::new(NamedBankFacts::from_banks(vec![NamedBank {
+            name: BANK.name,
+            tile: bank_tile,
+            definition: Some(&BANK),
+            routable: true,
+        }]));
+        let hooks = Arc::new(Mutex::new(TransferHooks::default()));
+        let mut request = BankSeatArgs::new(BankSeatOperation::Open);
+        request.stand = Some(bank_tile);
+        request.obstacles = vec!["Door".into()];
+        request.hooks_present = HOOK_LOG;
+        let args = OpeningArgs {
+            request,
+            facts,
+            preferences: BankPreferences::default(),
+            hooks: Arc::clone(&hooks),
+            selection_refused: false,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(tile(100, 100)));
+        let mut ledger = None;
+        let (_owner, mut opening, action_id) = with_tick(&snapshot, &mut ledger, 1, |tick| {
+            let owner = tick
+                .actions
+                .begin::<Opening>(args.clone(), &mut tick.cx)
+                .expect("opening owner");
+            let action_id = tick.cx.action_id;
+            let mut opening = Opening::begin(args, &mut tick.cx).expect("opening machine");
+            // The slot hold gate skips this machine; drive it directly to exercise a refused walk.
+            tick.cx.eligible = false;
+            let refused = walk_request(&tick.cx, bank_tile, 2, world_walk_options());
+            assert!(matches!(tick.cx.walk(refused), Err(ActionError::Held)));
+            assert!(opening.poll(&mut tick.cx).is_pending());
+            (owner, opening, action_id)
+        });
+        assert!(ledger.as_ref().unwrap().outbox.is_empty());
+
+        let mut events = Vec::new();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            tick.cx.action_id = action_id;
+            assert!(opening.poll(&mut tick.cx).is_pending());
+        });
+        let call = lock_hooks(&hooks)
+            .pending
+            .take()
+            .expect("the access log reaches the caller before access");
+        assert_eq!(call.hook, "log");
+        assert_eq!(
+            call.args,
+            vec![Value::String("bank: Shilo Village uses npc access".into())]
+        );
+        events.push("log");
+        lock_hooks(&hooks).answer = Some(TransferAnswer::Value(Value::Null));
+
+        snapshot.seed_npcs(vec![bank_npc(7, bank_tile, bank_tile)]);
+        with_tick(&snapshot, &mut ledger, 3, |tick| {
+            tick.cx.action_id = action_id;
+            assert!(opening.poll(&mut tick.cx).is_pending());
+        });
+        events.push("access");
+        let outbox = &ledger.as_ref().unwrap().outbox;
+        assert_eq!(outbox.len(), 1);
+        assert!(matches!(
+            &outbox[0].effect,
+            HostEffect::Interaction(InteractReq::Npc { action, .. }) if action == "Bank"
+        ));
+        assert_eq!(events, ["log", "access"]);
     }
 }
