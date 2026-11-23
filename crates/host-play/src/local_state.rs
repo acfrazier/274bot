@@ -3529,7 +3529,7 @@ impl Shared {
                 if let Some(store) = state.stores.get_mut(&key) {
                     store.readback = Readback::Queued;
                 }
-                if cause == sql::WaitCause::Busy {
+                if cause.is_lock_contention() {
                     state.bank_readback_retry.first.get_or_insert(now);
                     state.bank_readback_retry.delay_polling(now);
                 } else {
@@ -3588,7 +3588,7 @@ impl Shared {
                     self.settle_waited(&mut state, &key, vec![terminal], cause);
                     return;
                 }
-                if matches!(key, StoreKey::BankHint { .. }) && cause == sql::WaitCause::Busy {
+                if matches!(key, StoreKey::BankHint { .. }) && cause.is_lock_contention() {
                     queued.retry.first.get_or_insert(now);
                     queued.retry.delay_polling(now);
                 } else {
