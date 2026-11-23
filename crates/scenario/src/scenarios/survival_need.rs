@@ -11,6 +11,7 @@ const BRONZE_AXE_ID: i32 = 1351;
 // severity)` (`_test/scripts/cheats/cheat_other.rs2:1-3`), so the engine's own
 // poison script (`skill_combat/scripts/poison.rs2:6-18`) applies the poison.
 const POISON_DEBUG_COMMAND: &str = "~poison 27";
+const POISON_FIRST_FIRE_BUDGET_TICKS: u32 = 31;
 const YEW_LOC_ID: i32 = 1309;
 const WOODCUTTING_STAT_ID: i32 = 8;
 const HITPOINTS_STAT_ID: i32 = 3;
@@ -170,9 +171,10 @@ pub(crate) fn survival_need_scenario() -> Scenario {
                 id: HITPOINTS_STAT_ID,
                 max: 24,
             },
-            // Severity 27 deals (27 + 4) / 5 = 6 HP, and poison.rs2:72-75
-            // schedules the first fire after exactly 30 game ticks.
-            budget_ticks: 30,
+            // A fresh timer starts at poison.rs2:12-18 and is set for 30 ticks
+            // at :72-75. Its callback queues damage at :20-30, so allow one
+            // more observed tick for that first fire to reach this proof.
+            budget_ticks: POISON_FIRST_FIRE_BUDGET_TICKS,
         },
     });
 
