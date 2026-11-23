@@ -50,27 +50,100 @@ fn hydrate_panel_preferences(session: &mut crate::session::Session) {
 }
 
 #[test]
-fn held_state_root_refuses_panel_startup_before_any_window_or_store_access() {
+fn held_state_root_refusal_is_interactive_only_and_precedes_store_preflight() {
     let iso = frontend_core::test_support::IsolatedStores::enter("panel-instance-refusal");
     let root = host_play::local_state::StateRoot::new(iso.home().join(".274bot"));
     let _lock = host_play::local_state::RootUse::acquire(&root).unwrap();
     // A preflight would read this invalid saved store and return another error.
     let loadouts = root.path().join("loadouts.json");
     std::fs::write(&loadouts, b"not JSON").unwrap();
-    for argv in [vec![], vec!["--smoke".to_string()]] {
+
+    let mut presentation = None;
+    let error = super::run_panel_with_refusal(
+        parse_args(Vec::<String>::new(), None).unwrap(),
+        |requested| {
+            presentation = Some(requested);
+            Ok(())
+        },
+    )
+    .expect_err("an interactive held root refuses startup");
+    assert!(matches!(
+        &error,
+        crate::window::PanelError::StateRootLock(
+            frontend_core::launch::StateRootLockError::InUse { root: held }
+        ) if held == root.path()
+    ));
+    let presentation = presentation.expect("interactive refusal is presented");
+    assert_eq!(presentation.title, "Another 274bot is running");
+    assert_eq!(presentation.exit_label, "Exit");
+    assert_eq!(
+        presentation.message,
+        frontend_core::launch::StateRootLockError::InUse {
+            root: root.path().to_path_buf(),
+        }
+        .to_string()
+    );
+    assert!(presentation.message.contains(root.path().to_str().unwrap()));
+    assert_eq!(std::fs::read(&loadouts).unwrap(), b"not JSON");
+    assert!(!root.database_file().exists());
+
+    for argv in [
+        vec!["--smoke".to_string()],
+        vec!["--live".to_string(), "null_raster".to_string()],
+        vec!["--prepare-fixture".to_string(), "thiever".to_string()],
+    ] {
         let args = parse_args(argv, None).unwrap();
-        let error = super::run_panel(args).expect_err("a held root refuses every startup mode");
+        let mut presented = false;
+        let error = super::run_panel_with_refusal(args, |_| {
+            presented = true;
+            Ok(())
+        })
+        .expect_err("a noninteractive held root refuses startup");
         assert!(matches!(
             &error,
             crate::window::PanelError::StateRootLock(
                 frontend_core::launch::StateRootLockError::InUse { root: held }
             ) if held == root.path()
         ));
-        assert!(error.to_string().contains("Another 274bot process"));
-        assert!(error.to_string().contains(root.path().to_str().unwrap()));
+        assert!(!presented, "noninteractive refusal must not open a window");
         assert_eq!(std::fs::read(&loadouts).unwrap(), b"not JSON");
         assert!(!root.database_file().exists());
     }
+}
+
+#[test]
+fn state_root_io_refusal_survives_a_failed_presenter() {
+    let iso = frontend_core::test_support::IsolatedStores::enter("panel-instance-io-refusal");
+    let root = host_play::local_state::StateRoot::new(iso.home().join(".274bot"));
+    std::fs::create_dir_all(root.instance_lock_file()).unwrap();
+    let loadouts = root.loadouts_file();
+    std::fs::write(&loadouts, b"not JSON").unwrap();
+    let mut presentation = None;
+    let error = super::run_panel_with_refusal(
+        parse_args(Vec::<String>::new(), None).unwrap(),
+        |requested| {
+            presentation = Some(requested);
+            Err(crate::window::PanelError::StartupFailure(
+                "test display failure".into(),
+            ))
+        },
+    )
+    .expect_err("a failed presenter must not replace the root-lock refusal");
+    assert!(matches!(
+        &error,
+        crate::window::PanelError::StateRootLock(
+            frontend_core::launch::StateRootLockError::Io { root: held, .. }
+        ) if held == root.path()
+    ));
+    let presentation = presentation.expect("the I/O refusal is presented");
+    assert_eq!(presentation.title, "Cannot lock 274bot state");
+    assert_eq!(presentation.exit_label, "Exit");
+    assert!(presentation
+        .message
+        .starts_with("Cannot lock 274bot state root "));
+    assert!(presentation.message.contains(root.path().to_str().unwrap()));
+    assert_eq!(std::fs::read(loadouts).unwrap(), b"not JSON");
+    assert!(!root.database_file().exists());
 }
 
 #[test]

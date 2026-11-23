@@ -188,11 +188,13 @@ impl HeadlessDriver {
     ) -> Result<Self, script::ScriptSettingsError> {
         let root_use = permit.root_use();
         let mut session = OperatorSession::open(permit);
-        session.bind_local_state(host_play::local_state::LocalStateService::open_process_with(
-            host_play::local_state::StateRoot::new(state_root.to_path_buf()),
-            host_play::local_state::Frontend::Headless,
-            root_use,
-        ));
+        session.bind_local_state(
+            host_play::local_state::LocalStateService::open_process_with(
+                host_play::local_state::StateRoot::new(state_root.to_path_buf()),
+                host_play::local_state::Frontend::Headless,
+                root_use,
+            ),
+        );
         let preferences = session
             .preferences()
             .expect("the driver bound its local state just now");

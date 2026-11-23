@@ -47,9 +47,8 @@ use dear_imgui_rs::{
 #[cfg(feature = "js")]
 use dear_imgui_rs::{TableColumnFlags, TableFlags};
 use frontend_core::launch::{
-    InstanceKind, InstancePermit, Passphrase, PreparationCompletion, PreparationJob,
-    ProfilePreparation, ProgressStage, ProgressUnit, ProgressView, ValidationJob,
-    ValidationPending,
+    InstancePermit, Passphrase, PreparationCompletion, PreparationJob, ProfilePreparation,
+    ProgressStage, ProgressUnit, ProgressView, ValidationJob, ValidationPending,
 };
 use frontend_core::process::debug_enabled;
 use frontend_core::surface::map_image_to_applet;
@@ -8168,6 +8167,59 @@ fn saved_data_choice(ui: &Ui, refusal: &str) -> Option<bool> {
     });
     choice
 }
+const STATE_ROOT_LOCK_WINDOW_TITLE: &str = "Another 274bot is running";
+const STATE_ROOT_LOCK_EXIT_LABEL: &str = "Exit";
+
+#[derive(Debug)]
+struct StateRootLockPresentation {
+    title: &'static str,
+    message: String,
+    exit_label: &'static str,
+}
+
+fn show_state_root_lock_refusal(
+    presentation: StateRootLockPresentation,
+) -> Result<(), window::PanelError> {
+    let cfg = window::PanelConfig {
+        window_title: presentation.title.to_owned(),
+        window_size: ((DIALOG_W + 32.0) as f64, 176.0),
+        clear_color: BG,
+        ini_filename: None,
+        restore_previous_geometry: false,
+        redraw: RedrawMode::Wait,
+        theme: Some(Theme::Dark),
+        ..Default::default()
+    };
+    let shots = Arc::new(Mutex::new(window::ShotState::default()));
+    window::run(
+        cfg,
+        amber_style,
+        |_, _, _, _| {},
+        |_| {},
+        shots,
+        move |ui, _gpu| {
+            let mut open = true;
+            let mut exit_requested = false;
+            ui.window(presentation.title)
+                .opened(&mut open)
+                .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
+                .size_constraints(
+                    scale_size(ui, [DIALOG_W, 80.0]),
+                    [scale_px(ui, DIALOG_W), scale_px(ui, 720.0)],
+                )
+                .build(|| {
+                    let _wrap = ui.push_text_wrap_pos(scale_px(ui, DIALOG_W - 16.0));
+                    ui.text_wrapped(&presentation.message);
+                    ui.spacing();
+                    let width = ui.content_region_avail()[0];
+                    if ui.button_with_size(presentation.exit_label, [width, 0.0]) {
+                        exit_requested = true;
+                    }
+                });
+            !open || exit_requested
+        },
+    )
+}
 
 /// Resolve a normal event-loop return against a failure latched by a terminal
 /// frame. The failure remains fatal if the window closes during that frame.
@@ -8189,18 +8241,18 @@ fn live_exit_code(live: &LiveHarness, failure: Option<&str>) -> Option<i32> {
     }
 }
 
-/// The saved-data preflight of the panel's start, before any window opens:
-/// the probe of the stores beneath `root` and its one old-format question.
-/// `Ok(None)`: startup goes on (nothing was refused). `Ok(Some(..))`: the
-/// refused files and the question the first frame asks about them. An I/O
+/// The saved-data preflight of the panel's start, before the regular panel
+/// window opens: the probe of the stores beneath `root` and its old-format
+/// question. `Ok(None)`: startup goes on (nothing was refused). `Ok(Some(..))`:
+/// the refused files and the question the first frame asks about them. An I/O
 /// failure of the probe, or refused files a run that cannot ask about
-/// (`skip_lock`) must keep, stops the start. A legacy preferences file the
-/// state database cannot import is none of these: the probe does not open
+/// (`non_interactive`) must keep, stops the start. A legacy preferences file
+/// the state database cannot import is none of these: the probe does not open
 /// it, and the database's refusal (path, cause and remedy) shows on the
 /// preferences' own surface while the start and every other store go on.
 fn saved_data_preflight(
     root: &frontend_core::saved_data::StateRoot,
-    skip_lock: bool,
+    non_interactive: bool,
 ) -> Result<Option<(frontend_core::saved_data::SavedDataStartup, String)>, window::PanelError> {
     let startup = frontend_core::saved_data::SavedDataStartup::check(root).map_err(|error| {
         let message = error.to_string();
@@ -8217,7 +8269,7 @@ fn saved_data_preflight(
             })?;
         return Ok(None);
     };
-    if skip_lock {
+    if non_interactive {
         let error = startup
             .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
             .expect_err("the preflight found refused saved data");
@@ -8228,14 +8280,21 @@ fn saved_data_preflight(
     Ok(Some((startup, message)))
 }
 
-/// Open the 274bot panel window. Call after the vault has been started.
+/// Start the panel. Refuse an occupied root before opening saved state.
 /// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
 /// exit 0). `--prepare-fixture` is offline-only and never opens a window.
 pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
-    let skip_lock = !matches!(args.mode, RunMode::Interactive);
+    run_panel_with_refusal(args, show_state_root_lock_refusal)
+}
+
+fn run_panel_with_refusal(
+    args: PanelArgs,
+    present_refusal: impl FnOnce(StateRootLockPresentation) -> Result<(), window::PanelError>,
+) -> Result<(), window::PanelError> {
+    let non_interactive = !matches!(args.mode, RunMode::Interactive);
     #[cfg(feature = "memory-profile")]
-    let skip_lock = skip_lock
+    let non_interactive = non_interactive
         || frontend_core::bench::BenchConfig::from_env()
             .ok()
             .flatten()
@@ -8243,8 +8302,30 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let root = frontend_core::saved_data::StateRoot::new(
         frontend_core::scripts::paths::bot_home().join(".274bot"),
     );
-    let permit = frontend_core::launch::acquire_instance(InstanceKind::Panel)?;
-    let mut saved_data_prompt = saved_data_preflight(&root, skip_lock)?;
+    let permit = match frontend_core::launch::acquire_instance() {
+        Ok(permit) => permit,
+        Err(error) => {
+            if !non_interactive {
+                let presentation = StateRootLockPresentation {
+                    title: match &error {
+                        frontend_core::launch::StateRootLockError::InUse { .. } => {
+                            STATE_ROOT_LOCK_WINDOW_TITLE
+                        }
+                        frontend_core::launch::StateRootLockError::Io { .. } => {
+                            "Cannot lock 274bot state"
+                        }
+                    },
+                    message: error.to_string(),
+                    exit_label: STATE_ROOT_LOCK_EXIT_LABEL,
+                };
+                if let Err(presentation_error) = present_refusal(presentation) {
+                    api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup refusal could not be shown: {presentation_error}");
+                }
+            }
+            return Err(window::PanelError::StateRootLock(error));
+        }
+    };
+    let mut saved_data_prompt = saved_data_preflight(&root, non_interactive)?;
     if let Some(scenario) = args.mode.prepare_fixture_name() {
         return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
             eprintln!("FAIL: {e}");

@@ -67,9 +67,7 @@ fn locked_driver_shares_its_permit_and_releases_it_on_drop() {
     let mut driver = HeadlessDriver::open(root.path(), permit)
         .expect("the locked driver's script settings are readable");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !driver.session().preferences().unwrap().ready()
-        && std::time::Instant::now() < deadline
-    {
+    while !driver.session().preferences().unwrap().ready() && std::time::Instant::now() < deadline {
         driver.poll();
         std::thread::sleep(std::time::Duration::from_millis(5));
     }

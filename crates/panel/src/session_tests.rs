@@ -10611,8 +10611,7 @@ fn unbound_test_session_takes_a_shared_root_lease() {
 #[test]
 fn locked_session_releases_the_instance_lock_on_drop() {
     let iso = IsolatedStores::enter("session-hold-lock");
-    let permit =
-        frontend_core::launch::acquire_instance().expect("the isolated root is free");
+    let permit = frontend_core::launch::acquire_instance().expect("the isolated root is free");
     let session = Session::with_instance(permit).expect("isolated script settings are readable");
     drop(session);
     let _next = host_play::local_state::RootUse::acquire(&thread_state_root())

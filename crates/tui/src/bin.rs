@@ -6462,10 +6462,11 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             false
         }
     };
-    let skip_lock = !matches!(mode, RunMode::Interactive) || memory;
-    let interactive_saved_data = !skip_lock && std::io::IsTerminal::is_terminal(&std::io::stdin());
-    let permit = frontend_core::launch::acquire_instance(frontend_core::launch::InstanceKind::Tui)
-        .map_err(|error| error.to_string())?;
+    // This controls saved-data prompting only. Every mode must acquire the root.
+    let non_interactive = !matches!(mode, RunMode::Interactive) || memory;
+    let interactive_saved_data =
+        !non_interactive && std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let permit = frontend_core::launch::acquire_instance().map_err(|error| error.to_string())?;
     let root = frontend_core::saved_data::StateRoot::new(
         frontend_core::scripts::paths::bot_home().join(".274bot"),
     );

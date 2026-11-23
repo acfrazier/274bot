@@ -62,7 +62,9 @@ mod tests {
     fn service_lease_keeps_the_lock_after_the_permit_drops() {
         let _iso = script::IsolatedEnv::enter("instance-lock-service");
         let permit = resolve_instance_permit().unwrap();
-        let lease = permit.root_use().expect("the startup permit holds the lock");
+        let lease = permit
+            .root_use()
+            .expect("the startup permit holds the lock");
         drop(permit);
         assert!(matches!(
             resolve_instance_permit(),
