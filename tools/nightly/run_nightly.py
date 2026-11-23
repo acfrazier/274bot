@@ -292,6 +292,9 @@ HTTP_PORT = int(os.environ.get("NIGHTLY_HTTP_PORT", str(JOB_DEFAULTS["http_port"
 # The 289 engine's 40-byte /crc identity (ENGINE.md); empty skips the comparison.
 ENGINE_CRC_SHA256 = os.environ.get("NIGHTLY_ENGINE_CRC_SHA256", DEFAULTS["engine_crc_sha256"])
 ENGINE_LABEL = os.environ.get("NIGHTLY_ENGINE_LABEL", JOB_DEFAULTS["label"])
+# Engine and content commits named by the dispatcher, for a copy without its own Git metadata
+# (JSON: {"engine": <40 hex>, "content": <40 hex>}). Local git identity takes precedence.
+ENGINE_COMMITS_RAW = os.environ.get("NIGHTLY_ENGINE_COMMITS", "")
 # Fresh exact-commit clone per run from local bare mirrors (Windows) into the
 # branch's one stable tree path, instead of one reused checkout per branch
 # (malbec). The stable path means Cargo overwrites last night's artefacts
@@ -3492,6 +3495,7 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
         + (f": {meta['build']['error']}" if meta['build'].get('error') else ""),
         f"- Engine: {meta['engine']['status']}; catalog `{meta['catalog_commit']}`; "
         f"{meta['parallel']} cells in parallel; outer cap {meta['cell_cap_s']} s",
+        f"- Engine commits: {engine_commits_text(meta['engine'].get('commits'))}",
     ]
     if meta.get("status"):
         md.append(f"- Status: {meta['status']}")
@@ -3647,8 +3651,40 @@ def local_engine_identity() -> dict[str, dict[str, object]] | None:
     return {"engine": engine, "content": content}
 
 
+def engine_commits(local_identity: dict | None) -> dict[str, str] | None:
+    """Name the engine and content commits: the local git heads when the identity names them,
+    else the dispatcher's NIGHTLY_ENGINE_COMMITS; None when neither names them."""
+    parts = [local_identity.get(name) if local_identity else None for name in ("engine", "content")]
+    if all(isinstance(part, dict) and isinstance(part.get("head"), str) for part in parts):
+        return {"engine": parts[0]["head"], "content": parts[1]["head"]}
+    return parse_engine_commits(ENGINE_COMMITS_RAW)
+
+
+def parse_engine_commits(raw: str) -> dict[str, str] | None:
+    """Accept only {"engine": <40 hex>, "content": <40 hex>}; anything else is logged and ignored."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        value = None
+    if (not isinstance(value, dict) or set(value) != {"engine", "content"}
+            or not all(isinstance(value[key], str)
+                       and re.fullmatch(r"[0-9a-f]{40}", value[key]) for key in value)):
+        log(f"NIGHTLY_ENGINE_COMMITS ignored: expected {{\"engine\": sha, \"content\": sha}}, got {raw!r}")
+        return None
+    return {"engine": value["engine"], "content": value["content"]}
+
+
+def engine_commits_text(commits: dict | None) -> str:
+    if not commits:
+        return "not recorded"
+    return f"engine `{commits['engine']}`, content `{commits['content']}`"
+
+
 def engine_summary(status: str, local_identity: dict | None) -> dict:
-    summary = dict(status=status, mode=ENGINE_MODE, source=engine_source())
+    summary = dict(status=status, mode=ENGINE_MODE, source=engine_source(),
+                   commits=engine_commits(local_identity))
     if ENGINE_MODE == "local":
         summary["identity"] = local_identity
     return summary
