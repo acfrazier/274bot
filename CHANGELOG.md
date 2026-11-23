@@ -14,6 +14,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   instead of offering the already-used button. This fixes revision-377 Cook
   dialogue failures while retaining native menu refusal checks.
 
+### Banking
+
+- Native `Banking.open` reports known-bank access, fallback destinations, and
+  visible booths through its optional log callback.
+
 ### Quester
 
 - Unsupported combat stages size food from available damage facts instead of

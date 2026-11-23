@@ -1801,11 +1801,17 @@ fn nearest_use_quickly(rows: &[LocView], here: WorldTile, level: i32) -> Option<
         .min_by_key(|row| row.tile.x.abs_diff(here.x).max(row.tile.z.abs_diff(here.z)))
 }
 
+#[derive(Clone, Copy)]
+struct SceneBooth {
+    distance: i32,
+    tile: WorldTile,
+}
+
 fn nearest_scene_booth_distance(
     cx: &ActionContext<'_>,
     booth_name: &str,
     booth_op: &str,
-) -> Option<i32> {
+) -> Option<SceneBooth> {
     let snapshot = cx.snapshot();
     let rows = snapshot.locs()?.value;
     let here = current_tile(cx);
@@ -1821,8 +1827,11 @@ fn nearest_scene_booth_distance(
                         .is_some_and(|op| !op.is_empty() && op != "hidden")
                 })
         })
-        .map(|row| row.distance)
-        .min();
+        .min_by_key(|row| row.distance)
+        .map(|row| SceneBooth {
+            distance: row.distance,
+            tile: row.tile,
+        });
     let nearest = here.and_then(|here| {
         nearest_use_quickly(rows, here, here.level)
             .filter(|row| {
@@ -1834,9 +1843,15 @@ fn nearest_scene_booth_distance(
                             .is_some_and(|op| op.eq_ignore_ascii_case(booth_op))
                     })
             })
-            .map(|row| row.tile.x.abs_diff(here.x).max(row.tile.z.abs_diff(here.z)) as i32)
+            .map(|row| SceneBooth {
+                distance: row.tile.x.abs_diff(here.x).max(row.tile.z.abs_diff(here.z)) as i32,
+                tile: row.tile,
+            })
     });
-    row_distance.into_iter().chain(nearest).min()
+    row_distance
+        .into_iter()
+        .chain(nearest)
+        .min_by_key(|booth| booth.distance)
 }
 
 struct SelectionResult {
@@ -1998,6 +2013,19 @@ impl BankingOpen {
                             4,
                             WorldTarget::Access(Some(AccessSpec::from_bank(selection.bank))),
                         );
+                        if log_enabled {
+                            log.queue(
+                                format!(
+                                    "no booth in scene — web-walking to the {} bank at ({}, {}, {})",
+                                    selection.bank.name,
+                                    selection.bank.tile.x,
+                                    selection.bank.tile.z,
+                                    selection.bank.tile.level
+                                ),
+                                true,
+                            );
+                            return Poll::Pending;
+                        }
                     }
                 },
                 BankingPhase::WalkStart {
@@ -2113,7 +2141,7 @@ impl BankingOpen {
         let nearest =
             here.and_then(|here| nearest_eligible_bank(facts, self.preferences, cx, here));
         if self.prefer_nearby
-            && scene_booth.is_some_and(|distance| f64::from(distance) <= self.nearby_radius)
+            && scene_booth.is_some_and(|booth| f64::from(booth.distance) <= self.nearby_radius)
         {
             self.phase = BankingPhase::Access(self.default_access());
             if log_enabled {
@@ -2158,25 +2186,75 @@ impl BankingOpen {
             let known = nearest_eligible_bank(facts, self.preferences, cx, stand)
                 .filter(|bank| within_radius(stand, bank.tile, self.nearby_radius));
             let access = known.map(AccessSpec::from_bank);
-            let target = if access
+            let uses_npc_access = access.as_ref().is_some_and(|access| access.npc.is_some());
+            let access_kind = if uses_npc_access {
+                Some("npc")
+            } else if access
                 .as_ref()
-                .is_some_and(|access| access.npc.is_some() || access.object.is_some())
+                .is_some_and(|access| access.object.is_some())
             {
+                Some("object")
+            } else {
+                None
+            };
+            let target = if access_kind.is_some() {
                 WorldTarget::Access(access)
             } else {
                 WorldTarget::Preset(stand)
             };
             self.walk_to(cx, stand, 2, target);
-        } else if scene_booth.is_some() {
+            if let (Some(access_kind), Some(bank)) = (access_kind, known) {
+                if log_enabled {
+                    log.queue(
+                        format!("bank: {} uses {access_kind} access", bank.name),
+                        true,
+                    );
+                    return Poll::Pending;
+                }
+            }
+        } else if let Some(scene_booth) = scene_booth {
             self.phase = BankingPhase::Access(self.default_access());
+            if log_enabled {
+                log.queue(
+                    format!(
+                        "bank: opening visible '{}' at ({}, {}, {})",
+                        self.booth_name,
+                        scene_booth.tile.x,
+                        scene_booth.tile.z,
+                        scene_booth.tile.level
+                    ),
+                    true,
+                );
+                return Poll::Pending;
+            }
         } else if let Some(destination) = self.destination.take() {
             let tile = destination.tile;
+            // The wire drops the upstream label, so log only a unique catalog match.
+            let destination_name = if log_enabled {
+                let mut matching = facts.banks().iter().filter(|bank| bank.tile == tile);
+                match (matching.next(), matching.next()) {
+                    (Some(bank), None) => Some(bank.name),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             self.walk_to(
                 cx,
                 tile,
                 4,
                 WorldTarget::Access(Some(AccessSpec::from_wire(&destination))),
             );
+            if let Some(destination_name) = destination_name {
+                log.queue(
+                    format!(
+                        "no booth in scene — web-walking to the {destination_name} bank at ({}, {}, {})",
+                        tile.x, tile.z, tile.level
+                    ),
+                    true,
+                );
+                return Poll::Pending;
+            }
         } else if let Some(from) = here {
             match SelectorCore::begin(
                 Arc::clone(facts),

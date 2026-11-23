@@ -4974,6 +4974,364 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn isolate_banking_open_logs_local_bank_route_and_queues_walk() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__messages = [];
+        globalThis.__opened = await Banking.open({
+            stand: { x: 300, z: 100, level: 0 },
+            log: message => globalThis.__messages.push(message),
+        });
+    }
+}
+"#;
+    let bank_tile = api::snapshot::WorldTile {
+        x: 110,
+        z: 100,
+        level: 0,
+    };
+    let banks = std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+        api::named_banks::NamedBank::new("Draynor", bank_tile),
+    ]));
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, banks);
+    let mut input = base_snapshot();
+    input.here = Some(script::native::snapshot_source::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let mut actions = slot.take_actions();
+    assert_eq!(
+        slot.probe("__messages[0] ?? null").unwrap(),
+        serde_json::json!("bank: local Draynor bank — using it instead of distant preset"),
+        "the local-bank route message reaches the caller"
+    );
+    if actions.is_empty() {
+        tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+        actions = slot.take_actions();
+    }
+    let [walk] = actions.as_slice() else {
+        panic!("the local-bank route must queue one walk");
+    };
+    let script::native::HostEffect::Walk(request) = &walk.effect else {
+        panic!("the local-bank route must queue a native walk");
+    };
+    assert_eq!(request.target, bank_tile);
+    slot.stop();
+}
+
+#[test]
+fn isolate_banking_open_logs_known_bank_access_before_walk() {
+    static NPC_BANK: api::named_banks::BankDefinition = api::named_banks::BankDefinition {
+        name: "Shilo Village",
+        tile: api::snapshot::WorldTile {
+            x: 300,
+            z: 100,
+            level: 0,
+        },
+        approach: None,
+        skill: None,
+        quest: None,
+        setting: None,
+        object: None,
+        open_first: None,
+        npc: Some(api::named_banks::BankOperation {
+            name: "Banker",
+            op: "Talk-to",
+        }),
+        choose: Some("Bank"),
+    };
+    static OBJECT_BANK: api::named_banks::BankDefinition = api::named_banks::BankDefinition {
+        name: "Falador East",
+        tile: api::snapshot::WorldTile {
+            x: 300,
+            z: 100,
+            level: 0,
+        },
+        approach: None,
+        skill: None,
+        quest: None,
+        setting: None,
+        object: Some(api::named_banks::BankOperation {
+            name: "Bank booth",
+            op: "Use-quickly",
+        }),
+        open_first: None,
+        npc: None,
+        choose: None,
+    };
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__messages = [];
+        globalThis.__opened = await Banking.open({
+            stand: { x: 300, z: 100, level: 0 },
+            log: message => globalThis.__messages.push(message),
+        });
+    }
+}
+"#;
+    for (definition, expected) in [
+        (&NPC_BANK, "bank: Shilo Village uses npc access"),
+        (&OBJECT_BANK, "bank: Falador East uses object access"),
+    ] {
+        let bank_tile = definition.tile;
+        let banks = std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+            api::named_banks::NamedBank {
+                name: definition.name,
+                tile: bank_tile,
+                definition: Some(definition),
+                routable: true,
+            },
+        ]));
+        let mut slot = new_bank_slot(src, LoadShape::CompatClass, banks);
+        let mut input = base_snapshot();
+        input.here = Some(script::native::snapshot_source::TileInput {
+            x: 100,
+            z: 100,
+            level: 0,
+        });
+        let mut snapshot = api::snapshot::GameSnapshot::new();
+        tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+        let mut actions = slot.take_actions();
+        assert_eq!(
+            slot.probe("__messages[0] ?? null").unwrap(),
+            serde_json::json!(expected),
+            "the selected access method reaches the caller"
+        );
+        if actions.is_empty() {
+            tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+            actions = slot.take_actions();
+        }
+        let [walk] = actions.as_slice() else {
+            panic!("known-bank access must queue one walk");
+        };
+        let script::native::HostEffect::Walk(request) = &walk.effect else {
+            panic!("known-bank access must queue a native walk");
+        };
+        assert_eq!(request.target, bank_tile);
+        slot.stop();
+    }
+}
+
+#[test]
+fn isolate_banking_open_logs_explicit_fallback_destination() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__messages = [];
+        globalThis.__opened = await Banking.open({
+            destination: {
+                name: 'Seers',
+                tile: { x: 300, z: 100, level: 0 },
+            },
+            log: message => globalThis.__messages.push(message),
+        });
+    }
+}
+"#;
+    let bank_tile = api::snapshot::WorldTile {
+        x: 300,
+        z: 100,
+        level: 0,
+    };
+    let banks = std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+        api::named_banks::NamedBank::new("Seers", bank_tile),
+    ]));
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, banks);
+    let mut input = base_snapshot();
+    input.here = Some(script::native::snapshot_source::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let mut actions = slot.take_actions();
+    assert_eq!(
+        slot.probe("__messages[0] ?? null").unwrap(),
+        serde_json::json!("no booth in scene — web-walking to the Seers bank at (300, 100, 0)"),
+        "the explicit fallback destination message reaches the caller"
+    );
+    if actions.is_empty() {
+        tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+        actions = slot.take_actions();
+    }
+    let [walk] = actions.as_slice() else {
+        panic!("the fallback destination must queue one walk");
+    };
+    let script::native::HostEffect::Walk(request) = &walk.effect else {
+        panic!("the fallback destination must queue a native walk");
+    };
+    assert_eq!(request.target, bank_tile);
+    slot.stop();
+}
+
+#[test]
+fn isolate_banking_open_logs_selected_fallback_bank() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__messages = [];
+        globalThis.__opened = await Banking.open({
+            log: message => globalThis.__messages.push(message),
+        });
+    }
+}
+"#;
+    let bank_tile = api::snapshot::WorldTile {
+        x: 299,
+        z: 400,
+        level: 0,
+    };
+    let banks = std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+        api::named_banks::NamedBank::new("Seers", bank_tile),
+    ]));
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, banks);
+    let mut input = base_snapshot();
+    input.here = Some(script::native::snapshot_source::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
+    let [pick] = actions.as_slice() else {
+        panic!("the fallback route must request native bank selection");
+    };
+    let script::native::HostEffect::BankPick(_) = &pick.effect else {
+        panic!("the fallback route must request native bank selection");
+    };
+    let authority = pick.authority();
+    slot.slot.complete_native_bank_pick(
+        &authority,
+        script::native_bank::BankPickReceipt {
+            request_id: pick.request_id.get(),
+            evidence: api::quest_progress::EvidenceStamp {
+                run: pick.run(),
+                tick: 1,
+                sequence: 1,
+            },
+            outcome: script::native_bank::BankPickOutcome::Selected(
+                script::native_bank::SelectedBank {
+                    bank_index: 0,
+                    access_tile: bank_tile,
+                    kind: script::native_bank::PickKind::Reachable,
+                    access: None,
+                },
+            ),
+        },
+    );
+    tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
+    let mut actions = slot.take_actions();
+    assert_eq!(
+        slot.probe("__messages[0] ?? null").unwrap(),
+        serde_json::json!("no booth in scene — web-walking to the Seers bank at (299, 400, 0)"),
+        "the selected fallback bank message reaches the caller"
+    );
+    if actions.is_empty() {
+        tick_bank_slot(&mut slot, &mut input, 3, -1, -1, &mut snapshot);
+        actions = slot.take_actions();
+    }
+    let [walk] = actions.as_slice() else {
+        panic!("the selected fallback bank must queue one walk");
+    };
+    let script::native::HostEffect::Walk(request) = &walk.effect else {
+        panic!("the selected fallback bank must queue a native walk");
+    };
+    assert_eq!(request.target, bank_tile);
+    slot.stop();
+}
+
+#[test]
+fn isolate_banking_open_logs_visible_booth_tile() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__started) return;
+        globalThis.__started = true;
+        globalThis.__messages = [];
+        globalThis.__opened = await Banking.open({
+            preferNearby: false,
+            log: message => globalThis.__messages.push(message),
+        });
+    }
+}
+"#;
+    let actions = ["Use-quickly".to_string()];
+    let locs = [script::native::snapshot_source::SceneEntityInput {
+        index: 0,
+        id: 2213,
+        name: Some("Bank booth"),
+        x: 101,
+        z: 100,
+        level: 0,
+        distance: 1,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
+        shape: 10,
+        angle: 0,
+    }];
+    let mut slot = new_bank_slot(src, LoadShape::CompatClass, empty_named_banks());
+    let mut input = base_snapshot();
+    input.here = Some(script::native::snapshot_source::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    input.locs = &locs;
+    input.nearest_booth = Some(nearest_booth_input(101, 100, 0, "Bank booth"));
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    tick_bank_slot(&mut slot, &mut input, 1, -1, -1, &mut snapshot);
+    let actions = slot.take_actions();
+    assert_eq!(
+        slot.probe("__messages[0] ?? null").unwrap(),
+        serde_json::json!("bank: opening visible 'Bank booth' at (101, 100, 0)"),
+        "the visible-booth message includes the selected tile"
+    );
+    assert_eq!(actions.len(), 1, "the visible booth queues one interaction");
+    assert!(matches!(
+        bank_interaction(&actions[0]),
+        script::interact::InteractReq::OpenBooth {
+            x: 101,
+            z: 100,
+            level: 0,
+            id: 2213,
+            ..
+        }
+    ));
+    slot.stop();
+}
+
+#[test]
 fn isolate_bank_open_nearest_and_open_booth_queue_open_booth() {
     if !crate::local_game_data::local_game_data_available(289) {
         return;
