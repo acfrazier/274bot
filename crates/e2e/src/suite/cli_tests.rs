@@ -155,6 +155,7 @@ fn argument_parsing_rejects_unknown_flags_and_missing_values() {
 #[cfg(not(feature = "test-support"))]
 #[test]
 fn suite_cli_rejects_vault_override_without_test_support() {
+    const EXPECTED: &str = "--vault is not available in this build. Before the first 0.3.0 unlock for this server, move or copy the legacy vault to <state-root>/<vault-component> (default root: ~/.274bot). Do not overwrite another vault.";
     for args in [
         vec![
             "list".to_string(),
@@ -163,10 +164,7 @@ fn suite_cli_rejects_vault_override_without_test_support() {
         ],
         vec!["list".to_string(), "--vault=/fixture-vault".into()],
     ] {
-        let error = parse_args(&args).unwrap_err();
-        assert!(error.contains("--vault"), "{error}");
-        assert!(error.contains("test-support"), "{error}");
-        assert!(error.contains("configured vault"), "{error}");
+        assert_eq!(parse_args(&args).unwrap_err(), EXPECTED);
     }
 }
 

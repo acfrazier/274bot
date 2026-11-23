@@ -625,7 +625,7 @@ impl BinaryIdentity {
         match hashed.len() {
             0 => Err(format!(
                 "no built {name} executable under {}; the suite binds the executable it launches, \
-                 so build it first (`cargo build -p panel {} {name}`) or pass {flag} PATH",
+                 so build it first (`cargo build -p panel --features test-support {} {name}`) or pass {flag} PATH",
                 target_dir.display(),
                 if examples { "--example" } else { "--bin" }
             )),

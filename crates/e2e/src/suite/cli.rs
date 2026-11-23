@@ -116,7 +116,7 @@ fn parse_args(argv: &[String]) -> SuiteResult<Args> {
         #[cfg(not(feature = "test-support"))]
         if arg.as_str() == "--vault" || arg.starts_with("--vault=") {
             return Err(
-                "--vault is available only in test-support builds; use the selected server profile's configured vault".into(),
+                "--vault is not available in this build. Before the first 0.3.0 unlock for this server, move or copy the legacy vault to <state-root>/<vault-component> (default root: ~/.274bot). Do not overwrite another vault.".into(),
             );
         }
         let mut value = |flag: &str| -> SuiteResult<String> {

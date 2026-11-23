@@ -475,6 +475,7 @@ fn selected_profile(
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("CATALOG_NAV_FLAGS").map(PathBuf::from),
         engine_dir: std::env::var_os("CATALOG_ENGINE_DIR").map(PathBuf::from),
+        #[cfg(feature = "test-support")]
         vault_path: Some(temp.join("vault")),
         catalog_root: Some(catalog_root),
         ..ProfileOptions::default()

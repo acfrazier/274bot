@@ -225,14 +225,12 @@ fn test_support_build_accepts_explicit_vault_path() {
 #[cfg(not(feature = "test-support"))]
 #[test]
 fn release_build_rejects_explicit_vault_path_during_parse() {
+    const EXPECTED: &str = "--vault is not available in this build. Before the first 0.3.0 unlock for this server, move or copy the legacy vault to <state-root>/<vault-component> (default root: ~/.274bot). Do not overwrite another vault.";
     for args in [
         &["--vault", "relative-vault"][..],
         &["--vault=relative-vault"][..],
     ] {
-        let error = parse_profile_args(args).unwrap_err();
-        assert!(error.contains("--vault"), "{error}");
-        assert!(error.contains("test-support"), "{error}");
-        assert!(error.contains("configured vault"), "{error}");
+        assert_eq!(parse_profile_args(args).unwrap_err(), EXPECTED);
     }
 }
 
@@ -326,30 +324,29 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
         host_play::ProfileClass::Local
     );
 
+    let explicit = ProfileOptions {
+        profile: Some("public-289".into()),
+        cache_dir: Some("explicit-cache".into()),
+        unpack_dir: Some("explicit-unpack".into()),
+        nav_pack: Some("explicit.navpack".into()),
+        nav_flags: Some("explicit.navflags".into()),
+        content_dir: Some("explicit-content".into()),
+        #[cfg(feature = "test-support")]
+        vault_path: Some("explicit-vault".into()),
+        ..ProfileOptions::default()
+    };
+    let mut explicit_environment = fixture.env();
+    explicit_environment.working_dir = Some(fixture.0.clone());
+    let selected = explicit
+        .resolve_with_env(Some(274), &explicit_environment)
+        .unwrap();
+    assert_eq!(selected.cache_dir(), fixture.0.join("explicit-cache"));
+    assert_eq!(selected.unpack_dir(), fixture.0.join("explicit-unpack"));
+    assert_eq!(selected.nav_pack(), fixture.0.join("explicit.navpack"));
+    assert_eq!(selected.nav_flags(), fixture.0.join("explicit.navflags"));
+    assert_eq!(selected.content_dir(), fixture.0.join("explicit-content"));
     #[cfg(feature = "test-support")]
-    {
-        let explicit = ProfileOptions {
-            profile: Some("public-289".into()),
-            cache_dir: Some("explicit-cache".into()),
-            unpack_dir: Some("explicit-unpack".into()),
-            nav_pack: Some("explicit.navpack".into()),
-            nav_flags: Some("explicit.navflags".into()),
-            content_dir: Some("explicit-content".into()),
-            vault_path: Some("explicit-vault".into()),
-            ..ProfileOptions::default()
-        };
-        let mut explicit_environment = fixture.env();
-        explicit_environment.working_dir = Some(fixture.0.clone());
-        let selected = explicit
-            .resolve_with_env(Some(274), &explicit_environment)
-            .unwrap();
-        assert_eq!(selected.cache_dir(), fixture.0.join("explicit-cache"));
-        assert_eq!(selected.unpack_dir(), fixture.0.join("explicit-unpack"));
-        assert_eq!(selected.nav_pack(), fixture.0.join("explicit.navpack"));
-        assert_eq!(selected.nav_flags(), fixture.0.join("explicit.navflags"));
-        assert_eq!(selected.content_dir(), fixture.0.join("explicit-content"));
-        assert_eq!(selected.vault_path(), fixture.0.join("explicit-vault"));
-    }
+    assert_eq!(selected.vault_path(), fixture.0.join("explicit-vault"));
 }
 
 #[test]

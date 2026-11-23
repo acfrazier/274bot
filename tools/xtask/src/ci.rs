@@ -83,7 +83,7 @@ const CLIPPY_COMMANDS: &[(&str, &str)] = &[
 ];
 
 const TEST_LANES: &[(&str, &str)] = &[
-    ("workspace", "cargo test --workspace"),
+    ("workspace", "cargo test --workspace --features e2e/test-support"),
     (
         "vendor",
         "cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace",

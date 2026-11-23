@@ -68,19 +68,25 @@ The child command line is the *resolved* executable, the profile flags and the c
 name. `--exec-core`/`--exec-pair` and `--cwd` must be absolute; the suite canonicalizes the
 program and the effective working directory once and launches exactly those paths.
 
-The manifest's `exec` entry is a cargo template that *names* the artifact
-(`cargo run -p panel --example catalog_watch`); it is never the launch program. The suite
-resolves it to the built file under `target/{debug,release}[/examples]`, hashes it, and
-launches that path, so the bytes in the ledger and the bytes in the child are the same
-executable — `cargo run` is not re-invoked after the identity was captured (it could
-rebuild different bytes under the same command). `--exec-core`/`--exec-pair PATH` name a
-direct executable instead; either way a case whose executable cannot be resolved and
-hashed refuses the run (and `dry-run` refuses the plan) rather than printing a template it
-would never launch. The external loader smoke resolves its own template
-(`cargo run -p panel --example external_watch`) through the same path, or
-`--exec-external PATH`, and only when the selection actually contains that case: a
-core/pair-only run never resolves, hashes or requires the loader executable or its raw
-source.
+The manifest's `exec` entry is a Cargo template that names a target
+(`cargo run -p panel --example catalog_watch`). The suite does not run the
+template. It resolves the target under `target/{debug,release}[/examples]`,
+hashes the file and launches the same bytes. The template only locates a
+built target. It does not run Cargo or enable Cargo features.
+
+For a `--vault` child, build the selected example with `test-support` before
+the run. For example:
+`cargo build -p panel --features test-support --example catalog_watch`
+Build `pair_watch` or `external_watch` instead when the selected case uses
+those examples.
+
+`--exec-core`/`--exec-pair PATH` name a direct executable instead. A run
+refuses when it cannot resolve and hash a child. `dry-run` also refuses the
+plan instead of printing a template it never launches. The external loader
+smoke resolves its own template (`cargo run -p panel --example external_watch`)
+through the same path, or `--exec-external PATH`, only when selected. A
+core/pair-only run does not resolve, hash or require the loader executable or
+raw source.
 
 Only flags the executables actually accept are emitted. The native entrypoints share
 panel argument parsing for profile, memory, paints and supported execution modes.

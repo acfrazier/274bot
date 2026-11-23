@@ -39,7 +39,7 @@ fn case(id: &str) -> CaseEntry {
     manifest.case(id).expect("case").clone()
 }
 #[test]
-fn embedded_native_child_templates_enable_test_support() {
+fn native_child_templates_only_name_targets() {
     let manifest = SuiteManifest::parse(
         crate::suite::EMBEDDED_MANIFEST.as_bytes(),
         "embedded fixture",
@@ -51,11 +51,8 @@ fn embedded_native_child_templates_enable_test_support() {
         ("external", &manifest.defaults.exec.external),
     ] {
         assert!(
-            template
-                .args
-                .windows(2)
-                .any(|args| args[0] == "--features" && args[1] == "test-support"),
-            "{name} child template must enable test-support: {:?}",
+            !template.args.iter().any(|arg| arg == "--features"),
+            "{name} child template must not claim build features: {:?}",
             template.args
         );
     }

@@ -65,7 +65,7 @@ rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled
 # These harnesses use the optional scenario runner even for their offline tests.
 [[test]]
 name = "catalog_boundary_live"
-required-features = ["memory-profile", "test-support"]
+required-features = ["memory-profile"]
 
 [[test]]
 name = "world_boundary_live"
