@@ -22,9 +22,10 @@ use script::{ScriptCtx, SlotScript};
 
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
-    dispatch_observed_bank_op, dispatch_script_interact_cached_scoped, pack_cached_reach,
-    recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
-    take_carried_walk, BankDepositDispatch, InteractContext, NavBot, ScriptWall,
+    dispatch_observed_bank_op, dispatch_script_interact_cached_scoped,
+    dispatch_script_interact_outcome, pack_cached_reach, recovery_walk_idle, reset_script_nav,
+    resumed_walk, route_inspect, script_slot, take_carried_walk, BankDepositDispatch,
+    InteractContext, NavBot, ScriptWall,
 };
 #[cfg(any(feature = "js", feature = "luau"))]
 use super::{with_script_snapshot_input_shorts, PostedWalkOutcome};
@@ -670,6 +671,7 @@ where
     let observed_slot = script_slot(scripts, name);
     let mut slot_work_epoch = None;
     let mut has_native_actions = false;
+    let mut has_approach_watch = false;
     let mut walk_permissions = None;
     #[cfg(feature = "js")]
     let mut channel_generation = 0;
@@ -1831,6 +1833,7 @@ where
         .then_some(slot.runtime_generation());
         loc_projection_wanted = slot.loc_projection_wanted();
         has_native_actions = slot.has_native_actions();
+        has_approach_watch = slot.has_approach_watch();
         journal_paint_hidden = journal_wall_now.is_some_and(|now| slot.journal_paint_hidden(now));
         script_wait =
             slot.script_interaction_wait(journal_wall_now.unwrap_or_else(Instant::now), tick);
@@ -1889,7 +1892,10 @@ where
     }
     // The card's own work goes out outside every hold. The Guardian's Fight
     // child goes out under the Guardian's hold, and only its rows do.
-    let ordinary_gate = up && !hold && (!interact.is_empty() || has_native_actions);
+    // An armed approach watch needs each pass's snapshot to see the silent
+    // wait after its click went out, so it opens the gate with no queued row.
+    let ordinary_gate =
+        up && !hold && (!interact.is_empty() || has_native_actions || has_approach_watch);
     let child_gate = up && child_rows;
     if ordinary_gate || child_gate {
         if snapshot.read().is_some() {
@@ -1970,6 +1976,9 @@ where
                                 .collect::<Vec<_>>(),
                         );
                     }
+                    // Count observed server ticks of an armed approach watch
+                    // from this pass's snapshot before the pass dispatches.
+                    slot.observe_native_approach(&snapshot, tick);
                     let mut refused_batch = None;
                     while let Some(action) = slot.take_dispatch_action(!card_open) {
                         let batch = action.batch;
@@ -2158,6 +2167,8 @@ where
                                         }
                                     }
                                 });
+                                let mut approach_reach = None;
+                                let mut approach_watch = None;
                                 let accepted = if let Some(dispatch) = bank_dispatch.as_ref() {
                                     dispatch.accepted
                                 } else if matches!(
@@ -2178,7 +2189,7 @@ where
                                         false
                                     }
                                 } else {
-                                    dispatch_script_interact_cached_scoped(
+                                    let outcome = dispatch_script_interact_outcome(
                                         driver,
                                         &InteractContext {
                                             snapshot: &snapshot,
@@ -2195,7 +2206,10 @@ where
                                         },
                                         Some(&mut slot),
                                         [request],
-                                    )
+                                    );
+                                    approach_reach = outcome.reach;
+                                    approach_watch = outcome.watch;
+                                    outcome.wrote
                                 };
                                 let mut emitted_packets = 0;
                                 let mut opcode = None;
@@ -2297,6 +2311,23 @@ where
                                             .map_or(0, |line| line.sequence),
                                     },
                                 );
+                                match (approach_reach, approach_watch.take()) {
+                                    (Some(api::interact::OpReach::Unreachable), _) => {
+                                        slot.complete_native_approach(
+                                            &authority,
+                                            script::native::ApproachEnd::Unreachable,
+                                            api::quest_progress::EvidenceStamp {
+                                                run: authority.run(),
+                                                tick,
+                                                sequence: tick,
+                                            },
+                                        );
+                                    }
+                                    (_, Some(watch)) if accepted => {
+                                        slot.arm_native_approach(&authority, watch);
+                                    }
+                                    _ => {}
+                                }
                                 if batch != 0 && !accepted {
                                     refused_batch = Some(batch);
                                 }

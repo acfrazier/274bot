@@ -60,6 +60,9 @@ pub struct GatherRun {
     previous_fletch_xp: i32,
     waiting_target_change: bool,
     pending_end: Option<GatherEnd>,
+    /// The latest click's request, kept after its receipt is read so the
+    /// approach end can still be matched to it.
+    approach_request: Option<u64>,
 }
 
 impl NativeMachine for GatherRun {
@@ -135,6 +138,7 @@ impl NativeMachine for GatherRun {
             previous_fletch_xp,
             pending_end: None,
             waiting_target_change: false,
+            approach_request: None,
         };
         let may_tend = machine.args.timing.as_ref().is_none_or(|timing| {
             timing.cycle.allows_stray_tend() && !timing.cycle.has_unresolved_requests()
@@ -246,6 +250,16 @@ impl NativeMachine for GatherRun {
         if target_state != TargetObservation::Active {
             return self.finish(target_state.end());
         }
+        // The host refused an unreachable target, or the sent click's approach
+        // stopped moving the player: the target cannot be worked from here.
+        // End it as stalled so the runner avoids it and selects another,
+        // instead of waiting out the quiet-tick bound.
+        if self
+            .approach_request
+            .is_some_and(|request_id| cx.approach_end(request_id).is_some())
+        {
+            return self.finish(GatherEnd::Idle);
+        }
         if refused {
             return self.finish(GatherEnd::Refused);
         }
@@ -310,7 +324,9 @@ impl GatherRun {
             return Ok(());
         }
         let request = click_request(&self.args.target)?;
-        self.request_id = Some(cx.emit(request)?);
+        let request_id = cx.emit(request)?;
+        self.request_id = Some(request_id);
+        self.approach_request = Some(request_id);
         self.last_emit_tick = cx.evidence().tick;
         Ok(())
     }

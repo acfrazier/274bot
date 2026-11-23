@@ -256,7 +256,12 @@ impl NativeMachine for Reach {
                         None => Poll::Pending,
                     };
                 }
-                if saw_cant_reach(cx, self.chat_mark) {
+                // The host's typed approach end (an unreachable target it
+                // would not click, or an approach that stopped moving) takes
+                // the same recovery as the engine's own refusal.
+                let approach_ended =
+                    self.request_id != 0 && cx.approach_end(self.request_id).is_some();
+                if approach_ended || saw_cant_reach(cx, self.chat_mark) {
                     // Preserve the response until locs from the entered scene
                     // are observed before choosing a retry or door transition.
                     if cx.entered_scene() {
@@ -290,6 +295,13 @@ impl NativeMachine for Reach {
                         Some(receipt) if receipt.accepted => {}
                         Some(_) => return Poll::Ready(Ok(false)),
                         None => return Poll::Pending,
+                    }
+                    // The op was sent but the player may still be walking to
+                    // it. Report success only once the host's watch ends
+                    // (arrival or an outcome); a stall ends it with a typed
+                    // end, which the recovery branch above takes.
+                    if cx.approach_watching(self.request_id) {
+                        return Poll::Pending;
                     }
                 }
                 if let ReachKind::Ground { id, .. } = self.args.kind {

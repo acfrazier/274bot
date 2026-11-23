@@ -464,12 +464,14 @@ mod tests {
         // the typed service pick (its own outcome and request identity) adds 8 B.
         // The advisory receipt retains an 8 B pointer to boxed food-route
         // counters until the requester consumes its correlated result.
+        // The approach watch and its typed end share one boxed state: 8 B.
         // These counters cannot use the separate risk-assessment allocation.
-        // The ledger is 1,032 B on 64-bit targets.
+        // The ledger is 1,040 B on 64-bit targets.
         assert_eq!(
             std::mem::size_of::<Ledger>(),
             944 + 2 * std::mem::size_of::<Option<(NonZeroU64, crate::native::WaitDeadline)>>()
                 + std::mem::size_of::<std::time::Instant>()
+                + 8
                 + 8
                 + 8
                 + std::mem::size_of::<Option<std::sync::Arc<crate::quester::FoodRoute>>>()

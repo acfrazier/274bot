@@ -3029,6 +3029,61 @@ impl SlotScript {
         }
     }
 
+    /// Arm the stall watch of an accepted operation that must approach its
+    /// target (`api::interact::ApproachWatch`).
+    pub fn arm_native_approach(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        watch: api::interact::ApproachWatch,
+    ) {
+        if let Some(ledger) = self.ledger_of(authority.run()) {
+            ledger.arm_approach(authority, watch);
+        }
+    }
+
+    /// Record the typed end of an interaction's approach.
+    pub fn complete_native_approach(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        end: crate::native::ApproachEnd,
+        evidence: api::quest_progress::EvidenceStamp,
+    ) {
+        if let Some(ledger) = self.ledger_of(authority.run()) {
+            ledger.complete_approach(authority, end, evidence);
+        }
+    }
+
+    /// Whether an approach watch is armed on the foreground or Guardian
+    /// ledger. The host observes it each pass, not only when rows are queued:
+    /// a watch exists to see the silent wait after the click was sent.
+    pub fn has_approach_watch(&mut self) -> bool {
+        let main = self
+            .native_runtime
+            .ledger
+            .as_ref()
+            .is_some_and(|ledger| ledger.has_approach_watch());
+        main || self.guardian.as_mut().is_some_and(|child| {
+            let run = child.run();
+            child
+                .ledger_for(run)
+                .and_then(|ledger| ledger.as_ref())
+                .is_some_and(|ledger| ledger.has_approach_watch())
+        })
+    }
+
+    /// Feed the armed approach watch, if any, this observation's snapshot.
+    /// Counts observed server ticks from the snapshot, not passes.
+    pub fn observe_native_approach(&mut self, snapshot: &api::snapshot::GameSnapshot, tick: u64) {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            ledger.observe_approach(snapshot, tick);
+        }
+        if let Some(child) = self.guardian.as_mut() {
+            if let Some(ledger) = child.ledger_for(child.run()).and_then(|l| l.as_mut()) {
+                ledger.observe_approach(snapshot, tick);
+            }
+        }
+    }
+
     /// Deliver one terminal ordered dispatch within its original run/session.
     pub fn complete_native_server_ordered(
         &mut self,

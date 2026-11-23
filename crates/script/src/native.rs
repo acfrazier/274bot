@@ -1792,6 +1792,31 @@ pub struct InteractionReceipt {
     pub chat_since: i32,
 }
 
+/// How an interaction's approach ended without the engine operating its
+/// target. Typed so an owner can re-route or fail instead of waiting on a
+/// deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApproachEnd {
+    /// The host refused to send the operation: no route reaches the target
+    /// and no approach script can serve it (`SendReason::Unreachable`). The
+    /// client would have sent the operation alone and the engine would have
+    /// stalled silently.
+    Unreachable,
+    /// The host sent the operation, the target was not in reach, and the
+    /// player did not move for `ticks` observed server ticks with no outcome
+    /// (`api::interact::APPROACH_STALL_TICKS`).
+    Stalled { ticks: u32 },
+}
+
+/// The typed end of one interaction request's approach
+/// ([`ActionContext::approach_end`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApproachReceipt {
+    pub request_id: u64,
+    pub evidence: EvidenceStamp,
+    pub end: ApproachEnd,
+}
+
 /// Where one single interaction request is in the host's dispatch lifecycle
 /// ([`ActionContext::interaction_dispatch`]). The host takes queued native
 /// work only in an observation pass that may dispatch: connected, not held,
