@@ -17,6 +17,12 @@ const START_TILE: (i32, i32, i32) = (3136, 3343, 0);
 // Leave the manor's aggressive NPCs through normal scene walking. This
 // destination is south of the nettles, not a teleport or a world-state edit.
 const ESCAPE_TILE: (i32, i32, i32) = (3140, 3320, 0);
+// The level-2 Giant spider spawns on this route (maps/m48_52.jm2:10653;
+// all.npc:1790-1819). Its cowardly hunt (all.hunt:37-45) skips players above
+// twice its level here (Npc.ts:1017-1019). Defence 8 reaches combat level 5
+// on a fresh account without changing its 10 HP (Player.ts:1433-1438).
+const MIN_NETTLE_COMBAT_LEVEL: i32 = 5;
+const NETTLE_COMBAT_SEED: &str = "setstat defence 8";
 const QUIET_TICKS: u32 = 4;
 const WINDOW: &str = "self-nettle-sting";
 const CHILD_MODE: &str = "PARITY_1I_WINDOW";
@@ -27,6 +33,16 @@ fn hitpoints(snapshot: &GameSnapshot) -> Option<i32> {
         .iter()
         .find(|stat| stat.index == 3)
         .map(|stat| stat.effective)
+}
+
+fn combat_level(snapshot: &GameSnapshot) -> Option<i32> {
+    snapshot
+        .local_player()
+        .map(|local| local.player.combat_level)
+}
+
+fn nettle_stats_ready(level: Option<i32>, hp: Option<i32>) -> bool {
+    level.is_some_and(|level| level >= MIN_NETTLE_COMBAT_LEVEL) && hp == Some(10)
 }
 
 fn combat_quiet(snapshot: &GameSnapshot) -> bool {
@@ -114,6 +130,7 @@ impl EscapeWitness {
 
 fn state(snapshot: &GameSnapshot) -> Value {
     json!({"tick":snapshot.tick(),"tile":snapshot.tile(),"hitpoints":hitpoints(snapshot),
+        "combat_level":combat_level(snapshot),
         "taking_damage":snapshot.taking_damage(),"hitmarks":snapshot.hitmarks(),
         "actor":snapshot.local_player().map(|local| &local.player.actor)})
 }
@@ -340,6 +357,24 @@ fn run_case(inside: bool, directory: &Path, mode: &str) -> Result<(), String> {
                 state.ingame() && state.scene_state() == 2 && state.tile() == Some((3220, 3220, 0))
             },
         )?;
+        writeln!(
+            log,
+            "{}",
+            json!({"phase":"fixture","account":name,"action":NETTLE_COMBAT_SEED,
+            "scope":"own fresh account defence"})
+        )
+        .map_err(|error| error.to_string())?;
+        if !interact::cheat(&mut client, NETTLE_COMBAT_SEED).is_sent() {
+            return Err("fixture own defence seed refused".into());
+        }
+        wait_for(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            "nettle fixture combat level before teleport",
+            Duration::from_secs(60),
+            |state| nettle_stats_ready(combat_level(state), hitpoints(state)),
+        )?;
         let command = format!(
             "tele {},{},{},{},{}",
             START_TILE.2,
@@ -356,12 +391,12 @@ fn run_case(inside: bool, directory: &Path, mode: &str) -> Result<(), String> {
             &mut client,
             &mut snapshot,
             &mut pump,
-            "nettle fixture target and HP",
+            "nettle fixture target and combat stats",
             Duration::from_secs(60),
             |state| {
                 state.tile() == Some(START_TILE)
                     && state.scene_state() == 2
-                    && hitpoints(state) == Some(10)
+                    && nettle_stats_ready(combat_level(state), hitpoints(state))
                     && state.locs().iter().any(|loc| {
                         loc.id == NETTLE_ID
                             && (loc.tile.x, loc.tile.z, loc.tile.level) == NETTLE_TILE
@@ -648,6 +683,17 @@ fn nettle_disturbance(
         Ok(())
     } else {
         Err(DisturbanceFixture::NettleNotObserved)
+    }
+}
+
+#[test]
+fn nettle_fixture_requires_spider_safe_combat_level_and_unchanged_hp() {
+    for level in [None, Some(3), Some(4)] {
+        assert!(!nettle_stats_ready(level, Some(10)));
+    }
+    assert!(nettle_stats_ready(Some(5), Some(10)));
+    for hp in [None, Some(8), Some(11)] {
+        assert!(!nettle_stats_ready(Some(5), hp));
     }
 }
 
