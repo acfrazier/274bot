@@ -3222,39 +3222,29 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
 }
 
 /// Deterministic old/new inspection handoff over local revision-289 content.
-/// Reads `T5W_INSPECT_CAPTURE_BASELINE`; optionally writes the exact
-/// new snapshot when `T5W_INSPECT_CAPTURE_OUT=<path>` is set.
+/// Uses the committed old capture by default. Set `T5W_INSPECT_CAPTURE_BASELINE`
+/// to override it, or `T5W_INSPECT_CAPTURE_OUT=<path>` to write the new snapshot.
 #[cfg(feature = "js")]
 #[test]
 fn real_content_inspection_capture_bytes() {
     use crate::script_runtime::SettledStart as _;
-    let Some(capture_baseline_path) =
-        std::env::var_os("T5W_INSPECT_CAPTURE_BASELINE").map(std::path::PathBuf::from)
-    else {
-        eprintln!(
-            "Skipping real_content_inspection_capture_bytes: T5W_INSPECT_CAPTURE_BASELINE is not set"
+    let old_bytes: std::borrow::Cow<'_, [u8]> = std::env::var_os("T5W_INSPECT_CAPTURE_BASELINE")
+        .map(std::path::PathBuf::from)
+        .map_or_else(
+            || {
+                std::borrow::Cow::Borrowed(
+                    &include_bytes!("../tests/fixtures/inspection-old-capture.fb")[..],
+                )
+            },
+            |path| {
+                std::borrow::Cow::Owned(std::fs::read(&path).unwrap_or_else(|error| {
+                    panic!(
+                        "cannot read T5W_INSPECT_CAPTURE_BASELINE at {}: {error}",
+                        path.display()
+                    )
+                }))
+            },
         );
-        return;
-    };
-    if !capture_baseline_path.is_file() {
-        if std::env::var_os("GITHUB_ACTIONS").as_deref() == Some(std::ffi::OsStr::new("true")) {
-            eprintln!(
-                "Skipping real_content_inspection_capture_bytes: T5W_INSPECT_CAPTURE_BASELINE is not an available file"
-            );
-            return;
-        }
-        panic!(
-            "T5W_INSPECT_CAPTURE_BASELINE must name an existing capture file: {}",
-            capture_baseline_path.display()
-        );
-    }
-    let Some(old_capture) = api::test_support::local_asset_path(
-        "T5W_INSPECT_CAPTURE_BASELINE",
-        "",
-        "immutable old inspection capture",
-    ) else {
-        return;
-    };
     let Some((world, cache, obj_names)) = real_content_inspection_world() else {
         return;
     };
@@ -3461,7 +3451,6 @@ fn real_content_inspection_capture_bytes() {
         encode_inspect_bytes(&expected_snapshot, 289_001, false),
         "old/new real-content snapshot bytes include the dynamic route and refusal"
     );
-    let old_bytes = std::fs::read(old_capture).expect("read immutable old inspection capture");
     assert_eq!(old_bytes.len(), 1_376, "immutable capture size");
     let digest: [u8; 32] = sha2::Sha256::digest(&old_bytes).into();
     assert_eq!(
