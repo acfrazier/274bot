@@ -39,9 +39,10 @@ pub(crate) fn next_map_route_generation() -> u64 {
 
 #[cfg(test)]
 pub(crate) mod test_log {
+    use api::hostlog::Source;
     use std::thread::{self, ThreadId};
 
-    type Record = (ThreadId, Option<String>, String);
+    type Record = (ThreadId, Option<String>, Source, String);
 
     #[derive(Default)]
     struct Capture {
@@ -53,10 +54,12 @@ pub(crate) mod test_log {
             if record.message.starts_with("WalkTo ")
                 || record.message.starts_with("debug ::")
                 || record.message.starts_with("prayer cleanup ")
+                || record.message.starts_with("startup phase ")
             {
                 self.records.lock().push((
                     thread::current().id(),
                     record.slot.map(str::to_owned),
+                    record.source,
                     record.message.to_owned(),
                 ));
             }
@@ -80,8 +83,21 @@ pub(crate) mod test_log {
             .lock()
             .iter()
             .skip(mark)
-            .filter(|(record_thread, _, _)| *record_thread == thread)
-            .map(|(_, slot, message)| (slot.clone().unwrap_or_default(), message.clone()))
+            .filter(|(record_thread, _, _, _)| *record_thread == thread)
+            .map(|(_, slot, _, message)| (slot.clone().unwrap_or_default(), message.clone()))
+            .collect()
+    }
+
+    /// Records since `mark` with the source that routed each one, for tests
+    /// that check routing and not only the text.
+    pub(crate) fn sourced_records_since(mark: usize) -> Vec<(Source, String)> {
+        let thread = thread::current().id();
+        LOG.records
+            .lock()
+            .iter()
+            .skip(mark)
+            .filter(|(record_thread, _, _, _)| *record_thread == thread)
+            .map(|(_, _, source, message)| (*source, message.clone()))
             .collect()
     }
 }

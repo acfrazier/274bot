@@ -111,14 +111,30 @@ fn main() -> io::Result<()> {
     }
     let mut paths_377 = Vec::with_capacity(LOCAL_377_ASSETS.len());
     let mut missing_377 = false;
+    let mut last_watched_dir = None;
     for relative in LOCAL_377_ASSETS {
-        let path = manifest_dir.join(relative);
-        println!("cargo:rerun-if-changed={}", path.display());
+        let mut path = manifest_dir.join(relative);
         let path_string = path.to_string_lossy();
         let description = format!("API revision-377 local asset `{relative}`");
         match local_asset_path_377::local_asset_path_377("", &path_string, &description) {
-            Some(path) => paths_377.push(path),
-            None => missing_377 = true,
+            Some(path) => {
+                println!("cargo:rerun-if-changed={}", path.display());
+                paths_377.push(path);
+            }
+            None => {
+                missing_377 = true;
+                // Watch for creation without leaving Cargo's fingerprint permanently stale.
+                loop {
+                    assert!(path.pop(), "the package manifest directory exists");
+                    if path.is_dir() {
+                        break;
+                    }
+                }
+                if last_watched_dir.as_ref() != Some(&path) {
+                    println!("cargo:rerun-if-changed={}", path.display());
+                    last_watched_dir = Some(path);
+                }
+            }
         }
     }
     if missing_377 {

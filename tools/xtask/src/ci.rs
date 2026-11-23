@@ -428,6 +428,10 @@ fn steps() -> Vec<Step> {
             "python3 -B tools/docs-check/test_docs_check.py",
         ),
         shell("docs-check", "python3 -B tools/docs-check/docs_check.py"),
+        shell(
+            "release-tool-tests",
+            "python3 -B -m unittest discover -s tools/release/tests",
+        ),
         Step {
             name: "arch-selftest".to_owned(),
             kind: StepKind::ArchitectureSelfTest,

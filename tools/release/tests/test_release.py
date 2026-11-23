@@ -272,7 +272,10 @@ class ParameterTests(unittest.TestCase):
             platform="all",
             revision="289",
             linux_host="274bot-builder",
+            linux_remote_root="/srv/evidence/A7-1123",
             windows_host=None,
+            windows_remote_root="D:/evidence/A7-1123",
+            work_dir=None,
         )
         plan = release.render_build_plan(
             arguments,
@@ -297,11 +300,72 @@ class ParameterTests(unittest.TestCase):
         self.assertIn("no_local_game_data", encoded)
         self.assertNotIn("tree digest", encoded)
 
-    def test_remote_roots_must_be_relative_and_cannot_escape(self):
-        self.assertEqual(release.validate_remote_root("release/cache", "root"), "release/cache")
-        for value in ("/tmp/release", "../release", "release path", "release\\path"):
+    def test_remote_roots_require_absolute_evidence_paths_without_traversal(self):
+        self.assertEqual(
+            release.validate_remote_root("/srv/evidence/request", "root"),
+            "/srv/evidence/request",
+        )
+        self.assertEqual(
+            release.validate_remote_root(
+                "D:/evidence/request", "root", windows=True
+            ),
+            "D:/evidence/request",
+        )
+        for value in (
+            "release/cache",
+            "../release",
+            "/tmp/../release",
+            "release path",
+            "release\\path",
+            "/",
+            "D:/../release",
+            "D:/",
+            "//server/share",
+        ):
+            with self.subTest(value=value), self.assertRaises(release.ReleaseError):
+                release.validate_remote_root(value, "root", windows=value.startswith("D:"))
+
+        for value in (None, ""):
             with self.subTest(value=value), self.assertRaises(release.ReleaseError):
                 release.validate_remote_root(value, "root")
+
+    def test_selected_remote_platforms_require_evidence_roots(self):
+        args = argparse.Namespace(
+            commit="a" * 40,
+            linux_remote_root=None,
+            windows_remote_root=None,
+        )
+        with self.assertRaisesRegex(release.ReleaseError, "--linux-remote-root"):
+            release.validate_remote_roots(args, ("linux",))
+        with self.assertRaisesRegex(release.ReleaseError, "--windows-remote-root"):
+            release.validate_remote_roots(args, ("windows",))
+
+    def test_windows_staging_uses_absolute_evidence_root(self):
+        commit = "a" * 40
+        args = argparse.Namespace(
+            commit=commit,
+            windows_remote_root="D:/evidence/request",
+        )
+        expected = f"D:/evidence/request/{commit}/windows"
+        expected_windows = expected.replace("/", "\\")
+        with mock.patch.object(release, "windows_transport") as transport:
+            staged = release.stage_payload(
+                args, "windows", Path("/unused"), Path("/payload.tar.gz")
+            )
+
+        self.assertEqual(staged, expected)
+        scripts = [
+            call.args[2]
+            for call in transport.call_args_list
+            if call.args[1] == "run"
+        ]
+        self.assertEqual(len(scripts), 2)
+        for script in scripts:
+            self.assertIn(
+                f"$root = {release.powershell_quote(expected_windows)}",
+                script,
+            )
+            self.assertNotIn("Join-Path $HOME", script)
 
     def test_packager_map_defaults_use_the_289_generator_source(self):
         with mock.patch.dict(os.environ, {
@@ -430,8 +494,9 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
         "BOT_NAV_BUILD", "BOT_NAV_SNAPSHOT_ROOT", "RS2B0T",
         "GAME_DATA_274_ENGINE", "GAME_DATA_274_CONTENT",
         "GAME_DATA_289_ENGINE", "GAME_DATA_289_CONTENT",
-        "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL",
+        "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL", "CARGO_HOME",
     }
+
 
     def test_macos_build_path_is_fixed_and_minimal(self):
         self.assertEqual(
@@ -478,9 +543,10 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
             release.runtime_requirements("macos"),
             [f"macOS {release.MACOS_DEPLOYMENT_TARGET} or later; Apple Silicon"],
         )
-        for name in ("CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
+        for name in ("RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
                      "EVIL_ARBITRARY_VARIABLE", "SOME_FUTURE_LIB_DIR"):
             self.assertNotIn(name, mac)
+        self.assertEqual(mac["CARGO_HOME"], "/cargo")
         self.assertEqual(mac["DEVELOPER_DIR"], "/Library/Developer/CommandLineTools")
         self.assertEqual(mac["CARGO_TARGET_DIR"], "/target")
         self.assertEqual(mac["GIT_DIRTY"], "0")
@@ -495,6 +561,33 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
                 f"/inputs/game-data/{revision}/content",
             )
         self.assertEqual(mac["RS2B0T"], "/inputs/rs2b0t")
+
+    def test_release_cargo_home_is_worker_local_for_every_platform(self):
+        for platform in ("macos", "linux", "windows"):
+            with self.subTest(platform=platform):
+                target = Path("/evidence/request") / platform / "cache" / "target"
+                with mock.patch.dict(os.environ, {
+                    "HOME": "/Users/builder",
+                    "CARGO_HOME": "/Users/builder/.cargo",
+                }, clear=True):
+                    archive = (
+                        "/evidence/request/rusty-v8.tar.gz"
+                        if platform == "windows"
+                        else None
+                    )
+                    environment = release.native_build_environment(
+                        self.EXPECT,
+                        Path("/inputs"),
+                        target,
+                        platform,
+                        rusty_v8_archive=archive,
+                    )
+                self.assertEqual(
+                    environment["CARGO_HOME"], str(target.parent / "cargo")
+                )
+                self.assertNotEqual(
+                    environment["CARGO_HOME"], "/Users/builder/.cargo"
+                )
 
     def test_developer_dir_must_be_an_existing_apple_dir(self):
         with mock.patch.object(Path, "is_dir", lambda path: True):
@@ -546,6 +639,7 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
                 f"/inputs/game-data/{revision}/content",
             )
         self.assertEqual(linux["RS2B0T"], "/inputs/rs2b0t")
+        self.assertEqual(linux["CARGO_HOME"], "/cargo")
         for obsolete in (
             "BOT_NAV_ENGINE_DIR",
             "BOT_NAV_CONTENT_DIR",
@@ -1576,11 +1670,11 @@ class ControllerTests(unittest.TestCase):
             notarization_id=None,
             worker_root=None,
             linux_host="builder",
-            linux_remote_root="release",
+            linux_remote_root="/srv/evidence/release",
             linux_identity=None,
             linux_known_hosts=None,
             windows_host="operator@windows",
-            windows_remote_root="release",
+            windows_remote_root="D:/evidence/release",
             windows_identity=None,
             windows_known_hosts=None,
         )
@@ -1688,6 +1782,68 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(
                 all(value == receipt for value in result["map_catalogues"].values())
             )
+
+
+class ReleaseDryRunTests(unittest.TestCase):
+    def test_build_dry_run_does_not_write_to_home_or_evidence_root(self):
+        repo = Path(release.__file__).resolve().parents[2]
+        commit = release.run_git(repo, "rev-parse", "HEAD")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / "home"
+            home.mkdir()
+            evidence = root / "evidence" / "A7-1123"
+            command = [
+                sys.executable,
+                "-B",
+                str(Path(release.__file__).resolve()),
+                "build",
+                "--repo-root",
+                str(repo),
+                "--commit",
+                commit,
+                "--platform",
+                "all",
+                "--dry-run",
+                "--work-dir",
+                str(evidence),
+                "--linux-remote-root",
+                "/srv/evidence/A7-1123",
+                "--windows-remote-root",
+                "D:/evidence/A7-1123",
+            ]
+            environment = os.environ.copy()
+            environment.update(
+                HOME=str(home),
+                USERPROFILE=str(home),
+                TMPDIR=str(root),
+                CARGO_HOME=str(home / ".cargo"),
+            )
+            result = subprocess.run(
+                command,
+                cwd=repo,
+                env=environment,
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(result.stdout)
+            self.assertEqual(plan["staging"]["work_dir"], str(evidence.resolve()))
+            self.assertEqual(
+                plan["staging"]["platform_roots"],
+                {
+                    "macos": str((evidence / commit / "macos").resolve()),
+                    "linux": f"/srv/evidence/A7-1123/{commit}/linux",
+                    "windows": f"D:/evidence/A7-1123/{commit}/windows",
+                },
+            )
+            self.assertEqual(
+                plan["staging"]["cargo_home"], "{worker_root}/cache/cargo"
+            )
+            self.assertEqual(list(home.iterdir()), [])
+            self.assertFalse(evidence.exists())
 
 if __name__ == "__main__":
     unittest.main()

@@ -148,7 +148,7 @@ fn held_tick_tracking_has_no_allocations_or_additional_nav_lock() {
 fn no_progress_info_logs_once_for_each_observed_episode() {
     const CHILD: &str = "WALK_NO_PROGRESS_LOG_TEST_CHILD";
     if std::env::var(CHILD).as_deref() != Ok("1") {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = std::process::Command::new(crate::test_process::executable())
             .args([
                 "--exact",
                 "script_runtime::script_walk::no_progress_tests::no_progress_info_logs_once_for_each_observed_episode",

@@ -3253,7 +3253,7 @@ mod watchdog_restart_tests {
         const CHILD: &str = "GRINCH_WATCHDOG_ACTION_LOG_TEST";
         if std::env::var(CHILD).as_deref() != Ok("1") {
             let output = crate::test_process::output(
-                std::process::Command::new(std::env::current_exe().unwrap())
+                std::process::Command::new(crate::test_process::executable())
                     .args([
                         "--exact",
                         "script_runtime::script_observe::watchdog_restart_tests::watchdog_action_trace_is_debug_only_and_none_is_silent",
