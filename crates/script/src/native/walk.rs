@@ -98,7 +98,7 @@ pub fn resolve_destination(name: &str) -> Option<&'static WalkDestination> {
 /// (`N6-1123/plan-wait/*/cell.log`, `native-walk-request` and
 /// `native-walk-allowance` lines of the earlier build; maximum 1 tick). The margin is 60 ticks,
 /// one hop clock of the route follower's default budget
-/// (`nav-executor/src/traveller.rs:548`), for planning that is cooperative
+/// (`nav-executor/src/traveller.rs:550`), for planning that is cooperative
 /// host work with no tick bound (`nav_planner::router::NODE_BUDGET` counts
 /// places). The measured set is small, so the margin is a policy.
 pub const WALK_PLAN_WAIT_TICKS: u32 = 1 + 60;
