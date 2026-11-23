@@ -1860,9 +1860,8 @@ impl Db {
         let _ = fs::remove_file(&staged);
         vault::create_private_file(&staged, &body)
             .map_err(|error| io_failed("staging the JSON", error))?;
-        fs::File::open(&staged)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| io_failed("syncing the staged JSON", error))?;
+        // `create_private_file` already syncs its staged bytes. Reopening the file
+        // read-only and calling `sync_all` fails on Windows.
         let conn = self.conn.as_mut().ok_or_else(closed)?;
         let tx = begin_write(conn, &self.root, guard, "recording the prepared export")?;
         tx.execute(
