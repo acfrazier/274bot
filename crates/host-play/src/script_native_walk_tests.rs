@@ -1769,7 +1769,8 @@ fn native_food_guard_uses_bound_377_tables_for_condition_and_food_rows() {
     );
 
     let drain = host::DrainResult {
-        player_info: true,
+        packet_delta: 1,
+        received_at: Instant::now(),
         npc_rows_coherent: true,
         session_changed: false,
         gens: Default::default(),
@@ -1948,7 +1949,8 @@ fn a_permitted_native_danger_walk_arms_the_food_guard_whichever_permission_it_ha
 
 fn seed_guard_poison_onset(rig: &mut Rig, policy: script::survival::CurePoison) {
     let drain = host::DrainResult {
-        player_info: true,
+        packet_delta: 1,
+        received_at: Instant::now(),
         npc_rows_coherent: true,
         session_changed: false,
         gens: Default::default(),

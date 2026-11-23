@@ -1232,9 +1232,9 @@ fn spawn_slot_thread(
             let mut world_dirty = world_round.is_some();
             let mut refresh_key = false;
             let mut key_refreshed = false;
-            // Slot-thread tick identity: one increment per observed drain
-            // containing PLAYER_INFO. It survives relogs; dirty snapshots and
-            // host receipts reuse it, never a wall-clock/frame-derived tick.
+            // Lifetime script clock: every applied PLAYER_INFO packet, including
+            // batches. It survives relogs. TickHealth's session totals reset.
+            // Dirty snapshots, polls, and watchdog stamps never advance it.
             let mut script_tick: u64 = 0;
             let mut run_policy = ScriptRunPolicy::default();
             let mut last_relog_park = None;
@@ -1979,10 +1979,8 @@ fn spawn_slot_thread(
                                 mainland_sent = true;
                                 host_log!(Category::Lifecycle, Level::Info, "mainland hop queued");
                             }
-                            let tick_edge = should_emit_tick(drain.player_info);
-                            if tick_edge {
-                                *script_tick = script_tick.wrapping_add(1);
-                            }
+                            let tick_edge = should_emit_tick(drain.packet_delta);
+                            *script_tick = script_tick.wrapping_add(drain.packet_delta);
                             #[cfg(feature = "test-support")]
                             if let Some(test_hook) = TickEngineTestHook::current() {
                                 let tick_engine_suppressed_openchat =

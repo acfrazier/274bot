@@ -1090,6 +1090,43 @@ mod tests {
     }
 
     #[test]
+    fn native_menu_budget_expires_at_the_same_server_tick_after_a_batch() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let client = make_menu_client("Make 1");
+        let snapshot = menu_snapshot(&client);
+        for deltas in [&[1_u64, 1][..], &[2][..]] {
+            let mut ledger = None;
+            let mut selected = request(false);
+            selected.menu_id = 999;
+            selected.after_trigger = true;
+            let handle = start_machine(&snapshot, &mut ledger, selected);
+            let mut health = api::tick_health::TickHealth::default();
+            let at = std::time::Instant::now();
+            health.observe(1, 1, 0, at, None);
+            let mut generation = 1;
+            let mut script_tick = 1;
+            let mut expired_at = None;
+            for &delta in deltas {
+                generation += delta;
+                let receipt = health.observe(1, generation, 0, at, None);
+                script_tick += receipt.packet_delta;
+                let result = with_tick(&snapshot, &mut ledger, script_tick, |tick| {
+                    tick.actions.poll(&handle, &mut tick.cx)
+                });
+                if let Poll::Ready(Err(ActionError::Failed(reason))) = result {
+                    assert_eq!(reason.as_ref(), "production menu did not expose the product");
+                    expired_at = Some(script_tick);
+                } else {
+                    assert!(result.is_pending());
+                }
+            }
+            assert_eq!(expired_at, Some(3), "packet grouping must not extend the budget");
+        }
+    }
+
+    #[test]
     fn main_make_accepts_smithing_set_operations() {
         if !api::test_support::game_data_available() {
             return;

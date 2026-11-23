@@ -479,11 +479,10 @@ impl HoldRig {
         );
         let index = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let seen: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
-        let tick_edge = Arc::new(AtomicBool::new(false));
+        let mut observer_pump = host::Pump::from_gens(self.client.gens);
 
         let observe_seen = Arc::clone(&seen);
         let observe_index = Arc::clone(&index);
-        let observe_edge = Arc::clone(&tick_edge);
         let observe_tick = Arc::clone(&self.script_tick);
         let observe_scripts = Arc::clone(&self.scripts);
         let observe_cheats = Arc::clone(&self.cheats);
@@ -497,7 +496,6 @@ impl HoldRig {
 
         let probe_plan = Arc::clone(&plan);
         let probe_index = Arc::clone(&index);
-        let probe_edge = Arc::clone(&tick_edge);
         let probe_armed = Arc::clone(&self.armed);
         let probe_page = Arc::clone(&self.page);
         let probe_scripts = Arc::clone(&self.scripts);
@@ -515,12 +513,9 @@ impl HoldRig {
             self.run_policy.take().unwrap_or_default(),
             move |c, _, run_sends, _, run_policy| {
                 observe_seen.lock().unwrap().push(run_sends);
-                let edge = observe_edge.load(Ordering::Relaxed);
-                let tick = if edge {
-                    observe_tick.fetch_add(1, Ordering::Relaxed) + 1
-                } else {
-                    observe_tick.load(Ordering::Relaxed)
-                };
+                let delta = observer_pump.drain_client(c).packet_delta;
+                let edge = delta != 0;
+                let tick = observe_tick.fetch_add(delta, Ordering::Relaxed).wrapping_add(delta);
                 let inv: [(i32, i32); 0] = [];
                 script_observe_cached(
                     c,
@@ -579,7 +574,6 @@ impl HoldRig {
                     }
                 }
                 probe_page.store(step.modal != -1, Ordering::Relaxed);
-                probe_edge.store(step.drain > 0, Ordering::Relaxed);
                 probe_armed.store(step.click, Ordering::Relaxed);
                 false
             },
@@ -681,6 +675,11 @@ fn auto_run_hold_survives_full_five_packet_drains() {
         frame(5, -1),
     ]);
     assert_eq!(presses, [0, 0, 0, 0, 0, 1]);
+    assert_eq!(
+        rig.script_tick.load(Ordering::Relaxed),
+        21,
+        "script time counts every packet, not the five nonempty drains"
+    );
 }
 
 #[test]

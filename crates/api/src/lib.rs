@@ -54,4 +54,5 @@ pub mod snapshot;
 pub mod stock;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+pub mod tick_health;
 pub mod work;

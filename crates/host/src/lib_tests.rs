@@ -248,7 +248,7 @@ fn logout_drain_resets_snapshot_instead_of_republishing_retained_client_state() 
     client.psize = 4;
     client.handle_packet(client::io::ServerProt::PLAYER_INFO, &mut player);
     let fresh = slot.after_drain(&mut client);
-    assert!(fresh.player_info);
+    assert_eq!(fresh.packet_delta, 1);
     assert!(slot.snapshot.local_player().is_some());
     assert!(slot.snapshot.npcs().is_empty());
     assert_eq!(slot.snapshot.tick(), 1);
@@ -435,7 +435,7 @@ fn rebuild_invalidation_refreshes_player_view_without_inventing_tick() {
     let result = slot.after_drain(&mut client);
 
     assert!(result.dirty.player && result.dirty.scene);
-    assert!(!result.player_info);
+    assert_eq!(result.packet_delta, 0);
     assert_eq!(slot.snapshot.base(), Some((352, 352)));
     assert_eq!(slot.snapshot.tick(), 0);
 }
@@ -595,7 +595,7 @@ fn qualify_decoder_to_host_snapshot(revision: client::client::ClientRevision) {
     };
     dispatch_packet(&mut client, rebuild_opcode, rebuild);
     let rebuild_result = slot.after_drain(&mut client);
-    assert!(!rebuild_result.player_info);
+    assert_eq!(rebuild_result.packet_delta, 0);
     assert!(rebuild_result.dirty.scene && rebuild_result.dirty.player);
     assert_eq!(
         slot.snapshot.base(),
@@ -643,8 +643,8 @@ fn qualify_decoder_to_host_snapshot(revision: client::client::ClientRevision) {
     };
     dispatch_packet(&mut client, player_opcode, player_frame);
     let tick_result = slot.after_drain(&mut client);
-    assert!(tick_result.player_info);
-    assert!(should_emit_tick(tick_result.player_info));
+    assert_eq!(tick_result.packet_delta, 1);
+    assert!(should_emit_tick(tick_result.packet_delta));
     assert_eq!(slot.snapshot.tick(), 1);
     assert_eq!(slot.snapshot.tile(), Some(expected_tile));
     assert_eq!(
@@ -698,7 +698,7 @@ fn session_change_same_drain_publishes_fresh_packet_families() {
     );
 
     let result = pump.drain_client(&client);
-    assert!(result.session_changed && result.player_info);
+    assert!(result.session_changed && result.packet_delta == 1);
     publish_snapshot(&mut snapshot, &client, result);
 
     assert_eq!(snapshot.tick(), 1);
@@ -761,7 +761,7 @@ fn reconnect_drain_discards_old_packets_and_invalidation_but_keeps_fresh_familie
         // or actors retained by response 15.
         dispatch_packet(&mut client, rebuild, vec![0, 50, 0, 50]);
         let drain = pump.drain_client(&client);
-        assert!(!drain.player_info);
+        assert_eq!(drain.packet_delta, 0);
         publish_snapshot(&mut snapshot, &client, drain);
         assert!(snapshot.local_player().is_none());
         assert!(snapshot.npcs().is_empty());
@@ -4596,4 +4596,34 @@ fn slot_loop_does_not_count_a_send_blocked_on_the_peer() {
         Vec::<u64>::new(),
         "a send blocked on the peer is the network's wait, not the host's"
     );
+}
+
+#[test]
+fn snapshot_and_drain_receipt_count_all_applied_player_info_packets() {
+    let mut client = Client::new(cfg());
+    client.ingame = true;
+    let mut pump = Pump::default();
+    let mut snapshot = GameSnapshot::default();
+    let at = Instant::now();
+    for expected in [1_u64, 5] {
+        for _ in 0..expected {
+            dispatch_packet(
+                &mut client,
+                client::io::ServerProt::PLAYER_INFO,
+                vec![0xe0, 0x50, 0xc0, 0],
+            );
+        }
+        let drain = pump.drain_at(client.gens, client.session_start_gens(), at);
+        assert_eq!(drain.packet_delta, expected);
+        publish_snapshot(&mut snapshot, &client, drain);
+        let receipt = snapshot.tick_health();
+        assert_eq!(receipt.packet_delta, expected);
+        assert_eq!(receipt.coalesced_observations, expected - 1);
+        assert_eq!(u64::from(snapshot.tick()), receipt.server_ticks);
+    }
+    assert_eq!(snapshot.tick(), 6);
+    let quiet = pump.drain_at(client.gens, client.session_start_gens(), at);
+    publish_snapshot(&mut snapshot, &client, quiet);
+    assert_eq!(snapshot.tick_health().packet_delta, 0);
+    assert_eq!(snapshot.tick(), 6);
 }

@@ -560,6 +560,18 @@ fn schedstat_line_parses_cpu_run_queue_wait_and_timeslices() {
     assert_eq!(parse_schedstat(b""), None);
 }
 
+#[test]
+fn tick_health_service_delay_is_the_last_completed_measurement() {
+    let (mon, t0) = monitor();
+    let mut bot = Bot::active(&mon, t0);
+    bot.service(t0 + ms(20), 750);
+    assert_eq!(bot.rec.last_service_delay, Some(ms(750)));
+    bot.service(t0 + ms(40), 4);
+    assert_eq!(bot.rec.last_service_delay, Some(ms(4)));
+    bot.rec.begin(t0 + ms(50), 0);
+    assert_eq!(bot.rec.last_service_delay, None);
+}
+
 /// Per-bot memory and the frame path's cost, for the report:
 /// `cargo test -p host per_bot_memory -- --nocapture`.
 #[test]

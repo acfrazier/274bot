@@ -117,6 +117,8 @@ pub struct GameSnapshot {
     /// The host game-tick count this snapshot reflects: one bump per
     /// `PLAYER_INFO` (the same tick edge `should_emit_tick` reads).
     tick: u32,
+    #[serde(skip)]
+    tick_health: crate::tick_health::TickHealth,
     /// Inventory `(obj id, count)` from the TYPE_INV iface, rebuilt when
     /// the inv gen moves (the server's `UPDATE_INV_FULL` fills it each
     /// frame). Empty before the inv iface loads.
@@ -373,6 +375,7 @@ impl Default for GameSnapshot {
     fn default() -> Self {
         GameSnapshot {
             gens: ClientGens::default(),
+            tick_health: crate::tick_health::TickHealth::default(),
             native_menu_scope_published: false,
             npc: Vec::new(),
             player: None,
@@ -780,8 +783,17 @@ impl GameSnapshot {
             iface: gens.iface,
             inv: gens.inv,
         };
+        let mut tick_health = std::mem::take(&mut self.tick_health);
+        tick_health.observe(
+            gens.session,
+            gens.player_info,
+            gens.player_info,
+            std::time::Instant::now(),
+            None,
+        );
         *self = Self {
             gens,
+            tick_health,
             loc_gen: gens.scene,
             loc_varp_gen: gens.varp,
             npc_varp_gen: gens.varp,
@@ -938,8 +950,8 @@ impl GameSnapshot {
     /// Rebuild every family whose gen moved and count each newly observed
     /// `PLAYER_INFO` packet. Returns true iff any family gen moved.
     pub fn rebuild(&mut self, client: &Client) -> bool {
-        let player_info = client.gens.player_info != self.gens.player_info;
-        self.rebuild_from_drain(client, player_info)
+        let packet_delta = client.gens.player_info.wrapping_sub(self.gens.player_info);
+        self.rebuild_from_drain(client, packet_delta)
     }
 
     /// Refresh the complete host view, retaining each family's generation
@@ -950,7 +962,26 @@ impl GameSnapshot {
     /// `npc_info` today; the drain-end copy is a redundant backstop.
     /// `session` and `invalidations` remain the [`Self::reset_session`]
     /// watermark; the host handles session changes before this rebuild.
-    pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
+    pub fn rebuild_from_drain(&mut self, client: &Client, packet_delta: u64) -> bool {
+        self.rebuild_from_drain_at(client, packet_delta, std::time::Instant::now(), None)
+    }
+
+    /// Rebuild at the drain's receive-observation instant. Service delay is
+    /// the previous completed host service, not packet latency.
+    pub fn rebuild_from_drain_at(
+        &mut self,
+        client: &Client,
+        packet_delta: u64,
+        received_at: std::time::Instant,
+        host_service_delay: Option<std::time::Duration>,
+    ) -> bool {
+        self.tick_health.observe(
+            client.gens.session,
+            client.gens.player_info,
+            client.session_start_gens().player_info,
+            received_at,
+            host_service_delay,
+        );
         self.refresh_event_watermarks(client);
         client_adapter_cache::publish(&client.cache);
         // The first PLAYER_INFO follows the login script's quest-colour refresh.
@@ -964,11 +995,7 @@ impl GameSnapshot {
             client.ingame && client.last_login_reconnect == Some(false),
             login_player_info,
         );
-        let player_info_ticks = if player_info {
-            client.gens.player_info.wrapping_sub(self.gens.player_info)
-        } else {
-            0
-        };
+        let player_info_ticks = packet_delta;
         self.refresh_native_facts(client);
         self.loc_bits_prelude = Some(loc_dirty_bits(client));
         let mut dirty = false;
@@ -1143,6 +1170,12 @@ impl GameSnapshot {
     /// generation used by ordered dispatch and the host's native evidence tick.
     pub fn tick(&self) -> u32 {
         self.tick
+    }
+
+    /// Packet counts, sampled-state coverage, and independent delay evidence
+    /// from the latest client drain. No wall interval implies missing ticks.
+    pub fn tick_health(&self) -> crate::tick_health::TickHealthReceipt {
+        self.tick_health.receipt()
     }
 
     /// Latest observed tick at which scene loading began or the scene identity changed.

@@ -1650,7 +1650,9 @@ where
             let now = Instant::now();
             journal_wall_now = Some(now);
             if tick_edge {
-                slot.note_game_packet_tick(now);
+                if let Some(snapshot) = snapshot.read() {
+                    slot.note_tick_health(&snapshot.tick_health(), now);
+                }
             }
             if frozen {
                 if slot.watchdog().recovering_anchor().is_some() {

@@ -4105,6 +4105,15 @@ impl SlotScript {
         self.watchdog.stamp_game_packet_tick(now);
     }
 
+    /// Apply the shared drain receipt to the packet-freshness watchdog.
+    pub fn note_tick_health(
+        &mut self,
+        receipt: &api::tick_health::TickHealthReceipt,
+        now: Instant,
+    ) {
+        self.watchdog.observe_tick_health(receipt, now);
+    }
+
     fn duel_fight_pen_anchor_unreachable(player: WatchdogTile, anchor: WatchdogTile) -> bool {
         let pen_index = |tile: WatchdogTile| crate::duel_arena::pen_at(tile.x, tile.z, tile.level);
         let Some(player_pen) = pen_index(player) else {
