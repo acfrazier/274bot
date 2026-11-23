@@ -3060,3 +3060,52 @@ globs = [
 cells = [
   "host.upstream-e2e-adopted|LIVE=1 BOT_CPU=1 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 UEP_CASES=${UEP_CASES:?} UEP_UPSTREAM=${UEP_UPSTREAM:?} UEP_OUTPUT=${UEP_OUTPUT:?} UEP_HOST_COMMIT=${UEP_HOST_COMMIT:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture|--locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture",
 ]
+
+[[cover]]
+globs = ["crates/api/src/json.rs"]
+cells = [
+  "host-play.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib local_state::",
+]
+
+[[cover]]
+globs = ["crates/api/src/tick_health.rs"]
+cells = [
+  "api.tick-health-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib tick_health::tests::",
+  "host.tick-health-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib tick_health_live_tests::tick_health_engine_a_receipt -- --ignored --exact --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/host/src/slot.rs"]
+cells = [
+  "host.tick-health-drain-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host --lib snapshot_and_drain_receipt_count_all_applied_player_info_packets",
+]
+
+[[cover]]
+globs = ["crates/script/src/watchdog.rs"]
+cells = [
+  "script.watchdog-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib watchdog::tests::",
+]
+
+[[cover]]
+globs = ["crates/panel/src/ime.rs"]
+cells = [
+  "panel.ime-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib ime_ -- --nocapture",
+]
+
+[[cover]]
+globs = ["crates/script-js/src/shim/market_maker.js"]
+cells = [
+  "compat.market-maker-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_runtime compat_v1_runtime_market_maker_missing_member_has_not_implemented_kind -- --exact --nocapture",
+]
+
+[[cover]]
+globs = ["crates/host-play/src/engine_speed.rs"]
+cells = [
+  "host.engine-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib engine_speed::tests::",
+  "host.world-nav-full-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=nav_full WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-nav-door-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=nav_door WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-bank-return-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=bank_return WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-guardian-lamp-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_lamp WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-guardian-lamp-pair-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_lamp_pair WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-guardian-maze-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_maze WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+]
