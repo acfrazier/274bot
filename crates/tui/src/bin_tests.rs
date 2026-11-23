@@ -4232,7 +4232,8 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
     aborted.route = Some(Arc::new(aborted_route));
     aborted.route_generation = 102;
     let mut finished = 0;
-    for _ in 0..70 {
+    for tick in 1..=70 {
+        snap.seed_tick(tick);
         finished += usize::from(host_play::step_walk_arm_follow(
             &mut c,
             &snap,
