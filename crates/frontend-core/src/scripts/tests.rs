@@ -60,6 +60,13 @@ fn surface_start_errors_keep_runtime_and_refusal_classification() {
             StartLoadError::Surface(SurfaceError::ForeignCard(SurfaceKind::Js)),
             ScriptStartErrorKind::Refused,
         ),
+        (
+            StartLoadError::SettingValue(script::SavedSettingValueError {
+                setting: "names".into(),
+                kind: script::SavedSettingValueErrorKind::WrongType,
+            }),
+            ScriptStartErrorKind::Refused,
+        ),
     ] {
         let diagnostic = error.to_string();
         let converted = super::ScriptStartError::from(error);
@@ -476,8 +483,8 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
                 Some("alice"),
                 &selection,
                 "count",
-                ("1", Some(current.clone())),
                 SettingView::new(def),
+                ("1", Some(current.clone())),
                 &[],
             ),
             Ok(json!(text.parse::<u64>().unwrap()))
@@ -500,8 +507,8 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             Some("alice"),
             &selection,
             "count",
-            ("1", Some(current.clone())),
             SettingView::new(def),
+            ("1", Some(current.clone())),
             &[],
         )
         .is_err());
@@ -528,8 +535,8 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
             Some("alice"),
             &selection,
             "count",
-            ("1", Some(current.clone())),
             SettingView::new(def),
+            ("1", Some(current.clone())),
             &[],
         ),
         Ok(json!(123))
@@ -1072,8 +1079,8 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
                 Some("alice"),
                 &selection,
                 "miningResources",
-                (&initial_text, Some(current.clone())),
                 SettingView::new(def),
+                (&initial_text, Some(current.clone())),
                 &[],
             )
             .unwrap(),
@@ -1152,8 +1159,8 @@ fn unknown_resource_save_survives_and_radius_remains_editable() {
             Some("alice"),
             &selection,
             "radius",
-            (&initial_radius_text, Some(current_radius.clone())),
             SettingView::new(radius_def),
+            (&initial_radius_text, Some(current_radius.clone())),
             &[],
         )
         .unwrap();
@@ -3201,10 +3208,121 @@ fn gatherer_settings_saved_by_0_2_8_load_and_resave_as_the_current_schema() {
 
 #[cfg(feature = "js")]
 #[test]
+fn manifest_profile_edits_validate_values_and_preserve_saved_overrides() {
+    let mut f = fixture("manifest-profile-settings", &["alice"]);
+    let source = script_js::NativeFixture::new("Profile settings")
+        .settings("{ count: { type: 'number', default: 1, min: 0, max: 10 } }")
+        .source("export function tick(api) {}");
+    let card = f.card("profile-settings.ts", &source);
+    let key = card.identity_key();
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+
+    let defaults = f.scripts.merged_profile_bag(
+        &mut f.core,
+        "alice",
+        CardSource::from_script(card.source),
+        &card.name,
+        &card.path,
+        SchemaRef::new(&card.settings_schema),
+    );
+    assert_eq!(defaults.get("count"), Some(&json!(1)));
+
+    let before = f.core.last_operation().map(|report| report.id());
+    let error = f
+        .scripts
+        .set_profile_setting(
+            &mut f.core,
+            "alice",
+            CardSource::from_script(card.source),
+            &card.name,
+            &card.path,
+            "count",
+            json!(11),
+        )
+        .expect_err("an out-of-range manifest setting must not be saved");
+    assert!(
+        error.contains("invalid saved value for setting `count`"),
+        "{error}"
+    );
+    assert!(error.contains("outside its declared range"), "{error}");
+    assert_eq!(f.core.last_operation().map(|report| report.id()), before);
+    assert_eq!(f.saved_bag("alice", &key), None);
+
+    f.set("alice", &card, "count", json!(7));
+    f.core.flush_writes();
+    let saved = f
+        .scripts
+        .merged_profile_bag(
+            &mut f.core,
+            "alice",
+            CardSource::from_script(card.source),
+            &card.name,
+            &card.path,
+            SchemaRef::new(&card.settings_schema),
+        )
+        .get("count")
+        .cloned();
+    assert_eq!(saved, Some(json!(7)));
+    assert_eq!(
+        f.scripts
+            .durable_setting_value(&f.core, Some("alice"), &selection, "count"),
+        Some(json!(7))
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn invalid_manifest_saved_value_fails_before_start_with_a_keyed_diagnostic() {
+    let mut f = fixture("manifest-start-invalid-setting", &["alice"]);
+    let source = script_js::NativeFixture::new("Invalid saved setting")
+        .settings("{ count: { type: 'number', default: 1, min: 0, max: 10 } }")
+        .source("export function tick(api) {}");
+    let card = f.card("invalid-setting.ts", &source);
+    f.assign("alice", &card);
+    let key = card.identity_key();
+    let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+    row.settings
+        .script_settings
+        .insert(key.clone(), bag(&[("count", json!(11))]));
+    f.core
+        .save_profile(row, crate::ArmMirror::none(), "invalid-setting")
+        .unwrap();
+    f.core.flush_writes();
+
+    f.scripts
+        .start_profile(&mut f.core, "alice", None)
+        .expect("Start queues validation for the assigned manifest card");
+    f.settle();
+
+    assert_eq!(f.state("alice"), ScriptRunState::Idle);
+    assert_eq!(
+        Scripts::assignment(&f.core, "alice"),
+        Some(card.assignment())
+    );
+    let failures = f.scripts.take_start_failures();
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert_eq!(failures[0].0, "alice");
+    assert!(
+        failures[0]
+            .1
+            .contains("invalid saved value for setting `count`"),
+        "{failures:?}"
+    );
+    assert!(
+        failures[0].1.contains("outside its declared range"),
+        "{failures:?}"
+    );
+    assert_eq!(
+        f.saved_bag("alice", &key),
+        Some(bag(&[("count", json!(11))])),
+        "a failed Start does not rewrite the saved value"
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
 fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
-    if !api::test_support::game_data_available() {
-        return;
-    }
     if !api::test_support::game_data_available() {
         return;
     }

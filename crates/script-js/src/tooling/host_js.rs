@@ -308,6 +308,8 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  str(name: string, fallback?: string): string;\n");
     out.push_str("  num(name: string, fallback?: number): number;\n");
     out.push_str("  bool(name: string, fallback?: boolean): boolean;\n");
+    out.push_str("  list(name: string, fallback?: readonly string[]): readonly string[];\n");
+    out.push_str("  tile(name: string, fallback?: WorldTile | null): WorldTile | null;\n");
     out.push_str("}\n\n");
     out.push_str("/** Recording paint frame. end() publishes the host overlay. */\n");
     out.push_str("export interface NativePaintFrame {\n");

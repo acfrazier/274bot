@@ -695,6 +695,7 @@ impl JsLibrary {
                 | script::StartLoadError::Refused(diagnostic)
                 | script::StartLoadError::NoLoadouts(diagnostic),
             ) => Err(diagnostic),
+            Err(script::StartLoadError::SettingValue(error)) => Err(error.to_string()),
             Err(script::StartLoadError::Surface(error)) => Err(error.to_string()),
         }
     }

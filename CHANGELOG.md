@@ -20,6 +20,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   dialogue failures while retaining native menu refusal checks.
 - The JavaScript compatibility reader preserves ground-item stack counts.
 
+### Scripts
+
+- Native v2 Start validates saved settings against the manifest and reports the
+  key and reason for an invalid value. Native v2 scripts can read list and tile
+  settings through `api.settings.list` and `api.settings.tile`. These methods
+  return copies.
+
 ### Banking
 
 - Native `Banking.open` reports known-bank access, fallback destinations, and

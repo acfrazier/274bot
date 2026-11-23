@@ -1950,6 +1950,22 @@ impl Scripts {
                         return;
                     }
                 };
+                let identity = card.identity_key();
+                if card.manifest.is_some() {
+                    let overrides =
+                        self.peek_profile_overrides(core, &profile, &identity, &card.name);
+                    if let Err(error) =
+                        self.validate_manifest_profile_settings(core, &card, &overrides)
+                    {
+                        self.report_start_failure(
+                            &profile,
+                            preparation.demand.kind,
+                            preparation.demand.tallied,
+                            error.to_string(),
+                        );
+                        return;
+                    }
+                }
                 let bag = self.merged_profile_bag(
                     core,
                     &profile,
@@ -1959,10 +1975,7 @@ impl Scripts {
                     super::SchemaRef::new(&card.settings_schema),
                 );
                 let bag = (!bag.is_empty()).then_some(bag);
-                let fingerprint = self
-                    .js
-                    .stored_fingerprint(&card.identity_key())
-                    .map(str::to_owned);
+                let fingerprint = self.js.stored_fingerprint(&identity).map(str::to_owned);
                 preparation.stage = StartStage::Ready {
                     card: Box::new(card),
                     siblings,
