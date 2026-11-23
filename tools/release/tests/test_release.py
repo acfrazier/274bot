@@ -464,10 +464,8 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
         "RUSTFLAGS": "-L /opt/local/lib",
         "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER": "/opt/local/bin/ld",
         "RUSTC_WRAPPER": "/opt/homebrew/bin/sccache",
-        # Toolchain/config redirection and arbitrary future variables a
-        # denylist would miss; an allowlist drops them by construction.
-        "CARGO_HOME": "/opt/local/cargo",
-        "RUSTUP_HOME": "/opt/local/rustup",
+        # Toolchain selection and arbitrary future variables a denylist
+        # would miss; caller toolchain homes are tested separately.
         "RUSTUP_TOOLCHAIN": "nightly-2099-01-01",
         "CARGO": "/opt/local/bin/cargo-wrapper",
         "CCC_OVERRIDE_OPTIONS": "x-I/opt/local/include",
@@ -498,16 +496,40 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
     }
 
 
-    def test_macos_build_path_is_fixed_and_minimal(self):
+    def test_macos_build_path_uses_caller_home_or_fallback(self):
         self.assertEqual(
             release.macos_build_path("/Users/builder"),
             "/Users/builder/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         )
+        self.assertEqual(
+            release.macos_build_path("/isolated", "/caller/cargo"),
+            "/caller/cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        )
+
+    def test_macos_allowlist_preserves_caller_toolchain_homes(self):
+        source = {
+            "HOME": "/isolated",
+            "CARGO_HOME": "/caller/cargo",
+            "RUSTUP_HOME": "/caller/rustup",
+        }
+        mac = release.macos_allowlisted_env(source)
+        self.assertEqual(mac["CARGO_HOME"], "/caller/cargo")
+        self.assertEqual(mac["RUSTUP_HOME"], "/caller/rustup")
+        self.assertEqual(
+            mac["PATH"],
+            release.macos_build_path("/isolated", "/caller/cargo"),
+        )
+        fallback = release.macos_allowlisted_env({"HOME": "/isolated"})
+        self.assertEqual(fallback["PATH"], release.macos_build_path("/isolated"))
+        self.assertNotIn("CARGO_HOME", fallback)
+        self.assertNotIn("RUSTUP_HOME", fallback)
 
     def test_macos_environment_is_an_allowlist_from_empty(self):
         parent = {
             **self.HOSTILE,
             "HOME": "/Users/builder",
+            "CARGO_HOME": "/Users/builder/.cargo",
+            "RUSTUP_HOME": "/Users/builder/.rustup",
             "USER": "builder",
             "LOGNAME": "builder",
             "TMPDIR": "/var/folders/builder/T/",
@@ -530,8 +552,12 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
             "PATH", "HOME", "MACOSX_DEPLOYMENT_TARGET",
             "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE",
             "HTTP_PROXY", "https_proxy", "DEVELOPER_DIR",
+            "RUSTUP_HOME",
         })
-        self.assertEqual(mac["PATH"], release.macos_build_path("/Users/builder"))
+        self.assertEqual(
+            mac["PATH"],
+            release.macos_build_path("/Users/builder", "/Users/builder/.cargo"),
+        )
         self.assertEqual(mac["HOME"], "/Users/builder")
         # The deployment target is pinned from the one constant the
         # manifest line also uses, not inherited from the shell's 14.0.
@@ -543,10 +569,11 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
             release.runtime_requirements("macos"),
             [f"macOS {release.MACOS_DEPLOYMENT_TARGET} or later; Apple Silicon"],
         )
-        for name in ("RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
+        for name in ("RUSTUP_TOOLCHAIN",
                      "EVIL_ARBITRARY_VARIABLE", "SOME_FUTURE_LIB_DIR"):
             self.assertNotIn(name, mac)
         self.assertEqual(mac["CARGO_HOME"], "/cargo")
+        self.assertEqual(mac["RUSTUP_HOME"], "/Users/builder/.rustup")
         self.assertEqual(mac["DEVELOPER_DIR"], "/Library/Developer/CommandLineTools")
         self.assertEqual(mac["CARGO_TARGET_DIR"], "/target")
         self.assertEqual(mac["GIT_DIRTY"], "0")

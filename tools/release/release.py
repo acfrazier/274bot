@@ -629,32 +629,24 @@ MACOS_DEPLOYMENT_TARGET = "11.0"
 # that PATH -- MacPorts' pkg-config answers `-L/opt/local/lib` for bzip2 --
 # or through an inherited search-path/toolchain variable can link a shipped
 # binary against libraries users' Macs do not have, or move it off the
-# pinned toolchain. A denylist of such variables is not a closed set (a
-# shell can set RUSTUP_TOOLCHAIN, CARGO_HOME, CCC_OVERRIDE_OPTIONS, or any
-# future <LIB>_DIR without touching it), so the macOS worker environment
-# is an allowlist built from empty: only the keys below are copied from
-# the parent, everything else about the build environment is constructed
-# here, and SDKROOT is left unset so xcrun rediscovers the SDK through
-# DEVELOPER_DIR / xcode-select. A request-local CARGO_HOME prevents loading
-# the builder's ~/.cargo/config.toml; repository-local Cargo configuration
-# remains active. The otool linkage check below is the fail-closed backstop
-# for unexpected linked-library paths.
+# pinned toolchain. A denylist of RUSTUP_TOOLCHAIN, CCC_OVERRIDE_OPTIONS,
+# and future <LIB>_DIR variables is not closed, so the macOS environment is
+# an allowlist built from empty. CARGO_HOME/RUSTUP_HOME are the toolchain
+# exception: PATH uses CARGO_HOME/bin when set (HOME/.cargo/bin otherwise),
+# while native_build_environment replaces CARGO_HOME with a request-local
+# cache to keep caller Cargo configuration out. SDKROOT stays unset for
+# xcrun; otool checks final links.
 MACOS_SYSTEM_PATH_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
-# Copied from the parent only when set, each linkage-neutral or needed to
-# identify the build user: USER/LOGNAME (codesign and passwd lookups),
-# TMPDIR (the per-user clang/rustc temp dir; unset falls back to /tmp),
-# LANG and LC_* (locale only), and the proxy variables (network only, for
-# a cargo fetch that misses the local cache). PATH, HOME and
-# MACOSX_DEPLOYMENT_TARGET are also allowlisted but always constructed,
-# never inherited; DEVELOPER_DIR is copied only after validation below.
-# Deliberately not inherited: CARGO_HOME is set to the worker-local
-# cache/cargo path below; RUSTUP_HOME/RUSTUP_TOOLCHAIN are not inherited
-# and rust-toolchain.toml pins the toolchain. Search-path, compiler-
-# selection and DYLD_ variables are also omitted.
+# The ordinary passthroughs are linkage-neutral or needed to identify the
+# build user (USER/LOGNAME, TMPDIR, LANG/LC_*) or proxy variables for Cargo.
+# CARGO_HOME/RUSTUP_HOME are the toolchain exception documented above.
+# PATH, HOME and MACOSX_DEPLOYMENT_TARGET are always constructed;
+# DEVELOPER_DIR is copied only after validation.
 MACOS_PASSTHROUGH_ENV = (
     "USER", "LOGNAME", "TMPDIR", "LANG",
     "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
     "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    "CARGO_HOME", "RUSTUP_HOME",
 )
 MACOS_DEVELOPER_DIRS = re.compile(
     r"^(?:/Library/Developer/CommandLineTools"
@@ -662,10 +654,11 @@ MACOS_DEVELOPER_DIRS = re.compile(
 )
 
 
-def macos_build_path(home):
-    """The only PATH a macOS release build runs with: rustup, then system."""
+def macos_build_path(home, cargo_home=None):
+    """The only PATH a macOS build runs with: Cargo shim, then system."""
+    cargo_home = Path(cargo_home) if cargo_home else Path(home) / ".cargo"
     return os.pathsep.join(
-        [str(Path(home) / ".cargo/bin"), *MACOS_SYSTEM_PATH_DIRS]
+        [str(cargo_home / "bin"), *MACOS_SYSTEM_PATH_DIRS]
     )
 
 
@@ -681,10 +674,7 @@ def valid_macos_developer_dir(value):
 
 
 def macos_allowlisted_env(source=None):
-    """The inherited half of the macOS worker environment, built from
-    empty: the justified passthrough keys above, a validated
-    DEVELOPER_DIR, and the constructed HOME/PATH/deployment target.
-    native_build_environment adds the worker's own pinned keys on top."""
+    """Build the macOS environment from justified passthroughs and pins."""
     source = os.environ if source is None else source
     environment = {
         name: source[name]
@@ -699,9 +689,9 @@ def macos_allowlisted_env(source=None):
     developer_dir = source.get("DEVELOPER_DIR")
     if developer_dir and valid_macos_developer_dir(developer_dir):
         environment["DEVELOPER_DIR"] = developer_dir
-    home = Path.home()
+    home = Path(source.get("HOME") or Path.home())
     environment["HOME"] = str(home)
-    environment["PATH"] = macos_build_path(home)
+    environment["PATH"] = macos_build_path(home, source.get("CARGO_HOME"))
     environment["MACOSX_DEPLOYMENT_TARGET"] = MACOS_DEPLOYMENT_TARGET
     return environment
 
