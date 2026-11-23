@@ -2954,6 +2954,17 @@ impl SlotScript {
             .is_some_and(|ledger| ledger.capture_walk_prereq_allow(authority, allow))
     }
 
+    /// Record the tick allowance of the route the host now follows for this
+    /// native walk.
+    pub fn post_native_walk_allowance(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        ticks: u64,
+    ) -> bool {
+        self.ledger_of(authority.run())
+            .is_some_and(|ledger| ledger.post_walk_allowance(authority, ticks))
+    }
+
     pub fn complete_native_walk(
         &mut self,
         authority: &crate::native::HostAuthority,

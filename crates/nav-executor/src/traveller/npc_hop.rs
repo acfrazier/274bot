@@ -1,6 +1,6 @@
 use super::*;
 
-const NPC_HOP_ATTEMPTS: u32 = 3;
+pub(super) const NPC_HOP_ATTEMPTS: u32 = 3;
 
 #[derive(Default)]
 pub(super) struct NpcRecovery {

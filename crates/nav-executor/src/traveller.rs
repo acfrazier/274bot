@@ -29,12 +29,14 @@ use nav_planner::router::{Leg, Route};
 use nav_planner::transport::{DoorDir, TransportEdge, TransportKind};
 use thiserror::Error;
 
+mod allowance;
 mod dialog;
 mod npc_hop;
 mod snapshot;
 mod transport_hop;
 mod walk;
 
+use allowance::*;
 use dialog::*;
 use npc_hop::*;
 use snapshot::*;
@@ -579,6 +581,9 @@ pub struct Traveller {
     /// wizard. Survives across routes (the game's `%exit_essence_mine_coord`
     /// varp persists too); a new entry overwrites it.
     essence: Option<EssenceSession>,
+    /// The tick allowance of the follow that started last
+    /// ([`Self::take_follow_allowance`]); zero when none is waiting.
+    follow_allowance: u64,
 }
 
 impl Traveller {
@@ -588,7 +593,17 @@ impl Traveller {
             follow: None,
             follow_terminal_leg: None,
             essence: None,
+            follow_allowance: 0,
         }
+    }
+
+    /// The observed ticks that the follow started last may take, once: the
+    /// sum of the allowances this follower grants each leg of its route
+    /// ([`allowance`] module). A native walk owner reads it as its backstop.
+    /// `None` until a new follow starts, so a replan reports its own.
+    pub fn take_follow_allowance(&mut self) -> Option<u64> {
+        let ticks = std::mem::take(&mut self.follow_allowance);
+        (ticks != 0).then_some(ticks)
     }
 
     /// Drop the active follow run and its terminal-leg record.
@@ -779,7 +794,9 @@ impl Traveller {
     ) -> Option<TravelOutcome> {
         if self.follow.is_none() {
             self.follow_terminal_leg = None;
-            self.follow = Some(start_run(options));
+            let run = start_run(options);
+            self.follow_allowance = run.allowance;
+            self.follow = Some(run);
         }
         let outcome = self
             .follow
@@ -987,6 +1004,8 @@ struct FollowRun {
     settle_until: Option<u32>,
     walk: Option<WalkHop>,
     transport: Option<TransportHop>,
+    /// The observed ticks this follow may take ([`route_allowance_ticks`]).
+    allowance: u64,
 }
 
 impl FollowRun {
@@ -1007,6 +1026,11 @@ impl FollowRun {
     }
 
     fn with_legs(legs: RouteLegSource, options: &TravelOptions<'_>) -> FollowRun {
+        let allowance = route_allowance_ticks(
+            leg_shapes(&legs),
+            options.budget_ticks_per_hop,
+            options.max_hops,
+        );
         FollowRun {
             stun_wait: None,
             stun_recovery_used: false,
@@ -1026,6 +1050,7 @@ impl FollowRun {
             settle_until: None,
             walk: None,
             transport: None,
+            allowance,
         }
     }
 

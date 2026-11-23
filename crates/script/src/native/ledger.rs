@@ -418,6 +418,18 @@ impl PickReceipt {
     }
 }
 
+/// The observed ticks that the route follower may take for the route that the
+/// host planned for one walk request, as the follower sums them for that
+/// route. The host posts one for every route it starts to follow, so a replan
+/// posts a new one; `seq` tells the owner which it has read. Ticks saturate at
+/// `u32::MAX`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WalkAllowance {
+    pub(crate) request: NonZeroU64,
+    pub(crate) seq: u32,
+    pub(crate) ticks: u32,
+}
+
 /// Allocated only on first native admission. There is one foreground owner,
 /// one outstanding walk and a bounded outbox, not a second navigation runtime.
 pub struct Ledger {
@@ -426,6 +438,9 @@ pub struct Ledger {
     pub(crate) outbox: Vec<HostAction>,
     pub(crate) walk: Option<WalkReceipt>,
     pub(crate) walk_prereq_allow: Option<(NonZeroU64, super::PrereqAllow)>,
+    /// The tick allowance of the route the host follows for the live walk
+    /// request ([`WalkAllowance`]).
+    pub(crate) walk_allowance: Option<WalkAllowance>,
     pub(crate) walk_events: Vec<WalkEvent>,
     pub(crate) interaction: Option<InteractionReceipt>,
     pub(crate) interaction_request: Option<NonZeroU64>,
@@ -476,6 +491,7 @@ impl Default for Ledger {
             outbox: Vec::with_capacity(6),
             walk: None,
             walk_prereq_allow: None,
+            walk_allowance: None,
             walk_events: Vec::new(),
             interaction: None,
             interaction_request: None,
@@ -498,6 +514,27 @@ impl Default for Ledger {
 }
 
 impl Ledger {
+    /// Record the allowance of the route followed for this live walk request.
+    pub(crate) fn post_walk_allowance(&mut self, authority: &HostAuthority, ticks: u64) -> bool {
+        if !authority.walk
+            || !authority.live()
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+            })
+        {
+            return false;
+        }
+        let seq = self
+            .walk_allowance
+            .map_or(0, |last| last.seq.wrapping_add(1));
+        self.walk_allowance = Some(WalkAllowance {
+            request: authority.request_id(),
+            seq,
+            ticks: u32::try_from(ticks).unwrap_or(u32::MAX),
+        });
+        true
+    }
+
     /// Freeze consent on this live walk request, not its later terminal frame.
     pub(crate) fn capture_walk_prereq_allow(
         &mut self,
@@ -674,6 +711,7 @@ impl Ledger {
             .retain(|action| matches!(action.effect, HostEffect::AssessWalk(_)));
         self.walk = None;
         self.walk_prereq_allow = None;
+        self.walk_allowance = None;
         self.walk_events.clear();
         self.interaction = None;
         self.interaction_request = None;

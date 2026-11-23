@@ -14,7 +14,7 @@ const END_BLOCKED_STALL_TICKS: u32 = 5;
 /// budget: WALK-STALL-1029/r1/budget-ratios.json. A 5/4 cap leaves 21.64%
 /// above that observed maximum for server-path turns and recovery delays.
 /// This is a finite policy margin, not another engine timing constant.
-const WALK_MOVEMENT_MARGIN_DIVISOR: u32 = 4;
+pub(super) const WALK_MOVEMENT_MARGIN_DIVISOR: u32 = 4;
 
 /// The client is still walking an accepted click: its actor has queued
 /// route steps and the map flag of that click is still set.

@@ -2712,6 +2712,18 @@ where
 /// or abort that ended the follow), and the published outcome of the route
 /// the owner still holds. A revoked owner receives neither.
 fn deliver_native_walk_end(slot: &mut script::SlotScript, bot: &mut NavBot, tick: u64) {
+    // A route the host started to follow carries the tick allowance that the
+    // follower sums for it. Only the walk that the host is routing reads it;
+    // a replan reports its own.
+    if let Some(ticks) = bot.traveller.take_follow_allowance() {
+        if let Some(owner) = bot
+            .native_walk
+            .as_ref()
+            .filter(|owner| owner.live() && owner.request_id().get() == bot.walk_request_id)
+        {
+            slot.post_native_walk_allowance(owner, ticks);
+        }
+    }
     for (owner, event) in bot.walk_guard_events.drain(..) {
         slot.notify_native_walk(&owner, event);
     }

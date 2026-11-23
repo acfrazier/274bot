@@ -2974,7 +2974,7 @@ fn a_walk_deadline_returns_no_route_to_step_without_a_fact_or_retry() {
         with_tick(
             &snapshot,
             &mut ledger,
-            u64::from(crate::native::walk::WALK_DEADLINE_TICKS),
+            u64::from(crate::native::walk::WALK_PLAN_WAIT_TICKS),
             |native| run.poll(native.actions, &mut native.cx, Some(&state), &mut budget)
         )
         .is_pending(),
@@ -2983,7 +2983,7 @@ fn a_walk_deadline_returns_no_route_to_step_without_a_fact_or_retry() {
     let result = with_tick(
         &snapshot,
         &mut ledger,
-        u64::from(crate::native::walk::WALK_DEADLINE_TICKS) + 1,
+        u64::from(crate::native::walk::WALK_PLAN_WAIT_TICKS) + 1,
         |native| run.poll(native.actions, &mut native.cx, Some(&state), &mut budget),
     );
     assert!(matches!(

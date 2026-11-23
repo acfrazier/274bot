@@ -556,6 +556,20 @@ impl ActionContext<'_> {
         })
     }
 
+    /// The route follower's tick allowance for this walk request, with the
+    /// sequence number of its post: `(seq, ticks)`. A replan posts a new one.
+    pub fn walk_allowance(&self, request_id: u64) -> Option<(u32, u32)> {
+        let ledger = self.ledger.as_ref()?;
+        let owner = ledger.owner.as_ref()?;
+        if owner.run != self.run() || owner.id.get() != self.action_id || !owner.live() {
+            return None;
+        }
+        ledger
+            .walk_allowance
+            .filter(|allowance| allowance.request.get() == request_id)
+            .map(|allowance| (allowance.seq, allowance.ticks))
+    }
+
     pub fn interaction_receipt(&self, request_id: u64) -> Option<&InteractionReceipt> {
         let ledger = self.ledger.as_ref()?;
         let owner = ledger.owner.as_ref()?;
@@ -2854,14 +2868,14 @@ mod tests {
         with_snapshot_frame_at(
             &mut ledger,
             Duration::from_secs(24 * 60 * 60),
-            u64::from(super::walk::WALK_DEADLINE_TICKS),
+            u64::from(super::walk::WALK_PLAN_WAIT_TICKS),
             None,
             |cx| {
                 assert!(actions.poll(&handle, cx).is_pending());
             },
         );
         assert!(authority.live());
-        let last = u64::from(super::walk::WALK_DEADLINE_TICKS) + 1;
+        let last = u64::from(super::walk::WALK_PLAN_WAIT_TICKS) + 1;
         with_snapshot_frame_at(&mut ledger, Duration::ZERO, last, None, |cx| {
             let ended = actions.poll(&handle, cx);
             assert!(
@@ -2983,9 +2997,11 @@ mod tests {
                     WalkEnd::RouteEnded => (short, false, 1),
                     // The walk is still moving at the last observed tick of
                     // its budget: the tick before it leaves the walk pending.
-                    WalkEnd::Failed => {
-                        (short, true, u64::from(super::walk::WALK_DEADLINE_TICKS) + 1)
-                    }
+                    WalkEnd::Failed => (
+                        short,
+                        true,
+                        u64::from(super::walk::WALK_PLAN_WAIT_TICKS) + 1,
+                    ),
                     _ => unreachable!(),
                 };
                 let final_snapshot = walking_snapshot(tile, still_moving);

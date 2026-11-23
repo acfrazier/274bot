@@ -2291,7 +2291,7 @@ mod tests {
         crate::compat::clue::on_reset();
         let (flow, _) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1);
         assert_eq!(flow, ScriptFlow::Continue);
-        let deadline = u64::from(script::native::walk::WALK_DEADLINE_TICKS);
+        let deadline = u64::from(script::native::walk::WALK_PLAN_WAIT_TICKS);
         let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, deadline);
         assert_eq!(
             flow,

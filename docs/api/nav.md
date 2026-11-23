@@ -1339,9 +1339,17 @@ correlated successful terminal route receipt is held while authoritative
 local-actor motion is still moving; failed, blocked, evidence-required and
 cancelled receipts surface promptly. Motion is carried explicitly through
 the isolate snapshot; old snapshots report it unavailable, not stationary.
-The walk's deadline of 11,460 eligible observed game ticks (the route
-follower's maximum) bounds the wait, without relaxing reach. A hold, a pause
-and a blocked interval do not spend it.
+The walk's deadline is the route follower's tick allowance for the route the
+host planned: the sum of the clocks the follower enforces on each leg of that
+route (`crates/nav-executor/src/traveller/allowance.rs`), counted in eligible
+observed game ticks from the observation that carries it. A replan recomputes
+it. Before the host plans, a walk waits 183 ticks. A hold, a pause and a
+blocked interval do not spend it. Known limitations: the guardian's hold kinds
+that have no tick bound (Dialog, Pick, Mime, Box, Lamp, Hazard, LostTool,
+LostGear and trapped) suspend the deadline for as long as the hold lasts, and
+their owner bounds them (GH-001); a walk hop that waits unsent and a slashable
+web that keeps failing have no bound in the follower, so the allowance grants
+a fixed policy for them.
 `NeedsEvidence` preserves its typed quest gates through native walk adapters.
 Quester Stops with a `needs-evidence` failure; it does not retain an unused
 copy of the gates after reporting that terminal block.
