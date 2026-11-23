@@ -866,6 +866,8 @@ def build_worker(args):
         if not args.sign_identity:
             raise ReleaseError("macOS release build requires --sign-identity")
         package_command += ["--app-profile", args.app_profile, "--sign-identity", args.sign_identity]
+        if args.keychain:
+            package_command += ["--keychain", str(args.keychain)]
     run(package_command, cwd=source, env=environment)
     result_record = {
         "platform": args.platform,
@@ -2141,6 +2143,9 @@ def parser():
     build.add_argument("--jobs", type=int, default=4)
     build.add_argument("--app-profile", default="rs2b2t")
     build.add_argument("--sign-identity", default=os.environ.get("RELEASE_SIGN_IDENTITY"))
+    build.add_argument("--keychain", type=Path,
+                       default=os.environ.get("RELEASE_KEYCHAIN"),
+                       help="macOS keychain path for identity lookup and signing")
     build.add_argument("--rusty-v8-archive", default=os.environ.get("RUSTY_V8_ARCHIVE"))
     build.add_argument("--reset-prepared", action="store_true",
                        help="discard and recreate the shared source/input payload")

@@ -113,8 +113,10 @@ toolchain in each builder's Rustup home before a release build. Do not use
 unqualified `stable` to qualify a release.
 
 - macOS arm64 builds locally. `--sign-identity` (or
-  `RELEASE_SIGN_IDENTITY`) is required for a real release build. The macOS
-  worker never builds with the operator's login environment: the Mac's
+  `RELEASE_SIGN_IDENTITY`) is required for a real release build.
+  `--keychain PATH` or `RELEASE_KEYCHAIN` selects the keychain used for
+  identity lookup and signing; omit it to use the system default keychain.
+  The macOS worker never builds with the operator's login environment: the Mac's
   login `PATH` puts MacPorts and Homebrew ahead of `/usr/bin`, and in the
   0.2.1 build MacPorts' `pkg-config` answered the `bzip2-sys` probe with
   `-L/opt/local/lib`, which would have shipped binaries linked against

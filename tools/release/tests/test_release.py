@@ -1424,6 +1424,118 @@ class PackageReceiptTests(unittest.TestCase):
                                 )
 
 
+class PackageKeychainTests(unittest.TestCase):
+    def test_fake_security_and_codesign_use_selected_keychain(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "inputs"
+            nav = inputs / "nav/274"
+            nav.mkdir(parents=True)
+            artifacts = {}
+            for name in ("panel-play", "tui-play"):
+                path = inputs / name
+                path.write_bytes(name.encode())
+                artifacts[name] = path
+            for name in release.NAV_NAMES:
+                path = nav / name
+                path.write_bytes(name.encode())
+                artifacts[f"nav/274/{name}"] = path
+            receipt_path = root / "build-receipt.json"
+            receipt_path.write_text(json.dumps({
+                "host_commit": "a" * 40,
+                "client_commit": "b" * 40,
+                "target": "aarch64-apple-darwin",
+                "rustc": "rustc test",
+                "features": "default",
+                "built_at": "2026-11-23T00:00:00Z",
+                "files": {
+                    name: release_package.digest(path)
+                    for name, path in artifacts.items()
+                },
+            }))
+            metadata = json.dumps({
+                "packages": [{"name": "panel", "version": "0.1.9"}],
+            })
+            identity = "AABBCCDDEEFF"
+            env_keychain = root / "env.keychain"
+            cli_keychain = root / "cli.keychain"
+            security_calls = []
+            codesign_calls = []
+
+            def fake_run(*command):
+                command = tuple(map(str, command))
+                if command[0] == "cargo":
+                    return metadata
+                if command[0] == "security":
+                    security_calls.append(command)
+                    return f'  1) {identity} "Developer ID Application: Test"'
+                self.fail(f"unexpected package command: {command}")
+
+            def fake_codesign(command, **kwargs):
+                self.assertTrue(kwargs.get("check"))
+                codesign_calls.append([str(part) for part in command])
+                return subprocess.CompletedProcess(command, 0)
+
+            cases = (
+                ("environment", None, env_keychain, {"RELEASE_KEYCHAIN": str(env_keychain)}),
+                ("argument", cli_keychain, cli_keychain, {
+                    "RELEASE_KEYCHAIN": str(env_keychain),
+                }),
+                ("default", None, None, {}),
+            )
+            for label, cli_path, expected_path, environment in cases:
+                with self.subTest(source=label):
+                    output = root / f"output-{label}"
+                    argv = [
+                        "package.py", "--platform", "macos",
+                        "--input", str(inputs), "--output", str(output),
+                        "--build-receipt", str(receipt_path), "--revision", "274",
+                        "--sign-identity", identity,
+                    ]
+                    if cli_path:
+                        argv += ["--keychain", str(cli_path)]
+                    security_start = len(security_calls)
+                    codesign_start = len(codesign_calls)
+                    with mock.patch.object(release_package, "run", side_effect=fake_run), \
+                            mock.patch.object(
+                                release_package.subprocess, "run",
+                                side_effect=fake_codesign,
+                            ), \
+                            mock.patch.object(sys, "argv", argv), \
+                            mock.patch.dict(os.environ, environment, clear=True), \
+                            contextlib.redirect_stdout(io.StringIO()), \
+                            contextlib.redirect_stderr(io.StringIO()):
+                        release_package.main()
+
+                    expected_security = [
+                        "security", "find-identity", "-v", "-p", "codesigning",
+                    ]
+                    if expected_path:
+                        expected_security.append(str(expected_path))
+                    self.assertEqual(list(security_calls[security_start]), expected_security)
+                    sign_calls = [
+                        call for call in codesign_calls[codesign_start:] if "--sign" in call
+                    ]
+                    self.assertEqual(len(sign_calls), 3)
+                    for call in sign_calls:
+                        if expected_path:
+                            keychain_index = call.index("--keychain")
+                            self.assertEqual(call[keychain_index + 1], str(expected_path))
+                        else:
+                            self.assertNotIn("--keychain", call)
+
+    def test_release_keychain_environment_and_argument(self):
+        env_keychain = Path("/test/env.keychain")
+        cli_keychain = Path("/test/cli.keychain")
+        base = ["build", "--commit", "a" * 40, "--platform", "macos"]
+        with mock.patch.dict(os.environ, {"RELEASE_KEYCHAIN": str(env_keychain)}, clear=True):
+            self.assertEqual(release.parser().parse_args(base).keychain, env_keychain)
+            self.assertEqual(
+                release.parser().parse_args(base + ["--keychain", str(cli_keychain)]).keychain,
+                cli_keychain,
+            )
+
+
 class ManifestTests(unittest.TestCase):
     def test_finalize_manifest_rehashes_notes_and_package_files(self):
         with tempfile.TemporaryDirectory() as temporary:

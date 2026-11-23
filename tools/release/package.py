@@ -142,6 +142,8 @@ def main():
     p.add_argument('--app-profile', default='rs2b2t',
                    help='servers.json profile name for Finder launch')
     p.add_argument('--sign-identity', help='Developer ID Application identity SHA-1')
+    p.add_argument('--keychain', type=Path, default=os.environ.get('RELEASE_KEYCHAIN'),
+                   help='macOS keychain path for identity lookup and signing')
     p.add_argument('--map-cache', type=Path,
                    help='jag directory of the client cache the nav bundle was built from '
                         '(default: the nav build\'s engine data/pack/client)')
@@ -173,7 +175,10 @@ def main():
     if not a.check and not a.output:
         p.error('--output is required')
     if a.sign_identity:
-        identities = run('security', 'find-identity', '-v', '-p', 'codesigning')
+        identity_args = ['security', 'find-identity', '-v', '-p', 'codesigning']
+        if a.keychain:
+            identity_args.append(str(a.keychain))
+        identities = run(*identity_args)
         matches = [line for line in identities.splitlines()
                    if a.sign_identity in line and 'Developer ID Application:' in line]
         if not matches:
@@ -246,9 +251,14 @@ def main():
             if a.sign_identity:
                 entitlements = root / 'tools/release/macos-entitlements.plist'
                 for target in [output / n for n in names] + [app]:
-                    subprocess.run(['codesign', '--force', '--options', 'runtime', '--timestamp',
-                                    '--entitlements', str(entitlements), '--sign', a.sign_identity,
-                                    str(target)], check=True)
+                    sign_command = [
+                        'codesign', '--force', '--options', 'runtime', '--timestamp',
+                        '--entitlements', str(entitlements),
+                    ]
+                    if a.keychain:
+                        sign_command += ['--keychain', str(a.keychain)]
+                    sign_command += ['--sign', a.sign_identity, str(target)]
+                    subprocess.run(sign_command, check=True)
                     subprocess.run(['codesign', '--verify', '--strict', '--verbose=2', str(target)],
                                    check=True)
                     signed.append(str(target.relative_to(output)))
