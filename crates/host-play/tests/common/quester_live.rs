@@ -781,6 +781,17 @@ impl TickMean {
     }
 }
 
+fn tick_health_after_start(
+    session: u64,
+    packet_generation: u64,
+    now: Instant,
+) -> api::tick_health::TickHealth {
+    let mut health = api::tick_health::TickHealth::default();
+    // Start is an observation baseline, not a batch of setup packets.
+    health.observe(session, packet_generation, packet_generation, now, None);
+    health
+}
+
 fn observed_tick_rate_receipt(health: &api::tick_health::TickHealth) -> Value {
     let mut receipt =
         serde_json::to_value(health.receipt()).expect("TickHealthReceipt serializes to JSON");
@@ -1840,6 +1851,13 @@ fn run_cells(
                 };
                 match result {
                     Ok(()) => {
+                        if actor.starts == 0 {
+                            actor.observed_tick_rate = tick_health_after_start(
+                                client.gens.session,
+                                client.gens.player_info,
+                                Instant::now(),
+                            );
+                        }
                         actor.starts += 1;
                         actor.restart_due = false;
                         actor.transitions.push(json!({
@@ -3947,6 +3965,41 @@ mod tests {
         assert_eq!(receipt.server_ticks, 3);
         assert_eq!(receipt.clean_interval_samples, 0);
         assert_eq!(receipt.median_ms, None);
+    }
+
+    #[test]
+    fn tick_health_receipt_baselines_at_start_without_counting_setup_packets() {
+        let start = Instant::now();
+        let mut health = tick_health_after_start(1, 42, start);
+        let baseline = observed_tick_rate_receipt(&health);
+        assert_eq!(baseline["packet_generation"], 42);
+        assert_eq!(baseline["packet_delta"], 0);
+        assert_eq!(baseline["server_ticks"], 0);
+        assert_eq!(baseline["total_coalesced_observations"], 0);
+        assert_eq!(baseline["interval_samples"], 0);
+
+        for generation in [43, 44] {
+            health.observe(
+                1,
+                generation,
+                7,
+                start + Duration::from_millis((generation - 42) * 600),
+                None,
+            );
+        }
+        let singles = health.receipt();
+        assert_eq!(singles.packet_delta, 1);
+        assert_eq!(singles.server_ticks, 2);
+        assert_eq!(singles.total_coalesced_observations, 0);
+        assert_eq!(singles.interval_samples, 1);
+        assert_eq!(singles.mean_tick_ms, Some(600.0));
+
+        health.observe(1, 47, 7, start + Duration::from_millis(1800), None);
+        let batch = health.receipt();
+        assert_eq!(batch.packet_delta, 3);
+        assert_eq!(batch.server_ticks, 5);
+        assert_eq!(batch.coalesced_observations, 2);
+        assert_eq!(batch.total_coalesced_observations, 2);
     }
 
     #[test]

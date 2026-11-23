@@ -2400,6 +2400,37 @@ fn client_frame_keeps_loop_counters_slot_local() {
 }
 
 #[test]
+fn production_clock_counts_packet_batches() {
+    let mut client = Client::new(cfg());
+    client.ingame = true;
+    client.set_draw(false);
+    let mut slot = SlotLoop::new();
+    let mut sends = 0;
+    for (packets, expected_tick) in [(5, 5), (0, 5), (3, 8)] {
+        for _ in 0..packets {
+            dispatch_packet(
+                &mut client,
+                client::io::ServerProt::PLAYER_INFO,
+                vec![0xe0, 0x50, 0xc0, 0],
+            );
+        }
+        // Run the real service path, including its private tick_n update.
+        Host::client_frame(
+            &mut client,
+            &mut slot,
+            "alice",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+        assert_eq!(slot.tick_n, expected_tick);
+        assert_eq!(slot.snapshot.tick_health().packet_delta, packets);
+        assert_eq!(slot.snapshot.tick_health().server_ticks, expected_tick);
+    }
+}
+
+#[test]
 fn client_frame_draw_on_paints_this_tick() {
     let _cpu = force_cpu_backend();
     let mut c = prepare_client(
