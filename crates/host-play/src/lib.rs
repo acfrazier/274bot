@@ -8,6 +8,7 @@ pub mod admission;
 pub mod audio;
 pub mod cache;
 pub mod catalog_core;
+pub mod engine_speed;
 pub mod evidence_writer;
 pub mod external_loader;
 pub mod fd_limit;
