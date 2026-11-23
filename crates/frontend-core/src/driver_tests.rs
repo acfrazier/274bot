@@ -6404,9 +6404,21 @@ struct Disk {
 
 impl Disk {
     fn install(d: &HeadlessDriver, held: usize) -> Self {
+        Self::install_reporting_entry(d, held).0
+    }
+
+    /// [`Self::install`] that also reports each held write once it has
+    /// reached its stall on the writer thread. A test that relies on the
+    /// writer staying parked (the queue cannot drain while it waits) takes
+    /// the report instead of assuming the thread has started the write.
+    fn install_reporting_entry(
+        d: &HeadlessDriver,
+        held: usize,
+    ) -> (Self, std::sync::mpsc::Receiver<()>) {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
         let (release, gate) = std::sync::mpsc::channel::<()>();
         let gate = std::sync::Mutex::new(gate);
+        let (entered, entered_rx) = std::sync::mpsc::channel::<()>();
         let writes = std::sync::Arc::new(AtomicUsize::new(0));
         let fail_after = std::sync::Arc::new(AtomicUsize::new(usize::MAX));
         let service = d
@@ -6416,6 +6428,7 @@ impl Disk {
         let stalled = std::sync::Arc::clone(&writes);
         service.set_write_stall_for_test(std::sync::Arc::new(move || {
             if stalled.fetch_add(1, SeqCst) < held {
+                let _ = entered.send(());
                 let _ = gate.lock().unwrap().recv();
             }
         }));
@@ -6424,10 +6437,13 @@ impl Disk {
         service.set_write_fault_for_test(std::sync::Arc::new(move || {
             counted.load(SeqCst) > limit.load(SeqCst)
         }));
-        Self {
-            release,
-            fail_after,
-        }
+        (
+            Self {
+                release,
+                fail_after,
+            },
+            entered_rx,
+        )
     }
 
     /// Let the oldest held write run.
@@ -7037,14 +7053,59 @@ fn a_second_process_version_reaches_the_models_and_calls_the_surface_back() {
 /// one `info` line at the shared command boundary names it, the refusal is
 /// counted, and the setting shows the reason. An accepted write that fails
 /// later is a different result and logs no refusal.
+///
+/// Admission is a property of the process service's ONE writer thread: a
+/// submit is accepted only while the store's queue has room, and room
+/// appears only when that thread takes the front write out of the queue
+/// (`host-play/src/local_state.rs` `take_write` pops before the write — and
+/// the test's stall — begins). The accepted/refused split used to race that
+/// thread: a take that landed just before a later submit made it accepted,
+/// and an accepted write clears the setting's retained failure
+/// (`frontend-core/src/setting.rs` `begin`). The end-of-loop reason
+/// assertion was therefore unsound (FU:14). This test parks the thread in
+/// the stall on a priming write of another setting before it counts, so the
+/// queue never drains and the split is fixed: the first 8 submits are
+/// accepted, the remaining 16 refused, and the reason set by the last
+/// refusal stands.
 #[test]
 fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_boundary() {
     use crate::nav_prefs::NavPreference as N;
+    use crate::walk_permissions::DangerLevel;
     let mut d = driver("s3-queue-refusal", &["alice"]);
     d.poll();
-    let disk = Disk::install(&d, 1);
-    let refusals = d.session().refusals();
     let setting = crate::Setting::Nav(N::AllowTeleports);
+    // Leave the single writer idle and the queue empty before the stall is
+    // installed: a write that settles first cannot take the stall (the
+    // first held write) instead of the priming write below.
+    let marker = d
+        .submit(
+            OperatorCommand::SetDangerLevel(DangerLevel::Never),
+            Targets::Application,
+        )
+        .expect("the marker command is admitted")
+        .request();
+    assert_eq!(settled_app(&mut d, marker), Some(done()));
+    let (disk, writer_parked) = Disk::install_reporting_entry(&d, 1);
+    // The hold: this write reaches the stall on the writer thread and stays
+    // there until `drop(disk)`, so the queue cannot drain for the rest of
+    // the test.
+    let priming = d
+        .submit(
+            OperatorCommand::SetDangerLevel(DangerLevel::Always),
+            Targets::Application,
+        )
+        .expect("the priming command is admitted")
+        .request();
+    assert_eq!(
+        terminal_app(&d, priming),
+        None,
+        "the priming write is queued, not settled"
+    );
+    writer_parked
+        .recv_timeout(SETTLE_HANG_GUARD)
+        .expect("the writer takes the priming write and waits in the stall");
+    let refusals = d.session().refusals();
+    let stamp = process_log_stamp();
     let mut refused = Vec::new();
     let mut accepted = Vec::new();
     for index in 0..24 {
@@ -7079,6 +7140,17 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
         refused.len()
     );
     assert_eq!(
+        (accepted.len(), refused.len()),
+        (8, 16),
+        "the parked writer's queue holds 8, so the first 8 are accepted"
+    );
+    assert!(
+        d.session()
+            .setting_failure(setting)
+            .is_some_and(|text| text.starts_with("Not saved: ")),
+        "the last submit was refused, so the reason still stands"
+    );
+    assert_eq!(
         d.session().refusals(),
         refusals + refused.len() as u64,
         "one refusal counted per refused command, none for the accepted ones"
@@ -7089,7 +7161,7 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
     let lines = view
         .rows()
         .iter()
-        .filter(|row| row.message().contains("WriteRefused"))
+        .filter(|row| row.seq() > stamp && row.message().contains("WriteRefused"))
         .count();
     assert_eq!(lines, refused.len(), "one info line per refused command");
     // The accepted writes settle on their own: no further refusal line.
@@ -7098,6 +7170,17 @@ fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_bound
         assert_eq!(settled_app(&mut d, request), Some(done()));
     }
     assert_eq!(d.session().refusals(), refusals + refused.len() as u64);
+}
+
+/// The newest order stamp the process log holds, `0` when it is empty:
+/// every later push carries a higher stamp. The process ring is one store
+/// of 500 lines shared by every test of this binary
+/// (`frontend-core/src/log.rs` `PROCESS_RING_CAP`), so a test that counts
+/// its own lines must bound the count by the stamp it took first.
+fn process_log_stamp() -> u64 {
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
+    crate::log::global().refresh(&mut view);
+    view.rows().back().map_or(0, |row| row.seq())
 }
 
 /// Process-log rows whose text contains `needle`.
