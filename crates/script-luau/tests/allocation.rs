@@ -102,11 +102,7 @@ fn profile(source: &str, ticks: u64, expected_interactions: Option<usize>) -> Pr
     let mut counts = Vec::new();
     let mut changes = Vec::new();
     for number in WARM_UP + 1..=WARM_UP + ticks {
-        counts.push(measured_tick(
-            &mut *run,
-            number,
-            expected_interactions,
-        ));
+        counts.push(measured_tick(&mut *run, number, expected_interactions));
         let now = used_bytes(&*run);
         changes.push(now as i64 - used as i64);
         used = now;

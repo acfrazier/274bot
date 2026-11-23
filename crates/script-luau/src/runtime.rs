@@ -762,7 +762,10 @@ fn refusal_value(
         Refusal::Argument { argument, expected } => {
             format!("api.{path}: {argument} must be {expected}")
         }
-        Refusal::TextTooLong { argument, max_bytes } => {
+        Refusal::TextTooLong {
+            argument,
+            max_bytes,
+        } => {
             format!("api.{path}: {argument} exceeds {max_bytes} bytes")
         }
         Refusal::Arity(1) => format!("api.{path}: expects at most 1 argument"),
