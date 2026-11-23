@@ -523,7 +523,7 @@ pub(super) fn set_startup_phase(
             s.startup_phase = phase;
             s.startup_phase_started = Instant::now();
             host_log!(
-                Category::Login,
+                phase_category(phase),
                 phase_level(phase),
                 slot = name,
                 "startup phase {phase:?}"
@@ -542,6 +542,19 @@ fn phase_level(phase: StartupPhase) -> Level {
         | StartupPhase::Queueing
         | StartupPhase::Connecting
         | StartupPhase::Error => Level::Info,
+    }
+}
+
+/// Category of one startup-phase line. Region loads repeat on every scene
+/// change and belong to the slot's host lifecycle; only the login path
+/// (Preparing/Queueing/Connecting/Error) is login work.
+fn phase_category(phase: StartupPhase) -> Category {
+    match phase {
+        StartupPhase::LoadingScene | StartupPhase::Ready => Category::Lifecycle,
+        StartupPhase::Preparing
+        | StartupPhase::Queueing
+        | StartupPhase::Connecting
+        | StartupPhase::Error => Category::Login,
     }
 }
 
@@ -576,7 +589,7 @@ pub(super) fn apply_startup_phase(
             s.startup_phase = next_phase;
             s.startup_phase_started = Instant::now();
             host_log!(
-                Category::Login,
+                phase_category(next_phase),
                 phase_level(next_phase),
                 slot = name,
                 "startup phase {next_phase:?}"
@@ -796,5 +809,41 @@ mod tests {
         assert_eq!(copy.random, source.random);
         assert_eq!(copy.random.response, source.random.response);
         assert_eq!(copy.random.fight, source.random.fight);
+    }
+
+    /// Both startup-phase log sites route a region load to the host source.
+    /// The login preparation phase keeps the login source.
+    #[test]
+    fn region_load_phase_lines_leave_the_login_source() {
+        use api::hostlog::Source;
+
+        let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+            username: "alice".into(),
+            ..SlotStatus::default()
+        }]));
+        let mut observed = SlotStatus {
+            username: "alice".into(),
+            startup_phase: StartupPhase::LoadingScene,
+            ..SlotStatus::default()
+        };
+        let mark = crate::walk_map::test_log::mark();
+        // The login phase, then the two region-load lines: set_startup_phase
+        // emits LoadingScene; apply_startup_phase emits Ready.
+        set_startup_phase(&statuses, "alice", StartupPhase::Connecting);
+        set_startup_phase(&statuses, "alice", StartupPhase::LoadingScene);
+        apply_startup_phase(&mut observed, "alice", true, true);
+        let lines: Vec<(Source, String)> = crate::walk_map::test_log::sourced_records_since(mark)
+            .into_iter()
+            .filter(|(_, message)| message.starts_with("startup phase "))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                (Source::Login, "startup phase Connecting".to_string()),
+                (Source::Host, "startup phase LoadingScene".to_string()),
+                (Source::Host, "startup phase Ready".to_string()),
+            ],
+            "login preparation stays on the login source; region loads are host lifecycle"
+        );
     }
 }
