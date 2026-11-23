@@ -30,8 +30,9 @@ const SAVES: usize = 9;
 const PROCESSES: usize = 1;
 /// Shared 250 ms threshold for per-class over_limit counts and the load report.
 pub(super) const THRESHOLD_MS: f64 = 250.0;
-/// Rounds per process: 18 saves a round of about 25 frames each, so the log
-/// passes the idle TRUNCATE trigger (W / 2 = 4,608 frames) more than once.
+/// Rounds per process: nine saves a round of about 25 frames each, about
+/// 5,400 frames in all, so the log passes the idle TRUNCATE trigger
+/// (W / 2 = 4,608 frames).
 pub(super) const ROUNDS: usize = 24;
 
 /// Per-class wall times, in milliseconds.

@@ -163,7 +163,7 @@ const RETRY_MAX: Duration = Duration::from_millis(50);
 /// The most file-store and bank jobs the writer runs in a row while a
 /// preference job is due. Without it a preference save waits behind every
 /// queued file job: the 256 first imports of the resident cap take 6.98 s in
-/// one process on syrah (`first_import_of_all_accounts_ms` of
+/// one process on the reference machine (`first_import_of_all_accounts_ms` of
 /// `bank_budget_report`), over [`PREFERENCE_DEADLINE`]. The bound is the depth
 /// of a preference queue ([`OPERATOR_QUEUE_CAP`], the load of
 /// design-r7.md:259), so a save waits behind at most 8 file jobs: 8 x the
