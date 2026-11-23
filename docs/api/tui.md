@@ -18,9 +18,8 @@ cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_t
 ```
 
 Shared server-profile flags match host-play / panel-play
-(`--profile NAME`, `--rs2b2t`, `--revision`, `--vault`,
-`--vault-pass-stdin`, `--host`, `--port`, `--cache`, `--catalog`, `--user`,
-`--live`, …). On `rs2b2t`, `--world N` chooses the starting world for
+(`--profile NAME`, `--rs2b2t`, `--revision`, `--vault-pass-stdin`,
+`--host`, `--port`, `--cache`, `--catalog`, `--user`, `--live`, …). On
 accounts stored as auto; pinned
 accounts keep their vault setting. Unit tests render to
 ratatui `TestBackend` (no TTY). `--live` headed when a controlling

@@ -11,7 +11,7 @@
 //! No engine, no client, no login and no gameplay: wherever a real run would launch a
 //! native panel executable, these tests hand the suite the disposable
 //! `e2e-suite-fixture` binary through `--exec-core`. `LIVE` is never read here; the tests
-//! run in a plain `cargo test -p e2e`.
+//! run with `cargo test -p e2e --features test-support --test suite_offline`.
 //!
 //! The fixture speaks the panel's real line contract — outer `PASS: live script_thiever`,
 //! inner evidence `"scenario":"thiever"`, witness `"case":"thiever"` — and writes the
@@ -514,6 +514,7 @@ fn a_contracted_capture_that_never_arrives_stops_the_run() {
 /// A recorded result is durable: resume carries it, never relaunches it, and refuses a
 /// changed request — settings, manifest, or the *content* of an input at the same path —
 /// before any launch.
+#[cfg(feature = "test-support")]
 #[test]
 fn a_pending_visual_result_is_retained_and_resume_refuses_changed_inputs() {
     let tmp = temp_dir("resume");
@@ -1178,6 +1179,7 @@ fn the_profile_default_vault_is_bound_and_a_same_path_change_refuses_resume() {
 
 /// A relative input path is refused: the child would resolve it against its own working
 /// directory, so the suite cannot bind the path the child reads.
+#[cfg(feature = "test-support")]
 #[test]
 fn a_relative_profile_input_is_refused() {
     let tmp = temp_dir("relative-input");
@@ -1243,7 +1245,7 @@ fn dry_run_refuses_an_unresolvable_executable() {
 
 /// A linked vault whose target bytes change at the same path refuses resume before launch.
 /// Unix-only: creating a symlink on Windows needs a privilege the test does not assume.
-#[cfg(unix)]
+#[cfg(all(unix, feature = "test-support"))]
 #[test]
 fn resume_refuses_a_linked_vault_whose_target_bytes_changed() {
     let tmp = temp_dir("symlink-vault");
@@ -1498,6 +1500,7 @@ fn child_arg_refuses_the_removed_passphrase_flag_and_launches_nothing() {
 }
 
 /// A --child-arg that supplies --vault is bound as the effective argv, not the earlier request.
+#[cfg(feature = "test-support")]
 #[test]
 fn extra_args_cannot_evade_profile_identity() {
     let tmp = temp_dir("extra-vault");

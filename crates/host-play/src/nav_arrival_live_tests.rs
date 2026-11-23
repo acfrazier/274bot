@@ -1609,7 +1609,7 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
     let supplied_root = absolute_env_path("BOT_EVIDENCE_DIR");
     std::fs::create_dir_all(&supplied_root).expect("create BOT_EVIDENCE_DIR");
     let evidence_root = std::fs::canonicalize(&supplied_root).expect("resolve BOT_EVIDENCE_DIR");
-    let home = required_directory("HOME", &evidence_root);
+    let _home = required_directory("HOME", &evidence_root);
     let copied_cache = required_directory("BOT_CACHE_DIR", &evidence_root);
     let nav_pack_supplied = absolute_env_path("WORLD_NAV_PACK");
     let nav_pack = std::fs::canonicalize(&nav_pack_supplied).unwrap_or_else(|error| {
@@ -1660,7 +1660,8 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         engine_dir: Some(engine_dir),
         cache_dir: Some(copied_cache.clone()),
         unpack_dir: Some(copied_cache),
-        vault_path: Some(home.join("vault-nav-arrival")),
+        #[cfg(feature = "test-support")]
+        vault_path: Some(_home.join("vault-nav-arrival")),
         nav_pack: Some(nav_pack.clone()),
         ..ProfileOptions::default()
     };

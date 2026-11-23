@@ -219,6 +219,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The per-event Guardian policy is now Flee or Fight in both apps; the
   Ignore choice is gone. A policy saved as Ignore by 0.2.9 loads as Flee,
   and the next settings save writes Flee. A saved Fight stays Fight.
+- `--vault` is not available in this build. Before the first
+  0.3.0 unlock for this server, move or copy the legacy vault to
+  `<state-root>/<vault-component>` (default root: `~/.274bot`). Do not
+  overwrite another vault.
+  Find the component in the built-in mapping or the `vault` field in the
+  original `servers.json` or its private `.migrated` copy. Confirm the
+  mapping with `state servers show`. Stop 274bot before moving the file.
+  If the destination exists, back up both vaults privately and choose which
+  one to import. This remedy applies only before the first import. Do not replace
+  or reopen a completed vault binding.
+  Test-support builds retain the override only for disposable e2e/live fixtures.
 - The TUI keeps every Quester start-zone row reachable with PageUp and
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
 - Fixed unbounded memory growth when a CPU-rendered panel is minimized or occluded.

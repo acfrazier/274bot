@@ -61,6 +61,8 @@ pub struct NativeConfig {
     pub engine: Option<PathBuf>,
     pub cache: Option<PathBuf>,
     pub catalog: PathBuf,
+    /// Test-only vault fixture override.
+    #[cfg(feature = "test-support")]
     pub vault: Option<PathBuf>,
     pub lowmem: bool,
     pub mainland: bool,
@@ -109,6 +111,7 @@ impl NativeConfig {
             self.cache.as_ref().map(|p| p.display().to_string()),
         );
         push("--catalog", Some(self.catalog.display().to_string()));
+        #[cfg(feature = "test-support")]
         push(
             "--vault",
             self.vault.as_ref().map(|p| p.display().to_string()),
@@ -157,11 +160,10 @@ impl NativeConfig {
         // suite resolves them in its own process while a child resolves them in its own
         // cwd, so the two would not necessarily agree: refuse a relative input instead of
         // binding a path the child may not read.
-        for (flag, path) in [
+        let input_paths = [
             ("--catalog", Some(&self.catalog)),
             ("--engine", self.engine.as_ref()),
             ("--cache", self.cache.as_ref()),
-            ("--vault", self.vault.as_ref()),
             ("--exec-core", self.exec_core.as_ref()),
             ("--exec-pair", self.exec_pair.as_ref()),
             ("--exec-external", self.exec_external.as_ref()),
@@ -170,7 +172,14 @@ impl NativeConfig {
             // cannot force an ordinary core/pair run to resolve an external resource.
             ("--external-ts", self.external_ts.as_ref()),
             ("--cwd", self.cwd.as_ref()),
-        ] {
+        ];
+        #[cfg(feature = "test-support")]
+        let input_paths = input_paths
+            .into_iter()
+            .chain([("--vault", self.vault.as_ref())]);
+        #[cfg(not(feature = "test-support"))]
+        let input_paths = input_paths.into_iter();
+        for (flag, path) in input_paths {
             if let Some(path) = path {
                 if path.is_relative() && !path.as_os_str().is_empty() {
                     return Err(format!(
@@ -218,11 +227,17 @@ impl NativeConfig {
                 }
             }
         }
-        for (flag, path) in [
+        let existing_paths = [
             ("--engine", self.engine.as_ref()),
             ("--cache", self.cache.as_ref()),
-            ("--vault", self.vault.as_ref()),
-        ] {
+        ];
+        #[cfg(feature = "test-support")]
+        let existing_paths = existing_paths
+            .into_iter()
+            .chain([("--vault", self.vault.as_ref())]);
+        #[cfg(not(feature = "test-support"))]
+        let existing_paths = existing_paths.into_iter();
+        for (flag, path) in existing_paths {
             if let Some(path) = path {
                 if !path.exists() {
                     return Err(format!("{flag} {} does not exist", path.display()));

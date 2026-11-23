@@ -396,7 +396,7 @@ fn run_live(fault: Fault, label: &str) {
     );
     let evidence = env_path("BOT_EVIDENCE_DIR");
     std::fs::create_dir_all(&evidence).unwrap();
-    let home = PathBuf::from(std::env::var_os("HOME").expect("isohome HOME"));
+    let _home = PathBuf::from(std::env::var_os("HOME").expect("isohome HOME"));
     let game_port = env_port("RELOG_GAME_PORT", 44594);
     let relay = (fault == Fault::DeadServer).then(|| Relay::start(game_port));
     let options = ProfileOptions {
@@ -410,7 +410,8 @@ fn run_live(fault: Fault, label: &str) {
         cache_dir: Some(cache_dir),
         unpack_dir: Some(unpack_dir),
         nav_pack: Some(nav_pack),
-        vault_path: Some(home.join(format!("vault-relog-{label}"))),
+        #[cfg(feature = "test-support")]
+        vault_path: Some(_home.join(format!("vault-relog-{label}"))),
         ..ProfileOptions::default()
     };
     let template = options
