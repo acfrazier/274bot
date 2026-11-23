@@ -3679,22 +3679,20 @@ fn uid_save_on_running_slot_connects_without_requeue_spin() {
 /// start right behind it.
 #[test]
 fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
-    let spacing = Duration::from_millis(400);
-    let queue = Arc::new(QueueMutex::new(LoginQueue::new(
-        spacing,
-        29,
-        Duration::from_secs(60),
-    )));
+    let minimum_spacing = Duration::from_millis(400);
+    let production_spacing = host::login_queue::LOGIN_START_SPACING;
+    // The deadline is the queue's exact start instant plus HANDSHAKE_HOLD.
+    let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
     let statuses = rows(&["alice", "bob"]);
     let alice = SlotArm::new(7, true);
     let bob = SlotArm::new(8, true);
     let mut permit = granted(wait_for_permit(&queue, &statuses, "alice", 7, &alice));
-    thread::sleep(spacing + Duration::from_millis(200));
+    thread::sleep(production_spacing + Duration::from_millis(200));
     let mut alice_start = None;
     let login = permit.attempt(
         |_| true,
-        |_, _| {
-            alice_start = Some(Instant::now());
+        |deadline, _| {
+            alice_start = Some(deadline - host::login_queue::HANDSHAKE_HOLD);
             Err::<(), _>("refused at once")
         },
         |_| None,
@@ -3704,8 +3702,8 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     let mut bob_start = None;
     let login = permit.attempt(
         |_| true,
-        |_, _| {
-            bob_start = Some(Instant::now());
+        |deadline, _| {
+            bob_start = Some(deadline - host::login_queue::HANDSHAKE_HOLD);
             Ok::<(), ()>(())
         },
         |_| None,
@@ -3713,8 +3711,8 @@ fn a_worker_delayed_after_its_grant_is_spaced_from_its_real_start() {
     assert_eq!(login, Some(Ok(())));
     let gap = bob_start.unwrap().duration_since(alice_start.unwrap());
     assert!(
-        gap >= spacing,
-        "attempts started {gap:?} apart, closer than the {spacing:?} spacing"
+        gap >= minimum_spacing,
+        "attempts started {gap:?} apart, below the {minimum_spacing:?} minimum with {production_spacing:?} production spacing"
     );
 }
 
