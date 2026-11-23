@@ -16,6 +16,7 @@ stop -> Host::stop
 wait -> Host::wait_next_tick
 walk.near -> Host::walk
 walk.to -> Host::walk
+api::script_contract::MAX_START_CHARGE <- required_text
 host Host::bank -> .await_bank
 host Host::interact -> .queue_interaction
 host Host::log -> .log_line
