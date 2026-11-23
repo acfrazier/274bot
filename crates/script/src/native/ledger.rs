@@ -15,6 +15,9 @@ pub(crate) struct Runtime {
     pub ledger: Option<Box<Ledger>>,
     pub budget: TickBudget,
     pub clock: ActiveClock,
+    /// Observed game ticks that elapsed while the run was eligible to act
+    /// ([`EligibleTicks`]).
+    pub eligible_ticks: EligibleTicks,
     pub observed_walk_outcome: ObservedWalkOutcome,
     /// The latest manual takeover sequence consumed by Resume.
     pub takeover_consumed_seq: u64,
@@ -23,6 +26,13 @@ pub(crate) struct Runtime {
 }
 
 impl Runtime {
+    /// Record whether the run is eligible to act: the owner's active clock
+    /// and its eligible observed ticks open and close together.
+    pub fn observe_eligibility(&mut self, now: Instant, eligible: bool) {
+        self.clock.observe(now, eligible);
+        self.eligible_ticks.set_open(eligible);
+    }
+
     pub fn revoke(&mut self) {
         if let Some(ledger) = &mut self.ledger {
             ledger.revoke();
@@ -57,6 +67,63 @@ impl Runtime {
     pub fn quiet_read_wait(&mut self, now: Instant, tick: u64) -> Option<(QuietReadOwner, u64)> {
         let active_now = self.clock.now(now).as_duration();
         self.ledger.as_mut()?.quiet_read_wait(now, active_now, tick)
+    }
+}
+
+/// The observed game ticks that elapsed while a run was eligible to act: the
+/// tick-domain twin of [`ActiveClock`]. Pause, guardian hold, not-ready,
+/// recovery hold and Blocked close the span, so the ticks that pass inside
+/// one do not count. It counts every observed tick of an eligible span,
+/// whether or not a machine polled on it, so a machine that polls rarely
+/// reads the same count as one that polls every tick. It reads no clock
+/// (`AGENTS.md` content-timed waits).
+///
+/// `last` is [`SPAN_CLOSED`] while the span is closed and [`SPAN_OPENED`]
+/// from the open until the first frame of the span, which only sets the
+/// baseline; the suspended gap before it is never counted.
+#[derive(Debug)]
+pub(crate) struct EligibleTicks {
+    banked: u64,
+    last: u64,
+}
+
+const SPAN_CLOSED: u64 = u64::MAX;
+const SPAN_OPENED: u64 = u64::MAX - 1;
+
+impl Default for EligibleTicks {
+    fn default() -> Self {
+        Self {
+            banked: 0,
+            last: SPAN_CLOSED,
+        }
+    }
+}
+
+impl EligibleTicks {
+    /// An eligible span opens or closes. Repeating the state changes nothing.
+    pub fn set_open(&mut self, open: bool) {
+        match (self.last == SPAN_CLOSED, open) {
+            (false, false) => self.last = SPAN_CLOSED,
+            (true, true) => self.last = SPAN_OPENED,
+            _ => {}
+        }
+    }
+
+    /// One host frame on observed `tick`. A tick clock that moved back (a new
+    /// session) counts nothing.
+    pub fn observe(&mut self, tick: u64) {
+        if self.last == SPAN_CLOSED {
+            return;
+        }
+        if self.last != SPAN_OPENED {
+            self.banked = self.banked.saturating_add(tick.saturating_sub(self.last));
+        }
+        self.last = tick.min(SPAN_OPENED - 1);
+    }
+
+    /// The eligible observed ticks banked so far.
+    pub fn count(&self) -> u64 {
+        self.banked
     }
 }
 
@@ -1681,6 +1748,56 @@ mod tests {
         budget.observe_fix(13, at(3209, 3215));
         budget.hold_end();
         assert!(!budget.take_hold_teleport());
+    }
+
+    #[test]
+    fn eligible_ticks_count_every_tick_of_an_open_span_and_none_of_a_closed_one() {
+        assert_eq!(std::mem::size_of::<EligibleTicks>(), 16);
+        let mut ticks = EligibleTicks::default();
+        // Closed: frames count nothing.
+        ticks.observe(5);
+        assert_eq!(ticks.count(), 0);
+        // The first frame of a span sets the baseline only.
+        ticks.set_open(true);
+        ticks.set_open(true);
+        ticks.observe(10);
+        assert_eq!(ticks.count(), 0);
+        // Frames count the tick delta, polled or not: a sparse frame counts
+        // the whole eligible gap, and a repeat frame none.
+        ticks.observe(11);
+        ticks.observe(11);
+        ticks.observe(61);
+        assert_eq!(ticks.count(), 51);
+        // A suspended span (hold, pause, not-ready, Blocked) counts nothing,
+        // whatever its length, and the gap before the next frame stays out.
+        ticks.set_open(false);
+        ticks.set_open(false);
+        ticks.observe(500);
+        ticks.observe(5000);
+        assert_eq!(ticks.count(), 51);
+        ticks.set_open(true);
+        ticks.observe(9000);
+        assert_eq!(ticks.count(), 51, "the suspended gap is not counted");
+        ticks.observe(9002);
+        assert_eq!(ticks.count(), 53);
+        // A tick clock that moved back counts nothing.
+        ticks.observe(3);
+        assert_eq!(ticks.count(), 53);
+    }
+
+    #[test]
+    fn the_runtime_opens_and_closes_the_clock_and_the_eligible_ticks_together() {
+        let mut runtime = Runtime::default();
+        let now = Instant::now();
+        runtime.observe_eligibility(now, true);
+        runtime.eligible_ticks.observe(1);
+        runtime.eligible_ticks.observe(4);
+        assert!(runtime.clock.is_eligible());
+        assert_eq!(runtime.eligible_ticks.count(), 3);
+        runtime.observe_eligibility(now, false);
+        assert!(!runtime.clock.is_eligible());
+        runtime.eligible_ticks.observe(400);
+        assert_eq!(runtime.eligible_ticks.count(), 3);
     }
 
     #[test]

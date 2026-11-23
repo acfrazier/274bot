@@ -2970,15 +2970,16 @@ fn a_walk_deadline_returns_no_route_to_step_without_a_fact_or_retry() {
         "the deadline starts with one owned walk"
     );
     let before = state.prereq_snapshot();
-    for tick in 2..=u64::from(crate::native::walk::WALK_DEADLINE_TICKS) {
-        assert!(
-            with_tick(&snapshot, &mut ledger, tick, |native| {
-                run.poll(native.actions, &mut native.cx, Some(&state), &mut budget)
-            })
-            .is_pending(),
-            "the owned walk stays pending on tick {tick}"
-        );
-    }
+    assert!(
+        with_tick(
+            &snapshot,
+            &mut ledger,
+            u64::from(crate::native::walk::WALK_DEADLINE_TICKS),
+            |native| run.poll(native.actions, &mut native.cx, Some(&state), &mut budget)
+        )
+        .is_pending(),
+        "the owned walk stays pending the tick before its deadline"
+    );
     let result = with_tick(
         &snapshot,
         &mut ledger,

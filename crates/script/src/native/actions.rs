@@ -1264,6 +1264,7 @@ mod tests {
             shop_keepers: None,
             wilderness: None,
             active_now: Duration::ZERO,
+            eligible_ticks: 0,
             wall_now: Instant::now(),
             ledger: &mut ledger,
             pending_note_progress: None,
@@ -1792,6 +1793,7 @@ mod tests {
             shop_keepers: None,
             wilderness: None,
             active_now,
+            eligible_ticks: tick,
             wall_now: Instant::now(),
             ledger,
             pending_note_progress: None,
@@ -2847,18 +2849,17 @@ mod tests {
         });
         assert!(authority.live());
         // A day of wall time on the active clock spends nothing: the walk
-        // counts observed game ticks, and no host receipt ever arrived.
-        for tick in 2..=u64::from(super::walk::WALK_DEADLINE_TICKS) {
-            with_snapshot_frame_at(
-                &mut ledger,
-                Duration::from_secs(24 * 60 * 60),
-                tick,
-                None,
-                |cx| {
-                    assert!(actions.poll(&handle, cx).is_pending(), "tick {tick}");
-                },
-            );
-        }
+        // counts observed game ticks, and no host receipt ever arrived. The
+        // last tick before the deadline leaves it pending.
+        with_snapshot_frame_at(
+            &mut ledger,
+            Duration::from_secs(24 * 60 * 60),
+            u64::from(super::walk::WALK_DEADLINE_TICKS),
+            None,
+            |cx| {
+                assert!(actions.poll(&handle, cx).is_pending());
+            },
+        );
         assert!(authority.live());
         let last = u64::from(super::walk::WALK_DEADLINE_TICKS) + 1;
         with_snapshot_frame_at(&mut ledger, Duration::ZERO, last, None, |cx| {
@@ -2981,23 +2982,23 @@ mod tests {
                     WalkEnd::Arrived => (target, true, 1),
                     WalkEnd::RouteEnded => (short, false, 1),
                     // The walk is still moving at the last observed tick of
-                    // its budget: 999 ticks after the first are not enough.
+                    // its budget: the tick before it leaves the walk pending.
                     WalkEnd::Failed => {
                         (short, true, u64::from(super::walk::WALK_DEADLINE_TICKS) + 1)
                     }
                     _ => unreachable!(),
                 };
                 let final_snapshot = walking_snapshot(tile, still_moving);
-                for before in 2..tick {
+                if tick > 1 {
                     with_snapshot_frame_at(
                         &mut ledger,
                         Duration::ZERO,
-                        before,
+                        tick - 1,
                         Some(&final_snapshot),
                         |cx| {
                             assert!(
                                 actions.poll(&handle, cx).is_pending(),
-                                "radius {radius}: a moving walk stays pending on tick {before}"
+                                "radius {radius}: a moving walk stays pending the tick before"
                             );
                         },
                     );

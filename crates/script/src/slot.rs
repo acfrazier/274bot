@@ -1720,7 +1720,8 @@ impl SlotScript {
         self.want_run = false;
         self.evidence_wait_run = None;
         self.native_runtime.clear_note_progress();
-        self.native_runtime.clock.observe(Instant::now(), false);
+        self.native_runtime
+            .observe_eligibility(Instant::now(), false);
         self.revoke_native_input();
         self.interrupt_compiled(Interrupt::Pause);
 
@@ -1992,7 +1993,8 @@ impl SlotScript {
         self.guardian_revoke(FightCancel::SessionEnded);
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
-        self.native_runtime.clock.observe(Instant::now(), false);
+        self.native_runtime
+            .observe_eligibility(Instant::now(), false);
         self.manual_route_run = None;
         self.manual_route_bank_fetch = None;
         self.on_is_up(false);
@@ -2215,7 +2217,7 @@ impl SlotScript {
         let _ = self.native_quiet_read(now);
         // Pause, hold, not-ready, recovery hold and Blocked freeze the clock.
         let eligible = self.dispatch_open() && !held;
-        self.native_runtime.clock.observe(now, eligible);
+        self.native_runtime.observe_eligibility(now, eligible);
         if self.surface_active() {
             return;
         }

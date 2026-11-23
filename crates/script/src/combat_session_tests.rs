@@ -359,6 +359,7 @@ fn with_tick<R>(
             retained: &mut retained,
             action_id: 0,
             active_now: Duration::from_millis(tick * 600),
+            eligible_ticks: tick,
             wall_now: Instant::now(),
             ledger,
             pending_note_progress: None,

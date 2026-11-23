@@ -2291,17 +2291,17 @@ mod tests {
         crate::compat::clue::on_reset();
         let (flow, _) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1);
         assert_eq!(flow, ScriptFlow::Continue);
-        for tick in 2..=1000 {
-            let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, tick);
-            assert_eq!(
-                flow,
-                ScriptFlow::Continue,
-                "not yet 1,000 observed ticks, tick {tick}"
-            );
-            assert!(interacts.is_empty());
-        }
+        let deadline = u64::from(script::native::walk::WALK_DEADLINE_TICKS);
+        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, deadline);
+        assert_eq!(
+            flow,
+            ScriptFlow::Continue,
+            "not yet the walk's observed-tick deadline"
+        );
+        assert!(interacts.is_empty());
         assert_eq!(ledger.as_ref().unwrap().test_outbox().len(), 1);
-        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1001);
+        let (flow, interacts) =
+            tick_native(&mut frame, &mut script, &data, &mut ledger, deadline + 1);
         let ScriptFlow::Blocked(failure) = flow else {
             panic!("the finite walk deadline must block: {flow:?}");
         };
@@ -2309,7 +2309,8 @@ mod tests {
         assert_eq!(failure.message.as_ref(), "clue walk timed out");
         assert!(interacts.is_empty());
         assert!(script.clue_walk.is_none());
-        let (flow, interacts) = tick_native(&mut frame, &mut script, &data, &mut ledger, 1002);
+        let (flow, interacts) =
+            tick_native(&mut frame, &mut script, &data, &mut ledger, deadline + 2);
         assert!(matches!(flow, ScriptFlow::Blocked(_)));
         assert!(interacts.is_empty());
         assert_eq!(

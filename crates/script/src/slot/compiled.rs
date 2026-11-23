@@ -488,6 +488,7 @@ pub(crate) fn frame_context<'a>(
     };
     let now = Instant::now();
     runtime.budget.observe_frame(ctx.tick, ctx.snapshot);
+    runtime.eligible_ticks.observe(ctx.tick);
     ActionContext {
         walk_prereq: Default::default(),
         protected_items: None,
@@ -511,6 +512,7 @@ pub(crate) fn frame_context<'a>(
         retained,
         action_id: 0,
         active_now: runtime.clock.now(now).as_duration(),
+        eligible_ticks: runtime.eligible_ticks.count(),
         wall_now: now,
         ledger: &mut runtime.ledger,
         pending_note_progress: Some(&mut runtime.pending_note_progress),

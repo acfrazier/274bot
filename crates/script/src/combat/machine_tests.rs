@@ -129,6 +129,7 @@ impl Runtime {
             retained: &mut self.retained,
             action_id,
             active_now: Duration::from_millis(tick * 600),
+            eligible_ticks: tick,
             wall_now: self.wall,
             ledger: &mut self.ledger,
             pending_note_progress: None,

@@ -1339,8 +1339,9 @@ correlated successful terminal route receipt is held while authoritative
 local-actor motion is still moving; failed, blocked, evidence-required and
 cancelled receipts surface promptly. Motion is carried explicitly through
 the isolate snapshot; old snapshots report it unavailable, not stationary.
-The walk's deadline of 1,000 observed game ticks bounds the wait, without
-relaxing reach. A hold, a pause and several polls in one tick do not spend it.
+The walk's deadline of 11,460 eligible observed game ticks (the route
+follower's maximum) bounds the wait, without relaxing reach. A hold, a pause
+and a blocked interval do not spend it.
 `NeedsEvidence` preserves its typed quest gates through native walk adapters.
 Quester Stops with a `needs-evidence` failure; it does not retain an unused
 copy of the gates after reporting that terminal block.
