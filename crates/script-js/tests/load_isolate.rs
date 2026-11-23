@@ -5330,7 +5330,7 @@ export default class T extends LoopingBot {{
     tick_bank_slot(&mut slot, &mut input, 2, -1, -1, &mut snapshot);
     assert_eq!(
         slot.probe("__messages.includes('bank: Shilo Village uses npc access')")
-            .unwrap(),
+            .expect("bank access log probe must succeed after the walk result"),
         serde_json::json!(expected_log),
         "bank access logging follows trimmed caller obstacles"
     );
