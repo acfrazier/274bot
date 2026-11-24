@@ -273,11 +273,8 @@ pub(super) fn gate_pass_watch(
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Keep the observed content-wait count separate from its stamps and the reused hop budget."
-)]
-fn log_prereq_hop_wait(
+/// Structured log fields emitted while waiting on a prerequisite transport hop.
+struct PrereqHopWaitLog {
     wait: &'static str,
     crossing: api::prereq_steps::CrossingId,
     since: u32,
@@ -286,20 +283,24 @@ fn log_prereq_hop_wait(
     bound: u32,
     end: &'static str,
     hop_budget: u32,
-) {
-    api::host_log!(
-        Category::NavEvent,
-        Level::Info,
-        "prereq hop-wait={} crossing={:?} since={} at={} count={} bound={} end={} hop_budget={}",
-        wait,
-        crossing,
-        since,
-        at,
-        count,
-        bound,
-        end,
-        hop_budget
-    );
+}
+
+impl PrereqHopWaitLog {
+    fn emit(self) {
+        api::host_log!(
+            Category::NavEvent,
+            Level::Info,
+            "prereq hop-wait={} crossing={:?} since={} at={} count={} bound={} end={} hop_budget={}",
+            self.wait,
+            self.crossing,
+            self.since,
+            self.at,
+            self.count,
+            self.bound,
+            self.end,
+            self.hop_budget
+        );
+    }
 }
 
 fn log_prereq_hop_timeout(snapshot: &GameSnapshot, hop: &mut TransportHop, hop_budget: u32) {
@@ -314,16 +315,17 @@ fn log_prereq_hop_timeout(snapshot: &GameSnapshot, hop: &mut TransportHop, hop_b
     };
     if let Some(mut watch) = pass_watch {
         let count = watch.ticks.observe(snapshot.tick());
-        log_prereq_hop_wait(
-            "pass",
-            watch.crossing,
-            watch.since,
-            snapshot.tick(),
+        PrereqHopWaitLog {
+            wait: "pass",
+            crossing: watch.crossing,
+            since: watch.since,
+            at: snapshot.tick(),
             count,
-            watch.bound,
-            "timeout",
+            bound: watch.bound,
+            end: "timeout",
             hop_budget,
-        );
+        }
+        .emit();
     }
     if let Some(watch) = hop.refusal_watch.as_mut() {
         let wait = if watch.matched.is_some() {
@@ -332,16 +334,17 @@ fn log_prereq_hop_timeout(snapshot: &GameSnapshot, hop: &mut TransportHop, hop_b
             "refusal-page"
         };
         let count = watch.wait_ticks.observe(snapshot.tick());
-        log_prereq_hop_wait(
+        PrereqHopWaitLog {
             wait,
-            watch.crossing,
-            watch.wait_since,
-            snapshot.tick(),
+            crossing: watch.crossing,
+            since: watch.wait_since,
+            at: snapshot.tick(),
             count,
-            PREREQ_DIALOGUE_WAIT_BOUND,
-            "timeout",
+            bound: PREREQ_DIALOGUE_WAIT_BOUND,
+            end: "timeout",
             hop_budget,
-        );
+        }
+        .emit();
     }
 }
 
@@ -426,16 +429,17 @@ fn poll_gate_refusal_dialog<D: Driver>(
     if page.root == -1 {
         if let Some(matched) = watch.matched {
             let count = watch.wait_ticks.observe(snapshot.tick());
-            log_prereq_hop_wait(
-                "refusal-close",
-                watch.crossing,
-                watch.wait_since,
-                snapshot.tick(),
+            PrereqHopWaitLog {
+                wait: "refusal-close",
+                crossing: watch.crossing,
+                since: watch.wait_since,
+                at: snapshot.tick(),
                 count,
-                PREREQ_DIALOGUE_WAIT_BOUND,
-                "closed",
+                bound: PREREQ_DIALOGUE_WAIT_BOUND,
+                end: "closed",
                 hop_budget,
-            );
+            }
+            .emit();
             return Some(matched);
         }
         return None;
@@ -445,16 +449,17 @@ fn poll_gate_refusal_dialog<D: Driver>(
     }
     let count = watch.wait_ticks.observe(snapshot.tick());
     if watch.logged_page != Some(page) {
-        log_prereq_hop_wait(
-            "refusal-page",
-            watch.crossing,
-            watch.wait_since,
-            snapshot.tick(),
+        PrereqHopWaitLog {
+            wait: "refusal-page",
+            crossing: watch.crossing,
+            since: watch.wait_since,
+            at: snapshot.tick(),
             count,
-            PREREQ_DIALOGUE_WAIT_BOUND,
-            "page",
+            bound: PREREQ_DIALOGUE_WAIT_BOUND,
+            end: "page",
             hop_budget,
-        );
+        }
+        .emit();
         watch.logged_page = Some(page);
     }
     let matched = watch
@@ -469,6 +474,118 @@ fn poll_gate_refusal_dialog<D: Driver>(
         watch.logged_page = None;
     }
     None
+}
+
+/// Build the positional/evidence predicate that proves a transport hop arrived.
+fn build_arrived_arm(
+    snapshot: &GameSnapshot,
+    hop: &TransportHop,
+    edge: Box<TransportEdge>,
+    close_enough: i32,
+    options: &TravelOptions<'_>,
+) -> Evidence<'static> {
+    if let Some(pass) = crossing_pass(&edge, options) {
+        let landing = pass.landing;
+        let message = pass.message.clone();
+        let pass_message_seen = snapshot
+            .chat_lines()
+            .iter()
+            .any(|line| line.sequence > hop.chat_seq && line.text.contains(message.as_ref()));
+        return Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+            pass_message_seen && now.world_tile() == Some(landing)
+        });
+    }
+    if edge.takeoff.is_some() {
+        return arrived(edge.to, 0);
+    }
+    if edge.kind == TransportKind::Door && edge.dir.is_some() {
+        return Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+            let Some(here) = now.world_tile() else {
+                return false;
+            };
+            here.level == edge.to.level
+                && door_crossed(&edge, here)
+                && (here.x - edge.to.x).abs().max((here.z - edge.to.z).abs()) <= close_enough
+        });
+    }
+    if edge.kind == TransportKind::Door && edge.dir.is_none() {
+        return Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+            now.world_tile()
+                .is_some_and(|here| door_dir_none_arrived(&edge, here, close_enough))
+        });
+    }
+    if is_essence_entry_edge(&edge) {
+        // The entry teleport lands at a random `essence_mine_teleports` coord
+        // — never the pad exactly — so any tile inside the enclosed mine
+        // completes the hop (and latches the session).
+        return Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+            now.world_tile().is_some_and(in_essence_mine)
+        });
+    }
+    if edge.kind == TransportKind::EssenceExit {
+        // The exit portal teleports to `map_findsquare(anchor, 0, 2, lineofwalk)`:
+        // a random standable tile within chebyshev 2 of the wizard's anchor,
+        // never the anchor exactly.
+        let to = edge.to;
+        return Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+            now.world_tile().is_some_and(|t| {
+                t.level == to.level
+                    && (t.x - to.x).abs().max((t.z - to.z).abs()) <= ESSENCE_MINE_EXIT_ARRIVE_RADIUS
+            })
+        });
+    }
+    if edge.kind == TransportKind::Teleport {
+        // `player_teleport_normal` lands at `map_findsquare(to, 0, 2, lineofwalk)`:
+        // a random standable tile within chebyshev 2 of the packed landing,
+        // never the tile exactly — so the hop accepts that radius regardless
+        // of the runner's exact `close_enough`.
+        return arrived(edge.to, TELEPORT_ARRIVE_RADIUS);
+    }
+    if edge.kind == TransportKind::Glider {
+        return arrived(edge.to, GLIDER_ARRIVE_RADIUS);
+    }
+    if edge.player_delta.is_some() {
+        // The content displaces the player's actual takeoff stand. A route's
+        // planned landing is not proof if live admission used a different
+        // stand, and an unchanged tile cannot prove a crossing.
+        let landing = hop
+            .sent_tile
+            .and_then(|sent| edge.landing_from(sent).map(|to| (sent, to)));
+        return Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+            landing.is_some_and(|(sent, to)| {
+                now.world_tile().is_some_and(|here| {
+                    here != sent
+                        && here.level == to.level
+                        && (here.x - to.x).abs().max((here.z - to.z).abs()) <= close_enough
+                })
+            })
+        });
+    }
+    if matches!(edge.kind, TransportKind::Ladder | TransportKind::Stairs)
+        && edge.at.level != edge.to.level
+        && edge.at.x == edge.to.x
+        && edge.at.z == edge.to.z
+    {
+        // Vertical moves preserve the player's stand adjacent to any side of
+        // the live loc, not only adjacent to its south-west origin.
+        let (origin, width, length) = hop.arrival_footprint.unwrap_or((edge.at, 1, 1));
+        let radius = VERTICAL_ARRIVE_RADIUS.max(close_enough);
+        let dest_level = edge.to.level;
+        return Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+            now.world_tile().is_some_and(|here| {
+                here.level == dest_level
+                    && (origin.x - radius..=origin.x + width - 1 + radius).contains(&here.x)
+                    && (origin.z - radius..=origin.z + length - 1 + radius).contains(&here.z)
+            })
+        });
+    }
+    if (edge.to.z - edge.at.z).abs() == CELLAR_SHIFT && edge.to.level == edge.at.level {
+        // `movecoord(coord(), 0, 0, ±6400)` lands on the player's tile, one
+        // Chebyshev off the loc-baked dest when the hop is taken from an
+        // adjacent stand. Host WalkNear uses close_enough 0.
+        return arrived(edge.to, CELLAR_ARRIVE_RADIUS.max(close_enough));
+    }
+    arrived(edge.to, close_enough)
 }
 
 const WEB_CUT_FAILURE_MESSAGE: &str = "You fail to cut through it.";
@@ -852,39 +969,10 @@ impl FollowRun {
                 return Poll::Terminal(outcome);
             }
         }
-        if let (Some(cb), Leg::Transport { edge }) = (options.on_event.as_mut(), &hop.leg) {
-            cb(TravelEvent::TransportState {
-                tick: snapshot.tick(),
-                at: here,
-                kind: edge.kind,
-                loc_id: edge.loc_id,
-                from: edge.at,
-                to: edge.to,
-                open: edge_loc_open(snapshot, edge),
-                approach: hop.approach.is_some(),
-                troll: hop.troll,
-                waited: if npc_backed(edge) {
-                    hop.npc_recovery.waited
-                } else {
-                    hop.ticks_waited.get()
-                },
-                loc_wait: self.loc_wait,
-                budget: self.budget,
-                live_loc: find_transport_loc(snapshot, edge).map(|l| (l.id, l.tile)),
-            });
-        }
+        self.emit_transport_state(snapshot, &hop, here, options);
         let npc_hop = matches!(&hop.leg, Leg::Transport { edge } if npc_backed(edge));
         if npc_hop {
-            if hop.npc_recovery.last_tick != Some(snapshot.tick()) {
-                hop.npc_recovery.last_tick = Some(snapshot.tick());
-                hop.npc_recovery.waited += 1;
-            }
-            if hop.approach.is_some() {
-                if hop.npc_recovery.waited > self.budget {
-                    fire_leg(options, &hop.leg, LegPhase::Failed);
-                    return Poll::Terminal(self.npc_expired(snapshot, &hop));
-                }
-                let poll = self.poll_npc_approach(d, snapshot, &mut hop, options);
+            if let Some(poll) = self.poll_npc_hop_precheck(d, snapshot, &mut hop, options) {
                 if matches!(poll, Poll::Watching) {
                     self.transport = Some(hop);
                 }
@@ -910,260 +998,47 @@ impl FollowRun {
                 return Poll::Terminal(outcome);
             }
         } else if hop.approach.is_none() {
-            if let Leg::Transport { edge } = &hop.leg {
-                // Cheap hop: Open was sent; the live open leaf can sit a tile
-                // off `at`. Walk through as soon as it reads open — do not sit
-                // until the troll budget while the door is already open.
-                if edge.kind == TransportKind::Door
-                    && edge_loc_open(snapshot, edge)
-                    && !door_crossed(edge, here)
-                {
-                    let mut ix = Interactions::new(snapshot, d);
-                    let result = ix.walk(hop.to);
-                    report_walk(options, snapshot, here, hop.to, &result);
-                    match result {
-                        SendResult::Sent { .. } => {
-                            api::host_log!(
-                                Category::NavTrace,
-                                Level::Debug,
-                                "cheap hop walk-through to {:?}",
-                                hop.to
-                            );
-                        }
-                        SendResult::Refused { reason, .. } => {
-                            fire_leg(options, &hop.leg, LegPhase::Failed);
-                            return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
-                        }
-                    }
-                    self.transport = Some(hop);
-                    return Poll::Watching;
-                } else if edge.open_loc_id.is_some()
-                    && edge.kind != TransportKind::Door
-                    && !npc_backed(edge)
-                    && edge_loc_open(snapshot, edge)
-                    && hop.tries == 0
-                {
-                    return match find_transport_target_instance(snapshot, edge, hop.npc_index) {
-                        Some(target) => {
-                            let arrival_footprint = target.footprint();
-                            let mut ix = Interactions::new(snapshot, d);
-                            match interact_transport(
-                                snapshot,
-                                &mut ix,
-                                target,
-                                edge,
-                                &mut options.on_event,
-                            ) {
-                                SendResult::Sent { .. } => {
-                                    hop.tries = 1;
-                                    hop.ticks_waited = TickCount::sent_at(snapshot.tick());
-                                    hop.sent_tile = Some(here);
-                                    hop.arrival_footprint = arrival_footprint;
-                                    hop.pass_watch = gate_pass_watch(snapshot, edge, options);
-                                    self.loc_wait = 0;
-                                    self.transport = Some(hop);
-                                    Poll::Watching
-                                }
-                                SendResult::Refused { reason, .. } => {
-                                    fire_leg(options, &hop.leg, LegPhase::Failed);
-                                    Poll::Terminal(TravelOutcome::Refused { at: here, reason })
-                                }
-                            }
-                        }
-                        None => {
-                            self.transport = Some(hop);
-                            Poll::Watching
-                        }
-                    };
-                }
-            }
-        }
-        if hop.approach.is_none() {
-            let web_edge = match &hop.leg {
-                Leg::Transport { edge } if is_slashable_web(edge) => Some(edge.clone()),
-                _ => None,
-            };
-            if let Some(edge) = web_edge.filter(|edge| {
-                !edge_loc_open(snapshot, edge) && observed_web_cut_failure(snapshot, hop.chat_seq)
-            }) {
-                let Some(target) = find_transport_target_instance(snapshot, &edge, hop.npc_index)
-                else {
-                    self.loc_wait += 1;
-                    if self.loc_wait > self.budget {
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        return Poll::Terminal(TravelOutcome::Blocked {
-                            at: here,
-                            leg: self.leg_index,
-                            why: BlockedWhy::SlashableWebMissingOnRetry {
-                                loc_id: edge.loc_id,
-                            },
-                        });
-                    }
-                    self.transport = Some(hop);
-                    return Poll::Watching;
-                };
-                let action = match current_web_action(
-                    snapshot,
-                    &edge,
-                    options.edges,
-                    options.quest_evidence,
-                ) {
-                    Ok(action) => action,
-                    Err(reason) => {
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        return Poll::Terminal(web_action_failure(
-                            here,
-                            self.leg_index,
-                            &edge,
-                            reason,
-                        ));
-                    }
-                };
-                hop.open_sent_tick = Some(snapshot.tick());
-                let poll = self.resend_transport(d, snapshot, &mut hop, options, target, action);
+            if let Some(poll) = self.poll_open_leaf_hop(d, snapshot, &mut hop, here, options) {
                 if matches!(poll, Poll::Watching) {
-                    // A web cut is a fresh interaction: its clock restarts.
-                    hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                     self.transport = Some(hop);
                 }
                 return poll;
             }
         }
         if hop.approach.is_none() {
+            if let Some(poll) = self.poll_slashable_web_retry(d, snapshot, &mut hop, here, options)
+            {
+                if matches!(poll, Poll::Watching) {
+                    self.transport = Some(hop);
+                }
+                return poll;
+            }
             if let Some(poll) = self.recover_occupied(d, snapshot, &mut hop, options) {
                 if matches!(poll, Poll::Watching) {
                     self.transport = Some(hop);
                 }
                 return poll;
             }
-        }
-        // Loc-backed pre-interact approach; NPC approaches are driven above.
-        if hop.approach.is_some() {
-            match self.poll_approach(d, snapshot, &mut hop, options) {
-                Poll::Watching => {
-                    self.transport = Some(hop);
-                    return Poll::Watching;
-                }
-                Poll::Terminal(outcome) => return Poll::Terminal(outcome),
-                Poll::LegDone => {}
-            }
-            let edge = match &hop.leg {
-                Leg::Transport { edge } => edge.clone(),
-                Leg::Walk { .. } => unreachable!("transport hop holds a transport leg"),
-            };
-            if edge.kind == TransportKind::Door && edge_loc_open(snapshot, &edge) {
-                // The leaf opened (another player, or a slashed web) while
-                // the player walked to this stand. OP_LOC1 on an open leaf
-                // is Close: send nothing, and let the next poll's open-leaf
-                // walk (door recovery, or the cheap hop's) cross it.
+        } else {
+            // Loc-backed pre-interact approach; NPC approaches are driven above.
+            let poll = self.poll_loc_approach_and_send(d, snapshot, &mut hop, here, options);
+            if matches!(poll, Poll::Watching) {
                 self.transport = Some(hop);
-                return Poll::Watching;
             }
-            let target = find_transport_target_instance(snapshot, &edge, hop.npc_index);
-            return match target {
-                Some(target) => {
-                    let action = if is_slashable_web(&edge) {
-                        match current_web_action(
-                            snapshot,
-                            &edge,
-                            options.edges,
-                            options.quest_evidence,
-                        ) {
-                            Ok(action) => action,
-                            Err(reason) => {
-                                fire_leg(options, &hop.leg, LegPhase::Failed);
-                                return Poll::Terminal(web_action_failure(
-                                    here,
-                                    self.leg_index,
-                                    &edge,
-                                    reason,
-                                ));
-                            }
-                        }
-                    } else {
-                        &edge
-                    };
-                    let chat_seq_at_send = (npc_backed(&edge)
-                        || is_slashable_web(&edge)
-                        || edge.kind == TransportKind::AgilityShortcut
-                        || has_authored_crossing_metadata(&edge, options))
-                    .then(|| chat_seq(snapshot));
-                    let arrival_footprint = target.footprint();
-                    let target_name = target.name();
-                    let mut ix = Interactions::new(snapshot, d);
-                    match interact_transport(
-                        snapshot,
-                        &mut ix,
-                        target,
-                        action,
-                        &mut options.on_event,
-                    ) {
-                        SendResult::Sent { .. } => {
-                            self.loc_wait = 0;
-                            hop.ticks_waited = TickCount::sent_at(snapshot.tick());
-                            hop.sent_tile = Some(here);
-                            hop.arrival_footprint = arrival_footprint;
-                            if let Some(seq) = chat_seq_at_send {
-                                hop.chat_seq = seq;
-                            }
-                            hop.refusal_watch = gate_refusal_watch(snapshot, &edge, options);
-                            hop.pass_watch = gate_pass_watch(snapshot, &edge, options);
-                            hop.approach = None;
-                            if edge.kind == TransportKind::Door {
-                                hop.open_sent_tick = Some(snapshot.tick());
-                                note_door_open_sent(&edge, snapshot.tick(), target_name, options);
-                                if !is_slashable_web(&edge) {
-                                    hop.tries = hop.tries.saturating_add(1);
-                                    hop.door_retry.sent(snapshot.tick());
-                                }
-                            }
-                            if edge.open_loc_id.is_some()
-                                && edge.kind != TransportKind::Door
-                                && edge_loc_open(snapshot, &edge)
-                            {
-                                hop.tries = 1;
-                            }
-                            self.transport = Some(hop);
-                            Poll::Watching
-                        }
-                        SendResult::Refused { reason, .. } => {
-                            fire_leg(options, &hop.leg, LegPhase::Failed);
-                            Poll::Terminal(TravelOutcome::Refused { at: here, reason })
-                        }
-                    }
-                }
-                None => {
-                    self.loc_wait += 1;
-                    if self.loc_wait > self.budget {
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        Poll::Terminal(TravelOutcome::Blocked {
-                            at: here,
-                            leg: self.leg_index,
-                            why: BlockedWhy::TransportTargetOutOfRange {
-                                kind: edge.kind,
-                                loc_id: edge.loc_id,
-                                at: edge.at,
-                            },
-                        })
-                    } else {
-                        self.transport = Some(hop);
-                        Poll::Watching
-                    }
-                }
-            };
+            return poll;
         }
-        // The "I can't reach that!" watch: the client pathfind failed
-        // right after the send, so the hop is refused immediately instead
-        // of sitting out the settle budget. NPC-backed hops refresh
-        // `chat_seq` at interaction send, so only genuinely new lines count.
+        // The "I can't reach that!" watch: the client pathfind failed right
+        // after the send, so the hop is refused immediately instead of sitting
+        // out the settle budget. NPC-backed hops refresh `chat_seq` at
+        // interaction send, so only genuinely new lines count.
         let hop_seq = hop.chat_seq;
         let edge = match &hop.leg {
             Leg::Transport { edge } => edge.clone(),
             Leg::Walk { .. } => unreachable!("transport hop holds a transport leg"),
         };
         // The latch target, read before the arrive-arm builder below moves
-        // `edge` into the door closure: a completed essence entry hop
-        // records the wizard the player entered through.
+        // `edge` into the door closure: a completed essence entry hop records
+        // the wizard the player entered through.
         let entry_wizard = is_essence_entry_edge(&edge).then_some(edge.loc_id);
         if api::hostlog::debug_enabled() {
             api::host_log!(
@@ -1177,256 +1052,11 @@ impl FollowRun {
                 edge_loc_open(snapshot, &edge),
             );
         }
-        // An Npc hop's first op can open a chat dialog instead of riding
-        // immediately (the live cart drivers' `opnpc1` says "Hello!", then
-        // asks "Is that Ok?" with a "Yes please…" choice), a jewellery
-        // rub opens the destination choice (the glory's "Where would you
-        // like to teleport to?" with each location named — the dueling
-        // ring's single arena first and "Nowhere." last), a Shantay henge
-        // `oploc1` shows the pass handover (and the first-crossing
-        // disclaimer choice), and the Al Kharid toll `oploc1` opens the
-        // border-guard pay page. Drive the dialog the same way: press the
-        // modal's continue button while it is up, and press the content-
-        // defined choice exactly once when the choice page is up, then keep
-        // watching `arrived(to)`. Unknown Door pages and an Al Kharid pay
-        // page without 10 coins refuse instead of guessing.
-        if hop.refusal_watch.is_some() {
-            if let Some(matched) =
-                poll_gate_refusal_dialog(d, snapshot, &mut hop, options, self.budget)
-            {
-                let watch = hop
-                    .refusal_watch
-                    .expect("a matched refusal has an active watch");
-                let gates = edge
-                    .quest_gates
-                    .as_ref()
-                    .expect("a refusal watch requires authored quest gates")
-                    .shared_gates();
-                fire_leg(options, &hop.leg, LegPhase::Failed);
-                return Poll::Terminal(TravelOutcome::GateRefused {
-                    at: here,
-                    leg: self.leg_index,
-                    crossing: watch.crossing,
-                    gates,
-                    matched,
-                });
-            }
+        if let Some(outcome) = self.drive_hop_dialogue(d, snapshot, &mut hop, &edge, options) {
+            return Poll::Terminal(outcome);
         }
-        if guidor_gate_search_page(&edge, snapshot) {
-            let _ = Interactions::new(snapshot, d).continue_dialog(None);
-        } else if hop.refusal_watch.is_none() && drives_hop_dialogs(&edge, options) {
-            if npc_hop
-                && (snapshot.chat_continue_component_id() != -1
-                    || !snapshot.chat_options().is_empty()
-                    || snapshot.modals().main == GLIDER_MAP_ROOT)
-            {
-                // Once fare dialogue begins, a reach line cannot justify an
-                // NPC/approach click that would cancel the pending journey.
-                hop.npc_recovery.dialog_started = true;
-            }
-            let mut ix = Interactions::new(snapshot, d);
-            if snapshot.chat_continue_component_id() != -1 {
-                match ix.continue_dialog(None) {
-                    SendResult::Sent { .. } => {
-                        api::host_log!(
-                            Category::NavEvent,
-                            Level::Info,
-                            "continued the npc {} dialog",
-                            edge.loc_id
-                        );
-                    }
-                    SendResult::Refused { .. } => {}
-                }
-            } else if !snapshot.chat_options().is_empty() {
-                // A jewellery rub's destination choice is the edge's case
-                // index: the script maps the answered option through
-                // `switch_int($choice)`, so the choice of the edge being
-                // followed is the 1-based index of its `to` among the
-                // packed same-`loc_id` rub edges (the dueling ring — the
-                // only sibling — answers 1). NPC ride dialogs select the
-                // content-defined affirmative or packed destination choice,
-                // independent of the NPC operation index. Dragon Slayer
-                // puts Crandor before the normal sailor fare.
-                // Spirit trees are two pages: adult trees ask "Where can I
-                // go?" before the dest list; answering the dest index on
-                // the first page is "No thanks, old tree." and the hop
-                // returns. Answer each distinct option-page once.
-                let page = chat_page_key(snapshot);
-                if hop.dialog_page.as_deref() != Some(page.as_str()) {
-                    if let Some(choice) = hop_dialog_choice(
-                        &hop.leg,
-                        options.teleports,
-                        options.edges,
-                        snapshot.chat_options(),
-                    ) {
-                        if let Some(why) = door_hop_choice_blocked(&edge, snapshot, choice) {
-                            fire_leg(options, &hop.leg, LegPhase::Failed);
-                            return Poll::Terminal(TravelOutcome::Blocked {
-                                at: here,
-                                leg: self.leg_index,
-                                why,
-                            });
-                        }
-                        match ix.answer_choice(choice) {
-                            SendResult::Sent { .. } => {
-                                hop.dialog_page = Some(page);
-                                api::host_log!(
-                                    Category::NavEvent,
-                                    Level::Info,
-                                    "answered choice {} for {} {}",
-                                    choice,
-                                    match edge.kind {
-                                        TransportKind::SpiritTree => "spirit tree",
-                                        TransportKind::Teleport => "jewellery",
-                                        TransportKind::Door => "door",
-                                        _ => "npc",
-                                    },
-                                    edge.loc_id
-                                );
-                            }
-                            SendResult::Refused { .. } => {}
-                        }
-                    } else if edge.kind == TransportKind::Door {
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        return Poll::Terminal(TravelOutcome::Blocked {
-                            at: here,
-                            leg: self.leg_index,
-                            why: BlockedWhy::UnrecognizedJourneyDialogue,
-                        });
-                    } else {
-                        hop.npc_recovery.detail =
-                            Some(NpcHopBlockReason::UnrecognizedJourneyDialogue);
-                    }
-                }
-            } else if snapshot.modals().main == GLIDER_MAP_ROOT {
-                // Gnome glider: after "Can you take me on the glider?" the
-                // script `if_openmain(glidermap)` and dests are IF_BUTTON
-                // on com_21..=25, not chat. Boat `ship_journey` has no
-                // dest buttons — the hop just waits for the telejump.
-                if let Some(com) = dest_map_component(&edge) {
-                    let page = format!("if:{com}");
-                    if hop.dialog_page.as_deref() != Some(page.as_str()) {
-                        if let Some(widget) =
-                            snapshot.widgets().iter().find(|w| w.component_id == com)
-                        {
-                            match ix.press(widget) {
-                                SendResult::Sent { .. } => {
-                                    hop.dialog_page = Some(page);
-                                    api::host_log!(
-                                        Category::NavEvent,
-                                        Level::Info,
-                                        "pressed glidermap {} for dest ({}, {}, {})",
-                                        com,
-                                        edge.to.x,
-                                        edge.to.z,
-                                        edge.to.level
-                                    );
-                                }
-                                SendResult::Refused { .. } => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        let close_enough = self.close_enough;
         let hop_dialog_started = hop.npc_recovery.dialog_started;
-        let arrived_arm: Evidence<'static> = if let Some(pass) = crossing_pass(&edge, options) {
-            let landing = pass.landing;
-            let message = pass.message.clone();
-            let pass_message_seen = snapshot
-                .chat_lines()
-                .iter()
-                .any(|line| line.sequence > hop.chat_seq && line.text.contains(message.as_ref()));
-            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
-                pass_message_seen && now.world_tile() == Some(landing)
-            })
-        } else if edge.takeoff.is_some() {
-            arrived(edge.to, 0)
-        } else if edge.kind == TransportKind::Door && edge.dir.is_some() {
-            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
-                let Some(here) = now.world_tile() else {
-                    return false;
-                };
-                if here.level != edge.to.level {
-                    return false;
-                }
-                door_crossed(&edge, here)
-                    && (here.x - edge.to.x).abs().max((here.z - edge.to.z).abs()) <= close_enough
-            })
-        } else if edge.kind == TransportKind::Door && edge.dir.is_none() {
-            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
-                now.world_tile()
-                    .is_some_and(|here| door_dir_none_arrived(&edge, here, close_enough))
-            })
-        } else if is_essence_entry_edge(&edge) {
-            // The entry teleport lands at a random `essence_mine_teleports`
-            // coord — never the pad exactly — so any tile inside the
-            // enclosed mine completes the hop (and latches the session).
-            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
-                now.world_tile().is_some_and(in_essence_mine)
-            })
-        } else if edge.kind == TransportKind::EssenceExit {
-            // The exit portal teleports to `map_findsquare(anchor, 0, 2,
-            // lineofwalk)`: a random standable tile within chebyshev 2 of
-            // the wizard's anchor, never the anchor exactly.
-            let to = edge.to;
-            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
-                now.world_tile().is_some_and(|t| {
-                    t.level == to.level
-                        && (t.x - to.x).abs().max((t.z - to.z).abs())
-                            <= ESSENCE_MINE_EXIT_ARRIVE_RADIUS
-                })
-            })
-        } else if edge.kind == TransportKind::Teleport {
-            // `player_teleport_normal` lands at `map_findsquare(to, 0, 2,
-            // lineofwalk)`: a random standable tile within chebyshev 2 of
-            // the packed landing, never the tile exactly — so the hop
-            // accepts that radius regardless of the runner's exact
-            // `close_enough`.
-            arrived(edge.to, TELEPORT_ARRIVE_RADIUS)
-        } else if edge.kind == TransportKind::Glider {
-            arrived(edge.to, GLIDER_ARRIVE_RADIUS)
-        } else if edge.player_delta.is_some() {
-            // The content displaces the player's actual takeoff stand. A
-            // route's planned landing is not proof if live admission used a
-            // different stand, and an unchanged tile cannot prove a crossing.
-            let landing = hop
-                .sent_tile
-                .and_then(|sent| edge.landing_from(sent).map(|to| (sent, to)));
-            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
-                landing.is_some_and(|(sent, to)| {
-                    now.world_tile().is_some_and(|here| {
-                        here != sent
-                            && here.level == to.level
-                            && (here.x - to.x).abs().max((here.z - to.z).abs()) <= close_enough
-                    })
-                })
-            })
-        } else if matches!(edge.kind, TransportKind::Ladder | TransportKind::Stairs)
-            && edge.at.level != edge.to.level
-            && edge.at.x == edge.to.x
-            && edge.at.z == edge.to.z
-        {
-            // Vertical moves preserve the player's stand adjacent to any side
-            // of the live loc, not only adjacent to its south-west origin.
-            let (origin, width, length) = hop.arrival_footprint.unwrap_or((edge.at, 1, 1));
-            let radius = VERTICAL_ARRIVE_RADIUS.max(close_enough);
-            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
-                now.world_tile().is_some_and(|here| {
-                    here.level == edge.to.level
-                        && (origin.x - radius..=origin.x + width - 1 + radius).contains(&here.x)
-                        && (origin.z - radius..=origin.z + length - 1 + radius).contains(&here.z)
-                })
-            })
-        } else if (edge.to.z - edge.at.z).abs() == CELLAR_SHIFT && edge.to.level == edge.at.level {
-            // `movecoord(coord(), 0, 0, ±6400)` lands on the player's tile,
-            // one Chebyshev off the loc-baked dest when the hop is taken
-            // from an adjacent stand. Host WalkNear uses close_enough 0.
-            arrived(edge.to, CELLAR_ARRIVE_RADIUS.max(close_enough))
-        } else {
-            arrived(edge.to, close_enough)
-        };
+        let arrived_arm = build_arrived_arm(snapshot, &hop, edge, self.close_enough, options);
         let arms: [(&str, Evidence<'static>); 2] = [
             ("arrived", arrived_arm),
             (
@@ -1450,96 +1080,12 @@ impl FollowRun {
             },
             ReadContext::new(snapshot),
         );
-        match settle.poll(ReadContext::new(snapshot)) {
+        let poll = match settle.poll(ReadContext::new(snapshot)) {
             Some(Outcome::Matched {
                 arm: "unreachable", ..
-            }) => {
-                if npc_hop {
-                    if hop.npc_recovery.waited > self.budget {
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        return Poll::Terminal(self.npc_expired(snapshot, &hop));
-                    }
-                    let poll = self.retry_npc_reach(d, snapshot, &mut hop, options);
-                    if matches!(poll, Poll::Watching) {
-                        self.transport = Some(hop);
-                    }
-                    return poll;
-                }
-                fire_leg(options, &hop.leg, LegPhase::Failed);
-                Poll::Terminal(TravelOutcome::Refused {
-                    at: here,
-                    reason: SendReason::Unreachable,
-                })
-            }
+            }) => self.handle_hop_unreachable(d, snapshot, &mut hop, here, npc_hop, options),
             Some(Outcome::Matched { .. }) => {
-                if let Some(mut watch) = hop.pass_watch.take() {
-                    let count = watch.ticks.observe(snapshot.tick());
-                    log_prereq_hop_wait(
-                        "pass",
-                        watch.crossing,
-                        watch.since,
-                        snapshot.tick(),
-                        count,
-                        watch.bound,
-                        "pass",
-                        self.budget,
-                    );
-                }
-                // Agility forcemove holds the player after they land on
-                // `to`. Completing on the first arrived poll sends the
-                // next walk into a locked player (live Yanille ledge
-                // Dropped at 2580,9512). Packed `edge.ticks` is the anim
-                // delay — stay on this hop until it elapses.
-                if let Leg::Transport { edge } = &hop.leg {
-                    let delay = edge.ticks.max(0) as u32;
-                    if edge.kind == TransportKind::AgilityShortcut && delay > 0 {
-                        // Count packed ticks from the first landed poll, not
-                        // from the interact — the forcemove can land on `to`
-                        // while the player is still locked (live ledge
-                        // Dropped the next walk). The hop clock keeps
-                        // running: the landing delay draws on the hop
-                        // budget too.
-                        let tick = snapshot.tick();
-                        if hop.sent_tile.is_some() {
-                            hop.sent_tile = None;
-                            // The landing poll is the delay's first tick.
-                            hop.occupied.mark = hop.ticks_waited.observe(tick).saturating_sub(1);
-                        }
-                        let landed = hop
-                            .ticks_waited
-                            .observe(tick)
-                            .saturating_sub(hop.occupied.mark);
-                        if landed < delay {
-                            // The landing delay is part of the hop: a
-                            // crossing still settling when the hop budget
-                            // is spent ends here, as an unlanded hop does.
-                            if hop.ticks_waited.get() > self.budget {
-                                log_prereq_hop_timeout(snapshot, &mut hop, self.budget);
-                                fire_leg(options, &hop.leg, LegPhase::Failed);
-                                return Poll::Terminal(hop_stalled(here, &hop));
-                            }
-                            self.transport = Some(hop);
-                            return Poll::Watching;
-                        }
-                    }
-                }
-                // A completed essence entry hop latches the mine session:
-                // the exit portal may only return to this wizard.
-                if let Some(wizard) = entry_wizard {
-                    if let Some(session) = essence_session_for_wizard(wizard) {
-                        *essence = Some(session);
-                        api::host_log!(
-                            Category::NavEvent,
-                            Level::Info,
-                            "essence entry latched wizard {} -> {:?}",
-                            session.wizard_npc,
-                            session.return_tile
-                        );
-                    }
-                }
-                fire_leg(options, &hop.leg, LegPhase::Done);
-                self.leg_index += 1;
-                Poll::LegDone
+                self.handle_hop_arrived(snapshot, &mut hop, here, entry_wizard, options, essence)
             }
             Some(Outcome::Expired { .. }) => {
                 log_prereq_hop_timeout(snapshot, &mut hop, self.budget);
@@ -1548,27 +1094,564 @@ impl FollowRun {
             }
             // `poll` never produces `Refused` (only `Interactions` does);
             // keep watching defensively.
-            Some(Outcome::Refused { .. }) => {
-                self.transport = Some(hop);
+            Some(Outcome::Refused { .. }) => Poll::Watching,
+            None => self.handle_hop_still_watching(snapshot, &mut hop, here, npc_hop, options),
+        };
+        if matches!(poll, Poll::Watching) {
+            self.transport = Some(hop);
+        }
+        poll
+    }
+
+    fn emit_transport_state(
+        &self,
+        snapshot: &GameSnapshot,
+        hop: &TransportHop,
+        here: WorldTile,
+        options: &mut TravelOptions<'_>,
+    ) {
+        if let (Some(cb), Leg::Transport { edge }) = (options.on_event.as_mut(), &hop.leg) {
+            cb(TravelEvent::TransportState {
+                tick: snapshot.tick(),
+                at: here,
+                kind: edge.kind,
+                loc_id: edge.loc_id,
+                from: edge.at,
+                to: edge.to,
+                open: edge_loc_open(snapshot, edge),
+                approach: hop.approach.is_some(),
+                troll: hop.troll,
+                waited: if npc_backed(edge) {
+                    hop.npc_recovery.waited
+                } else {
+                    hop.ticks_waited.get()
+                },
+                loc_wait: self.loc_wait,
+                budget: self.budget,
+                live_loc: find_transport_loc(snapshot, edge).map(|l| (l.id, l.tile)),
+            });
+        }
+    }
+
+    fn poll_npc_hop_precheck<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        options: &mut TravelOptions<'_>,
+    ) -> Option<Poll> {
+        if hop.npc_recovery.last_tick != Some(snapshot.tick()) {
+            hop.npc_recovery.last_tick = Some(snapshot.tick());
+            hop.npc_recovery.waited += 1;
+        }
+        hop.approach.as_ref()?;
+        if hop.npc_recovery.waited > self.budget {
+            fire_leg(options, &hop.leg, LegPhase::Failed);
+            return Some(Poll::Terminal(self.npc_expired(snapshot, hop)));
+        }
+        Some(self.poll_npc_approach(d, snapshot, hop, options))
+    }
+
+    fn poll_open_leaf_hop<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        here: WorldTile,
+        options: &mut TravelOptions<'_>,
+    ) -> Option<Poll> {
+        let Leg::Transport { edge } = &hop.leg else {
+            return None;
+        };
+        // Cheap hop: Open was sent; the live open leaf can sit a tile off `at`.
+        // Walk through as soon as it reads open — do not sit until the troll
+        // budget while the door is already open.
+        if edge.kind == TransportKind::Door
+            && edge_loc_open(snapshot, edge)
+            && !door_crossed(edge, here)
+        {
+            let mut ix = Interactions::new(snapshot, d);
+            let result = ix.walk(hop.to);
+            report_walk(options, snapshot, here, hop.to, &result);
+            return match result {
+                SendResult::Sent { .. } => {
+                    api::host_log!(
+                        Category::NavTrace,
+                        Level::Debug,
+                        "cheap hop walk-through to {:?}",
+                        hop.to
+                    );
+                    Some(Poll::Watching)
+                }
+                SendResult::Refused { reason, .. } => {
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    Some(Poll::Terminal(TravelOutcome::Refused { at: here, reason }))
+                }
+            };
+        }
+        if edge.open_loc_id.is_some()
+            && edge.kind != TransportKind::Door
+            && !npc_backed(edge)
+            && edge_loc_open(snapshot, edge)
+            && hop.tries == 0
+        {
+            return Some(
+                match find_transport_target_instance(snapshot, edge, hop.npc_index) {
+                    Some(target) => {
+                        let arrival_footprint = target.footprint();
+                        let mut ix = Interactions::new(snapshot, d);
+                        match interact_transport(
+                            snapshot,
+                            &mut ix,
+                            target,
+                            edge,
+                            &mut options.on_event,
+                        ) {
+                            SendResult::Sent { .. } => {
+                                hop.tries = 1;
+                                hop.ticks_waited = TickCount::sent_at(snapshot.tick());
+                                hop.sent_tile = Some(here);
+                                hop.arrival_footprint = arrival_footprint;
+                                hop.pass_watch = gate_pass_watch(snapshot, edge, options);
+                                self.loc_wait = 0;
+                                Poll::Watching
+                            }
+                            SendResult::Refused { reason, .. } => {
+                                fire_leg(options, &hop.leg, LegPhase::Failed);
+                                Poll::Terminal(TravelOutcome::Refused { at: here, reason })
+                            }
+                        }
+                    }
+                    None => Poll::Watching,
+                },
+            );
+        }
+        None
+    }
+
+    fn poll_slashable_web_retry<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        here: WorldTile,
+        options: &mut TravelOptions<'_>,
+    ) -> Option<Poll> {
+        let edge = match &hop.leg {
+            Leg::Transport { edge }
+                if is_slashable_web(edge)
+                    && !edge_loc_open(snapshot, edge)
+                    && observed_web_cut_failure(snapshot, hop.chat_seq) =>
+            {
+                edge.clone()
+            }
+            _ => return None,
+        };
+        let Some(target) = find_transport_target_instance(snapshot, &edge, hop.npc_index) else {
+            self.loc_wait += 1;
+            if self.loc_wait > self.budget {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Some(Poll::Terminal(TravelOutcome::Blocked {
+                    at: here,
+                    leg: self.leg_index,
+                    why: BlockedWhy::SlashableWebMissingOnRetry {
+                        loc_id: edge.loc_id,
+                    },
+                }));
+            }
+            return Some(Poll::Watching);
+        };
+        let action =
+            match current_web_action(snapshot, &edge, options.edges, options.quest_evidence) {
+                Ok(action) => action,
+                Err(reason) => {
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    return Some(Poll::Terminal(web_action_failure(
+                        here,
+                        self.leg_index,
+                        &edge,
+                        reason,
+                    )));
+                }
+            };
+        hop.open_sent_tick = Some(snapshot.tick());
+        let poll = self.resend_transport(d, snapshot, hop, options, target, action);
+        if matches!(poll, Poll::Watching) {
+            // A web cut is a fresh interaction: its clock restarts.
+            hop.ticks_waited = TickCount::sent_at(snapshot.tick());
+        }
+        Some(poll)
+    }
+
+    fn poll_loc_approach_and_send<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        here: WorldTile,
+        options: &mut TravelOptions<'_>,
+    ) -> Poll {
+        match self.poll_approach(d, snapshot, hop, options) {
+            Poll::Watching => return Poll::Watching,
+            Poll::Terminal(outcome) => return Poll::Terminal(outcome),
+            Poll::LegDone => {}
+        }
+        let edge = match &hop.leg {
+            Leg::Transport { edge } => edge.clone(),
+            Leg::Walk { .. } => unreachable!("transport hop holds a transport leg"),
+        };
+        if edge.kind == TransportKind::Door && edge_loc_open(snapshot, &edge) {
+            // The leaf opened (another player, or a slashed web) while the
+            // player walked to this stand. OP_LOC1 on an open leaf is Close:
+            // send nothing, and let the next poll's open-leaf walk (door
+            // recovery, or the cheap hop's) cross it.
+            return Poll::Watching;
+        }
+        let Some(target) = find_transport_target_instance(snapshot, &edge, hop.npc_index) else {
+            self.loc_wait += 1;
+            if self.loc_wait > self.budget {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Poll::Terminal(TravelOutcome::Blocked {
+                    at: here,
+                    leg: self.leg_index,
+                    why: BlockedWhy::TransportTargetOutOfRange {
+                        kind: edge.kind,
+                        loc_id: edge.loc_id,
+                        at: edge.at,
+                    },
+                });
+            }
+            return Poll::Watching;
+        };
+        let action = if is_slashable_web(&edge) {
+            match current_web_action(snapshot, &edge, options.edges, options.quest_evidence) {
+                Ok(action) => action,
+                Err(reason) => {
+                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                    return Poll::Terminal(web_action_failure(here, self.leg_index, &edge, reason));
+                }
+            }
+        } else {
+            &edge
+        };
+        let chat_seq_at_send = (npc_backed(&edge)
+            || is_slashable_web(&edge)
+            || edge.kind == TransportKind::AgilityShortcut
+            || has_authored_crossing_metadata(&edge, options))
+        .then(|| chat_seq(snapshot));
+        let arrival_footprint = target.footprint();
+        let target_name = target.name();
+        let mut ix = Interactions::new(snapshot, d);
+        match interact_transport(snapshot, &mut ix, target, action, &mut options.on_event) {
+            SendResult::Sent { .. } => {
+                self.loc_wait = 0;
+                hop.ticks_waited = TickCount::sent_at(snapshot.tick());
+                hop.sent_tile = Some(here);
+                hop.arrival_footprint = arrival_footprint;
+                if let Some(seq) = chat_seq_at_send {
+                    hop.chat_seq = seq;
+                }
+                hop.refusal_watch = gate_refusal_watch(snapshot, &edge, options);
+                hop.pass_watch = gate_pass_watch(snapshot, &edge, options);
+                hop.approach = None;
+                if edge.kind == TransportKind::Door {
+                    hop.open_sent_tick = Some(snapshot.tick());
+                    note_door_open_sent(&edge, snapshot.tick(), target_name, options);
+                    if !is_slashable_web(&edge) {
+                        hop.tries = hop.tries.saturating_add(1);
+                        hop.door_retry.sent(snapshot.tick());
+                    }
+                }
+                if edge.open_loc_id.is_some()
+                    && edge.kind != TransportKind::Door
+                    && edge_loc_open(snapshot, &edge)
+                {
+                    hop.tries = 1;
+                }
                 Poll::Watching
             }
-            None => {
-                if !npc_hop {
-                    hop.ticks_waited.observe(snapshot.tick());
-                }
-                if npc_hop && hop.npc_recovery.waited > self.budget {
+            SendResult::Refused { reason, .. } => {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                Poll::Terminal(TravelOutcome::Refused { at: here, reason })
+            }
+        }
+    }
+
+    fn drive_hop_dialogue<D: Driver>(
+        &self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        edge: &TransportEdge,
+        options: &mut TravelOptions<'_>,
+    ) -> Option<TravelOutcome> {
+        let here = here(snapshot);
+        let npc_hop = npc_backed(edge);
+        if hop.refusal_watch.is_some() {
+            if let Some(matched) = poll_gate_refusal_dialog(d, snapshot, hop, options, self.budget)
+            {
+                let watch = hop
+                    .refusal_watch
+                    .expect("a matched refusal has an active watch");
+                let gates = edge
+                    .quest_gates
+                    .as_ref()
+                    .expect("a refusal watch requires authored quest gates")
+                    .shared_gates();
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Some(TravelOutcome::GateRefused {
+                    at: here,
+                    leg: self.leg_index,
+                    crossing: watch.crossing,
+                    gates,
+                    matched,
+                });
+            }
+        }
+        if guidor_gate_search_page(edge, snapshot) {
+            let _ = Interactions::new(snapshot, d).continue_dialog(None);
+            return None;
+        }
+        // An Npc hop's first op can open a chat dialog instead of riding
+        // immediately (the live cart drivers' `opnpc1` says "Hello!", then
+        // asks "Is that Ok?" with a "Yes please…" choice), a jewellery rub
+        // opens the destination choice (the glory's "Where would you like to
+        // teleport to?" with each location named — the dueling ring's single
+        // arena first and "Nowhere." last), a Shantay henge `oploc1` shows the
+        // pass handover (and the first-crossing disclaimer choice), and the Al
+        // Kharid toll `oploc1` opens the border-guard pay page. Drive the
+        // dialog the same way: press the modal's continue button while it is
+        // up, and press the content-defined choice exactly once when the
+        // choice page is up, then keep watching `arrived(to)`. Unknown Door
+        // pages and an Al Kharid pay page without 10 coins refuse instead of
+        // guessing.
+        if hop.refusal_watch.is_some() || !drives_hop_dialogs(edge, options) {
+            return None;
+        }
+        if npc_hop
+            && (snapshot.chat_continue_component_id() != -1
+                || !snapshot.chat_options().is_empty()
+                || snapshot.modals().main == GLIDER_MAP_ROOT)
+        {
+            // Once fare dialogue begins, a reach line cannot justify an
+            // NPC/approach click that would cancel the pending journey.
+            hop.npc_recovery.dialog_started = true;
+        }
+        let mut ix = Interactions::new(snapshot, d);
+        if snapshot.chat_continue_component_id() != -1 {
+            if matches!(ix.continue_dialog(None), SendResult::Sent { .. }) {
+                api::host_log!(
+                    Category::NavEvent,
+                    Level::Info,
+                    "continued the npc {} dialog",
+                    edge.loc_id
+                );
+            }
+        } else if !snapshot.chat_options().is_empty() {
+            // A jewellery rub's destination choice is the edge's case index:
+            // the script maps the answered option through `switch_int($choice)`,
+            // so the choice of the edge being followed is the 1-based index of
+            // its `to` among the packed same-`loc_id` rub edges (the dueling
+            // ring — the only sibling — answers 1). NPC ride dialogs select
+            // the content-defined affirmative or packed destination choice,
+            // independent of the NPC operation index. Dragon Slayer puts
+            // Crandor before the normal sailor fare.
+            // Spirit trees are two pages: adult trees ask "Where can I go?"
+            // before the dest list; answering the dest index on the first page
+            // is "No thanks, old tree." and the hop returns. Answer each
+            // distinct option-page once.
+            let page = chat_page_key(snapshot);
+            if hop.dialog_page.as_deref() != Some(page.as_str()) {
+                if let Some(choice) = hop_dialog_choice(
+                    &hop.leg,
+                    options.teleports,
+                    options.edges,
+                    snapshot.chat_options(),
+                ) {
+                    if let Some(why) = door_hop_choice_blocked(edge, snapshot, choice) {
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        return Some(TravelOutcome::Blocked {
+                            at: here,
+                            leg: self.leg_index,
+                            why,
+                        });
+                    }
+                    if matches!(ix.answer_choice(choice), SendResult::Sent { .. }) {
+                        hop.dialog_page = Some(page);
+                        api::host_log!(
+                            Category::NavEvent,
+                            Level::Info,
+                            "answered choice {} for {} {}",
+                            choice,
+                            match edge.kind {
+                                TransportKind::SpiritTree => "spirit tree",
+                                TransportKind::Teleport => "jewellery",
+                                TransportKind::Door => "door",
+                                _ => "npc",
+                            },
+                            edge.loc_id
+                        );
+                    }
+                } else if edge.kind == TransportKind::Door {
                     fire_leg(options, &hop.leg, LegPhase::Failed);
-                    return Poll::Terminal(self.npc_expired(snapshot, &hop));
-                }
-                if hop.ticks_waited.get() > self.budget {
-                    log_prereq_hop_timeout(snapshot, &mut hop, self.budget);
-                    fire_leg(options, &hop.leg, LegPhase::Failed);
-                    Poll::Terminal(hop_stalled(here, &hop))
+                    return Some(TravelOutcome::Blocked {
+                        at: here,
+                        leg: self.leg_index,
+                        why: BlockedWhy::UnrecognizedJourneyDialogue,
+                    });
                 } else {
-                    self.transport = Some(hop);
-                    Poll::Watching
+                    hop.npc_recovery.detail = Some(NpcHopBlockReason::UnrecognizedJourneyDialogue);
                 }
             }
+        } else if snapshot.modals().main == GLIDER_MAP_ROOT {
+            // Gnome glider: after "Can you take me on the glider?" the script
+            // `if_openmain(glidermap)` and dests are IF_BUTTON on com_21..=25,
+            // not chat. Boat `ship_journey` has no dest buttons — the hop just
+            // waits for the telejump.
+            if let Some(com) = dest_map_component(edge) {
+                let page = format!("if:{com}");
+                if hop.dialog_page.as_deref() != Some(page.as_str()) {
+                    if let Some(widget) = snapshot.widgets().iter().find(|w| w.component_id == com)
+                    {
+                        if matches!(ix.press(widget), SendResult::Sent { .. }) {
+                            hop.dialog_page = Some(page);
+                            api::host_log!(
+                                Category::NavEvent,
+                                Level::Info,
+                                "pressed glidermap {} for dest ({}, {}, {})",
+                                com,
+                                edge.to.x,
+                                edge.to.z,
+                                edge.to.level
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn handle_hop_unreachable<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        here: WorldTile,
+        npc_hop: bool,
+        options: &mut TravelOptions<'_>,
+    ) -> Poll {
+        if npc_hop {
+            if hop.npc_recovery.waited > self.budget {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Poll::Terminal(self.npc_expired(snapshot, hop));
+            }
+            return self.retry_npc_reach(d, snapshot, hop, options);
+        }
+        fire_leg(options, &hop.leg, LegPhase::Failed);
+        Poll::Terminal(TravelOutcome::Refused {
+            at: here,
+            reason: SendReason::Unreachable,
+        })
+    }
+
+    fn handle_hop_arrived(
+        &mut self,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        here: WorldTile,
+        entry_wizard: Option<i32>,
+        options: &mut TravelOptions<'_>,
+        essence: &mut Option<EssenceSession>,
+    ) -> Poll {
+        if let Some(mut watch) = hop.pass_watch.take() {
+            let count = watch.ticks.observe(snapshot.tick());
+            PrereqHopWaitLog {
+                wait: "pass",
+                crossing: watch.crossing,
+                since: watch.since,
+                at: snapshot.tick(),
+                count,
+                bound: watch.bound,
+                end: "pass",
+                hop_budget: self.budget,
+            }
+            .emit();
+        }
+        // Agility forcemove holds the player after they land on `to`.
+        // Completing on the first arrived poll sends the next walk into a
+        // locked player (live Yanille ledge Dropped at 2580,9512). Packed
+        // `edge.ticks` is the anim delay — stay on this hop until it elapses.
+        if let Leg::Transport { edge } = &hop.leg {
+            let delay = edge.ticks.max(0) as u32;
+            if edge.kind == TransportKind::AgilityShortcut && delay > 0 {
+                // Count packed ticks from the first landed poll, not from the
+                // interact — the forcemove can land on `to` while the player is
+                // still locked (live ledge Dropped the next walk). The hop clock
+                // keeps running: the landing delay draws on the hop budget too.
+                let tick = snapshot.tick();
+                if hop.sent_tile.is_some() {
+                    hop.sent_tile = None;
+                    // The landing poll is the delay's first tick.
+                    hop.occupied.mark = hop.ticks_waited.observe(tick).saturating_sub(1);
+                }
+                let landed = hop
+                    .ticks_waited
+                    .observe(tick)
+                    .saturating_sub(hop.occupied.mark);
+                if landed < delay {
+                    // The landing delay is part of the hop: a crossing still
+                    // settling when the hop budget is spent ends here, as an
+                    // unlanded hop does.
+                    if hop.ticks_waited.get() > self.budget {
+                        log_prereq_hop_timeout(snapshot, hop, self.budget);
+                        fire_leg(options, &hop.leg, LegPhase::Failed);
+                        return Poll::Terminal(hop_stalled(here, hop));
+                    }
+                    return Poll::Watching;
+                }
+            }
+        }
+        // A completed essence entry hop latches the mine session: the exit
+        // portal may only return to this wizard.
+        if let Some(wizard) = entry_wizard {
+            if let Some(session) = essence_session_for_wizard(wizard) {
+                *essence = Some(session);
+                api::host_log!(
+                    Category::NavEvent,
+                    Level::Info,
+                    "essence entry latched wizard {} -> {:?}",
+                    session.wizard_npc,
+                    session.return_tile
+                );
+            }
+        }
+        fire_leg(options, &hop.leg, LegPhase::Done);
+        self.leg_index += 1;
+        Poll::LegDone
+    }
+
+    fn handle_hop_still_watching(
+        &self,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        here: WorldTile,
+        npc_hop: bool,
+        options: &mut TravelOptions<'_>,
+    ) -> Poll {
+        if !npc_hop {
+            hop.ticks_waited.observe(snapshot.tick());
+        }
+        if npc_hop && hop.npc_recovery.waited > self.budget {
+            fire_leg(options, &hop.leg, LegPhase::Failed);
+            return Poll::Terminal(self.npc_expired(snapshot, hop));
+        }
+        if hop.ticks_waited.get() > self.budget {
+            log_prereq_hop_timeout(snapshot, hop, self.budget);
+            fire_leg(options, &hop.leg, LegPhase::Failed);
+            Poll::Terminal(hop_stalled(here, hop))
+        } else {
+            Poll::Watching
         }
     }
 
