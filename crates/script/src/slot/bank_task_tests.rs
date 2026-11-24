@@ -97,15 +97,14 @@ fn poll_row(
     };
     with_tick(snapshot, ledger, tick, |native| {
         let mut note = None;
-        row.poll(
-            native.actions,
-            &mut native.cx,
-            None,
-            &facts,
+        let mut env = BankPollEnv {
+            slot_state: None,
+            facts: &facts,
             preferences,
-            &mut note,
-            None,
-        )
+            note: &mut note,
+            common_casket_id: None,
+        };
+        row.poll(native.actions, &mut native.cx, &mut env)
     })
 }
 
@@ -548,15 +547,14 @@ fn poll_row_in_session(
     with_tick(snapshot, ledger, tick, |native| {
         native.cx.evidence.run.session = session;
         let mut note = None;
-        row.poll(
-            native.actions,
-            &mut native.cx,
-            None,
-            &facts,
+        let mut env = BankPollEnv {
+            slot_state: None,
+            facts: &facts,
             preferences,
-            &mut note,
-            None,
-        )
+            note: &mut note,
+            common_casket_id: None,
+        };
+        row.poll(native.actions, &mut native.cx, &mut env)
     })
 }
 
