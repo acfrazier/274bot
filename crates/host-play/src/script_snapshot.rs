@@ -268,94 +268,56 @@ pub(crate) fn with_script_snapshot_input<R>(
 }
 
 #[cfg(any(feature = "js", feature = "luau"))]
-/// The same pack with the walk outcome's navigator-named gate shorts: the live
-/// observe path takes this entry point, and [`with_script_snapshot_input`] is
-/// this one with none. The rows are a borrow of THIS frame and are handed to `f`
-/// inside the facts it already receives, because a caller cannot attach them
-/// through the closure itself: that parameter is higher-ranked, so a borrow of
-/// the caller's frame could never satisfy it.
-#[allow(clippy::too_many_arguments, unused_assignments)]
-pub(crate) fn with_script_snapshot_input_shorts<R>(
-    tick: u64,
-    here: Option<(i32, i32, i32)>,
-    ingame: bool,
-    inv: Option<&[(i32, i32)]>,
+use script::native::snapshot_source::{
+    BankApproachInput, BankStandInput, ChatLineInput, ChatModalTextsInput, ChatOptionInput,
+    ClientAdapterFactsInput, CollisionViewInput, CombatStyleInput, GroundItemInput,
+    InspectHopInput, ItemRowInput, MainModalTextsInput, MakeButtonInput, MakeProductInput,
+    NativeFactsInput, NearestBoothInput, ProjectionSceneInput, PuzzleBoardInput, QuestStatusInput,
+    ReachViewInput, RouteInspectFactsInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
+    StatInput, TileInput, VarpInput, WidgetFactInput, WidgetTextInput,
+};
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn compute_owned_flood(
     snapshot: Option<&GameSnapshot>,
-    obj_names: Option<&api::obj_names::ObjNames>,
+    here: Option<(i32, i32, i32)>,
+) -> Option<api::query::ReachFlood> {
+    snapshot.and_then(|s| {
+        let (x, z, level) = here?;
+        if !s.scene().available {
+            return None;
+        }
+        api::query::SceneQuery::new(s.scene(), Some(WorldTile { x, z, level })).flood_reach()
+    })
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn pack_owned_reach(
+    snapshot: Option<&GameSnapshot>,
+    flood: Option<&api::query::ReachFlood>,
     world: Option<&NavWorld>,
-    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
-    hold: bool,
-    ours: bool,
-    teleports_enabled: bool,
-    withdraw_x_result_seq: u64,
-    withdraw_x_result: bool,
-    bank_op_result_seq: u64,
-    bank_op_result: bool,
     canlight: Option<&[u64]>,
-    walk_outcome: PostedWalkOutcome,
-    door_crossing: Option<script::native::snapshot_source::DoorCrossingInput<'_>>,
-    walk_missing_carry: &[script::native::snapshot_source::CarryInput<'_>],
-    inspect: route_inspect::PostedInspect,
-    bank_selection: script::native::snapshot_source::BankSelectionInput,
-    precomputed_reach: Option<&api::query::ReachQueryView>,
-    precomputed_flood: Option<&api::query::ReachFlood>,
+) -> api::query::ReachQueryView {
+    let canlight_plane = canlight.and_then(|bits| {
+        world.map(|w| api::query::CanlightPlane {
+            bits,
+            origin_x: w.collision.origin.x,
+            origin_z: w.collision.origin.z,
+            width: w.collision.width as i32,
+            height: w.collision.height as i32,
+        })
+    });
+    snapshot
+        .map(|s| api::query::pack_reach_query_plane(s.scene(), flood, canlight_plane))
+        .unwrap_or_else(api::query::ReachQueryView::unavailable)
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn to_reach_view_input<'a>(
+    reach_pack: &'a api::query::ReachQueryView,
     reach_stamp: u64,
-    guardian_active_event: Option<&str>,
-
-    f: impl FnOnce(
-        &script::native::snapshot_source::SnapshotInput<'_>,
-        script::native::snapshot_source::NativeFactsInput<'_>,
-    ) -> R,
-) -> R {
-    use script::native::snapshot_source::{
-        BankApproachInput, BankStandInput, ChatLineInput, ChatModalTextsInput, ChatOptionInput,
-        ClientAdapterFactsInput, CollisionViewInput, CombatStyleInput, GroundItemInput,
-        ItemRowInput, MainModalTextsInput, MakeButtonInput, MakeProductInput, NativeFactsInput,
-        NearestBoothInput, ProjectionSceneInput, PuzzleBoardInput, QuestStatusInput,
-        ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
-        VarpInput, WidgetFactInput, WidgetTextInput,
-    };
-
-    let owned_flood: Option<api::query::ReachFlood>;
-    let flood: Option<&api::query::ReachFlood> = if precomputed_reach.is_some() {
-        owned_flood = None;
-        precomputed_flood
-    } else {
-        owned_flood = snapshot.and_then(|s| {
-            let (x, z, level) = here?;
-            if !s.scene().available {
-                return None;
-            }
-            api::query::SceneQuery::new(s.scene(), Some(WorldTile { x, z, level })).flood_reach()
-        });
-        owned_flood.as_ref()
-    };
-    let owned_reach: Option<api::query::ReachQueryView>;
-    let reach_pack: &api::query::ReachQueryView = match precomputed_reach {
-        Some(view) => {
-            owned_reach = None;
-            view
-        }
-        None => {
-            let canlight_plane = canlight.and_then(|bits| {
-                world.map(|w| api::query::CanlightPlane {
-                    bits,
-                    origin_x: w.collision.origin.x,
-                    origin_z: w.collision.origin.z,
-                    width: w.collision.width as i32,
-                    height: w.collision.height as i32,
-                })
-            });
-            owned_reach = Some(
-                snapshot
-                    .map(|s| api::query::pack_reach_query_plane(s.scene(), flood, canlight_plane))
-                    .unwrap_or_else(api::query::ReachQueryView::unavailable),
-            );
-            owned_reach.as_ref().unwrap()
-        }
-    };
-
-    let reach = ReachViewInput {
+) -> ReachViewInput<'a> {
+    ReachViewInput {
         available: reach_pack.available,
         base_x: reach_pack.base_x,
         base_z: reach_pack.base_z,
@@ -370,247 +332,584 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         step: &reach_pack.step,
         canlight: &reach_pack.canlight,
         stamp: reach_stamp,
-    };
-    let here = here.map(|(x, z, level)| TileInput { x, z, level });
-    let entity_reach = |x: i32, z: i32, level: i32| -> (bool, bool) {
-        let tile = WorldTile { x, z, level };
-        (
-            api::query::ReachQueryView::bit_at(
-                &reach_pack.reachable,
-                reach_pack.width,
-                reach_pack.height,
-                reach_pack.base_x,
-                reach_pack.base_z,
-                reach_pack.level,
-                tile,
-            ),
-            api::query::ReachQueryView::bit_at(
-                &reach_pack.reachable_adj,
-                reach_pack.width,
-                reach_pack.height,
-                reach_pack.base_x,
-                reach_pack.base_z,
-                reach_pack.level,
-                tile,
-            ),
-        )
-    };
-    let scene_entity_target = |target: Option<&api::snapshot::ActorTargetView>| -> (i32, i32) {
-        match target {
-            None => (0, -1),
-            Some(t) => {
-                let kind = match t.kind {
-                    api::snapshot::ActorKind::Npc => 1,
-                    api::snapshot::ActorKind::Player => 2,
-                };
-                (kind, t.index as i32)
-            }
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn entity_reach_flags(
+    reach_pack: &api::query::ReachQueryView,
+    x: i32,
+    z: i32,
+    level: i32,
+) -> (bool, bool) {
+    let tile = WorldTile { x, z, level };
+    (
+        api::query::ReachQueryView::bit_at(
+            &reach_pack.reachable,
+            reach_pack.width,
+            reach_pack.height,
+            reach_pack.base_x,
+            reach_pack.base_z,
+            reach_pack.level,
+            tile,
+        ),
+        api::query::ReachQueryView::bit_at(
+            &reach_pack.reachable_adj,
+            reach_pack.width,
+            reach_pack.height,
+            reach_pack.base_x,
+            reach_pack.base_z,
+            reach_pack.level,
+            tile,
+        ),
+    )
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn actor_target_wire(target: Option<&api::snapshot::ActorTargetView>) -> (i32, i32) {
+    match target {
+        None => (0, -1),
+        Some(t) => {
+            let kind = match t.kind {
+                api::snapshot::ActorKind::Npc => 1,
+                api::snapshot::ActorKind::Player => 2,
+            };
+            (kind, t.index as i32)
         }
-    };
-    let inv_ops_store: Vec<Vec<String>>;
-    let inv: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        if s.inventory().is_empty() {
-            inv_ops_store = Vec::new();
-            inv.map(|rows| {
-                rows.iter()
-                    .map(|(id, count)| ItemRowInput {
-                        name: obj_names.and_then(|names| names.name(*id)),
-                        count: *count,
-                        id: *id,
-                        ops: &[],
-                        noted: false,
-                        cert: posted_cert_id(obj_names, *id),
-                        component_id: -1,
-                        slot: -1,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-        } else {
-            inv_ops_store = s
-                .inventory()
-                .iter()
-                .map(|it| {
-                    it.actions
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn filtered_actions(actions: &[Option<String>]) -> Vec<String> {
+    actions
+        .iter()
+        .filter_map(|a| a.as_deref().map(str::to_string))
+        .collect()
+}
+
+/// Selects how `collect_item_ops` shapes each item's action strings.
+#[cfg(any(feature = "js", feature = "luau"))]
+#[derive(Clone, Copy)]
+enum ItemOpsMode {
+    Filtered,
+    Positional,
+}
+
+/// Selects whether entity action vectors retain `None` slots as `""` sentinels.
+#[cfg(any(feature = "js", feature = "luau"))]
+#[derive(Clone, Copy)]
+enum EntityActionsMode {
+    Filtered,
+    KeepHoles,
+}
+
+/// Selects whether `build_item_rows` retains the item's `component_id` or sets `-1`.
+#[cfg(any(feature = "js", feature = "luau"))]
+#[derive(Clone, Copy)]
+enum ComponentIdMode {
+    Omit,
+    Keep,
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn collect_item_ops(items: &[api::snapshot::ItemView], mode: ItemOpsMode) -> Vec<Vec<String>> {
+    items
+        .iter()
+        .map(|it| match mode {
+            ItemOpsMode::Positional => positional_ops(it),
+            ItemOpsMode::Filtered => filtered_actions(&it.actions),
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn collect_entity_actions<T>(
+    items: &[T],
+    actions_of: impl Fn(&T) -> &[Option<String>],
+    mode: EntityActionsMode,
+) -> Vec<Vec<String>> {
+    items
+        .iter()
+        .map(|item| {
+            let actions = actions_of(item);
+            match mode {
+                EntityActionsMode::KeepHoles => {
+                    // FlatBuffers cannot carry null entries in a string
+                    // vector. Keep each native op's position with the
+                    // existing empty-string sentinel; the shim filters it
+                    // from the public actions while opIndex still sees the
+                    // original one-based slot numbers.
+                    actions
                         .iter()
-                        .filter_map(|a| a.as_deref().map(str::to_string))
+                        .map(|a| a.as_deref().unwrap_or_default().to_string())
                         .collect()
-                })
-                .collect();
-            s.inventory()
-                .iter()
-                .enumerate()
-                .map(|(i, it)| ItemRowInput {
-                    name: obj_names
-                        .and_then(|names| names.name(it.def.id))
-                        .or(it.def.name.as_deref()),
-                    count: it.count,
-                    id: it.def.id,
-                    ops: &inv_ops_store[i],
-                    noted: it.def.noted,
-                    cert: posted_cert(obj_names, &it.def),
-                    component_id: -1,
-                    slot: it.slot,
-                })
-                .collect()
+                }
+                EntityActionsMode::Filtered => filtered_actions(actions),
+            }
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_item_rows<'a>(
+    items: &'a [api::snapshot::ItemView],
+    ops_store: &'a [Vec<String>],
+    obj_names: Option<&'a api::obj_names::ObjNames>,
+    mode: ComponentIdMode,
+) -> Vec<ItemRowInput<'a>> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(i, it)| ItemRowInput {
+            name: obj_names
+                .and_then(|names| names.name(it.def.id))
+                .or(it.def.name.as_deref()),
+            count: it.count,
+            id: it.def.id,
+            ops: &ops_store[i],
+            noted: it.def.noted,
+            cert: posted_cert(obj_names, &it.def),
+            component_id: match mode {
+                ComponentIdMode::Keep => it.component_id,
+                ComponentIdMode::Omit => -1,
+            },
+            slot: it.slot,
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_fallback_inv_rows<'a>(
+    inv: Option<&[(i32, i32)]>,
+    obj_names: Option<&'a api::obj_names::ObjNames>,
+) -> Vec<ItemRowInput<'a>> {
+    inv.map(|rows| {
+        rows.iter()
+            .map(|(id, count)| ItemRowInput {
+                name: obj_names.and_then(|names| names.name(*id)),
+                count: *count,
+                id: *id,
+                ops: &[],
+                noted: false,
+                cert: posted_cert_id(obj_names, *id),
+                component_id: -1,
+                slot: -1,
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_inv_rows<'a>(
+    snapshot: Option<&'a GameSnapshot>,
+    ops_store: &'a [Vec<String>],
+    inv: Option<&[(i32, i32)]>,
+    obj_names: Option<&'a api::obj_names::ObjNames>,
+) -> Vec<ItemRowInput<'a>> {
+    match snapshot {
+        Some(s) if !s.inventory().is_empty() => {
+            build_item_rows(s.inventory(), ops_store, obj_names, ComponentIdMode::Omit)
         }
+        _ => build_fallback_inv_rows(inv, obj_names),
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn widget_items_relevant(s: &GameSnapshot) -> bool {
+    s.shop().open
+        || s.trade().offer_open
+        || s.trade().confirm_open
+        || matches!(s.modals().main, 6575 | 6412)
+}
+
+/// Owned backing vectors for borrowed snapshot input slices.
+#[cfg(any(feature = "js", feature = "luau"))]
+struct SnapshotOwnedStores {
+    inv_ops: Vec<Vec<String>>,
+    bank_ops: Vec<Vec<String>>,
+    bank_side_ops: Vec<Vec<String>>,
+    npc_actions: Vec<Vec<String>>,
+    loc_actions: Vec<Vec<String>>,
+    player_actions: Vec<Vec<String>>,
+    ground_actions: Vec<Vec<String>>,
+    equip_ops: Vec<Vec<String>>,
+    trade_mine_ops: Vec<Vec<String>>,
+    trade_theirs_ops: Vec<Vec<String>>,
+    trade_side_ops: Vec<Vec<String>>,
+    shop_player_ops: Vec<Vec<String>>,
+    main_make_ops: Vec<Vec<String>>,
+    shop_stock_ops: Vec<Vec<String>>,
+    puzzle_board_ops: Vec<Vec<String>>,
+    combat_styles: Option<Vec<api::query::widget_search::CombatStyleLabel>>,
+    make_buttons: Vec<Vec<MakeButtonInput>>,
+    spells: Option<Vec<(String, i32)>>,
+    widgets: Vec<(i32, String, i32)>,
+    widget_item_ops: Vec<Vec<Vec<String>>>,
+    bank_approaches: Vec<BankApproachInput>,
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+impl SnapshotOwnedStores {
+    fn build(
+        snapshot: Option<&GameSnapshot>,
+        here: Option<(i32, i32, i32)>,
+        flood: Option<&api::query::ReachFlood>,
+    ) -> Self {
+        let Some(s) = snapshot else {
+            return Self {
+                inv_ops: Vec::new(),
+                bank_ops: Vec::new(),
+                bank_side_ops: Vec::new(),
+                npc_actions: Vec::new(),
+                loc_actions: Vec::new(),
+                player_actions: Vec::new(),
+                ground_actions: Vec::new(),
+                equip_ops: Vec::new(),
+                trade_mine_ops: Vec::new(),
+                trade_theirs_ops: Vec::new(),
+                trade_side_ops: Vec::new(),
+                shop_player_ops: Vec::new(),
+                main_make_ops: Vec::new(),
+                shop_stock_ops: Vec::new(),
+                puzzle_board_ops: Vec::new(),
+                combat_styles: None,
+                make_buttons: Vec::new(),
+                spells: None,
+                widgets: Vec::new(),
+                widget_item_ops: Vec::new(),
+                bank_approaches: Vec::new(),
+            };
+        };
+        Self {
+            inv_ops: if s.inventory().is_empty() {
+                Vec::new()
+            } else {
+                collect_item_ops(s.inventory(), ItemOpsMode::Filtered)
+            },
+            bank_ops: collect_item_ops(s.bank(), ItemOpsMode::Positional),
+            bank_side_ops: collect_item_ops(s.bank_side(), ItemOpsMode::Positional),
+            npc_actions: collect_entity_actions(
+                s.npcs(),
+                |npc| &npc.actions,
+                EntityActionsMode::Filtered,
+            ),
+            loc_actions: collect_entity_actions(
+                s.locs(),
+                |loc| &loc.actions,
+                EntityActionsMode::Filtered,
+            ),
+            player_actions: collect_entity_actions(
+                s.players(),
+                |player| &player.actor.actions,
+                EntityActionsMode::KeepHoles,
+            ),
+            ground_actions: collect_entity_actions(
+                s.ground_items(),
+                |item| &item.actions,
+                EntityActionsMode::Filtered,
+            ),
+            equip_ops: collect_item_ops(s.equipment(), ItemOpsMode::Filtered),
+            trade_mine_ops: collect_item_ops(&s.trade().my_offer, ItemOpsMode::Filtered),
+            trade_theirs_ops: collect_item_ops(&s.trade().their_offer, ItemOpsMode::Filtered),
+            trade_side_ops: collect_item_ops(&s.trade().side_pack, ItemOpsMode::Filtered),
+            shop_player_ops: collect_item_ops(&s.shop().player, ItemOpsMode::Filtered),
+            main_make_ops: collect_item_ops(s.main_make(), ItemOpsMode::Filtered),
+            shop_stock_ops: collect_item_ops(&s.shop().stock, ItemOpsMode::Filtered),
+            puzzle_board_ops: collect_item_ops(s.puzzle_board().items, ItemOpsMode::Filtered),
+            combat_styles: Some(build_combat_style_store(s)),
+            make_buttons: build_make_button_store(s),
+            spells: Some(build_spell_store(s)),
+            widgets: build_widget_store(s),
+            widget_item_ops: build_widget_item_ops_store(s),
+            bank_approaches: build_bank_approaches(s, here, flood),
+        }
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_combat_style_store(s: &GameSnapshot) -> Vec<api::query::widget_search::CombatStyleLabel> {
+    let root = s
+        .side_tabs()
+        .iter()
+        .find(|t| t.index == 0)
+        .map(|t| t.root_component_id)
+        .unwrap_or(-1);
+    if root == -1 {
+        Vec::new()
     } else {
-        inv_ops_store = Vec::new();
-        inv.map(|rows| {
-            rows.iter()
-                .map(|(id, count)| ItemRowInput {
-                    name: obj_names.and_then(|names| names.name(*id)),
-                    count: *count,
-                    id: *id,
-                    ops: &[],
-                    noted: false,
-                    cert: posted_cert_id(obj_names, *id),
-                    component_id: -1,
-                    slot: -1,
+        api::query::widget_search::combat_style_labels(s, root, 43)
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_make_button_store(s: &GameSnapshot) -> Vec<Vec<MakeButtonInput>> {
+    s.make_products()
+        .iter()
+        .map(|p| {
+            p.buttons
+                .iter()
+                .map(|b| MakeButtonInput {
+                    qty: b.quantity,
+                    com_id: b.component_id,
                 })
                 .collect()
         })
-        .unwrap_or_default()
-    };
-    let stats = snapshot.map(|s| {
-        s.stats()
-            .iter()
-            .map(|st| StatInput {
-                index: st.index,
-                name: &st.name,
-                xp: st.xp,
-                base: st.base,
-                effective: st.effective,
-            })
-            .collect::<Vec<_>>()
-    });
-    let bank_ops_store: Vec<Vec<String>>;
-    let bank: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        bank_ops_store = s.bank().iter().map(positional_ops).collect();
-        s.bank()
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &bank_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                component_id: it.component_id,
-                slot: it.slot,
-            })
-            .collect()
-    } else {
-        bank_ops_store = Vec::new();
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_spell_store(s: &GameSnapshot) -> Vec<(String, i32)> {
+    let root = s
+        .side_tabs()
+        .iter()
+        .find(|t| t.index == 6)
+        .map(|t| t.root_component_id)
+        .unwrap_or(-1);
+    if root == -1 {
         Vec::new()
-    };
-    let bank_side_ops_store: Vec<Vec<String>>;
-    let bank_side: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        bank_side_ops_store = s.bank_side().iter().map(positional_ops).collect();
-        s.bank_side()
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &bank_side_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                // Real deposit component (e.g. 2006 / fixture 701). Input.invButton
-                // revalidates this id; posting -1 rejects every bank-side deposit.
-                component_id: it.component_id,
-                slot: it.slot,
-            })
-            .collect()
     } else {
-        bank_side_ops_store = Vec::new();
-        Vec::new()
-    };
-    let npc_action_store: Vec<Vec<String>>;
-    let npcs: Vec<SceneEntityInput<'_>> = if let Some(s) = snapshot {
-        npc_action_store = s
-            .npcs()
+        s.widgets()
             .iter()
-            .map(|npc| {
-                npc.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect::<Vec<String>>()
+            .chain(s.side_tabs().iter().flat_map(|t| t.widgets.iter()))
+            .filter(|w| {
+                w.root_component_id == root
+                    && w.button_type == 2
+                    && w.target_base.as_deref().is_some_and(|t| !t.is_empty())
             })
-            .collect();
-        s.npcs()
-            .iter()
-            .enumerate()
-            .map(|(i, npc)| {
-                let (reachable, reachable_adj) =
-                    entity_reach(npc.network.x, npc.network.z, npc.network.level);
-                let (target_kind, target_index) = scene_entity_target(npc.target.as_ref());
+            .map(|w| (w.target_base.clone().unwrap_or_default(), w.component_id))
+            .collect()
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_widget_store(s: &GameSnapshot) -> Vec<(i32, String, i32)> {
+    s.widgets()
+        .iter()
+        .filter(|w| w.text.is_some() || w.type_ == 2)
+        .map(|w| {
+            (
+                w.component_id,
+                w.text.clone().unwrap_or_default(),
+                if w.type_ == 2 {
+                    w.items.len() as i32
+                } else {
+                    -1
+                },
+            )
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_widget_item_ops_store(s: &GameSnapshot) -> Vec<Vec<Vec<String>>> {
+    let relevant = widget_items_relevant(s);
+    s.widgets()
+        .iter()
+        .map(|w| {
+            if relevant && w.type_ == 2 {
+                collect_item_ops(&w.items, ItemOpsMode::Filtered)
+            } else {
+                Vec::new()
+            }
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_bank_approaches(
+    s: &GameSnapshot,
+    here: Option<(i32, i32, i32)>,
+    flood: Option<&api::query::ReachFlood>,
+) -> Vec<BankApproachInput> {
+    let (Some((hx, hz, hlevel)), Some(flood)) = (here, flood) else {
+        return Vec::new();
+    };
+    let origin = WorldTile {
+        x: hx,
+        z: hz,
+        level: hlevel,
+    };
+    s.locs()
+        .iter()
+        .filter_map(|loc| {
+            let name = loc.name.as_deref()?;
+            if !name
+                .as_bytes()
+                .windows(4)
+                .any(|word| word.eq_ignore_ascii_case(b"bank"))
+            {
+                return None;
+            }
+            let approach = api::query::loc_approach::booth_approach(loc, s.scene(), origin, flood)?;
+            Some(BankApproachInput {
+                loc_id: loc.id,
+                x: loc.tile.x,
+                z: loc.tile.z,
+                level: loc.tile.level,
+                can_operate: approach.can_operate,
+                dest_ok: approach.dest.is_some(),
+                dest_x: approach.dest.map(|t| t.x).unwrap_or(0),
+                dest_z: approach.dest.map(|t| t.z).unwrap_or(0),
+                dest_level: approach.dest.map(|t| t.level).unwrap_or(0),
+            })
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_npcs<'a>(
+    s: &'a GameSnapshot,
+    actions: &'a [Vec<String>],
+    reach_pack: &api::query::ReachQueryView,
+) -> Vec<SceneEntityInput<'a>> {
+    s.npcs()
+        .iter()
+        .enumerate()
+        .map(|(i, npc)| {
+            let (reachable, reachable_adj) =
+                entity_reach_flags(reach_pack, npc.network.x, npc.network.z, npc.network.level);
+            let (target_kind, target_index) = actor_target_wire(npc.target.as_ref());
+            SceneEntityInput {
+                index: npc.index as i32,
+                id: npc.r#type.map(|t| t as i32).unwrap_or(-1),
+                name: npc.name.as_deref(),
+                x: npc.tile.x,
+                z: npc.tile.z,
+                level: npc.tile.level,
+                distance: npc.distance,
+                health: npc.health,
+                max_health: npc.total_health,
+                in_combat: npc.in_combat,
+                animating: npc.moving || npc.animation != -1,
+                actions: &actions[i],
+                reachable,
+                reachable_adj,
+                combat_level: npc.level,
+                target_kind,
+                target_index,
+                size: npc.size,
+                nx: npc.network.x,
+                nz: npc.network.z,
+                shape: 0,
+                angle: 0,
+            }
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_locs<'a>(
+    s: &'a GameSnapshot,
+    actions: &'a [Vec<String>],
+    reach_pack: &api::query::ReachQueryView,
+) -> Vec<SceneEntityInput<'a>> {
+    s.locs()
+        .iter()
+        .enumerate()
+        .map(|(i, loc)| {
+            let (reachable, reachable_adj) =
+                entity_reach_flags(reach_pack, loc.tile.x, loc.tile.z, loc.tile.level);
+            SceneEntityInput {
+                index: loc.id,
+                id: loc.id,
+                name: loc.name.as_deref(),
+                x: loc.tile.x,
+                z: loc.tile.z,
+                level: loc.tile.level,
+                distance: loc.distance,
+                health: -1,
+                max_health: -1,
+                in_combat: false,
+                animating: loc.animation != -1,
+                actions: &actions[i],
+                reachable,
+                reachable_adj,
+                combat_level: 0,
+                target_kind: 0,
+                target_index: -1,
+                size: 0,
+                nx: 0,
+                nz: 0,
+                shape: loc.shape,
+                angle: loc.angle,
+            }
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_players<'a>(
+    s: &'a GameSnapshot,
+    actions: &'a [Vec<String>],
+    reach_pack: &api::query::ReachQueryView,
+) -> Vec<SceneEntityInput<'a>> {
+    s.players()
+        .iter()
+        .enumerate()
+        .map(|(i, player)| {
+            let (reachable, reachable_adj) = entity_reach_flags(
+                reach_pack,
+                player.network.x,
+                player.network.z,
+                player.network.level,
+            );
+            let (target_kind, target_index) = actor_target_wire(player.actor.target.as_ref());
+            SceneEntityInput {
+                index: player.index as i32,
+                id: player.index as i32,
+                name: player.actor.name.as_deref(),
+                x: player.actor.tile.x,
+                z: player.actor.tile.z,
+                level: player.actor.tile.level,
+                distance: player.actor.distance,
+                health: player.actor.health,
+                max_health: player.actor.total_health,
+                in_combat: player.actor.in_combat,
+                animating: player.actor.moving || player.actor.animation != -1,
+                actions: &actions[i],
+                reachable,
+                reachable_adj,
+                combat_level: player.combat_level,
+                target_kind,
+                target_index,
+                size: 1,
+                nx: player.network.x,
+                nz: player.network.z,
+                shape: 0,
+                angle: 0,
+            }
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_ground_items<'a>(
+    s: &'a GameSnapshot,
+    actions: &'a [Vec<String>],
+    reach_pack: &api::query::ReachQueryView,
+    obj_names: Option<&'a api::obj_names::ObjNames>,
+) -> Vec<GroundItemInput<'a>> {
+    s.ground_items()
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let (reachable, reachable_adj) =
+                entity_reach_flags(reach_pack, item.tile.x, item.tile.z, item.tile.level);
+            GroundItemInput::new(
                 SceneEntityInput {
-                    index: npc.index as i32,
-                    id: npc.r#type.map(|t| t as i32).unwrap_or(-1),
-                    name: npc.name.as_deref(),
-                    x: npc.tile.x,
-                    z: npc.tile.z,
-                    level: npc.tile.level,
-                    distance: npc.distance,
-                    health: npc.health,
-                    max_health: npc.total_health,
-                    in_combat: npc.in_combat,
-                    animating: npc.moving || npc.animation != -1,
-                    actions: &npc_action_store[i],
-                    reachable,
-                    reachable_adj,
-                    combat_level: npc.level,
-                    target_kind,
-                    target_index,
-                    size: npc.size,
-                    nx: npc.network.x,
-                    nz: npc.network.z,
-                    shape: 0,
-                    angle: 0,
-                }
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let loc_action_store: Vec<Vec<String>>;
-    let locs: Vec<SceneEntityInput<'_>> = if let Some(s) = snapshot {
-        loc_action_store = s
-            .locs()
-            .iter()
-            .map(|loc| {
-                loc.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect::<Vec<String>>()
-            })
-            .collect();
-        s.locs()
-            .iter()
-            .enumerate()
-            .map(|(i, loc)| {
-                let (reachable, reachable_adj) =
-                    entity_reach(loc.tile.x, loc.tile.z, loc.tile.level);
-                SceneEntityInput {
-                    index: loc.id,
-                    id: loc.id,
-                    name: loc.name.as_deref(),
-                    x: loc.tile.x,
-                    z: loc.tile.z,
-                    level: loc.tile.level,
-                    distance: loc.distance,
+                    index: item.def.id,
+                    id: item.def.id,
+                    name: obj_names.and_then(|names| names.name(item.def.id)),
+                    x: item.tile.x,
+                    z: item.tile.z,
+                    level: item.tile.level,
+                    distance: item.distance,
                     health: -1,
                     max_health: -1,
                     in_combat: false,
-                    animating: loc.animation != -1,
-                    actions: &loc_action_store[i],
+                    animating: false,
+                    actions: &actions[i],
                     reachable,
                     reachable_adj,
                     combat_level: 0,
@@ -619,647 +918,126 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                     size: 0,
                     nx: 0,
                     nz: 0,
-                    shape: loc.shape,
-                    angle: loc.angle,
-                }
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let player_action_store: Vec<Vec<String>>;
-    let players: Vec<SceneEntityInput<'_>> = if let Some(s) = snapshot {
-        player_action_store = s
-            .players()
-            .iter()
-            .map(|player| {
-                player
-                    .actor
-                    .actions
-                    .iter()
-                    // FlatBuffers cannot carry null entries in a string
-                    // vector. Keep each native op's position with the
-                    // existing empty-string sentinel; the shim filters it
-                    // from the public actions while opIndex still sees the
-                    // original one-based slot numbers.
-                    .map(|a| a.as_deref().unwrap_or_default().to_string())
-                    .collect::<Vec<String>>()
-            })
-            .collect();
-        s.players()
-            .iter()
-            .enumerate()
-            .map(|(i, player)| {
-                let (reachable, reachable_adj) =
-                    entity_reach(player.network.x, player.network.z, player.network.level);
-                let (target_kind, target_index) = scene_entity_target(player.actor.target.as_ref());
-                SceneEntityInput {
-                    index: player.index as i32,
-                    id: player.index as i32,
-                    name: player.actor.name.as_deref(),
-                    x: player.actor.tile.x,
-                    z: player.actor.tile.z,
-                    level: player.actor.tile.level,
-                    distance: player.actor.distance,
-                    health: player.actor.health,
-                    max_health: player.actor.total_health,
-                    in_combat: player.actor.in_combat,
-                    animating: player.actor.moving || player.actor.animation != -1,
-                    actions: &player_action_store[i],
-                    reachable,
-                    reachable_adj,
-                    combat_level: player.combat_level,
-                    target_kind,
-                    target_index,
-                    size: 1,
-                    nx: player.network.x,
-                    nz: player.network.z,
                     shape: 0,
                     angle: 0,
-                }
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let ground_action_store: Vec<Vec<String>>;
-    let ground: Vec<GroundItemInput<'_>> = if let Some(s) = snapshot {
-        ground_action_store = s
-            .ground_items()
-            .iter()
-            .map(|item| {
-                item.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect::<Vec<String>>()
-            })
-            .collect();
-        s.ground_items()
-            .iter()
-            .enumerate()
-            .map(|(i, item)| {
-                let (reachable, reachable_adj) =
-                    entity_reach(item.tile.x, item.tile.z, item.tile.level);
-                GroundItemInput::new(
-                    SceneEntityInput {
-                        index: item.def.id,
-                        id: item.def.id,
-                        name: obj_names.and_then(|names| names.name(item.def.id)),
-                        x: item.tile.x,
-                        z: item.tile.z,
-                        level: item.tile.level,
-                        distance: item.distance,
-                        health: -1,
-                        max_health: -1,
-                        in_combat: false,
-                        animating: false,
-                        actions: &ground_action_store[i],
-                        reachable,
-                        reachable_adj,
-                        combat_level: 0,
-                        target_kind: 0,
-                        target_index: -1,
-                        size: 0,
-                        nx: 0,
-                        nz: 0,
-                        shape: 0,
-                        angle: 0,
-                    },
-                    item.count,
-                )
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let equip_ops_store: Vec<Vec<String>>;
-    let equipment: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        equip_ops_store = s
-            .equipment()
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
-        s.equipment()
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &equip_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                component_id: -1,
-                slot: it.slot,
-            })
-            .collect()
-    } else {
-        equip_ops_store = Vec::new();
-        Vec::new()
-    };
-    let trade_mine_ops_store: Vec<Vec<String>>;
-    let trade_mine: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        trade_mine_ops_store = s
-            .trade()
-            .my_offer
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
-        s.trade()
-            .my_offer
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &trade_mine_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                component_id: it.component_id,
-                slot: it.slot,
-            })
-            .collect()
-    } else {
-        trade_mine_ops_store = Vec::new();
-        Vec::new()
-    };
-    let trade_theirs_ops_store: Vec<Vec<String>>;
-    let trade_theirs: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        trade_theirs_ops_store = s
-            .trade()
-            .their_offer
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
-        s.trade()
-            .their_offer
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &trade_theirs_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                component_id: it.component_id,
-                slot: it.slot,
-            })
-            .collect()
-    } else {
-        trade_theirs_ops_store = Vec::new();
-        Vec::new()
-    };
-    let trade_side_ops_store: Vec<Vec<String>>;
-    let trade_side: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        trade_side_ops_store = s
-            .trade()
-            .side_pack
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
-        s.trade()
-            .side_pack
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &trade_side_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                component_id: it.component_id,
-                slot: it.slot,
-            })
-            .collect()
-    } else {
-        trade_side_ops_store = Vec::new();
-        Vec::new()
-    };
-    let shop_player_ops_store: Vec<Vec<String>>;
-    let shop_player_rows: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        shop_player_ops_store = s
-            .shop()
-            .player
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
-        s.shop()
-            .player
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &shop_player_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                component_id: it.component_id,
-                slot: it.slot,
-            })
-            .collect()
-    } else {
-        shop_player_ops_store = Vec::new();
-        Vec::new()
-    };
-    // `None` = the shop side interface's player pack was not decoded: the
-    // Sell path fails closed rather than acting on an empty stand-in.
-    let shop_player = snapshot
-        .filter(|s| s.shop().player_available)
-        .map(|_| shop_player_rows.as_slice());
-    let main_make_ops_store: Vec<Vec<String>>;
-    let main_make_rows: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        main_make_ops_store = s
-            .main_make()
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
-        s.main_make()
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &main_make_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                component_id: it.component_id,
-                slot: it.slot,
-            })
-            .collect()
-    } else {
-        main_make_ops_store = Vec::new();
-        Vec::new()
-    };
-    // Always decoded when a snapshot exists: empty means no Make TYPE_INV
-    // on the open main modal, not an unpublished field.
-    let main_make = snapshot.map(|_| main_make_rows.as_slice());
-    let shop_stock_ops_store: Vec<Vec<String>>;
-    let shop_stock: Vec<ItemRowInput<'_>> = if let Some(s) = snapshot {
-        shop_stock_ops_store = s
-            .shop()
-            .stock
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
-        s.shop()
-            .stock
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &shop_stock_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                component_id: it.component_id,
-                slot: it.slot,
-            })
-            .collect()
-    } else {
-        shop_stock_ops_store = Vec::new();
-        Vec::new()
-    };
-    let chat_options = snapshot.map(|s| {
-        s.chat_options()
-            .iter()
-            .map(|o| ChatOptionInput {
-                text: &o.text,
-                com_id: o.component_id,
-            })
-            .collect::<Vec<_>>()
-    });
-    let varps = snapshot.map(|s| {
-        let magic = api::snapshot::ReadContext::new(s).varp(108);
-        let energy = api::snapshot::ReadContext::new(s).varp(300);
-        let armed = api::snapshot::ReadContext::new(s).varp(301);
-        // attackstyle_magic is packed as varp 108 on both selected caches.
-        // sa_energy/sa_attack are packed as 300/301. Always post them,
-        // including 0, so Special.energy/armed and Autocast.armed/selected
-        // observe real state instead of a missing-row default.
-        let mut rows: Vec<VarpInput> = vec![
-            VarpInput {
-                index: 108,
-                value: magic,
-            },
-            VarpInput {
-                index: 300,
-                value: energy,
-            },
-            VarpInput {
-                index: 301,
-                value: armed,
-            },
-        ];
-        // Selected prayer overlays ride the same vector, including 0.
-        // Present snapshot rows only — do not invent 0 for an unobserved key.
-        rows.extend(
-            s.varps()
-                .iter()
-                .filter(|v| crate::catalog_core::is_prayer_varp(v.index))
-                .map(|v| VarpInput {
-                    index: v.index,
-                    value: v.value,
-                }),
-        );
-        // Every other nonzero varp, so `reader.varp(i)` reads the client's
-        // real value for any index (quest points 101, quest progress). A
-        // missing row reads 0, which is the client's own unset value.
-        rows.extend(
-            s.varps()
-                .iter()
-                .filter(|v| {
-                    v.value != 0
-                        && v.index != 108
-                        && v.index != 300
-                        && v.index != 301
-                        && !crate::catalog_core::is_prayer_varp(v.index)
-                })
-                .map(|v| VarpInput {
-                    index: v.index,
-                    value: v.value,
-                }),
-        );
-        rows
-    });
-    let combat_style_store = snapshot.map(|s| {
-        let root = s
-            .side_tabs()
-            .iter()
-            .find(|t| t.index == 0)
-            .map(|t| t.root_component_id)
-            .unwrap_or(-1);
-        if root == -1 {
-            Vec::new()
-        } else {
-            api::query::widget_search::combat_style_labels(s, root, 43)
-        }
-    });
-    let combat_styles: Vec<CombatStyleInput<'_>> = combat_style_store
-        .as_ref()
-        .map(|labels| {
-            labels
-                .iter()
-                .map(|l| CombatStyleInput {
-                    mode: l.mode,
-                    label: &l.label,
-                    component_id: l.component_id,
-                })
-                .collect()
+                },
+                item.count,
+            )
         })
-        .unwrap_or_default();
-    let local = snapshot.and_then(|s| s.local_player());
-    let my_name = local.and_then(|lp| lp.player.actor.name.as_deref());
-    let in_combat = local.is_some_and(|lp| lp.player.actor.in_combat);
-    let attacked_by_player =
-        local.is_some_and(|lp| api::snapshot::attacked_by_player(lp.player.actor.face_entity));
-    let (self_target_kind, self_target_index) =
-        scene_entity_target(local.and_then(|lp| lp.player.actor.target.as_ref()));
-    let animating =
-        local.is_some_and(|lp| lp.player.actor.moving || lp.player.actor.animation != -1);
-    let modals = snapshot.map(|s| s.modals());
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_varps(s: &GameSnapshot) -> Vec<VarpInput> {
+    let magic = api::snapshot::ReadContext::new(s).varp(108);
+    let energy = api::snapshot::ReadContext::new(s).varp(300);
+    let armed = api::snapshot::ReadContext::new(s).varp(301);
+    // attackstyle_magic is packed as varp 108 on both selected caches.
+    // sa_energy/sa_attack are packed as 300/301. Always post them,
+    // including 0, so Special.energy/armed and Autocast.armed/selected
+    // observe real state instead of a missing-row default.
+    let mut rows: Vec<VarpInput> = vec![
+        VarpInput {
+            index: 108,
+            value: magic,
+        },
+        VarpInput {
+            index: 300,
+            value: energy,
+        },
+        VarpInput {
+            index: 301,
+            value: armed,
+        },
+    ];
+    // Selected prayer overlays ride the same vector, including 0.
+    // Present snapshot rows only — do not invent 0 for an unobserved key.
+    rows.extend(
+        s.varps()
+            .iter()
+            .filter(|v| crate::catalog_core::is_prayer_varp(v.index))
+            .map(|v| VarpInput {
+                index: v.index,
+                value: v.value,
+            }),
+    );
+    // Every other nonzero varp, so `reader.varp(i)` reads the client's
+    // real value for any index (quest points 101, quest progress). A
+    // missing row reads 0, which is the client's own unset value.
+    rows.extend(
+        s.varps()
+            .iter()
+            .filter(|v| {
+                v.value != 0
+                    && v.index != 108
+                    && v.index != 300
+                    && v.index != 301
+                    && !crate::catalog_core::is_prayer_varp(v.index)
+            })
+            .map(|v| VarpInput {
+                index: v.index,
+                value: v.value,
+            }),
+    );
+    rows
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_booths(s: &GameSnapshot) -> Vec<TileInput> {
     // The scene bank booths: the openable locs (`Use-quickly` is the
     // bankbooth op the pack bakes from `scripts/interface_bank/configs/
     // bank_booth.loc`). Only the tile is posted — the shim never reads a
     // loc definition.
-    let booths = snapshot.map(|s| {
-        s.locs()
-            .iter()
-            .filter(|l| {
-                script::bank::ops::op_slot(*l, "Use-quickly", script::bank::ops::LabelMatch::Folded)
-                    .is_some()
-            })
-            .map(|l| TileInput {
-                x: l.tile.x,
-                z: l.tile.z,
-                level: l.tile.level,
-            })
-            .collect::<Vec<_>>()
-    });
-    let nearest_booth = snapshot.and_then(|s| {
-        s.nearest_use_quickly_booth().map(|loc| NearestBoothInput {
-            x: loc.tile.x,
-            z: loc.tile.z,
-            level: loc.tile.level,
-            id: loc.id,
-            name: loc.name.as_deref().unwrap_or("Bank booth"),
-            op: "Use-quickly",
-        })
-    });
-    let banks = world.map(|w| {
-        use nav_planner::pack::BankAccess;
-        w.banks()
-            .iter()
-            .filter_map(|b| match &b.access {
-                BankAccess::Booth { op } => Some(BankStandInput {
-                    name: &b.name,
-                    x: b.tile.x,
-                    z: b.tile.z,
-                    level: b.tile.level,
-                    kind: "booth",
-                    op: *op,
-                    choose: None,
-                }),
-                BankAccess::Npc { .. } => None,
-            })
-            .collect::<Vec<_>>()
-    });
-    let mut make_button_store: Vec<Vec<MakeButtonInput>> = Vec::new();
-    let make_products: Vec<MakeProductInput<'_>> = snapshot
-        .map(|s| {
-            make_button_store = s
-                .make_products()
-                .iter()
-                .map(|p| {
-                    p.buttons
-                        .iter()
-                        .map(|b| MakeButtonInput {
-                            qty: b.quantity,
-                            com_id: b.component_id,
-                        })
-                        .collect()
-                })
-                .collect();
-            s.make_products()
-                .iter()
-                .enumerate()
-                .map(|(i, p)| MakeProductInput {
-                    object_id: p.object_id,
-                    name: p.name.as_str(),
-                    buttons: &make_button_store[i],
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let side_tab_ifaces: Vec<SideTabIfaceInput> = snapshot
-        .map(|s| {
-            s.side_tabs()
-                .iter()
-                .map(|t| SideTabIfaceInput {
-                    index: t.index,
-                    id: t.root_component_id,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let spell_store = snapshot.map(|s| {
-        let root = s
-            .side_tabs()
-            .iter()
-            .find(|t| t.index == 6)
-            .map(|t| t.root_component_id)
-            .unwrap_or(-1);
-        if root == -1 {
-            Vec::new()
-        } else {
-            s.widgets()
-                .iter()
-                .chain(s.side_tabs().iter().flat_map(|t| t.widgets.iter()))
-                .filter(|w| {
-                    w.root_component_id == root
-                        && w.button_type == 2
-                        && w.target_base.as_deref().is_some_and(|t| !t.is_empty())
-                })
-                .map(|w| (w.target_base.clone().unwrap_or_default(), w.component_id))
-                .collect::<Vec<_>>()
-        }
-    });
-    let spell_buttons: Vec<CombatStyleInput<'_>> = spell_store
-        .as_ref()
-        .map(|rows| {
-            rows.iter()
-                .map(|(label, component_id)| CombatStyleInput {
-                    mode: 0,
-                    label,
-                    component_id: *component_id,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let chat_lines: Vec<ChatLineInput<'_>> = snapshot
-        .map(|s| {
-            s.chat_lines()
-                .iter()
-                .map(|l| ChatLineInput {
-                    seq: l.sequence,
-                    text: l.text.as_str(),
-                    type_: l.type_,
-                    username: l.username.as_deref(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let widget_store: Vec<(i32, String, i32)> = snapshot
-        .map(|s| {
-            s.widgets()
-                .iter()
-                .filter(|w| w.text.is_some() || w.type_ == 2)
-                .map(|w| {
-                    (
-                        w.component_id,
-                        w.text.clone().unwrap_or_default(),
-                        if w.type_ == 2 {
-                            w.items.len() as i32
-                        } else {
-                            -1
-                        },
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let widgets: Vec<WidgetTextInput<'_>> = widget_store
+    s.locs()
         .iter()
-        .map(|(component_id, text, item_count)| WidgetTextInput {
-            component_id: *component_id,
-            text,
-            item_count: *item_count,
+        .filter(|l| {
+            script::bank::ops::op_slot(*l, "Use-quickly", script::bank::ops::LabelMatch::Folded)
+                .is_some()
         })
-        .collect();
-    let widget_views = snapshot.map(|s| s.widgets()).unwrap_or_default();
-    let widget_items_relevant = snapshot.is_some_and(|s| {
-        s.shop().open
-            || s.trade().offer_open
-            || s.trade().confirm_open
-            || matches!(s.modals().main, 6575 | 6412)
-    });
-    let widget_item_ops_store: Vec<Vec<Vec<String>>> = widget_views
+        .map(|l| TileInput {
+            x: l.tile.x,
+            z: l.tile.z,
+            level: l.tile.level,
+        })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_banks(world: &NavWorld) -> Vec<BankStandInput<'_>> {
+    use nav_planner::pack::BankAccess;
+    world
+        .banks()
         .iter()
-        .map(|w| {
-            if widget_items_relevant && w.type_ == 2 {
-                w.items
-                    .iter()
-                    .map(|it| {
-                        it.actions
-                            .iter()
-                            .filter_map(|op| op.as_deref().map(str::to_owned))
-                            .collect()
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            }
+        .filter_map(|b| match &b.access {
+            BankAccess::Booth { op } => Some(BankStandInput {
+                name: &b.name,
+                x: b.tile.x,
+                z: b.tile.z,
+                level: b.tile.level,
+                kind: "booth",
+                op: *op,
+                choose: None,
+            }),
+            BankAccess::Npc { .. } => None,
         })
-        .collect();
-    let widget_items_store: Vec<Vec<ItemRowInput<'_>>> = widget_views
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_widget_items_store<'a>(
+    snapshot: Option<&'a GameSnapshot>,
+    ops_store: &'a [Vec<Vec<String>>],
+    obj_names: Option<&'a api::obj_names::ObjNames>,
+) -> Vec<Vec<ItemRowInput<'a>>> {
+    let Some(s) = snapshot else {
+        return Vec::new();
+    };
+    let relevant = widget_items_relevant(s);
+    s.widgets()
         .iter()
         .enumerate()
         .map(|(wi, w)| {
-            if !widget_items_relevant || w.type_ != 2 {
+            if !relevant || w.type_ != 2 {
                 return Vec::new();
             }
             w.items
@@ -1271,7 +1049,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                         .or(item.def.name.as_deref()),
                     count: item.count,
                     id: item.def.id,
-                    ops: &widget_item_ops_store[wi][ii],
+                    ops: &ops_store[wi][ii],
                     noted: item.def.noted,
                     cert: item.def.certificate_link,
                     component_id: item.component_id,
@@ -1279,8 +1057,16 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                 })
                 .collect()
         })
-        .collect();
-    let widget_facts: Vec<WidgetFactInput<'_>> = widget_views
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_widget_facts<'a>(
+    snapshot: Option<&'a GameSnapshot>,
+    widget_items: &'a [Vec<ItemRowInput<'a>>],
+) -> Vec<WidgetFactInput<'a>> {
+    let widget_views = snapshot.map(|s| s.widgets()).unwrap_or_default();
+    widget_views
         .iter()
         .enumerate()
         .map(|(index, w)| {
@@ -1323,58 +1109,415 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
                     .unwrap_or(-1),
                 colour: w.colour,
                 inventory_ready: w.inventory_ready,
-                items: &widget_items_store[index],
+                items: &widget_items[index],
             }
         })
+        .collect()
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_client_adapter<'a>(
+    s: &'a GameSnapshot,
+    widget_facts: &'a [WidgetFactInput<'a>],
+    menu_entries: &'a [&'a str],
+) -> ClientAdapterFactsInput<'a> {
+    let world = s.world();
+    ClientAdapterFactsInput {
+        attached: s.attached(),
+        map_build_base: (world.map_base_x, world.map_base_z),
+        server_tile: s.local_player().map(|player| TileInput {
+            x: player.player.network.x,
+            z: player.player.network.z,
+            level: player.player.network.level,
+        }),
+        hint_tile_level: s.hint_tile().map(|tile| tile.level),
+        bank_com_id: s.bank_component_id(),
+        chat_continue_component_id: s.chat_continue_component_id(),
+        chat_modal_texts: ChatModalTextsInput {
+            root: s.modals().chat,
+            texts: s.chat_modal_texts(),
+        },
+        widget_facts,
+        player_count: world.player_count,
+        npc_count: world.npc_count,
+        run_controls: s
+            .run_controls()
+            .map(|controls| (controls.on_component_id, controls.off_component_id)),
+        login_message: s.login_message(),
+        menu_entries,
+        last_walk_path_local: s.last_walk_path_local(),
+        session_generation: s.trade().session_generation,
+        modal_close_generation: s.shop().server_closes,
+        projection_scene: {
+            let view = s.projection_scene();
+            view.available.then_some(ProjectionSceneInput { view })
+        },
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_collision_view(snapshot: Option<&GameSnapshot>) -> CollisionViewInput<'_> {
+    match snapshot {
+        Some(s) if s.ingame() && s.scene_state() == 2 && s.scene().available => {
+            let sc = s.scene();
+            CollisionViewInput {
+                available: true,
+                base_x: sc.base_x,
+                base_z: sc.base_z,
+                level: sc.level,
+                width: sc.width,
+                height: sc.height,
+                flags: &sc.collision_flags,
+            }
+        }
+        _ => CollisionViewInput::UNAVAILABLE,
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+fn build_route_inspect<'a>(
+    inspect: &'a route_inspect::PostedInspect,
+    latest: &'a [InspectHopInput<'a>],
+    prev: &'a [InspectHopInput<'a>],
+) -> RouteInspectFactsInput<'a> {
+    let latest_in = inspect
+        .latest
+        .as_ref()
+        .map(|t| route_inspect::terminal_to_input(t, latest))
+        .unwrap_or_default();
+    let prev_in = inspect
+        .prev
+        .as_ref()
+        .map(|t| route_inspect::terminal_to_input(t, prev))
+        .unwrap_or_default();
+    RouteInspectFactsInput {
+        latest: latest_in,
+        prev: prev_in,
+        running_id: inspect.running_id,
+        pending_id: inspect.pending_id,
+        accepted_id: inspect.accepted_id,
+        replaced_id: inspect.replaced_id,
+        replaced_prev_id: inspect.replaced_prev_id,
+        refused_id: inspect.refused_id,
+        refused_id_2: inspect.refused_id_2,
+        refused_id_3: inspect.refused_id_3,
+        unobserved: inspect.unobserved,
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+/// The same pack with the walk outcome's navigator-named gate shorts: the live
+/// observe path takes this entry point, and [`with_script_snapshot_input`] is
+/// this one with none. The rows are a borrow of THIS frame and are handed to `f`
+/// inside the facts it already receives, because a caller cannot attach them
+/// through the closure itself: that parameter is higher-ranked, so a borrow of
+/// the caller's frame could never satisfy it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_script_snapshot_input_shorts<R>(
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    ingame: bool,
+    inv: Option<&[(i32, i32)]>,
+    snapshot: Option<&GameSnapshot>,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    world: Option<&NavWorld>,
+    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
+    hold: bool,
+    ours: bool,
+    teleports_enabled: bool,
+    withdraw_x_result_seq: u64,
+    withdraw_x_result: bool,
+    bank_op_result_seq: u64,
+    bank_op_result: bool,
+    canlight: Option<&[u64]>,
+    walk_outcome: PostedWalkOutcome,
+    door_crossing: Option<script::native::snapshot_source::DoorCrossingInput<'_>>,
+    walk_missing_carry: &[script::native::snapshot_source::CarryInput<'_>],
+    inspect: route_inspect::PostedInspect,
+    bank_selection: script::native::snapshot_source::BankSelectionInput,
+    precomputed_reach: Option<&api::query::ReachQueryView>,
+    precomputed_flood: Option<&api::query::ReachFlood>,
+    reach_stamp: u64,
+    guardian_active_event: Option<&str>,
+
+    f: impl FnOnce(
+        &script::native::snapshot_source::SnapshotInput<'_>,
+        script::native::snapshot_source::NativeFactsInput<'_>,
+    ) -> R,
+) -> R {
+    let owned_flood = if precomputed_reach.is_none() {
+        compute_owned_flood(snapshot, here)
+    } else {
+        None
+    };
+    let flood = if precomputed_reach.is_some() {
+        precomputed_flood
+    } else {
+        owned_flood.as_ref()
+    };
+    let owned_reach = match precomputed_reach {
+        Some(_) => None,
+        None => Some(pack_owned_reach(snapshot, flood, world, canlight)),
+    };
+    let reach_pack: &api::query::ReachQueryView = match precomputed_reach {
+        Some(view) => view,
+        None => owned_reach
+            .as_ref()
+            .expect("owned reach packed when precomputed_reach is None"),
+    };
+    let reach = to_reach_view_input(reach_pack, reach_stamp);
+    let here_tile = here.map(|(x, z, level)| TileInput { x, z, level });
+    let stores = SnapshotOwnedStores::build(snapshot, here, flood);
+    let inv = build_inv_rows(snapshot, &stores.inv_ops, inv, obj_names);
+    let stats = snapshot.map(|s| {
+        s.stats()
+            .iter()
+            .map(|st| StatInput {
+                index: st.index,
+                name: &st.name,
+                xp: st.xp,
+                base: st.base,
+                effective: st.effective,
+            })
+            .collect::<Vec<_>>()
+    });
+    let bank = snapshot
+        .map(|s| build_item_rows(s.bank(), &stores.bank_ops, obj_names, ComponentIdMode::Keep))
+        .unwrap_or_default();
+    // Real deposit component (e.g. 2006 / fixture 701). Input.invButton
+    // revalidates this id; posting -1 rejects every bank-side deposit.
+    let bank_side = snapshot
+        .map(|s| {
+            build_item_rows(
+                s.bank_side(),
+                &stores.bank_side_ops,
+                obj_names,
+                ComponentIdMode::Keep,
+            )
+        })
+        .unwrap_or_default();
+    let npcs = snapshot
+        .map(|s| build_npcs(s, &stores.npc_actions, reach_pack))
+        .unwrap_or_default();
+    let locs = snapshot
+        .map(|s| build_locs(s, &stores.loc_actions, reach_pack))
+        .unwrap_or_default();
+    let players = snapshot
+        .map(|s| build_players(s, &stores.player_actions, reach_pack))
+        .unwrap_or_default();
+    let ground = snapshot
+        .map(|s| build_ground_items(s, &stores.ground_actions, reach_pack, obj_names))
+        .unwrap_or_default();
+    let equipment = snapshot
+        .map(|s| {
+            build_item_rows(
+                s.equipment(),
+                &stores.equip_ops,
+                obj_names,
+                ComponentIdMode::Omit,
+            )
+        })
+        .unwrap_or_default();
+    let trade_mine = snapshot
+        .map(|s| {
+            build_item_rows(
+                &s.trade().my_offer,
+                &stores.trade_mine_ops,
+                obj_names,
+                ComponentIdMode::Keep,
+            )
+        })
+        .unwrap_or_default();
+    let trade_theirs = snapshot
+        .map(|s| {
+            build_item_rows(
+                &s.trade().their_offer,
+                &stores.trade_theirs_ops,
+                obj_names,
+                ComponentIdMode::Keep,
+            )
+        })
+        .unwrap_or_default();
+    let trade_side = snapshot
+        .map(|s| {
+            build_item_rows(
+                &s.trade().side_pack,
+                &stores.trade_side_ops,
+                obj_names,
+                ComponentIdMode::Keep,
+            )
+        })
+        .unwrap_or_default();
+    let shop_player_rows = snapshot
+        .map(|s| {
+            build_item_rows(
+                &s.shop().player,
+                &stores.shop_player_ops,
+                obj_names,
+                ComponentIdMode::Keep,
+            )
+        })
+        .unwrap_or_default();
+    // `None` = the shop side interface's player pack was not decoded: the
+    // Sell path fails closed rather than acting on an empty stand-in.
+    let shop_player = snapshot
+        .filter(|s| s.shop().player_available)
+        .map(|_| shop_player_rows.as_slice());
+    let main_make_rows = snapshot
+        .map(|s| {
+            build_item_rows(
+                s.main_make(),
+                &stores.main_make_ops,
+                obj_names,
+                ComponentIdMode::Keep,
+            )
+        })
+        .unwrap_or_default();
+    // Always decoded when a snapshot exists: empty means no Make TYPE_INV
+    // on the open main modal, not an unpublished field.
+    let main_make = snapshot.map(|_| main_make_rows.as_slice());
+    let shop_stock = snapshot
+        .map(|s| {
+            build_item_rows(
+                &s.shop().stock,
+                &stores.shop_stock_ops,
+                obj_names,
+                ComponentIdMode::Keep,
+            )
+        })
+        .unwrap_or_default();
+    let chat_options = snapshot.map(|s| {
+        s.chat_options()
+            .iter()
+            .map(|o| ChatOptionInput {
+                text: &o.text,
+                com_id: o.component_id,
+            })
+            .collect::<Vec<_>>()
+    });
+    let varps = snapshot.map(build_varps);
+    let combat_styles: Vec<CombatStyleInput<'_>> = stores
+        .combat_styles
+        .as_ref()
+        .map(|labels| {
+            labels
+                .iter()
+                .map(|l| CombatStyleInput {
+                    mode: l.mode,
+                    label: &l.label,
+                    component_id: l.component_id,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let local = snapshot.and_then(|s| s.local_player());
+    let my_name = local.and_then(|lp| lp.player.actor.name.as_deref());
+    let in_combat = local.is_some_and(|lp| lp.player.actor.in_combat);
+    let attacked_by_player =
+        local.is_some_and(|lp| api::snapshot::attacked_by_player(lp.player.actor.face_entity));
+    let (self_target_kind, self_target_index) =
+        actor_target_wire(local.and_then(|lp| lp.player.actor.target.as_ref()));
+    let animating =
+        local.is_some_and(|lp| lp.player.actor.moving || lp.player.actor.animation != -1);
+    let modals = snapshot.map(|s| s.modals());
+    let booths = snapshot.map(build_booths);
+    let nearest_booth = snapshot.and_then(|s| {
+        s.nearest_use_quickly_booth().map(|loc| NearestBoothInput {
+            x: loc.tile.x,
+            z: loc.tile.z,
+            level: loc.tile.level,
+            id: loc.id,
+            name: loc.name.as_deref().unwrap_or("Bank booth"),
+            op: "Use-quickly",
+        })
+    });
+    let banks = world.map(build_banks);
+    let make_products: Vec<MakeProductInput<'_>> = snapshot
+        .map(|s| {
+            s.make_products()
+                .iter()
+                .enumerate()
+                .map(|(i, p)| MakeProductInput {
+                    object_id: p.object_id,
+                    name: p.name.as_str(),
+                    buttons: &stores.make_buttons[i],
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let side_tab_ifaces: Vec<SideTabIfaceInput> = snapshot
+        .map(|s| {
+            s.side_tabs()
+                .iter()
+                .map(|t| SideTabIfaceInput {
+                    index: t.index,
+                    id: t.root_component_id,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let spell_buttons: Vec<CombatStyleInput<'_>> = stores
+        .spells
+        .as_ref()
+        .map(|rows| {
+            rows.iter()
+                .map(|(label, component_id)| CombatStyleInput {
+                    mode: 0,
+                    label,
+                    component_id: *component_id,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let chat_lines: Vec<ChatLineInput<'_>> = snapshot
+        .map(|s| {
+            s.chat_lines()
+                .iter()
+                .map(|l| ChatLineInput {
+                    seq: l.sequence,
+                    text: l.text.as_str(),
+                    type_: l.type_,
+                    username: l.username.as_deref(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let widgets: Vec<WidgetTextInput<'_>> = stores
+        .widgets
+        .iter()
+        .map(|(component_id, text, item_count)| WidgetTextInput {
+            component_id: *component_id,
+            text,
+            item_count: *item_count,
+        })
         .collect();
+    let widget_items_store = build_widget_items_store(snapshot, &stores.widget_item_ops, obj_names);
+    let widget_facts = build_widget_facts(snapshot, &widget_items_store);
     // The open puzzle board, posted next to the widget-text map: the
     // identified component, its observed slot count, its rows mapped from
     // that widget's own `ItemView`s (bounded — one row per stored slot) and
     // the session generation. `None` only when there is no snapshot at all
     // (not supplied); a closed board is `Some` with component -1 and no
     // rows, so a close can never be mistaken for a delta keep.
-    let puzzle_board_ops_store: Vec<Vec<String>>;
-    let puzzle_board_items_store: Vec<ItemRowInput<'_>>;
-    let puzzle_board = if let Some(s) = snapshot {
+    let puzzle_board_items_store: Vec<ItemRowInput<'_>> = snapshot
+        .map(|s| {
+            build_item_rows(
+                s.puzzle_board().items,
+                &stores.puzzle_board_ops,
+                obj_names,
+                ComponentIdMode::Keep,
+            )
+        })
+        .unwrap_or_default();
+    let puzzle_board = snapshot.map(|s| {
         let board = s.puzzle_board();
-        puzzle_board_ops_store = board
-            .items
-            .iter()
-            .map(|it| {
-                it.actions
-                    .iter()
-                    .filter_map(|a| a.as_deref().map(str::to_string))
-                    .collect()
-            })
-            .collect();
-        puzzle_board_items_store = board
-            .items
-            .iter()
-            .enumerate()
-            .map(|(i, it)| ItemRowInput {
-                name: obj_names
-                    .and_then(|names| names.name(it.def.id))
-                    .or(it.def.name.as_deref()),
-                count: it.count,
-                id: it.def.id,
-                ops: &puzzle_board_ops_store[i],
-                noted: it.def.noted,
-                cert: posted_cert(obj_names, &it.def),
-                component_id: it.component_id,
-                slot: it.slot,
-            })
-            .collect();
-        Some(PuzzleBoardInput {
+        PuzzleBoardInput {
             component_id: board.component_id,
             size: board.size,
             items: &puzzle_board_items_store,
             generation: board.generation,
-        })
-    } else {
-        puzzle_board_ops_store = Vec::new();
-        puzzle_board_items_store = Vec::new();
-        None
-    };
+        }
+    });
     let quest_statuses: Vec<QuestStatusInput<'_>> = snapshot
         .map(|s| {
             s.quest_statuses()
@@ -1404,43 +1547,10 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     let menu_entries: Vec<&str> = snapshot
         .map(|s| s.menu_entries().iter().map(String::as_str).collect())
         .unwrap_or_default();
-    let client_adapter = snapshot.map(|s| {
-        let world = s.world();
-        ClientAdapterFactsInput {
-            attached: s.attached(),
-            map_build_base: (world.map_base_x, world.map_base_z),
-            server_tile: s.local_player().map(|player| TileInput {
-                x: player.player.network.x,
-                z: player.player.network.z,
-                level: player.player.network.level,
-            }),
-            hint_tile_level: s.hint_tile().map(|tile| tile.level),
-            bank_com_id: s.bank_component_id(),
-            chat_continue_component_id: s.chat_continue_component_id(),
-            chat_modal_texts: ChatModalTextsInput {
-                root: s.modals().chat,
-                texts: s.chat_modal_texts(),
-            },
-            widget_facts: &widget_facts,
-            player_count: world.player_count,
-            npc_count: world.npc_count,
-            run_controls: s
-                .run_controls()
-                .map(|controls| (controls.on_component_id, controls.off_component_id)),
-            login_message: s.login_message(),
-            menu_entries: &menu_entries,
-            last_walk_path_local: s.last_walk_path_local(),
-            session_generation: s.trade().session_generation,
-            modal_close_generation: s.shop().server_closes,
-            projection_scene: {
-                let view = s.projection_scene();
-                view.available.then_some(ProjectionSceneInput { view })
-            },
-        }
-    });
+    let client_adapter = snapshot.map(|s| build_client_adapter(s, &widget_facts, &menu_entries));
     let input = SnapshotInput {
         tick,
-        here,
+        here: here_tile,
         ingame,
         walk_outcome_cancel_reason: walk_outcome.cancel_reason,
         user_move_intent_seq: walk_outcome.user_move_intent_seq,
@@ -1531,44 +1641,6 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         self_target_index,
         widgets: &widgets,
     };
-    let bank_approach_store: Vec<BankApproachInput> = match (snapshot, here, flood.as_ref()) {
-        (Some(s), Some(tile), Some(flood)) => s
-            .locs()
-            .iter()
-            .filter_map(|loc| {
-                let name = loc.name.as_deref()?;
-                if !name
-                    .as_bytes()
-                    .windows(4)
-                    .any(|word| word.eq_ignore_ascii_case(b"bank"))
-                {
-                    return None;
-                }
-                let approach = api::query::loc_approach::booth_approach(
-                    loc,
-                    s.scene(),
-                    WorldTile {
-                        x: tile.x,
-                        z: tile.z,
-                        level: tile.level,
-                    },
-                    flood,
-                )?;
-                Some(BankApproachInput {
-                    loc_id: loc.id,
-                    x: loc.tile.x,
-                    z: loc.tile.z,
-                    level: loc.tile.level,
-                    can_operate: approach.can_operate,
-                    dest_ok: approach.dest.is_some(),
-                    dest_x: approach.dest.map(|t| t.x).unwrap_or(0),
-                    dest_z: approach.dest.map(|t| t.z).unwrap_or(0),
-                    dest_level: approach.dest.map(|t| t.level).unwrap_or(0),
-                })
-            })
-            .collect(),
-        _ => Vec::new(),
-    };
     let latest_hops = inspect
         .latest
         .as_ref()
@@ -1579,31 +1651,6 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         .as_ref()
         .map(|t| route_inspect::hop_inputs(&t.hops))
         .unwrap_or_default();
-    let latest_in = inspect
-        .latest
-        .as_ref()
-        .map(|t| route_inspect::terminal_to_input(t, &latest_hops))
-        .unwrap_or_default();
-    let prev_in = inspect
-        .prev
-        .as_ref()
-        .map(|t| route_inspect::terminal_to_input(t, &prev_hops))
-        .unwrap_or_default();
-    let collision = Some(match snapshot {
-        Some(s) if s.ingame() && s.scene_state() == 2 && s.scene().available => {
-            let sc = s.scene();
-            CollisionViewInput {
-                available: true,
-                base_x: sc.base_x,
-                base_z: sc.base_z,
-                level: sc.level,
-                width: sc.width,
-                height: sc.height,
-                flags: &sc.collision_flags,
-            }
-        }
-        _ => CollisionViewInput::UNAVAILABLE,
-    });
     let native = NativeFactsInput {
         stats_ready: snapshot.is_some_and(GameSnapshot::stats_ready),
         inv_ready: snapshot.is_some_and(GameSnapshot::inventory_ready),
@@ -1636,7 +1683,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         npc_boxes,
         shop_player,
         main_make,
-        bank_approaches: Some(&bank_approach_store),
+        bank_approaches: Some(&stores.bank_approaches),
         walk_outcome_seq: walk_outcome.seq,
         walk_outcome_generation: walk_outcome.generation,
         walk_outcome_request_id: walk_outcome.request_id,
@@ -1652,20 +1699,8 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         walk_remaining: walk_outcome.remaining,
         door_crossing,
         walk_missing_carry,
-        route_inspect: script::native::snapshot_source::RouteInspectFactsInput {
-            latest: latest_in,
-            prev: prev_in,
-            running_id: inspect.running_id,
-            pending_id: inspect.pending_id,
-            accepted_id: inspect.accepted_id,
-            replaced_id: inspect.replaced_id,
-            replaced_prev_id: inspect.replaced_prev_id,
-            refused_id: inspect.refused_id,
-            refused_id_2: inspect.refused_id_2,
-            refused_id_3: inspect.refused_id_3,
-            unobserved: inspect.unobserved,
-        },
-        collision,
+        route_inspect: build_route_inspect(&inspect, &latest_hops, &prev_hops),
+        collision: Some(build_collision_view(snapshot)),
         bank_selection,
         self_anim: Some(local.map_or(-1, |lp| lp.player.actor.animation)),
         local_player_moving: local.map(|lp| lp.player.actor.moving),
