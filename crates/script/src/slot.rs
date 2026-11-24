@@ -2450,18 +2450,17 @@ impl SlotScript {
             return LentOutcome::Refused;
         }
         let identity = self.runtime_context.native_input().lock().identity();
-        let outcome = Self::with_native_page(
-            SlotPageSources {
-                seat: self.seat.as_deref(),
-                api: self.api.as_deref(),
-                bank: self.bank.as_deref(),
-                shop: self.shop.as_deref(),
-                compiled: self.compiled.as_deref(),
-                seat_compiled_owner: self.seat_compiled_owner,
-            },
-            native,
-            |native| surface.dispatch_lent(wake, ctx.tick, identity, input, native),
-        );
+        let sources = SlotPageSources {
+            seat: self.seat.as_deref(),
+            api: self.api.as_deref(),
+            bank: self.bank.as_deref(),
+            shop: self.shop.as_deref(),
+            compiled: self.compiled.as_deref(),
+            seat_compiled_owner: self.seat_compiled_owner,
+        };
+        let outcome = Self::with_native_page(sources, native, |native| {
+            surface.dispatch_lent(wake, ctx.tick, identity, input, native)
+        });
         if let LentOutcome::Failed(failure) = &outcome {
             self.stop_blocked(failure.clone(), ctx.tick);
         }
@@ -2479,18 +2478,17 @@ impl SlotScript {
         let Some(surface) = self.surface.as_mut() else {
             return false;
         };
-        Self::with_native_page(
-            SlotPageSources {
-                seat: self.seat.as_deref(),
-                api: self.api.as_deref(),
-                bank: self.bank.as_deref(),
-                shop: self.shop.as_deref(),
-                compiled: self.compiled.as_deref(),
-                seat_compiled_owner: self.seat_compiled_owner,
-            },
-            native,
-            |native| surface.post_snapshot_delta(input, native, force_banks),
-        )
+        let sources = SlotPageSources {
+            seat: self.seat.as_deref(),
+            api: self.api.as_deref(),
+            bank: self.bank.as_deref(),
+            shop: self.shop.as_deref(),
+            compiled: self.compiled.as_deref(),
+            seat_compiled_owner: self.seat_compiled_owner,
+        };
+        Self::with_native_page(sources, native, |native| {
+            surface.post_snapshot_delta(input, native, force_banks)
+        })
     }
 
     /// Prepare native pages and post one typed snapshot wake.
@@ -2504,18 +2502,17 @@ impl SlotScript {
         let Some(surface) = self.surface.as_mut() else {
             return false;
         };
-        Self::with_native_page(
-            SlotPageSources {
-                seat: self.seat.as_deref(),
-                api: self.api.as_deref(),
-                bank: self.bank.as_deref(),
-                shop: self.shop.as_deref(),
-                compiled: self.compiled.as_deref(),
-                seat_compiled_owner: self.seat_compiled_owner,
-            },
-            native,
-            |native| surface.post_snapshot_wake(input, native, force_banks, preserve_inv),
-        )
+        let sources = SlotPageSources {
+            seat: self.seat.as_deref(),
+            api: self.api.as_deref(),
+            bank: self.bank.as_deref(),
+            shop: self.shop.as_deref(),
+            compiled: self.compiled.as_deref(),
+            seat_compiled_owner: self.seat_compiled_owner,
+        };
+        Self::with_native_page(sources, native, |native| {
+            surface.post_snapshot_wake(input, native, force_banks, preserve_inv)
+        })
     }
 
     /// Last accepted snapshot identities, used to detect host completions
@@ -3805,15 +3802,7 @@ impl SlotScript {
                 continue;
             }
             if self.seat.as_ref().is_some_and(|seat| seat.held()) {
-                let before = queued.batch.reqs.len();
-                queued.batch.reqs.retain(|row| {
-                    seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
-                        != api::script_contract::EmissionClass::Gameplay
-                });
-                self.seat
-                    .as_mut()
-                    .expect("held seat")
-                    .count_dropped(before - queued.batch.reqs.len());
+                self.drop_batch_gameplay_rows(&mut queued);
                 // The carrier still owns starts, controls, watermark and
                 // releases. Guardian-held gameplay is never replayed.
                 carried.push(queued);
@@ -3824,14 +3813,7 @@ impl SlotScript {
                 // (`28-seat-sg.md:64`): the frame's gameplay is dropped and
                 // counted, never dispatched after the hold. The seat is not
                 // frozen, so the batch's controls and other rows apply now.
-                let before = queued.batch.reqs.len();
-                queued.batch.reqs.retain(|row| {
-                    seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
-                        != api::script_contract::EmissionClass::Gameplay
-                });
-                if let Some(seat) = self.seat.as_mut() {
-                    seat.count_dropped(before - queued.batch.reqs.len());
-                }
+                self.drop_batch_gameplay_rows(&mut queued);
                 if queued.held_fold {
                     // The guardian's retained pages wait for the hold to
                     // end, and later batches queue behind them.
@@ -3931,6 +3913,17 @@ impl SlotScript {
         });
         self.keep_held_aborts(&mut policy, &mut reqs);
         (policy, reqs, self.api_owns_foreground())
+    }
+
+    fn drop_batch_gameplay_rows(&mut self, queued: &mut crate::native::seat_rows::QueuedSeatBatch) {
+        let before = queued.batch.reqs.len();
+        queued.batch.reqs.retain(|row| {
+            seat_interact_class(&row.request, row.lineage.or(row.mirror_owner)).0
+                != api::script_contract::EmissionClass::Gameplay
+        });
+        if let Some(seat) = self.seat.as_mut() {
+            seat.count_dropped(before - queued.batch.reqs.len());
+        }
     }
 
     /// While the frame is held, the host dispatches no script row: the slot
@@ -4484,15 +4477,19 @@ impl SlotScript {
             if !matches!(outcome, LentOutcome::Accepted) {
                 return outcome;
             }
-            self.tick_api(ctx);
-            self.tick_bank_scoped(ctx, bank_seat::BankPoll::All);
-            self.tick_shop(ctx);
-            self.capture_native_seat_rows();
-            self.settle_api_seat_terminals();
+            self.tick_surface_native_seats(ctx);
             return outcome;
         }
         self.poll_compiled_frame(ctx);
         LentOutcome::Refused
+    }
+
+    fn tick_surface_native_seats(&mut self, ctx: &mut ScriptCtx<'_>) {
+        self.tick_api(ctx);
+        self.tick_bank_scoped(ctx, bank_seat::BankPoll::All);
+        self.tick_shop(ctx);
+        self.capture_native_seat_rows();
+        self.settle_api_seat_terminals();
     }
 
     /// The `SeatAnswer` producer: an owed answer page on a seat that is not
@@ -4674,11 +4671,7 @@ impl SlotScript {
                 self.seat_held_tick();
                 return outcome;
             }
-            self.tick_api(ctx);
-            self.tick_bank_scoped(ctx, bank_seat::BankPoll::All);
-            self.tick_shop(ctx);
-            self.capture_native_seat_rows();
-            self.settle_api_seat_terminals();
+            self.tick_surface_native_seats(ctx);
             return outcome;
         }
         if self.compiled.is_none() {
