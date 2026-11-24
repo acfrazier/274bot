@@ -838,1094 +838,35 @@ impl NativeMachine for BankMachine {
                 self.arm_deadline(cx.evidence().tick, ops::TRANSFER_OBSERVED_TICK_LIMIT);
                 self.phase = Phase::AwaitTable;
             }
-            match self.phase {
-                Phase::Open => {
-                    if matches!(self.request.action, BankAction::Close) {
-                        let Some(session) = cx.snapshot().bank_session().map(|s| s.value) else {
-                            return Poll::Ready(Ok(self.receipt(true)));
-                        };
-                        if ops::close_begin(session.open).is_some() {
-                            return Poll::Ready(Ok(self.receipt(true)));
-                        }
-                        let started_tick = cx.evidence().tick;
-                        let run = cx.evidence().run;
-                        std::task::ready!(crate::native::defer_budget(
-                            cx.emit(InteractReq::Close)
-                        ))?;
-                        self.arm_deadline(started_tick, ops::TRANSFER_OBSERVED_TICK_LIMIT);
-                        self.phase = Phase::AwaitClose {
-                            baseline: CloseBaseline {
-                                generation: session.generation,
-                                side: session.side,
-                            },
-                            run,
-                        };
-                        return Poll::Pending;
-                    }
-                    let stand = self.stand_access().cloned();
-                    let is_open_stand = matches!(self.request.action, BankAction::OpenStand { .. });
-                    let teller = stand
-                        .as_ref()
-                        .is_some_and(|access| access.kind == AccessKind::Teller);
-                    // A transfer verb re-opening through a teller goes to
-                    // the dialogue only while the table is down.
-                    if teller && (is_open_stand || cx.snapshot().bank().is_none()) {
-                        // The teller attempt counts only once its core sends a
-                        // request (`NpcAccess` phase below), not when it starts.
-                        self.opened_from = None;
-                        self.deadline = None;
-                        self.phase = Phase::NpcAccess {
-                            core: npc::NpcAccess::new(),
-                            dialogue: AccessDialogue::Teller,
-                            first_target: None,
-                        };
-                        continue;
-                    }
-                    if cx.snapshot().bank().is_some() {
-                        self.session = cx
-                            .snapshot()
-                            .bank_session()
-                            .map_or(0, |session| session.value.generation);
-                        self.reopen_pending = false;
-                        self.clear_wait_deadlines();
-                        self.phase = Phase::Act;
-                        continue;
-                    }
-                    if self.deadline_reached(cx.evidence().tick) {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank did not open",
-                        ))));
-                    }
-                    let mut first_target = None;
-                    if let Some(access) = stand.as_ref() {
-                        let definition = access.bank.definition;
-                        let object = definition.and_then(|definition| definition.object);
-                        let open_first = definition.and_then(|definition| definition.open_first);
-                        if object.is_some() || open_first.is_some() {
-                            // Another player can leave the final bank target open.
-                            // Probe it before the opener, as ObjectOpen does.
-                            let target = object
-                                .and_then(|operation| {
-                                    catalog_object_loc(cx, access.stand_tile, operation)
-                                        .map(|candidate| (operation, candidate, false))
-                                })
-                                .or_else(|| {
-                                    open_first.filter(|_| self.open_stage == 0).and_then(
-                                        |operation| {
-                                            catalog_object_loc(cx, access.stand_tile, operation)
-                                                .map(|candidate| (operation, candidate, true))
-                                        },
-                                    )
-                                });
-                            let Some((operation, candidate, opening_first)) = target else {
-                                return Poll::Pending;
-                            };
-                            // A player-radius area and strict reachability
-                            // keep the old `reachable_only` object probe.
-                            let Some(loc) = crate::quester::families::reach::choose_loc(
-                                cx,
-                                Some(candidate.id),
-                                None,
-                                Some(operation.op),
-                                crate::quester::families::reach::Area::new(
-                                    None,
-                                    BANK_OBJECT_RADIUS,
-                                ),
-                                Some(candidate.tile),
-                                &crate::quester::families::reach::Avoid::default(),
-                            )
-                            .reachable() else {
-                                return Poll::Pending;
-                            };
-                            first_target = opening_first.then_some((loc.id, loc.tile));
-                            std::task::ready!(crate::native::defer_budget(cx.emit(
-                                InteractReq::Loc {
-                                    x: loc.tile.x,
-                                    z: loc.tile.z,
-                                    level: loc.tile.level,
-                                    action: operation.op.to_owned(),
-                                    id: Some(loc.id),
-                                },
-                            )))?;
-                            self.object_dialogue = ObjectDialogue::Awaiting;
-                        } else {
-                            let Some(locs) = cx.snapshot().locs() else {
-                                return Poll::Pending;
-                            };
-                            let wanted_name = access.name.as_deref();
-                            let Some(loc) =
-                                ops::booth_at(locs.value, access.stand_tile, wanted_name)
-                            else {
-                                return Poll::Pending;
-                            };
-                            let stand_op = if access.stand_op > 0 {
-                                Some(access.stand_op)
-                            } else {
-                                ops::op_slot(loc, "Use-quickly", ops::LabelMatch::Folded)
-                            };
-                            let Some(stand_op) = stand_op else {
-                                return Poll::Pending;
-                            };
-                            std::task::ready!(crate::native::defer_budget(cx.emit(
-                                InteractReq::OpenStand {
-                                    x: loc.tile.x,
-                                    z: loc.tile.z,
-                                    level: loc.tile.level,
-                                    kind: access.kind.as_str().to_owned(),
-                                    name: loc.name.as_deref().map(str::to_owned),
-                                    stand_op: Some(stand_op),
-                                    choose: access.choose.as_deref().map(str::to_owned),
-                                },
-                            )))?;
-                        }
-                        // The opener's click (a chest lid) does not open the bank.
-                        self.opened_from = first_target.is_none().then(|| open_generation(cx));
-                        self.reopen_pending = false;
-                        self.phase = Phase::AwaitOpen { first_target };
-                        return Poll::Pending;
-                    }
-                    let Some(bank) = self.request.bank else {
-                        return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                            "bank open requires a selected stand",
-                        ))));
-                    };
-                    let Some(locs) = cx.snapshot().locs() else {
-                        return Poll::Pending;
-                    };
-                    let wanted = bank.definition.and_then(|definition| definition.object);
-                    let booth = ops::booth_nearest_action(
-                        locs.value,
-                        bank.tile.level,
-                        wanted.map_or("Use-quickly", |wanted| wanted.op),
-                    );
-                    let Some(booth) = booth else {
-                        return Poll::Pending;
-                    };
-                    let action = wanted.map(|row| row.op.to_string());
-                    let name = wanted.map(|row| row.name.to_string());
-                    std::task::ready!(crate::native::defer_budget(cx.emit(
-                        InteractReq::OpenBooth {
-                            x: booth.tile.x,
-                            z: booth.tile.z,
-                            level: booth.tile.level,
-                            id: booth.id,
-                            name,
-                            action,
-                        },
-                    )))?;
-                    self.opened_from = Some(open_generation(cx));
-                    self.reopen_pending = false;
-                    self.phase = Phase::AwaitOpen { first_target: None };
-                    return Poll::Pending;
-                }
+            let step = match self.phase {
+                Phase::Open => self.poll_open(cx),
                 Phase::NpcAccess {
-                    mut core,
+                    core,
                     dialogue,
                     first_target,
-                } => {
-                    let Some(access) = self.stand_access().cloned() else {
-                        unreachable!("bank dialogue needs a stand access");
-                    };
-                    let intent = match dialogue {
-                        AccessDialogue::Teller => npc_intent(&access)?,
-                        AccessDialogue::Object => npc::Intent {
-                            name: "",
-                            op: npc::NpcOp::Index(-1),
-                            choose: "",
-                        },
-                    };
-                    let deadline = self.deadline;
-                    let mut npc_cx = NativeNpcContext {
-                        cx,
-                        deadline: &mut self.deadline,
-                        sent: false,
-                    };
-                    let polled = crate::native::defer_budget(core.step(intent, &mut npc_cx));
-                    // A request that the teller core actually emitted is this
-                    // machine's open attempt. A wait without a banker or a
-                    // budget denial sends nothing and records nothing. An
-                    // object's dialogue follows a click that already recorded
-                    // (or, for a chest lid, must not record) the attempt.
-                    if npc_cx.sent
-                        && dialogue == AccessDialogue::Teller
-                        && self.opened_from.is_none()
-                    {
-                        self.opened_from = Some(open_generation(cx));
-                    }
-                    let step = match polled {
-                        Poll::Pending => {
-                            self.deadline = deadline;
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(result) => result?,
-                    };
-                    match step {
-                        npc::Step::Wait => {
-                            self.phase = Phase::NpcAccess {
-                                core,
-                                dialogue,
-                                first_target,
-                            };
-                            return Poll::Pending;
-                        }
-                        npc::Step::Note(npc::Note::Unloaded) => {
-                            if cx
-                                .snapshot()
-                                .bank_session()
-                                .is_some_and(|session| session.value.open)
-                            {
-                                if dialogue == AccessDialogue::Object {
-                                    self.object_dialogue = ObjectDialogue::Finished;
-                                }
-                                self.phase = Phase::AwaitOpen { first_target };
-                                continue;
-                            }
-                            let message = if dialogue == AccessDialogue::Teller {
-                                "bank teller opened without a loaded item list"
-                            } else {
-                                "bank object opened without a loaded item list"
-                            };
-                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(message))));
-                        }
-                        npc::Step::Note(
-                            npc::Note::NoBanker | npc::Note::NoDialogue | npc::Note::NotOpened,
-                        ) => {
-                            self.phase = Phase::NpcAccess {
-                                core,
-                                dialogue,
-                                first_target,
-                            };
-                            continue;
-                        }
-                        npc::Step::Done(false) => {
-                            if cx
-                                .snapshot()
-                                .bank_session()
-                                .is_some_and(|session| session.value.open)
-                            {
-                                if dialogue == AccessDialogue::Object {
-                                    self.object_dialogue = ObjectDialogue::Finished;
-                                }
-                                self.phase = Phase::AwaitOpen { first_target };
-                                continue;
-                            }
-                            if dialogue == AccessDialogue::Object {
-                                self.arm_deadline(
-                                    cx.evidence().tick,
-                                    ops::TRANSFER_OBSERVED_TICK_LIMIT,
-                                );
-                                self.object_dialogue = ObjectDialogue::Finished;
-                                self.phase = Phase::AwaitOpen { first_target };
-                                continue;
-                            }
-                            return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                "bank teller did not open the bank",
-                            ))));
-                        }
-                        npc::Step::Done(true) => {
-                            let snapshot = cx.snapshot();
-                            let Some(session) = snapshot.bank_session() else {
-                                let message = if dialogue == AccessDialogue::Teller {
-                                    "bank teller did not establish an open session"
-                                } else {
-                                    "bank object did not establish an open session"
-                                };
-                                return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                    message,
-                                ))));
-                            };
-                            if !session.value.open {
-                                let message = if dialogue == AccessDialogue::Teller {
-                                    "bank teller did not establish an open session"
-                                } else {
-                                    "bank object did not establish an open session"
-                                };
-                                return Poll::Ready(Err(ActionError::Unavailable(Arc::from(
-                                    message,
-                                ))));
-                            }
-                            if snapshot.bank().is_none() {
-                                self.phase = Phase::AwaitOpen { first_target };
-                                continue;
-                            }
-                            self.session = session.value.generation;
-                            self.clear_wait_deadlines();
-                            self.phase = Phase::Act;
-                            continue;
-                        }
-                    }
-                }
-                Phase::AwaitOpen { first_target } => {
-                    if cx.snapshot().bank().is_some() {
-                        self.session = cx
-                            .snapshot()
-                            .bank_session()
-                            .map_or(0, |session| session.value.generation);
-                        self.clear_wait_deadlines();
-                        self.phase = Phase::Act;
-                        continue;
-                    }
-                    let open_wait_expired = self.deadline_reached(cx.evidence().tick);
-                    if open_wait_expired {
-                        self.session_lost(cx, "bank item table unavailable")?;
-                        continue;
-                    }
-                    let stand = self.stand_access().cloned();
-                    let object_access = stand.as_ref().is_some_and(|access| {
-                        access.kind == AccessKind::Booth
-                            && access.bank.definition.is_some_and(|definition| {
-                                definition.open_first.or(definition.object).is_some()
-                            })
-                    });
-                    let chat_open = cx.snapshot().chat_modal().is_some_and(|chat| {
-                        chat.value.root != -1 || chat.value.continue_component_id >= 0
-                    });
-                    if self.object_dialogue == ObjectDialogue::Awaiting
-                        && object_access
-                        && chat_open
-                    {
-                        self.deadline = None;
-                        self.phase = Phase::NpcAccess {
-                            core: npc::NpcAccess::new(),
-                            dialogue: AccessDialogue::Object,
-                            first_target,
-                        };
-                        continue;
-                    }
-                    if let Some(access) = stand.as_ref() {
-                        if self.open_stage == 0 {
-                            if let Some(open_first) = access
-                                .bank
-                                .definition
-                                .and_then(|definition| definition.open_first)
-                            {
-                                if cx.snapshot().locs().is_none() {
-                                    return Poll::Pending;
-                                }
-                                if let Some((id, tile)) = first_target {
-                                    let still_closed =
-                                        catalog_object_at(cx, id, tile, open_first).is_some();
-                                    if !still_closed {
-                                        self.open_stage = 1;
-                                        self.phase = Phase::Open;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    return Poll::Pending;
-                }
-                Phase::AwaitTable => {
-                    if cx.snapshot().bank().is_some() {
-                        self.session = cx
-                            .snapshot()
-                            .bank_session()
-                            .map_or(0, |session| session.value.generation);
-                        self.clear_wait_deadlines();
-                        self.phase = Phase::Act;
-                        continue;
-                    }
-                    // The table and the open arrive in one server flush, the
-                    // table first (`bank.rs2:21-23`, `World.ts:1116-1123`): an
-                    // open whose session is gone again is a closed bank, not
-                    // a slow table. After this request's own stand click the
-                    // close is the engine's close-then-open on that click
-                    // (`OpLocHandler.ts:53`, `Player.ts:760-814`), so the open
-                    // wait resumes on its bound; a transfer that sent no click
-                    // lost its session and re-opens.
-                    if !bank_open {
-                        if self.opened_from.is_some() {
-                            self.phase = Phase::AwaitOpen { first_target: None };
-                            return Poll::Pending;
-                        }
-                        // No access of this request is behind the gone modal
-                        // (a transfer, or an open that adopted a modal left
-                        // by an earlier session): access the stand now.
-                        self.session_lost(cx, "bank closed before the item table loaded")?;
-                        continue;
-                    }
-                    if self.deadline_reached(cx.evidence().tick) {
-                        // A banker's dialogue is not driven while a bank modal
-                        // is up (`bank/npc.rs:122`), so a teller open that
-                        // adopted a modal cannot access its stand again until
-                        // the modal is gone: it stays terminal for its caller.
-                        let teller = self
-                            .stand_access()
-                            .is_some_and(|access| access.kind == AccessKind::Teller);
-                        if teller && self.adopted_open_without_access() {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank item table unavailable",
-                            ))));
-                        }
-                        self.session_lost(cx, "bank item table unavailable")?;
-                        continue;
-                    }
-                    return Poll::Pending;
-                }
+                } => self.poll_npc_access(cx, core, dialogue, first_target),
+                Phase::AwaitOpen { first_target } => self.poll_await_open(cx, first_target),
+                Phase::AwaitTable => self.poll_await_table(cx, bank_open),
                 Phase::AwaitNoteMode {
                     request_id,
                     evidence,
-                } => {
-                    let current_evidence = cx.evidence();
-                    let timed_out = ops::observed_wait_expired(
-                        evidence.tick,
-                        current_evidence.tick,
-                        ops::TRANSFER_OBSERVED_TICK_LIMIT,
-                    );
-                    if current_evidence.run != evidence.run
-                        || current_evidence.sequence <= evidence.sequence
-                    {
-                        if timed_out {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank item mode dispatch did not settle",
-                            ))));
-                        }
-                        return Poll::Pending;
-                    }
-                    let Some(receipt) = cx.interaction_receipt(request_id) else {
-                        if timed_out {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank item mode dispatch did not settle",
-                            ))));
-                        }
-                        return Poll::Pending;
-                    };
-                    if !receipt.accepted
-                        || receipt.evidence.run != evidence.run
-                        || receipt.evidence.sequence < evidence.sequence
-                    {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                            "bank item mode could not be set to unnoted",
-                        ))));
-                    }
-                    if !self.same_session(cx) {
-                        self.session_lost(cx, "bank closed before item mode settled")?;
-                        continue;
-                    }
-                    self.item_mode_ensured = true;
-                    cx.note_bank_item_mode(self.session);
-                    self.clear_wait_deadlines();
-                    self.phase = Phase::Act;
-                    continue;
-                }
-                Phase::Act => match &self.request.action {
-                    BankAction::Scan => return Poll::Ready(Ok(self.receipt(true))),
-                    BankAction::OpenStand { .. } => {
-                        return Poll::Ready(Ok(self.receipt(true)));
-                    }
-                    BankAction::Withdraw { item, qty } => {
-                        let Some(view) = HeldView::read(cx, item.id) else {
-                            return Poll::Pending;
-                        };
-                        let goal = WithdrawGoal::exact_at_least(
-                            item.id,
-                            Arc::clone(&item.name),
-                            item.id,
-                            *qty,
-                            view.available,
-                            view.held,
-                            self.session,
-                        );
-                        match ops::withdraw_progress(
-                            &goal,
-                            view.held,
-                            view.full,
-                            self.same_session(cx),
-                        ) {
-                            Progress::Complete => {
-                                return Poll::Ready(Ok(self.receipt(true)));
-                            }
-                            Progress::SessionGone => {
-                                self.session_lost(cx, "bank closed during withdraw")?;
-                                continue;
-                            }
-                            Progress::Incomplete | Progress::PackFull | Progress::OverTarget => {}
-                        }
-                        let reason =
-                            match std::task::ready!(self.click_withdraw(cx, &goal, view.held))? {
-                                Clicked::Sent => return Poll::Pending,
-                                Clicked::Closed => {
-                                    self.session_lost(cx, "bank closed during withdraw")?;
-                                    continue;
-                                }
-                                Clicked::NoStock => "bank lacks requested item",
-                                Clicked::NoOp => "bank item has no compatible withdraw action",
-                            };
-                        // `partial_ok` takes the incomplete receipt; an unmet
-                        // exact target is never reported complete.
-                        return if self.request.partial_ok {
-                            Poll::Ready(Ok(self.receipt(false)))
-                        } else {
-                            Poll::Ready(Err(ActionError::Failed(Arc::from(reason))))
-                        };
-                    }
-                    BankAction::WithdrawAny { items, qty } => {
-                        let snapshot = cx.snapshot();
-                        // A legal tier already carried — worn or held — is
-                        // the loadout satisfied; never withdraw a second one
-                        // (design-bank-snapshot §6 bug 15).
-                        let stock = snapshot.stock();
-                        if stock.pack.is_none() {
-                            return Poll::Pending;
-                        }
-                        if items.iter().any(|item| {
-                            stock.holds(item.id, *qty) == Truth::True
-                                || stock.has(item.id, *qty) == Truth::True
-                        }) {
-                            return Poll::Ready(Ok(self.receipt(true)));
-                        }
-                        let Some(bank) = snapshot.bank() else {
-                            self.session_lost(cx, "bank closed during tier withdraw")?;
-                            continue;
-                        };
-                        let Some(item) = items.iter().find(|item| {
-                            bank.value
-                                .iter()
-                                .any(|row| row.def.id == item.id && row.count > 0)
-                        }) else {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank lacks every permitted loadout tier",
-                            ))));
-                        };
-                        let Some(view) = HeldView::read(cx, item.id) else {
-                            return Poll::Pending;
-                        };
-                        let goal = WithdrawGoal::exact_at_least(
-                            item.id,
-                            Arc::clone(&item.name),
-                            item.id,
-                            *qty,
-                            view.available,
-                            view.held,
-                            self.session,
-                        );
-                        if ops::withdraw_progress(
-                            &goal,
-                            view.held,
-                            view.full,
-                            self.same_session(cx),
-                        ) == Progress::SessionGone
-                        {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank closed during tier withdraw",
-                            ))));
-                        }
-                        match std::task::ready!(self.click_withdraw(cx, &goal, view.held))? {
-                            Clicked::Sent => return Poll::Pending,
-                            Clicked::Closed => {
-                                self.session_lost(cx, "bank closed during tier withdraw")?;
-                                continue;
-                            }
-                            Clicked::NoStock | Clicked::NoOp => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank item has no compatible withdraw action",
-                                ))));
-                            }
-                        }
-                    }
-                    BankAction::WithdrawTo { withdrawals } => {
-                        let Some(withdrawal) = withdrawals.get(usize::from(self.withdraw_index))
-                        else {
-                            return Poll::Ready(Ok(self.receipt(true)));
-                        };
-                        let Some(view) = HeldView::read(cx, withdrawal.id) else {
-                            return Poll::Pending;
-                        };
-                        let goal = WithdrawGoal::exact_equal(
-                            withdrawal.id,
-                            Arc::clone(&withdrawal.name),
-                            withdrawal.id,
-                            withdrawal.target,
-                            view.available,
-                            view.held,
-                            self.session,
-                        );
-                        match ops::withdraw_progress(
-                            &goal,
-                            view.held,
-                            view.full,
-                            self.same_session(cx),
-                        ) {
-                            Progress::Complete => {
-                                self.withdraw_index = self.withdraw_index.saturating_add(1);
-                                continue;
-                            }
-                            Progress::OverTarget => {
-                                return Poll::Ready(Ok(self.receipt(false)));
-                            }
-                            Progress::SessionGone => {
-                                self.session_lost(cx, "bank closed during exact withdraw")?;
-                                continue;
-                            }
-                            Progress::Incomplete | Progress::PackFull => {}
-                        }
-                        match std::task::ready!(self.click_withdraw(cx, &goal, view.held))? {
-                            Clicked::Sent => return Poll::Pending,
-                            Clicked::Closed => {
-                                self.session_lost(cx, "bank closed during exact withdraw")?;
-                                continue;
-                            }
-                            Clicked::NoStock | Clicked::NoOp => {
-                                return Poll::Ready(Ok(self.receipt(false)));
-                            }
-                        }
-                    }
-                    BankAction::Deposit { .. }
-                    | BankAction::DepositAll { .. }
-                    | BankAction::DepositProducts { .. }
-                    | BankAction::DepositCapacity { .. } => {
-                        let snapshot = cx.snapshot();
-                        let pack = snapshot.inventory().map(|rows| rows.value);
-                        if matches!(
-                            self.request.action,
-                            BankAction::DepositProducts { .. } | BankAction::DepositCapacity { .. }
-                        ) {
-                            match self.protected_unchanged(pack) {
-                                Some(true) => {}
-                                Some(false) => {
-                                    return Poll::Ready(Err(ActionError::Blocked(Arc::from(
-                                        "protected inventory changed during bank deposit",
-                                    ))));
-                                }
-                                None => return Poll::Pending,
-                            }
-                        }
-                        // A deposit the lost session applied is credited
-                        // from the new session's pack before this session
-                        // chooses a click: the owed capacity delta and the
-                        // deposited tally continue, never restart.
-                        if self.in_flight.is_some() {
-                            let Some(pack) = pack else {
-                                return Poll::Pending;
-                            };
-                            self.reconcile_in_flight(cx, pack);
-                        }
-                        let side = snapshot.bank_side().map(|rows| rows.value);
-                        if let BankAction::DepositCapacity { slots, .. } = &self.request.action {
-                            if self.capacity_freed >= *slots {
-                                return Poll::Ready(Ok(self.receipt(true)));
-                            }
-                        }
-                        let view_wait_expired =
-                            self.view_armed && self.deadline_reached(cx.evidence().tick);
-                        let scan = if let BankAction::DepositCapacity {
-                            keep, extra_keep, ..
-                        } = &self.request.action
-                        {
-                            ops::deposit_capacity_next(
-                                keep,
-                                *extra_keep,
-                                side,
-                                pack,
-                                self.same_session(cx),
-                            )
-                        } else {
-                            let spec = deposit_spec(&self.request.action, self.best_effort_skipped)
-                                .expect("deposit actions have a deposit spec");
-                            ops::deposit_next(
-                                &spec,
-                                side,
-                                pack,
-                                view_wait_expired,
-                                self.same_session(cx),
-                            )
-                        };
-                        match scan {
-                            DepositScan::WaitView => {
-                                if pack.is_some()
-                                    && matches!(self.request.action, BankAction::DepositAll { .. })
-                                {
-                                    if !self.view_armed {
-                                        self.view_armed = true;
-                                        self.arm_deadline(cx.evidence().tick, SIDE_VIEW_TICKS);
-                                    }
-                                } else {
-                                    if self.deadline.is_none() {
-                                        self.arm_deadline(cx.evidence().tick, SIDE_VIEW_TICKS);
-                                    }
-                                    if self.deadline_reached(cx.evidence().tick) {
-                                        return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                            "bank deposit view did not post",
-                                        ))));
-                                    }
-                                }
-                                return Poll::Pending;
-                            }
-                            DepositScan::ViewExpired => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank deposit view did not post",
-                                ))));
-                            }
-                            DepositScan::Done => {
-                                let complete = match &self.request.action {
-                                    BankAction::DepositCapacity { slots, .. } => {
-                                        self.capacity_freed >= *slots
-                                    }
-                                    _ => true,
-                                };
-                                return Poll::Ready(Ok(self.receipt(complete)));
-                            }
-                            DepositScan::SessionGone => {
-                                self.session_lost(cx, "bank closed during deposit")?;
-                                continue;
-                            }
-                            DepositScan::MissingRequired => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "inventory products remain without a safe matching bank-side deposit operation",
-                                ))));
-                            }
-                            DepositScan::Click(click) => {
-                                if self.deposits >= MAX_DEPOSITS {
-                                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                        "bank deposit exceeded 32 item rows",
-                                    ))));
-                                }
-                                let Some(before) = pack.map(|rows| ops::count_id(rows, click.id))
-                                else {
-                                    self.phase = Phase::Act;
-                                    return Poll::Pending;
-                                };
-                                if before <= 0 {
-                                    self.phase = Phase::Act;
-                                    return Poll::Pending;
-                                }
-                                // Content rejects any positive addition to a
-                                // saturated stack (`bank.rs2:88-92`). Other
-                                // capacity refusals use its post-send message.
-                                if snapshot.bank().is_some_and(|rows| {
-                                    ops::count_id(rows.value, click.id) == i32::MAX
-                                }) {
-                                    return Poll::Ready(Err(ActionError::BankDeposit(
-                                        ops::DepositFailure::FullStack,
-                                    )));
-                                }
-                                let before_slots = matches!(
-                                    self.request.action,
-                                    BankAction::DepositCapacity { .. }
-                                )
-                                .then(|| pack.map_or(0, pack_rows));
-                                let option = side
-                                    .and_then(|side| deposit_option(side, click))
-                                    .expect("a selected deposit has its posted operation label");
-                                let trace = Arc::new(BankDepositTrace {
-                                    generation: self.session,
-                                    transfer: self.deposits + 1,
-                                    click_tick: cx.evidence().tick,
-                                    sequence: cx.evidence().sequence,
-                                    id: click.id,
-                                    slot: click.slot,
-                                    component: click.component,
-                                    option: Arc::from(option),
-                                    operation: click.operation,
-                                    main_before: before,
-                                    side_before: side.map(|side| ops::count_id(side, click.id)),
-                                    bank_before: snapshot
-                                        .bank()
-                                        .map(|rows| ops::count_id(rows.value, click.id)),
-                                    main_revision: snapshot.inventory_packet_generation(),
-                                    side_revision: snapshot.bank_side_packet_generation(),
-                                });
-                                let request = std::task::ready!(crate::native::defer_budget(
-                                    cx.emit_bank_deposit(
-                                        ops::deposit_req(click, self.session),
-                                        &trace,
-                                    )
-                                ))?;
-                                api::host_log!(
-                                    api::hostlog::Category::BankOp,
-                                    api::hostlog::Level::Debug,
-                                    "bank-deposit-click run={:?} bank_generation={} transfer={} request={} click_tick={} sequence={} id={} slot={} component={} option={} operation={} main_before={} side_before={:?} bank_before={:?} main_revision={:?} side_revision={:?}",
-                                    cx.evidence().run,
-                                    trace.generation,
-                                    trace.transfer,
-                                    request,
-                                    trace.click_tick,
-                                    trace.sequence,
-                                    trace.id,
-                                    trace.slot,
-                                    trace.component,
-                                    trace.option,
-                                    trace.operation,
-                                    trace.main_before,
-                                    trace.side_before,
-                                    trace.bank_before,
-                                    trace.main_revision,
-                                    trace.side_revision,
-                                );
-                                self.deposit_log = Some(Box::new(DepositLogState {
-                                    request,
-                                    last_observation: None,
-                                    last_logged_tick: trace.click_tick,
-                                    trace: Arc::clone(&trace),
-                                    dispatch_evidence: None,
-                                    dispatch_accepted: None,
-                                    chat_since: None,
-                                }));
-                                self.view_armed = false;
-                                self.deadline = None;
-                                self.phase = Phase::AwaitTransfer {
-                                    before,
-                                    before_slots,
-                                    item_id: click.id,
-                                    evidence: cx.evidence(),
-                                };
-                                return Poll::Pending;
-                            }
-                        }
-                    }
-                    BankAction::Close => unreachable!("close is handled before opening"),
-                },
+                } => self.poll_await_note_mode(cx, request_id, evidence),
+                Phase::Act => self.poll_act(cx),
                 Phase::ReconcileDeposit { evidence, reason } => {
-                    if !self.same_session(cx) {
-                        if self.interrupted {
-                            return Poll::Ready(Err(ActionError::Cancelled));
-                        }
-                        self.session_lost(cx, "bank closed before the transfer settled")?;
-                        continue;
-                    }
-                    // An increased bank or decreased side count without the
-                    // corresponding held-count fall is an applied transfer
-                    // whose inventory packet is still delayed. This also
-                    // covers notes, whose bank destination has a different id.
-                    // Retain the existing transfer wait bound; never replay it.
-                    let (bank_before, side_before) =
-                        self.deposit_log.as_ref().map_or((None, None), |state| {
-                            (state.trace.bank_before, state.trace.side_before)
-                        });
-                    let transfer_ahead = self.in_flight.is_some_and(|flight| {
-                        let bank_ahead = bank_before.is_some_and(|before| {
-                            snapshot.bank().is_some_and(|rows| {
-                                ops::count_id(rows.value, flight.item_id) > before
-                            })
-                        });
-                        let side_ahead = side_before.is_some_and(|before| {
-                            snapshot.bank_side().is_some_and(|rows| {
-                                ops::count_id(rows.value, flight.item_id) < before
-                            })
-                        });
-                        (bank_ahead || side_ahead)
-                            && snapshot.inventory().is_some_and(|rows| {
-                                ops::count_id(rows.value, flight.item_id) >= flight.before
-                            })
-                    });
-                    // Reconcile the old transfer once in Act, before rescanning.
-                    if cx.evidence().run == evidence.run
-                        && cx.evidence().sequence > evidence.sequence
-                        && snapshot.inventory().is_some()
-                        && snapshot.bank().is_some()
-                        && !transfer_ahead
-                    {
-                        self.deposit_log = None;
-                        self.phase = Phase::Act;
-                        continue;
-                    }
-                    if ops::observed_wait_expired(
-                        evidence.tick,
-                        cx.evidence().tick,
-                        ops::TRANSFER_OBSERVED_TICK_LIMIT,
-                    ) {
-                        return Poll::Ready(Err(if self.interrupted {
-                            ActionError::Cancelled
-                        } else {
-                            ActionError::BankDeposit(reason)
-                        }));
-                    }
-                    return Poll::Pending;
+                    self.poll_reconcile_deposit(cx, evidence, reason)
                 }
                 Phase::AwaitTransfer {
                     before,
                     before_slots,
                     item_id,
                     evidence,
-                } => {
-                    if cx.evidence().run != evidence.run
-                        || cx.evidence().sequence <= evidence.sequence
-                    {
-                        return Poll::Pending;
-                    }
-                    if self.deposit_log.is_some() {
-                        match self.await_deposit_transfer(
-                            cx,
-                            before,
-                            before_slots,
-                            item_id,
-                            evidence,
-                        ) {
-                            Ok(TransferWait::Settled) => {
-                                self.phase = Phase::Act;
-                                continue;
-                            }
-                            Ok(TransferWait::Pending) => return Poll::Pending,
-                            Ok(TransferWait::Retry(reason)) => {
-                                if reason == ops::DepositFailure::BankFull {
-                                    if let Some(bit) =
-                                        best_effort_bank_full_bit(&self.request.action, item_id)
-                                    {
-                                        self.best_effort_skipped |= bit;
-                                        self.deposit_log = None;
-                                        self.phase = Phase::Act;
-                                        api::host_log!(
-                                            api::hostlog::Category::BankOp,
-                                            api::hostlog::Level::Info,
-                                            "bank-deposit-skip run={:?} tick={} id={} reason=bank-full optional=1",
-                                            cx.evidence().run,
-                                            cx.evidence().tick,
-                                            item_id,
-                                        );
-                                        continue;
-                                    }
-                                }
-                                if self.deposit_recovered {
-                                    return Poll::Ready(Err(ActionError::BankDeposit(reason)));
-                                }
-                                self.deposit_recovered = true;
-                                self.in_flight = Some(InFlightDeposit {
-                                    before,
-                                    before_slots,
-                                    item_id,
-                                });
-                                api::host_log!(
-                                    api::hostlog::Category::BankOp,
-                                    api::hostlog::Level::Info,
-                                    "bank-deposit-recover run={:?} tick={} id={} reason={reason} recovery=1/1",
-                                    cx.evidence().run,
-                                    cx.evidence().tick,
-                                    item_id,
-                                );
-                                if let Some(state) = self.deposit_log.as_ref() {
-                                    cx.cancel_request(state.request);
-                                }
-                                self.phase = Phase::ReconcileDeposit {
-                                    evidence: cx.evidence(),
-                                    reason,
-                                };
-                                return Poll::Pending;
-                            }
-                            Ok(TransferWait::SessionLost) => {
-                                self.in_flight = Some(InFlightDeposit {
-                                    before,
-                                    before_slots,
-                                    item_id,
-                                });
-                                if self.interrupted {
-                                    return Poll::Ready(Err(ActionError::Cancelled));
-                                }
-                                self.session_lost(cx, "bank closed before the transfer settled")?;
-                                continue;
-                            }
-                            Err(error) => return Poll::Ready(Err(error)),
-                        }
-                    }
-                    let snapshot = cx.snapshot();
-                    let pack = snapshot.inventory().map(|rows| rows.value);
-                    let same_session = cx.evidence().run == evidence.run
-                        && snapshot.bank_session().is_some_and(|session| {
-                            session.value.open && session.value.generation == self.session
-                        });
-                    let withdrawing = matches!(
-                        self.request.action,
-                        BankAction::Withdraw { .. }
-                            | BankAction::WithdrawAny { .. }
-                            | BankAction::WithdrawTo { .. }
-                    );
-                    if !same_session {
-                        // Withdrawals are held targets: the new session reads
-                        // the held count again and owes only the remainder.
-                        if !withdrawing {
-                            self.in_flight = Some(InFlightDeposit {
-                                before,
-                                before_slots,
-                                item_id,
-                            });
-                        }
-                        if self.interrupted {
-                            return Poll::Ready(Err(ActionError::Cancelled));
-                        }
-                        self.session_lost(cx, "bank closed before the transfer settled")?;
-                        continue;
-                    }
-                    if matches!(
-                        self.request.action,
-                        BankAction::DepositProducts { .. } | BankAction::DepositCapacity { .. }
-                    ) {
-                        match self.protected_unchanged(pack) {
-                            Some(true) => {}
-                            Some(false) if self.interrupted => {
-                                return Poll::Ready(Err(ActionError::Cancelled));
-                            }
-                            Some(false) => {
-                                return Poll::Ready(Err(ActionError::Blocked(Arc::from(
-                                    "protected inventory changed during bank deposit",
-                                ))));
-                            }
-                            None => return Poll::Pending,
-                        }
-                    }
-                    // The clicked id's held count: a withdraw raises it, a
-                    // deposit lowers it.
-                    let current = pack.map(|rows| ops::count_id(rows, item_id));
-                    let moved = if withdrawing {
-                        current.is_some_and(|now| now > before)
-                    } else {
-                        current.is_some_and(|now| now < before)
-                    };
-                    if moved {
-                        if !withdrawing {
-                            let after = current.unwrap_or(before);
-                            self.deposited = self
-                                .deposited
-                                .saturating_add(before.saturating_sub(after).max(0) as u32);
-                        }
-                        if let (Some(before_slots), Some(pack)) = (before_slots, pack) {
-                            let freed = before_slots.saturating_sub(pack_rows(pack));
-                            self.capacity_freed = self.capacity_freed.saturating_add(freed);
-                        }
-                        self.phase = Phase::Act;
-                        continue;
-                    }
-                    if ops::observed_wait_expired(
-                        evidence.tick,
-                        cx.evidence().tick,
-                        ops::TRANSFER_OBSERVED_TICK_LIMIT,
-                    ) {
-                        return Poll::Ready(Err(if self.interrupted {
-                            ActionError::Cancelled
-                        } else {
-                            ActionError::Failed(Arc::from("bank transfer did not settle"))
-                        }));
-                    }
-                    return Poll::Pending;
-                }
-                Phase::AwaitClose { baseline, run } => {
-                    let session = cx.snapshot().bank_session().map(|s| s.value);
-                    // Logged out: no session to read; the replaced login
-                    // settles it whatever the other facts say.
-                    let same_login = session.is_some() && cx.evidence().run == run;
-                    match ops::close_progress(
-                        session.is_some_and(|s| s.open),
-                        session.map_or(-1, |s| s.side),
-                        session.map_or(baseline.generation, |s| s.generation),
-                        baseline,
-                        same_login,
-                        self.deadline_reached(cx.evidence().tick),
-                    ) {
-                        CloseScan::Complete | CloseScan::AlreadyShut => {
-                            return Poll::Ready(Ok(self.receipt(true)));
-                        }
-                        CloseScan::Waiting | CloseScan::SideHeld => return Poll::Pending,
-                        CloseScan::SessionReplaced => {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank session replaced before the close settled",
-                            ))));
-                        }
-                        CloseScan::TimedOut => {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank did not close",
-                            ))));
-                        }
-                    }
-                }
+                } => self.poll_await_transfer(cx, before, before_slots, item_id, evidence),
+                Phase::AwaitClose { baseline, run } => self.poll_await_close(cx, baseline, run),
+            };
+            match step {
+                PhaseStep::Continue => continue,
+                PhaseStep::Pending => return Poll::Pending,
+                PhaseStep::Ready(result) => return Poll::Ready(result),
             }
         }
     }
@@ -1933,6 +874,1106 @@ impl NativeMachine for BankMachine {
     fn cancel(&mut self) {}
     fn interrupt(&mut self) {
         BankMachine::interrupt(self);
+    }
+}
+
+/// Control-flow decision for one step of [`BankMachine::poll`].
+enum PhaseStep {
+    Continue,
+    Pending,
+    Ready(Result<BankReceipt, ActionError>),
+}
+
+impl BankMachine {
+    fn enter_act_phase(&mut self, cx: &ActionContext<'_>) {
+        self.session = cx
+            .snapshot()
+            .bank_session()
+            .map_or(0, |session| session.value.generation);
+        self.clear_wait_deadlines();
+        self.phase = Phase::Act;
+    }
+
+    fn try_session_lost(&mut self, cx: &mut ActionContext<'_>, reason: &'static str) -> PhaseStep {
+        match self.session_lost(cx, reason) {
+            Ok(()) => PhaseStep::Continue,
+            Err(error) => PhaseStep::Ready(Err(error)),
+        }
+    }
+
+    fn poll_open(&mut self, cx: &mut ActionContext<'_>) -> PhaseStep {
+        if matches!(self.request.action, BankAction::Close) {
+            return self.poll_close_begin(cx);
+        }
+        let stand = self.stand_access().cloned();
+        let is_open_stand = matches!(self.request.action, BankAction::OpenStand { .. });
+        let teller = stand
+            .as_ref()
+            .is_some_and(|access| access.kind == AccessKind::Teller);
+        // A transfer verb re-opening through a teller goes to the dialogue only
+        // while the table is down.
+        if teller && (is_open_stand || cx.snapshot().bank().is_none()) {
+            // The teller attempt counts only once its core sends a request
+            // (`NpcAccess` phase below), not when it starts.
+            self.opened_from = None;
+            self.deadline = None;
+            self.phase = Phase::NpcAccess {
+                core: npc::NpcAccess::new(),
+                dialogue: AccessDialogue::Teller,
+                first_target: None,
+            };
+            return PhaseStep::Continue;
+        }
+        if cx.snapshot().bank().is_some() {
+            self.reopen_pending = false;
+            self.enter_act_phase(cx);
+            return PhaseStep::Continue;
+        }
+        if self.deadline_reached(cx.evidence().tick) {
+            return PhaseStep::Ready(Err(ActionError::Failed(Arc::from("bank did not open"))));
+        }
+        if let Some(access) = stand.as_ref() {
+            return self.poll_open_stand_access(cx, access);
+        }
+        self.poll_open_default_booth(cx)
+    }
+
+    fn poll_close_begin(&mut self, cx: &mut ActionContext<'_>) -> PhaseStep {
+        let Some(session) = cx.snapshot().bank_session().map(|s| s.value) else {
+            return PhaseStep::Ready(Ok(self.receipt(true)));
+        };
+        if ops::close_begin(session.open).is_some() {
+            return PhaseStep::Ready(Ok(self.receipt(true)));
+        }
+        let started_tick = cx.evidence().tick;
+        let run = cx.evidence().run;
+        match crate::native::defer_budget(cx.emit(InteractReq::Close)) {
+            Poll::Pending => return PhaseStep::Pending,
+            Poll::Ready(Err(error)) => return PhaseStep::Ready(Err(error)),
+            Poll::Ready(Ok(_)) => {}
+        }
+        self.arm_deadline(started_tick, ops::TRANSFER_OBSERVED_TICK_LIMIT);
+        self.phase = Phase::AwaitClose {
+            baseline: CloseBaseline {
+                generation: session.generation,
+                side: session.side,
+            },
+            run,
+        };
+        PhaseStep::Pending
+    }
+
+    fn poll_open_stand_access(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        access: &BankStandAccess,
+    ) -> PhaseStep {
+        let mut first_target = None;
+        let definition = access.bank.definition;
+        let object = definition.and_then(|definition| definition.object);
+        let open_first = definition.and_then(|definition| definition.open_first);
+        if object.is_some() || open_first.is_some() {
+            // Another player can leave the final bank target open.
+            // Probe it before the opener, as ObjectOpen does.
+            let target = object
+                .and_then(|operation| {
+                    catalog_object_loc(cx, access.stand_tile, operation)
+                        .map(|candidate| (operation, candidate, false))
+                })
+                .or_else(|| {
+                    open_first
+                        .filter(|_| self.open_stage == 0)
+                        .and_then(|operation| {
+                            catalog_object_loc(cx, access.stand_tile, operation)
+                                .map(|candidate| (operation, candidate, true))
+                        })
+                });
+            let Some((operation, candidate, opening_first)) = target else {
+                return PhaseStep::Pending;
+            };
+            // A player-radius area and strict reachability keep the old
+            // `reachable_only` object probe.
+            let Some(loc) = crate::quester::families::reach::choose_loc(
+                cx,
+                Some(candidate.id),
+                None,
+                Some(operation.op),
+                crate::quester::families::reach::Area::new(None, BANK_OBJECT_RADIUS),
+                Some(candidate.tile),
+                &crate::quester::families::reach::Avoid::default(),
+            )
+            .reachable() else {
+                return PhaseStep::Pending;
+            };
+            first_target = opening_first.then_some((loc.id, loc.tile));
+            match crate::native::defer_budget(cx.emit(InteractReq::Loc {
+                x: loc.tile.x,
+                z: loc.tile.z,
+                level: loc.tile.level,
+                action: operation.op.to_owned(),
+                id: Some(loc.id),
+            })) {
+                Poll::Pending => return PhaseStep::Pending,
+                Poll::Ready(Err(error)) => return PhaseStep::Ready(Err(error)),
+                Poll::Ready(Ok(_)) => {}
+            }
+            self.object_dialogue = ObjectDialogue::Awaiting;
+        } else {
+            let Some(locs) = cx.snapshot().locs() else {
+                return PhaseStep::Pending;
+            };
+            let wanted_name = access.name.as_deref();
+            let Some(loc) = ops::booth_at(locs.value, access.stand_tile, wanted_name) else {
+                return PhaseStep::Pending;
+            };
+            let stand_op = if access.stand_op > 0 {
+                Some(access.stand_op)
+            } else {
+                ops::op_slot(loc, "Use-quickly", ops::LabelMatch::Folded)
+            };
+            let Some(stand_op) = stand_op else {
+                return PhaseStep::Pending;
+            };
+            match crate::native::defer_budget(cx.emit(InteractReq::OpenStand {
+                x: loc.tile.x,
+                z: loc.tile.z,
+                level: loc.tile.level,
+                kind: access.kind.as_str().to_owned(),
+                name: loc.name.as_deref().map(str::to_owned),
+                stand_op: Some(stand_op),
+                choose: access.choose.as_deref().map(str::to_owned),
+            })) {
+                Poll::Pending => return PhaseStep::Pending,
+                Poll::Ready(Err(error)) => return PhaseStep::Ready(Err(error)),
+                Poll::Ready(Ok(_)) => {}
+            }
+        }
+        // The opener's click (a chest lid) does not open the bank.
+        self.opened_from = first_target.is_none().then(|| open_generation(cx));
+        self.reopen_pending = false;
+        self.phase = Phase::AwaitOpen { first_target };
+        PhaseStep::Pending
+    }
+
+    fn poll_open_default_booth(&mut self, cx: &mut ActionContext<'_>) -> PhaseStep {
+        let Some(bank) = self.request.bank else {
+            return PhaseStep::Ready(Err(ActionError::Unavailable(Arc::from(
+                "bank open requires a selected stand",
+            ))));
+        };
+        let Some(locs) = cx.snapshot().locs() else {
+            return PhaseStep::Pending;
+        };
+        let wanted = bank.definition.and_then(|definition| definition.object);
+        let Some(booth) = ops::booth_nearest_action(
+            locs.value,
+            bank.tile.level,
+            wanted.map_or("Use-quickly", |wanted| wanted.op),
+        ) else {
+            return PhaseStep::Pending;
+        };
+        let action = wanted.map(|row| row.op.to_string());
+        let name = wanted.map(|row| row.name.to_string());
+        match crate::native::defer_budget(cx.emit(InteractReq::OpenBooth {
+            x: booth.tile.x,
+            z: booth.tile.z,
+            level: booth.tile.level,
+            id: booth.id,
+            name,
+            action,
+        })) {
+            Poll::Pending => return PhaseStep::Pending,
+            Poll::Ready(Err(error)) => return PhaseStep::Ready(Err(error)),
+            Poll::Ready(Ok(_)) => {}
+        }
+        self.opened_from = Some(open_generation(cx));
+        self.reopen_pending = false;
+        self.phase = Phase::AwaitOpen { first_target: None };
+        PhaseStep::Pending
+    }
+
+    fn poll_npc_access(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        mut core: npc::NpcAccess,
+        dialogue: AccessDialogue,
+        first_target: Option<(i32, WorldTile)>,
+    ) -> PhaseStep {
+        let Some(access) = self.stand_access().cloned() else {
+            unreachable!("bank dialogue needs a stand access");
+        };
+        let intent = match dialogue {
+            AccessDialogue::Teller => match npc_intent(&access) {
+                Ok(intent) => intent,
+                Err(error) => return PhaseStep::Ready(Err(error)),
+            },
+            AccessDialogue::Object => npc::Intent {
+                name: "",
+                op: npc::NpcOp::Index(-1),
+                choose: "",
+            },
+        };
+        let deadline = self.deadline;
+        let mut npc_cx = NativeNpcContext {
+            cx,
+            deadline: &mut self.deadline,
+            sent: false,
+        };
+        let polled = crate::native::defer_budget(core.step(intent, &mut npc_cx));
+        // A request that the teller core actually emitted is this machine's
+        // open attempt. A wait without a banker or a budget denial sends
+        // nothing and records nothing. An object's dialogue follows a click
+        // that already recorded (or, for a chest lid, must not record) the
+        // attempt.
+        if npc_cx.sent && dialogue == AccessDialogue::Teller && self.opened_from.is_none() {
+            self.opened_from = Some(open_generation(cx));
+        }
+        let step = match polled {
+            Poll::Pending => {
+                self.deadline = deadline;
+                return PhaseStep::Pending;
+            }
+            Poll::Ready(Ok(step)) => step,
+            Poll::Ready(Err(error)) => return PhaseStep::Ready(Err(error)),
+        };
+        let session_open = cx
+            .snapshot()
+            .bank_session()
+            .is_some_and(|session| session.value.open);
+        match step {
+            npc::Step::Wait => {
+                self.phase = Phase::NpcAccess {
+                    core,
+                    dialogue,
+                    first_target,
+                };
+                PhaseStep::Pending
+            }
+            npc::Step::Note(npc::Note::Unloaded) => {
+                if session_open {
+                    if dialogue == AccessDialogue::Object {
+                        self.object_dialogue = ObjectDialogue::Finished;
+                    }
+                    self.phase = Phase::AwaitOpen { first_target };
+                    return PhaseStep::Continue;
+                }
+                let message = match dialogue {
+                    AccessDialogue::Teller => "bank teller opened without a loaded item list",
+                    AccessDialogue::Object => "bank object opened without a loaded item list",
+                };
+                PhaseStep::Ready(Err(ActionError::Unavailable(Arc::from(message))))
+            }
+            npc::Step::Note(npc::Note::NoBanker | npc::Note::NoDialogue | npc::Note::NotOpened) => {
+                self.phase = Phase::NpcAccess {
+                    core,
+                    dialogue,
+                    first_target,
+                };
+                PhaseStep::Continue
+            }
+            npc::Step::Done(false) => {
+                if session_open {
+                    if dialogue == AccessDialogue::Object {
+                        self.object_dialogue = ObjectDialogue::Finished;
+                    }
+                    self.phase = Phase::AwaitOpen { first_target };
+                    return PhaseStep::Continue;
+                }
+                if dialogue == AccessDialogue::Object {
+                    self.arm_deadline(cx.evidence().tick, ops::TRANSFER_OBSERVED_TICK_LIMIT);
+                    self.object_dialogue = ObjectDialogue::Finished;
+                    self.phase = Phase::AwaitOpen { first_target };
+                    return PhaseStep::Continue;
+                }
+                PhaseStep::Ready(Err(ActionError::Unavailable(Arc::from(
+                    "bank teller did not open the bank",
+                ))))
+            }
+            npc::Step::Done(true) => {
+                let snapshot = cx.snapshot();
+                let Some(session) = snapshot.bank_session().filter(|s| s.value.open) else {
+                    let message = match dialogue {
+                        AccessDialogue::Teller => "bank teller did not establish an open session",
+                        AccessDialogue::Object => "bank object did not establish an open session",
+                    };
+                    return PhaseStep::Ready(Err(ActionError::Unavailable(Arc::from(message))));
+                };
+                if snapshot.bank().is_none() {
+                    self.phase = Phase::AwaitOpen { first_target };
+                    return PhaseStep::Continue;
+                }
+                self.session = session.value.generation;
+                self.clear_wait_deadlines();
+                self.phase = Phase::Act;
+                PhaseStep::Continue
+            }
+        }
+    }
+
+    fn poll_await_open(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        first_target: Option<(i32, WorldTile)>,
+    ) -> PhaseStep {
+        if cx.snapshot().bank().is_some() {
+            self.enter_act_phase(cx);
+            return PhaseStep::Continue;
+        }
+        if self.deadline_reached(cx.evidence().tick) {
+            return self.try_session_lost(cx, "bank item table unavailable");
+        }
+        let stand = self.stand_access().cloned();
+        let object_access = stand.as_ref().is_some_and(|access| {
+            access.kind == AccessKind::Booth
+                && access
+                    .bank
+                    .definition
+                    .is_some_and(|definition| definition.open_first.or(definition.object).is_some())
+        });
+        let chat_open = cx
+            .snapshot()
+            .chat_modal()
+            .is_some_and(|chat| chat.value.root != -1 || chat.value.continue_component_id >= 0);
+        if self.object_dialogue == ObjectDialogue::Awaiting && object_access && chat_open {
+            self.deadline = None;
+            self.phase = Phase::NpcAccess {
+                core: npc::NpcAccess::new(),
+                dialogue: AccessDialogue::Object,
+                first_target,
+            };
+            return PhaseStep::Continue;
+        }
+        if let Some(access) = stand.as_ref() {
+            if self.open_stage == 0 {
+                if let Some(open_first) = access
+                    .bank
+                    .definition
+                    .and_then(|definition| definition.open_first)
+                {
+                    if cx.snapshot().locs().is_none() {
+                        return PhaseStep::Pending;
+                    }
+                    if let Some((id, tile)) = first_target {
+                        let still_closed = catalog_object_at(cx, id, tile, open_first).is_some();
+                        if !still_closed {
+                            self.open_stage = 1;
+                            self.phase = Phase::Open;
+                            return PhaseStep::Continue;
+                        }
+                    }
+                }
+            }
+        }
+        PhaseStep::Pending
+    }
+
+    fn poll_await_table(&mut self, cx: &mut ActionContext<'_>, bank_open: bool) -> PhaseStep {
+        if cx.snapshot().bank().is_some() {
+            self.enter_act_phase(cx);
+            return PhaseStep::Continue;
+        }
+        // The table and the open arrive in one server flush, the table first
+        // (`bank.rs2:21-23`, `World.ts:1116-1123`): an open whose session is
+        // gone again is a closed bank, not a slow table. After this request's
+        // own stand click the close is the engine's close-then-open on that
+        // click (`OpLocHandler.ts:53`, `Player.ts:760-814`), so the open wait
+        // resumes on its bound; a transfer that sent no click lost its session
+        // and re-opens.
+        if !bank_open {
+            if self.opened_from.is_some() {
+                self.phase = Phase::AwaitOpen { first_target: None };
+                return PhaseStep::Pending;
+            }
+            // No access of this request is behind the gone modal (a transfer,
+            // or an open that adopted a modal left by an earlier session):
+            // access the stand now.
+            return self.try_session_lost(cx, "bank closed before the item table loaded");
+        }
+        if self.deadline_reached(cx.evidence().tick) {
+            // A banker's dialogue is not driven while a bank modal is up
+            // (`bank/npc.rs:122`), so a teller open that adopted a modal cannot
+            // access its stand again until the modal is gone: it stays terminal
+            // for its caller.
+            let teller = self
+                .stand_access()
+                .is_some_and(|access| access.kind == AccessKind::Teller);
+            if teller && self.adopted_open_without_access() {
+                return PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                    "bank item table unavailable",
+                ))));
+            }
+            return self.try_session_lost(cx, "bank item table unavailable");
+        }
+        PhaseStep::Pending
+    }
+
+    fn poll_await_note_mode(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        request_id: u64,
+        evidence: EvidenceStamp,
+    ) -> PhaseStep {
+        let current_evidence = cx.evidence();
+        let timed_out = ops::observed_wait_expired(
+            evidence.tick,
+            current_evidence.tick,
+            ops::TRANSFER_OBSERVED_TICK_LIMIT,
+        );
+        if current_evidence.run != evidence.run || current_evidence.sequence <= evidence.sequence {
+            return if timed_out {
+                PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                    "bank item mode dispatch did not settle",
+                ))))
+            } else {
+                PhaseStep::Pending
+            };
+        }
+        let Some(receipt) = cx.interaction_receipt(request_id) else {
+            return if timed_out {
+                PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                    "bank item mode dispatch did not settle",
+                ))))
+            } else {
+                PhaseStep::Pending
+            };
+        };
+        if !receipt.accepted
+            || receipt.evidence.run != evidence.run
+            || receipt.evidence.sequence < evidence.sequence
+        {
+            return PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                "bank item mode could not be set to unnoted",
+            ))));
+        }
+        if !self.same_session(cx) {
+            return self.try_session_lost(cx, "bank closed before item mode settled");
+        }
+        self.item_mode_ensured = true;
+        cx.note_bank_item_mode(self.session);
+        self.clear_wait_deadlines();
+        self.phase = Phase::Act;
+        PhaseStep::Continue
+    }
+
+    fn poll_act(&mut self, cx: &mut ActionContext<'_>) -> PhaseStep {
+        match &self.request.action {
+            BankAction::Scan | BankAction::OpenStand { .. } => {
+                PhaseStep::Ready(Ok(self.receipt(true)))
+            }
+            BankAction::Withdraw { item, qty } => {
+                let (item_id, item_name, qty) = (item.id, Arc::clone(&item.name), *qty);
+                self.poll_act_withdraw(cx, item_id, item_name, qty)
+            }
+            BankAction::WithdrawAny { items, qty } => {
+                let (items, qty) = (Arc::clone(items), *qty);
+                self.poll_act_withdraw_any(cx, &items, qty)
+            }
+            BankAction::WithdrawTo { withdrawals } => {
+                let next = withdrawals
+                    .get(usize::from(self.withdraw_index))
+                    .map(|w| (w.id, Arc::clone(&w.name), w.target));
+                self.poll_act_withdraw_to(cx, next)
+            }
+            BankAction::Deposit { .. }
+            | BankAction::DepositAll { .. }
+            | BankAction::DepositProducts { .. }
+            | BankAction::DepositCapacity { .. } => self.poll_act_deposit(cx),
+            BankAction::Close => unreachable!("close is handled before opening"),
+        }
+    }
+
+    fn poll_act_withdraw(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        item_id: i32,
+        item_name: Arc<str>,
+        qty: i32,
+    ) -> PhaseStep {
+        let Some(view) = HeldView::read(cx, item_id) else {
+            return PhaseStep::Pending;
+        };
+        let goal = WithdrawGoal::exact_at_least(
+            item_id,
+            item_name,
+            item_id,
+            qty,
+            view.available,
+            view.held,
+            self.session,
+        );
+        match ops::withdraw_progress(&goal, view.held, view.full, self.same_session(cx)) {
+            Progress::Complete => return PhaseStep::Ready(Ok(self.receipt(true))),
+            Progress::SessionGone => {
+                return self.try_session_lost(cx, "bank closed during withdraw");
+            }
+            Progress::Incomplete | Progress::PackFull | Progress::OverTarget => {}
+        }
+        let reason = match self.click_withdraw(cx, &goal, view.held) {
+            Poll::Pending => return PhaseStep::Pending,
+            Poll::Ready(Err(error)) => return PhaseStep::Ready(Err(error)),
+            Poll::Ready(Ok(Clicked::Sent)) => return PhaseStep::Pending,
+            Poll::Ready(Ok(Clicked::Closed)) => {
+                return self.try_session_lost(cx, "bank closed during withdraw");
+            }
+            Poll::Ready(Ok(Clicked::NoStock)) => "bank lacks requested item",
+            Poll::Ready(Ok(Clicked::NoOp)) => "bank item has no compatible withdraw action",
+        };
+        // `partial_ok` takes the incomplete receipt; an unmet exact target is
+        // never reported complete.
+        if self.request.partial_ok {
+            PhaseStep::Ready(Ok(self.receipt(false)))
+        } else {
+            PhaseStep::Ready(Err(ActionError::Failed(Arc::from(reason))))
+        }
+    }
+
+    fn poll_act_withdraw_any(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        items: &[BankItem],
+        qty: i32,
+    ) -> PhaseStep {
+        let snapshot = cx.snapshot();
+        // A legal tier already carried — worn or held — is the loadout
+        // satisfied; never withdraw a second one (design-bank-snapshot §6 bug 15).
+        let stock = snapshot.stock();
+        if stock.pack.is_none() {
+            return PhaseStep::Pending;
+        }
+        if items.iter().any(|item| {
+            stock.holds(item.id, qty) == Truth::True || stock.has(item.id, qty) == Truth::True
+        }) {
+            return PhaseStep::Ready(Ok(self.receipt(true)));
+        }
+        let Some(bank) = snapshot.bank() else {
+            return self.try_session_lost(cx, "bank closed during tier withdraw");
+        };
+        let Some((item_id, item_name)) = items.iter().find_map(|item| {
+            bank.value
+                .iter()
+                .any(|row| row.def.id == item.id && row.count > 0)
+                .then(|| (item.id, Arc::clone(&item.name)))
+        }) else {
+            return PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                "bank lacks every permitted loadout tier",
+            ))));
+        };
+        let Some(view) = HeldView::read(cx, item_id) else {
+            return PhaseStep::Pending;
+        };
+        let goal = WithdrawGoal::exact_at_least(
+            item_id,
+            item_name,
+            item_id,
+            qty,
+            view.available,
+            view.held,
+            self.session,
+        );
+        if ops::withdraw_progress(&goal, view.held, view.full, self.same_session(cx))
+            == Progress::SessionGone
+        {
+            return PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                "bank closed during tier withdraw",
+            ))));
+        }
+        match self.click_withdraw(cx, &goal, view.held) {
+            Poll::Pending => PhaseStep::Pending,
+            Poll::Ready(Err(error)) => PhaseStep::Ready(Err(error)),
+            Poll::Ready(Ok(Clicked::Sent)) => PhaseStep::Pending,
+            Poll::Ready(Ok(Clicked::Closed)) => {
+                self.try_session_lost(cx, "bank closed during tier withdraw")
+            }
+            Poll::Ready(Ok(Clicked::NoStock | Clicked::NoOp)) => PhaseStep::Ready(Err(
+                ActionError::Failed(Arc::from("bank item has no compatible withdraw action")),
+            )),
+        }
+    }
+
+    fn poll_act_withdraw_to(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        next: Option<(i32, Arc<str>, i32)>,
+    ) -> PhaseStep {
+        let Some((item_id, item_name, target)) = next else {
+            return PhaseStep::Ready(Ok(self.receipt(true)));
+        };
+        let Some(view) = HeldView::read(cx, item_id) else {
+            return PhaseStep::Pending;
+        };
+        let goal = WithdrawGoal::exact_equal(
+            item_id,
+            item_name,
+            item_id,
+            target,
+            view.available,
+            view.held,
+            self.session,
+        );
+        match ops::withdraw_progress(&goal, view.held, view.full, self.same_session(cx)) {
+            Progress::Complete => {
+                self.withdraw_index = self.withdraw_index.saturating_add(1);
+                return PhaseStep::Continue;
+            }
+            Progress::OverTarget => return PhaseStep::Ready(Ok(self.receipt(false))),
+            Progress::SessionGone => {
+                return self.try_session_lost(cx, "bank closed during exact withdraw");
+            }
+            Progress::Incomplete | Progress::PackFull => {}
+        }
+        match self.click_withdraw(cx, &goal, view.held) {
+            Poll::Pending => PhaseStep::Pending,
+            Poll::Ready(Err(error)) => PhaseStep::Ready(Err(error)),
+            Poll::Ready(Ok(Clicked::Sent)) => PhaseStep::Pending,
+            Poll::Ready(Ok(Clicked::Closed)) => {
+                self.try_session_lost(cx, "bank closed during exact withdraw")
+            }
+            Poll::Ready(Ok(Clicked::NoStock | Clicked::NoOp)) => {
+                PhaseStep::Ready(Ok(self.receipt(false)))
+            }
+        }
+    }
+
+    fn poll_act_deposit(&mut self, cx: &mut ActionContext<'_>) -> PhaseStep {
+        let snapshot = cx.snapshot();
+        let pack = snapshot.inventory().map(|rows| rows.value);
+        if matches!(
+            self.request.action,
+            BankAction::DepositProducts { .. } | BankAction::DepositCapacity { .. }
+        ) {
+            match self.protected_unchanged(pack) {
+                Some(true) => {}
+                Some(false) => {
+                    return PhaseStep::Ready(Err(ActionError::Blocked(Arc::from(
+                        "protected inventory changed during bank deposit",
+                    ))));
+                }
+                None => return PhaseStep::Pending,
+            }
+        }
+        // A deposit the lost session applied is credited from the new session's
+        // pack before this session chooses a click: the owed capacity delta and
+        // the deposited tally continue, never restart.
+        if self.in_flight.is_some() {
+            let Some(pack) = pack else {
+                return PhaseStep::Pending;
+            };
+            self.reconcile_in_flight(cx, pack);
+        }
+        let side = snapshot.bank_side().map(|rows| rows.value);
+        if let BankAction::DepositCapacity { slots, .. } = &self.request.action {
+            if self.capacity_freed >= *slots {
+                return PhaseStep::Ready(Ok(self.receipt(true)));
+            }
+        }
+        let view_wait_expired = self.view_armed && self.deadline_reached(cx.evidence().tick);
+        let scan = if let BankAction::DepositCapacity {
+            keep, extra_keep, ..
+        } = &self.request.action
+        {
+            ops::deposit_capacity_next(keep, *extra_keep, side, pack, self.same_session(cx))
+        } else {
+            let spec = deposit_spec(&self.request.action, self.best_effort_skipped)
+                .expect("deposit actions have a deposit spec");
+            ops::deposit_next(&spec, side, pack, view_wait_expired, self.same_session(cx))
+        };
+        match scan {
+            DepositScan::WaitView => {
+                if pack.is_some() && matches!(self.request.action, BankAction::DepositAll { .. }) {
+                    if !self.view_armed {
+                        self.view_armed = true;
+                        self.arm_deadline(cx.evidence().tick, SIDE_VIEW_TICKS);
+                    }
+                } else {
+                    if self.deadline.is_none() {
+                        self.arm_deadline(cx.evidence().tick, SIDE_VIEW_TICKS);
+                    }
+                    if self.deadline_reached(cx.evidence().tick) {
+                        return PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                            "bank deposit view did not post",
+                        ))));
+                    }
+                }
+                PhaseStep::Pending
+            }
+            DepositScan::ViewExpired => PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                "bank deposit view did not post",
+            )))),
+            DepositScan::Done => {
+                let complete = match &self.request.action {
+                    BankAction::DepositCapacity { slots, .. } => self.capacity_freed >= *slots,
+                    _ => true,
+                };
+                PhaseStep::Ready(Ok(self.receipt(complete)))
+            }
+            DepositScan::SessionGone => self.try_session_lost(cx, "bank closed during deposit"),
+            DepositScan::MissingRequired => PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                "inventory products remain without a safe matching bank-side deposit operation",
+            )))),
+            DepositScan::Click(click) => self.emit_deposit_click(cx, click, side, pack),
+        }
+    }
+
+    fn emit_deposit_click(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        click: ops::DepositClick,
+        side: Option<&[api::snapshot::ItemView]>,
+        pack: Option<&[api::snapshot::ItemView]>,
+    ) -> PhaseStep {
+        if self.deposits >= MAX_DEPOSITS {
+            return PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                "bank deposit exceeded 32 item rows",
+            ))));
+        }
+        let Some(before) = pack.map(|rows| ops::count_id(rows, click.id)) else {
+            self.phase = Phase::Act;
+            return PhaseStep::Pending;
+        };
+        if before <= 0 {
+            self.phase = Phase::Act;
+            return PhaseStep::Pending;
+        }
+        let snapshot = cx.snapshot();
+        // Content rejects any positive addition to a saturated stack
+        // (`bank.rs2:88-92`). Other capacity refusals use its post-send
+        // message.
+        if snapshot
+            .bank()
+            .is_some_and(|rows| ops::count_id(rows.value, click.id) == i32::MAX)
+        {
+            return PhaseStep::Ready(Err(ActionError::BankDeposit(
+                ops::DepositFailure::FullStack,
+            )));
+        }
+        let before_slots = matches!(self.request.action, BankAction::DepositCapacity { .. })
+            .then(|| pack.map_or(0, pack_rows));
+        let option = side
+            .and_then(|side| deposit_option(side, click))
+            .expect("a selected deposit has its posted operation label");
+        let trace = Arc::new(BankDepositTrace {
+            generation: self.session,
+            transfer: self.deposits + 1,
+            click_tick: cx.evidence().tick,
+            sequence: cx.evidence().sequence,
+            id: click.id,
+            slot: click.slot,
+            component: click.component,
+            option: Arc::from(option),
+            operation: click.operation,
+            main_before: before,
+            side_before: side.map(|side| ops::count_id(side, click.id)),
+            bank_before: snapshot
+                .bank()
+                .map(|rows| ops::count_id(rows.value, click.id)),
+            main_revision: snapshot.inventory_packet_generation(),
+            side_revision: snapshot.bank_side_packet_generation(),
+        });
+        let request = match crate::native::defer_budget(
+            cx.emit_bank_deposit(ops::deposit_req(click, self.session), &trace),
+        ) {
+            Poll::Pending => return PhaseStep::Pending,
+            Poll::Ready(Err(error)) => return PhaseStep::Ready(Err(error)),
+            Poll::Ready(Ok(request)) => request,
+        };
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Debug,
+            "bank-deposit-click run={:?} bank_generation={} transfer={} request={} click_tick={} sequence={} id={} slot={} component={} option={} operation={} main_before={} side_before={:?} bank_before={:?} main_revision={:?} side_revision={:?}",
+            cx.evidence().run,
+            trace.generation,
+            trace.transfer,
+            request,
+            trace.click_tick,
+            trace.sequence,
+            trace.id,
+            trace.slot,
+            trace.component,
+            trace.option,
+            trace.operation,
+            trace.main_before,
+            trace.side_before,
+            trace.bank_before,
+            trace.main_revision,
+            trace.side_revision,
+        );
+        self.deposit_log = Some(Box::new(DepositLogState {
+            request,
+            last_observation: None,
+            last_logged_tick: trace.click_tick,
+            trace: Arc::clone(&trace),
+            dispatch_evidence: None,
+            dispatch_accepted: None,
+            chat_since: None,
+        }));
+        self.view_armed = false;
+        self.deadline = None;
+        self.phase = Phase::AwaitTransfer {
+            before,
+            before_slots,
+            item_id: click.id,
+            evidence: cx.evidence(),
+        };
+        PhaseStep::Pending
+    }
+
+    fn poll_reconcile_deposit(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        evidence: EvidenceStamp,
+        reason: ops::DepositFailure,
+    ) -> PhaseStep {
+        let snapshot = cx.snapshot();
+        if !self.same_session(cx) {
+            if self.interrupted {
+                return PhaseStep::Ready(Err(ActionError::Cancelled));
+            }
+            return self.try_session_lost(cx, "bank closed before the transfer settled");
+        }
+        // An increased bank or decreased side count without the corresponding
+        // held-count fall is an applied transfer whose inventory packet is
+        // still delayed. This also covers notes, whose bank destination has a
+        // different id. Retain the existing transfer wait bound; never replay
+        // it.
+        let (bank_before, side_before) = self.deposit_log.as_ref().map_or((None, None), |state| {
+            (state.trace.bank_before, state.trace.side_before)
+        });
+        let transfer_ahead = self.in_flight.is_some_and(|flight| {
+            let bank_ahead = bank_before.is_some_and(|before| {
+                snapshot
+                    .bank()
+                    .is_some_and(|rows| ops::count_id(rows.value, flight.item_id) > before)
+            });
+            let side_ahead = side_before.is_some_and(|before| {
+                snapshot
+                    .bank_side()
+                    .is_some_and(|rows| ops::count_id(rows.value, flight.item_id) < before)
+            });
+            (bank_ahead || side_ahead)
+                && snapshot
+                    .inventory()
+                    .is_some_and(|rows| ops::count_id(rows.value, flight.item_id) >= flight.before)
+        });
+        // Reconcile the old transfer once in Act, before rescanning.
+        if cx.evidence().run == evidence.run
+            && cx.evidence().sequence > evidence.sequence
+            && snapshot.inventory().is_some()
+            && snapshot.bank().is_some()
+            && !transfer_ahead
+        {
+            self.deposit_log = None;
+            self.phase = Phase::Act;
+            return PhaseStep::Continue;
+        }
+        if ops::observed_wait_expired(
+            evidence.tick,
+            cx.evidence().tick,
+            ops::TRANSFER_OBSERVED_TICK_LIMIT,
+        ) {
+            return PhaseStep::Ready(Err(if self.interrupted {
+                ActionError::Cancelled
+            } else {
+                ActionError::BankDeposit(reason)
+            }));
+        }
+        PhaseStep::Pending
+    }
+
+    fn poll_await_transfer(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        before: i32,
+        before_slots: Option<u8>,
+        item_id: i32,
+        evidence: EvidenceStamp,
+    ) -> PhaseStep {
+        if cx.evidence().run != evidence.run || cx.evidence().sequence <= evidence.sequence {
+            return PhaseStep::Pending;
+        }
+        if self.deposit_log.is_some() {
+            return self.poll_await_logged_deposit(cx, before, before_slots, item_id, evidence);
+        }
+        let snapshot = cx.snapshot();
+        let pack = snapshot.inventory().map(|rows| rows.value);
+        let same_session = cx.evidence().run == evidence.run
+            && snapshot.bank_session().is_some_and(|session| {
+                session.value.open && session.value.generation == self.session
+            });
+        let withdrawing = matches!(
+            self.request.action,
+            BankAction::Withdraw { .. }
+                | BankAction::WithdrawAny { .. }
+                | BankAction::WithdrawTo { .. }
+        );
+        if !same_session {
+            // Withdrawals are held targets: the new session reads the held
+            // count again and owes only the remainder.
+            if !withdrawing {
+                self.in_flight = Some(InFlightDeposit {
+                    before,
+                    before_slots,
+                    item_id,
+                });
+            }
+            if self.interrupted {
+                return PhaseStep::Ready(Err(ActionError::Cancelled));
+            }
+            return self.try_session_lost(cx, "bank closed before the transfer settled");
+        }
+        if matches!(
+            self.request.action,
+            BankAction::DepositProducts { .. } | BankAction::DepositCapacity { .. }
+        ) {
+            match self.protected_unchanged(pack) {
+                Some(true) => {}
+                Some(false) if self.interrupted => {
+                    return PhaseStep::Ready(Err(ActionError::Cancelled));
+                }
+                Some(false) => {
+                    return PhaseStep::Ready(Err(ActionError::Blocked(Arc::from(
+                        "protected inventory changed during bank deposit",
+                    ))));
+                }
+                None => return PhaseStep::Pending,
+            }
+        }
+        // The clicked id's held count: a withdraw raises it, a deposit lowers
+        // it.
+        let current = pack.map(|rows| ops::count_id(rows, item_id));
+        let moved = if withdrawing {
+            current.is_some_and(|now| now > before)
+        } else {
+            current.is_some_and(|now| now < before)
+        };
+        if moved {
+            if !withdrawing {
+                let after = current.unwrap_or(before);
+                self.deposited = self
+                    .deposited
+                    .saturating_add(before.saturating_sub(after).max(0) as u32);
+            }
+            if let (Some(before_slots), Some(pack)) = (before_slots, pack) {
+                let freed = before_slots.saturating_sub(pack_rows(pack));
+                self.capacity_freed = self.capacity_freed.saturating_add(freed);
+            }
+            self.phase = Phase::Act;
+            return PhaseStep::Continue;
+        }
+        if ops::observed_wait_expired(
+            evidence.tick,
+            cx.evidence().tick,
+            ops::TRANSFER_OBSERVED_TICK_LIMIT,
+        ) {
+            return PhaseStep::Ready(Err(if self.interrupted {
+                ActionError::Cancelled
+            } else {
+                ActionError::Failed(Arc::from("bank transfer did not settle"))
+            }));
+        }
+        PhaseStep::Pending
+    }
+
+    fn poll_await_logged_deposit(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        before: i32,
+        before_slots: Option<u8>,
+        item_id: i32,
+        evidence: EvidenceStamp,
+    ) -> PhaseStep {
+        match self.await_deposit_transfer(cx, before, before_slots, item_id, evidence) {
+            Ok(TransferWait::Settled) => {
+                self.phase = Phase::Act;
+                PhaseStep::Continue
+            }
+            Ok(TransferWait::Pending) => PhaseStep::Pending,
+            Ok(TransferWait::Retry(reason)) => {
+                if reason == ops::DepositFailure::BankFull {
+                    if let Some(bit) = best_effort_bank_full_bit(&self.request.action, item_id) {
+                        self.best_effort_skipped |= bit;
+                        self.deposit_log = None;
+                        self.phase = Phase::Act;
+                        api::host_log!(
+                            api::hostlog::Category::BankOp,
+                            api::hostlog::Level::Info,
+                            "bank-deposit-skip run={:?} tick={} id={} reason=bank-full optional=1",
+                            cx.evidence().run,
+                            cx.evidence().tick,
+                            item_id,
+                        );
+                        return PhaseStep::Continue;
+                    }
+                }
+                if self.deposit_recovered {
+                    return PhaseStep::Ready(Err(ActionError::BankDeposit(reason)));
+                }
+                self.deposit_recovered = true;
+                self.in_flight = Some(InFlightDeposit {
+                    before,
+                    before_slots,
+                    item_id,
+                });
+                api::host_log!(
+                    api::hostlog::Category::BankOp,
+                    api::hostlog::Level::Info,
+                    "bank-deposit-recover run={:?} tick={} id={} reason={reason} recovery=1/1",
+                    cx.evidence().run,
+                    cx.evidence().tick,
+                    item_id,
+                );
+                if let Some(state) = self.deposit_log.as_ref() {
+                    cx.cancel_request(state.request);
+                }
+                self.phase = Phase::ReconcileDeposit {
+                    evidence: cx.evidence(),
+                    reason,
+                };
+                PhaseStep::Pending
+            }
+            Ok(TransferWait::SessionLost) => {
+                self.in_flight = Some(InFlightDeposit {
+                    before,
+                    before_slots,
+                    item_id,
+                });
+                if self.interrupted {
+                    return PhaseStep::Ready(Err(ActionError::Cancelled));
+                }
+                self.try_session_lost(cx, "bank closed before the transfer settled")
+            }
+            Err(error) => PhaseStep::Ready(Err(error)),
+        }
+    }
+
+    fn poll_await_close(
+        &mut self,
+        cx: &mut ActionContext<'_>,
+        baseline: CloseBaseline,
+        run: api::selected::RunKey,
+    ) -> PhaseStep {
+        let session = cx.snapshot().bank_session().map(|s| s.value);
+        // Logged out: no session to read; the replaced login settles it
+        // whatever the other facts say.
+        let same_login = session.is_some() && cx.evidence().run == run;
+        match ops::close_progress(
+            session.is_some_and(|s| s.open),
+            session.map_or(-1, |s| s.side),
+            session.map_or(baseline.generation, |s| s.generation),
+            baseline,
+            same_login,
+            self.deadline_reached(cx.evidence().tick),
+        ) {
+            CloseScan::Complete | CloseScan::AlreadyShut => {
+                PhaseStep::Ready(Ok(self.receipt(true)))
+            }
+            CloseScan::Waiting | CloseScan::SideHeld => PhaseStep::Pending,
+            CloseScan::SessionReplaced => PhaseStep::Ready(Err(ActionError::Failed(Arc::from(
+                "bank session replaced before the close settled",
+            )))),
+            CloseScan::TimedOut => {
+                PhaseStep::Ready(Err(ActionError::Failed(Arc::from("bank did not close"))))
+            }
+        }
     }
 }
 
