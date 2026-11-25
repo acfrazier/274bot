@@ -1533,28 +1533,12 @@ pub fn warn_legacy_passphrase_env(program: &str) {
     host_play::passphrase::warn_legacy_env(program);
 }
 
-/// Which front end holds the single-instance lock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstanceKind {
-    Panel,
-    Tui,
-}
-
-impl InstanceKind {
-    fn to_host(self) -> host_play::InstanceKind {
-        match self {
-            Self::Panel => host_play::InstanceKind::Panel,
-            Self::Tui => host_play::InstanceKind::Tui,
-        }
-    }
-}
-
-/// Permission to open the operator's preferences and vault: the held
-/// single-instance lock, or an explicit decision to run without it.
+/// The instance lock retained by the operator session.
 pub struct InstancePermit(host_play::InstancePermit);
 
 impl InstancePermit {
-    /// Run without the lock (harness boots, a confirmed second instance).
+    /// Construct an unbound library-test session, not a product startup.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn skip() -> Self {
         Self(host_play::InstancePermit::skip())
     }
@@ -1562,31 +1546,17 @@ impl InstancePermit {
     pub(crate) fn into_host(self) -> host_play::InstancePermit {
         self.0
     }
-}
 
-/// Another running 274bot holds the instance lock.
-pub struct InstanceConflict(host_play::InstanceHolder);
-
-impl InstanceConflict {
-    /// The operator-facing explanation (who holds the lock and where).
-    pub fn message(&self) -> String {
-        host_play::instance_conflict_message(&self.0)
+    pub(crate) fn root_use(&self) -> Option<host_play::local_state::RootUse> {
+        self.0.root_use()
     }
 }
 
-/// Take the single-instance lock for `kind` (or skip it when `skip`).
-/// `Ok(Err(conflict))` means another instance holds it and the operator
-/// must decide; `Err` is an I/O failure taking the lock.
-pub fn acquire_instance(
-    kind: InstanceKind,
-    skip: bool,
-) -> std::io::Result<Result<InstancePermit, InstanceConflict>> {
-    Ok(
-        match host_play::resolve_instance_permit(kind.to_host(), skip)? {
-            host_play::InstancePermitOutcome::Ready(permit) => Ok(InstancePermit(permit)),
-            host_play::InstancePermitOutcome::NeedsConfirm(holder) => Err(InstanceConflict(holder)),
-        },
-    )
+pub use host_play::local_state::StateRootLockError;
+
+/// Take the exclusive state-root lock before opening saved state.
+pub fn acquire_instance() -> Result<InstancePermit, StateRootLockError> {
+    host_play::resolve_instance_permit().map(InstancePermit)
 }
 
 #[cfg(test)]

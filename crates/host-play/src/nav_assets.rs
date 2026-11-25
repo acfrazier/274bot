@@ -47,6 +47,10 @@ pub fn stage_payload(source: &Path, destination: &Path) -> std::io::Result<()> {
         permissions.set_mode(permissions.mode() | 0o200);
     }
     #[cfg(not(unix))]
+    #[expect(
+        clippy::permissions_set_readonly_false,
+        reason = "Windows Permissions exposes only the read-only attribute, which staging must clear."
+    )]
     permissions.set_readonly(false);
     std::fs::set_permissions(destination, permissions)
 }

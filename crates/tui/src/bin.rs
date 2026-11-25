@@ -6395,17 +6395,6 @@ fn chat_data_from(s: &api::snapshot::GameSnapshot) -> ChatData {
     }
 }
 
-fn prompt_instance_conflict(conflict: &frontend_core::launch::InstanceConflict) -> bool {
-    eprintln!("{}", conflict.message());
-    eprint!("Exit (default) or Continue anyway [E/c]: ");
-    let _ = std::io::Write::flush(&mut std::io::stderr());
-    let mut line = String::new();
-    let _ = std::io::stdin().read_line(&mut line);
-    matches!(
-        line.trim(),
-        "c" | "C" | "continue" | "Continue" | "Continue anyway"
-    )
-}
 fn prompt_saved_data(refusal: &str) -> bool {
     eprintln!("{refusal}");
     eprint!("Move these files aside and continue? [y/N]: ");
@@ -6477,21 +6466,11 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             false
         }
     };
-    let skip_lock = !matches!(mode, RunMode::Interactive) || memory;
-    let interactive_saved_data = !skip_lock && std::io::IsTerminal::is_terminal(&std::io::stdin());
-    let permit = match frontend_core::launch::acquire_instance(
-        frontend_core::launch::InstanceKind::Tui,
-        skip_lock,
-    ) {
-        Ok(Ok(permit)) => permit,
-        Ok(Err(conflict)) => {
-            if !prompt_instance_conflict(&conflict) {
-                return Ok(0);
-            }
-            frontend_core::launch::InstancePermit::skip()
-        }
-        Err(e) => return Err(format!("instance lock: {e}")),
-    };
+    // This controls saved-data prompting only. Every mode must acquire the root.
+    let non_interactive = !matches!(mode, RunMode::Interactive) || memory;
+    let interactive_saved_data =
+        !non_interactive && std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let permit = frontend_core::launch::acquire_instance().map_err(|error| error.to_string())?;
     let root = frontend_core::saved_data::StateRoot::new(
         frontend_core::scripts::paths::bot_home().join(".274bot"),
     );

@@ -341,10 +341,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   (with its `-wal` and `-shm` files), instead of `panel-ui.json`. The first
   start of this version imports the whole `panel-ui.json`, members it does not
   know included, and renames the file to `panel-ui.json.migrated` as evidence.
-  The panel and the terminal app share the one database, also when both run on
-  one home. A save no longer rewrites a JSON file: each save is one database
-  commit at a new version, and the log keeps one line per save that names what
-  changed.
+  One process holds each state root exclusively. A second 274bot process
+  using that root refuses to start and names the root. The interactive panel
+  shows the refusal in a window with an Exit button. Different state roots
+  can run concurrently. Each save is one database commit at a new version,
+  and the log keeps one line per save that names what changed.
 - Before running 0.2.9 in the same home, stop all 274bot processes, then run
   `panel-play state preferences export --same-root` or
   `tui-play state preferences export --same-root`. Without the export, 0.2.9

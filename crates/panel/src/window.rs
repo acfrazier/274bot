@@ -75,6 +75,8 @@ pub enum PanelError {
     MemoryRunFailure(String),
     #[error("startup failed: {0}")]
     StartupFailure(String),
+    #[error("startup failed: {0}")]
+    StateRootLock(#[from] frontend_core::launch::StateRootLockError),
     #[error("window creation failed: {0}")]
     WindowCreation(#[source] winit::error::OsError),
     #[error("WGPU surface creation failed: {0}; {help}", help = GRAPHICS_HELP)]

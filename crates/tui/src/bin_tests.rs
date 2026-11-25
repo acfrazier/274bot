@@ -958,6 +958,53 @@ fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
     );
 }
 
+/// The root lock refusal precedes saved-store access in both startup modes.
+#[test]
+fn run_refuses_interactive_and_live_startup_when_state_root_is_in_use() {
+    let _iso = IsolatedStores::enter("tui-in-use-startup-refusal");
+    let root = host_play::local_state::StateRoot::new(
+        frontend_core::scripts::paths::bot_home().join(".274bot"),
+    );
+    let _root_use =
+        host_play::local_state::RootUse::acquire(&root).expect("the isolated root is available");
+    let loadouts_path = root.loadouts_file();
+    let invalid_loadouts: &[u8] = b"{ invalid loadouts";
+    crate::test_support::write_private_fixture(&loadouts_path, invalid_loadouts).unwrap();
+    assert!(
+        !root.database_file().exists(),
+        "the isolated root starts without a state database"
+    );
+    let expected = format!(
+        "Another 274bot process is using state root {}. Close that process before starting 274bot.",
+        root.path().display()
+    );
+
+    let live_args = parse_args_from(["--live", "script_bone_burier"]).unwrap();
+    let live_mode = RunMode::Live(live_args.live.clone().expect("--live sets its scenario"));
+    let cases = [
+        (
+            "interactive",
+            parse_args_from(std::iter::empty::<&str>()).unwrap(),
+            RunMode::Interactive,
+        ),
+        ("--live", live_args, live_mode),
+    ];
+    for (mode_name, args, mode) in cases {
+        let error = run(&args, mode).unwrap_err();
+        assert_eq!(error, expected, "{mode_name} must report the locked root");
+        let saved_bytes = std::fs::read(&loadouts_path).unwrap();
+        assert_eq!(
+            saved_bytes.as_slice(),
+            invalid_loadouts,
+            "{mode_name} must leave the invalid store unchanged"
+        );
+        assert!(
+            !root.database_file().exists(),
+            "{mode_name} must not create the state database"
+        );
+    }
+}
+
 /// A legacy preferences source the database cannot read (a directory at its
 /// path, a file the process may not read) is no startup failure (plan §5.1,
 /// T5.3 S1 round 2): `tui-play`'s start gets past its saved-data check and

@@ -96,6 +96,13 @@ fn main() -> ExitCode {
         }
     };
     let root = StateRoot::new(std::path::PathBuf::from(home).join(".274bot"));
+    let _state_root_lock = match host_play::local_state::RootUse::acquire(&root) {
+        Ok(lock) => lock,
+        Err(error) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let startup = match SavedDataStartup::check(&root) {
         Ok(startup) => startup,
         Err(error) => {

@@ -57,6 +57,37 @@ fn open_driver(dir: &Scratch) -> HeadlessDriver {
 }
 
 #[test]
+fn locked_driver_shares_its_permit_and_releases_it_on_drop() {
+    let _iso = IsolatedStores::enter("driver-locked-permit");
+    let _source = crate::quester_paths::registry_source_test_lock();
+    let root = host_play::local_state::StateRoot::new(script::bot_home().join(".274bot"));
+    let saved = br#"{"capture":false,"nav":{"allow_teleports":true}}"#;
+    vault::write_private_file(&root.preferences_file(), saved).unwrap();
+    let permit = crate::launch::acquire_instance().expect("the isolated root is free");
+    let mut driver = HeadlessDriver::open(root.path(), permit)
+        .expect("the locked driver's script settings are readable");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !driver.session().preferences().unwrap().ready() && std::time::Instant::now() < deadline {
+        driver.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        driver.session().preferences().unwrap().ready(),
+        "the service must read through its permit, not wait on its own startup lock"
+    );
+    driver.poll();
+    assert!(!driver.models.draw.capture());
+    assert!(driver.models.walk_globals.globals().allow_teleports());
+    assert!(matches!(
+        host_play::local_state::RootUse::acquire(&root),
+        Err(host_play::local_state::StateRootLockError::InUse { .. })
+    ));
+    drop(driver);
+    let _next = host_play::local_state::RootUse::acquire(&root)
+        .expect("dropping the driver released the permit and service lease");
+}
+
+#[test]
 fn cold_preferences_adopt_saved_startup_models_without_writing_defaults() {
     let dir = scratch("cold-preferences-startup");
     let mut driver = open_driver(&dir);

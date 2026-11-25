@@ -95,10 +95,23 @@ fn cli_collects_old_lazy_stores_and_quits_without_moving_or_initializing() {
         );
         assert_eq!(std::fs::read(path).unwrap(), *bytes);
     }
-    // No move-aside backup is created: the root holds panel-ui.json,
-    // loadouts.json, worlds.json and bank-hints; the hint folder holds the two
-    // hints.
-    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 4);
+    // Only the root lock is new. No backup or database is created.
+    let mut entries: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    entries.sort();
+    assert_eq!(
+        entries,
+        [
+            "bank-hints",
+            "instance.lock",
+            "loadouts.json",
+            "panel-ui.json",
+            "worlds.json",
+        ]
+        .map(std::ffi::OsString::from)
+    );
     assert_eq!(
         std::fs::read_dir(root.join("bank-hints/local-289"))
             .unwrap()

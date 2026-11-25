@@ -132,11 +132,7 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use host::{wake_channel, DetectedRandom, Pump};
 use host::{FrameBuf, SlotInput, SlotWake};
 pub use host::{ManualMoveIntent, MouseOwner};
-pub use instance_lock::{
-    instance_conflict_message, instance_lock_path, resolve_instance_permit,
-    try_acquire_instance_lock, InstanceHolder, InstanceKind, InstanceLock, InstanceLockResult,
-    InstancePermit, InstancePermitOutcome,
-};
+pub use instance_lock::{resolve_instance_permit, InstancePermit};
 #[cfg(test)]
 use nav_executor::Traveller;
 #[cfg(test)]
