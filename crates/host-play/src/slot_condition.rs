@@ -415,7 +415,8 @@ impl SlotCondition {
             self.reset_window(WindowReset::Modal);
             // Preserve same-drain ordinary hits before TimerPaused advances last_mark.
             // The normal scan below still owns hit_seen and latch ordering.
-            if drain.player_info && self.tables.is_some() && snapshot.local_player().is_some() {
+            if drain.packet_delta != 0 && self.tables.is_some() && snapshot.local_player().is_some()
+            {
                 if let Some(marks) = snapshot.hitmarks() {
                     let tick = snapshot.tick() as u16;
                     for (slot, mark) in marks.marks.iter().enumerate() {
@@ -494,7 +495,7 @@ impl SlotCondition {
         // inventory), and the fruit line of tick T+1 can be read at the edge of
         // tick T. On an edge the window pairs with the previous edge; later
         // frames at the same tick keep that edge as the window's other bound.
-        let previous_edge_tick = if drain.player_info {
+        let previous_edge_tick = if drain.packet_delta != 0 {
             self.previous_edge_tick = previous_tick;
             previous_tick
         } else {
@@ -515,7 +516,7 @@ impl SlotCondition {
             self.transition(PoisonEvent::ProvenFruit { origin });
             self.latch = None;
         }
-        if drain.player_info {
+        if drain.packet_delta != 0 {
             // Close only a latch opened by an earlier edge, before new evidence.
             if self.latch.take().is_some() {
                 self.transition(PoisonEvent::LatchComplete { q: self.q_unknown });
@@ -584,7 +585,7 @@ impl SlotCondition {
         ) {
             self.transition(PoisonEvent::ProvenSuperDrink { origin });
         }
-        if drain.player_info {
+        if drain.packet_delta != 0 {
             // Kind 2 reveals the fire's value. A same-edge ordinary hit may
             // follow it server-side, so process it afterward and fail closed.
             for poison in [true, false] {
@@ -614,7 +615,7 @@ impl SlotCondition {
                 self.transition(PoisonEvent::LatchComplete { q });
             }
         }
-        if matches!(self.memory.state, PoisonState::Unknown { .. }) && drain.player_info {
+        if matches!(self.memory.state, PoisonState::Unknown { .. }) && drain.packet_delta != 0 {
             let reset = if modal_open {
                 Some(WindowReset::Modal)
             } else if guardian_hold {

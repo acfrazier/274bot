@@ -781,58 +781,28 @@ impl TickMean {
     }
 }
 
-/// Receive-time measurement only. It never controls content waits or deadlines.
-#[derive(Default)]
-struct ObservedTickRate {
-    last: Option<(u32, Instant)>,
-    elapsed: Duration,
-    ticks: u64,
-    samples: u64,
-    minimum_ms: Option<f64>,
-    maximum_ms: Option<f64>,
-    counter_resets: u64,
+fn tick_health_after_start(
+    session: u64,
+    packet_generation: u64,
+    now: Instant,
+) -> api::tick_health::TickHealth {
+    let mut health = api::tick_health::TickHealth::default();
+    // Start is an observation baseline, not a batch of setup packets.
+    health.observe(session, packet_generation, packet_generation, now, None);
+    health
 }
 
-impl ObservedTickRate {
-    fn observe(&mut self, tick: u32, at: Instant) {
-        if let Some((previous_tick, previous_at)) = self.last {
-            if tick == previous_tick {
-                return;
-            }
-            if let Some(delta) = tick.checked_sub(previous_tick) {
-                let elapsed = at.saturating_duration_since(previous_at);
-                let milliseconds = elapsed.as_secs_f64() * 1000.0 / f64::from(delta);
-                self.elapsed += elapsed;
-                self.ticks += u64::from(delta);
-                self.samples += 1;
-                self.minimum_ms = Some(
-                    self.minimum_ms
-                        .map_or(milliseconds, |value| value.min(milliseconds)),
-                );
-                self.maximum_ms = Some(
-                    self.maximum_ms
-                        .map_or(milliseconds, |value| value.max(milliseconds)),
-                );
-            } else {
-                self.counter_resets += 1;
-            }
-        }
-        self.last = Some((tick, at));
-    }
-
-    fn receipt(&self) -> Value {
-        json!({
-            "source": "monotonic PLAYER_INFO receive observations after Start",
-            "interval_samples": self.samples,
-            "sampled_game_ticks": self.ticks,
-            "elapsed_ms": self.elapsed.as_secs_f64() * 1000.0,
-            "mean_tick_ms": (self.ticks > 0)
-                .then(|| self.elapsed.as_secs_f64() * 1000.0 / self.ticks as f64),
-            "minimum_tick_ms": self.minimum_ms,
-            "maximum_tick_ms": self.maximum_ms,
-            "counter_resets": self.counter_resets,
-        })
-    }
+fn observed_tick_rate_receipt(health: &api::tick_health::TickHealth) -> Value {
+    let mut receipt =
+        serde_json::to_value(health.receipt()).expect("TickHealthReceipt serializes to JSON");
+    receipt
+        .as_object_mut()
+        .expect("TickHealthReceipt serializes as an object")
+        .insert(
+            "source".into(),
+            json!("monotonic PLAYER_INFO receive observations after Start"),
+        );
+    receipt
 }
 
 struct ActorShared {
@@ -861,7 +831,7 @@ struct ActorShared {
     tick_mean: TickMean,
     /// `{stage, tick}` at each observed stage change, in observed game ticks.
     stage_ticks: Vec<Value>,
-    observed_tick_rate: ObservedTickRate,
+    observed_tick_rate: api::tick_health::TickHealth,
     starts: u32,
     stops: u32,
     restart_due: bool,
@@ -1699,7 +1669,7 @@ fn run_cells(
             tick_observations: Vec::new(),
             tick_mean: TickMean::default(),
             stage_ticks: Vec::new(),
-            observed_tick_rate: ObservedTickRate::default(),
+            observed_tick_rate: api::tick_health::TickHealth::default(),
             starts: 0,
             stops: 0,
             restart_due: false,
@@ -1804,11 +1774,14 @@ fn run_cells(
             if let Some(observe) = actor.observe_client_poll.as_mut() {
                 observe(&actor.snapshot);
             }
-            let game_tick = actor.snapshot.tick();
-            if actor.starts > 0
-                && actor.observed_tick_rate.last.map(|(tick, _)| tick) != Some(game_tick)
-            {
-                actor.observed_tick_rate.observe(game_tick, Instant::now());
+            if actor.starts > 0 {
+                actor.observed_tick_rate.observe(
+                    client.gens.session,
+                    client.gens.player_info,
+                    client.session_start_gens().player_info,
+                    Instant::now(),
+                    None,
+                );
             }
             actor.last_tile = observed_tile(&actor.snapshot);
             if !actor_frame_enabled(frame_state.teardown_started) {
@@ -1878,6 +1851,13 @@ fn run_cells(
                 };
                 match result {
                     Ok(()) => {
+                        if actor.starts == 0 {
+                            actor.observed_tick_rate = tick_health_after_start(
+                                client.gens.session,
+                                client.gens.player_info,
+                                Instant::now(),
+                            );
+                        }
                         actor.starts += 1;
                         actor.restart_due = false;
                         actor.transitions.push(json!({
@@ -3492,7 +3472,7 @@ fn run_cells(
                     "quest": actor.quest,
                     "display": actor.display,
                     "observed_ticks": actor.snapshot.tick(),
-                    "observed_tick_rate": actor.observed_tick_rate.receipt(),
+                    "observed_tick_rate": observed_tick_rate_receipt(&actor.observed_tick_rate),
                     "quest_complete": quest_done(&actor.snapshot, actor.display)
                         || actor.owned_card_complete,
                     "last_tile": actor.last_tile.map(|tile| [tile.x, tile.z, tile.level]),
@@ -3924,50 +3904,102 @@ mod tests {
     use super::*;
 
     #[test]
-    fn observed_tick_rate_distinguishes_300_and_600_millisecond_sequences() {
+    fn tick_health_receipt_distinguishes_300_and_600_millisecond_sequences() {
         for milliseconds in [300, 600] {
             let start = Instant::now();
-            let mut rate = ObservedTickRate::default();
-            assert_eq!(rate.receipt()["mean_tick_ms"], Value::Null);
-            for tick in 1..=4 {
-                rate.observe(
-                    tick,
-                    start + Duration::from_millis(u64::from(tick - 1) * milliseconds),
+            let mut health = api::tick_health::TickHealth::default();
+            for generation in 1..=4 {
+                health.observe(
+                    1,
+                    generation,
+                    0,
+                    start + Duration::from_millis((generation - 1) * milliseconds),
+                    None,
                 );
             }
-            let receipt = rate.receipt();
-            assert_eq!(receipt["sampled_game_ticks"], 3);
-            assert_eq!(receipt["mean_tick_ms"], milliseconds as f64);
-            assert_eq!(receipt["minimum_tick_ms"], milliseconds as f64);
-            assert_eq!(receipt["maximum_tick_ms"], milliseconds as f64);
+            let receipt = health.receipt();
+            assert_eq!(receipt.interval_samples, 3);
+            assert_eq!(receipt.sampled_game_ticks, 3);
+            assert_eq!(receipt.mean_tick_ms, Some(milliseconds as f64));
+            assert_eq!(receipt.minimum_tick_ms, Some(milliseconds as f64));
+            assert_eq!(receipt.maximum_tick_ms, Some(milliseconds as f64));
         }
     }
 
     #[test]
-    fn observed_tick_rate_ignores_duplicate_polls_and_counter_reset_gaps() {
+    fn tick_health_receipt_ignores_duplicate_polls_and_resets_samples_by_session() {
         let start = Instant::now();
-        let mut rate = ObservedTickRate::default();
-        rate.observe(10, start);
-        rate.observe(10, start + Duration::from_secs(5));
-        rate.observe(11, start + Duration::from_millis(300));
-        rate.observe(1, start + Duration::from_secs(20));
-        rate.observe(2, start + Duration::from_millis(20_600));
-        let receipt = rate.receipt();
-        assert_eq!(receipt["interval_samples"], 2);
-        assert_eq!(receipt["sampled_game_ticks"], 2);
-        assert_eq!(receipt["mean_tick_ms"], 450.0);
-        assert_eq!(receipt["counter_resets"], 1);
+        let mut health = api::tick_health::TickHealth::default();
+        health.observe(1, 10, 10, start, None);
+        health.observe(1, 10, 10, start + Duration::from_millis(5), None);
+        health.observe(1, 11, 10, start + Duration::from_millis(300), None);
+        health.observe(1, 11, 10, start + Duration::from_millis(500), None);
+        health.observe(1, 12, 10, start + Duration::from_millis(600), None);
+        let first_session = health.receipt();
+        assert_eq!(first_session.clean_interval_samples, 1);
+        assert_eq!(first_session.mean_tick_ms, Some(300.0));
+
+        health.observe(2, 20, 20, start + Duration::from_secs(20), None);
+        let reset = health.receipt();
+        assert_eq!(reset.session_resets, 1);
+        assert_eq!(reset.clean_interval_samples, 0);
+        assert_eq!(reset.median_ms, None);
+
+        health.observe(2, 21, 20, start + Duration::from_millis(20_300), None);
+        health.observe(2, 22, 20, start + Duration::from_millis(20_600), None);
+        let second_session = health.receipt();
+        assert_eq!(second_session.interval_samples, 1);
+        assert_eq!(second_session.mean_tick_ms, Some(300.0));
+        assert_eq!(second_session.session_resets, 1);
     }
 
     #[test]
-    fn observed_tick_rate_normalizes_batched_game_ticks() {
+    fn tick_health_receipt_marks_batched_packets_as_incomplete_coverage() {
         let start = Instant::now();
-        let mut rate = ObservedTickRate::default();
-        rate.observe(1, start);
-        rate.observe(3, start + Duration::from_millis(600));
-        assert_eq!(rate.receipt()["mean_tick_ms"], 300.0);
-        assert_eq!(rate.receipt()["sampled_game_ticks"], 2);
-        assert_eq!(rate.receipt()["interval_samples"], 1);
+        let mut health = api::tick_health::TickHealth::default();
+        health.observe(1, 1, 0, start, None);
+        health.observe(1, 3, 0, start + Duration::from_millis(600), None);
+        let receipt = health.receipt();
+        assert_eq!(receipt.packet_delta, 2);
+        assert_eq!(receipt.coalesced_observations, 1);
+        assert_eq!(receipt.server_ticks, 3);
+        assert_eq!(receipt.clean_interval_samples, 0);
+        assert_eq!(receipt.median_ms, None);
+    }
+
+    #[test]
+    fn tick_health_receipt_baselines_at_start_without_counting_setup_packets() {
+        let start = Instant::now();
+        let mut health = tick_health_after_start(1, 42, start);
+        let baseline = observed_tick_rate_receipt(&health);
+        assert_eq!(baseline["packet_generation"], 42);
+        assert_eq!(baseline["packet_delta"], 0);
+        assert_eq!(baseline["server_ticks"], 0);
+        assert_eq!(baseline["total_coalesced_observations"], 0);
+        assert_eq!(baseline["interval_samples"], 0);
+
+        for generation in [43, 44] {
+            health.observe(
+                1,
+                generation,
+                7,
+                start + Duration::from_millis((generation - 42) * 600),
+                None,
+            );
+        }
+        let singles = health.receipt();
+        assert_eq!(singles.packet_delta, 1);
+        assert_eq!(singles.server_ticks, 2);
+        assert_eq!(singles.total_coalesced_observations, 0);
+        assert_eq!(singles.interval_samples, 1);
+        assert_eq!(singles.mean_tick_ms, Some(600.0));
+
+        health.observe(1, 47, 7, start + Duration::from_millis(1800), None);
+        let batch = health.receipt();
+        assert_eq!(batch.packet_delta, 3);
+        assert_eq!(batch.server_ticks, 5);
+        assert_eq!(batch.coalesced_observations, 2);
+        assert_eq!(batch.total_coalesced_observations, 2);
     }
 
     #[test]

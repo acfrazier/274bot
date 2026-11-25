@@ -31,12 +31,14 @@ use thiserror::Error;
 
 mod dialog;
 mod npc_hop;
+mod progress;
 mod snapshot;
 mod transport_hop;
 mod walk;
 
 use dialog::*;
 use npc_hop::*;
+use progress::*;
 use snapshot::*;
 pub use transport_hop::TickCount;
 use transport_hop::*;
@@ -579,6 +581,10 @@ pub struct Traveller {
     /// wizard. Survives across routes (the game's `%exit_essence_mine_coord`
     /// varp persists too); a new entry overwrites it.
     essence: Option<EssenceSession>,
+    /// The longest enforced clock, in observed ticks, now running in the
+    /// follow, set when a clock starts ([`Self::take_clock_progress`]); zero
+    /// when none is waiting.
+    clock_progress: u32,
 }
 
 impl Traveller {
@@ -588,7 +594,20 @@ impl Traveller {
             follow: None,
             follow_terminal_leg: None,
             essence: None,
+            clock_progress: 0,
         }
+    }
+
+    /// Progress of the follow, once: `Some(ticks)` when the follower started a
+    /// new enforced clock (a new follow, leg, hop, send, approach, wait or
+    /// stun window) since the last call. `ticks` is the longest clock now in
+    /// force: the follower ends its own follow when any clock passes its
+    /// bound, so it ends within `ticks + 1` observed ticks of this progress
+    /// unless it starts another clock. A native walk owner uses it as a
+    /// progress watchdog ([`progress`] module).
+    pub fn take_clock_progress(&mut self) -> Option<u32> {
+        let ticks = std::mem::take(&mut self.clock_progress);
+        (ticks != 0).then_some(ticks)
     }
 
     /// Drop the active follow run and its terminal-leg record.
@@ -777,14 +796,22 @@ impl Traveller {
         options: &mut TravelOptions<'a>,
         start_run: impl FnOnce(&TravelOptions<'a>) -> FollowRun,
     ) -> Option<TravelOutcome> {
-        if self.follow.is_none() {
+        let started = clock_starts();
+        let new_run = self.follow.is_none();
+        if new_run {
             self.follow_terminal_leg = None;
             self.follow = Some(start_run(options));
         }
+        let marks = self.follow.as_ref().map(FollowRun::progress_marks);
         let outcome = self
             .follow
             .as_mut()
             .and_then(|run| run.step(d, snapshot, options, &mut self.essence));
+        if let Some(run) = self.follow.as_ref().filter(|_| outcome.is_none()) {
+            if new_run || clock_starts() != started || marks != Some(run.progress_marks()) {
+                self.clock_progress = run.longest_clock_ticks();
+            }
+        }
         if api::hostlog::debug_enabled() {
             let run = self.follow.as_ref();
             api::host_log!(
@@ -978,8 +1005,9 @@ struct FollowRun {
     budget: u32,
     /// Shared by every walk hop and stalled resend in this follow.
     walk_packet_budget: WalkPacketBudget,
-    /// Ticks the current transport leg has waited for its loc to appear.
-    loc_wait: u32,
+    /// Observed ticks the current transport leg has waited for its loc to
+    /// appear: one per `PLAYER_INFO` packet, as every follower clock counts.
+    loc_wait: TickCount,
     /// Refused clicks this follow may still sit out while nothing was
     /// clicked yet (frozen `CANDIDATE_SETTLE_TRIES`, one budget per walk).
     settle_left: u32,
@@ -1021,7 +1049,7 @@ impl FollowRun {
             close_enough: options.close_enough,
             budget: options.budget_ticks_per_hop,
             walk_packet_budget: WalkPacketBudget::default(),
-            loc_wait: 0,
+            loc_wait: TickCount::default(),
             settle_left: SCENE_SETTLE_TRIES,
             settle_until: None,
             walk: None,
@@ -1096,62 +1124,8 @@ impl FollowRun {
         options: &mut TravelOptions<'_>,
         essence: &mut Option<EssenceSession>,
     ) -> Option<TravelOutcome> {
-        if snapshot.ingame() && snapshot.attached() {
-            if !self.stun_recovery_used {
-                if let Some(observed) = snapshot.thieving_stun_tick() {
-                    let after_send = |sent: u32| observed.wrapping_sub(sent) < (1u32 << 31);
-                    let pending_was_affected = self
-                        .walk
-                        .as_ref()
-                        .is_some_and(|h| h.sent && after_send(h.sent_tick))
-                        || self
-                            .transport
-                            .as_ref()
-                            .and_then(|h| h.approach.as_ref())
-                            .is_some_and(|a| after_send(a.sent_tick));
-                    if snapshot.tick().wrapping_sub(observed) < THIEVING_STUN_WINDOW
-                        || pending_was_affected
-                    {
-                        self.stun_recovery_used = true;
-                        self.stun_wait = Some(observed);
-                        if let Some(cb) = options.on_event.as_mut() {
-                            cb(TravelEvent::StunDeferred {
-                                observed_tick: observed,
-                                resume_tick: observed.wrapping_add(THIEVING_STUN_WINDOW),
-                            });
-                        }
-                    }
-                }
-            }
-            if let Some(observed) = self.stun_wait {
-                if snapshot.tick().wrapping_sub(observed) < THIEVING_STUN_WINDOW {
-                    return None;
-                }
-                self.stun_wait = None;
-                let at = here(snapshot);
-                if let Some(hop) = self.walk.as_mut() {
-                    let radius = if hop.aim_index + 1 >= hop.tiles().len() {
-                        0
-                    } else {
-                        self.close_enough.max(2)
-                    };
-                    if hop.sent && (at.level != hop.aim.level || cheb(at, hop.aim) > radius) {
-                        hop.sent = false;
-                    }
-                }
-                if let Some(approach) = self.transport.as_mut().and_then(|h| h.approach.as_mut()) {
-                    approach.retry_pending = true;
-                }
-                if let Some(cb) = options.on_event.as_mut() {
-                    cb(TravelEvent::StunResumed {
-                        tick: snapshot.tick(),
-                    });
-                }
-            }
-        } else {
-            // Keep existing disconnect/refusal handling reachable even when
-            // no further PLAYER_INFO ticks arrive to advance the stun window.
-            self.stun_wait = None;
+        if self.step_stun_recovery(snapshot, options) {
+            return None;
         }
         loop {
             if self.walk.is_some() {
@@ -1181,39 +1155,8 @@ impl FollowRun {
             let Some(route_leg) = self.next_leg() else {
                 return Some(TravelOutcome::Arrived { at: here(snapshot) });
             };
-            if let Some(tiles) = route_leg.walk_tiles() {
-                fire_follow_leg(options, &route_leg, LegPhase::Start);
-                // Single-tile walk legs (the `find(from == to)` shape)
-                // carry no distance: no-op, never send.
-                if tiles.len() <= 1 {
-                    fire_follow_leg(options, &route_leg, LegPhase::Done);
-                    self.leg_index += 1;
-                    self.current_route_index = None;
-                    continue;
-                }
-                let here = here(snapshot);
-                let hop = WalkHop {
-                    leg: route_leg,
-                    route_index_start: self.current_route_index.expect("route leg has an index"),
-                    cursor: 0,
-                    aim: here,
-                    aim_index: 0,
-                    sent: false,
-                    send_refusal: None,
-                    ticks_waited: TickCount::default(),
-                    budget_ticks: self.budget,
-                    sent_tile: None,
-                    sent_tick: snapshot.tick(),
-                    start_tile: here,
-                    first_sent_tick: snapshot.tick(),
-                    tries: 0,
-                    stall_idle_ticks: 0,
-                    stall_idle_last_tick: None,
-                    stall_idle_at: None,
-                    end_refused_ticks: 0,
-                    end_refused_last_tick: None,
-                };
-                match self.send_walk_hop(d, snapshot, options, hop, here) {
+            if route_leg.walk_tiles().is_some() {
+                match self.start_walk_leg(d, snapshot, options, route_leg) {
                     Poll::Watching => return None,
                     Poll::Terminal(outcome) => return Some(outcome),
                     Poll::LegDone => {
@@ -1233,403 +1176,475 @@ impl FollowRun {
                 return None;
             }
             let leg = route_leg.into_transport();
-            match leg {
-                Leg::Walk { .. } => unreachable!("route transport materialized as a walk leg"),
-                Leg::Transport { .. } => {
-                    let edge = match &leg {
-                        Leg::Transport { edge } => edge,
-                        Leg::Walk { .. } => unreachable!("transport arm holds a transport leg"),
-                    };
-                    fire_leg(options, &leg, LegPhase::Start);
-                    let here = here(snapshot);
-                    if let Some(outcome) =
-                        self.check_transport_gate(edge, here, snapshot, options.quest_evidence)
-                    {
-                        fire_leg(options, &leg, LegPhase::Failed);
-                        return Some(outcome);
-                    }
-                    // A packed Teleport hop is any-tile: no approach and no
-                    // loc/npc target — the edge names the op itself (the
-                    // held-item Rub on the charged jewellery obj, or the
-                    // spellbook button of the standard spell the landing
-                    // identifies), never the WalkTo `::tele` cheat.
-                    if edge.kind == TransportKind::Teleport {
-                        match teleport_send(snapshot, d, edge) {
-                            TeleportSend::Sent => {
-                                let to = edge.to;
-                                let pass_watch = gate_pass_watch(snapshot, edge, options);
-                                self.loc_wait = 0;
-                                self.transport = Some(TransportHop {
-                                    leg,
-                                    to,
-                                    ticks_waited: TickCount::sent_at(snapshot.tick()),
-                                    sent_tile: Some(here),
-                                    arrival_footprint: None,
-                                    tries: 0,
-                                    troll: false,
-                                    npc_index: None,
-                                    npc_recovery: NpcRecovery::default(),
-                                    open_sent_tick: None,
-                                    door_retry: DoorRetry::default(),
-                                    occupied: OccupiedRetry::default(),
-                                    chat_seq: chat_seq(snapshot),
-                                    refusal_watch: None,
-                                    pass_watch,
-                                    dialog_page: None,
-                                    approach: None,
-                                });
-                                return None;
-                            }
-                            TeleportSend::Refused(reason) => {
-                                fire_leg(options, &leg, LegPhase::Failed);
-                                return Some(TravelOutcome::Refused { at: here, reason });
-                            }
-                            TeleportSend::Wait(reason) => {
-                                self.loc_wait += 1;
-                                if self.loc_wait > self.budget {
-                                    fire_leg(options, &leg, LegPhase::Failed);
-                                    return Some(TravelOutcome::Blocked {
-                                        at: here,
-                                        leg: self.leg_index,
-                                        why: reason.into(),
-                                    });
-                                }
-                                self.requeue_transport(leg);
-                                return None;
-                            }
-                            TeleportSend::Blocked(why) => {
-                                fire_leg(options, &leg, LegPhase::Failed);
-                                return Some(TravelOutcome::Blocked {
-                                    at: here,
-                                    leg: self.leg_index,
-                                    why,
-                                });
-                            }
-                        }
-                    }
-                    // Multiloc open-state: when the live door loc at `at`
-                    // already reads open, interacting is wrong (an OP on
-                    // the open leaf would Close it) — walk straight
-                    // through to `to` and settle `arrived(to)` with the
-                    // normal budget. Doors only: an Npc edge's `at` is the
-                    // driver's tile, and a nearby loc with a Close op
-                    // would misread as an open leaf.
-                    if edge.kind == TransportKind::Door && edge_loc_open(snapshot, edge) {
-                        let to = edge.to;
-                        let mut ix = Interactions::new(snapshot, d);
-                        match ix.walk(to) {
-                            SendResult::Sent { .. } => {
-                                let pass_watch = gate_pass_watch(snapshot, edge, options);
-                                self.loc_wait = 0;
-                                self.transport = Some(TransportHop {
-                                    leg,
-                                    to,
-                                    ticks_waited: TickCount::sent_at(snapshot.tick()),
-                                    sent_tile: Some(here),
-                                    arrival_footprint: None,
-                                    tries: 0,
-                                    troll: false,
-                                    npc_index: None,
-                                    npc_recovery: NpcRecovery::default(),
-                                    open_sent_tick: None,
-                                    door_retry: DoorRetry::default(),
-                                    occupied: OccupiedRetry::default(),
-                                    chat_seq: chat_seq(snapshot),
-                                    refusal_watch: None,
-                                    pass_watch,
-                                    dialog_page: None,
-                                    approach: None,
-                                });
-                                return None;
-                            }
-                            SendResult::Refused { reason, .. } => {
-                                fire_leg(options, &leg, LegPhase::Failed);
-                                return Some(TravelOutcome::Refused { at: here, reason });
-                            }
-                        }
-                    }
-                    // The game only accepts an `op_loc`/`op_npc` from an
-                    // operable adjacent stand. Packed `at` is the spawn, not
-                    // a leash: sailors/officers/pilots wander, and OP_NPC
-                    // paths to the live network route head rather than the
-                    // rendered/interpolated tile.
-                    let mut selected_npc_index = None;
-                    let mut selected_stand = None;
-                    let approach_at = if npc_backed(edge) {
-                        match select_npc_approach(snapshot, edge, here, None, &[]) {
-                            Some((npc, stand)) => {
-                                selected_npc_index = Some(npc.index);
-                                selected_stand = Some(stand);
-                                npc.network
-                            }
-                            None => {
-                                self.loc_wait += 1;
-                                if self.loc_wait > self.budget {
-                                    fire_leg(options, &leg, LegPhase::Failed);
-                                    return Some(TravelOutcome::Blocked {
-                                        at: here,
-                                        leg: self.leg_index,
-                                        why: BlockedWhy::NpcTargetUnavailable {
-                                            loc_id: edge.loc_id,
-                                            radius: NPC_SEARCH_RADIUS,
-                                            at: edge.at,
-                                        },
-                                    });
-                                }
-                                self.requeue_transport(leg);
-                                return None;
-                            }
-                        }
-                    } else {
-                        edge.takeoff.unwrap_or(edge.at)
-                    };
-                    let needs_approach = if let Some(takeoff) = edge.takeoff {
-                        here != takeoff
-                            || loc_transport_ready(snapshot, edge, here).is_some_and(|ready| !ready)
-                    } else if selected_npc_index.is_some() {
-                        !find_transport_target_instance(snapshot, edge, selected_npc_index)
-                            .is_some_and(|target| match target {
-                                TransportTarget::Npc(npc) => {
-                                    npc_interaction_ready(snapshot, here, npc)
-                                }
-                                TransportTarget::Loc(_) => false,
-                            })
-                    } else {
-                        loc_transport_ready(snapshot, edge, here)
-                            .map_or(cheb(here, approach_at) > 1, |ready| !ready)
-                    };
-                    if needs_approach {
-                        if self
-                            .settle_until
-                            .is_some_and(|until| snapshot.tick() < until)
-                        {
-                            self.requeue_transport(leg);
-                            return None;
-                        }
-                        self.settle_until = None;
-                        let Some(approach) = edge.takeoff.or(selected_stand).or_else(|| {
-                            if npc_backed(edge) {
-                                return None;
-                            }
-                            if loc_transport_ready(snapshot, edge, here).is_some() {
-                                if let Some(loc) = find_transport_loc(snapshot, edge) {
-                                    let flood = SceneQuery::new(snapshot.scene(), Some(here))
-                                        .flood_reach()?;
-                                    return api::query::loc_approach::booth_approach(
-                                        loc,
-                                        snapshot.scene(),
-                                        here,
-                                        &flood,
-                                    )?
-                                    .dest;
-                                }
-                            }
-                            approach_tile(snapshot, approach_at, here)
-                        }) else {
-                            // No standable tile adjacent to the target in
-                            // the loaded scene: keep waiting, bounded by
-                            // the hop budget. The leg stays on the front
-                            // while waiting.
-                            self.loc_wait += 1;
-                            if self.loc_wait > self.budget {
-                                fire_leg(options, &leg, LegPhase::Failed);
-                                return Some(TravelOutcome::Blocked {
-                                    at: here,
-                                    leg: self.leg_index,
-                                    why: BlockedWhy::TransportApproachUnavailable {
-                                        kind: edge.kind,
-                                        loc_id: edge.loc_id,
-                                        at: edge.at,
-                                    },
-                                });
-                            }
-                            self.requeue_transport(leg);
-                            return None;
-                        };
-                        let to = edge.to;
-                        let mut ix = Interactions::new(snapshot, d);
-                        let result = ix.walk(approach);
-                        report_walk(options, snapshot, here, approach, &result);
-                        match result {
-                            SendResult::Sent { .. } => {
-                                let npc_recovery = NpcRecovery {
-                                    waited: self.loc_wait,
-                                    last_tick: Some(snapshot.tick()),
-                                    ..Default::default()
-                                };
-                                self.loc_wait = 0;
-                                self.transport = Some(TransportHop {
-                                    leg,
-                                    to,
-                                    ticks_waited: TickCount::sent_at(snapshot.tick()),
-                                    sent_tile: Some(here),
-                                    arrival_footprint: None,
-                                    tries: 0,
-                                    troll: false,
-                                    open_sent_tick: None,
-                                    door_retry: DoorRetry::default(),
-                                    occupied: OccupiedRetry::default(),
-                                    chat_seq: chat_seq(snapshot),
-                                    refusal_watch: None,
-                                    pass_watch: None,
-                                    npc_index: selected_npc_index,
-                                    npc_recovery,
-                                    dialog_page: None,
-                                    approach: Some(ApproachHop {
-                                        tile: approach,
-                                        at: approach_at,
-                                        sent_tick: snapshot.tick(),
-                                        ticks_waited: TickCount::sent_at(snapshot.tick()),
-                                        retry_pending: false,
-                                    }),
-                                });
-                                return None;
-                            }
-                            // Frozen `WalkExecutor.ts:1178-1184`: with nothing
-                            // clicked yet the scene may still be loading
-                            // (a region rebuild empties the client's local
-                            // route), so a refused click is sat out two ticks
-                            // at a time, `CANDIDATE_SETTLE_TRIES` per walk,
-                            // before it ends the follow.
-                            SendResult::Refused {
-                                reason:
-                                    SendReason::Unreachable
-                                    | SendReason::OffScene
-                                    | SendReason::SceneUnavailable,
-                                ..
-                            } if self.settle_left > 0 => {
-                                self.settle_left -= 1;
-                                self.settle_until =
-                                    Some(snapshot.tick().saturating_add(SCENE_SETTLE_TICKS));
-                                self.requeue_transport(leg);
-                                return None;
-                            }
-                            SendResult::Refused { reason, .. } => {
-                                fire_leg(options, &leg, LegPhase::Failed);
-                                return Some(TravelOutcome::Refused { at: here, reason });
-                            }
-                        }
-                    }
-                    match find_transport_target_instance(snapshot, edge, selected_npc_index) {
-                        Some(target) => {
-                            let to = edge.to;
-                            let action = if is_slashable_web(edge) {
-                                match current_web_action(
-                                    snapshot,
-                                    edge,
-                                    options.edges,
-                                    options.quest_evidence,
-                                ) {
-                                    Ok(action) => action,
-                                    Err(reason) => {
-                                        fire_leg(options, &leg, LegPhase::Failed);
-                                        return Some(web_action_failure(
-                                            here,
-                                            self.leg_index,
-                                            edge,
-                                            reason,
-                                        ));
-                                    }
-                                }
-                            } else {
-                                edge
-                            };
-                            let chat_seq_at_send = chat_seq(snapshot);
-                            let arrival_footprint = target.footprint();
-                            let target_name = target.name();
-                            let mut ix = Interactions::new(snapshot, d);
-                            match interact_transport(
-                                snapshot,
-                                &mut ix,
-                                target,
-                                action,
-                                &mut options.on_event,
-                            ) {
-                                SendResult::Sent { .. } => {
-                                    // Already-open trapdoor: this interact is
-                                    // Climb-down. Mark tries so poll_transport
-                                    // does not send it a second time.
-                                    let tries = if npc_backed(edge)
-                                        || (edge.kind == TransportKind::Door
-                                            && !is_slashable_web(edge))
-                                        || (edge.open_loc_id.is_some()
-                                            && edge.kind != TransportKind::Door
-                                            && edge_loc_open(snapshot, edge))
-                                    {
-                                        1
-                                    } else {
-                                        0
-                                    };
-                                    // A door Open arms the one crossing
-                                    // probe: a scripted door can place the
-                                    // player on `at` and never read open
-                                    // (see `door_step_pending`).
-                                    let open_sent_tick =
-                                        (edge.kind == TransportKind::Door).then(|| snapshot.tick());
-                                    let npc_recovery = NpcRecovery {
-                                        waited: self.loc_wait,
-                                        last_tick: Some(snapshot.tick()),
-                                        ..Default::default()
-                                    };
-                                    let refusal_watch = gate_refusal_watch(snapshot, edge, options);
-                                    let pass_watch = gate_pass_watch(snapshot, edge, options);
-                                    note_door_open_sent(
-                                        edge,
-                                        snapshot.tick(),
-                                        target_name,
-                                        options,
-                                    );
-                                    self.loc_wait = 0;
-                                    self.transport = Some(TransportHop {
-                                        leg,
-                                        to,
-                                        ticks_waited: TickCount::sent_at(snapshot.tick()),
-                                        sent_tile: Some(here),
-                                        arrival_footprint,
-                                        tries,
-                                        troll: false,
-                                        npc_index: selected_npc_index,
-                                        npc_recovery,
-                                        open_sent_tick,
-                                        door_retry: DoorRetry::opened_at(open_sent_tick),
-                                        occupied: OccupiedRetry::default(),
-                                        chat_seq: chat_seq_at_send,
-                                        refusal_watch,
-                                        pass_watch,
-                                        dialog_page: None,
-                                        approach: None,
-                                    });
-                                    return None;
-                                }
-                                SendResult::Refused { reason, .. } => {
-                                    fire_leg(options, &leg, LegPhase::Failed);
-                                    return Some(TravelOutcome::Refused { at: here, reason });
-                                }
-                            }
-                        }
-                        None => {
-                            // The target has not appeared in the loaded
-                            // scene yet: keep waiting, bounded by the hop
-                            // budget. The leg stays on the front while
-                            // waiting.
-                            self.loc_wait += 1;
-                            if self.loc_wait > self.budget {
-                                fire_leg(options, &leg, LegPhase::Failed);
-                                return Some(TravelOutcome::Blocked {
-                                    at: here,
-                                    leg: self.leg_index,
-                                    why: BlockedWhy::TransportTargetOutOfRange {
-                                        kind: edge.kind,
-                                        loc_id: edge.loc_id,
-                                        at: edge.at,
-                                    },
-                                });
-                            }
-                            self.requeue_transport(leg);
-                            return None;
-                        }
+            return self.start_transport_leg(d, snapshot, options, leg);
+        }
+    }
+
+    /// Observe and wait out one thieving stun window before advancing any hop.
+    /// Returns `true` when the traveller must wait this tick.
+    fn step_stun_recovery(
+        &mut self,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions<'_>,
+    ) -> bool {
+        if !snapshot.ingame() || !snapshot.attached() {
+            // Keep existing disconnect/refusal handling reachable even when
+            // no further PLAYER_INFO ticks arrive to advance the stun window.
+            self.stun_wait = None;
+            return false;
+        }
+        if !self.stun_recovery_used {
+            if let Some(observed) = snapshot.thieving_stun_tick() {
+                let after_send = |sent: u32| observed.wrapping_sub(sent) < (1u32 << 31);
+                let pending_was_affected = self
+                    .walk
+                    .as_ref()
+                    .is_some_and(|h| h.sent && after_send(h.sent_tick))
+                    || self
+                        .transport
+                        .as_ref()
+                        .and_then(|h| h.approach.as_ref())
+                        .is_some_and(|a| after_send(a.sent_tick));
+                if snapshot.tick().wrapping_sub(observed) < THIEVING_STUN_WINDOW
+                    || pending_was_affected
+                {
+                    self.stun_recovery_used = true;
+                    self.stun_wait = Some(observed);
+                    clock_started();
+                    if let Some(cb) = options.on_event.as_mut() {
+                        cb(TravelEvent::StunDeferred {
+                            observed_tick: observed,
+                            resume_tick: observed.wrapping_add(THIEVING_STUN_WINDOW),
+                        });
                     }
                 }
+            }
+        }
+        let Some(observed) = self.stun_wait else {
+            return false;
+        };
+        if snapshot.tick().wrapping_sub(observed) < THIEVING_STUN_WINDOW {
+            return true;
+        }
+        self.stun_wait = None;
+        let at = here(snapshot);
+        if let Some(hop) = self.walk.as_mut() {
+            let radius = if hop.aim_index + 1 >= hop.tiles().len() {
+                0
+            } else {
+                self.close_enough.max(2)
+            };
+            if hop.sent && (at.level != hop.aim.level || cheb(at, hop.aim) > radius) {
+                hop.sent = false;
+            }
+            if !hop.sent {
+                hop.ticks_waited = TickCount::sent_at(snapshot.tick());
+            }
+        }
+        if let Some(approach) = self.transport.as_mut().and_then(|h| h.approach.as_mut()) {
+            approach.retry_pending = true;
+        }
+        if let Some(cb) = options.on_event.as_mut() {
+            cb(TravelEvent::StunResumed {
+                tick: snapshot.tick(),
+            });
+        }
+        false
+    }
+
+    fn start_walk_leg<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions<'_>,
+        route_leg: FollowLeg,
+    ) -> Poll {
+        let tile_count = route_leg
+            .walk_tiles()
+            .expect("start_walk_leg requires a walk leg")
+            .len();
+        fire_follow_leg(options, &route_leg, LegPhase::Start);
+        // Single-tile walk legs (the `find(from == to)` shape)
+        // carry no distance: no-op, never send.
+        if tile_count <= 1 {
+            fire_follow_leg(options, &route_leg, LegPhase::Done);
+            self.leg_index += 1;
+            return Poll::LegDone;
+        }
+        let here = here(snapshot);
+        let hop = WalkHop {
+            leg: route_leg,
+            route_index_start: self.current_route_index.expect("route leg has an index"),
+            cursor: 0,
+            aim: here,
+            aim_index: 0,
+            sent: false,
+            send_refusal: None,
+            ticks_waited: TickCount::sent_at(snapshot.tick()),
+            budget_ticks: self.budget,
+            sent_tile: None,
+            sent_tick: snapshot.tick(),
+            start_tile: here,
+            first_sent_tick: snapshot.tick(),
+            tries: 0,
+            stall_idle_ticks: 0,
+            stall_idle_last_tick: None,
+            stall_idle_at: None,
+            end_refused_ticks: 0,
+            end_refused_last_tick: None,
+        };
+        self.send_walk_hop(d, snapshot, options, hop, here)
+    }
+
+    fn start_transport_leg<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions<'_>,
+        leg: Leg,
+    ) -> Option<TravelOutcome> {
+        let edge = match &leg {
+            Leg::Transport { edge } => edge,
+            Leg::Walk { .. } => unreachable!("route transport materialized as a walk leg"),
+        };
+        fire_leg(options, &leg, LegPhase::Start);
+        let here = here(snapshot);
+        if let Some(outcome) =
+            self.check_transport_gate(edge, here, snapshot, options.quest_evidence)
+        {
+            fire_leg(options, &leg, LegPhase::Failed);
+            return Some(outcome);
+        }
+        // A packed Teleport hop is any-tile: no approach and no loc/npc target —
+        // the edge names the op itself (the held-item Rub on the charged
+        // jewellery obj, or the spellbook button of the standard spell the
+        // landing identifies), never the WalkTo `::tele` cheat.
+        if edge.kind == TransportKind::Teleport {
+            return self.start_teleport_hop(d, snapshot, options, leg, here);
+        }
+        // Multiloc open-state: when the live door loc at `at` already reads
+        // open, interacting is wrong (an OP on the open leaf would Close it) —
+        // walk straight through to `to` and settle `arrived(to)` with the
+        // normal budget. Doors only: an Npc edge's `at` is the driver's tile,
+        // and a nearby loc with a Close op would misread as an open leaf.
+        if edge.kind == TransportKind::Door && edge_loc_open(snapshot, edge) {
+            return self.start_open_door_hop(d, snapshot, options, leg, here);
+        }
+        let target = match self.resolve_transport_approach_target(snapshot, edge, here) {
+            Ok(target) => target,
+            Err(blocked) => {
+                return self.wait_or_block_transport(leg, here, snapshot.tick(), options, blocked)
+            }
+        };
+        if transport_needs_approach(snapshot, edge, here, target) {
+            return self.start_transport_approach(d, snapshot, options, leg, here, target);
+        }
+        self.send_initial_transport(d, snapshot, options, leg, here, target.npc_index)
+    }
+
+    fn wait_or_block_transport(
+        &mut self,
+        leg: Leg,
+        here: WorldTile,
+        tick: u32,
+        options: &mut TravelOptions<'_>,
+        why: BlockedWhy,
+    ) -> Option<TravelOutcome> {
+        if self.loc_wait.observe(tick) > self.budget {
+            fire_leg(options, &leg, LegPhase::Failed);
+            return Some(TravelOutcome::Blocked {
+                at: here,
+                leg: self.leg_index,
+                why,
+            });
+        }
+        self.requeue_transport(leg);
+        None
+    }
+
+    fn start_teleport_hop<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions<'_>,
+        leg: Leg,
+        here: WorldTile,
+    ) -> Option<TravelOutcome> {
+        let edge = match &leg {
+            Leg::Transport { edge } => edge,
+            Leg::Walk { .. } => unreachable!("teleport arm holds a transport leg"),
+        };
+        match teleport_send(snapshot, d, edge) {
+            TeleportSend::Sent => {
+                let to = edge.to;
+                let pass_watch = gate_pass_watch(snapshot, edge, options);
+                self.restart_loc_wait();
+                let mut hop = TransportHop::new(leg, to, here, snapshot);
+                hop.pass_watch = pass_watch;
+                self.transport = Some(hop);
+                None
+            }
+            TeleportSend::Refused(reason) => {
+                fire_leg(options, &leg, LegPhase::Failed);
+                Some(TravelOutcome::Refused { at: here, reason })
+            }
+            TeleportSend::Wait(reason) => {
+                self.wait_or_block_transport(leg, here, snapshot.tick(), options, reason.into())
+            }
+            TeleportSend::Blocked(why) => {
+                fire_leg(options, &leg, LegPhase::Failed);
+                Some(TravelOutcome::Blocked {
+                    at: here,
+                    leg: self.leg_index,
+                    why,
+                })
+            }
+        }
+    }
+
+    fn start_open_door_hop<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions<'_>,
+        leg: Leg,
+        here: WorldTile,
+    ) -> Option<TravelOutcome> {
+        let edge = match &leg {
+            Leg::Transport { edge } => edge,
+            Leg::Walk { .. } => unreachable!("open-door arm holds a transport leg"),
+        };
+        let to = edge.to;
+        let mut ix = Interactions::new(snapshot, d);
+        match ix.walk(to) {
+            SendResult::Sent { .. } => {
+                let pass_watch = gate_pass_watch(snapshot, edge, options);
+                self.restart_loc_wait();
+                let mut hop = TransportHop::new(leg, to, here, snapshot);
+                hop.pass_watch = pass_watch;
+                self.transport = Some(hop);
+                None
+            }
+            SendResult::Refused { reason, .. } => {
+                fire_leg(options, &leg, LegPhase::Failed);
+                Some(TravelOutcome::Refused { at: here, reason })
+            }
+        }
+    }
+
+    /// Resolve the live target tile (and optional NPC instance/stand) for a
+    /// non-teleport transport edge.
+    ///
+    /// The game only accepts an `op_loc`/`op_npc` from an operable adjacent
+    /// stand. Packed `at` is the spawn, not a leash: sailors/officers/pilots
+    /// wander, and OP_NPC paths to the live network route head rather than the
+    /// rendered/interpolated tile.
+    fn resolve_transport_approach_target(
+        &self,
+        snapshot: &GameSnapshot,
+        edge: &TransportEdge,
+        here: WorldTile,
+    ) -> Result<TransportApproachTarget, BlockedWhy> {
+        if npc_backed(edge) {
+            match select_npc_approach(snapshot, edge, here, None, &[]) {
+                Some((npc, stand)) => Ok(TransportApproachTarget {
+                    npc_index: Some(npc.index),
+                    stand: Some(stand),
+                    at: npc.network,
+                }),
+                None => Err(BlockedWhy::NpcTargetUnavailable {
+                    loc_id: edge.loc_id,
+                    radius: NPC_SEARCH_RADIUS,
+                    at: edge.at,
+                }),
+            }
+        } else {
+            Ok(TransportApproachTarget {
+                npc_index: None,
+                stand: None,
+                at: edge.takeoff.unwrap_or(edge.at),
+            })
+        }
+    }
+
+    fn start_transport_approach<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions<'_>,
+        leg: Leg,
+        here: WorldTile,
+        target: TransportApproachTarget,
+    ) -> Option<TravelOutcome> {
+        let edge = match &leg {
+            Leg::Transport { edge } => edge,
+            Leg::Walk { .. } => unreachable!("approach arm holds a transport leg"),
+        };
+        if self
+            .settle_until
+            .is_some_and(|until| snapshot.tick() < until)
+        {
+            self.requeue_transport(leg);
+            return None;
+        }
+        self.settle_until = None;
+        let Some(approach) = edge.takeoff.or(target.stand).or_else(|| {
+            if npc_backed(edge) {
+                return None;
+            }
+            if loc_transport_ready(snapshot, edge, here).is_some() {
+                if let Some(loc) = find_transport_loc(snapshot, edge) {
+                    let flood = SceneQuery::new(snapshot.scene(), Some(here)).flood_reach()?;
+                    return api::query::loc_approach::booth_approach(
+                        loc,
+                        snapshot.scene(),
+                        here,
+                        &flood,
+                    )?
+                    .dest;
+                }
+            }
+            approach_tile(snapshot, target.at, here)
+        }) else {
+            // No standable tile adjacent to the target in the loaded scene:
+            // keep waiting, bounded by the hop budget. The leg stays on the
+            // front while waiting.
+            let blocked = BlockedWhy::TransportApproachUnavailable {
+                kind: edge.kind,
+                loc_id: edge.loc_id,
+                at: edge.at,
+            };
+            return self.wait_or_block_transport(leg, here, snapshot.tick(), options, blocked);
+        };
+        let to = edge.to;
+        let mut ix = Interactions::new(snapshot, d);
+        let result = ix.walk(approach);
+        report_walk(options, snapshot, here, approach, &result);
+        match result {
+            SendResult::Sent { .. } => {
+                let npc_recovery = NpcRecovery {
+                    waited: self.loc_wait.get(),
+                    last_tick: Some(snapshot.tick()),
+                    ..Default::default()
+                };
+                self.restart_loc_wait();
+                let mut hop = TransportHop::new(leg, to, here, snapshot);
+                hop.npc_index = target.npc_index;
+                hop.npc_recovery = npc_recovery;
+                hop.approach = Some(ApproachHop {
+                    tile: approach,
+                    at: target.at,
+                    sent_tick: snapshot.tick(),
+                    ticks_waited: TickCount::sent_at(snapshot.tick()),
+                    retry_pending: false,
+                });
+                self.transport = Some(hop);
+                None
+            }
+            // Frozen `WalkExecutor.ts:1178-1184`: with nothing clicked yet the
+            // scene may still be loading (a region rebuild empties the client's
+            // local route), so a refused click is sat out two ticks at a time,
+            // `CANDIDATE_SETTLE_TRIES` per walk, before it ends the follow.
+            SendResult::Refused {
+                reason:
+                    SendReason::Unreachable | SendReason::OffScene | SendReason::SceneUnavailable,
+                ..
+            } if self.settle_left > 0 => {
+                self.settle_left -= 1;
+                self.settle_until = Some(snapshot.tick().saturating_add(SCENE_SETTLE_TICKS));
+                clock_started();
+                self.requeue_transport(leg);
+                None
+            }
+            SendResult::Refused { reason, .. } => {
+                fire_leg(options, &leg, LegPhase::Failed);
+                Some(TravelOutcome::Refused { at: here, reason })
+            }
+        }
+    }
+
+    fn send_initial_transport<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions<'_>,
+        leg: Leg,
+        here: WorldTile,
+        selected_npc_index: Option<usize>,
+    ) -> Option<TravelOutcome> {
+        let edge = match &leg {
+            Leg::Transport { edge } => edge,
+            Leg::Walk { .. } => unreachable!("send arm holds a transport leg"),
+        };
+        let Some(target) = find_transport_target_instance(snapshot, edge, selected_npc_index)
+        else {
+            // The target has not appeared in the loaded scene yet: keep
+            // waiting, bounded by the hop budget. The leg stays on the front
+            // while waiting.
+            let blocked = BlockedWhy::TransportTargetOutOfRange {
+                kind: edge.kind,
+                loc_id: edge.loc_id,
+                at: edge.at,
+            };
+            return self.wait_or_block_transport(leg, here, snapshot.tick(), options, blocked);
+        };
+        let to = edge.to;
+        let action = if is_slashable_web(edge) {
+            match current_web_action(snapshot, edge, options.edges, options.quest_evidence) {
+                Ok(action) => action,
+                Err(reason) => {
+                    fire_leg(options, &leg, LegPhase::Failed);
+                    return Some(web_action_failure(here, self.leg_index, edge, reason));
+                }
+            }
+        } else {
+            edge
+        };
+        let arrival_footprint = target.footprint();
+        let target_name = target.name();
+        let mut ix = Interactions::new(snapshot, d);
+        match interact_transport(snapshot, &mut ix, target, action, &mut options.on_event) {
+            SendResult::Sent { .. } => {
+                // Already-open trapdoor: this interact is Climb-down. Mark
+                // tries so poll_transport does not send it a second time.
+                let tries = if npc_backed(edge)
+                    || (edge.kind == TransportKind::Door && !is_slashable_web(edge))
+                    || (edge.open_loc_id.is_some()
+                        && edge.kind != TransportKind::Door
+                        && edge_loc_open(snapshot, edge))
+                {
+                    1
+                } else {
+                    0
+                };
+                // A door Open arms the one crossing probe: a scripted door can
+                // place the player on `at` and never read open
+                // (see `door_step_pending`).
+                let open_sent_tick = (edge.kind == TransportKind::Door).then(|| snapshot.tick());
+                let npc_recovery = NpcRecovery {
+                    waited: self.loc_wait.get(),
+                    last_tick: Some(snapshot.tick()),
+                    ..Default::default()
+                };
+                let refusal_watch = gate_refusal_watch(snapshot, edge, options);
+                let pass_watch = gate_pass_watch(snapshot, edge, options);
+                note_door_open_sent(edge, snapshot.tick(), target_name, options);
+                self.restart_loc_wait();
+                let mut hop = TransportHop::new(leg, to, here, snapshot);
+                hop.arrival_footprint = arrival_footprint;
+                hop.tries = tries;
+                hop.npc_index = selected_npc_index;
+                hop.npc_recovery = npc_recovery;
+                hop.open_sent_tick = open_sent_tick;
+                hop.door_retry = DoorRetry::opened_at(open_sent_tick);
+                hop.refusal_watch = refusal_watch;
+                hop.pass_watch = pass_watch;
+                self.transport = Some(hop);
+                None
+            }
+            SendResult::Refused { reason, .. } => {
+                fire_leg(options, &leg, LegPhase::Failed);
+                Some(TravelOutcome::Refused { at: here, reason })
             }
         }
     }
@@ -1710,7 +1725,7 @@ struct WalkHop {
     leg: FollowLeg,
     /// First route-path index represented by this walk leg.
     route_index_start: usize,
-    /// Index into the leg tiles of the last cleared tile.
+    /// First leg tile still to aim at after the preceding hop.
     cursor: usize,
     aim: WorldTile,
     aim_index: usize,
@@ -1818,6 +1833,58 @@ struct TransportHop {
     /// the edge's `at`. `None` after the interaction is sent (or on a hop
     /// with no interact, like the open-leaf walk-through).
     approach: Option<ApproachHop>,
+}
+
+impl TransportHop {
+    fn new(leg: Leg, to: WorldTile, here: WorldTile, snapshot: &GameSnapshot) -> Self {
+        Self {
+            leg,
+            to,
+            ticks_waited: TickCount::sent_at(snapshot.tick()),
+            sent_tile: Some(here),
+            arrival_footprint: None,
+            tries: 0,
+            troll: false,
+            npc_index: None,
+            npc_recovery: NpcRecovery::default(),
+            open_sent_tick: None,
+            door_retry: DoorRetry::default(),
+            occupied: OccupiedRetry::default(),
+            chat_seq: chat_seq(snapshot),
+            refusal_watch: None,
+            pass_watch: None,
+            dialog_page: None,
+            approach: None,
+        }
+    }
+}
+
+/// Target stand and NPC index used to test whether a transport hop needs approach.
+#[derive(Clone, Copy)]
+struct TransportApproachTarget {
+    npc_index: Option<usize>,
+    stand: Option<WorldTile>,
+    at: WorldTile,
+}
+
+fn transport_needs_approach(
+    snapshot: &GameSnapshot,
+    edge: &TransportEdge,
+    here: WorldTile,
+    target: TransportApproachTarget,
+) -> bool {
+    if let Some(takeoff) = edge.takeoff {
+        here != takeoff || loc_transport_ready(snapshot, edge, here).is_some_and(|ready| !ready)
+    } else if target.npc_index.is_some() {
+        !find_transport_target_instance(snapshot, edge, target.npc_index).is_some_and(|found| {
+            match found {
+                TransportTarget::Npc(npc) => npc_interaction_ready(snapshot, here, npc),
+                TransportTarget::Loc(_) => false,
+            }
+        })
+    } else {
+        loc_transport_ready(snapshot, edge, here).map_or(cheb(here, target.at) > 1, |ready| !ready)
+    }
 }
 
 /// Request-owned observations. Walks without a measured Open need no allocation.

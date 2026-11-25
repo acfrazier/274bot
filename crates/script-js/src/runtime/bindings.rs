@@ -12,6 +12,8 @@ use crate::library::shape::LoadShape;
 
 #[path = "bindings/event_callbacks.rs"]
 pub(crate) mod event_callbacks;
+#[path = "bindings/native_settings.rs"]
+mod native_settings;
 #[path = "bindings/tree_bot.rs"]
 pub(crate) mod tree_bot;
 /// Monotonic clock backing the prelude's `performance.now()` shim
@@ -218,6 +220,9 @@ pub(super) fn wire_runtime(
     card_name: &str,
 ) -> Result<(), String> {
     let source = crate::shim::remap_catalog_imports(source);
+    if matches!(checked.shape(), LoadShape::NativeTick) {
+        native_settings::install(runtime)?;
+    }
     runtime
         .register_function(
             "__rs2b0t_now",
@@ -1069,6 +1074,12 @@ function settingsReader() {
     bool(name, fallback) {
       const v = (host().settingsBag || {})[name];
       return typeof v === 'boolean' ? v : (fallback === undefined ? false : fallback);
+    },
+    list(name, fallback) {
+      return globalThis.__rs2b0t_native_settings_list(name, fallback);
+    },
+    tile(name, fallback) {
+      return globalThis.__rs2b0t_native_settings_tile(name, fallback);
     },
   };
 }

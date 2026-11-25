@@ -20,6 +20,11 @@ path = "src/bin/e2e-suite.rs"
 name = "e2e-suite-fixture"
 path = "src/bin/e2e-suite-fixture.rs"
 
+# Offline suite fixtures pass a disposable vault override to the child.
+[[test]]
+name = "suite_offline"
+required-features = ["test-support"]
+
 [dependencies]
 host = { path = "../host" }
 host-play = { path = "../host-play", default-features = false }
@@ -37,6 +42,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 default = ["js", "luau"]
 js = ["host-play/js"]
 luau = ["host-play/luau"]
+test-support = ["host-play/test-support"]
 
 [dev-dependencies]
 # JS-enabled e2e tests inherit script-js's unprotected V8 test platform

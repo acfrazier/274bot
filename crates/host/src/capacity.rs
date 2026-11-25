@@ -505,6 +505,7 @@ struct SlotRecorder {
     cursor: usize,
     late_cursor: usize,
     ticks: u64,
+    last_service_delay: Option<Duration>,
 }
 
 impl SlotRecorder {
@@ -520,6 +521,7 @@ impl SlotRecorder {
             cursor: 0,
             late_cursor: 0,
             ticks: 0,
+            last_service_delay: None,
         }
     }
 
@@ -549,6 +551,7 @@ impl SlotRecorder {
         };
         self.bracketed = Duration::ZERO;
         self.ticks = ticks;
+        self.last_service_delay = None;
     }
 
     /// Scheduling delay since the previous service (zero for the first).
@@ -579,6 +582,7 @@ impl SlotRecorder {
     /// One service; returns its delay.
     fn record(&mut self, service: Service) -> Duration {
         let delay = self.delay(&service);
+        self.last_service_delay = Some(delay);
         let active = self.class == ServiceClass::Active;
         if active && self.counted {
             let at_ms = self.monitor.ms(service.at);
@@ -721,6 +725,12 @@ pub(crate) fn end_services() {
 
 pub(crate) fn record_service(service: Service) {
     with_recorder(|recorder| recorder.record(service));
+}
+
+/// Previous completed service's scheduling delay on this slot thread.
+/// The current service does not finish until after snapshot/script observation.
+pub(crate) fn last_service_delay() -> Option<Duration> {
+    with_recorder(|recorder| recorder.last_service_delay).flatten()
 }
 
 /// One active bot's delay per counted service over the last [`WINDOW`],

@@ -1280,6 +1280,197 @@ fn drive_log() {
     );
     assert!(observed.requests.is_empty(), "{:?}", observed.requests);
 }
+fn settings_isolate(name: &str, settings: &str, body: &str, bag: Value) -> LoadIsolate {
+    let source = script_js::NativeFixture::new(name)
+        .settings(settings)
+        .source(body);
+    let iso = LoadIsolate::spawn(source, LoadShape::NativeTick, Vec::new())
+        .expect("spawn NativeSettings conformance isolate");
+    let iso = wait_ready(iso, "NativeSettings conformance isolate");
+    iso.post_settings_bag(
+        bag.as_object()
+            .expect("NativeSettings fixture is an object"),
+    );
+    assert!(
+        iso.probe("true").is_ok(),
+        "NativeSettings bag must be installed before the first tick"
+    );
+    iso
+}
+
+fn settings_output(iso: &LoadIsolate) -> Value {
+    let raw = iso
+        .probe("globalThis.__probe")
+        .expect("read NativeSettings conformance output");
+    serde_json::from_str(
+        raw.as_str()
+            .expect("NativeSettings output is a JSON string"),
+    )
+    .expect("NativeSettings output parses as JSON")
+}
+
+fn drive_settings_list() {
+    let body = r#"
+export function tick(api) {
+  if (api.tick === 1) {
+    const names = api.settings.list('names');
+    globalThis.__oldNames = names;
+    names.push('caller');
+    const fallback = ['fallback'];
+    const fallbackValue = api.settings.list('missing', fallback);
+    fallbackValue.push('caller');
+    globalThis.__fallbackSource = fallback;
+    globalThis.__beforeReplacement = {
+      legacy: api.settings.list('legacyNames'),
+      afterMutation: api.settings.list('names'),
+      wrongFallback: api.settings.list('wrongList', ['wrong-fallback']),
+      wrongDefault: api.settings.list('wrongList'),
+      missingFallback: api.settings.list('missing', ['missing-fallback']),
+      missingDefault: api.settings.list('missing'),
+    };
+  } else if (api.tick === 2) {
+    globalThis.__probe = JSON.stringify({
+      oldNames: globalThis.__oldNames,
+      replacement: api.settings.list('names'),
+      beforeReplacement: globalThis.__beforeReplacement,
+      fallbackSource: globalThis.__fallbackSource,
+    });
+  }
+}
+"#;
+    let legacy = script::coerce_setting_value("list", &json!("legacy-a, legacy-b"));
+    let mut initial = serde_json::Map::new();
+    initial.insert("names".into(), json!(["alice", "bob"]));
+    initial.insert("legacyNames".into(), legacy);
+    initial.insert("wrongList".into(), json!(["valid", 7]));
+    let iso = settings_isolate(
+        "settings-list",
+        "{ names: { type: 'string[]', default: [] }, legacyNames: { type: 'string[]', default: [] }, wrongList: { type: 'string[]', default: [] } }",
+        body,
+        Value::Object(initial),
+    );
+    post_native_tick(
+        &iso,
+        1,
+        common::ingame_snapshot(),
+        &NativeFactsInput::default(),
+    );
+
+    let mut replacement = serde_json::Map::new();
+    replacement.insert("names".into(), json!(["carol"]));
+    iso.post_settings_bag(&replacement);
+    assert!(iso.probe("true").is_ok(), "replacement settings must apply");
+    post_native_tick(
+        &iso,
+        2,
+        common::ingame_snapshot(),
+        &NativeFactsInput::default(),
+    );
+
+    assert_eq!(
+        settings_output(&iso),
+        json!({
+            "oldNames": ["alice", "bob", "caller"],
+            "replacement": ["carol"],
+            "beforeReplacement": {
+                "legacy": ["legacy-a", "legacy-b"],
+                "afterMutation": ["alice", "bob"],
+                "wrongFallback": ["wrong-fallback"],
+                "wrongDefault": [],
+                "missingFallback": ["missing-fallback"],
+                "missingDefault": []
+            },
+            "fallbackSource": ["fallback"]
+        })
+    );
+    assert!(interact_requests(&iso).is_empty());
+    assert!(iso.drain_logs().is_empty());
+    iso.join();
+}
+
+fn drive_settings_tile() {
+    let body = r#"
+export function tick(api) {
+  if (api.tick === 1) {
+    const destination = api.settings.tile('destination');
+    globalThis.__oldDestination = destination;
+    destination.x = -1;
+    const fallback = { x: 8, z: 9, level: 2 };
+    const fallbackValue = api.settings.tile('missing', fallback);
+    fallbackValue.z = 99;
+    globalThis.__fallbackSource = fallback;
+    globalThis.__beforeReplacement = {
+      afterMutation: api.settings.tile('destination'),
+      wrongFallback: api.settings.tile('wrongTile', { x: 1, z: 2, level: 0 }),
+      wrongDefault: api.settings.tile('wrongTile'),
+      missingFallback: api.settings.tile('missing', { x: 3, z: 4, level: 1 }),
+      missingDefault: api.settings.tile('missing'),
+    };
+  } else if (api.tick === 2) {
+    globalThis.__probe = JSON.stringify({
+      oldDestination: globalThis.__oldDestination,
+      replacement: api.settings.tile('destination'),
+      beforeReplacement: globalThis.__beforeReplacement,
+      fallbackSource: globalThis.__fallbackSource,
+    });
+  }
+}
+"#;
+    let mut initial = serde_json::Map::new();
+    initial.insert(
+        "destination".into(),
+        json!({ "x": 3200, "z": 3201, "level": 1 }),
+    );
+    initial.insert(
+        "wrongTile".into(),
+        json!({ "x": "bad", "z": 2, "level": 0 }),
+    );
+    let iso = settings_isolate(
+        "settings-tile",
+        "{ destination: { type: 'tile', default: { x: 1, z: 2, level: 0 } }, wrongTile: { type: 'tile', default: { x: 1, z: 2, level: 0 } } }",
+        body,
+        Value::Object(initial),
+    );
+    post_native_tick(
+        &iso,
+        1,
+        common::ingame_snapshot(),
+        &NativeFactsInput::default(),
+    );
+
+    let mut replacement = serde_json::Map::new();
+    replacement.insert(
+        "destination".into(),
+        json!({ "x": 3300, "z": 3301, "level": 2 }),
+    );
+    iso.post_settings_bag(&replacement);
+    assert!(iso.probe("true").is_ok(), "replacement settings must apply");
+    post_native_tick(
+        &iso,
+        2,
+        common::ingame_snapshot(),
+        &NativeFactsInput::default(),
+    );
+
+    assert_eq!(
+        settings_output(&iso),
+        json!({
+            "oldDestination": { "x": -1, "z": 3201, "level": 1 },
+            "replacement": { "x": 3300, "z": 3301, "level": 2 },
+            "beforeReplacement": {
+                "afterMutation": { "x": 3200, "z": 3201, "level": 1 },
+                "wrongFallback": { "x": 1, "z": 2, "level": 0 },
+                "wrongDefault": null,
+                "missingFallback": { "x": 3, "z": 4, "level": 1 },
+                "missingDefault": null
+            },
+            "fallbackSource": { "x": 8, "z": 9, "level": 2 }
+        })
+    );
+    assert!(interact_requests(&iso).is_empty());
+    assert!(iso.drain_logs().is_empty());
+    iso.join();
+}
 fn drive_bank_nearest_reachable() {
     use script::bank::request::BankSeatOperation;
 
@@ -2913,6 +3104,16 @@ fn rows() -> Vec<Row> {
             "return [api.settings.bool('on',false),api.settings.bool('absent',true)];",
             json!([true, true]),
         ),
+        Row {
+            id: "NativeApi.settings.list",
+            why: "list reads normalized legacy and current values, rejects wrong shapes, uses fallbacks, and returns detached copies after replacement",
+            case: Case::Drive(drive_settings_list),
+        },
+        Row {
+            id: "NativeApi.settings.tile",
+            why: "tile reads current values, rejects wrong shapes, uses fallbacks, and returns detached copies after replacement",
+            case: Case::Drive(drive_settings_tile),
+        },
         Row {
             id: "NativeApi.log",
             why: "log lines reach the host log channel with no gameplay request",

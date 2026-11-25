@@ -491,6 +491,11 @@ pub fn global() -> &'static LogStore {
     store
 }
 
+/// Stderr lines dropped by the process-owned bounded host-log writer.
+pub fn stderr_dropped() -> u64 {
+    api::hostlog::stderr_dropped()
+}
+
 impl api::hostlog::Sink for LogStore {
     fn record(&self, record: &Record<'_>) {
         self.push(record);

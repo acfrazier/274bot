@@ -183,6 +183,7 @@ impl Driver {
                 retained: &mut self.retained,
                 action_id: 0,
                 active_now: Duration::from_millis(tick.saturating_mul(600)),
+                eligible_ticks: tick,
                 wall_now: Instant::now(),
                 ledger: &mut self.ledger,
                 pending_note_progress: Some(&mut self.pending_note_progress),

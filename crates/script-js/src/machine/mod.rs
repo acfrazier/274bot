@@ -1124,6 +1124,7 @@ pub(crate) enum Reply {
 pub(crate) struct Thrown {
     message: String,
     value: Option<v8::Global<v8::Value>>,
+    not_implemented: bool,
 }
 
 impl Thrown {
@@ -1132,6 +1133,16 @@ impl Thrown {
         Self {
             message: message.into(),
             value: None,
+            not_implemented: false,
+        }
+    }
+
+    /// A Rust-raised not-implemented failure with the shared JS error kind.
+    pub(crate) fn not_implemented(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            value: None,
+            not_implemented: true,
         }
     }
 
@@ -1140,11 +1151,16 @@ impl Thrown {
         Self {
             message,
             value: Some(value),
+            not_implemented: false,
         }
     }
 
     pub(crate) fn message(&self) -> &str {
         &self.message
+    }
+
+    pub(crate) fn is_not_implemented(&self) -> bool {
+        self.not_implemented
     }
 
     /// The thrown value itself, when script code threw it.
@@ -1159,10 +1175,10 @@ impl std::fmt::Debug for Thrown {
     }
 }
 
-/// By message: V8 handles have no value equality.
+/// By message and error kind: V8 handles have no value equality.
 impl PartialEq for Thrown {
     fn eq(&self, other: &Self) -> bool {
-        self.message == other.message
+        self.message == other.message && self.not_implemented == other.not_implemented
     }
 }
 
@@ -1331,7 +1347,7 @@ impl Cx<'_> {
         }
         self.asks += 1;
         if self.asks > ASKS_PER_STEP {
-            self.ending = Some(Ending::Failed(Thrown::new(format!(
+            self.ending = Some(Ending::Failed(Thrown::not_implemented(format!(
                 "not impl: more than {ASKS_PER_STEP} synchronous callbacks in one step"
             ))));
             return Err(Ended);
@@ -1358,7 +1374,7 @@ impl Cx<'_> {
                 Ok(Called::Settled(Reply::Value(serde_json::json!({}))))
             }
             Called::Pending(_) if path == native::abi::HookPath::Ask => {
-                self.ending = Some(Ending::Failed(Thrown::new(
+                self.ending = Some(Ending::Failed(Thrown::not_implemented(
                     "not impl: a synchronous machine callback returned a promise",
                 )));
                 Err(Ended)
@@ -2087,14 +2103,14 @@ impl NativeBankChild {
             bank_prompt_hook(self.family, &prompt.point, &self.hook_indices)
         else {
             self.fail_callback();
-            return Step::Fail(Thrown::new(format!(
+            return Step::Fail(Thrown::not_implemented(format!(
                 "not impl: no source-backed bank prompt {} / {:?}",
                 self.family, prompt.point
             )));
         };
         if !cx.has(hook_index) {
             self.fail_callback();
-            return Step::Fail(Thrown::new(format!(
+            return Step::Fail(Thrown::not_implemented(format!(
                 "not impl: bank prompt {} / {:?} has no held callback",
                 self.family, prompt.point
             )));

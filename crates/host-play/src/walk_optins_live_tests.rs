@@ -271,7 +271,7 @@ fn live_quester_walk_optins() {
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     let cell = Cell::from_env();
     let root = absolute_env_path("BOT_EVIDENCE_DIR");
-    let home = required_directory("HOME", &root);
+    let _home = required_directory("HOME", &root);
     let cache = required_directory("BOT_CACHE_DIR", &root);
     let engine = absolute_env_path("WORLD_ENGINE_DIR");
     let pack = absolute_env_path("WORLD_NAV_PACK");
@@ -298,7 +298,8 @@ fn live_quester_walk_optins() {
         unpack_dir: Some(cache),
         nav_pack: Some(pack),
         nav_flags: Some(flags),
-        vault_path: Some(home.join("vault-walk-optins")),
+        #[cfg(feature = "test-support")]
+        vault_path: Some(_home.join("vault-walk-optins")),
         ..Default::default()
     };
     let template = options.resolve(None).unwrap().prepare_template().unwrap();

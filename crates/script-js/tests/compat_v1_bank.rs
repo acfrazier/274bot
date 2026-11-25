@@ -398,3 +398,66 @@ fn compat_v1_client_adapter__reader_bankitems__contract() {
     assert_eq!(iso.probe("__snap").unwrap(), serde_json::json!([]));
     iso.join();
 }
+#[test]
+fn compat_v1_bank_deposit_all_matching_distinguishes_refusal() {
+    let src = bot(
+        "import { Bank } from '../../api/bank/Bank.js';",
+        r#"
+            globalThis.__rs2b0t_machine_start = (family) => {
+                if (family !== 'bank_deposit') throw new Error('unexpected machine: ' + family);
+                return { kind: 'refused', reason: 'bank is not open' };
+            };
+            globalThis.__refusal = null;
+            globalThis.__missing = null;
+            Bank.depositAllMatching(() => true).catch((error) => {
+                globalThis.__refusal = { kind: error.kind, message: error.message };
+            });
+            try {
+                Bank.__compat_census_unknown;
+            } catch (error) {
+                globalThis.__missing = { kind: error.kind, message: error.message };
+            }
+        "#,
+    );
+
+    let value = run(
+        &src,
+        "({ refusal: globalThis.__refusal, missing: globalThis.__missing })",
+    );
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "refusal": {
+                "kind": "refused",
+                "message": "cannot do that now: Bank.depositAllMatching: bank is not open",
+            },
+            "missing": {
+                "kind": "not-implemented",
+                "message": "not impl: Bank.__compat_census_unknown",
+            },
+        })
+    );
+}
+
+#[test]
+fn compat_v1_banking_missing_member_has_not_implemented_kind() {
+    let src = bot(
+        "import { Banking } from '../../api/bank/Banking.js';",
+        r#"
+let missing;
+try {
+    Banking.__compat_census_unknown;
+} catch (error) {
+    missing = { kind: error.kind, message: error.message };
+}
+globalThis.__missing = missing;
+"#,
+    );
+    assert_eq!(
+        run(&src, "globalThis.__missing"),
+        serde_json::json!({
+            "kind": "not-implemented",
+            "message": "not impl: Banking.__compat_census_unknown",
+        })
+    );
+}

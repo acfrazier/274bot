@@ -2814,7 +2814,7 @@ mod tests {
 
     /// Replays the files named by `C0_REPLAY_RECEIPT` (paths joined by `:`),
     /// prints each result, and fails if any receipt has a failure.
-    /// Run: `C0_REPLAY_RECEIPT=a.json:b.log cargo test ... replay_saved_c0_receipts -- --ignored --nocapture`.
+    /// Run: `C0_REPLAY_RECEIPT=a.json:b.log cargo test -p host-play --features "live-harness test-support" --test quester_upkeep_live replay_saved_c0_receipts -- --ignored --nocapture`.
     #[test]
     #[ignore = "offline replay of the receipts named by C0_REPLAY_RECEIPT"]
     fn replay_saved_c0_receipts() {

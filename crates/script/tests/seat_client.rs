@@ -228,7 +228,10 @@ fn stamped_start_and_exact_terminal_are_consumed_once() {
     );
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
     assert_eq!(client.take_completion(), None);
     assert!(client.awaiting().is_none());
@@ -484,7 +487,10 @@ fn starts_and_cancels_retry_until_a_page_acknowledges_them() {
     assert_eq!(client.pending_starts(), 0);
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
 
     let watermark = client.drain_seat_batches().pop().unwrap();
@@ -530,7 +536,13 @@ fn reset_discards_stale_starts_cancels_and_restored_rows() {
     assert!(client.drain_lifecycle().is_empty());
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Aborted(AbortReason::Reset))
+        Some(SeatCompletion::Aborted {
+            awaited: Awaited::Seat {
+                id,
+                kind: NativeKind::BankPlan,
+            },
+            reason: AbortReason::Reset,
+        })
     );
 }
 
@@ -571,7 +583,13 @@ fn reset_advances_the_work_generation_for_new_batches() {
     assert_eq!(new_generation, old_generation + 1);
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Aborted(AbortReason::Reset))
+        Some(SeatCompletion::Aborted {
+            awaited: Awaited::Seat {
+                id: old_id,
+                kind: NativeKind::BankPlan,
+            },
+            reason: AbortReason::Reset,
+        })
     );
     let new_id = client
         .start_awaited(NativeKind::BankPlan, SeatStartArgs::Empty, None)
@@ -605,7 +623,10 @@ fn reset_preserves_a_completion_already_copied_from_the_page() {
     assert!(client.completion_ready());
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
 }
 
@@ -850,7 +871,10 @@ fn completion_waits_until_lifecycle_capacity_is_available() {
     assert_eq!(batch.batch.reqs.len(), MAX_SEAT_GAMEPLAY_ROWS);
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
 }
 
@@ -930,7 +954,10 @@ fn terminal_page_consumes_every_result_sequence() {
     assert_eq!(batch.batch.consumed_terminal_seq, 2);
     assert_eq!(
         client.take_completion(),
-        Some(SeatCompletion::Terminal(results[0]))
+        Some(SeatCompletion::Terminal {
+            result: results[0],
+            value: None,
+        })
     );
 }
 
@@ -1021,7 +1048,10 @@ fn model_trace_drives_the_client_terminal_receipt() {
                 let terminal = seat.results()[0];
                 assert_eq!(terminal.seq, sequence);
                 assert_eq!(terminal.outcome, SeatTerminal::Done);
-                expected = Some(SeatCompletion::Terminal(terminal));
+                expected = Some(SeatCompletion::Terminal {
+                    result: terminal,
+                    value: None,
+                });
                 let page = SeatPageInput::new(&[], seat.results(), &[], 0).unwrap();
                 client.accept_delivery(
                     &snapshot(),
@@ -1037,4 +1067,52 @@ fn model_trace_drives_the_client_terminal_receipt() {
         }
     }
     assert_eq!(client.take_completion(), expected);
+}
+#[test]
+fn queued_interactions_are_exact_rows_and_stay_inside_the_seat_bound() {
+    let request = InteractReq::Loc {
+        x: 3200,
+        z: 3201,
+        level: 0,
+        action: "Use-quickly".into(),
+        id: Some(42),
+    };
+    let mut queued = client();
+    queued.queue_interaction(request.clone()).unwrap();
+    let batch = queued.drain_seat_batches().pop().unwrap();
+    assert_eq!(batch.batch.reqs.len(), 1);
+    assert_eq!(batch.batch.reqs[0].request, request);
+    assert_eq!(batch.batch.reqs[0].lineage, None);
+    assert_eq!(batch.batch.reqs[0].mirror_owner, None);
+    assert_eq!(
+        queued.queue_interaction(walk_request()),
+        Err(ClientError::NotInteraction)
+    );
+
+    let mut full = client();
+    for _ in 0..MAX_SEAT_GAMEPLAY_ROWS {
+        full.queue_interaction(InteractReq::Npc {
+            name: "Banker".into(),
+            action: "Bank".into(),
+            index: None,
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        full.queue_interaction(InteractReq::Player {
+            name: "bob".into(),
+            action: "Trade".into(),
+        }),
+        Err(ClientError::RowsFull)
+    );
+
+    let mut waiting = client();
+    waiting.await_next_tick().unwrap();
+    assert_eq!(
+        waiting.queue_interaction(InteractReq::Player {
+            name: "bob".into(),
+            action: "Trade".into(),
+        }),
+        Err(ClientError::AlreadyWaiting)
+    );
 }

@@ -129,6 +129,7 @@ impl Runtime {
             retained: &mut self.retained,
             action_id,
             active_now: Duration::from_millis(tick * 600),
+            eligible_ticks: tick,
             wall_now: self.wall,
             ledger: &mut self.ledger,
             pending_note_progress: None,
@@ -6112,6 +6113,53 @@ fn melee_prep_waits_for_split_weapon_wear_frame() {
         report.end,
         CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Weapon))
     );
+}
+
+#[test]
+fn melee_split_weapon_grace_frame_skips_engage_actions() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut scene = Scene::new("cow");
+    let mut sword = scene.held("bronze_scimitar", 0);
+    let id = sword.def.id;
+    scene.inventory.push(sword.clone());
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.stand = Some(tile(2605, 3205));
+    request.set_kit(Arc::new(CompiledKit {
+        worn: Arc::from([(3, id)]),
+        ..CompiledKit::default()
+    }));
+    let mut harness = Harness::new(&scene, request);
+
+    let first = harness.pending_batch(&scene, 1);
+    assert!(contains_wear(&first, sword.def.name.as_deref().unwrap()));
+    assert_len(&first, 1);
+    assert_eq!(harness.machine.phase, Phase::Engage);
+
+    // Split wear packet: inventory dropped the weapon before equipment gained it.
+    // On this grace tick the planner must return immediately rather than fall
+    // through into Engage (where an unengaged stand walk would fire).
+    scene.inventory.clear();
+    scene.refresh();
+    assert!(
+        matches!(harness.poll(&scene.snapshot, 2), Poll::Pending),
+        "split weapon wear frame must yield Pending without aborting"
+    );
+    let waiting = harness.drain(None);
+    assert_len(&waiting, 0);
+    assert_eq!(harness.machine.end, None);
+
+    // Once the weapon lands in equipment, Engage resumes and walks to stand.
+    sword.container = ItemContainer::Equipment;
+    sword.slot = 3;
+    scene.equipment.push(sword);
+    scene.refresh();
+    let after_wear = harness.pending_batch(&scene, 3);
+    assert_len(&after_wear, 1);
+    assert!(matches!(after_wear.get(0), Some(HostEffect::Walk(_))));
 }
 
 #[test]

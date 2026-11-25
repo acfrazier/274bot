@@ -12731,7 +12731,7 @@
       "selector": "$module",
       "reason": "Host-only transport helpers have no frozen source module; envelope results are not booleans.",
       "runtime": "crates/script-js/src/shim/_kernel.js:4",
-      "declaration": "export interface WorldTile { x: number; z: number; level?: number }\nexport interface MachineResult { kind: string; value?: unknown; reason?: string }\nexport function host(): Record<string, unknown>;\nexport function snap(): Record<string, unknown>;\nexport function notImpl(name: string, reason?: string): Error;\nexport function refused(reason?: string): Error;\nexport function queue(req: unknown): void;\nexport function runMachine(family: string, args: unknown, hooks?: unknown): Promise<MachineResult>;\nexport function machineNow(family: string, args: unknown): MachineResult;\nexport function proxy<T extends object>(ns: string, members: T): T;\nexport function notImplValue(ns: string): never;\nexport function distanceTo(a: WorldTile | null, b: WorldTile | null): number;\nexport function planarDistanceTo(a: WorldTile | null, b: WorldTile | null): number;\nexport function arrived(dest: WorldTile, radius?: number): boolean;\nexport function presentOps(actions: readonly (string | null)[] | null): string[];\nexport function opIndex(actions: readonly (string | null)[], action: string): number;\nexport function entitySnapView(row: Record<string, unknown> | null): Record<string, unknown> | null;\nexport function optionalText(value: unknown): string | null;\nexport const HOST_CONTROLS: readonly [\n    { readonly id: \"__rs2b0t.pause\"; readonly label: \"Pause\" },\n    { readonly id: \"__rs2b0t.stop\"; readonly label: \"Stop\" },\n];",
+      "declaration": "export interface WorldTile { x: number; z: number; level?: number }\nexport interface MachineResult { kind: string; value?: unknown; reason?: string }\nexport function host(): Record<string, unknown>;\nexport function snap(): Record<string, unknown>;\nexport function notImpl(name: string, reason?: string): Error & { kind: 'not-implemented' };\nexport function refused(reason?: string): Error & { kind: 'refused' };\nexport function queue(req: unknown): void;\nexport function runMachine(family: string, args: unknown, hooks?: unknown): Promise<MachineResult>;\nexport function machineNow(family: string, args: unknown): MachineResult;\nexport function proxy<T extends object>(ns: string, members: T): T;\nexport function notImplValue(ns: string): never;\nexport function distanceTo(a: WorldTile | null, b: WorldTile | null): number;\nexport function planarDistanceTo(a: WorldTile | null, b: WorldTile | null): number;\nexport function arrived(dest: WorldTile, radius?: number): boolean;\nexport function presentOps(actions: readonly (string | null)[] | null): string[];\nexport function opIndex(actions: readonly (string | null)[], action: string): number;\nexport function entitySnapView(row: Record<string, unknown> | null): Record<string, unknown> | null;\nexport function optionalText(value: unknown): string | null;\nexport const HOST_CONTROLS: readonly [\n    { readonly id: \"__rs2b0t.pause\"; readonly label: \"Pause\" },\n    { readonly id: \"__rs2b0t.stop\"; readonly label: \"Stop\" },\n];",
       "family_id": "compat-runtime",
       "nav_consuming": false
     },
@@ -12810,7 +12810,7 @@
       "module": "api/bank/Banking.js",
       "selector": "$add",
       "reason": "Selected game data supplies the id through api::content::random_event_casket_id; lostcity-289/content/pack/obj.pack:406 is 405=casket.",
-      "runtime": "crates/script-js/src/shim/banking.js:17",
+      "runtime": "crates/script-js/src/shim/banking.js:15",
       "declaration": "export const RANDOM_EVENT_CASKET_ID: number;",
       "family_id": "bank",
       "nav_consuming": true
@@ -12830,7 +12830,7 @@
       "module": "api/execution/Execution.js",
       "selector": "$add",
       "reason": "Native step-machine park is a host-only helper, resolving a completion envelope.",
-      "runtime": "crates/script-js/src/shim/execution.js:132",
+      "runtime": "crates/script-js/src/shim/execution.js:133",
       "declaration": "export function parkMachine(handle: number): Promise<import('../../shim/_kernel.js').MachineResult>;",
       "family_id": "execution",
       "nav_consuming": false
@@ -13063,7 +13063,7 @@
       "module": "api/bank/Bank.js",
       "selector": "Bank.withdrawLoad",
       "reason": "rs2b0t 90a69240 accepts a numeric item ID; the host adapter forwards the ID to the bank seat.",
-      "runtime": "crates/script-js/src/shim/bank.js:163",
+      "runtime": "crates/script-js/src/shim/bank.js:176",
       "declaration": "/** Fill the pack: Withdraw-All when present, otherwise Withdraw-X for free slots. */\nwithdrawLoad(name: string | number): Promise<boolean>;",
       "family_id": "bank",
       "nav_consuming": true
@@ -13083,7 +13083,7 @@
       "module": "api/execution/Execution.js",
       "selector": "$add",
       "reason": "ScriptAborted marks host script cancellation and lets scripts identify a caught stop error.",
-      "runtime": "crates/script-js/src/shim/execution.js:12",
+      "runtime": "crates/script-js/src/shim/execution.js:13",
       "declaration": "export class ScriptAborted extends Error { constructor(); }",
       "family_id": "execution",
       "nav_consuming": false
@@ -13155,7 +13155,7 @@
       "module": "api/bank/Bank.js",
       "selector": "Bank.items",
       "reason": "Bank.items preserves its legacy noted/cert projection, frozen and reused only with posted bank-session and item generations; audited consumers only read the rows.",
-      "runtime": "crates/script-js/src/shim/bank.js:45",
+      "runtime": "crates/script-js/src/shim/bank.js:58",
       "declaration": "items(): readonly Readonly<Omit<InvItemSnapshot, 'ops'> & { ops: readonly (string | null)[]; cert: number }>[];",
       "family_id": "bank",
       "nav_consuming": true
@@ -13246,7 +13246,7 @@
       "module": "api/bank/Banking.js",
       "selector": "Banking.bankNearest",
       "reason": "The native facade defaults opts and only invokes deposit when it is a callback; a missing deposit policy is valid.",
-      "runtime": "crates/script-js/src/shim/banking.js:110",
+      "runtime": "crates/script-js/src/shim/banking.js:107",
       "declaration": "bankNearest(opts?: { deposit?: (name: string) => boolean; commonJunk?: boolean; destination?: BankDestination; returnTo?: WorldTile; boothName?: string; boothOp?: string; afterDeposit?: () => void | Promise<void>; log?: (msg: string) => void }): Promise<boolean>;",
       "family_id": "bank",
       "nav_consuming": true

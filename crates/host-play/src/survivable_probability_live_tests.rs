@@ -114,7 +114,7 @@ impl Rig {
             .dispatch_checkpoint(&self.client);
         #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
         let mut tick_walk_attempts = Vec::new();
-        if follow && drain.player_info {
+        if follow && drain.packet_delta != 0 {
             crate::script_runtime::step_nav_bot(
                 &mut self.client,
                 &self.name,

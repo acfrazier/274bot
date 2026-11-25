@@ -229,15 +229,16 @@ pub enum ProcessProbe {
     Sampled {
         /// Cumulative user + system CPU seconds.
         cpu_seconds: f64,
-        /// Current resident bytes, when the platform reports them.
+        /// Current physical footprint on macOS, RSS on Linux, or working set on Windows.
         resident: Option<u64>,
         /// Lifetime peak resident bytes.
         peak: u64,
     },
 }
 
-/// Read this process's CPU time and memory. The current resident size is
-/// read first, so the peak read after it already covers it.
+/// Read this process's CPU time and memory. The current sample is read first.
+/// On macOS, physical footprint and lifetime peak RSS are different metrics.
+/// The display uses `peak.max(current)` so its peak label is not below current.
 pub fn probe_process() -> ProcessProbe {
     if !cfg!(any(target_os = "macos", target_os = "linux", windows)) {
         return ProcessProbe::Unsupported;

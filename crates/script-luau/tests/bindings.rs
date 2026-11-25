@@ -1,9 +1,14 @@
-//! Each L4a binding through a real product run: the value it returns and
-//! the typed error of each wrong argument (plan slice L4a).
+//! Luau bindings through product runs (plan slices L4a and L4b).
+//! Each call checks its frame behavior and the typed seat row it produces.
 
 pub mod support;
 
+use api::script_contract::MAX_START_CHARGE;
+
+use script::bank::request::BankSeatOperation;
 use script::interact::InteractReq;
+use script::native::request::NativeKind;
+use script::native::seat_rows::SeatStartArgs;
 use script::native::snapshot_source::{NativeFactsInput, TileInput};
 use script::native::{SettingsBag, WalkCancelReason};
 use script::surface::{LentOutcome, SurfaceRun, SurfaceWake, TickOutcome};
@@ -517,4 +522,205 @@ fn the_vm_exposes_exactly_the_binding_table() {
     // The `__test` tree exists only in builds with the test hooks.
     names.retain(|name| !name.starts_with("__test."));
     assert_eq!(names, expected, "rule T8: no hidden binding");
+}
+
+fn queued_bank_operation(run: &dyn SurfaceRun) -> BankSeatOperation {
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1, "one bank seat batch");
+    assert_eq!(batches[0].batch.starts.len(), 1, "one typed bank start");
+    assert_eq!(
+        batches[0]
+            .batch
+            .reqs
+            .iter()
+            .map(|row| row.request.clone())
+            .collect::<Vec<_>>(),
+        [InteractReq::WaitEnqueued],
+        "bank starts queue no interaction rows"
+    );
+    let start = &batches[0].batch.starts[0];
+    assert_eq!(start.kind, NativeKind::BankPlan);
+    let SeatStartArgs::Bank(args) = &start.args else {
+        panic!("bank start has typed arguments: {start:?}");
+    };
+    args.validate(start.kind).expect("valid bank arguments");
+    args.operation()
+}
+
+#[test]
+fn bank_bindings_start_the_typed_bank_operations() {
+    for (member, expected) in [
+        ("openNearest", BankSeatOperation::OpenNearestWorld),
+        ("depositAll", BankSeatOperation::DepositAll),
+        ("close", BankSeatOperation::Close),
+    ] {
+        let source = format!("return {{ tick=function(api) api.bank.{member}() end }}");
+        let mut run = spawn(&source);
+        assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+        assert_eq!(
+            queued_bank_operation(&*run),
+            expected,
+            "api.bank.{member} starts the matching native plan"
+        );
+        assert!(run.drain_logs().is_empty());
+    }
+}
+
+#[test]
+fn interaction_bindings_queue_exact_typed_rows() {
+    let mut run = spawn(
+        r#"
+        return { tick = function(api)
+            api.interact.npc("Banker", "Bank", 1)
+            api.interact.npc("Banker", "Bank")
+            api.interact.loc(3093, 3243, 0, "Use-quickly", 2214)
+            api.interact.obj(3093, 3243, 0, "Take", 995)
+            api.interact.player("alice", "Trade")
+            api.interact.held("Bronze axe", "Wield", 0, 1351)
+        end }
+        "#,
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1, "one interaction batch");
+    assert_eq!(
+        batches[0]
+            .batch
+            .reqs
+            .iter()
+            .map(|row| row.request.clone())
+            .collect::<Vec<_>>(),
+        [
+            InteractReq::Npc {
+                name: "Banker".into(),
+                action: "Bank".into(),
+                index: Some(1),
+            },
+            InteractReq::Npc {
+                name: "Banker".into(),
+                action: "Bank".into(),
+                index: None,
+            },
+            InteractReq::Loc {
+                x: 3093,
+                z: 3243,
+                level: 0,
+                action: "Use-quickly".into(),
+                id: Some(2214),
+            },
+            InteractReq::Obj {
+                x: 3093,
+                z: 3243,
+                level: 0,
+                name: None,
+                action: "Take".into(),
+                id: Some(995),
+            },
+            InteractReq::Player {
+                name: "alice".into(),
+                action: "Trade".into(),
+            },
+            InteractReq::Held {
+                name: "Bronze axe".into(),
+                action: "Wield".into(),
+                slot: Some(0),
+                target_item_id: Some(1351),
+            },
+            InteractReq::LoopSettled,
+        ]
+    );
+    assert!(run.drain_logs().is_empty());
+}
+
+#[test]
+fn interaction_text_is_bounded_before_host_copy() {
+    let source = format!(
+        r#"
+        return {{ tick = function(api)
+            local name = string.rep("x", {MAX_START_CHARGE})
+            api.interact.player(name, "Trade")
+            api.log(pcall(api.interact.player, string.rep("y", {MAX_START_CHARGE}+1), "Trade"))
+        end }}
+        "#
+    );
+    let mut run = spawn(&source);
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    let error = format!("api.interact.player: name exceeds {MAX_START_CHARGE} bytes");
+    assert_refused(&run.drain_logs(), &[error.as_str()]);
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1, "one interaction batch");
+    assert_eq!(batches[0].batch.reqs.len(), 2);
+    let InteractReq::Player { name, action } = &batches[0].batch.reqs[0].request else {
+        panic!("the argument at the limit is accepted");
+    };
+    assert_eq!(name.len(), MAX_START_CHARGE);
+    assert_eq!(action, "Trade");
+}
+
+#[test]
+fn bank_and_interaction_bindings_refuse_bad_arguments_and_wrong_phases() {
+    let mut run = spawn(
+        r#"
+        api.log(pcall(api.bank.close))
+        api.log(pcall(api.interact.player, "alice", "Trade"))
+        return {
+            tick = function(api)
+                api.log(pcall(api.bank.depositAll, 1))
+                api.log(pcall(api.interact.npc, 12, "Bank"))
+                api.log(pcall(api.interact.npc, "Banker", "Bank", -1))
+                api.log(pcall(api.interact.loc, 3093, 3243, 0, "Use-quickly", -1))
+                api.log(pcall(api.interact.obj, 3093, 3243, 0, "Take", -1))
+                api.log(pcall(api.interact.held, "Bronze axe", "Wield", -1, 1351))
+                api.log(pcall(api.interact.held, "Bronze axe", "Wield", 0))
+                api.log(pcall(api.interact.player, "alice"))
+                api.log(pcall(api.interact.player, "alice", "Trade", "extra"))
+            end,
+            onPaint = function(api)
+                api.log(pcall(api.bank.close))
+                api.log(pcall(api.interact.player, "alice", "Trade"))
+            end,
+        }
+        "#,
+    );
+    assert_refused(
+        &run.drain_logs(),
+        &[
+            "api.bank.close: is only available during tick",
+            "api.interact.player: is only available during tick",
+        ],
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    assert_refused(
+        &run.drain_logs(),
+        &[
+            "api.bank.depositAll: expects at most 0 arguments",
+            "api.interact.npc: name must be a string",
+            "api.interact.npc: index must be an integer from 0",
+            "api.interact.loc: id must be an integer from 0",
+            "api.interact.obj: id must be an integer from 0",
+            "api.interact.held: slot must be an integer from 0",
+            "api.interact.held: target_item_id must be an integer from 0",
+            "api.interact.player: action must be a string",
+            "api.interact.player: expects at most 2 arguments",
+            "api.bank.close: is only available during tick",
+            "api.interact.player: is only available during tick",
+        ],
+    );
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1, "the tick has one seat batch");
+    assert!(
+        batches[0].batch.starts.is_empty(),
+        "refused calls queue no starts"
+    );
+    assert_eq!(
+        batches[0]
+            .batch
+            .reqs
+            .iter()
+            .map(|row| row.request.clone())
+            .collect::<Vec<_>>(),
+        [InteractReq::LoopSettled],
+        "refused calls queue no interaction rows"
+    );
+    assert!(!run.stopped(), "a refused call does not stop the run");
 }

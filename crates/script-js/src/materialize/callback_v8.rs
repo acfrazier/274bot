@@ -132,11 +132,27 @@ pub(crate) fn type_error<'s>(scope: &mut v8::HandleScope<'s>, message: &str) -> 
     Throw::Value(v8::Exception::type_error(scope, message))
 }
 
+/// Add the shared not-implemented kind to a Rust-raised compatibility error.
+pub(crate) fn not_implemented_error<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    message: &str,
+) -> v8::Local<'s, v8::Value> {
+    let message = v8::String::new(scope, message).unwrap_or_else(|| v8::String::empty(scope));
+    let error = v8::Exception::error(scope, message);
+    let Some(object) = error.to_object(scope) else {
+        return error;
+    };
+    let key = v8::String::new(scope, "kind").unwrap_or_else(|| v8::String::empty(scope));
+    let value =
+        v8::String::new(scope, "not-implemented").unwrap_or_else(|| v8::String::empty(scope));
+    let _ = object.set(scope, key.into(), value.into());
+    error
+}
+
 /// The shim's explicit `notImpl(feature)` error (`not impl: <feature>`).
 pub(crate) fn not_impl<'s>(scope: &mut v8::HandleScope<'s>, feature: &str) -> Throw<'s> {
     let text = format!("not impl: {feature}");
-    let message = v8::String::new(scope, &text).unwrap_or_else(|| v8::String::empty(scope));
-    Throw::Value(v8::Exception::error(scope, message))
+    Throw::Value(not_implemented_error(scope, &text))
 }
 
 fn nullish_name(value: v8::Local<v8::Value>) -> &'static str {

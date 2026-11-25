@@ -358,7 +358,8 @@ fn no_reach() -> Arc<api::query::ReachQueryView> {
 
 fn drain(player_info: bool) -> host::DrainResult {
     host::DrainResult {
-        player_info,
+        packet_delta: u64::from(player_info),
+        received_at: std::time::Instant::now(),
         npc_rows_coherent: true,
         session_changed: false,
         gens: Default::default(),

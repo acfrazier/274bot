@@ -206,14 +206,32 @@ fn flags_are_order_independent_and_override_saved_or_environment_revision() {
     assert_eq!(selected.revision(), ClientRevision::R274);
     assert_eq!(selected.game_port(), 43594);
     assert!(selected.vault_path().ends_with(".274bot/vault"));
+}
 
+#[cfg(feature = "test-support")]
+#[test]
+fn test_support_build_accepts_explicit_vault_path() {
+    let fixture = Fixture::new();
     let mut environment = fixture.env();
     environment.working_dir = Some(fixture.0.clone());
-    let (options, _) =
+    let (options, rest) =
         parse_profile_args(["--cache", "relative-cache", "--vault", "relative-vault"]).unwrap();
+    assert!(rest.is_empty());
     let selected = options.resolve_with_env(None, &environment).unwrap();
     assert_eq!(selected.cache_dir(), fixture.0.join("relative-cache"));
     assert_eq!(selected.vault_path(), fixture.0.join("relative-vault"));
+}
+
+#[cfg(not(feature = "test-support"))]
+#[test]
+fn release_build_rejects_explicit_vault_path_during_parse() {
+    const EXPECTED: &str = "--vault is not available in this build. Before the first 0.3.0 unlock for this server, move or copy the legacy vault to <state-root>/<vault-component> (default root: ~/.274bot). Do not overwrite another vault.";
+    for args in [
+        &["--vault", "relative-vault"][..],
+        &["--vault=relative-vault"][..],
+    ] {
+        assert_eq!(parse_profile_args(args).unwrap_err(), EXPECTED);
+    }
 }
 
 #[test]
@@ -313,6 +331,7 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
         nav_pack: Some("explicit.navpack".into()),
         nav_flags: Some("explicit.navflags".into()),
         content_dir: Some("explicit-content".into()),
+        #[cfg(feature = "test-support")]
         vault_path: Some("explicit-vault".into()),
         ..ProfileOptions::default()
     };
@@ -326,6 +345,7 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     assert_eq!(selected.nav_pack(), fixture.0.join("explicit.navpack"));
     assert_eq!(selected.nav_flags(), fixture.0.join("explicit.navflags"));
     assert_eq!(selected.content_dir(), fixture.0.join("explicit-content"));
+    #[cfg(feature = "test-support")]
     assert_eq!(selected.vault_path(), fixture.0.join("explicit-vault"));
 }
 

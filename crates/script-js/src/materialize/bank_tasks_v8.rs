@@ -542,9 +542,7 @@ fn deposit_matcher<'s>(
     let result = (|| -> JsResult<'s, v8::Local<'s, v8::Value>> {
         let own = args.get(0);
         if !own.is_function() {
-            let message = v8::String::new(scope, "not impl: depositMatcher: requires a function")
-                .unwrap_or_else(|| v8::String::empty(scope));
-            return Err(cb::Throw::Value(v8::Exception::error(scope, message)));
+            return Err(cb::not_impl(scope, "depositMatcher: requires a function"));
         }
         let include_common = cb::truthy(scope, args.get(1));
         let include_common = v8::Boolean::new(scope, include_common).into();

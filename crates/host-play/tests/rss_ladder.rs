@@ -11,7 +11,7 @@
 //! Use the checked 289 template: `ENGINE_DIR`, `WORLD_ENGINE_DIR`,
 //! `WORLD_NAV_PACK`, `BOT_CACHE_DIR`, and `BOT_GAME_PORT=44594` point at the
 //! local Engine A inputs. `LIVE=1 RSS_LOAD=1 RSS_N=10
-//! BOT_LIVE_NAME_PREFIX=<unique1-4char> cargo test -p host-play --test
+//! BOT_LIVE_NAME_PREFIX=<unique1-4char> cargo test -p host-play --features test-support --test
 //! rss_ladder -- --ignored --test-threads=1 --nocapture`. Accepted N:
 //! 1, 2, 4, 10. The prefix owns all minted accounts (12-char engine limit).
 

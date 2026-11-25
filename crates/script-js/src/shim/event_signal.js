@@ -5,8 +5,8 @@
 // skips act on those names; EventSignal only exposes cooperative interrupt
 // state.
 // Every other member throws `not impl` — never a fake value.
+import { notImpl } from '../../shim/_kernel.js';
 const host = () => globalThis.__rs2b0t_host || {};
-const notImpl = (name) => new Error('not impl: ' + name);
 
 export const EventSignal = new Proxy(
     {

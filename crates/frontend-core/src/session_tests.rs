@@ -11,8 +11,8 @@ use vault::{Profile, ProfileSettings, Vault};
 use super::*;
 use crate::command::OperatorCommand;
 #[cfg(feature = "js")]
-use crate::surface::{SlotAttach, SlotSurface};
-use crate::ArmMirror;
+use crate::surface::SlotSurface;
+use crate::SlotAttach;
 use crate::WalkGlobals;
 use api::lifecycle::MemoryMode;
 

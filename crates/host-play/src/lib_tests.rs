@@ -1704,6 +1704,67 @@ fn run_with_io_empty_profiles_starts_no_slots() {
     assert!(play.statuses().is_empty());
 }
 
+#[cfg(feature = "test-support")]
+#[test]
+fn production_clock_counts_packet_batches() {
+    let account = "slot-tick-clock";
+    let hook = crate::tick_engine_test_support::TickEngineTestHook::new(account);
+    hook.arm_measurement(1511, &[]);
+    hook.install();
+    let frames = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 1,
+            cache_dir: std::env::temp_dir()
+                .join("absent-slot-tick-cache")
+                .display()
+                .to_string(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        move |client, _, _| {
+            client.set_draw(false);
+            client.ingame = true;
+            // This callback runs after this frame's real Pump drain. Apply
+            // packets for the next drain, with an empty poll between batches.
+            let packets = match frames.fetch_add(1, Ordering::Relaxed) {
+                0 => 5,
+                2 => 3,
+                _ => 0,
+            };
+            for _ in 0..packets {
+                client.bump_gens(client::io::ServerProt::PLAYER_INFO);
+            }
+        },
+    );
+    let arm = SlotArm::new(42, false);
+    arm.bypass_asset_startup_for_test();
+    let mut account_profile = profile(account, 42);
+    account_profile.settings.random_events = false;
+    play.spawn_slot(account_profile, None, None, Some(arm));
+    let observed = hook.wait_for_frame(3, Duration::from_secs(60));
+    play.stop_slot(account);
+    hook.uninstall();
+    assert!(
+        observed.is_some(),
+        "the real slot worker must complete four frames"
+    );
+    let trace = hook.trace();
+    assert!(trace.frames.len() >= 4);
+    for (frame, expected_tick) in trace.frames[..4].iter().zip([0, 5, 5, 8]) {
+        // The hook reads the actual play_slots script_tick, not a replica.
+        assert_eq!(frame.game_tick, expected_tick);
+        assert_eq!(frame.client_tick, expected_tick);
+    }
+    for (frame, expected_edge) in trace.frames[..4].iter().zip([false, true, false, true]) {
+        assert_eq!(frame.tick_edge, expected_edge);
+    }
+}
+
 #[test]
 fn obj_names_getter_shares_the_play_table() {
     // A cache-less temp dir falls back to `Cache::default()` (empty
@@ -7166,7 +7227,10 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
     };
 
     let mut finished = 0;
-    for _ in 0..70 {
+    // The follower's wait for the boat counts observed server ticks, so each
+    // step is one tick: the 60-tick budget lapses within the 70 steps.
+    for tick in 1..=70 {
+        snapshot.seed_tick(tick);
         finished += usize::from(step_walk_arm_follow(
             &mut client,
             &snapshot,

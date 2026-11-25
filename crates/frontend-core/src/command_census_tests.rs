@@ -119,6 +119,10 @@ const CORE: &[(&str, Decision)] = &[
     ("log.rs::classify_script_line", Excluded(FORMAT)),
     ("log.rs::default_save_path", Excluded("path derivation; no effect")),
     ("log.rs::global", Excluded(ACCESSOR)),
+    (
+        "log.rs::stderr_dropped",
+        Excluded("reads the process-wide stderr drop counter; no operator decision"),
+    ),
     ("log.rs::logs_dir", Excluded("path derivation; no effect")),
     // log_file.rs
     (

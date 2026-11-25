@@ -4,6 +4,7 @@
 
 use super::convert::Refusal;
 use crate::runtime::RunState;
+use script::bank::request::BankSeatArgs;
 use script::interact::InteractReq;
 use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
 
@@ -42,5 +43,13 @@ impl<'a> Host<'a> {
 
     pub(crate) fn walk(self, request: InteractReq) -> Result<(), Refusal> {
         self.state.await_walk(request, self.frame)
+    }
+
+    pub(crate) fn bank(self, args: BankSeatArgs) -> Result<(), Refusal> {
+        self.state.await_bank(args, self.frame)
+    }
+
+    pub(crate) fn interact(self, request: InteractReq) -> Result<(), Refusal> {
+        self.state.queue_interaction(request, self.frame)
     }
 }

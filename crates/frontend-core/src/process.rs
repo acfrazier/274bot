@@ -11,10 +11,12 @@ pub fn debug_enabled() -> bool {
 #[error("{0}")]
 pub struct StartError(String);
 
-/// Initialize the enabled script runtime before any script or slot work.
+/// Start process-owned host logging and initialize the enabled script runtime
+/// before any script or slot work.
 /// With JS, start the protected V8 platform on the process main thread.
 /// With the memory benchmark, also mark the process start.
 pub fn bootstrap() -> Result<(), StartError> {
+    api::hostlog::start_stderr_writer();
     #[cfg(feature = "js")]
     {
         script_js::install_cards().map_err(|error| StartError(error.to_string()))?;

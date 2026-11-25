@@ -1635,6 +1635,45 @@ fn perform_budget_fails_when_the_arm_never_fires() {
     assert_eq!(ev.predicate, "stat(16)>=999");
     assert!(ev.message.is_some());
 }
+
+#[test]
+fn survival_need_first_poison_fire_wait_accepts_ticks_30_and_31_not_32() {
+    for (fire_tick, should_pass) in [(30, true), (31, true), (32, false)] {
+        let mut scenario = crate::get("survival_need").expect("survival_need scenario");
+        let fire_step = scenario
+            .steps
+            .iter()
+            .position(|step| {
+                step.name == "observe the first real poison fire while the need row remains"
+            })
+            .expect("first poison fire step");
+        scenario.steps = vec![scenario.steps.remove(fire_step)];
+        scenario.seed.mainland = false;
+        scenario.settings.require_mainland_base = false;
+
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(Duration::ZERO);
+        let mut client = seeded_client();
+        client.stat_effective_level[3] = 30;
+        runner.tick(&mut client);
+        assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+
+        for tick in 1..=fire_tick {
+            if tick == fire_tick {
+                client.stat_effective_level[3] = 24;
+                client.bump_gens(ServerProt::UPDATE_STAT);
+            }
+            advance_one_game_tick(&mut runner, &mut client, false);
+        }
+
+        assert_eq!(
+            matches!(runner.status(), RunnerStatus::Passed),
+            should_pass,
+            "the first fire at tick {fire_tick} ended as {:?}",
+            runner.status()
+        );
+    }
+}
 /// The first snapshot can contain login `PLAYER_INFO` generations from before
 /// the step dispatch. Those generations must not spend the step's wait budget.
 #[test]

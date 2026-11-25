@@ -423,7 +423,10 @@ fn set_key(
 }
 
 fn throw_error(scope: &mut v8::HandleScope, message: &str) {
-    if let Some(s) = v8::String::new(scope, message) {
+    if message.starts_with("not impl: PartnerTrade.") {
+        let error = super::callback_v8::not_implemented_error(scope, message);
+        scope.throw_exception(error);
+    } else if let Some(s) = v8::String::new(scope, message) {
         let exc = v8::Exception::error(scope, s);
         scope.throw_exception(exc);
     }

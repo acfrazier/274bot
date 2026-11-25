@@ -1296,8 +1296,21 @@ fn bank_refusal_is_not_an_unimplemented_member() {
             if (globalThis.__did) return;\n\
             globalThis.__did = true;\n\
             globalThis.__rs2b0t_machine_start = () => ({ kind: 'refused', reason: 'denied' });\n\
-            try { await Bank.withdrawX('Bones', -1); }\n\
-            catch (error) { globalThis.__refused = error.message; }\n\
+            globalThis.__refused = {};\n\
+            const calls = {\n\
+                deposit: () => Bank.deposit('Bones'),\n\
+                withdraw: () => Bank.withdraw('Bones', 1),\n\
+                withdrawById: () => Bank.withdrawById(526),\n\
+                withdrawX: () => Bank.withdrawX('Bones', 2),\n\
+                withdrawXById: () => Bank.withdrawXById(526, 2),\n\
+            };\n\
+            for (const [name, call] of Object.entries(calls)) {\n\
+                try {\n\
+                    await call();\n\
+                } catch (error) {\n\
+                    globalThis.__refused[name] = error.message;\n\
+                }\n\
+            }\n\
             try { Bank.notImplementedMember; }\n\
             catch (error) { globalThis.__missing = error.message; }\n\
         }\n\
@@ -1307,7 +1320,13 @@ fn bank_refusal_is_not_an_unimplemented_member() {
     machine_tick(&iso, 1);
     assert_eq!(
         iso.probe("globalThis.__refused").unwrap(),
-        serde_json::json!("cannot do that now: denied")
+        serde_json::json!({
+            "deposit": "cannot do that now: Bank.deposit: denied",
+            "withdraw": "cannot do that now: Bank.withdraw: denied",
+            "withdrawById": "cannot do that now: Bank.withdrawById: denied",
+            "withdrawX": "cannot do that now: Bank.withdrawX: denied",
+            "withdrawXById": "cannot do that now: Bank.withdrawXById: denied",
+        })
     );
     assert_eq!(
         iso.probe("globalThis.__missing").unwrap(),
@@ -1425,7 +1444,7 @@ fn sync_step_promises_are_opaque_while_ask_promises_fail() {
              const pending = new Promise(() => {});
              const settle = (promise) => promise.then(
                  (out) => ({ ok: out }),
-                 (error) => ({ err: String(error) }),
+                 (error) => ({ err: { message: error.message, kind: error.kind } }),
              );
              const run = (promise) => settle(runMachine('hooked', {}, {
                  sync: () => promise,
@@ -1466,12 +1485,13 @@ fn sync_step_promises_are_opaque_while_ask_promises_fail() {
             { "object": true, "promise": false, "empty": true, "same": false },
         ])
     );
-    assert!(
-        outcomes[2]["err"]
-            .as_str()
-            .is_some_and(|error| error
-                .contains("not impl: a synchronous machine callback returned a promise")),
-        "Cx::ask rejects a Promise instead of returning an opaque value: {outcomes:?}"
+    assert_eq!(
+        outcomes[2]["err"],
+        serde_json::json!({
+            "message": "not impl: a synchronous machine callback returned a promise",
+            "kind": "not-implemented",
+        }),
+        "Cx::ask rejects a Promise instead of returning an opaque value"
     );
     iso.join();
 }

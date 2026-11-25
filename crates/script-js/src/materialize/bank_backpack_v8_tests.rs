@@ -7,16 +7,6 @@ const CHILD_ENV: &str = "SCRIPT_NORMAL_BACKPACK_SHAPE_TEST_CHILD";
 const TEST_NAME: &str =
     "materialize::bank_backpack_v8::tests::normal_backpack_rows_have_fast_properties_and_bound_v8_heap";
 
-const BANK_KERNEL: &str = r#"
-export function runMachine() { throw new Error('unused'); }
-export function snap() { return {}; }
-export function queue() { return {}; }
-export function proxy(_name, methods) { return methods; }
-export const notImpl = (name, reason) =>
-    new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
-export const refused = (reason) =>
-    new Error(reason ? 'cannot do that now: ' + reason : 'cannot do that now');
-"#;
 const BANK_ENTRY: &str = r#"
 import '/rs2b0t/bot/shim/_kernel.js';
 import { Bank } from '/rs2b0t/bot/api/bank/Bank.js';
@@ -108,11 +98,18 @@ fn load_bank_api(runtime: &mut Runtime) {
         "/rs2b0t/bot/adapter/ClientAdapter.js",
         include_str!("../shim/client_adapter.js"),
     );
-    let kernel = Module::new("/rs2b0t/bot/shim/_kernel.js", BANK_KERNEL);
+    let execution = Module::new(
+        "/rs2b0t/bot/api/execution/Execution.js",
+        include_str!("../shim/execution.js"),
+    );
+    let kernel = Module::new(
+        "/rs2b0t/bot/shim/_kernel.js",
+        include_str!("../shim/_kernel.js"),
+    );
     let entry = Module::new("/bank_backpack_test.js", BANK_ENTRY);
-    // Both shims import `_kernel.js`; register it before the importers.
+    // The kernel imports Execution.js; the bank and adapter shims import the kernel.
     runtime
-        .load_modules(&entry, vec![&kernel, &bank, &adapter])
+        .load_modules(&entry, vec![&execution, &kernel, &bank, &adapter])
         .unwrap();
 }
 
