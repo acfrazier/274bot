@@ -1585,7 +1585,7 @@ fn the_bindings_pass_the_census() {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct LiveCell {
     command: String,
     covers_luau_source: bool,
