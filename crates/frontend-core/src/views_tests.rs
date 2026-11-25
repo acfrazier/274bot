@@ -837,7 +837,7 @@ fn counting_probe() -> ProcessProbe {
     ProcessProbe::Sampled {
         cpu_seconds: n as f64 * 0.25,
         resident: Some(64 << 20),
-        peak: 80 << 20,
+        peak: Some(80 << 20),
     }
 }
 
@@ -873,7 +873,10 @@ fn the_meter_samples_once_a_second_for_the_whole_fleet() {
     assert_eq!(first.cpu(), &Metric::Measuring, "a rate needs two samples");
     assert_eq!(
         first.ram(),
-        &Metric::available("64.0 MB process, peak 80.0 MB")
+        &Metric::available(format!(
+            "64.0 MB {}, peak 80.0 MB",
+            crate::resources::PROCESS_MEMORY_LABEL
+        ))
     );
 
     let generation = s.resource_generation();

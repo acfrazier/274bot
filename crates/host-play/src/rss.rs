@@ -201,18 +201,51 @@ pub fn sample_process() -> (u64, f64) {
 const TASK_VM_INFO_REV1_COUNT: libc::mach_msg_type_number_t = 38;
 
 #[cfg(target_os = "macos")]
+const TASK_VM_INFO_REV3_COUNT: libc::mach_msg_type_number_t = 84;
+
+#[cfg(target_os = "macos")]
 fn macos_task_vm_footprint(
     status: libc::kern_return_t,
     count: libc::mach_msg_type_number_t,
-    info: &[u64; 19],
-) -> Option<u64> {
-    if status != libc::KERN_SUCCESS || count != TASK_VM_INFO_REV1_COUNT {
-        return None;
+    info: &[u64; 42],
+) -> (Option<u64>, Option<u64>) {
+    if status != libc::KERN_SUCCESS || count < TASK_VM_INFO_REV1_COUNT {
+        return (None, None);
     }
-    match info[18] {
-        0 => None,
-        footprint => Some(footprint),
-    }
+    let current = (info[18] > 0).then_some(info[18]);
+    let peak = if count >= 44 {
+        let peak = info[21] as i64;
+        (peak > 0).then_some(peak as u64)
+    } else {
+        None
+    };
+    (current, peak)
+}
+
+/// Current footprint and lifetime footprint peak from one macOS task-info read.
+/// A kernel that returns only REV1 or REV2 supplies no footprint peak.
+#[cfg(target_os = "macos")]
+pub fn current_footprint_and_peak_bytes() -> (Option<u64>, Option<u64>) {
+    // mach/task_info.h: REV3 has 84 integer_t cells. phys_footprint starts
+    // at cell 36 (u64 index 18), ledger_phys_footprint_peak at cell 42 (index 21).
+    let mut info = [0_u64; 42];
+    let mut count = TASK_VM_INFO_REV3_COUNT;
+    #[expect(
+        deprecated,
+        reason = "libc's Mach task accessor avoids an extra FFI dependency"
+    )]
+    // SAFETY: mach_task_self() names this process. task_info writes at most
+    // count integer_t cells into the aligned 42-u64 buffer. The parser checks
+    // the returned count before reading either complete footprint field.
+    let kr = unsafe {
+        libc::task_info(
+            libc::mach_task_self(),
+            22, // TASK_VM_INFO
+            info.as_mut_ptr().cast::<libc::integer_t>(),
+            &mut count,
+        )
+    };
+    macos_task_vm_footprint(kr, count, &info)
 }
 
 /// Current process memory in bytes: physical footprint on macOS, resident
@@ -224,26 +257,7 @@ fn macos_task_vm_footprint(
 pub fn current_resident_bytes() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
-        // TASK_VM_INFO_REV1 is 38 integer_t cells. Its final two cells are
-        // phys_footprint, at u64 index 18 (mach/task_info.h).
-        let mut info = [0_u64; 19];
-        let mut count = TASK_VM_INFO_REV1_COUNT;
-        #[expect(
-            deprecated,
-            reason = "libc's Mach task accessor avoids an extra FFI dependency"
-        )]
-        // SAFETY: mach_task_self() names this process. task_info writes at most
-        // count integer_t cells into the aligned 19-u64 buffer. Its returned
-        // count is checked before reading the complete phys_footprint field.
-        let kr = unsafe {
-            libc::task_info(
-                libc::mach_task_self(),
-                22, // TASK_VM_INFO
-                info.as_mut_ptr().cast::<libc::integer_t>(),
-                &mut count,
-            )
-        };
-        macos_task_vm_footprint(kr, count, &info)
+        current_footprint_and_peak_bytes().0
     }
     #[cfg(target_os = "linux")]
     {
@@ -254,6 +268,7 @@ pub fn current_resident_bytes() -> Option<u64> {
         if resident_pages == 0 {
             return None;
         }
+        // SAFETY: sysconf reads the process page size and takes no pointers.
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if page <= 0 {
             return None;
@@ -344,24 +359,37 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn task_vm_phys_footprint_rejects_failed_or_short_reads() {
-        let mut info = [0_u64; 19];
+        let mut info = [0_u64; 42];
         info[18] = 4096;
+        info[21] = 8192;
         assert_eq!(
-            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV1_COUNT, &info),
-            Some(4096)
+            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV3_COUNT, &info),
+            (Some(4096), Some(8192))
         );
         assert_eq!(
-            macos_task_vm_footprint(libc::KERN_FAILURE, TASK_VM_INFO_REV1_COUNT, &info),
-            None
+            macos_task_vm_footprint(libc::KERN_FAILURE, TASK_VM_INFO_REV3_COUNT, &info),
+            (None, None)
+        );
+        for count in [TASK_VM_INFO_REV1_COUNT, 42, 43] {
+            assert_eq!(
+                macos_task_vm_footprint(libc::KERN_SUCCESS, count, &info),
+                (Some(4096), None),
+                "the peak needs both integer_t cells: count={count}"
+            );
+        }
+        assert_eq!(
+            macos_task_vm_footprint(libc::KERN_SUCCESS, 44, &info),
+            (Some(4096), Some(8192))
         );
         assert_eq!(
-            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV1_COUNT - 2, &info),
-            None
+            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV1_COUNT - 1, &info),
+            (None, None)
         );
         info[18] = 0;
+        info[21] = u64::MAX;
         assert_eq!(
-            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV1_COUNT, &info),
-            None
+            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV3_COUNT, &info),
+            (None, None)
         );
     }
 

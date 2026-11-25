@@ -19,6 +19,17 @@ use parking_lot::Mutex;
 /// How often the meter samples.
 pub const SAMPLE_PERIOD: Duration = Duration::from_secs(1);
 
+/// The process-memory metric used by this platform's probe and resource card.
+pub const PROCESS_MEMORY_LABEL: &str = if cfg!(target_os = "macos") {
+    "footprint"
+} else if cfg!(target_os = "linux") {
+    "RSS"
+} else if cfg!(windows) {
+    "working set"
+} else {
+    "memory"
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MetricKind {
     Measuring,
@@ -111,7 +122,7 @@ pub struct ResourceView {
     background: usize,
     /// Process CPU: busy cores and their share of all cores.
     cpu: Metric,
-    /// Process memory: the current resident set and the lifetime peak.
+    /// Current and lifetime peak bytes for this platform's process-memory metric.
     ram: Metric,
     /// Summed stream bytes of every live worker, per second.
     traffic: Metric,
@@ -156,7 +167,7 @@ impl ResourceView {
         &self.cpu
     }
 
-    /// Process memory: the current resident set and the lifetime peak.
+    /// Current and lifetime peak bytes for this platform's process-memory metric.
     pub fn ram(&self) -> &Metric {
         &self.ram
     }
@@ -231,22 +242,26 @@ pub enum ProcessProbe {
         cpu_seconds: f64,
         /// Current physical footprint on macOS, RSS on Linux, or working set on Windows.
         resident: Option<u64>,
-        /// Lifetime peak resident bytes.
-        peak: u64,
+        /// Lifetime peak bytes for the same metric, if the OS supplies it.
+        peak: Option<u64>,
     },
 }
 
-/// Read this process's CPU time and memory. The current sample is read first.
-/// On macOS, physical footprint and lifetime peak RSS are different metrics.
-/// The display uses `peak.max(current)` so its peak label is not below current.
+/// Read this process's CPU time and memory. Current memory precedes the peak
+/// read on Linux and Windows. macOS reads both footprints in one task-info call.
 pub fn probe_process() -> ProcessProbe {
     if !cfg!(any(target_os = "macos", target_os = "linux", windows)) {
         return ProcessProbe::Unsupported;
     }
+    #[cfg(target_os = "macos")]
+    let (resident, peak) = host_play::current_footprint_and_peak_bytes();
+    #[cfg(not(target_os = "macos"))]
     let resident = host_play::current_resident_bytes();
-    let (peak, cpu_seconds) = host_play::sample_process();
-    // The host sampler's failure sentinel is `(0, 0.0)`.
-    if peak == 0 && cpu_seconds == 0.0 {
+    let (rss_peak, cpu_seconds) = host_play::sample_process();
+    #[cfg(not(target_os = "macos"))]
+    let peak = (rss_peak > 0).then_some(rss_peak);
+    // The host CPU/RSS sampler's joint failure sentinel is `(0, 0.0)`.
+    if rss_peak == 0 && cpu_seconds == 0.0 {
         return ProcessProbe::Failed;
     }
     ProcessProbe::Sampled {
@@ -319,8 +334,7 @@ fn probe_thread(shared: Arc<ProbeShared>) {
 }
 
 /// CPU from the previous read (`last_cpu`, updated here) and memory from
-/// this one. The peak shown is never below the current size: a lifetime
-/// peak below it is not a valid value.
+/// this one. Both memory figures use the platform's named metric.
 fn process_metrics(
     probe: ProcessProbe,
     taken: Instant,
@@ -354,16 +368,25 @@ fn process_metrics(
                 Some((text, figure)) => (Metric::available(text), figure),
                 None => (Metric::Measuring, String::new()),
             };
-            let (ram, ram_figure) = match resident {
-                Some(resident) => {
+            let (ram, ram_figure) = match (resident, peak) {
+                (Some(resident), peak) => {
                     let now = format_bytes(resident);
-                    let ram = format!("{now} process, peak {}", format_bytes(peak.max(resident)));
+                    let ram = match peak {
+                        Some(peak) => {
+                            format!("{now} {PROCESS_MEMORY_LABEL}, peak {}", format_bytes(peak))
+                        }
+                        None => format!("{now} {PROCESS_MEMORY_LABEL}"),
+                    };
                     (Metric::available(ram), now)
                 }
-                None => {
+                (None, Some(peak)) => {
                     let peak = format!("peak {}", format_bytes(peak));
-                    (Metric::available(format!("{peak} process")), peak)
+                    (
+                        Metric::available(format!("{peak} {PROCESS_MEMORY_LABEL}")),
+                        peak,
+                    )
                 }
+                (None, None) => (Metric::error(PROBE_FAILED), String::new()),
             };
             ProcessMetrics {
                 cpu,

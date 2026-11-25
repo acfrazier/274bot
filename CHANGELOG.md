@@ -59,10 +59,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Revision 377 login failures show clearer messages. An outdated-client
   refusal asks you to reload the page instead of suggesting a login-key problem.
 
-### macOS memory
+### Process memory
 
-- The current-memory readout reports physical footprint, consistent with the
-  map-cache footprint measurement. Lifetime peak RSS remains a separate metric.
+- The panel and TUI resource cards name the memory metric: footprint on macOS,
+  RSS on Linux, and working set on Windows. The macOS peak now reports lifetime
+  footprint, not peak RSS. Older kernels without a footprint peak omit it.
 
 ### Logging
 

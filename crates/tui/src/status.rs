@@ -396,7 +396,10 @@ mod tests {
     fn the_meter_shows_measuring_and_unavailable_values() {
         let view = ResourceView::with_metrics(
             Metric::Measuring,
-            Metric::available("64.0 MB process, peak 80.0 MB"),
+            Metric::available(format!(
+                "64.0 MB {}, peak 80.0 MB",
+                frontend_core::resources::PROCESS_MEMORY_LABEL
+            )),
             Metric::unavailable("no live slots"),
         );
         let text = render(
@@ -405,7 +408,13 @@ mod tests {
             12,
         );
         assert!(text.contains("cpu: measuring…"), "{text:?}");
-        assert!(text.contains("ram: 64.0 MB process"), "{text:?}");
+        assert!(
+            text.contains(&format!(
+                "ram: 64.0 MB {}",
+                frontend_core::resources::PROCESS_MEMORY_LABEL
+            )),
+            "{text:?}"
+        );
         assert!(text.contains("traffic: no live slots"), "{text:?}");
     }
 
@@ -427,7 +436,10 @@ mod tests {
         detail.set_modal(3559);
         let mut view = ResourceView::with_metrics(
             Metric::available("0.1 cores (0% of 16)"),
-            Metric::available("263.9 MB process, peak 263.9 MB"),
+            Metric::available(format!(
+                "263.9 MB {}, peak 263.9 MB",
+                frontend_core::resources::PROCESS_MEMORY_LABEL
+            )),
             Metric::available("1.2 KB/s"),
         );
         view.set_counts(3, 2, 2);
