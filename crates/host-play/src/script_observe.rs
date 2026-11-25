@@ -1628,7 +1628,8 @@ fn tick_running_slot(
     // ends with this function, before effect dispatch, logging and queued cheats.
     let bank_memory = frame.bank_memory.map(parking_lot::RwLock::read);
     // Keep the real lifecycle gate stable through this callback.
-    // Its guard drops before host effect dispatch below.
+    // Its guard drops when this function returns, before the caller
+    // dispatches host effects.
     let service_gate_guard = if slot.native_run().is_some() || slot.surface_active() {
         frame.service_arm.map(SlotArm::session_gate)
     } else {

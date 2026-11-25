@@ -1104,8 +1104,8 @@ struct SlotThreadArgs {
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
-    /// Borrowed, not cloned: the slot thread's one handle on the account's
-    /// bank memory and hint file.
+    /// The slot thread's one handle on the account's bank memory and hint
+    /// file: moved in here, never cloned.
     slot_bank: super::slot_bank_memory::SlotBankMemory,
     slot_manual_abort_pause: Arc<std::sync::atomic::AtomicBool>,
     slot_world: Option<Arc<NavWorld>>,
