@@ -1640,6 +1640,101 @@ fn live_cell(map: &str, cell_id: &str) -> Result<LiveCell, String> {
     cell.ok_or_else(|| format!("`{cell_id}` does not name a cell of tools/live-map/map.toml"))
 }
 
+/// Luau literals and file-local function/constant references in one reachable body.
+struct LiveTestReach<'a> {
+    invocation: &'a str,
+    found: bool,
+    references: BTreeSet<String>,
+}
+
+impl LiveTestReach<'_> {
+    fn visit_macro_arguments(&mut self, mac: &syn::Macro) {
+        use syn::parse::Parser;
+
+        // format! and the assertion macros take comma-separated expressions.
+        // Their tokens are not visited by syn's default visitor.
+        let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+        if let Ok(arguments) = parser.parse2(mac.tokens.clone()) {
+            for argument in &arguments {
+                self.visit_expr(argument);
+            }
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for LiveTestReach<'_> {
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        if !self.found {
+            self.found = literal.value().contains(self.invocation);
+        }
+    }
+
+    fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+        if let Some(name) = path.path.get_ident() {
+            self.references.insert(name.to_string());
+        }
+        syn::visit::visit_expr_path(self, path);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        self.visit_macro_arguments(mac);
+    }
+
+    fn visit_item(&mut self, _item: &'ast syn::Item) {
+        // A nested declaration does not run merely because its parent runs.
+    }
+}
+
+fn selected_test_reaches(source: &str, test_name: &str, invocation: &str) -> Result<bool, String> {
+    let file =
+        syn::parse_file(source).map_err(|error| format!("test source is invalid Rust: {error}"))?;
+    let items = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Fn(function) => Some((function.sig.ident.to_string(), item)),
+            syn::Item::Const(constant) => Some((constant.ident.to_string(), item)),
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    let Some(syn::Item::Fn(test)) = items.get(test_name).copied() else {
+        return Err(format!("test function `{test_name}` is missing"));
+    };
+    if !test
+        .attrs
+        .iter()
+        .any(|attribute| attribute.path().is_ident("test"))
+    {
+        return Err(format!("function `{test_name}` has no `#[test]`"));
+    }
+
+    let mut pending = vec![test_name.to_owned()];
+    let mut visited = BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name.clone()) {
+            continue;
+        }
+        let Some(item) = items.get(&name) else {
+            continue;
+        };
+        let mut reach = LiveTestReach {
+            invocation,
+            found: false,
+            references: BTreeSet::new(),
+        };
+        match item {
+            syn::Item::Fn(function) => reach.visit_block(&function.block),
+            syn::Item::Const(constant) => reach.visit_expr(&constant.expr),
+            _ => unreachable!("only functions and constants were indexed"),
+        }
+        if reach.found {
+            return Ok(true);
+        }
+        pending.extend(reach.references);
+    }
+    Ok(false)
+}
+
 fn exception_cell_error(
     path: &str,
     cell_id: &str,
@@ -1676,12 +1771,31 @@ fn exception_cell_error(
             "cell `{cell_id}` has an invalid `--test` name `{test_name}`"
         ));
     }
+    let mut exact_arguments = arguments
+        .iter()
+        .enumerate()
+        .filter(|(_, argument)| **argument == "--exact");
+    let (exact_index, _) = exact_arguments
+        .next()
+        .ok_or_else(|| format!("cell `{cell_id}` has no `--exact <name>` argument"))?;
+    if exact_arguments.next().is_some() {
+        return Err(format!("cell `{cell_id}` has more than one `--exact`"));
+    }
+    let function_name = arguments
+        .get(exact_index + 1)
+        .filter(|name| {
+            name.chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        })
+        .ok_or_else(|| format!("cell `{cell_id}` has no `--exact <name>` argument"))?;
     let test_source = read_test_file(test_name)
         .ok_or_else(|| format!("cell `{cell_id}` test file `{test_name}.rs` is missing"))?;
     let invocation = format!("api.{path}(");
-    if !test_source.contains(&invocation) {
+    if !selected_test_reaches(&test_source, function_name, &invocation)
+        .map_err(|error| format!("cell `{cell_id}` {error}"))?
+    {
         return Err(format!(
-            "cell `{cell_id}` test file does not contain `{invocation}`"
+            "cell `{cell_id}` test `{function_name}` does not reach `{invocation}`"
         ));
     }
     Ok(())
@@ -1786,10 +1900,10 @@ fn every_t6_cell_requirement_fails_closed_in_negative_fixtures() {
         (
             "a test file without the API call",
             "host.luau-lifecycle",
-            "LIVE=1 cargo test --test script_api_live",
+            "LIVE=1 cargo test --test script_api_live -- --exact no_wait_call",
             "crates/script-luau/src/**",
-            "fn no_wait_call() {}",
-            "does not contain `api.wait(`",
+            "#[test] fn no_wait_call() {}",
+            "test `no_wait_call` does not reach `api.wait(`",
         ),
     ];
     for (name, cell_id, command, glob, test_source, expected) in fixtures {
@@ -1797,6 +1911,83 @@ fn every_t6_cell_requirement_fails_closed_in_negative_fixtures() {
         let error = exception_cell_error("wait", cell_id, &map, |_| Some(test_source.to_owned()))
             .expect_err(name);
         assert!(error.contains(expected), "{name}: {error}");
+    }
+}
+
+#[test]
+fn t6_refuses_a_binding_found_only_in_another_cell() {
+    let map = read(&crate_dir().join("../../tools/live-map/map.toml"));
+    let tests = crate_dir().join("../host-play/tests");
+    let error = exception_cell_error("interact.held", "host.luau-walk", &map, |name| {
+        std::fs::read_to_string(tests.join(format!("{name}.rs"))).ok()
+    })
+    .expect_err("the walk cell cannot witness the held binding in its sibling cell");
+    assert!(error.contains("test `luau_walk` does not reach"), "{error}");
+}
+
+#[test]
+fn t6_follows_only_the_selected_tests_helpers_and_sources() {
+    let command = "LIVE=1 cargo test --test script_api_live -- --ignored --exact selected";
+    let map = live_map_fixture(command, "crates/script-luau/src/**");
+    for source in [
+        r#"#[test] fn selected() { let source = "api.wait()"; }"#,
+        r#"const SOURCE: &str = "api.wait()";
+           fn body() { run(SOURCE); }
+           fn capture(body: fn()) { body(); }
+           #[test] fn selected() { capture(body); }"#,
+        r#"fn body() { run(format!("api.wait()")); }
+           #[test] fn selected() { body(); }"#,
+    ] {
+        exception_cell_error("wait", "host.luau-lifecycle", &map, |_| {
+            Some(source.to_owned())
+        })
+        .unwrap_or_else(|error| panic!("reachable Luau source must count: {error}"));
+    }
+    for source in [
+        r#"#[test] fn selected() {} #[test] fn sibling() { run("api.wait()"); }"#,
+        r#"#[test] fn selected() { chosen(); }
+           fn chosen() {} fn unused() { run("api.wait()"); }"#,
+        r#"const UNUSED: &str = "api.wait()"; #[test] fn selected() {}"#,
+        "#[test] fn selected() { /* api.wait() */ }",
+    ] {
+        let error = exception_cell_error("wait", "host.luau-lifecycle", &map, |_| {
+            Some(source.to_owned())
+        })
+        .expect_err("unreachable or commented Luau source cannot witness the selected test");
+        assert!(error.contains("test `selected` does not reach"), "{error}");
+    }
+}
+
+#[test]
+fn t6_requires_one_exact_existing_test_function() {
+    for (command, source, expected) in [
+        (
+            "LIVE=1 cargo test --test script_api_live",
+            "#[test] fn selected() {}",
+            "has no `--exact <name>`",
+        ),
+        (
+            "LIVE=1 cargo test --test script_api_live -- --exact selected --exact sibling",
+            "#[test] fn selected() {}",
+            "has more than one `--exact`",
+        ),
+        (
+            "LIVE=1 cargo test --test script_api_live -- --exact missing",
+            "#[test] fn selected() {}",
+            "test function `missing` is missing",
+        ),
+        (
+            "LIVE=1 cargo test --test script_api_live -- --exact selected",
+            "fn selected() { run(\"api.wait()\"); }",
+            "function `selected` has no `#[test]`",
+        ),
+    ] {
+        let map = live_map_fixture(command, "crates/script-luau/src/**");
+        let error = exception_cell_error("wait", "host.luau-lifecycle", &map, |_| {
+            Some(source.to_owned())
+        })
+        .expect_err("the command must select one real test");
+        assert!(error.contains(expected), "{error}");
     }
 }
 
@@ -1856,14 +2047,14 @@ cells = ["host.luau-lifecycle|LIVE=1 cargo test --test script_api_live"]
 
 #[test]
 fn repeated_live_cell_with_identical_command_is_accepted() {
-    let command = "LIVE=1 cargo test --test script_api_live";
+    let command = "LIVE=1 cargo test --test script_api_live -- --exact selected";
     let map = format!(
         "{}{}",
         live_map_fixture(command, "crates/host-play/src/**"),
         live_map_fixture(command, "crates/script-luau/src/**")
     );
     exception_cell_error("wait", "host.luau-lifecycle", &map, |_| {
-        Some("api.wait()".to_owned())
+        Some("#[test] fn selected() { run(\"api.wait()\"); }".to_owned())
     })
     .unwrap_or_else(|error| panic!("identical cell commands should be accepted: {error}"));
 }

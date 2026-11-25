@@ -337,15 +337,18 @@ fn fixture_frame(
             .equipment()
             .iter()
             .any(|item| item.def.id == AXE && item.count == 1);
-        probe.banker_index = snapshot
-            .npcs()
-            .iter()
-            .find(|npc| {
-                npc.tile == LUAU_BANKER_HOME
-                    && npc.name.as_deref() == Some("Banker")
-                    && npc.distance <= 2
-            })
-            .map(|npc| npc.index);
+        // Preserve the first sighting: banker.npc:1-29 makes this NPC stationary.
+        if probe.banker_index.is_none() {
+            probe.banker_index = snapshot
+                .npcs()
+                .iter()
+                .find(|npc| {
+                    npc.tile == LUAU_BANKER_HOME
+                        && npc.name.as_deref() == Some("Banker")
+                        && npc.distance <= 2
+                })
+                .map(|npc| npc.index);
+        }
         probe.players = snapshot
             .players()
             .iter()
@@ -1597,10 +1600,18 @@ fn luau_interactions_cell() {
 
     let entries = mint_live_entries(&mint_live_names(1));
     let partner_account = entries[0].0.clone();
+    // An overlapping Trade target triggers randomWalk:
+    // engine/src/engine/entity/Player.ts:1069-1075 and
+    // engine/src/engine/entity/PathingEntity.ts:438-447.
+    // The adjacent public tile avoids that random step.
+    let partner_tile = WorldTile {
+        z: LUAU_INTERACT_START.z - 1,
+        ..LUAU_INTERACT_START
+    };
     let partner = LuauPartner {
         account: partner_account.clone(),
         fixture: Arc::new(Mutex::new(Fixture {
-            start_tile: Some(LUAU_INTERACT_START),
+            start_tile: Some(partner_tile),
             luau_probe: Some(LuauInteractionProbe::default()),
             ..Fixture::default()
         })),
@@ -1640,6 +1651,14 @@ fn luau_interactions_cell() {
             .iter()
             .any(|name| name.eq_ignore_ascii_case(&partner_display))
     });
+    assert_eq!(
+        fixture.lock().unwrap().observed_tile,
+        Some(LUAU_INTERACT_START)
+    );
+    assert_eq!(
+        partner.fixture.lock().unwrap().observed_tile,
+        Some(partner_tile)
+    );
     let chat_baseline = |state: &Mutex<Fixture>| {
         state
             .lock()
@@ -1745,7 +1764,9 @@ fn luau_interactions_cell() {
             "obj": {"inventory_before": 0, "inventory_after": 1,
                 "ground_before": 1, "ground_after": 0, "effect_tick": picked_up_tick},
             "player": {"sender_baseline": sender_baseline,
-                "recipient_baseline": partner_baseline, "received": trade_message},
+                "recipient_baseline": partner_baseline, "received": trade_message,
+                "sender_tile": [LUAU_INTERACT_START.x, LUAU_INTERACT_START.z, 0],
+                "recipient_tile": [partner_tile.x, partner_tile.z, 0]},
             "npc": {"index": banker_index, "greeting_before": false, "greeting_after": true},
             "content_evidence": [
                 "content/scripts/player/scripts/drop.rs2:1,22-24",
