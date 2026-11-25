@@ -15,10 +15,10 @@ use api::lifecycle::{
     QueueBlocker, SessionEndCause, SessionEventOut, SessionGate, TransportFailure,
     WorldChoice as IntentWorldChoice,
 };
-use client::io::ClientRevision;
 use client::client::{Client, LoginError};
 use client::config::IfType;
 use client::io::client_stream::LoginCancel;
+use client::io::ClientRevision;
 use host::login_queue::{AdmitBlocker, LoginBackoff, LoginQueue, Permit, QueuePos};
 use parking_lot::Mutex as QueueMutex;
 use vault::{Profile, RandomEventPolicy};
@@ -108,6 +108,7 @@ impl std::fmt::Display for RelogParkReason {
             Self::WorldError => "world_error",
             Self::ServerRefusal => "server_refusal",
         })
+    }
 }
 
 /// Maximum unconsumed session boundaries per slot. Overflow drops the oldest
@@ -894,7 +895,11 @@ impl SlotArm {
         self.lifecycle.lock().mailbox.snapshot().error_hold()
     }
     pub fn login_refusal(&self) -> Option<LoginRefusal> {
-        match self.lifecycle.lock().mailbox.snapshot().login_hold() {
+        let snapshot = self.lifecycle.lock().mailbox.snapshot();
+        if snapshot.latch().is_some() {
+            return None;
+        }
+        match snapshot.login_hold() {
             Some(LoginHold::ServerRefusal(refusal)) => Some(refusal),
             Some(LoginHold::WorldPreference) | None => None,
         }
@@ -998,6 +1003,14 @@ impl SlotArm {
     #[cfg(any(test, feature = "test-support"))]
     pub fn hold_login_on_error_for_test(&self) {
         self.hold_login_on_error();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hold_login_on_server_refusal_for_test(&self, refusal: LoginRefusal) -> bool {
+        let Some((command, world_generation)) = capture_login_authorization(self, false) else {
+            return false;
+        };
+        self.hold_login_on_server_refusal(command, world_generation, refusal)
     }
 
     pub(super) fn set_script_active(&self, active: bool) {
@@ -1581,8 +1594,7 @@ pub(super) fn terminal_login_refusal(
     error: &LoginError,
     revision: ClientRevision,
 ) -> Option<LoginRefusal> {
-    if error.transport.is_some()
-        || !matches!(revision, ClientRevision::R274 | ClientRevision::R289)
+    if error.transport.is_some() || !matches!(revision, ClientRevision::R274 | ClientRevision::R289)
     {
         return None;
     }

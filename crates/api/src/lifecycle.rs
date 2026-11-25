@@ -188,7 +188,7 @@ impl Intent {
             Intent::Login => RowMeaning {
                 session: SessionEffect::ArmLogin,
                 run: RunEffect::ResumeHeld,
-                attempt: AttemptCancellation::Always,
+                attempt: AttemptCancellation::Never,
             },
             Intent::AutoLogin(true) => RowMeaning {
                 session: SessionEffect::PolicyOnly,
@@ -327,7 +327,11 @@ pub enum LifecycleFact {
 
     /// A current game-server refusal that must stop automatic login.
     /// The command and world fences prevent an older socket result from
-    /// replacing newer operator intent.
+    /// replacing newer world or credential authority. An agreeing
+    /// [`Intent::Login`] posted during settlement does not move those fences,
+    /// so the refusal still stops automatic attempts; an explicit
+    /// [`Intent::Login`] or [`Intent::SwitchWorld`] posted after settlement
+    /// clears the hold and arms one new attempt.
     ServerLoginRefused {
         /// The authorization used by the completed handshake.
         command: IntentCommand,
@@ -388,9 +392,7 @@ impl LoginRefusal {
             }
             Self::MembersWorldRequired => "The selected world requires membership.",
             Self::PlayerSaveRejected => "The world could not load or admit the player save.",
-            Self::MembersAreaOnFreeWorld => {
-                "The player is in a members-only area on a free world."
-            }
+            Self::MembersAreaOnFreeWorld => "The player is in a members-only area on a free world.",
             Self::Unsupported { .. } => "The server sent an unsupported login refusal.",
         }
     }
@@ -404,7 +406,6 @@ pub enum LoginHold {
     /// The server returned a terminal refusal for this worker's engine.
     ServerRefusal(LoginRefusal),
 }
-
 
 impl LifecycleFact {
     /// Every fact row (with representative values), for exhaustive checks.
@@ -959,7 +960,11 @@ impl IntentMailbox {
     /// Re-derive the auto-login want after a hold lifts (today
     /// `release_error_hold`, `play_login.rs:575-589`).
     fn rederive_auto_want(&mut self) {
-        if self.auto_login && self.error_hold.is_none() && self.latch.is_none() && matches!(self.login, LoginIntent::Withdrawn) {
+        if self.auto_login
+            && self.error_hold.is_none()
+            && self.latch.is_none()
+            && matches!(self.login, LoginIntent::Withdrawn)
+        {
             self.login = LoginIntent::Auto;
         }
     }
@@ -1017,7 +1022,7 @@ impl IntentMailbox {
         }
         match intent {
             Intent::Login => {
-                self.command(true)?;
+                self.command(false)?;
                 self.arm_login();
             }
             Intent::AutoLogin(enabled) => {

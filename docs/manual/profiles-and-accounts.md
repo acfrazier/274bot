@@ -146,43 +146,47 @@ app show the same text in lower case.
 
 ## Read the login codes about your account
 
-When the game refuses a login, the bot's state line shows `login code N:` and the
-second line of the game's message. The game screen of that bot shows both lines
-while it waits. After a refusal the bot tries again by itself, after 5 seconds
-unless the row says otherwise.
+When a 274 or 289 server returns a refusal that cannot succeed by retrying with
+the same inputs (codes `3`, `4`, `6`, `11`, `12`, `13`, `17`, or an unsupported
+code), 274bot **stops automatic login attempts** for that bot. The bot leaves
+the login queue, keeps its saved **Log in automatically** setting unchanged,
+and stays on the title screen until you click **Log in** or switch its world.
+Both the hosted game title screen and the bot's status/card show
+`Login stopped (code N)` with the host explanation; unlike a timed login
+notice, this stopped state stays visible past 15 seconds until you retry. (The
+standalone client keeps the original Java title-screen strings.)
 
-The login error stays at the top of the bot's status for 15 seconds. It stays
-there even when the bot tries again, waits in the login queue or is logged out. The bot's
-current state shows under it. A successful login clears it at once. A newer failed
-login replaces it and starts the 15 seconds again. After that, the status rows show
-the error as `last error` until the bot is in the game.
+When the server returns a retryable response (`5`, `7`, `8`, `9`, `14`, `16`,
+`21`) or a network failure, the bot's state line shows `login code N:` (or the
+connection error) and the bot retries after its backoff. That timed login
+notice stays at the top of the bot's status for 15 seconds across retry states
+and clears on a successful login; after 15 seconds, the status rows keep it as
+`last error` until the bot is in the game.
 
-| What you see | What it means | What to do |
-| --- | --- | --- |
-| `login code 3: Invalid username or password.` | The game refused the **user** or **pass**. | Fix them in **Profiles** and click **Save**. The next attempt uses the saved password. |
-| `login code 4: Please check your message-centre for details.` | The game disabled the account. The first line, shown on the game screen but not in the state line, is `Your account has been disabled.` | Read the account's message centre for the reason. 274bot cannot lift a disabled account. |
-| `login code 5: Try again in 60 secs...` | The game says the account is already logged in. | Close the other session. The bot tries again after 60 seconds. |
-| `login code 9: Too many connections from your address.` | The game refused the login for too many connections from your address. | Close other game connections from your address. |
-| `login code 12: Please subscribe, or use a different world.` | The world needs a members account, and the account is not one. | Pick a free world in the profile's **world** option. See [Choose a world](servers-and-worlds.md#choose-a-world). |
-| `login code 16: Please wait 1 minute and try again.` | The game refused too many attempts. | Wait. The bot waits longer after each refusal. |
-| `login code 17: To play on this world move to a free area first` | The account stands in a members-only area, and the world is a free one. | Log in on a members world and walk the character out of that area. |
-| `Your profile will be transferred in: 12 seconds` | The game says you only just left another world. | Wait. The bot tries again when the countdown ends. |
+| What you see | What it means | Automatic retry | What to do |
+| --- | --- | --- | --- |
+| `Login stopped (code 3): The username or password was rejected. Select Log in to retry.` | The game refused the **user** or **pass**. | No | Fix them in **Profiles**, click **Save**, then click **Log in**. |
+| `Login stopped (code 4): The account is banned. The reply does not give an expiry. Select Log in to retry.` | The game reports an active account ban (Java title text: `Your account has been disabled.` / `Please check your message-centre for details.`). | No | Check the account's message centre. 274bot does not poll for ban expiry; click **Log in** only after the ban is lifted or expires. |
+| `login code 5: Try again in 60 secs...` | The game says the account is already logged in. | Yes | Close the other session. The bot tries again after 60 seconds (or on its clean-logout release probe). |
+| `login code 9: Too many connections from your address.` | The game refused the login for too many connections from your address. | Yes | Close other game connections from your address. |
+| `Login stopped (code 12): The selected world requires membership. Select Log in to retry.` | The world needs a members account, and the account is not one. | No | Pick a free world in the profile's **world** option (see [Choose a world](servers-and-worlds.md#choose-a-world)), or subscribe, then click **Log in**. |
+| `login code 16: Please wait 1 minute and try again.` | The game refused too many attempts. | Yes | Wait. The bot waits longer after each refusal and holds sibling attempts. |
+| `Login stopped (code 17): The player is in a members-only area on a free world. Select Log in to retry.` | The account stands in a members-only area, and the world is a free one. | No | Switch to a members world or move the character to a free area, then click **Log in**. |
+| `Your profile will be transferred in: 12 seconds` | The game says you only just left another world (response `21`). | Yes | Wait. The bot tries again when the countdown ends. |
 
 ## Read the login codes about the server
 
-| What you see | What it means | What to do |
-| --- | --- | --- |
-| `login code 6: Wrong RSA key; check this world's login key.` | The key the server uses for logins is not the key 274bot has. | A public server: 274bot fetches the key again once. Your own server: check its `login_key` in [Edit the server list](servers-and-worlds.md#edit-the-server-list). |
-| `login code 7: Please use a different world.` | The world is full. | See [A full world](#a-full-world). |
-| `login code 8: Login server offline.` | The game's login service is not answering. | Wait. |
-| `login code 10: Bad session id.` | The server refused the login handshake. | Wait. |
-| `login code 11: Please try again.` | The server asks for another attempt. | Wait. |
-| `login code 13: Please try using a different world.` | The game could not complete the login. | On a server with a world list, pick another world in the profile's **world** option. |
-| `login code 14: Please wait 1 minute and try again.` | The server is being updated. | Wait. The bot tries again after 5 seconds, sooner than the message asks. |
-| `login code 20: Please try using a different world.` | The game did not accept the login server. | On a server with a world list, pick another world in the profile's **world** option. |
-| `login code N: Please try using a different world.` | The game sent a code 274bot has no text for. The app shows its number. | Wait. If it repeats, pick another world. |
-| `login Error connecting to server. (connect: …)` | The bot could not reach the server. | Check your internet connection, then wait. The bot waits longer after each failure, up to a minute. |
-| `login Please try using a different world. (…: connection closed before the server answered)` | The server closed the connection without an answer. | Wait. The bot waits longer after each failure, up to a minute. |
+| What you see | What it means | Automatic retry | What to do |
+| --- | --- | --- | --- |
+| `Login stopped (code 6): The server rejected the revision, cache checksums, or RSA key. Select Log in to retry.` | The server replied with code `6` (Java title text: `RuneScape has been updated!` / `Please reload this page.`). The wire code does not distinguish revision, cache checksums, or RSA key mismatch. | No | On a public server, 274bot marks that world's cached login key stale so your next explicit **Log in** fetches a fresh key. On a local engine, verify the revision, cache, and `login_key` (troubleshooting: wrong RSA key; check this world's login key in [Edit the server list](servers-and-worlds.md#edit-the-server-list)). |
+| `login code 7: Please use a different world.` | The world is full. | Yes | See [A full world](#a-full-world). |
+| `login code 8: Login server offline.` | The game's login service is not answering. | Yes | Wait. |
+| `Login stopped (code 11): The server rejected the session. It may be an IP ban or a player-save refusal. Select Log in to retry.` | The server rejected the session due to an IP ban or a player-save safety refusal. | No | Check whether your address is banned or the account save is rejected before clicking **Log in**. |
+| `Login stopped (code 13): The world could not load or admit the player save. Select Log in to retry.` | The world could not load or admit the returned player save. | No | Check the server or pick another world, then click **Log in**. |
+| `login code 14: Please wait 1 minute and try again.` | The server is being updated. | Yes | Wait. The bot tries again after its retry delay. |
+| `Login stopped (code N): The server sent an unsupported login refusal. Select Log in to retry.` | The 274/289 server sent a refusal code with no known retry policy. | No | Check the server logs or pick another world, then click **Log in**. |
+| `login Error connecting to server. (connect: …)` | The bot could not reach the server. | Yes | Check your internet connection, then wait. The bot waits longer after each failure, up to a minute. |
+| `login Please try using a different world. (…: connection closed before the server answered)` | The server closed the connection without an answer. | Yes | Wait. The bot waits longer after each failure, up to a minute. |
 
 ## A full world
 

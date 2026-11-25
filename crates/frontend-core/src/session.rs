@@ -2774,7 +2774,12 @@ impl<Io> OperatorSession<Io> {
                     TransitionKind::SlotUp => (Source::Host, Level::Info, "slot up".into()),
                     TransitionKind::LoginError => {
                         let e = change.transition.error().unwrap_or_default();
-                        (Source::Login, Level::Error, format!("login {e}").into())
+                        let line = if e.starts_with("Login stopped") {
+                            std::borrow::Cow::Borrowed(e)
+                        } else {
+                            format!("login {e}").into()
+                        };
+                        (Source::Login, Level::Error, line)
                     }
                     // Visible by default: the operator reads a stuck bot's
                     // story (logged in, which scene) at a glance. The host's
@@ -4158,7 +4163,7 @@ fn record_transitions(
                 }
             }
             Some(p) => {
-                if p.error.is_none() {
+                if p.error != s.error {
                     if let Some(e) = &s.error {
                         push(name, Transition::login_error(e.clone()));
                     }

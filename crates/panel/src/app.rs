@@ -1806,6 +1806,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         // The preview fold's saved state, inside the cell under its cap.
         rail_preview_feedback_line(ui, &state.session, name, cx, cw);
+        rail_refusal_line(ui, row, cx, cw);
         let mut body_clicked = false;
         if preview {
             let after = ui.cursor_pos();
@@ -5387,6 +5388,18 @@ pub(crate) fn rail_preview_feedback_line(
     ui.group(|| panel_member_feedback_line(ui, session, &path));
 }
 
+/// Persistent terminal server refusal explanation drawn under a rail tile's or
+/// Grid cell's cap (focused or unselected, expanded or collapsed preview).
+/// Draws nothing while the slot is not held by a server refusal.
+pub(crate) fn rail_refusal_line(ui: &Ui, row: &FleetRow, x: f32, width: f32) {
+    let Some(refusal) = row.login_refusal() else {
+        return;
+    };
+    ui.set_cursor_pos([x, ui.cursor_pos()[1]]);
+    let _wrap = ui.push_text_wrap_pos(x + width);
+    ui.text_colored(ERROR, refusal.explanation());
+}
+
 /// General config row: the global "Start fights with players" setting
 /// (`pvp.start_fights`), shared with the TUI. It is off by default; bots always
 /// fight back when a player attacks them.
@@ -6148,6 +6161,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         }
         // The preview fold's saved state, inside the tile under its cap.
         rail_preview_feedback_line(ui, &state.session, name, ui.cursor_pos()[0], avail);
+        rail_refusal_line(ui, row, ui.cursor_pos()[0], avail);
         let mut dropped = drag.as_ref().and_then(|drag| drag.dropped);
         let body_clicked = if preview {
             let body_clicked = rail_body(ui, gpu, state, name, draw);
@@ -6298,6 +6312,13 @@ fn rail_cap(
         .build();
     #[cfg(test)]
     record_test_rail_item(ui);
+    if let Some(refusal) = row.login_refusal() {
+        ui.set_item_tooltip(format!(
+            "Login stopped (code {}): {}",
+            refusal.code(),
+            refusal.explanation()
+        ));
+    }
     if let Some(drag) = drag {
         drag.dragging = crate::fleet::profile_drag_source(ui, drag.identity, row.name());
         drag.dropped =

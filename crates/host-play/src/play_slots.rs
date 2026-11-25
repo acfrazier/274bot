@@ -1850,19 +1850,24 @@ impl SlotLoginState {
             return;
         }
         if let Some(refusal) = terminal {
-            if args.arm.hold_login_on_server_refusal(
-                login_command,
-                login_world_generation,
-                refusal,
-            ) {
+            if args
+                .arm
+                .hold_login_on_server_refusal(login_command, login_world_generation, refusal)
+            {
                 let title = format!("Login stopped (code {})", refusal.code());
                 show_title_message(client, &title, refusal.explanation());
                 record_login_error(&args.slot_statuses, username, error, Some(refusal));
-                if refusal == LoginRefusal::RevisionCacheOrRsaMismatch && self.world_round.is_some()
-                {
-                    self.refresh_key = true;
-                    self.world_dirty = true;
-                    self.key_refreshed = false;
+                if refusal == LoginRefusal::RevisionCacheOrRsaMismatch {
+                    if let Some(round) = self.world_round.as_ref() {
+                        if let Some(worlds) =
+                            args.connection.profile().and_then(|p| p.public_worlds())
+                        {
+                            public_worlds::mark_modulus_stale(&worlds.worlds[round.index].host);
+                        }
+                        self.refresh_key = true;
+                        self.world_dirty = true;
+                        self.key_refreshed = false;
+                    }
                 }
             }
             return;

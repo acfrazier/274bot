@@ -256,6 +256,27 @@ mod tests {
         assert!(!text.contains("last error"), "{text:?}");
     }
 
+    #[test]
+    fn a_terminal_login_refusal_shows_stopped_state_without_last_error_or_queue() {
+        let refusal = api::lifecycle::LoginRefusal::AccountBanned;
+        let state = format!(
+            "Login stopped (code {}): {} Select Log in to retry.",
+            refusal.code(),
+            refusal.explanation()
+        );
+        let mut detail = SlotDetail::default();
+        let mut row = FleetRow::fixture("bob", Phase::LoginError, None, None);
+        row.set_login_refusal(Some(refusal));
+        row.set_error(Some(state.clone()));
+        detail.set_row(row);
+        detail.set_state(&state);
+        let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 96, 12);
+        assert!(text.contains("Login stopped (code 4)"), "{text:?}");
+        assert!(text.contains(refusal.explanation()), "{text:?}");
+        assert!(!text.contains("last error"), "{text:?}");
+        assert!(text.contains("queue: —"), "{text:?}");
+    }
+
     /// LOGIN-NOTICE-1024: while a login notice stands, it shows in red in
     /// place of the last-error row, beside the live state; once it has
     /// cleared, the history row comes back. An error state line that

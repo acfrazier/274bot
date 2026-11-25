@@ -59,6 +59,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Revision 377 login failures show clearer messages. An outdated-client
   refusal asks you to reload the page instead of suggesting a login-key problem.
 
+### Login refusals
+
+- Terminal 274 and 289 login refusals (`3`, `4`, `6`, `11`, `12`, `13`, `17`,
+  and unsupported server codes) now stop automatic login attempts instead of
+  retrying in a loop. The bot leaves the login queue, keeps its saved
+  auto-login setting, and shows `Login stopped (code N)` with a host
+  explanation on its hosted title screen, status view, and panel card until an
+  explicit **Log in** or world switch.
+- The standalone Rust client restores Java's code `6` wording (`RuneScape has
+  been updated!` / `Please reload this page.`) on revisions 274 and 289, while
+  the host diagnostic names all three wire-6 causes (revision, cache checksums,
+  or RSA key) and marks a public world's cached key stale for the next explicit
+  **Log in**.
+
 ### macOS memory
 
 - The current-memory readout reports physical footprint, consistent with the

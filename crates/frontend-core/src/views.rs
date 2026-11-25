@@ -20,8 +20,8 @@ use crate::scripts::{ScriptRunState as RunState, StatusView};
 use host::login_queue::AdmitBlocker;
 use host_play::{Play, SlotArm, SlotStatus, StartupPhase, WalkArm};
 
-use api::lifecycle::LoginRefusal;
 use api::hostlog::{Level, Source};
+use api::lifecycle::LoginRefusal;
 
 use crate::login_notice::{LoginFailure, LoginNotice};
 use crate::operations::{write_op, ActionKind, OpChange, OperationId, OperationReport, Outcome};
@@ -582,7 +582,13 @@ impl FleetRow {
             Phase::Ready if self.busy() => "running",
             Phase::Ready => "idle",
             Phase::Preparing => "starting",
-            Phase::LoginError => "error",
+            Phase::LoginError => {
+                if let Some(refusal) = self.login_refusal {
+                    let _ = write!(self.brief, "Login stopped (code {})", refusal.code());
+                    return;
+                }
+                "error"
+            }
             phase => phase.label(),
         };
         self.brief.push_str(text);
@@ -638,6 +644,12 @@ impl FleetRow {
     /// Set the current login notice line (test fixtures).
     pub fn set_login_notice(&mut self, notice: Option<String>) {
         self.login_notice = notice.map(Box::new);
+    }
+
+    /// Set the typed terminal server refusal (test fixtures).
+    pub fn set_login_refusal(&mut self, refusal: Option<LoginRefusal>) {
+        self.login_refusal = refusal;
+        self.write_brief();
     }
 
     /// Set the newest operation brief (test fixtures).
@@ -1377,10 +1389,9 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
                 changed = true;
             }
         }
-        None
-            if new_lifetime
-                || old_refusal.is_some()
-                || matches!(phase, Phase::Ready | Phase::Offline) =>
+        None if new_lifetime
+            || old_refusal.is_some()
+            || matches!(phase, Phase::Ready | Phase::Offline) =>
         {
             changed |= row.error.take().is_some();
         }
@@ -1417,6 +1428,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
             input.now,
         );
     }
+    changed
 }
 
 /// The single phase derivation, with whether a login error is a retry
@@ -1451,12 +1463,17 @@ fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool,
         );
         return (Phase::LoggedOut, false, guard);
     }
+    if arm.login_refusal().is_some() {
+        return (Phase::LoginError, false, false);
+    }
     let phase = match s.startup_phase {
         StartupPhase::Preparing => Phase::Preparing,
         StartupPhase::Connecting => Phase::Connecting,
         StartupPhase::LoadingScene | StartupPhase::Ready => Phase::Loading,
         StartupPhase::Queueing | StartupPhase::Error => {
-            let failed = s.error.is_some() || s.startup_phase == StartupPhase::Error;
+            let stale_refusal = s.login_refusal.is_some() && arm.login_refusal().is_none();
+            let failed =
+                !stale_refusal && (s.error.is_some() || s.startup_phase == StartupPhase::Error);
             if !arm.login_wanted() {
                 // Parked on the title. An error that withdrew the login
                 // still needs the operator; any other failure is history

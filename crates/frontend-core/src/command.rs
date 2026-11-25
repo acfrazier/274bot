@@ -1793,7 +1793,8 @@ impl CommandBook {
             }
             Some(ParkReason::OperatorLogout) => Some("a logout was requested"),
             Some(ParkReason::PersistedLogout) => Some("the bot is set to stay logged out"),
-            Some(ParkReason::NoIntent | ParkReason::WorldError) | None => None,
+            Some(ParkReason::NoIntent | ParkReason::WorldError | ParkReason::ServerRefusal)
+            | None => None,
         }
     }
 
@@ -1825,15 +1826,27 @@ impl CommandBook {
         if snapshot.login_wanted() {
             return 0;
         }
+        // A row this book posted settled the members it superseded when it
+        // was posted; what is left was withdrawn by the slot's own latch or
+        // failed by an error hold.
         let terminal = || match snapshot.park_reason() {
             Some(ParkReason::WorldError) => {
                 Settlement::Failed(CommandFailure::Failed(FailureKind::WorldRejected))
             }
+            Some(ParkReason::ServerRefusal) => {
+                Settlement::Failed(CommandFailure::Failed(FailureKind::LoginFailed))
+            }
             _ => Settlement::Cancelled(Cancellation::Superseded),
         };
-        // A row this book posted settled the members it superseded when it
-        // was posted; what is left was withdrawn by the slot's own latch.
-        let detail = Self::withdrawn_words(snapshot.park_reason());
+        let detail = match snapshot.park_reason() {
+            Some(ParkReason::ServerRefusal) => match snapshot.login_hold() {
+                Some(api::lifecycle::LoginHold::ServerRefusal(refusal)) => {
+                    Some(refusal.explanation())
+                }
+                _ => None,
+            },
+            other => Self::withdrawn_words(other),
+        };
         let mut settled = 0;
         for report in self.pending.iter_mut().filter(|r| r.command.wants_login()) {
             for member in &mut report.members {
