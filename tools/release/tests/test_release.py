@@ -743,6 +743,70 @@ class BuildWorkerTests(unittest.TestCase):
                 str(shim),
             )
 
+    @unittest.skipUnless(sys.platform == "darwin", "the macOS package step runs only on macOS")
+    def test_macos_package_receives_keychain_only_when_selected(self):
+        expect = {
+            "host_commit": "a" * 40,
+            "client_commit": "b" * 40,
+            "revision": 274,
+            "jobs": 1,
+            "archives": {},
+            "version": "0.1.9",
+        }
+
+        def extract(_archive, destination):
+            Path(destination).mkdir(parents=True, exist_ok=True)
+
+        for label, keychain in (
+            ("selected", Path("/test/release.keychain")),
+            ("default", None),
+        ):
+            with self.subTest(keychain=label), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                profile = root / "cache/target/release"
+                nav = profile / "nav/274"
+                nav.mkdir(parents=True)
+                for name in ("panel-play", "tui-play"):
+                    (profile / name).write_bytes(name.encode())
+                for name in release.NAV_NAMES:
+                    (nav / name).write_bytes(name.encode())
+                args = argparse.Namespace(
+                    worker_root=root,
+                    commit="a" * 40,
+                    platform="macos",
+                    rusty_v8_archive=None,
+                    sign_identity="AABBCCDDEEFF",
+                    app_profile="rs2b2t",
+                    keychain=keychain,
+                )
+                package_commands = []
+
+                def fake_run(command, *, capture=False, **_kwargs):
+                    if command[0] == "rustc":
+                        return "rustc 1.98.1\nhost: aarch64-apple-darwin\n"
+                    package_commands.append([str(part) for part in command])
+                    return ""
+
+                with mock.patch.object(release, "worker_expect", return_value=expect), \
+                        mock.patch.object(release, "safe_extract_tar", side_effect=extract), \
+                        mock.patch.object(release, "require_embedded_game_data"), \
+                        mock.patch.object(release, "run", side_effect=fake_run), \
+                        mock.patch.object(
+                            release.subprocess, "run",
+                            return_value=subprocess.CompletedProcess([], 0),
+                        ), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    release.build_worker(args)
+
+                self.assertEqual(len(package_commands), 1)
+                package = package_commands[0]
+                self.assertEqual(Path(package[1]).name, "package.py")
+                if keychain is None:
+                    self.assertNotIn("--keychain", package)
+                else:
+                    self.assertIn("--keychain", package)
+                    self.assertEqual(package[package.index("--keychain") + 1], str(keychain))
+
 
 OTOOL_L = """\
 /pkg/panel-play:
