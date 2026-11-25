@@ -247,18 +247,20 @@ pub enum ProcessProbe {
     },
 }
 
-/// Read this process's CPU time and memory. Current memory precedes the peak
-/// read on Linux and Windows. macOS reads both footprints in one task-info call.
+/// Read process CPU and memory. macOS and Linux read each memory pair together.
+/// Windows reads current working set before its later lifetime-peak sample.
 pub fn probe_process() -> ProcessProbe {
     if !cfg!(any(target_os = "macos", target_os = "linux", windows)) {
         return ProcessProbe::Unsupported;
     }
     #[cfg(target_os = "macos")]
     let (resident, peak) = host_play::current_footprint_and_peak_bytes();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    let (resident, peak) = host_play::current_rss_and_peak_bytes();
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let resident = host_play::current_resident_bytes();
     let (rss_peak, cpu_seconds) = host_play::sample_process();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let peak = (rss_peak > 0).then_some(rss_peak);
     // The host CPU/RSS sampler's joint failure sentinel is `(0, 0.0)`.
     if rss_peak == 0 && cpu_seconds == 0.0 {
@@ -373,6 +375,11 @@ fn process_metrics(
                     let now = format_bytes(resident);
                     let ram = match peak {
                         Some(peak) => {
+                            // xnu osfmk/kern/ledger.c:1279-1287 credits the ledger
+                            // before updating its lifetime maximum (1133-1137).
+                            // A concurrent footprint credit can briefly lead its peak.
+                            #[cfg(target_os = "macos")]
+                            let peak = peak.max(resident);
                             format!("{now} {PROCESS_MEMORY_LABEL}, peak {}", format_bytes(peak))
                         }
                         None => format!("{now} {PROCESS_MEMORY_LABEL}"),

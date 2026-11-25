@@ -64,6 +64,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The panel and TUI resource cards name the memory metric: footprint on macOS,
   RSS on Linux, and working set on Windows. The macOS peak now reports lifetime
   footprint, not peak RSS. Older kernels without a footprint peak omit it.
+  Linux reads current and peak RSS from one status sample, so a growing process
+  cannot show a peak below current. macOS accounts for its ledger-update race.
 
 ### Logging
 

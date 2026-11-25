@@ -152,6 +152,26 @@ fn a_missing_peak_keeps_the_current_metric_without_an_rss_fallback() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_ledger_peak_lag_does_not_lower_the_displayed_peak() {
+    let resident = (365 << 20) + 64 * 1024;
+    let view = process_metrics(
+        ProcessProbe::Sampled {
+            cpu_seconds: 1.0,
+            resident: Some(resident),
+            peak: Some(resident - 16 * 1024),
+        },
+        Instant::now(),
+        &mut None,
+        4,
+    );
+    assert_eq!(
+        view.ram,
+        Metric::available("365.1 MB footprint, peak 365.1 MB")
+    );
+}
+
 /// Publish `name`'s stream counter, starting its worker when it has none.
 fn live(play: &mut Play, name: &str, bytes: u64) {
     if play.arm(name).is_none() {

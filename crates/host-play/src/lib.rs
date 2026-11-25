@@ -192,6 +192,8 @@ pub use resource_view::{
 };
 #[cfg(target_os = "macos")]
 pub use rss::current_footprint_and_peak_bytes;
+#[cfg(target_os = "linux")]
+pub use rss::current_rss_and_peak_bytes;
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
 use script_runtime::*;

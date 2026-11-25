@@ -248,6 +248,45 @@ pub fn current_footprint_and_peak_bytes() -> (Option<u64>, Option<u64>) {
     macos_task_vm_footprint(kr, count, &info)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn read_linux_rss(
+    read_status: impl FnOnce() -> std::io::Result<String>,
+) -> (Option<u64>, Option<u64>) {
+    fn parse_kib(value: &str) -> Option<u64> {
+        let mut parts = value.split_ascii_whitespace();
+        let kib: u64 = parts.next()?.parse().ok()?;
+        if parts.next()? != "kB" {
+            return None;
+        }
+        kib.checked_mul(1024).filter(|bytes| *bytes > 0)
+    }
+
+    let Ok(status) = read_status() else {
+        return (None, None);
+    };
+    let mut current = None;
+    let mut peak = None;
+    for line in status.lines() {
+        if let Some(value) = line.strip_prefix("VmRSS:") {
+            current = parse_kib(value);
+        } else if let Some(value) = line.strip_prefix("VmHWM:") {
+            peak = parse_kib(value);
+        }
+        if current.is_some() && peak.is_some() {
+            break;
+        }
+    }
+    (current, peak)
+}
+
+/// Current RSS and lifetime RSS high-water mark from one Linux status read.
+#[cfg(target_os = "linux")]
+pub fn current_rss_and_peak_bytes() -> (Option<u64>, Option<u64>) {
+    // Linux fs/proc/task_mmu.c task_mem derives VmRSS and VmHWM from the
+    // same exact counter sum, with VmHWM at least VmRSS.
+    read_linux_rss(|| std::fs::read_to_string("/proc/self/status"))
+}
+
 /// Current process memory in bytes: physical footprint on macOS, resident
 /// pages on Linux, and working set on Windows.
 ///
@@ -261,19 +300,7 @@ pub fn current_resident_bytes() -> Option<u64> {
     }
     #[cfg(target_os = "linux")]
     {
-        let text = std::fs::read_to_string("/proc/self/statm").ok()?;
-        let mut parts = text.split_whitespace();
-        let _total_pages = parts.next()?;
-        let resident_pages: u64 = parts.next()?.parse().ok()?;
-        if resident_pages == 0 {
-            return None;
-        }
-        // SAFETY: sysconf reads the process page size and takes no pointers.
-        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        if page <= 0 {
-            return None;
-        }
-        Some(resident_pages.saturating_mul(page as u64))
+        current_rss_and_peak_bytes().0
     }
     #[cfg(windows)]
     {
@@ -334,6 +361,57 @@ pub fn count_tcp_to(host: &str, port: u16) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LINUX_STATUS_FIXTURE: &str = "\
+Name:\talice
+State:\tR (running)
+VmPeak:\t   65536 kB
+VmSize:\t   32768 kB
+VmHWM:\t    8192 kB
+VmRSS:\t    6144 kB
+RssAnon:\t   4096 kB
+RssFile:\t   2048 kB
+Threads:\t4
+";
+
+    #[test]
+    fn linux_rss_pair_uses_one_status_read() {
+        let mut reads = 0;
+        let pair = read_linux_rss(|| {
+            reads += 1;
+            Ok(LINUX_STATUS_FIXTURE.to_owned())
+        });
+        assert_eq!(reads, 1);
+        assert_eq!(pair, (Some(6144 * 1024), Some(8192 * 1024)));
+    }
+
+    #[test]
+    fn linux_rss_status_preserves_missing_and_failed_values() {
+        for (text, expected) in [
+            ("VmRSS:\t128 kB\n", (Some(128 * 1024), None)),
+            ("VmHWM:\t256 kB\n", (None, Some(256 * 1024))),
+            ("VmRSS:\t0 kB\nVmHWM:\t256 kB\n", (None, Some(256 * 1024))),
+            ("VmRSS:\t128 B\nVmHWM:\tinvalid kB\n", (None, None)),
+        ] {
+            assert_eq!(read_linux_rss(|| Ok(text.to_owned())), expected, "{text}");
+        }
+        assert_eq!(
+            read_linux_rss(|| Err(std::io::Error::other("status read failed"))),
+            (None, None)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_status_rss_peak_covers_the_same_samples_current_value() {
+        let (current, peak) = current_rss_and_peak_bytes();
+        let current = current.expect("VmRSS");
+        let peak = peak.expect("VmHWM");
+        assert!(
+            current > 0 && peak >= current,
+            "current={current} peak={peak}"
+        );
+    }
 
     #[test]
     fn current_memory_resident_is_some_and_independent_of_peak() {
