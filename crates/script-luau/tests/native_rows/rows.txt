@@ -1,6 +1,6 @@
 # ADR 0023 items 31 and 32. Fields: row JS-witness JS-cell Luau-binding Luau-cell.
 # A dash means absent. Baseline rows without a complete pair need NO_LIVE_CELL_ROWS.
-# Gather: host-play/tests/script_api_live.rs:42 and map.toml:2246.
+# Gather: script-js/examples/gather_quest_v2.ts:38, loaded by host-play/tests/script_api_live.rs:881-883; map.toml:2246.
 # Combat: host-play/src/api_combat_live_tests.rs:362 and map.toml:1703.
 # QuestProgress: host-play/tests/script_api_live.rs:72 and map.toml:1595.
 # Bank JS: runtime/bindings.rs:1242 -> machine/mod.rs:1969 SeatStartPayload::Bank.

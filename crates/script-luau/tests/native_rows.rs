@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use script_luau::Kind;
+use syn::visit::Visit;
 
 const ROWS: &str = include_str!("native_rows/rows.txt");
 const RS2B0T_WITNESSES: &[(&str, &str)] =
@@ -21,11 +22,53 @@ const NO_LIVE_CELL_ROWS: &[&str] = &[
     "withdraw-x",
 ];
 
+struct SeatWitness {
+    row: &'static str,
+    member: &'static str,
+    line: usize,
+    call: &'static str,
+}
+
+// Witness associations, not the row inventory. Each cited bootstrap line must
+// retain its seat-start call. A new seat cannot borrow an existing association.
+const JS_SEAT_WITNESSES: &[SeatWitness] = &[
+    SeatWitness {
+        row: "Bank",
+        member: "NativeApi.bankNearestReachable",
+        // crates/script-js/src/runtime/bindings.rs:1243
+        line: 1243,
+        call: "const out = await runMachine('bank_select', {",
+    },
+    SeatWitness {
+        row: "Gather",
+        member: "NativeApi.gather.run",
+        // crates/script-js/src/runtime/bindings.rs:1185
+        line: 1185,
+        call: "return runMachine('gather', settings == null ? {} : settings, {});",
+    },
+    SeatWitness {
+        row: "Combat",
+        member: "NativeApi.combat.fight",
+        // crates/script-js/src/runtime/bindings.rs:1197
+        line: 1197,
+        call: "return runMachine('combat', request, {});",
+    },
+    SeatWitness {
+        row: "QuestProgress",
+        member: "NativeApi.questProgress",
+        // crates/script-js/src/runtime/bindings.rs:1213
+        line: 1213,
+        call: "return runMachine('quest-progress', { quest: input.quest }, {});",
+    },
+];
+
 struct Sources {
     seats: String,
     types: String,
     frozen: String,
     live_map: String,
+    bootstrap: String,
+    luau_bindings: String,
 }
 
 impl Sources {
@@ -40,6 +83,8 @@ impl Sources {
             types: read("crates/script-js/host-js/index.d.ts"),
             frozen: read("crates/script-js/tests/compat_v2_freeze.members"),
             live_map: read("tools/live-map/map.toml"),
+            bootstrap: read("crates/script-js/src/runtime/bindings.rs"),
+            luau_bindings: read("crates/script-luau/src/bindings/mod.rs"),
         }
     }
 }
@@ -248,8 +293,9 @@ fn api_members(tokens: &[&str]) -> Result<BTreeSet<String>, String> {
                     return Err(format!("unsupported object member type: {path}"));
                 }
                 collect(&value[1..end], &path, out)?;
+            } else {
+                out.insert(path);
             }
-            out.insert(path);
         }
         Ok(())
     }
@@ -259,6 +305,95 @@ fn api_members(tokens: &[&str]) -> Result<BTreeSet<String>, String> {
     collect(&tokens[start + 1..end], "NativeApi", &mut result)?;
     if result.is_empty() {
         return Err("NativeApi has no members".into());
+    }
+    Ok(result)
+}
+
+fn bank_bindings(source: &str) -> Result<BTreeSet<String>, String> {
+    fn field<'a>(binding: &'a syn::ExprStruct, name: &str) -> Result<&'a syn::Expr, String> {
+        binding
+            .fields
+            .iter()
+            .find_map(|field| match &field.member {
+                syn::Member::Named(ident) if ident == name => Some(&field.expr),
+                _ => None,
+            })
+            .ok_or_else(|| format!("Luau binding has no {name} field"))
+    }
+
+    struct BankCall(bool);
+    impl<'ast> Visit<'ast> for BankCall {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if call.method == "bank"
+                && matches!(&*call.receiver, syn::Expr::Path(receiver) if receiver.path.is_ident("host"))
+            {
+                self.0 = true;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+
+    let file = syn::parse_file(source).map_err(|error| format!("Luau bindings: {error}"))?;
+    let mut tables = file.items.iter().filter_map(|item| match item {
+        syn::Item::Static(item) if item.ident == "BINDINGS" => Some(item),
+        _ => None,
+    });
+    let table = tables.next().ok_or("Luau BINDINGS is missing")?;
+    if tables.next().is_some() {
+        return Err("Luau BINDINGS has multiple declarations".into());
+    }
+    let syn::Expr::Reference(reference) = &*table.expr else {
+        return Err("Luau BINDINGS is not an array reference".into());
+    };
+    let syn::Expr::Array(array) = &*reference.expr else {
+        return Err("Luau BINDINGS is not an array".into());
+    };
+    let mut result = BTreeSet::new();
+    for entry in &array.elems {
+        let syn::Expr::Struct(binding) = entry else {
+            return Err("unsupported Luau binding registration".into());
+        };
+        let syn::Expr::Lit(path) = field(binding, "path")? else {
+            return Err("Luau binding path is not a string".into());
+        };
+        let syn::Lit::Str(path) = &path.lit else {
+            return Err("Luau binding path is not a string".into());
+        };
+        let syn::Expr::Call(call) = field(binding, "call")? else {
+            return Err("unsupported Luau binding call".into());
+        };
+        let syn::Expr::Path(kind) = &*call.func else {
+            return Err("unsupported Luau binding call kind".into());
+        };
+        if kind.path.segments.len() != 2 || kind.path.segments[0].ident != "Call" {
+            return Err("unsupported Luau binding call kind".into());
+        }
+        if kind.path.segments[1].ident == "Frame" || kind.path.segments[1].ident == "Output" {
+            continue;
+        }
+        if kind.path.segments[1].ident != "Host" {
+            return Err("unsupported Luau host binding call".into());
+        }
+        let Some(syn::Expr::Path(function)) = call.args.first() else {
+            return Err("Luau binding call has no function".into());
+        };
+        let name = function
+            .path
+            .get_ident()
+            .ok_or("unsupported Luau binding function")?;
+        let body = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(item) if item.sig.ident == *name => Some(&item.block),
+                _ => None,
+            })
+            .ok_or_else(|| format!("Luau binding function is missing: {name}"))?;
+        let mut calls = BankCall(false);
+        calls.visit_block(body);
+        if calls.0 {
+            result.insert(path.value());
+        }
     }
     Ok(result)
 }
@@ -354,9 +489,31 @@ fn check(sources: &Sources, text: &str) -> Result<(usize, usize), String> {
         return Err("JSV2-FREEZE closed list is empty".into());
     }
     let cells = live_cells(&sources.live_map)?;
-    let bindings: BTreeSet<_> = script_luau::api_members()
+    let mut seat_witnesses = BTreeMap::new();
+    for witness in JS_SEAT_WITNESSES {
+        if sources
+            .bootstrap
+            .lines()
+            .nth(witness.line - 1)
+            .map(str::trim)
+            != Some(witness.call)
+        {
+            return Err(format!(
+                "stale JavaScript seat witness citation: {} crates/script-js/src/runtime/bindings.rs:{}",
+                witness.row, witness.line
+            ));
+        }
+        if seat_witnesses.insert(witness.row, witness.member).is_some() {
+            return Err(format!(
+                "duplicate JavaScript seat witness: {}",
+                witness.row
+            ));
+        }
+    }
+    let bank_paths = bank_bindings(&sources.luau_bindings)?;
+    let bindings: BTreeMap<_, _> = script_luau::api_members()
         .filter(|member| matches!(member.kind, Kind::Request | Kind::Await))
-        .map(|member| member.path)
+        .map(|member| (member.path, member))
         .collect();
     let mut without_cells = BTreeSet::new();
     let mut promotion = 0;
@@ -377,10 +534,30 @@ fn check(sources: &Sources, text: &str) -> Result<(usize, usize), String> {
                 return Err(format!("undeclared NativeApi witness: {row} {js}"));
             } else if frozen.contains(js) {
                 return Err(format!("compat-backed witness: {row} {js}"));
+            } else if ops.contains(row) {
+                return Err(format!("mismatched JavaScript op witness: {row} {js}"));
+            } else if seat_witnesses.get(row).copied() != Some(js) {
+                return Err(format!("mismatched JavaScript seat witness: {row} {js}"));
             }
         }
-        if luau != "-" && !bindings.contains(luau) {
-            return Err(format!("not a Request/Await Luau binding: {row} {luau}"));
+        if luau != "-" {
+            let member = bindings
+                .get(luau)
+                .ok_or_else(|| format!("not a Request/Await Luau binding: {row} {luau}"))?;
+            let same_row = if ops.contains(row) {
+                member.js.and_then(|js| js.strip_prefix("NativeOp:")) == Some(row)
+            } else if row == "Bank" {
+                // Host::bank issues SeatStartArgs::Bank through await_bank
+                // (bindings/host.rs:48-49 -> runtime.rs:1346-1358).
+                bank_paths.contains(luau)
+            } else {
+                seat_witnesses
+                    .get(row)
+                    .is_some_and(|js| member.js == Some(*js))
+            };
+            if !same_row {
+                return Err(format!("mismatched Luau row witness: {row} {luau}"));
+            }
         }
         for (witness, cell) in [(js, js_cell), (luau, luau_cell)] {
             if cell != "-" && (witness == "-" || !cells.contains(cell)) {
@@ -585,4 +762,159 @@ fn comments_and_unrelated_types_cannot_declare_witnesses() {
         "Gather NativeApi.noSuchMember",
     );
     refused(&sources, &rows, "undeclared NativeApi witness");
+}
+
+#[test]
+fn witness_identity_b1_refuses_a_new_seat_with_another_seats_js_member() {
+    let mut sources = Sources::read();
+    sources.seats = replace_once(
+        &sources.seats,
+        "pub enum SeatStartArgs {",
+        "pub enum SeatStartArgs { ProbeSeat(u8),",
+    );
+    let rows =
+        format!("{ROWS}\nProbeSeat NativeApi.gather.run host.script-api-gather-and-quest - -\n");
+    refused(
+        &sources,
+        &rows,
+        "mismatched JavaScript seat witness: ProbeSeat",
+    );
+}
+
+#[test]
+fn witness_identity_b2_refuses_a_bank_binding_for_the_close_op() {
+    let rows = replace_once(
+        ROWS,
+        "close NativeOp:close scenario.bone-burier-v2-live - -",
+        "close NativeOp:close scenario.bone-burier-v2-live bank.close host.luau-bank-interact",
+    );
+    refused(
+        &Sources::read(),
+        &rows,
+        "mismatched Luau row witness: close bank.close",
+    );
+}
+
+#[test]
+fn witness_identity_b3_refuses_walk_to_for_walk_near() {
+    let rows = replace_once(ROWS, "walk.near -", "walk.to host.luau-walk");
+    refused(
+        &Sources::read(),
+        &rows,
+        "mismatched Luau row witness: walk-near walk.to",
+    );
+}
+
+#[test]
+fn witness_identity_b4_refuses_a_setting_read_for_combat() {
+    let rows = replace_once(
+        ROWS,
+        "Combat NativeApi.combat.fight host.api-combat-melee - -",
+        "Combat NativeApi.combat.fight host.api-combat-melee settings.str host.luau-walk",
+    );
+    refused(
+        &Sources::read(),
+        &rows,
+        "mismatched Luau row witness: Combat settings.str",
+    );
+}
+
+#[test]
+fn witness_identity_b5_refuses_a_bank_binding_for_gather() {
+    let rows = replace_once(
+        ROWS,
+        "Gather NativeApi.gather.run host.script-api-gather-and-quest - -",
+        "Gather NativeApi.gather.run host.script-api-gather-and-quest bank.openNearest host.luau-bank-interact",
+    );
+    refused(
+        &Sources::read(),
+        &rows,
+        "mismatched Luau row witness: Gather bank.openNearest",
+    );
+}
+
+#[test]
+fn witness_identity_b6_refuses_another_seats_js_member() {
+    let rows = replace_once(
+        ROWS,
+        "Combat NativeApi.combat.fight host.api-combat-melee",
+        "Combat NativeApi.gather.run host.script-api-gather-and-quest",
+    );
+    refused(
+        &Sources::read(),
+        &rows,
+        "mismatched JavaScript seat witness: Combat",
+    );
+}
+
+#[test]
+fn witness_identity_b7_refuses_a_native_api_member_for_an_op() {
+    let rows = replace_once(
+        ROWS,
+        "held NativeOp:held scenario.bone-burier-v2-live",
+        "held NativeApi.request scenario.bone-burier-v2-live",
+    );
+    refused(
+        &Sources::read(),
+        &rows,
+        "mismatched JavaScript op witness: held",
+    );
+}
+
+#[test]
+fn witness_identity_refuses_a_namespace_as_a_js_witness() {
+    let rows = replace_once(ROWS, "Gather NativeApi.gather.run", "Gather NativeApi.clue");
+    refused(
+        &Sources::read(),
+        &rows,
+        "undeclared NativeApi witness: Gather NativeApi.clue",
+    );
+}
+
+#[test]
+fn witness_identity_refuses_a_changed_bootstrap_call_at_its_citation() {
+    let mut sources = Sources::read();
+    sources.bootstrap = replace_once(
+        &sources.bootstrap,
+        "return runMachine('gather', settings == null ? {} : settings, {});",
+        "return runMachine('combat', settings == null ? {} : settings, {});",
+    );
+    refused(
+        &sources,
+        ROWS,
+        "stale JavaScript seat witness citation: Gather",
+    );
+}
+
+#[test]
+fn witness_identity_refuses_a_bank_binding_without_the_bank_host_call() {
+    let mut sources = Sources::read();
+    sources.luau_bindings = replace_once(
+        &sources.luau_bindings,
+        "host.bank(convert::bank_request(\n        BankSeatOperation::OpenNearestWorld",
+        "host.interact(convert::bank_request(\n        BankSeatOperation::OpenNearestWorld",
+    );
+    sources
+        .luau_bindings
+        .push_str("\n// host.bank(convert::bank_request(BankSeatOperation::OpenNearestWorld))\n");
+    refused(
+        &sources,
+        ROWS,
+        "mismatched Luau row witness: Bank bank.openNearest",
+    );
+}
+
+#[test]
+fn witness_identity_refuses_a_bank_registration_with_another_function() {
+    let mut sources = Sources::read();
+    sources.luau_bindings = replace_once(
+        &sources.luau_bindings,
+        "call: Call::Host(bank_open_nearest)",
+        "call: Call::Host(settings_str)",
+    );
+    refused(
+        &sources,
+        ROWS,
+        "mismatched Luau row witness: Bank bank.openNearest",
+    );
 }
