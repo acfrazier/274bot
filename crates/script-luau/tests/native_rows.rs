@@ -1,14 +1,23 @@
 //! The native-row witness rule and promotion counts of ADR 0023 items 31–32.
 //! The declarations own the row set. The ledger owns the inspected associations,
 //! not a second row inventory. Source citations accompany those associations.
+//!
+//! Accepted limits: an op receives credit from its `ApiMember.js` label, not
+//! from the request its body issues. A false label remains a review risk.
+//! The Bank scan counts `host.bank` calls in dead code. It checks syntax,
+//! not reachability. Diff review covers deliberate false edits and obfuscation.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use deno_ast::swc::ast::CallExpr;
+use deno_ast::swc::ecma_visit::{Visit as JsVisit, VisitWith};
+use deno_ast::{ProgramRef, SourceRangedForSpanned};
 use script_luau::Kind;
 use syn::visit::Visit;
 
 const ROWS: &str = include_str!("native_rows/rows.txt");
+const JS_BOOTSTRAP_PATH: &str = "crates/script-js/src/runtime/bindings.rs";
 const RS2B0T_WITNESSES: &[(&str, &str)] =
     &[("CastNpc", "Game.castOnNpc"), ("Shop", "Shop.buyById")];
 // Existing gaps only. A new row must have a complete script-surface pair.
@@ -22,6 +31,7 @@ const NO_LIVE_CELL_ROWS: &[&str] = &[
     "withdraw-x",
 ];
 
+#[derive(Clone, Copy)]
 struct SeatWitness {
     row: &'static str,
     member: &'static str,
@@ -83,7 +93,7 @@ impl Sources {
             types: read("crates/script-js/host-js/index.d.ts"),
             frozen: read("crates/script-js/tests/compat_v2_freeze.members"),
             live_map: read("tools/live-map/map.toml"),
-            bootstrap: read("crates/script-js/src/runtime/bindings.rs"),
+            bootstrap: read(JS_BOOTSTRAP_PATH),
             luau_bindings: read("crates/script-luau/src/bindings/mod.rs"),
         }
     }
@@ -107,6 +117,136 @@ fn seat_rows(source: &str) -> Result<BTreeSet<String>, String> {
         .collect();
     if rows.is_empty() {
         return Err("SeatStartArgs has no native rows".into());
+    }
+    Ok(rows)
+}
+
+fn bootstrap_call_lines(source: &str) -> Result<BTreeSet<usize>, String> {
+    let file = syn::parse_file(source).map_err(|error| format!("{JS_BOOTSTRAP_PATH}: {error}"))?;
+    let mut constants = file.items.iter().filter_map(|item| match item {
+        syn::Item::Const(item) if item.ident == "NATIVE_V2_MAIN" => Some(item),
+        _ => None,
+    });
+    let constant = constants.next().ok_or("NATIVE_V2_MAIN is missing")?;
+    if constants.next().is_some() {
+        return Err("NATIVE_V2_MAIN has multiple declarations".into());
+    }
+    let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Str(literal),
+        ..
+    }) = &*constant.expr
+    else {
+        return Err("NATIVE_V2_MAIN is not a string literal".into());
+    };
+    // Map the parsed literal back to its file lines without a second lexer.
+    // A raw literal preserves the JavaScript line positions.
+    let token = literal.token().to_string();
+    let (opening, _) = token
+        .split_once('"')
+        .filter(|(opening, _)| {
+            opening
+                .strip_prefix('r')
+                .is_some_and(|hashes| hashes.bytes().all(|byte| byte == b'#'))
+        })
+        .ok_or("NATIVE_V2_MAIN is not a raw string literal")?;
+    let mut occurrences = source.match_indices(&token);
+    let (offset, _) = occurrences
+        .next()
+        .ok_or("NATIVE_V2_MAIN literal has no source location")?;
+    if occurrences.next().is_some() {
+        return Err("NATIVE_V2_MAIN literal has multiple source locations".into());
+    }
+    let first_line = source[..offset + opening.len() + 1]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let specifier = deno_ast::ModuleSpecifier::parse("file:///native-v2-main.js")
+        .map_err(|error| format!("bootstrap specifier: {error}"))?;
+    let parsed = deno_ast::parse_module(deno_ast::ParseParams {
+        specifier,
+        text: literal.value().into(),
+        media_type: deno_ast::MediaType::JavaScript,
+        capture_tokens: false,
+        scope_analysis: false,
+        maybe_syntax: None,
+    })
+    .map_err(|error| format!("parse NATIVE_V2_MAIN: {error}"))?;
+    let ProgramRef::Module(module) = parsed.program_ref() else {
+        return Err("NATIVE_V2_MAIN did not parse as a module".into());
+    };
+    struct Calls<'a> {
+        source: &'a deno_ast::SourceTextInfo,
+        first_line: usize,
+        lines: BTreeSet<usize>,
+    }
+    impl JsVisit for Calls<'_> {
+        fn visit_call_expr(&mut self, call: &CallExpr) {
+            self.lines
+                .insert(self.first_line + self.source.line_index(call.start()));
+            call.visit_children_with(self);
+        }
+    }
+    let mut calls = Calls {
+        source: parsed.text_info_lazy(),
+        first_line,
+        lines: BTreeSet::new(),
+    };
+    module.visit_with(&mut calls);
+    Ok(calls.lines)
+}
+
+fn seat_witnesses(
+    source: &str,
+    seats: &BTreeSet<String>,
+    witnesses: &[SeatWitness],
+) -> Result<BTreeMap<&'static str, &'static str>, String> {
+    let mut rows = BTreeMap::new();
+    let mut members = BTreeSet::new();
+    let mut citations = BTreeSet::new();
+    for witness in witnesses {
+        if !seats.contains(witness.row) {
+            return Err(format!("unknown JavaScript seat witness: {}", witness.row));
+        }
+        if rows.insert(witness.row, witness.member).is_some() {
+            return Err(format!(
+                "duplicate JavaScript seat witness: {}",
+                witness.row
+            ));
+        }
+        if !members.insert(witness.member) {
+            return Err(format!(
+                "duplicate JavaScript seat witness member: {}",
+                witness.member
+            ));
+        }
+        if !citations.insert((JS_BOOTSTRAP_PATH, witness.line)) {
+            return Err(format!(
+                "duplicate JavaScript seat witness citation: {JS_BOOTSTRAP_PATH}:{}",
+                witness.line
+            ));
+        }
+    }
+    let call_lines = bootstrap_call_lines(source)?;
+    for witness in witnesses {
+        if witness
+            .line
+            .checked_sub(1)
+            .and_then(|index| source.lines().nth(index))
+            .map(str::trim)
+            != Some(witness.call)
+        {
+            return Err(format!(
+                "stale JavaScript seat witness citation: {} {JS_BOOTSTRAP_PATH}:{}",
+                witness.row, witness.line
+            ));
+        }
+        if !call_lines.contains(&witness.line) {
+            return Err(format!(
+                "JavaScript seat witness citation has no call expression: {} {JS_BOOTSTRAP_PATH}:{}",
+                witness.row, witness.line
+            ));
+        }
     }
     Ok(rows)
 }
@@ -454,9 +594,18 @@ fn ledger(source: &str) -> Result<BTreeMap<&str, [&str; 4]>, String> {
 }
 
 fn check(sources: &Sources, text: &str) -> Result<(usize, usize), String> {
+    check_with_seat_witnesses(sources, text, JS_SEAT_WITNESSES)
+}
+
+fn check_with_seat_witnesses(
+    sources: &Sources,
+    text: &str,
+    witnesses: &[SeatWitness],
+) -> Result<(usize, usize), String> {
     let tokens = ts_tokens(&sources.types)?;
     let ops = native_ops(&tokens)?;
     let mut expected = seat_rows(&sources.seats)?;
+    let seat_witnesses = seat_witnesses(&sources.bootstrap, &expected, witnesses)?;
     for op in &ops {
         if !expected.insert(op.clone()) {
             return Err(format!("seat and op row names collide: {op}"));
@@ -489,27 +638,6 @@ fn check(sources: &Sources, text: &str) -> Result<(usize, usize), String> {
         return Err("JSV2-FREEZE closed list is empty".into());
     }
     let cells = live_cells(&sources.live_map)?;
-    let mut seat_witnesses = BTreeMap::new();
-    for witness in JS_SEAT_WITNESSES {
-        if sources
-            .bootstrap
-            .lines()
-            .nth(witness.line - 1)
-            .map(str::trim)
-            != Some(witness.call)
-        {
-            return Err(format!(
-                "stale JavaScript seat witness citation: {} crates/script-js/src/runtime/bindings.rs:{}",
-                witness.row, witness.line
-            ));
-        }
-        if seat_witnesses.insert(witness.row, witness.member).is_some() {
-            return Err(format!(
-                "duplicate JavaScript seat witness: {}",
-                witness.row
-            ));
-        }
-    }
     let bank_paths = bank_bindings(&sources.luau_bindings)?;
     let bindings: BTreeMap<_, _> = script_luau::api_members()
         .filter(|member| matches!(member.kind, Kind::Request | Kind::Await))
@@ -602,7 +730,11 @@ fn replace_once(text: &str, before: &str, after: &str) -> String {
 }
 
 fn refused(sources: &Sources, rows: &str, expected: &str) {
-    let error = check(sources, rows).expect_err("negative fixture must be refused");
+    assert_refused(check(sources, rows), expected);
+}
+
+fn assert_refused(result: Result<(usize, usize), String>, expected: &str) {
+    let error = result.expect_err("negative fixture must be refused");
     assert!(
         error.contains(expected),
         "expected {expected:?}, got {error:?}"
@@ -916,5 +1048,113 @@ fn witness_identity_refuses_a_bank_registration_with_another_function() {
         &sources,
         ROWS,
         "mismatched Luau row witness: Bank bank.openNearest",
+    );
+}
+
+#[test]
+fn seat_citation_f4_refuses_a_new_seat_borrowing_gathers_member_and_call() {
+    let mut sources = Sources::read();
+    sources.seats = replace_once(
+        &sources.seats,
+        "pub enum SeatStartArgs {",
+        "pub enum SeatStartArgs { ProbeSeat(u8),",
+    );
+    let rows =
+        format!("{ROWS}\nProbeSeat NativeApi.gather.run host.script-api-gather-and-quest - -\n");
+    let mut witnesses = JS_SEAT_WITNESSES.to_vec();
+    witnesses.push(SeatWitness {
+        row: "ProbeSeat",
+        ..JS_SEAT_WITNESSES[1]
+    });
+    assert_refused(
+        check_with_seat_witnesses(&sources, &rows, &witnesses),
+        "duplicate JavaScript seat witness member: NativeApi.gather.run",
+    );
+}
+
+#[test]
+fn seat_citation_refuses_an_unknown_seat() {
+    let mut witnesses = JS_SEAT_WITNESSES.to_vec();
+    witnesses.push(SeatWitness {
+        row: "UnknownSeat",
+        ..JS_SEAT_WITNESSES[1]
+    });
+    assert_refused(
+        check_with_seat_witnesses(&Sources::read(), ROWS, &witnesses),
+        "unknown JavaScript seat witness: UnknownSeat",
+    );
+}
+
+#[test]
+fn seat_citation_refuses_a_duplicate_seat() {
+    let mut witnesses = JS_SEAT_WITNESSES.to_vec();
+    witnesses.push(JS_SEAT_WITNESSES[1]);
+    assert_refused(
+        check_with_seat_witnesses(&Sources::read(), ROWS, &witnesses),
+        "duplicate JavaScript seat witness: Gather",
+    );
+}
+
+#[test]
+fn seat_citation_refuses_a_duplicate_member_with_a_distinct_call() {
+    let mut witnesses = JS_SEAT_WITNESSES.to_vec();
+    witnesses[2].member = witnesses[1].member;
+    assert_refused(
+        check_with_seat_witnesses(&Sources::read(), ROWS, &witnesses),
+        "duplicate JavaScript seat witness member: NativeApi.gather.run",
+    );
+}
+
+#[test]
+fn seat_citation_refuses_a_duplicate_citation_with_a_distinct_member() {
+    let mut witnesses = JS_SEAT_WITNESSES.to_vec();
+    witnesses[2].line = witnesses[1].line;
+    witnesses[2].call = witnesses[1].call;
+    assert_refused(
+        check_with_seat_witnesses(&Sources::read(), ROWS, &witnesses),
+        "duplicate JavaScript seat witness citation: crates/script-js/src/runtime/bindings.rs:1185",
+    );
+}
+
+#[test]
+fn seat_citation_f3_refuses_a_call_inside_a_block_comment() {
+    let mut sources = Sources::read();
+    sources.bootstrap = replace_once(
+        &sources.bootstrap,
+        "      }\n      return runMachine('gather', settings == null ? {} : settings, {});\n    },",
+        "      } /*\n      return runMachine('gather', settings == null ? {} : settings, {});\n    */ },",
+    );
+    refused(
+        &sources,
+        ROWS,
+        "JavaScript seat witness citation has no call expression: Gather",
+    );
+}
+
+#[test]
+fn seat_citation_f3_refuses_a_comment_matching_the_updated_constant() {
+    let mut sources = Sources::read();
+    let comment = "// return runMachine('gather', settings == null ? {} : settings, {});";
+    sources.bootstrap = replace_once(&sources.bootstrap, JS_SEAT_WITNESSES[1].call, comment);
+    let mut witnesses = JS_SEAT_WITNESSES.to_vec();
+    witnesses[1].call = comment;
+    assert_refused(
+        check_with_seat_witnesses(&sources, ROWS, &witnesses),
+        "JavaScript seat witness citation has no call expression: Gather",
+    );
+}
+
+#[test]
+fn seat_citation_n4b_refuses_a_commented_call_after_another_seat_call() {
+    let mut sources = Sources::read();
+    sources.bootstrap = replace_once(
+        &sources.bootstrap,
+        "      }\n      return runMachine('gather', settings == null ? {} : settings, {});\n    },",
+        "      } return runMachine('combat', settings == null ? {} : settings, {}); /*\n      return runMachine('gather', settings == null ? {} : settings, {});\n    */ },",
+    );
+    refused(
+        &sources,
+        ROWS,
+        "JavaScript seat witness citation has no call expression: Gather",
     );
 }

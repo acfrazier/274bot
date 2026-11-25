@@ -4450,6 +4450,7 @@ version = "0.2.9"
 dependencies = [
  "allocation-counter",
  "api",
+ "deno_ast",
  "mlua",
  "script",
  "serde_json",
