@@ -39,6 +39,34 @@ enum Phase {
     Escape,
     WindDown,
 }
+
+/// Snapshot of current HP, threat danger/burst bounds, and threshold lines.
+#[derive(Clone, Copy)]
+struct PlanThreat {
+    hp: i32,
+    hp_max: i32,
+    danger: Option<i32>,
+    burst: Option<i32>,
+    poison_fire: i32,
+    lines: select::Lines,
+}
+
+/// Control-flow decision returned by weapon/prep sub-planners in [`Combat::plan`].
+enum PrepPlanOutcome {
+    Continue,
+    ReturnPlan,
+    Replan,
+}
+
+/// Prayer state computed once per tick before offensive/defensive planning.
+struct PrayerPlanState {
+    allowed: bool,
+    points: i32,
+    base: i32,
+    mask: u16,
+    observation: PrayerObservation,
+    wanted_varp: Option<i32>,
+}
 #[derive(Clone, Copy, Default)]
 enum RangedReadinessWait {
     #[default]
@@ -2810,14 +2838,14 @@ impl Combat {
     ) -> Result<TickPlan, ActionError> {
         let mut plan = TickPlan::default();
         let (hp, hp_max) = arbiter::stat(frame, 3);
-        let mut danger = self.threats.danger(
+        let danger = self.threats.danger(
             frame,
             &self.tables,
             tick,
             self.shield(frame),
             self.antifire(tick),
         );
-        let mut burst = self.threats.burst(
+        let burst = self.threats.burst(
             frame,
             &self.tables,
             tick,
@@ -2831,16 +2859,25 @@ impl Combat {
         {
             self.release_stale_bite(frame, tick);
         }
-        let mut lines = select::lines(danger, hp_max).with_poison(poison_fire);
-        let food_available = self.emergency_food_available(frame, danger, cx.protected_items());
-        let escape_stop = self.escape_stop(frame, tick, danger, cx);
-        let cure_scheduled = self.cure_row(&mut plan, frame, tick, danger, lines.eat, cx);
+        let mut threat = PlanThreat {
+            hp,
+            hp_max,
+            danger,
+            burst,
+            poison_fire,
+            lines: select::lines(danger, hp_max).with_poison(poison_fire),
+        };
+        let food_available =
+            self.emergency_food_available(frame, threat.danger, cx.protected_items());
+        let escape_stop = self.escape_stop(frame, tick, threat.danger, cx);
+        let cure_scheduled =
+            self.cure_row(&mut plan, frame, tick, threat.danger, threat.lines.eat, cx);
         let cure_pending = cure_scheduled || self.pending_poison_cure();
         self.safety_end(
             frame,
             tick,
-            danger,
-            lines.emergency,
+            threat.danger,
+            threat.lines.emergency,
             food_available || cure_pending,
             escape_stop,
         );
@@ -2848,182 +2885,48 @@ impl Combat {
             return Ok(plan);
         }
         if self.phase == Phase::WindDown {
-            let obs = prayer_observation(frame);
-            if self.baseline_on & BASELINE_READY == 0 {
-                return Ok(plan);
-            }
-            for click in self
-                .sweep
-                .candidates(self.tables.selected(), &obs)
-                .filter(|click| self.raised_prayers.contains(click.varp))
-            {
-                if !self.pending_id(RowKind::Prayer, click.button_com) {
-                    self.push(
-                        &mut plan,
-                        PlanRow::new(RowKind::Prayer, click.button_com, 0),
-                    );
-                }
-            }
-            if plan.len == 0
-                && self.flags & TERMINAL_FOOD == 0
-                && hp > 0
-                && (danger != Some(0) || poison_fire > 0)
-                && hp <= lines.eat
-            {
-                self.eat(
-                    &mut plan,
-                    frame,
-                    tick,
-                    (danger, burst),
-                    poison_fire,
-                    cx.protected_items(),
-                );
-            }
-            if plan.len == 0 && !self.pending_row(RowKind::Prayer) {
-                self.ranged_sweep(&mut plan, frame, tick, cx);
-            }
+            self.plan_wind_down(&mut plan, frame, tick, cx, &threat);
             return Ok(plan);
         }
         if self.phase == Phase::Escape {
-            let Fallback::Retreat { tile } = self.request.fallback else {
-                unreachable!("escape requires retreat");
-            };
-            if self
-                .pending_walk
-                .and_then(|id| cx.walk_receipt(id.get()))
-                .is_some()
-                || elapsed(tick, self.escape_since) >= 60
-            {
-                self.finish(CombatEnd::Aborted(AbortReason::RetreatFailed), tick);
+            if self.plan_escape(&mut plan, frame, tick, cx, &threat)? {
                 return self.plan(frame, tick, cx);
-            }
-            if self.request.allow.retaliate_toggle && retaliate_on(frame) {
-                if !self.pending_row(RowKind::Retaliate)
-                    && self.schedule.ready(OpKind::Retaliate, tick)
-                {
-                    self.push(&mut plan, PlanRow::new(RowKind::Retaliate, 0, 0));
-                }
-                return Ok(plan);
-            }
-            if hp > 0 && (danger != Some(0) || poison_fire > 0) && hp <= lines.eat {
-                self.eat(
-                    &mut plan,
-                    frame,
-                    tick,
-                    (danger, burst),
-                    poison_fire,
-                    cx.protected_items(),
-                );
-            }
-            if plan.len == 0 && self.pending_walk.is_none() {
-                self.walk(tile, tick, cx, false)?;
             }
             return Ok(plan);
         }
         // Emergency uses the original danger, before free reducers project it.
-        if (danger != Some(0) || poison_fire > 0)
-            && hp
-                <= lines
-                    .emergency
-                    .max(policy::critical_floor(danger, burst, hp_max, poison_fire))
+        if (threat.danger != Some(0) || threat.poison_fire > 0)
+            && threat.hp
+                <= threat.lines.emergency.max(policy::critical_floor(
+                    threat.danger,
+                    threat.burst,
+                    threat.hp_max,
+                    threat.poison_fire,
+                ))
         {
             self.eat(
                 &mut plan,
                 frame,
                 tick,
-                (danger, burst),
-                poison_fire,
+                (threat.danger, threat.burst),
+                threat.poison_fire,
                 cx.protected_items(),
             );
         }
         if plan.closed(&self.tables) {
             return Ok(plan);
         }
-        let (points, base) = arbiter::stat(frame, 5);
-        let prayer_allowed = self.baseline_on & BASELINE_READY != 0 && self.request.allow.prayer;
-        let wanted = prayer_allowed
-            .then(|| {
-                policy::wanted_protect(
-                    &self.threats,
-                    frame,
-                    &self.tables,
-                    tick,
-                    self.shield(frame),
-                    self.antifire(tick),
-                )
-            })
-            .flatten();
-        let observation = prayer_observation(frame);
-        let mut prayers = frame
-            .varps
-            .iter()
-            .filter(|row| {
-                row.value == 1
-                    && (api::prayer::PRAYER_VARP0..api::prayer::PRAYER_VARP0 + 15)
-                        .contains(&row.index)
-            })
-            .fold(0u16, |mask, row| {
-                mask | (1 << (row.index - api::prayer::PRAYER_VARP0))
-            });
-        if let Some(protect) =
-            wanted.filter(|row| base >= row.level && observation.is_off(row.varp))
+        let prayer = self.plan_protect_prayer(&mut plan, frame, tick, cx, &mut threat);
+        if !plan.closed(&self.tables)
+            && (threat.danger != Some(0) || threat.poison_fire > 0)
+            && threat.hp <= threat.lines.eat
         {
-            if points == 0 {
-                self.drink_or_recover(
-                    &mut plan,
-                    PotionKind::Prayer,
-                    frame,
-                    tick,
-                    Recovery::new(lines.drink_gate, danger, burst, poison_fire),
-                    cx.protected_items(),
-                );
-            }
-            if points > 0
-                && self.prayer_ready(protect.varp, tick)
-                && !self.pending_id(RowKind::Prayer, protect.button_com)
-                && self.push(
-                    &mut plan,
-                    PlanRow::new(RowKind::Prayer, protect.button_com, 1),
-                )
-            {
-                self.project_prayer(&mut prayers, protect.varp, true);
-                let style = (0..3)
-                    .find(|tier| {
-                        self.tables
-                            .prayer(PrayerRole::Protect, *tier)
-                            .is_some_and(|row| row.varp == protect.varp)
-                    })
-                    .map(|tier| match tier {
-                        0 => StyleObs::Magic,
-                        1 => StyleObs::Ranged,
-                        _ => StyleObs::Melee,
-                    });
-                danger = self.threats.danger_with(
-                    &self.tables,
-                    tick,
-                    self.shield(frame),
-                    self.antifire(tick),
-                    style,
-                );
-                burst = self.threats.burst_with(
-                    &self.tables,
-                    tick,
-                    self.shield(frame),
-                    self.antifire(tick),
-                    style,
-                );
-                lines = select::lines(danger, hp_max).with_poison(poison_fire);
-            }
-        }
-        let wanted_varp = wanted.map(|row| row.varp);
-        let protection_wanted = wanted_varp.is_some();
-        if !plan.closed(&self.tables) && (danger != Some(0) || poison_fire > 0) && hp <= lines.eat {
             self.eat(
                 &mut plan,
                 frame,
                 tick,
-                (danger, burst),
-                poison_fire,
+                (threat.danger, threat.burst),
+                threat.poison_fire,
                 cx.protected_items(),
             );
         }
@@ -3057,150 +2960,402 @@ impl Combat {
         // The client can briefly show a moved weapon in neither inventory nor equipment
         // while it applies the separate inventory and equipment updates.
         if matches!(self.phase, Phase::Prep | Phase::Engage) {
-            let weapon = self.desired(3, frame);
-            let missing = self.request.allow.equipment
-                && weapon.is_some_and(|id| {
-                    arbiter::count(frame, id) == 0
-                        && !frame
-                            .equipment
-                            .iter()
-                            .any(|row| row.slot == 3 && row.def.id == id)
-                });
-            if missing {
-                if self.pending_wear(3) && !self.prep_missing_weapon_observed {
-                    self.prep_missing_weapon_observed = true;
-                    return Ok(plan);
-                }
-                self.finish(
-                    CombatEnd::Aborted(AbortReason::PrepFailed(weapon_prep_item(self.active))),
-                    tick,
-                );
-                return self.plan(frame, tick, cx);
+            match self.check_prep_missing_weapon(frame, tick) {
+                PrepPlanOutcome::Continue => {}
+                PrepPlanOutcome::ReturnPlan => return Ok(plan),
+                PrepPlanOutcome::Replan => return self.plan(frame, tick, cx),
             }
-            self.prep_missing_weapon_observed = false;
         }
         if self.phase == Phase::Prep {
-            let weapon = self.desired(3, frame);
-            let conflict = self.flags & SHIELD_OVERRIDE != 0
-                && weapon.is_some_and(|id| {
-                    self.tables
-                        .selected()
-                        .item_by_id(id)
-                        .is_some_and(|item| item.is_two_handed())
-                });
-            if conflict {
-                self.finish(
-                    CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Shield)),
-                    tick,
-                );
-                return self.plan(frame, tick, cx);
+            match self.plan_prep(&mut plan, frame, tick, cx, &threat)? {
+                PrepPlanOutcome::Continue => {}
+                PrepPlanOutcome::ReturnPlan => return Ok(plan),
+                PrepPlanOutcome::Replan => return self.plan(frame, tick, cx),
             }
-            self.wear(&mut plan, frame, tick);
-            self.style(&mut plan, frame, tick);
-            // Ranged Prep waits for the exact tab and observed style echo.
-            if self.active == Style::Ranged {
-                if let Some(reason) = self.ranged_readiness_abort(frame, Some(&plan)) {
-                    self.finish(CombatEnd::Aborted(AbortReason::PrepReadiness(reason)), tick);
-                    return self.plan(frame, tick, cx);
-                }
-                if !self.ranged_ready(frame) {
-                    return Ok(plan);
-                }
+        }
+        if self.phase == Phase::Engage {
+            self.plan_engage(&mut plan, frame, tick, cx)?;
+            return Ok(plan);
+        }
+        self.plan_fight_potions_and_prayers(&mut plan, frame, tick, cx, &threat, &prayer);
+        if plan.closed(&self.tables) {
+            return Ok(plan);
+        }
+        self.plan_fight_offensives_and_attack(&mut plan, frame, tick, cx, &prayer);
+        Ok(plan)
+    }
+
+    fn plan_wind_down(
+        &mut self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        cx: &mut ActionContext<'_>,
+        threat: &PlanThreat,
+    ) {
+        let obs = prayer_observation(frame);
+        if self.baseline_on & BASELINE_READY == 0 {
+            return;
+        }
+        for click in self
+            .sweep
+            .candidates(self.tables.selected(), &obs)
+            .filter(|click| self.raised_prayers.contains(click.varp))
+        {
+            if !self.pending_id(RowKind::Prayer, click.button_com) {
+                self.push(plan, PlanRow::new(RowKind::Prayer, click.button_com, 0));
             }
-            if self.active == Style::Mage && self.magic_prepare(&mut plan, frame, tick, cx) {
-                return Ok(plan);
-            }
-            self.retaliate(&mut plan, frame, tick);
-            if self.flags & SHIELD_OVERRIDE != 0
-                && (!self.antifire(tick) || elapsed(tick, self.antifire_sip) >= 590)
+        }
+        if plan.len == 0
+            && self.flags & TERMINAL_FOOD == 0
+            && threat.hp > 0
+            && (threat.danger != Some(0) || threat.poison_fire > 0)
+            && threat.hp <= threat.lines.eat
+        {
+            self.eat(
+                plan,
+                frame,
+                tick,
+                (threat.danger, threat.burst),
+                threat.poison_fire,
+                cx.protected_items(),
+            );
+        }
+        if plan.len == 0 && !self.pending_row(RowKind::Prayer) {
+            self.ranged_sweep(plan, frame, tick, cx);
+        }
+    }
+
+    fn plan_escape(
+        &mut self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        cx: &mut ActionContext<'_>,
+        threat: &PlanThreat,
+    ) -> Result<bool, ActionError> {
+        let Fallback::Retreat { tile } = self.request.fallback else {
+            unreachable!("escape requires retreat");
+        };
+        if self
+            .pending_walk
+            .and_then(|id| cx.walk_receipt(id.get()))
+            .is_some()
+            || elapsed(tick, self.escape_since) >= 60
+        {
+            self.finish(CombatEnd::Aborted(AbortReason::RetreatFailed), tick);
+            return Ok(true);
+        }
+        if self.request.allow.retaliate_toggle && retaliate_on(frame) {
+            if !self.pending_row(RowKind::Retaliate) && self.schedule.ready(OpKind::Retaliate, tick)
             {
+                self.push(plan, PlanRow::new(RowKind::Retaliate, 0, 0));
+            }
+            return Ok(false);
+        }
+        if threat.hp > 0
+            && (threat.danger != Some(0) || threat.poison_fire > 0)
+            && threat.hp <= threat.lines.eat
+        {
+            self.eat(
+                plan,
+                frame,
+                tick,
+                (threat.danger, threat.burst),
+                threat.poison_fire,
+                cx.protected_items(),
+            );
+        }
+        if plan.len == 0 && self.pending_walk.is_none() {
+            self.walk(tile, tick, cx, false)?;
+        }
+        Ok(false)
+    }
+
+    fn plan_protect_prayer(
+        &mut self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        cx: &ActionContext<'_>,
+        threat: &mut PlanThreat,
+    ) -> PrayerPlanState {
+        let (points, base) = arbiter::stat(frame, 5);
+        let allowed = self.baseline_on & BASELINE_READY != 0 && self.request.allow.prayer;
+        let wanted = allowed
+            .then(|| {
+                policy::wanted_protect(
+                    &self.threats,
+                    frame,
+                    &self.tables,
+                    tick,
+                    self.shield(frame),
+                    self.antifire(tick),
+                )
+            })
+            .flatten();
+        let observation = prayer_observation(frame);
+        let mut mask = frame
+            .varps
+            .iter()
+            .filter(|row| {
+                row.value == 1
+                    && (api::prayer::PRAYER_VARP0..api::prayer::PRAYER_VARP0 + 15)
+                        .contains(&row.index)
+            })
+            .fold(0u16, |mask, row| {
+                mask | (1 << (row.index - api::prayer::PRAYER_VARP0))
+            });
+        if let Some(protect) =
+            wanted.filter(|row| base >= row.level && observation.is_off(row.varp))
+        {
+            if points == 0 {
                 self.drink_or_recover(
-                    &mut plan,
-                    PotionKind::Antifire,
+                    plan,
+                    PotionKind::Prayer,
                     frame,
                     tick,
-                    Recovery::new(lines.drink_gate, danger, burst, poison_fire),
+                    Recovery::new(
+                        threat.lines.drink_gate,
+                        threat.danger,
+                        threat.burst,
+                        threat.poison_fire,
+                    ),
                     cx.protected_items(),
                 );
             }
-            if self.flags & BOOST_WORTH != 0 {
-                if let Some(kind) = self.boost(frame) {
-                    self.drink_or_recover(
-                        &mut plan,
-                        kind,
-                        frame,
-                        tick,
-                        Recovery::new(lines.drink_gate, danger, burst, poison_fire),
-                        cx.protected_items(),
-                    );
-                }
-            }
-            if plan.closed(&self.tables)
-                || self.pending_row(RowKind::Wear)
-                || self.pending_row(RowKind::Drink)
+            if points > 0
+                && self.prayer_ready(protect.varp, tick)
+                && !self.pending_id(RowKind::Prayer, protect.button_com)
+                && self.push(plan, PlanRow::new(RowKind::Prayer, protect.button_com, 1))
             {
-                return Ok(plan);
+                self.project_prayer(&mut mask, protect.varp, true);
+                let style = (0..3)
+                    .find(|tier| {
+                        self.tables
+                            .prayer(PrayerRole::Protect, *tier)
+                            .is_some_and(|row| row.varp == protect.varp)
+                    })
+                    .map(|tier| match tier {
+                        0 => StyleObs::Magic,
+                        1 => StyleObs::Ranged,
+                        _ => StyleObs::Melee,
+                    });
+                threat.danger = self.threats.danger_with(
+                    &self.tables,
+                    tick,
+                    self.shield(frame),
+                    self.antifire(tick),
+                    style,
+                );
+                threat.burst = self.threats.burst_with(
+                    &self.tables,
+                    tick,
+                    self.shield(frame),
+                    self.antifire(tick),
+                    style,
+                );
+                threat.lines =
+                    select::lines(threat.danger, threat.hp_max).with_poison(threat.poison_fire);
             }
-            // Only completed or in-plan equipment permits engagement.
-            let missing_wear = (0..14).any(|slot| {
-                self.desired(slot, frame).is_some_and(|id| {
-                    !frame
+        }
+        PrayerPlanState {
+            allowed,
+            points,
+            base,
+            mask,
+            observation,
+            wanted_varp: wanted.map(|row| row.varp),
+        }
+    }
+
+    fn check_prep_missing_weapon(&mut self, frame: &Frame<'_>, tick: u16) -> PrepPlanOutcome {
+        let weapon = self.desired(3, frame);
+        let missing = self.request.allow.equipment
+            && weapon.is_some_and(|id| {
+                arbiter::count(frame, id) == 0
+                    && !frame
                         .equipment
                         .iter()
-                        .any(|row| row.slot == i32::from(slot) && row.def.id == id)
-                        && !self.wear_skipped(slot)
-                        && arbiter::count(frame, id) > 0
-                        && !plan
-                            .iter()
-                            .any(|row| row.kind == RowKind::Wear && row.aux == slot && row.id == id)
-                })
+                        .any(|row| row.slot == 3 && row.def.id == id)
             });
-            if missing_wear && self.request.allow.equipment {
-                return Ok(plan);
+        if missing {
+            if self.pending_wear(3) && !self.prep_missing_weapon_observed {
+                self.prep_missing_weapon_observed = true;
+                return PrepPlanOutcome::ReturnPlan;
             }
-            self.phase = Phase::Engage;
+            self.finish(
+                CombatEnd::Aborted(AbortReason::PrepFailed(weapon_prep_item(self.active))),
+                tick,
+            );
+            return PrepPlanOutcome::Replan;
         }
-        if self.phase == Phase::Engage {
-            self.style(&mut plan, frame, tick);
-            self.retaliate(&mut plan, frame, tick);
-            if self.active == Style::Mage {
-                if self.magic_prepare(&mut plan, frame, tick, cx) {
-                    return Ok(plan);
-                }
-                if self.magic().mode == Some(CastMode::Manual) {
-                    self.manual_cast(&mut plan, frame, tick);
-                    return Ok(plan);
-                }
-            }
-            if self.engaged.is_some()
-                && self.flags2 & PVP_HOLD == 0
-                && (plan.len != 0
-                    || (!self.pending_row(RowKind::Attack)
-                        && self.schedule.ready(OpKind::Attack, tick)))
-            {
-                let attack = self.attack_row(&plan, frame);
-                self.push(&mut plan, attack);
-            } else if plan.len == 0 && self.engaged.is_none() && self.pending_walk.is_none() {
-                if let Some(tile) = self
-                    .request
-                    .stand
-                    .filter(|tile| !select::stand_reached(*tile, frame.local))
-                {
-                    self.walk(tile, tick, cx, true)?;
-                }
-            }
-            return Ok(plan);
+        self.prep_missing_weapon_observed = false;
+        PrepPlanOutcome::Continue
+    }
+
+    fn plan_prep(
+        &mut self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        cx: &mut ActionContext<'_>,
+        threat: &PlanThreat,
+    ) -> Result<PrepPlanOutcome, ActionError> {
+        let weapon = self.desired(3, frame);
+        let conflict = self.flags & SHIELD_OVERRIDE != 0
+            && weapon.is_some_and(|id| {
+                self.tables
+                    .selected()
+                    .item_by_id(id)
+                    .is_some_and(|item| item.is_two_handed())
+            });
+        if conflict {
+            self.finish(
+                CombatEnd::Aborted(AbortReason::PrepFailed(PrepItem::Shield)),
+                tick,
+            );
+            return Ok(PrepPlanOutcome::Replan);
         }
-        if self.request.allow.prayer
-            && (protection_wanted || prayers != 0)
-            && policy::prayer_sip_due(points, base)
+        self.wear(plan, frame, tick);
+        self.style(plan, frame, tick);
+        // Ranged Prep waits for the exact tab and observed style echo.
+        if self.active == Style::Ranged {
+            if let Some(reason) = self.ranged_readiness_abort(frame, Some(plan)) {
+                self.finish(CombatEnd::Aborted(AbortReason::PrepReadiness(reason)), tick);
+                return Ok(PrepPlanOutcome::Replan);
+            }
+            if !self.ranged_ready(frame) {
+                return Ok(PrepPlanOutcome::ReturnPlan);
+            }
+        }
+        if self.active == Style::Mage && self.magic_prepare(plan, frame, tick, cx) {
+            return Ok(PrepPlanOutcome::ReturnPlan);
+        }
+        self.retaliate(plan, frame, tick);
+        if self.flags & SHIELD_OVERRIDE != 0
+            && (!self.antifire(tick) || elapsed(tick, self.antifire_sip) >= 590)
         {
             self.drink_or_recover(
-                &mut plan,
+                plan,
+                PotionKind::Antifire,
+                frame,
+                tick,
+                Recovery::new(
+                    threat.lines.drink_gate,
+                    threat.danger,
+                    threat.burst,
+                    threat.poison_fire,
+                ),
+                cx.protected_items(),
+            );
+        }
+        if self.flags & BOOST_WORTH != 0 {
+            if let Some(kind) = self.boost(frame) {
+                self.drink_or_recover(
+                    plan,
+                    kind,
+                    frame,
+                    tick,
+                    Recovery::new(
+                        threat.lines.drink_gate,
+                        threat.danger,
+                        threat.burst,
+                        threat.poison_fire,
+                    ),
+                    cx.protected_items(),
+                );
+            }
+        }
+        if plan.closed(&self.tables)
+            || self.pending_row(RowKind::Wear)
+            || self.pending_row(RowKind::Drink)
+        {
+            return Ok(PrepPlanOutcome::ReturnPlan);
+        }
+        // Only completed or in-plan equipment permits engagement.
+        let missing_wear = (0..14).any(|slot| {
+            self.desired(slot, frame).is_some_and(|id| {
+                !frame
+                    .equipment
+                    .iter()
+                    .any(|row| row.slot == i32::from(slot) && row.def.id == id)
+                    && !self.wear_skipped(slot)
+                    && arbiter::count(frame, id) > 0
+                    && !plan
+                        .iter()
+                        .any(|row| row.kind == RowKind::Wear && row.aux == slot && row.id == id)
+            })
+        });
+        if missing_wear && self.request.allow.equipment {
+            return Ok(PrepPlanOutcome::ReturnPlan);
+        }
+        self.phase = Phase::Engage;
+        Ok(PrepPlanOutcome::Continue)
+    }
+
+    fn plan_engage(
+        &mut self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        cx: &mut ActionContext<'_>,
+    ) -> Result<(), ActionError> {
+        self.style(plan, frame, tick);
+        self.retaliate(plan, frame, tick);
+        if self.active == Style::Mage {
+            if self.magic_prepare(plan, frame, tick, cx) {
+                return Ok(());
+            }
+            if self.magic().mode == Some(CastMode::Manual) {
+                self.manual_cast(plan, frame, tick);
+                return Ok(());
+            }
+        }
+        if self.engaged.is_some()
+            && self.flags2 & PVP_HOLD == 0
+            && (plan.len != 0
+                || (!self.pending_row(RowKind::Attack)
+                    && self.schedule.ready(OpKind::Attack, tick)))
+        {
+            let attack = self.attack_row(plan, frame);
+            self.push(plan, attack);
+        } else if plan.len == 0 && self.engaged.is_none() && self.pending_walk.is_none() {
+            if let Some(tile) = self
+                .request
+                .stand
+                .filter(|tile| !select::stand_reached(*tile, frame.local))
+            {
+                self.walk(tile, tick, cx, true)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn plan_fight_potions_and_prayers(
+        &mut self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        cx: &mut ActionContext<'_>,
+        threat: &PlanThreat,
+        prayer: &PrayerPlanState,
+    ) {
+        if self.request.allow.prayer
+            && (prayer.wanted_varp.is_some() || prayer.mask != 0)
+            && policy::prayer_sip_due(prayer.points, prayer.base)
+        {
+            self.drink_or_recover(
+                plan,
                 PotionKind::Prayer,
                 frame,
                 tick,
-                Recovery::new(lines.drink_gate, danger, burst, poison_fire),
+                Recovery::new(
+                    threat.lines.drink_gate,
+                    threat.danger,
+                    threat.burst,
+                    threat.poison_fire,
+                ),
                 cx.protected_items(),
             );
         }
@@ -3209,11 +3364,16 @@ impl Combat {
         if cycle_room && self.flags & BOOST_WORTH != 0 && self.target_above_quarter(frame) {
             if let Some(kind) = self.boost(frame) {
                 self.drink_or_recover(
-                    &mut plan,
+                    plan,
                     kind,
                     frame,
                     tick,
-                    Recovery::new(lines.drink_gate, danger, burst, poison_fire),
+                    Recovery::new(
+                        threat.lines.drink_gate,
+                        threat.danger,
+                        threat.burst,
+                        threat.poison_fire,
+                    ),
                     cx.protected_items(),
                 );
             }
@@ -3223,69 +3383,82 @@ impl Combat {
             && (!self.antifire(tick) || elapsed(tick, self.antifire_sip) >= 590)
         {
             self.drink_or_recover(
-                &mut plan,
+                plan,
                 PotionKind::Antifire,
                 frame,
                 tick,
-                Recovery::new(lines.drink_gate, danger, burst, poison_fire),
+                Recovery::new(
+                    threat.lines.drink_gate,
+                    threat.danger,
+                    threat.burst,
+                    threat.poison_fire,
+                ),
                 cx.protected_items(),
             );
         }
-        if plan.closed(&self.tables) {
-            return Ok(plan);
-        }
+    }
+
+    fn plan_fight_offensives_and_attack(
+        &mut self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        cx: &mut ActionContext<'_>,
+        prayer: &PrayerPlanState,
+    ) {
+        let mut mask = prayer.mask;
         let offense = self.active == Style::Melee
             && self.flags & BOOST_WORTH != 0
-            && prayer_allowed
+            && prayer.allowed
             && (frame.local.player.actor.in_combat || self.threats.iter(tick).next().is_some())
-            && points > 0
-            && (points > policy::prayer_sip_floor(base)
+            && prayer.points > 0
+            && (prayer.points > policy::prayer_sip_floor(prayer.base)
                 || arbiter::potion_id(frame, &self.tables, PotionKind::Prayer).is_some());
         let offensives = if offense && self.active == Style::Melee {
             [
-                self.offensive_prayer(PrayerRole::Strength, base, &observation),
-                self.offensive_prayer(PrayerRole::Attack, base, &observation),
+                self.offensive_prayer(PrayerRole::Strength, prayer.base, &prayer.observation),
+                self.offensive_prayer(PrayerRole::Attack, prayer.base, &prayer.observation),
             ]
         } else {
             [None, None]
         };
         for row in offensives.into_iter().flatten() {
-            if prayers & prayer_bit(row.varp) == 0
-                && observation.is_off(row.varp)
+            if mask & prayer_bit(row.varp) == 0
+                && prayer.observation.is_off(row.varp)
                 && self.prayer_ready(row.varp, tick)
                 && !self.pending_id(RowKind::Prayer, row.button_com)
-                && self.push(&mut plan, PlanRow::new(RowKind::Prayer, row.button_com, 1))
+                && self.push(plan, PlanRow::new(RowKind::Prayer, row.button_com, 1))
             {
-                self.project_prayer(&mut prayers, row.varp, true);
+                self.project_prayer(&mut mask, row.varp, true);
             }
         }
         for row in self.tables.selected().prayers() {
-            if prayers & (1 << (row.varp - api::prayer::PRAYER_VARP0)) == 0
+            if mask & (1 << (row.varp - api::prayer::PRAYER_VARP0)) == 0
                 || !self.raised_prayers.contains(row.varp)
                 || self.pending_id(RowKind::Prayer, row.button_com)
             {
                 continue;
             }
-            let keep = prayer_allowed
-                && (wanted_varp == Some(row.varp)
+            let keep = prayer.allowed
+                && (prayer.wanted_varp == Some(row.varp)
                     || offensives
                         .iter()
                         .flatten()
                         .any(|best| best.varp == row.varp));
-            if !keep && self.push(&mut plan, PlanRow::new(RowKind::Prayer, row.button_com, 0)) {
-                self.project_prayer(&mut prayers, row.varp, false);
+            if !keep && self.push(plan, PlanRow::new(RowKind::Prayer, row.button_com, 0)) {
+                self.project_prayer(&mut mask, row.varp, false);
             }
         }
-        self.wear(&mut plan, frame, tick);
-        self.style(&mut plan, frame, tick);
-        self.retaliate(&mut plan, frame, tick);
+        self.wear(plan, frame, tick);
+        self.style(plan, frame, tick);
+        self.retaliate(plan, frame, tick);
         if self.active == Style::Mage && self.switch.pending().is_none() {
-            if self.magic_prepare(&mut plan, frame, tick, cx) {
-                return Ok(plan);
+            if self.magic_prepare(plan, frame, tick, cx) {
+                return;
             }
             if self.magic().mode == Some(CastMode::Manual) {
-                self.manual_cast(&mut plan, frame, tick);
-                return Ok(plan);
+                self.manual_cast(plan, frame, tick);
+                return;
             }
         }
         let mismatch = self.engaged.is_some_and(|actor| {
@@ -3303,10 +3476,9 @@ impl Combat {
                         || mismatch
                         || self.schedule.stale_ready(tick, self.rate(frame)))))
         {
-            let attack = self.attack_row(&plan, frame);
-            self.push(&mut plan, attack);
+            let attack = self.attack_row(plan, frame);
+            self.push(plan, attack);
         }
-        Ok(plan)
     }
     fn attack_row(&self, plan: &TickPlan, frame: &Frame<'_>) -> PlanRow {
         let rate = plan

@@ -413,6 +413,31 @@ fn trace_root_event(
     );
 }
 
+/// Action chosen after settling an active step or journal read.
+enum SettleAdvance {
+    SelectNow,
+    RereadNow,
+    Continue,
+}
+
+/// Result of selecting the next eligible step in [`Quester::advance`].
+enum StepSelectOutcome {
+    Selected {
+        index: usize,
+        advances: bool,
+        prelude: bool,
+    },
+    FinishQuest,
+    Continue,
+}
+
+/// Control-flow decision after polling the active quest step or wait.
+enum PollOkOutcome {
+    ContinueNoUpdate,
+    Reenter,
+    Done,
+}
+
 /// `modal root R (first text)`: the open chat page a journal park names.
 fn chat_page_label(tick: &NativeTick<'_>) -> String {
     let Some(chat) = tick.cx.snapshot().chat_modal() else {
@@ -3933,34 +3958,12 @@ impl Quester {
         if self.step.is_none() && !self.settling && !self.needs_read {
             self.request_contradicted_read(tick);
         }
-        if self.needs_read {
-            if let Some((index, until)) = self.read_after_kill {
-                // The quest progress lands with the killed NPC's removal.
-                if tick.cx.evidence().tick < until && npc_in_scene(tick, index) {
-                    self.publish(tick.output);
-                    return Ok(ScriptFlow::Continue);
-                }
-                self.read_after_kill = None;
-            }
-            let retarget =
-                !self.settling && self.step.is_none() && !self.provisioner.needs_progress_read();
-            if !self.read_stage(tick, retarget) {
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
-            }
-            if let Some(step) = self.step.as_mut() {
-                step.progress_read_completed(tick.cx.active_now());
-            }
-            self.provisioner
-                .progress_read_completed(tick.cx.active_now());
+        if !self.advance_progress_read(tick) {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Continue);
         }
         self.scope_stage_cross(tick);
-        if self
-            .path
-            .sequences
-            .get(self.seq_index)
-            .is_some_and(|seq| seq.terminal && seq.steps.is_empty())
-        {
+        if self.current_sequence_empty_terminal() {
             return Ok(self.finish_quest(tick));
         }
         if !self.admit_pair(tick) {
@@ -3968,486 +3971,611 @@ impl Quester {
             return Ok(ScriptFlow::Continue);
         }
         if self.settling {
-            let mut select_now = false;
-            let mut reread_now = false;
-            let truth = {
-                let pred = PredicateContext {
-                    cx: &tick.cx,
-                    pairs: tick.pairs,
-                    quests: &self.quests,
-                    progress: self.progress_slice(),
-                    required_after: tick.cx.evidence(),
-                    chat_since: self.chat_since,
-                    outcome: self.last_outcome.as_ref(),
-                };
-                self.current_step()
-                    .map(|step| step.settle.evaluate(&pred))
-                    .unwrap_or(Truth::False)
-            };
-            if truth == Truth::True {
-                let step = if self.in_prelude {
-                    self.path.prelude.get(self.step_index)
-                } else {
-                    self.path
-                        .sequences
-                        .get(self.seq_index)
-                        .and_then(|sequence| sequence.steps.get(self.step_index))
-                };
-                if let Some(step) = step {
-                    let stage = self
-                        .stage
-                        .as_ref()
-                        .map_or("unknown", |stage| stage.0.as_ref());
-                    trace_root_event(
-                        &mut self.trace,
-                        tick.output,
-                        api::hostlog::Level::Info,
-                        self.path.id.0.as_ref(),
-                        stage,
-                        step,
-                        format_args!("settled"),
-                    );
-                }
-                self.settling = false;
-                self.settle_deadline = Duration::ZERO;
-                self.fail_streak = 0;
-                self.record_step_success();
-                self.retarget_after_settle(true);
-                self.on_step_boundary(tick);
-                // Select on the snapshot that proved the settle instead of a
-                // tick later. Anything the next tick's prologue would do first
-                // (park, prayer cleanup, a reread) keeps the old order, and a
-                // tick whose single interaction event is spent, or that first
-                // shows a new scene, waits.
-                if !self.parked && !self.prayer_cleanup_pending {
-                    self.request_contradicted_read(tick);
-                }
-                select_now = !self.parked
-                    && !self.prayer_cleanup_pending
-                    && !self.needs_read
-                    && tick.cx.may_continue_this_tick();
-                // A boundary that owes a progress read (an advancing step, a
-                // contradicted colour) reads now and selects on its result
-                // (TICK-FIX #6, E-Q3): a colour read is immediate, a journal
-                // read sends its click this tick.
-                reread_now = !self.parked
-                    && !self.prayer_cleanup_pending
-                    && self.needs_read
-                    && tick.cx.may_continue_this_tick();
-            } else {
-                if tick.cx.active_now() >= self.settle_deadline {
-                    self.settling = false;
-                    let error = ActionError::Failed(Arc::from("step settle timeout"));
-                    let step = if self.in_prelude {
-                        self.path.prelude.get(self.step_index)
-                    } else {
-                        self.path
-                            .sequences
-                            .get(self.seq_index)
-                            .and_then(|sequence| sequence.steps.get(self.step_index))
-                    };
-                    let failed_step = step.map(|step| ParkedStep {
-                        sequence_index: self.seq_index,
-                        step_index: self.step_index,
-                        in_prelude: self.in_prelude,
-                        id: Arc::clone(&step.id.0),
-                    });
-                    if let Some(step) = step {
-                        let stage = self
-                            .stage
-                            .as_ref()
-                            .map_or("unknown", |stage| stage.0.as_ref());
-                        trace_root_event(
-                            &mut self.trace,
-                            tick.output,
-                            api::hostlog::Level::Warn,
-                            self.path.id.0.as_ref(),
-                            stage,
-                            step,
-                            format_args!("failed: step settle timeout"),
-                        );
+            match self.advance_settling(tick) {
+                SettleAdvance::SelectNow => {
+                    if self.current_sequence_empty_terminal() {
+                        return Ok(self.finish_quest(tick));
                     }
-                    self.record_step_failure_with_outcome(error, tick, true);
-                    // Progress may land after the earlier read while an advancing step settles.
-                    self.needs_read = !self.parked && (self.needs_read || self.advances);
-                    self.dirty = true;
-                    if self.parked {
-                        self.parked_step = failed_step;
+                }
+                SettleAdvance::RereadNow => {
+                    if pass < SAME_TICK_PASSES && !self.survival_deferred {
+                        return self.advance(tick, pass + 1);
                     }
-                    self.retarget_after_settle(false);
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
                 }
-            }
-            if !select_now {
-                if reread_now && pass < SAME_TICK_PASSES && !self.survival_deferred {
-                    return self.advance(tick, pass + 1);
+                SettleAdvance::Continue => {
+                    self.publish(tick.output);
+                    return Ok(ScriptFlow::Continue);
                 }
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
-            }
-            if self
-                .path
-                .sequences
-                .get(self.seq_index)
-                .is_some_and(|seq| seq.terminal && seq.steps.is_empty())
-            {
-                return Ok(self.finish_quest(tick));
             }
         }
         if self.step.is_none() {
-            if let Some(flow) = self.upkeep_before_provision(tick) {
+            if let Some(flow) = self.select_and_begin_step(tick)? {
                 return Ok(flow);
             }
-            if !self.poll_provision(tick) {
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
-            }
-            // A receipt may settle on a wake after this tick's event or on
-            // scene entry. Fresh selection waits until both fences are clear.
-            if !tick.cx.may_continue_this_tick() {
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
-            }
-            let (selected, skipped_to) = {
-                let path = &self.path;
-                let seq_index = self.seq_index;
-                let cursor = self.cursor;
-                let quests = &self.quests;
-                let progress = self
-                    .progress
-                    .as_deref()
-                    .map(std::slice::from_ref)
-                    .unwrap_or(&[]);
-                let outcome = self.last_combat.as_ref().or(self.last_outcome.as_ref());
-                let stage = self
-                    .stage
-                    .as_ref()
-                    .map_or("unknown", |stage| stage.0.as_ref());
-                let trace = &mut self.trace;
-                let output = &mut *tick.output;
-                let pred = PredicateContext {
-                    cx: &tick.cx,
-                    pairs: tick.pairs,
-                    quests,
-                    progress,
-                    required_after: tick.cx.evidence(),
-                    chat_since: super::families::reach::last_chat_seq(&tick.cx),
-                    outcome,
-                };
-                match select_with_skips(path, seq_index, cursor, &pred, |step| {
-                    trace.record(
-                        output,
-                        api::hostlog::Level::Info,
-                        format_args!(
-                            "quester {}: stage {stage} step {} skipped: {} evaluated true",
-                            path.id.0, step.id.0, step.skip_if_summary
-                        ),
-                    );
-                }) {
-                    SelectionDecision::Selected(sel) => (
-                        Ok(Some((sel.index, sel.step.advances, sel.prelude))),
-                        (!sel.prelude).then_some(sel.index),
-                    ),
-                    SelectionDecision::Exhausted => (
-                        Ok(None),
-                        path.sequences.get(seq_index).map(|seq| seq.steps.len()),
-                    ),
-                    SelectionDecision::Unknown(sel) => (
-                        Err((
-                            sel.index,
-                            sel.prelude,
-                            Arc::clone(&sel.step.id.0),
-                            Arc::clone(&sel.step.skip_if_summary),
-                            sel.step.skip_if.requires_bank(),
-                        )),
-                        (!sel.prelude).then_some(sel.index),
-                    ),
-                }
-            };
-            // Every sequence step the selector passed over had a proven-true
-            // skip_if, so those skips commit to the ordered cursor whether the
-            // selection then started a step, blocked on Unknown evidence, or
-            // ran out of steps: a skipped prefix never re-runs without a
-            // reset. Prelude skips never move it.
-            if let Some(cursor) = skipped_to {
-                self.cursor = cursor;
-            }
-            let selected = match selected {
-                Ok(selected) => selected,
-                Err((index, prelude, id, predicate, requires_bank)) => {
-                    let stage = self
-                        .stage
+        }
+        if !self.ensure_step_bank_scan(tick) {
+            self.publish(tick.output);
+            return Ok(ScriptFlow::Continue);
+        }
+        let poll = self.poll_active_step(tick);
+        match poll {
+            Poll::Pending => {
+                if !self.needs_read
+                    && self
+                        .step
                         .as_ref()
-                        .map_or("unknown", |stage| stage.0.as_ref());
-                    self.trace.record(
-                        tick.output,
-                        api::hostlog::Level::Info,
-                        format_args!(
-                            "quester {}: stage {stage} step {id} skip predicate waiting: {predicate}",
-                            self.path.id.0
-                        ),
-                    );
-                    if requires_bank && !bank_known(tick) {
-                        self.start_predicate_bank_scan(tick);
-                        self.selection_since = None;
-                        // The scan trip starts on this tick (TICK-FIX #4).
-                        if tick.cx.may_continue_this_tick() {
-                            self.poll_provision(tick);
-                        }
-                        self.publish(tick.output);
-                        return Ok(ScriptFlow::Continue);
-                    }
-                    let since = self.selection_since.get_or_insert(tick.cx.active_now());
-                    if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
-                        self.parked = true;
-                        self.park_reason = "skip predicate evidence unavailable";
-                        self.clear_last_error();
-                        self.parked_step = Some(ParkedStep {
-                            sequence_index: self.seq_index,
-                            step_index: index,
-                            in_prelude: prelude,
-                            id,
-                        });
-                        self.dirty = true;
-                    }
-                    self.publish(tick.output);
-                    return Ok(ScriptFlow::Continue);
-                }
-            };
-            self.selection_since = None;
-            let Some((index, advances, prelude)) = selected else {
-                self.selected_hazard.clear();
-                if self
-                    .path
-                    .sequences
-                    .get(self.seq_index)
-                    .is_some_and(|seq| seq.terminal)
+                        .is_some_and(|step| step.needs_progress_read())
                 {
-                    return Ok(self.finish_quest(tick));
-                }
-                self.last_outcome = None;
-                if self
-                    .path
-                    .sequences
-                    .get(self.seq_index)
-                    .is_some_and(|seq| seq.order == super::path::SequenceOrder::Ordered)
-                {
-                    let stage = self
-                        .stage
-                        .as_ref()
-                        .map_or("unknown", |stage| stage.0.as_ref());
-                    self.trace.record(
-                        tick.output,
-                        api::hostlog::Level::Info,
-                        format_args!(
-                            "quester {}: stage {stage} ordered sequence has no step left at cursor {}; rereading progress",
-                            self.path.id.0, self.cursor
-                        ),
-                    );
-                }
-                self.empty_reads += 1;
-                if self.empty_reads >= 2 {
-                    self.in_prelude = false;
-                    self.step_index = self
-                        .path
-                        .sequences
-                        .get(self.seq_index)
-                        .map_or(0, |sequence| sequence.steps.len());
-                    self.parked_step = None;
-                    self.parked = true;
-                    self.park_reason = "no step for stage";
-                    self.clear_last_error();
+                    self.needs_read = true;
                     self.dirty = true;
+                    // An advancing acquire child reads on its completion
+                    // tick, like an advancing root step (TICK-FIX #6).
+                    if pass < SAME_TICK_PASSES
+                        && tick.cx.may_continue_this_tick()
+                        && !self.survival_deferred
+                    {
+                        return self.advance(tick, pass + 1);
+                    }
                 }
-                self.needs_read = true;
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
-            };
-            self.step_index = index;
-            self.advances = advances;
-            self.empty_reads = 0;
-            self.in_prelude = prelude;
-            self.failed_acquisition_child = None;
-            self.parked_step = None;
-            if self.pair_begin_since.is_some_and(|since| {
-                tick.cx.active_now().saturating_sub(since) >= PAIR_ADMISSION_TIMEOUT
-            }) {
-                if let Some(port) = tick.pairs {
-                    port.invalidate(tick.cx.run());
+            }
+            Poll::Ready(Ok(outcome)) => match self.handle_step_poll_ok(tick, outcome, pass) {
+                PollOkOutcome::ContinueNoUpdate => return Ok(ScriptFlow::Continue),
+                PollOkOutcome::Reenter => return self.advance(tick, pass + 1),
+                PollOkOutcome::Done => {}
+            },
+            Poll::Ready(Err(error)) => {
+                if let Some(flow) = self.handle_step_poll_err(tick, error) {
+                    return Ok(flow);
                 }
-                self.pair_begin_since = None;
-                self.waiting = None;
-                self.record_failure(ActionError::Blocked(Arc::from(
-                    "partner phase begin timed out after 10 minutes of active time; Stop and Start both accounts",
-                )));
-                self.parked = true;
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
             }
-            let step_id = if prelude {
-                self.path.prelude[index].id.clone()
-            } else {
-                self.path.sequences[self.seq_index].steps[index].id.clone()
-            };
-            self.reset_attempt_scope_if_needed(&step_id);
-            let step = if prelude {
-                &self.path.prelude[index]
-            } else {
-                &self.path.sequences[self.seq_index].steps[index]
-            };
-            self.selected_hazard.select(
-                StepSlot {
-                    in_prelude: prelude,
-                    seq_index: self.seq_index,
-                    step_index: index,
-                },
-                step.hazard,
-            );
-            if let Some(hazard) = step.hazard.filter(|_| !self.selected_hazard.handled) {
-                let Some(hp_max) = tick
-                    .cx
-                    .snapshot()
-                    .stats()
-                    .and_then(|stats| stats.value.iter().find(|stat| stat.index == 3))
-                    .map(|stat| stat.base)
-                else {
-                    self.publish(tick.output);
-                    return Ok(ScriptFlow::Continue);
-                };
-                let max = hazard.max_damage(hp_max, hp_max);
-                let line = crate::combat::select::lines(Some(max), hp_max).eat;
-                tick.output.log(
-                    api::hostlog::Level::Info,
-                    &format!(
-                        "quester hazard step={} max={max} source={} line={line}",
-                        step.id.0,
-                        step.hazard_source.as_deref().unwrap_or("")
-                    ),
-                );
-                self.selected_hazard.handled = true;
-                if line >= hp_max {
-                    let id = Arc::clone(&step.id.0);
-                    self.parked_step = Some(ParkedStep {
-                        sequence_index: self.seq_index,
-                        step_index: index,
-                        in_prelude: prelude,
-                        id: Arc::clone(&id),
-                    });
-                    self.set_last_error(
-                        QuesterFailureKind::HazardUnsurvivable,
-                        Arc::from(format!(
-                            "step {id}: its damage {max} needs more than {hp_max} Hitpoints to clear the eat line {line}"
-                        )),
-                    );
-                    self.parked = true;
-                    self.dirty = true;
-                    self.trace_parked(tick.output);
-                    self.publish(tick.output);
-                    return Ok(ScriptFlow::Blocked(self.blocked_failure()));
-                }
-                self.survival_deferred = true;
-                self.dirty = true;
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
-            }
-            let pair_step = step.kind.as_ref() == "partner";
-            self.chat_since = super::families::reach::last_chat_seq(&tick.cx);
-            let required_after = tick.cx.evidence();
-            if step.kind.as_ref() == "combat" {
-                self.last_combat = None;
-            }
+        }
+        self.update_wait();
+        self.publish(tick.output);
+        Ok(ScriptFlow::Continue)
+    }
+
+    fn current_sequence_empty_terminal(&self) -> bool {
+        self.path
+            .sequences
+            .get(self.seq_index)
+            .is_some_and(|seq| seq.terminal && seq.steps.is_empty())
+    }
+
+    fn trace_current_root_event(
+        &mut self,
+        output: &mut dyn NativeOutput,
+        level: api::hostlog::Level,
+        event: fmt::Arguments<'_>,
+    ) {
+        let step = if self.in_prelude {
+            self.path.prelude.get(self.step_index)
+        } else {
+            self.path
+                .sequences
+                .get(self.seq_index)
+                .and_then(|sequence| sequence.steps.get(self.step_index))
+        };
+        if let Some(step) = step {
             let stage = self
                 .stage
                 .as_ref()
                 .map_or("unknown", |stage| stage.0.as_ref());
-            let trace_snapshot = api::hostlog::enabled(api::hostlog::Category::ScriptTrace)
-                .then(|| tick.frame().snapshot())
-                .flatten();
             trace_root_event(
                 &mut self.trace,
-                tick.output,
-                api::hostlog::Level::Info,
+                output,
+                level,
                 self.path.id.0.as_ref(),
                 stage,
                 step,
-                format_args!("begin"),
+                event,
             );
-            if let Some(snapshot) = trace_snapshot {
-                api::host_log!(
-                    api::hostlog::Category::ScriptTrace,
+        }
+    }
+
+    fn advance_progress_read(&mut self, tick: &mut NativeTick<'_>) -> bool {
+        if !self.needs_read {
+            return true;
+        }
+        if let Some((index, until)) = self.read_after_kill {
+            // The quest progress lands with the killed NPC's removal.
+            if tick.cx.evidence().tick < until && npc_in_scene(tick, index) {
+                return false;
+            }
+            self.read_after_kill = None;
+        }
+        let retarget =
+            !self.settling && self.step.is_none() && !self.provisioner.needs_progress_read();
+        if !self.read_stage(tick, retarget) {
+            return false;
+        }
+        if let Some(step) = self.step.as_mut() {
+            step.progress_read_completed(tick.cx.active_now());
+        }
+        self.provisioner
+            .progress_read_completed(tick.cx.active_now());
+        true
+    }
+
+    fn advance_settling(&mut self, tick: &mut NativeTick<'_>) -> SettleAdvance {
+        let truth = {
+            let pred = PredicateContext {
+                cx: &tick.cx,
+                pairs: tick.pairs,
+                quests: &self.quests,
+                progress: self.progress_slice(),
+                required_after: tick.cx.evidence(),
+                chat_since: self.chat_since,
+                outcome: self.last_outcome.as_ref(),
+            };
+            self.current_step()
+                .map(|step| step.settle.evaluate(&pred))
+                .unwrap_or(Truth::False)
+        };
+        if truth == Truth::True {
+            self.trace_current_root_event(
+                tick.output,
+                api::hostlog::Level::Info,
+                format_args!("settled"),
+            );
+            self.settling = false;
+            self.settle_deadline = Duration::ZERO;
+            self.fail_streak = 0;
+            self.record_step_success();
+            self.retarget_after_settle(true);
+            self.on_step_boundary(tick);
+            // Select on the snapshot that proved the settle instead of a
+            // tick later. Anything the next tick's prologue would do first
+            // (park, prayer cleanup, a reread) keeps the old order, and a
+            // tick whose single interaction event is spent, or that first
+            // shows a new scene, waits.
+            if !self.parked && !self.prayer_cleanup_pending {
+                self.request_contradicted_read(tick);
+            }
+            let may_continue =
+                !self.parked && !self.prayer_cleanup_pending && tick.cx.may_continue_this_tick();
+            if may_continue && !self.needs_read {
+                return SettleAdvance::SelectNow;
+            }
+            // A boundary that owes a progress read (an advancing step, a
+            // contradicted colour) reads now and selects on its result
+            // (TICK-FIX #6, E-Q3): a colour read is immediate, a journal
+            // read sends its click this tick.
+            if may_continue && self.needs_read {
+                return SettleAdvance::RereadNow;
+            }
+            return SettleAdvance::Continue;
+        }
+        if tick.cx.active_now() >= self.settle_deadline {
+            self.settling = false;
+            let error = ActionError::Failed(Arc::from("step settle timeout"));
+            let step = if self.in_prelude {
+                self.path.prelude.get(self.step_index)
+            } else {
+                self.path
+                    .sequences
+                    .get(self.seq_index)
+                    .and_then(|sequence| sequence.steps.get(self.step_index))
+            };
+            let failed_step = step.map(|step| ParkedStep {
+                sequence_index: self.seq_index,
+                step_index: self.step_index,
+                in_prelude: self.in_prelude,
+                id: Arc::clone(&step.id.0),
+            });
+            self.trace_current_root_event(
+                tick.output,
+                api::hostlog::Level::Warn,
+                format_args!("failed: step settle timeout"),
+            );
+            self.record_step_failure_with_outcome(error, tick, true);
+            // Progress may land after the earlier read while an advancing step settles.
+            self.needs_read = !self.parked && (self.needs_read || self.advances);
+            self.dirty = true;
+            if self.parked {
+                self.parked_step = failed_step;
+            }
+            self.retarget_after_settle(false);
+        }
+        SettleAdvance::Continue
+    }
+
+    fn select_and_begin_step(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+    ) -> Result<Option<ScriptFlow>, ScriptFailure> {
+        if let Some(flow) = self.upkeep_before_provision(tick) {
+            return Ok(Some(flow));
+        }
+        if !self.poll_provision(tick) {
+            self.publish(tick.output);
+            return Ok(Some(ScriptFlow::Continue));
+        }
+        // A receipt may settle on a wake after this tick's event or on
+        // scene entry. Fresh selection waits until both fences are clear.
+        if !tick.cx.may_continue_this_tick() {
+            self.publish(tick.output);
+            return Ok(Some(ScriptFlow::Continue));
+        }
+        let (index, advances, prelude) = match self.select_next_step(tick) {
+            StepSelectOutcome::Selected {
+                index,
+                advances,
+                prelude,
+            } => (index, advances, prelude),
+            StepSelectOutcome::FinishQuest => return Ok(Some(self.finish_quest(tick))),
+            StepSelectOutcome::Continue => {
+                self.publish(tick.output);
+                return Ok(Some(ScriptFlow::Continue));
+            }
+        };
+        self.step_index = index;
+        self.advances = advances;
+        self.empty_reads = 0;
+        self.in_prelude = prelude;
+        self.failed_acquisition_child = None;
+        self.parked_step = None;
+        if self.pair_begin_since.is_some_and(|since| {
+            tick.cx.active_now().saturating_sub(since) >= PAIR_ADMISSION_TIMEOUT
+        }) {
+            if let Some(port) = tick.pairs {
+                port.invalidate(tick.cx.run());
+            }
+            self.pair_begin_since = None;
+            self.waiting = None;
+            self.record_failure(ActionError::Blocked(Arc::from(
+                "partner phase begin timed out after 10 minutes of active time; Stop and Start both accounts",
+            )));
+            self.parked = true;
+            self.publish(tick.output);
+            return Ok(Some(ScriptFlow::Continue));
+        }
+        let step_id = if prelude {
+            self.path.prelude[index].id.clone()
+        } else {
+            self.path.sequences[self.seq_index].steps[index].id.clone()
+        };
+        self.reset_attempt_scope_if_needed(&step_id);
+        if let Some(flow) = self.check_selected_hazard(tick, prelude, index) {
+            self.publish(tick.output);
+            return Ok(Some(flow));
+        }
+        self.begin_selected_step(tick, prelude, index);
+        // A begun step is polled on its begin tick unless the begin
+        // already spent the tick's event (TICK-FIX #4, C-BEGIN-NO-POLL).
+        if self.step.is_none() || !tick.cx.may_continue_this_tick() {
+            self.publish(tick.output);
+            return Ok(Some(ScriptFlow::Continue));
+        }
+        Ok(None)
+    }
+
+    fn select_next_step(&mut self, tick: &mut NativeTick<'_>) -> StepSelectOutcome {
+        let (selected, skipped_to) = {
+            let path = &self.path;
+            let seq_index = self.seq_index;
+            let cursor = self.cursor;
+            let quests = &self.quests;
+            let progress = self
+                .progress
+                .as_deref()
+                .map(std::slice::from_ref)
+                .unwrap_or(&[]);
+            let outcome = self.last_combat.as_ref().or(self.last_outcome.as_ref());
+            let stage = self
+                .stage
+                .as_ref()
+                .map_or("unknown", |stage| stage.0.as_ref());
+            let trace = &mut self.trace;
+            let output = &mut *tick.output;
+            let pred = PredicateContext {
+                cx: &tick.cx,
+                pairs: tick.pairs,
+                quests,
+                progress,
+                required_after: tick.cx.evidence(),
+                chat_since: super::families::reach::last_chat_seq(&tick.cx),
+                outcome,
+            };
+            match select_with_skips(path, seq_index, cursor, &pred, |step| {
+                trace.record(
+                    output,
                     api::hostlog::Level::Info,
-                    "quester {}: stage {stage} step {} ({}) player_info={}",
-                    self.path.id.0,
-                    step.id.0,
-                    step.kind,
-                    snapshot.gens().player_info
+                    format_args!(
+                        "quester {}: stage {stage} step {} skipped: {} evaluated true",
+                        path.id.0, step.id.0, step.skip_if_summary
+                    ),
+                );
+            }) {
+                SelectionDecision::Selected(sel) => (
+                    Ok(Some((sel.index, sel.step.advances, sel.prelude))),
+                    (!sel.prelude).then_some(sel.index),
+                ),
+                SelectionDecision::Exhausted => (
+                    Ok(None),
+                    path.sequences.get(seq_index).map(|seq| seq.steps.len()),
+                ),
+                SelectionDecision::Unknown(sel) => (
+                    Err((
+                        sel.index,
+                        sel.prelude,
+                        Arc::clone(&sel.step.id.0),
+                        Arc::clone(&sel.step.skip_if_summary),
+                        sel.step.skip_if.requires_bank(),
+                    )),
+                    (!sel.prelude).then_some(sel.index),
+                ),
+            }
+        };
+        // Every sequence step the selector passed over had a proven-true
+        // skip_if, so those skips commit to the ordered cursor whether the
+        // selection then started a step, blocked on Unknown evidence, or
+        // ran out of steps: a skipped prefix never re-runs without a
+        // reset. Prelude skips never move it.
+        if let Some(cursor) = skipped_to {
+            self.cursor = cursor;
+        }
+        let selected = match selected {
+            Ok(selected) => selected,
+            Err((index, prelude, id, predicate, requires_bank)) => {
+                let stage = self
+                    .stage
+                    .as_ref()
+                    .map_or("unknown", |stage| stage.0.as_ref());
+                self.trace.record(
+                    tick.output,
+                    api::hostlog::Level::Info,
+                    format_args!(
+                        "quester {}: stage {stage} step {id} skip predicate waiting: {predicate}",
+                        self.path.id.0
+                    ),
+                );
+                if requires_bank && !bank_known(tick) {
+                    self.start_predicate_bank_scan(tick);
+                    self.selection_since = None;
+                    // The scan trip starts on this tick (TICK-FIX #4).
+                    if tick.cx.may_continue_this_tick() {
+                        self.poll_provision(tick);
+                    }
+                    return StepSelectOutcome::Continue;
+                }
+                let since = self.selection_since.get_or_insert(tick.cx.active_now());
+                if tick.cx.active_now().saturating_sub(*since) >= Duration::from_secs(16) {
+                    self.parked = true;
+                    self.park_reason = "skip predicate evidence unavailable";
+                    self.clear_last_error();
+                    self.parked_step = Some(ParkedStep {
+                        sequence_index: self.seq_index,
+                        step_index: index,
+                        in_prelude: prelude,
+                        id,
+                    });
+                    self.dirty = true;
+                }
+                return StepSelectOutcome::Continue;
+            }
+        };
+        self.selection_since = None;
+        let Some((index, advances, prelude)) = selected else {
+            self.selected_hazard.clear();
+            if self
+                .path
+                .sequences
+                .get(self.seq_index)
+                .is_some_and(|seq| seq.terminal)
+            {
+                return StepSelectOutcome::FinishQuest;
+            }
+            self.last_outcome = None;
+            if self
+                .path
+                .sequences
+                .get(self.seq_index)
+                .is_some_and(|seq| seq.order == super::path::SequenceOrder::Ordered)
+            {
+                let stage = self
+                    .stage
+                    .as_ref()
+                    .map_or("unknown", |stage| stage.0.as_ref());
+                self.trace.record(
+                    tick.output,
+                    api::hostlog::Level::Info,
+                    format_args!(
+                        "quester {}: stage {stage} ordered sequence has no step left at cursor {}; rereading progress",
+                        self.path.id.0, self.cursor
+                    ),
                 );
             }
-            #[cfg(test)]
-            self.begun.push(Arc::clone(&step.id.0));
-            let resume_page = self.open_page_retry.take() == Some((prelude, self.seq_index, index));
-            let result = {
-                let mut step_cx = StepContext {
-                    tick,
-                    quests: &self.quests,
-                    progress: self.progress_slice(),
-                    required_after,
-                    banks: &self.banks,
-                    choices: &self.choices,
-                };
-                if resume_page {
-                    step.plan.begin_open_page(&mut step_cx)
-                } else {
-                    step.plan.begin(&mut step_cx)
-                }
-            };
-            match result {
-                Ok(run) => {
-                    self.pair_begin_since = None;
-                    self.waiting = None;
-                    self.step = Some(run);
-                    self.step_after = required_after;
-                    self.last_outcome = None;
-                    self.dirty = true;
-                    self.clear_last_error();
-                }
-                Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted)
-                    if pair_step =>
-                {
-                    self.pair_begin_since.get_or_insert(tick.cx.active_now());
-                    self.waiting = Some(("Partner phase begin", Arc::clone(&self.path.id.0)));
-                    self.clear_last_error();
-                    self.dirty = true;
-                }
-                Err(ActionError::BudgetExhausted) => {
-                    // A composed begin can exhaust the transition allowance
-                    // too. Retry without counting a failed step attempt.
-                    self.pair_begin_since = None;
-                    self.waiting = None;
-                    self.clear_last_error();
-                    self.dirty = true;
-                }
-                Err(error) => {
-                    let reason = trace_error_reason(&error);
-                    self.trace.record(
-                        tick.output,
-                        api::hostlog::Level::Warn,
-                        format_args!(
-                            "quester {}: stage {stage} step {} ({}) begin failed: {reason}",
-                            self.path.id.0, step.id.0, step.kind
-                        ),
-                    );
-                    self.pair_begin_since = None;
-                    self.waiting = None;
-                    self.record_step_begin_failure(error);
-                }
+            self.empty_reads += 1;
+            if self.empty_reads >= 2 {
+                self.in_prelude = false;
+                self.step_index = self
+                    .path
+                    .sequences
+                    .get(self.seq_index)
+                    .map_or(0, |sequence| sequence.steps.len());
+                self.parked_step = None;
+                self.parked = true;
+                self.park_reason = "no step for stage";
+                self.clear_last_error();
+                self.dirty = true;
             }
-            // A begun step is polled on its begin tick unless the begin
-            // already spent the tick's event (TICK-FIX #4, C-BEGIN-NO-POLL).
-            if self.step.is_none() || !tick.cx.may_continue_this_tick() {
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
+            self.needs_read = true;
+            return StepSelectOutcome::Continue;
+        };
+        StepSelectOutcome::Selected {
+            index,
+            advances,
+            prelude,
+        }
+    }
+
+    fn check_selected_hazard(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+        prelude: bool,
+        index: usize,
+    ) -> Option<ScriptFlow> {
+        let step = if prelude {
+            &self.path.prelude[index]
+        } else {
+            &self.path.sequences[self.seq_index].steps[index]
+        };
+        self.selected_hazard.select(
+            StepSlot {
+                in_prelude: prelude,
+                seq_index: self.seq_index,
+                step_index: index,
+            },
+            step.hazard,
+        );
+        let hazard = step.hazard.filter(|_| !self.selected_hazard.handled)?;
+        let Some(hp_max) = tick
+            .cx
+            .snapshot()
+            .stats()
+            .and_then(|stats| stats.value.iter().find(|stat| stat.index == 3))
+            .map(|stat| stat.base)
+        else {
+            return Some(ScriptFlow::Continue);
+        };
+        let max = hazard.max_damage(hp_max, hp_max);
+        let line = crate::combat::select::lines(Some(max), hp_max).eat;
+        tick.output.log(
+            api::hostlog::Level::Info,
+            &format!(
+                "quester hazard step={} max={max} source={} line={line}",
+                step.id.0,
+                step.hazard_source.as_deref().unwrap_or("")
+            ),
+        );
+        self.selected_hazard.handled = true;
+        if line >= hp_max {
+            let id = Arc::clone(&step.id.0);
+            self.parked_step = Some(ParkedStep {
+                sequence_index: self.seq_index,
+                step_index: index,
+                in_prelude: prelude,
+                id: Arc::clone(&id),
+            });
+            self.set_last_error(
+                QuesterFailureKind::HazardUnsurvivable,
+                Arc::from(format!(
+                    "step {id}: its damage {max} needs more than {hp_max} Hitpoints to clear the eat line {line}"
+                )),
+            );
+            self.parked = true;
+            self.dirty = true;
+            self.trace_parked(tick.output);
+            return Some(ScriptFlow::Blocked(self.blocked_failure()));
+        }
+        self.survival_deferred = true;
+        self.dirty = true;
+        Some(ScriptFlow::Continue)
+    }
+
+    fn begin_selected_step(&mut self, tick: &mut NativeTick<'_>, prelude: bool, index: usize) {
+        let step = if prelude {
+            &self.path.prelude[index]
+        } else {
+            &self.path.sequences[self.seq_index].steps[index]
+        };
+        let pair_step = step.kind.as_ref() == "partner";
+        self.chat_since = super::families::reach::last_chat_seq(&tick.cx);
+        let required_after = tick.cx.evidence();
+        if step.kind.as_ref() == "combat" {
+            self.last_combat = None;
+        }
+        let stage = self
+            .stage
+            .as_ref()
+            .map_or("unknown", |stage| stage.0.as_ref());
+        let trace_snapshot = api::hostlog::enabled(api::hostlog::Category::ScriptTrace)
+            .then(|| tick.frame().snapshot())
+            .flatten();
+        trace_root_event(
+            &mut self.trace,
+            tick.output,
+            api::hostlog::Level::Info,
+            self.path.id.0.as_ref(),
+            stage,
+            step,
+            format_args!("begin"),
+        );
+        if let Some(snapshot) = trace_snapshot {
+            api::host_log!(
+                api::hostlog::Category::ScriptTrace,
+                api::hostlog::Level::Info,
+                "quester {}: stage {stage} step {} ({}) player_info={}",
+                self.path.id.0,
+                step.id.0,
+                step.kind,
+                snapshot.gens().player_info
+            );
+        }
+        #[cfg(test)]
+        self.begun.push(Arc::clone(&step.id.0));
+        let resume_page = self.open_page_retry.take() == Some((prelude, self.seq_index, index));
+        let result = {
+            let mut step_cx = StepContext {
+                tick,
+                quests: &self.quests,
+                progress: self.progress_slice(),
+                required_after,
+                banks: &self.banks,
+                choices: &self.choices,
+            };
+            if resume_page {
+                step.plan.begin_open_page(&mut step_cx)
+            } else {
+                step.plan.begin(&mut step_cx)
+            }
+        };
+        match result {
+            Ok(run) => {
+                self.pair_begin_since = None;
+                self.waiting = None;
+                self.step = Some(run);
+                self.step_after = required_after;
+                self.last_outcome = None;
+                self.dirty = true;
+                self.clear_last_error();
+            }
+            Err(ActionError::Busy | ActionError::Held | ActionError::BudgetExhausted)
+                if pair_step =>
+            {
+                self.pair_begin_since.get_or_insert(tick.cx.active_now());
+                self.waiting = Some(("Partner phase begin", Arc::clone(&self.path.id.0)));
+                self.clear_last_error();
+                self.dirty = true;
+            }
+            Err(ActionError::BudgetExhausted) => {
+                // A composed begin can exhaust the transition allowance
+                // too. Retry without counting a failed step attempt.
+                self.pair_begin_since = None;
+                self.waiting = None;
+                self.clear_last_error();
+                self.dirty = true;
+            }
+            Err(error) => {
+                let reason = trace_error_reason(&error);
+                self.trace.record(
+                    tick.output,
+                    api::hostlog::Level::Warn,
+                    format_args!(
+                        "quester {}: stage {stage} step {} ({}) begin failed: {reason}",
+                        self.path.id.0, step.id.0, step.kind
+                    ),
+                );
+                self.pair_begin_since = None;
+                self.waiting = None;
+                self.record_step_begin_failure(error);
             }
         }
+    }
+
+    fn ensure_step_bank_scan(&mut self, tick: &mut NativeTick<'_>) -> bool {
         let needs_bank_scan = self
             .step
             .as_ref()
@@ -4460,11 +4588,15 @@ impl Quester {
             if needs_bank_scan && !bank_known && !bank_scan_active {
                 self.start_predicate_bank_scan(tick);
             }
-            if !self.poll_provision(tick) {
-                self.publish(tick.output);
-                return Ok(ScriptFlow::Continue);
-            }
+            return self.poll_provision(tick);
         }
+        true
+    }
+
+    fn poll_active_step(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
         let required_after = tick.cx.evidence();
         let poll = {
             let mut step_cx = StepContext {
@@ -4491,81 +4623,74 @@ impl Quester {
             };
             self.trace_step_event(tick.output, event);
         }
-        match poll {
-            Poll::Pending => {
-                if !self.needs_read
-                    && self
-                        .step
-                        .as_ref()
-                        .is_some_and(|step| step.needs_progress_read())
-                {
-                    self.needs_read = true;
-                    self.dirty = true;
-                    // An advancing acquire child reads on its completion
-                    // tick, like an advancing root step (TICK-FIX #6).
-                    if pass < SAME_TICK_PASSES
-                        && tick.cx.may_continue_this_tick()
-                        && !self.survival_deferred
-                    {
-                        return self.advance(tick, pass + 1);
-                    }
-                }
-            }
-            Poll::Ready(Ok(outcome)) => {
-                if let Some(progress) = &outcome.progress {
-                    if outcome.evidence != progress.evidence
-                        || !self.valid_progress(tick, progress, self.step_after)
-                    {
-                        self.record_step_failure(ActionError::Stale, tick);
-                        self.step = None;
-                        return Ok(ScriptFlow::Continue);
-                    }
-                    self.adopt_progress(tick, Arc::clone(progress), false);
-                }
-                if let Some(loadout) = self.current_step().and_then(|step| step.loadout.clone()) {
-                    self.active_loadout = Some(loadout);
-                }
-                // The bank's rows are the host's to observe (design-bank-snapshot
-                // §1.3); a bank receipt carries nothing the memory lacks.
-                if outcome.receipt.as_ref().is_some_and(|receipt| {
-                    receipt.as_any().downcast_ref::<CombatReceipt>().is_some()
-                }) {
-                    self.last_combat = Some(StepOutcome {
-                        progress: outcome.progress.clone(),
-                        evidence: outcome.evidence,
-                        receipt: outcome.receipt.clone(),
-                    });
-                }
-                self.last_outcome = Some(outcome);
-                self.capture_prayer_cleanup();
-                self.dirty = true;
-                if self.advances {
-                    self.needs_read = true;
-                    self.read_after_kill = killed_npc_in_scene(tick, self.last_outcome.as_ref())
-                        .map(|index| (index, tick.cx.evidence().tick + KILL_READ_BOUND_TICKS));
-                }
+        poll
+    }
+
+    fn handle_step_poll_ok(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+        outcome: StepOutcome,
+        pass: u8,
+    ) -> PollOkOutcome {
+        if let Some(progress) = &outcome.progress {
+            if outcome.evidence != progress.evidence
+                || !self.valid_progress(tick, progress, self.step_after)
+            {
+                self.record_step_failure(ActionError::Stale, tick);
                 self.step = None;
-                self.settling = true;
-                self.settle_deadline = tick.cx.active_now()
-                    + self
-                        .current_step()
-                        .map(|step| step.plan.settle_timeout())
-                        .unwrap_or_default();
-                // Settle, reread and select on the snapshot that proved the
-                // completion instead of a tick later (TICK-FIX #5/#6, E-Q1/E-Q3).
-                if pass < SAME_TICK_PASSES
-                    && tick.cx.may_continue_this_tick()
-                    && !self.survival_deferred
-                {
-                    return self.advance(tick, pass + 1);
-                }
+                return PollOkOutcome::ContinueNoUpdate;
             }
-            Poll::Ready(Err(
-                error @ (ActionError::Blocked(_)
-                | ActionError::CombatInterrupted
-                | ActionError::NeedsEvidence(_)
-                | ActionError::UserInput),
-            )) => {
+            self.adopt_progress(tick, Arc::clone(progress), false);
+        }
+        if let Some(loadout) = self.current_step().and_then(|step| step.loadout.clone()) {
+            self.active_loadout = Some(loadout);
+        }
+        // The bank's rows are the host's to observe (design-bank-snapshot
+        // §1.3); a bank receipt carries nothing the memory lacks.
+        if outcome
+            .receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>().is_some())
+        {
+            self.last_combat = Some(StepOutcome {
+                progress: outcome.progress.clone(),
+                evidence: outcome.evidence,
+                receipt: outcome.receipt.clone(),
+            });
+        }
+        self.last_outcome = Some(outcome);
+        self.capture_prayer_cleanup();
+        self.dirty = true;
+        if self.advances {
+            self.needs_read = true;
+            self.read_after_kill = killed_npc_in_scene(tick, self.last_outcome.as_ref())
+                .map(|index| (index, tick.cx.evidence().tick + KILL_READ_BOUND_TICKS));
+        }
+        self.step = None;
+        self.settling = true;
+        self.settle_deadline = tick.cx.active_now()
+            + self
+                .current_step()
+                .map(|step| step.plan.settle_timeout())
+                .unwrap_or_default();
+        // Settle, reread and select on the snapshot that proved the
+        // completion instead of a tick later (TICK-FIX #5/#6, E-Q1/E-Q3).
+        if pass < SAME_TICK_PASSES && tick.cx.may_continue_this_tick() && !self.survival_deferred {
+            return PollOkOutcome::Reenter;
+        }
+        PollOkOutcome::Done
+    }
+
+    fn handle_step_poll_err(
+        &mut self,
+        tick: &mut NativeTick<'_>,
+        error: ActionError,
+    ) -> Option<ScriptFlow> {
+        match error {
+            error @ (ActionError::Blocked(_)
+            | ActionError::CombatInterrupted
+            | ActionError::NeedsEvidence(_)
+            | ActionError::UserInput) => {
                 if let Some(outcome) = self
                     .step
                     .as_ref()
@@ -4582,29 +4707,12 @@ impl Quester {
                         receipt: outcome.receipt.clone(),
                     });
                 }
-                let root_step = if self.in_prelude {
-                    self.path.prelude.get(self.step_index)
-                } else {
-                    self.path
-                        .sequences
-                        .get(self.seq_index)
-                        .and_then(|sequence| sequence.steps.get(self.step_index))
-                };
-                if let Some(step) = root_step {
-                    let stage = self
-                        .stage
-                        .as_ref()
-                        .map_or("unknown", |stage| stage.0.as_ref());
-                    trace_root_event(
-                        &mut self.trace,
-                        tick.output,
-                        api::hostlog::Level::Warn,
-                        self.path.id.0.as_ref(),
-                        stage,
-                        step,
-                        format_args!("failed: {}", trace_error_reason(&error)),
-                    );
-                }
+                let reason = trace_error_reason(&error);
+                self.trace_current_root_event(
+                    tick.output,
+                    api::hostlog::Level::Warn,
+                    format_args!("failed: {reason}"),
+                );
                 self.capture_prayer_cleanup();
                 self.capture_failed_acquisition_child();
                 let budget = self.current_attempt_budget();
@@ -4623,32 +4731,15 @@ impl Quester {
                 }
                 self.update_wait();
                 self.publish(tick.output);
-                return Ok(ScriptFlow::Blocked(self.blocked_failure()));
+                Some(ScriptFlow::Blocked(self.blocked_failure()))
             }
-            Poll::Ready(Err(error)) => {
-                let root_step = if self.in_prelude {
-                    self.path.prelude.get(self.step_index)
-                } else {
-                    self.path
-                        .sequences
-                        .get(self.seq_index)
-                        .and_then(|sequence| sequence.steps.get(self.step_index))
-                };
-                if let Some(step) = root_step {
-                    let stage = self
-                        .stage
-                        .as_ref()
-                        .map_or("unknown", |stage| stage.0.as_ref());
-                    trace_root_event(
-                        &mut self.trace,
-                        tick.output,
-                        api::hostlog::Level::Warn,
-                        self.path.id.0.as_ref(),
-                        stage,
-                        step,
-                        format_args!("failed: {}", trace_error_reason(&error)),
-                    );
-                }
+            error => {
+                let reason = trace_error_reason(&error);
+                self.trace_current_root_event(
+                    tick.output,
+                    api::hostlog::Level::Warn,
+                    format_args!("failed: {reason}"),
+                );
                 self.capture_prayer_cleanup();
                 self.capture_failed_acquisition_child();
                 self.step = None;
@@ -4661,11 +4752,9 @@ impl Quester {
                     self.step_index,
                 ));
                 self.record_step_failure(error, tick);
+                None
             }
         }
-        self.update_wait();
-        self.publish(tick.output);
-        Ok(ScriptFlow::Continue)
     }
 }
 

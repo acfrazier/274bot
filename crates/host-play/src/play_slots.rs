@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 use api::host_log;
 use api::hostlog::{Category, Level};
 use api::identity::SlotKeyMinter;
-use api::lifecycle::Intent;
+use api::lifecycle::{Intent, IntentCommand};
 use api::snapshot::GameSnapshot;
-use client::client::Client;
+use client::client::{Client, LoginError};
 use client::config::{Cache, IfType, IfTypeMut};
 use host::login_queue::LoginBackoff;
 use host::{
@@ -30,8 +30,8 @@ use crate::play_login::{
     granted_permit_world_is_current, observe_client_session_exit, plan_login_retry,
     publish_login_latched_from_arm, refresh_slot_world_preference, should_handshake,
     sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
-    wait_for_transfer_response, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
-    SlotLogin,
+    wait_for_transfer_response, PermitWait, QueuePlaceRetirement, RelogParkReason,
+    SharedLoginQueue, SlotArm, SlotLogin,
 };
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
@@ -743,38 +743,44 @@ impl Play {
             ..SlotStatus::default()
         });
         drop(statuses);
+        #[cfg(feature = "js")]
+        let slot_channels = self.channels.slot(&profile.username);
         spawn_slot_thread(
-            &self.connection,
-            profile,
-            world_round,
-            slot_input,
-            slot_render,
-            Some(park),
-            worker_wake,
-            arm,
-            Arc::clone(&self.cache),
-            self.ifaces.clone(),
-            self.ifaces_mut_template.clone(),
-            Arc::clone(&self.queue),
-            Arc::clone(&self.statuses),
-            Arc::clone(&self.scripts),
-            #[cfg(feature = "js")]
-            self.channels.clone(),
-            Arc::clone(&self.cheats),
-            Arc::clone(&self.wires),
-            Arc::clone(&self.navs),
-            slot_bank,
-            Arc::clone(&self.pause_script_on_manual_walk_abort),
-            self.world.clone(),
-            Arc::clone(&self.obj_names),
-            self.catalog_core.clone(),
-            self.paired_core.clone(),
-            Arc::clone(&self.per_frame),
-            #[cfg(any(test, feature = "test-support"))]
-            self.post_native_player_info.clone(),
-            #[cfg(feature = "test-support")]
-            self.post_host_frame.clone(),
-            Arc::clone(&self.capacity),
+            SlotThreadArgs {
+                connection: self.connection.clone(),
+                profile,
+                world_round,
+                slot_input,
+                slot_render,
+                // The park end survives re-login rounds (`run_client` is entered
+                // once per ingame stretch), so wrap it once here.
+                park: Some(Arc::new(park)),
+                slot_wake: worker_wake,
+                arm,
+                slot_cache: Arc::clone(&self.cache),
+                ifaces_template: self.ifaces.clone(),
+                ifaces_mut_template: self.ifaces_mut_template.clone(),
+                slot_queue: Arc::clone(&self.queue),
+                slot_statuses: Arc::clone(&self.statuses),
+                slot_scripts: Arc::clone(&self.scripts),
+                #[cfg(feature = "js")]
+                slot_channels,
+                slot_cheats: Arc::clone(&self.cheats),
+                slot_wires: Arc::clone(&self.wires),
+                slot_navs: Arc::clone(&self.navs),
+                slot_bank,
+                slot_manual_abort_pause: Arc::clone(&self.pause_script_on_manual_walk_abort),
+                slot_world: self.world.clone(),
+                slot_obj_names: Arc::clone(&self.obj_names),
+                slot_catalog_core: self.catalog_core.clone(),
+                slot_paired_core: self.paired_core.clone(),
+                slot_frame: Arc::clone(&self.per_frame),
+                #[cfg(any(test, feature = "test-support"))]
+                post_native_player_info: self.post_native_player_info.clone(),
+                #[cfg(feature = "test-support")]
+                post_host_frame: self.post_host_frame.clone(),
+                slot_capacity: Arc::clone(&self.capacity),
+            },
             &mut self.handles,
         );
         Ok(())
@@ -1077,20 +1083,14 @@ fn capacity_service_class(
     }
 }
 
-/// Every profile spawns one slot thread; shared handles are threaded through
-/// because the closure moves most of them (allowed: see `script_observe`).
-// The worker body keeps its hand layout: rustfmt used to skip it (an
-// overlong literal), and reformatting ~650 lines belongs in its own
-// move-only change, not in a behavioural one.
-#[rustfmt::skip]
-#[allow(clippy::too_many_arguments)]
-fn spawn_slot_thread(
-    connection: &PlayConnection,
+/// Handles and configuration moved into a spawned slot thread.
+struct SlotThreadArgs {
+    connection: PlayConnection,
     profile: Profile,
-    mut world_round: Option<public_worlds::WorldRound>,
+    world_round: Option<public_worlds::WorldRound>,
     slot_input: Arc<SlotInput>,
     slot_render: Option<SlotRender>,
-    park: Option<SlotPark>,
+    park: Option<Arc<SlotPark>>,
     slot_wake: SlotWake,
     arm: Arc<SlotArm>,
     slot_cache: Arc<Cache>,
@@ -1100,10 +1100,12 @@ fn spawn_slot_thread(
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: ScriptWall,
     #[cfg(feature = "js")]
-    slot_channels: super::script_channels::ChannelBroker,
+    slot_channels: super::script_channels::SlotChannels,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    /// The slot thread's one handle on the account's bank memory and hint
+    /// file: moved in here, never cloned.
     slot_bank: super::slot_bank_memory::SlotBankMemory,
     slot_manual_abort_pause: Arc<std::sync::atomic::AtomicBool>,
     slot_world: Option<Arc<NavWorld>>,
@@ -1116,1257 +1118,1645 @@ fn spawn_slot_thread(
     #[cfg(feature = "test-support")]
     post_host_frame: Option<PostFrameObserver>,
     slot_capacity: Arc<host::CapacityMonitor>,
-    handles: &mut HashMap<String, thread::JoinHandle<()>>,
-) {
-    let username = profile.username.clone();
-    let uid = profile.uid;
-    let connection = connection.clone();
-    #[cfg(feature = "js")]
-    let public_world_profile = connection
-        .profile()
-        .and_then(|profile| profile.public_worlds())
-        .is_some();
-    let mainland = match &connection {
-        PlayConnection::Direct(options) => options.mainland,
-        PlayConnection::Bound { mainland, .. } => *mainland,
-    };
-    #[cfg(feature = "js")]
-    let slot_channels = slot_channels.slot(&username);
+}
 
+/// Per-slot handshake backoff, world rotation, and title-wait state.
+struct SlotLoginState {
+    backoff: LoginBackoff,
+    world_round: Option<public_worlds::WorldRound>,
+    world_dirty: bool,
+    refresh_key: bool,
+    key_refreshed: bool,
+    last_relog_park: Option<RelogParkReason>,
+    title_wait: Option<TitleWait>,
+}
+
+/// Result of polling one title/login handshake step.
+enum HandshakeOutcome {
+    Proceed { left_pump_to_log_in: bool },
+    Continue,
+    Stop,
+}
+
+/// Per-slot references held across frames inside `run_client`.
+struct SlotObserveCtx<'a> {
+    args: &'a SlotThreadArgs,
+    username: &'a str,
+    slot_canlight: Option<Arc<[u64]>>,
+    map_members: bool,
+    script_tick: &'a mut u64,
+    last_nav_step: Option<NavStepKey>,
+    nav_world_state_cache: super::script_runtime::NavWorldStateCache,
+    session_epoch: u64,
+    debug_replies: super::debug_replies::DebugReplies,
+}
+
+/// Queued wire commands and checkpoint flags for one wire dispatch pass.
+struct DispatchWiresInput {
+    wires: VecDeque<WireCmd>,
+    exclusive: bool,
+    nav_facts: bool,
+    tick_edge: bool,
+    condition_dispatch: Option<api::interact::PacketCheckpoint>,
+}
+
+/// Borrowed snapshot reference matching test-support mutability rules.
+#[cfg(feature = "test-support")]
+type ObserveSnapshotRef<'a> = &'a mut GameSnapshot;
+/// Borrowed snapshot reference matching release-build immutability rules.
+#[cfg(not(feature = "test-support"))]
+type ObserveSnapshotRef<'a> = &'a GameSnapshot;
+
+/// Per-ingame-stretch state machine advancing frames, status, and script observe.
+struct SlotFrameRunner<'a> {
+    ctx: SlotObserveCtx<'a>,
+    mainland: bool,
+    #[cfg(feature = "js")]
+    public_world_profile: bool,
+    mainland_sent: bool,
+    pump: Pump,
+    nav_snapshot: GameSnapshot,
+    welcome: login_readiness::LoginReadiness,
+    title_park_reason: &'a mut Option<RelogParkReason>,
+}
+
+/// Frame-level inputs needed to publish one slot status row.
+struct FrameStatusInput<'a> {
+    ready: bool,
+    run_sends: u32,
+    status: &'a RandomStatus,
+    session_boundary: bool,
+    condition: api::condition::BotCondition,
+    welcome_step: &'a login_readiness::WelcomeStep,
+}
+
+/// Snapshot metadata returned from publishing one frame status row.
+struct PublishedFrameStatus {
+    up: bool,
+    here: Option<(i32, i32, i32)>,
+    #[cfg(feature = "js")]
+    active_world: Option<u16>,
+}
+
+/// Frame-level inputs passed into `script_observe_cached_with_channels`.
+struct ObservePassInput<'a> {
+    up: bool,
+    here: Option<(i32, i32, i32)>,
+    hold: bool,
+    guardian_hold: bool,
+    ours: bool,
+    guardian_active_event: Option<&'a str>,
+    inv: Option<&'a [(i32, i32)]>,
+    #[cfg(feature = "js")]
+    npc_boxes: Option<&'a [script::native::snapshot_source::NpcBoxInput]>,
+    #[cfg(feature = "js")]
+    broker_world: super::script_channels::BrokerWorld,
+}
+
+/// Every profile spawns one slot thread; shared handles are threaded through
+/// via [`SlotThreadArgs`].
+fn spawn_slot_thread(args: SlotThreadArgs, handles: &mut HashMap<String, thread::JoinHandle<()>>) {
+    let username = args.profile.username.clone();
     handles.insert(
         username.clone(),
         thread::Builder::new()
-            .name(username.clone())
+            .name(username)
             .stack_size(THREAD_STACK)
-            .spawn(move || {
-            api::hostlog::bind_slot(&username);
-            host::bind_capacity(&slot_capacity);
-            let worker_outcome = catch_unwind(AssertUnwindSafe(|| {
-            #[cfg(test)]
-            let startup_entries_published = arm.wait_worker_start_for_test();
-            let _queue_retirement = QueuePlaceRetirement {
-                queue: &slot_queue,
-                statuses: &slot_statuses,
-                username: &username,
-                arm: &arm,
-            };
-            #[cfg(feature = "memory-profile")]
-            let _duel_retirement = memory::DuelReportRetirement { name: &username };
-            // Pending bank observations are saved however the worker leaves
-            // (design-bank-snapshot §1.4: slot exit is a save point).
-            let _bank_exit_save = super::slot_bank_memory::ExitSave(&slot_bank);
-            #[cfg(test)]
-            if let Some(published) = startup_entries_published {
-                published.send(()).unwrap();
-            }
-            // Preparation has no determinate client percentage, but publish
-            // a phase immediately so a slow cache fetch is visibly active.
-            publish_startup_phase(&slot_statuses, &username, "Preparing client");
-            // The park end survives re-login rounds (run_client is entered
-            // once per ingame stretch), so wrap it once here.
-            let park = park.map(Arc::new);
-            let mut client = match &connection {
-                PlayConnection::Direct(options) => prepare_client(
-                    bot_client_config(options, &profile), uid, Arc::clone(&slot_cache),
-                    ifaces_template.clone(), ifaces_mut_template.clone(),
-                ),
-                PlayConnection::Bound { template, .. } => match template.prepare_client(uid, profile.settings.lowmem) {
-                    Ok(client) => client,
-                    Err(error) => {
-                        if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
-                            row.startup_phase = StartupPhase::Error;
-                            row.startup_phase_started = Instant::now();
-                            row.error = Some(error);
-                        }
-                        clear_startup_progress(&slot_statuses, &username);
-                        return;
-                    }
-                },
-            };
-            if let PlayConnection::Direct(options) = &connection {
-                client.set_transport(options.transport);
-                client.set_cheat_admission(match connection.profile_class() {
-                    crate::ProfileClass::Local => client::CheatAdmission::Granted,
-                    crate::ProfileClass::Remote => client::CheatAdmission::Remote(options.transport),
-                });
-            }
-            // The host owns every reconnect attempt so each fresh socket
-            // returns through the shared FIFO and reservation accounting.
-            client.set_external_reconnect_owner(true);
-            host_log!(Category::Lifecycle, Level::Info, "thread up");
+            .spawn(move || run_slot_thread(args))
+            .expect("failed to spawn slot thread"),
+    );
+}
 
-            // Jag/anim/model/map prefetch (mirrors client-play; the scene
-            // cannot reach scene_state 2 until the loc models are in).
-            // `maininit` is renderer-free now: progress recording lives on
-            // the Client, and no `Renderer` is constructed for a headless
-            // slot.
-            #[cfg(any(test, feature = "test-support"))]
-            let bypass_asset_startup = arm.bypass_asset_startup.load(Ordering::Relaxed);
-            #[cfg(not(any(test, feature = "test-support")))]
-            let bypass_asset_startup = false;
-            if !bypass_asset_startup {
-                client.maininit_with_progress(Some(&mut |client, message, percent| {
-                    if arm.stop.load(Ordering::Relaxed) {
-                        client.shell.stop();
-                    } else {
-                        publish_startup_progress(&slot_statuses, &username, message, percent);
-                    }
-                }));
-            }
-            if client.error_loading && connection.profile().is_some() {
-                if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
-                    row.startup_phase = StartupPhase::Error;
-                    row.startup_phase_started = Instant::now();
-                    row.error = Some(format!("profile asset initialization failed: {}", client.last_progress_message));
-                }
-                clear_startup_progress(&slot_statuses, &username);
-                return;
-            }
-            clear_startup_progress(&slot_statuses, &username);
-            set_startup_phase(&slot_statuses, &username, StartupPhase::Queueing);
-            if client.error_loading {
-                host_log!(Category::Lifecycle, Level::Error, "maininit failed");
-            }
+fn run_slot_thread(mut args: SlotThreadArgs) {
+    let username = args.profile.username.clone();
+    let world_round = args.world_round.take();
+    api::hostlog::bind_slot(&username);
+    host::bind_capacity(&args.slot_capacity);
+    let worker_outcome = catch_unwind(AssertUnwindSafe(|| {
+        run_slot_worker(&args, world_round, &username)
+    }));
+    host::unbind_capacity();
+    retire_slot_worker(&args, &username, worker_outcome);
+}
 
-            let mut backoff = LoginBackoff::new();
-            let mut world_dirty = world_round.is_some();
-            let mut refresh_key = false;
-            let mut key_refreshed = false;
-            // Lifetime script clock: every applied PLAYER_INFO packet, including
-            // batches. It survives relogs. TickHealth's session totals reset.
-            // Dirty snapshots, polls, and watchdog stamps never advance it.
-            let mut script_tick: u64 = 0;
-            let mut run_policy = ScriptRunPolicy::default();
-            let mut last_relog_park = None;
-            // Frames that keep the logged-out title live while a login waits
-            // outside the pump; built by the first wait of a login series and
-            // dropped before the pump takes over.
-            let mut title_wait: Option<TitleWait> = None;
-            loop {
-                if arm.stop.load(Ordering::Relaxed) {
-                    return;
+fn retire_slot_worker(
+    args: &SlotThreadArgs,
+    username: &str,
+    worker_outcome: std::thread::Result<()>,
+) {
+    // No later session observes this slot, however the worker ended (a Stop
+    // while parked at the title never reaches the boundary below): its
+    // channel member leaves the party now.
+    #[cfg(feature = "js")]
+    if args.slot_channels.tracks() {
+        deliver_channel_events(&args.slot_scripts, args.slot_channels.leave());
+    }
+    if !args.arm.stop.load(Ordering::Relaxed) {
+        match worker_outcome {
+            Ok(()) => {
+                publish_worker_terminal(&args.slot_statuses, username, WorkerTerminal::Failed, None)
+            }
+            Err(payload) => {
+                let detail = payload
+                    .downcast_ref::<&str>()
+                    .map(|message| (*message).to_string())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic payload".to_string());
+                publish_worker_terminal(
+                    &args.slot_statuses,
+                    username,
+                    WorkerTerminal::Panicked,
+                    Some(format!("slot worker panicked: {detail}")),
+                );
+            }
+        }
+    }
+}
+
+fn run_slot_worker(
+    args: &SlotThreadArgs,
+    world_round: Option<public_worlds::WorldRound>,
+    username: &str,
+) {
+    #[cfg(test)]
+    let startup_entries_published = args.arm.wait_worker_start_for_test();
+    let _queue_retirement = QueuePlaceRetirement {
+        queue: &args.slot_queue,
+        statuses: &args.slot_statuses,
+        username,
+        arm: &args.arm,
+    };
+    #[cfg(feature = "memory-profile")]
+    let _duel_retirement = memory::DuelReportRetirement { name: username };
+    // Pending bank observations are saved however the worker leaves
+    // (design-bank-snapshot §1.4: slot exit is a save point).
+    let _bank_exit_save = super::slot_bank_memory::ExitSave(&args.slot_bank);
+    #[cfg(test)]
+    if let Some(published) = startup_entries_published {
+        published.send(()).unwrap();
+    }
+    // Preparation has no determinate client percentage, but publish a phase
+    // immediately so a slow cache fetch is visibly active.
+    publish_startup_phase(&args.slot_statuses, username, "Preparing client");
+    let park = args.park.clone();
+    let Some(mut client) = prepare_slot_client(args, username) else {
+        return;
+    };
+    let mut login = SlotLoginState {
+        backoff: LoginBackoff::new(),
+        world_dirty: world_round.is_some(),
+        world_round,
+        refresh_key: false,
+        key_refreshed: false,
+        last_relog_park: None,
+        // Frames that keep the logged-out title live while a login waits
+        // outside the pump; built by the first wait of a login series and
+        // dropped before the pump takes over.
+        title_wait: None,
+    };
+    // Lifetime script clock: every applied PLAYER_INFO packet, including
+    // batches. It survives relogs. TickHealth's session totals reset.
+    // Dirty snapshots, polls, and watchdog stamps never advance it.
+    let mut script_tick: u64 = 0;
+    let mut run_policy = ScriptRunPolicy::default();
+    loop {
+        if args.arm.stop.load(Ordering::Relaxed) {
+            return;
+        }
+        let left_pump_to_log_in =
+            match login.step_offline_and_handshake(args, username, &mut client) {
+                HandshakeOutcome::Proceed {
+                    left_pump_to_log_in,
+                } => left_pump_to_log_in,
+                HandshakeOutcome::Continue => continue,
+                HandshakeOutcome::Stop => return,
+            };
+        if left_pump_to_log_in && !client.ingame {
+            // Back on the title after a login attempt: input made while no
+            // title frame ran (the handshake, or the moment a wait was
+            // cancelled) answers no screen the operator saw, so a stale Log In
+            // must not undo a Logout.
+            args.slot_input.discard_user(&mut client.shell);
+            show_title_message(&mut client, "", "");
+        }
+        let pump_had_session = client.ingame;
+        let slot_game_data = args
+            .connection
+            .profile()
+            .and_then(|profile| profile.game_data());
+        let mut knock =
+            ScriptRandomClaims::new(Arc::clone(&args.slot_scripts), username.to_owned());
+        if let Some(game_data) = slot_game_data.clone() {
+            knock = knock.with_fight(FightService::new(Arc::clone(&args.arm), game_data));
+        }
+        let mut runner =
+            SlotFrameRunner::new(args, username, &mut script_tick, &mut login.last_relog_park);
+        let probe_arm = Arc::clone(&args.arm);
+        let ifaces_template = Arc::clone(&args.ifaces_template);
+        run_policy = Host::run_client_with_event_policies(
+            &mut client,
+            username,
+            args.profile.settings.clone(),
+            Arc::clone(&args.arm.random_events),
+            Arc::clone(&args.arm.lamp_auto),
+            Arc::clone(&args.arm.lamp_skill),
+            Arc::clone(&args.arm.random_event_policies),
+            slot_game_data,
+            Some(Arc::clone(&args.slot_input)),
+            args.slot_render.clone(),
+            park.clone(),
+            run_policy,
+            move |c, _ignored, run_sends, status, run_policy| {
+                runner.observe_frame(c, run_sends, status, run_policy)
+            },
+            move |c| slot_client_pump_should_exit(c, &ifaces_template, &probe_arm),
+            knock,
+        );
+        if pump_had_session && args.arm.session_boundary_pending() {
+            publish_slot_disconnected(&args.slot_statuses, username);
+            end_slot_session(
+                username,
+                &args.arm,
+                &args.slot_scripts,
+                &args.slot_cheats,
+                &args.slot_wires,
+                &args.slot_navs,
+                #[cfg(feature = "js")]
+                &args.slot_channels,
+            );
+            args.slot_bank.session_ended();
+        }
+        if args.arm.stop.load(Ordering::Relaxed) {
+            return;
+        }
+    }
+}
+
+fn prepare_slot_client(args: &SlotThreadArgs, username: &str) -> Option<Client> {
+    let mut client = match &args.connection {
+        PlayConnection::Direct(options) => prepare_client(
+            bot_client_config(options, &args.profile),
+            args.profile.uid,
+            Arc::clone(&args.slot_cache),
+            args.ifaces_template.clone(),
+            args.ifaces_mut_template.clone(),
+        ),
+        PlayConnection::Bound { template, .. } => {
+            match template.prepare_client(args.profile.uid, args.profile.settings.lowmem) {
+                Ok(client) => client,
+                Err(error) => {
+                    if let Some(row) = lock_statuses(&args.slot_statuses)
+                        .iter_mut()
+                        .find(|s| s.username == username)
+                    {
+                        row.startup_phase = StartupPhase::Error;
+                        row.startup_phase_started = Instant::now();
+                        row.error = Some(error);
+                    }
+                    clear_startup_progress(&args.slot_statuses, username);
+                    return None;
                 }
-                if !client.ingame {
-                    sync_script_login(&arm, &slot_scripts, &username);
-                    apply_offline_logout_reset(
-                        &username,
-                        &arm,
-                        &slot_scripts,
-                        &slot_cheats,
-                        &slot_wires,
-                        &slot_navs,
-                        #[cfg(feature = "js")]
-                        &slot_channels,
-                    );
-                    if !should_handshake(&arm, client.ingame) {
-                        let reason = arm.relog_park_reason();
-                        if last_relog_park != Some(reason) {
-                            host_log!(
-                                Category::Login,
-                                Level::Info,
-                                "relog decision park reason={reason}"
-                            );
-                            last_relog_park = Some(reason);
-                        }
-                        // No pending intent (title hold, latched logout, or a
-                        // withdrawn wait): the live title pump holds no FIFO
-                        // place and publishes no `k of n`.
-                        drop_queue_place(
-                            &slot_queue,
-                            &slot_statuses,
-                            &username,
-                            arm.queue_owner,
-                        );
-                        publish_login_latched_from_arm(&slot_statuses, &username, &arm);
-                    }
-                }
-                if !client.ingame && should_handshake(&arm, client.ingame) {
-                    // A request raised after the observe armed this handshake
-                    // must not survive the ownership handoff and undo a later
-                    // operator Logout.
-                    let _ = client.take_title_login_request();
-                    last_relog_park = None;
-                    let wait_frames = title_wait.get_or_insert_with(|| {
-                        TitleWait::new(Some(Arc::clone(&slot_input)), slot_render.clone())
-                    });
-                    // Leaving title park for handshake: refresh latch from the
-                    // arm so an explicit Log in cannot keep a stale TRUE from
-                    // the last park publish through queue/connect.
-                    publish_login_latched_from_arm(&slot_statuses, &username, &arm);
-                    if let Some(round) = world_round.as_mut() {
-                        let worlds = connection
-                            .profile()
-                            .and_then(|p| p.public_worlds())
-                            .expect("public world round requires bound public worlds");
-                        match refresh_slot_world_preference(round, worlds, &arm) {
-                            Ok(true) => {
-                                world_dirty = true;
-                                refresh_key = false;
-                                key_refreshed = false;
-                            }
-                            Ok(false) => {}
-                            Err(error) => {
-                                if let Some(row) = lock_statuses(&slot_statuses)
-                                    .iter_mut()
-                                    .find(|s| s.username == username)
-                                {
-                                    row.startup_phase = StartupPhase::Error;
-                                    row.startup_phase_started = Instant::now();
-                                    row.error = Some(format!(
-                                        "public world preference failed: {error}"
-                                    ));
-                                }
-                                arm.hold_login_on_error();
-                                continue;
-                            }
-                        }
-                    }
-                    let Some((login_command, login_world_generation)) =
-                        capture_login_authorization(&arm, client.ingame)
-                    else {
-                        continue;
-                    };
-                    // The slot can outlive a profile uid edit. Prepare the
-                    // next handshake and its queue accounting from the live
-                    // identity; K4's publication fence rejects an edit that
-                    // races this snapshot.
-                    let uid = arm.uid.load(Ordering::Acquire);
-                    client.login_uid = uid;
-                    if world_dirty {
-                        let round = world_round.as_ref().expect("public world round");
-                        let worlds = connection.profile().and_then(|p| p.public_worlds())
-                            .expect("bound public worlds");
-                        let world = &worlds.worlds[round.index];
-                        if let Err(error) = configure_slot_world(&mut client, world, refresh_key, &arm.stop) {
-                            if arm.stop.load(Ordering::Relaxed) {
-                                return;
-                            }
-                            if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
-                                row.startup_phase = StartupPhase::Error;
-                                row.startup_phase_started = Instant::now();
-                                row.error = Some(format!("public world login configuration failed: {error}"));
-                            }
-                            clear_startup_progress(&slot_statuses, &username);
-                            return;
-                        }
-                        if let Some(slot) = script_slot(&slot_scripts, &username) {
-                            slot.lock().unwrap().pair_world_changed(&client.config.host, client.config.port);
-                        }
-                        if arm.stop.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
-                            row.world = Some(world.number);
-                        }
-                        // The next session to log in is bound to this world.
-                        arm.note_configured_world(world.number);
-                        host_log!(
-                            Category::Login,
-                            Level::Info,
-                            "world w{} {}:{} node {}",
-                            world.number, world.host, world.port, world.node_id
-                        );
-                        world_dirty = false;
-                        refresh_key = false;
-                    }
-                    // Publish only the command that selected this world.
-                    arm.prepared();
-                    enqueue_queue_place(&slot_queue, &slot_statuses, &username, uid, &arm);
-                    #[cfg(test)]
-                    arm.panic_after_queue_for_test();
-                    if let Some(until) = arm.clean_release_admission_at(
-                        &client.config.host,
-                        client.config.port,
-                        Instant::now(),
-                    ) {
-                        slot_queue.lock().defer_owner_until(arm.queue_owner, until);
-                    }
-                    host_log!(Category::Login, Level::Info, "relog decision wait queue");
-                    show_title_message(&mut client, "", "Waiting to log in...");
-                    let wait = wait_for_permit(
-                        &slot_queue,
-                        &slot_statuses,
-                        &username,
-                        uid,
-                        &arm,
-                        &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
-                    );
-                    // The reservation is owned from the granting poll on:
-                    // every `continue`/`return` (or unwind) below that drops
-                    // it unused gives the grant back.
-                    let PermitWait::Granted(mut permit) = wait else {
-                        if arm.stop.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        continue;
-                    };
-                    if !granted_permit_world_is_current(world_round.as_ref(), &arm) {
-                        drop(permit);
-                        // A returned grant must not immediately re-enter the
-                        // queue while the world preference stays mismatched.
-                        arm.wait_for_retry(
-                            Duration::from_millis(50),
-                            None,
-                            &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
-                        );
-                        continue;
-                    }
-                    // Script demand may change during the FIFO wait. Reduce
-                    // it without replacing the captured authorization.
-                    sync_script_login(&arm, &slot_scripts, &username);
-                    let reconnect = arm.reconnects();
+            }
+        }
+    };
+    if let PlayConnection::Direct(options) = &args.connection {
+        client.set_transport(options.transport);
+        client.set_cheat_admission(match args.connection.profile_class() {
+            crate::ProfileClass::Local => client::CheatAdmission::Granted,
+            crate::ProfileClass::Remote => client::CheatAdmission::Remote(options.transport),
+        });
+    }
+    // The host owns every reconnect attempt so each fresh socket returns
+    // through the shared FIFO and reservation accounting.
+    client.set_external_reconnect_owner(true);
+    host_log!(Category::Lifecycle, Level::Info, "thread up");
+
+    // Jag/anim/model/map prefetch (mirrors client-play; the scene cannot
+    // reach scene_state 2 until the loc models are in). `maininit` is
+    // renderer-free now: progress recording lives on the Client, and no
+    // `Renderer` is constructed for a headless slot.
+    #[cfg(any(test, feature = "test-support"))]
+    let bypass_asset_startup = args.arm.bypass_asset_startup.load(Ordering::Relaxed);
+    #[cfg(not(any(test, feature = "test-support")))]
+    let bypass_asset_startup = false;
+    if !bypass_asset_startup {
+        client.maininit_with_progress(Some(&mut |client, message, percent| {
+            if args.arm.stop.load(Ordering::Relaxed) {
+                client.shell.stop();
+            } else {
+                publish_startup_progress(&args.slot_statuses, username, message, percent);
+            }
+        }));
+    }
+    if client.error_loading && args.connection.profile().is_some() {
+        if let Some(row) = lock_statuses(&args.slot_statuses)
+            .iter_mut()
+            .find(|s| s.username == username)
+        {
+            row.startup_phase = StartupPhase::Error;
+            row.startup_phase_started = Instant::now();
+            row.error = Some(format!(
+                "profile asset initialization failed: {}",
+                client.last_progress_message
+            ));
+        }
+        clear_startup_progress(&args.slot_statuses, username);
+        return None;
+    }
+    clear_startup_progress(&args.slot_statuses, username);
+    set_startup_phase(&args.slot_statuses, username, StartupPhase::Queueing);
+    if client.error_loading {
+        host_log!(Category::Lifecycle, Level::Error, "maininit failed");
+    }
+    Some(client)
+}
+
+fn sync_offline_title_state(args: &SlotThreadArgs, username: &str) {
+    sync_script_login(&args.arm, &args.slot_scripts, username);
+    apply_offline_logout_reset(
+        username,
+        &args.arm,
+        &args.slot_scripts,
+        &args.slot_cheats,
+        &args.slot_wires,
+        &args.slot_navs,
+        #[cfg(feature = "js")]
+        &args.slot_channels,
+    );
+}
+
+impl SlotLoginState {
+    fn step_offline_and_handshake(
+        &mut self,
+        args: &SlotThreadArgs,
+        username: &str,
+        client: &mut Client,
+    ) -> HandshakeOutcome {
+        if !client.ingame {
+            sync_offline_title_state(args, username);
+            if !should_handshake(&args.arm, client.ingame) {
+                let reason = args.arm.relog_park_reason();
+                if self.last_relog_park != Some(reason) {
                     host_log!(
                         Category::Login,
                         Level::Info,
-                        "relog decision attempt reconnect={reconnect}"
+                        "relog decision park reason={reason}"
                     );
-                    // Read at each handshake, not captured at spawn: a
-                    // password saved since then applies to this login.
-                    let password = arm.login_password();
-                    // An in-world reconnect is only a server-side socket swap:
-                    // it retains the old mode and tabs. Only a clean logout
-                    // permits the queued mode to apply at this handshake.
-                    if arm.login_applies_memory() {
-                        if let Some(lowmem) = arm.lowmem_handshake() {
-                            if !client.configure_login_memory(lowmem) {
-                                host_log!(
-                                    Category::Login,
-                                    Level::Warn,
-                                    "login memory configuration refused"
-                                );
-                            }
-                        }
-                    }
-                    let handshake_lowmem = client.config.lowmem;
-                    // Publication is still an unused permit. A Logout or Stop
-                    // before it must not charge start spacing or UID/IP TTLs.
-                    let hold = Cell::new(None);
-                    let Some(login) = permit.attempt(
-                        |cancel| arm.begin_attempt(login_command, login_world_generation, cancel),
-                        |deadline, cancel| {
-                            mark_login_started(&slot_statuses, &username);
-                            let (result, server_hold) = SlotLogin {
-                                client: &mut client,
-                                arm: &arm,
-                                command: login_command,
-                                world_generation: login_world_generation,
-                                username: &username,
-                                password: &password,
-                                reconnect,
-                                backoff: &backoff,
-                            }
-                            .run(deadline, cancel, |_| {});
-                            hold.set(server_hold);
-                            result
-                        },
-                        |_| hold.get(),
-                    ) else {
-                        arm.clear_unused_attempt();
-                        drop(permit);
-                        // Refusal returns the unused grant before a bounded
-                        // park; a stable stale capture cannot spin the queue.
-                        arm.wait_for_retry(
-                            Duration::from_millis(50),
-                            None,
-                            &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
-                        );
-                        continue;
-                    };
-                    match login {
-                        Ok(false) => continue,
-                        Ok(true) => {
-                            show_title_message(&mut client, "", "");
-                            backoff.reset();
-                            if let Some(round) = world_round.as_mut() { round.reset(); }
-                            key_refreshed = false;
-                            publish_login_lowmem(
-                                &slot_statuses,
-                                &username,
-                                handshake_lowmem,
-                            );
-                            set_startup_phase(&slot_statuses, &username, StartupPhase::LoadingScene);
-                            host_log!(Category::Login, Level::Info, "handshake ok");
-                        }
-                        Err(e) => {
-                            show_title_message(&mut client, &e.mes1, &e.mes2);
-                            let transfer_countdown = Cell::new(None);
-                            if wait_for_transfer_response(
-                                &e,
-                                &arm,
-                                &slot_statuses,
-                                &username,
-                                &transfer_countdown,
-                                &mut title_frames(
-                                    wait_frames,
-                                    &mut client,
-                                    &username,
-                                    &slot_frame,
-                                    Some((&transfer_countdown, &e.mes1)),
-                                ),
-                            )
-                            .is_some()
-                            {
-                                continue;
-                            }
-                            if !arm.login_attempt_is_current(login_command, login_world_generation) {
-                                continue;
-                            }
-                            record_login_error(&slot_statuses, &username, &e);
-                            if let Some(delay) = arm.defer_clean_release_at(
-                                &e,
-                                login_command,
-                                &client.config.host,
-                                client.config.port,
-                                Instant::now(),
-                            ) {
-                                host_log!(
-                                    Category::Login,
-                                    Level::Info,
-                                    "relog decision release_wait_ms={} code=5; rejoining login queue",
-                                    delay.as_millis()
-                                );
-                                continue;
-                            }
-                            let worlds = connection.profile().and_then(|p| p.public_worlds());
-                            let plan = plan_login_retry(
-                                &e,
-                                world_round.as_mut().map(|round| {
-                                    (round, &**worlds.expect("bound public worlds"))
-                                }),
-                                (&client.config.host, client.config.port),
-                                &mut backoff,
-                                rand_core::RngCore::next_u32(&mut rand_core::OsRng),
-                            );
-                            if let Some(receipt) = plan.world_full {
-                                host_log!(Category::Login, Level::Warn, "{receipt}");
-                            }
-                            if plan.switch_world {
-                                world_dirty = true;
-                                key_refreshed = false;
-                            }
-                            // Auto world rotation: straight back into the
-                            // paced queue for the next world.
-                            let Some(retry) = plan.wait else {
-                                continue;
-                            };
-                            if world_round.is_some()
-                                && public_worlds::refresh_after_login_error(e.code, &mut key_refreshed)
-                            {
-                                refresh_key = true;
-                                world_dirty = true;
-                            }
-                            host_log!(
-                                Category::Login,
-                                Level::Info,
-                                "relog decision wait backoff_ms={} code={}",
-                                retry.as_millis(),
-                                e.code
-                            );
-                            arm.wait_for_retry(
-                                retry,
-                                Some((login_command, login_world_generation)),
-                                &mut title_frames(wait_frames, &mut client, &username, &slot_frame, None),
-                            );
-                            continue;
-                        }
-                    }
+                    self.last_relog_park = Some(reason);
                 }
-                let title_park_reason = &mut last_relog_park;
-                let title_wake = slot_wake.clone();
-                let pump_had_session = client.ingame;
-                // The pump's own frames take over the title from any wait.
-                let left_pump_to_log_in = title_wait.take().is_some();
-                if left_pump_to_log_in && !client.ingame {
-                    // Back on the title after a login attempt: input made
-                    // while no title frame ran (the handshake, or the moment
-                    // a wait was cancelled) answers no screen the operator
-                    // saw, so a stale Log In must not undo a Logout.
-                    slot_input.discard_user(&mut client.shell);
-                    show_title_message(&mut client, "", "");
-                }
-                let mut mainland_sent = false;
-                let arm_obs = Arc::clone(&arm);
-                let arm_latch_obs = Arc::clone(&arm_obs);
-                let obs_name = username.clone();
-                let obs_catalog_core = slot_catalog_core.clone();
-                let obs_paired_core = slot_paired_core.clone();
-                let slot_game_data = connection.profile().and_then(|profile| profile.game_data());
-                let mut knock =
-                    ScriptRandomClaims::new(Arc::clone(&slot_scripts), username.clone());
-                if let Some(game_data) = slot_game_data.clone() {
-                    knock = knock.with_fight(FightService::new(Arc::clone(&arm_obs), game_data));
-                }
-                run_policy = Host::run_client_with_event_policies(
-                    &mut client,
-                    &username,
-                    profile.settings.clone(),
-                    Arc::clone(&arm_obs.random_events),
-                    Arc::clone(&arm_obs.lamp_auto),
-                    Arc::clone(&arm_obs.lamp_skill),
-                    Arc::clone(&arm_obs.random_event_policies),
-                    slot_game_data,
-                    Some(slot_input.clone()),
-                    slot_render.clone(),
-                    park.clone(),
-                    run_policy,
-                    {
-                        let slot_frame = Arc::clone(&slot_frame);
-                        #[cfg(any(test, feature = "test-support"))]
-                        let post_native_player_info = post_native_player_info.clone();
-                        #[cfg(feature = "test-support")]
-                        let post_host_frame = post_host_frame.clone();
-                        let slot_statuses = Arc::clone(&slot_statuses);
-                        let slot_scripts = Arc::clone(&slot_scripts);
-                        let slot_input = Arc::clone(&slot_input);
-                        let slot_cheats = Arc::clone(&slot_cheats);
-                        let slot_wires = Arc::clone(&slot_wires);
-                        let slot_obj_names = Arc::clone(&slot_obj_names);
-                        let slot_cache = Arc::clone(&slot_cache);
-                        let slot_navs = Arc::clone(&slot_navs);
-                        let slot_manual_abort_pause = Arc::clone(&slot_manual_abort_pause);
-                        let slot_world = slot_world.clone();
-                        #[cfg(feature = "js")]
-                        let observe_channels = slot_channels.clone();
-                        // Borrowed, not cloned: the slot thread's one handle
-                        // on the account's bank memory and hint file.
-                        let slot_bank = &slot_bank;
-                        let slot_canlight = connection.profile().and_then(|p| p.canlight());
-                        let map_members = connection
-                            .profile()
-                            .map(|p| p.map_members())
-                            .unwrap_or(false);
-                        let mut pump = Pump::new();
-                        let script_tick = &mut script_tick;
-                        // Last `(player gen, here)` the nav bot stepped:
-                        // skip until either changes so the hop budget counts
-                        // server ticks, not 20 ms frames (panel `tick_latch`).
-                        let mut last_nav_step: Option<NavStepKey> = None;
-                        // The slot's per-tick nav snapshot: rebuilt each
-                        // observe when a family's gen moved (the walk arm
-                        // gates on its facts; the follow surface reads the
-                        // canonical base + route-head tile from it).
-                        let mut nav_snapshot = GameSnapshot::new();
-                        let mut nav_world_state_cache =
-                            super::script_runtime::NavWorldStateCache::default();
-                        let mut session_epoch = 0u64;
-                        let mut welcome = login_readiness::LoginReadiness::default();
-                        let mut debug_replies = super::debug_replies::DebugReplies::default();
-                        let seat_arm = arm.as_ref();
-                        // This frame's random status is published before
-                        // observe; its hold freezes script tick and nav follow.
-                        move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
-                            let name = &obs_name;
-                            #[cfg(feature = "test-support")]
-                            if let Some(test_hook) =
-                                TickEngineTestHook::bind_current_for_account(name)
-                            {
-                                test_hook.bind_client(c, name, Arc::clone(&slot_input));
-                            }
-                            if !c.ingame {
-                                // The live title pump owns offline script/latch
-                                // synchronization. A hosted title click is only
-                                // operator intent: arm the ordinary vault/FIFO
-                                // path and never use the client's title fields.
-                                if c.take_title_login_request() {
-                                    arm_latch_obs.arm_explicit_login();
-                                    title_wake.wake();
-                                }
-                                sync_script_login(&arm_latch_obs, &slot_scripts, name);
-                                apply_offline_logout_reset(
-                                    name,
-                                    &arm_latch_obs,
-                                    &slot_scripts,
-                                    &slot_cheats,
-                                    &slot_wires,
-                                    &slot_navs,
-                                    #[cfg(feature = "js")]
-                                    &observe_channels,
-                                );
-                                if should_handshake(&arm_latch_obs, c.ingame) {
-                                    *title_park_reason = None;
-                                } else {
-                                    let reason = arm_latch_obs.relog_park_reason();
-                                    if *title_park_reason != Some(reason) {
-                                        host_log!(
-                                            Category::Login,
-                                            Level::Info,
-                                            "relog decision park reason={reason}"
-                                        );
-                                        *title_park_reason = Some(reason);
-                                    }
-                                }
-                            }
-                            let drain = pump.drain_client(c);
-                            let session_boundary = publish_session_boundary_status(
-                                &slot_statuses,
-                                name,
-                                drain.session_changed,
-                                c.ingame,
-                                nav_snapshot.ingame(),
-                            );
-                            if session_boundary {
-                                debug_replies = super::debug_replies::DebugReplies::default();
-                                session_epoch = session_epoch.wrapping_add(1);
-                                nav_world_state_cache.clear();
-                                if c.ingame {
-                                    arm_latch_obs.set_script_active(script_active(&slot_scripts, name));
-                                    reset_slot_session_boundary(
-                                        name,
-                                        &arm_latch_obs,
-                                        BoundaryWork {
-                                            scripts: &slot_scripts,
-                                            cheats: &slot_cheats,
-                                            wires: &slot_wires,
-                                            navs: &slot_navs,
-                                            #[cfg(feature = "js")]
-                                            channels: &observe_channels,
-                                        },
-                                        arm_latch_obs.keeps_script_work_after_exit(),
-                                    );
-                                    // Before the first script tick of the
-                                    // session (design-bank-snapshot §1.4).
-                                    slot_bank.session_started();
-                                } else {
-                                    observe_client_session_exit(c, &arm_latch_obs);
-                                    end_slot_session(
-                                        name,
-                                        &arm_latch_obs,
-                                        &slot_scripts,
-                                        &slot_cheats,
-                                        &slot_wires,
-                                        &slot_navs,
-                                        #[cfg(feature = "js")]
-                                        &observe_channels,
-                                    );
-                                    slot_bank.session_ended();
-                                    if let Some(bot) = slot_navs.lock().unwrap().get_mut(name) {
-                                        bot.condition.session_ended();
-                                    }
-                                }
-                                last_nav_step = None;
-                            }
-                            nav_snapshot
-                                .set_loc_projection_wanted(run_policy.loc_projection_wanted());
-                            host::publish_snapshot(&mut nav_snapshot, c, drain);
-                            if session_boundary && c.ingame {
-                                slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
-                                    .condition.session_started(nav_snapshot.tick(), c.chat_seq as i32, slot_world.as_deref().and_then(crate::admission::condition_tables));
-                            }
-                            // The open bank's rows reach the account memory
-                            // here (design-bank-snapshot §1.3); a close saves.
-                            slot_bank.observe_frame(&nav_snapshot);
-                            let condition = {
-                                let mut navs = slot_navs.lock().unwrap();
-                                if let Some(bot) = navs.get_mut(name) {
-                                    bot.condition.observe_frame(&nav_snapshot, &drain, status.hold);
-                                    bot.condition.published()
-                                } else {
-                                    api::condition::BotCondition::default()
-                                }
-                            };
-                            let condition_dispatch = slot_navs.lock().unwrap().get(name)
-                                .and_then(|bot| bot.condition.dispatch_checkpoint(c));
-                            api::hostlog::set_tick(nav_snapshot.tick());
-                            debug_replies.observe(name, &nav_snapshot);
-                            // `script_observe_with_npc_boxes` below reaps the
-                            // isolate and can publish a Stop receipt. The next
-                            // frame attaches that bounded value here before
-                            // status publication; pending panel logs are never
-                            // consumed by this read.
-                            // `status` is this frame's client_frame publication,
-                            // copied onto the slot row below.
-                            // The hunt cards also read the slot's own record
-                            // of the requests host-play dispatched for it.
-                            let copies_inspect = obs_catalog_core.copies_route_inspect();
-                            let copies_hunt = obs_catalog_core.copies_hunt();
-                            let (inspect, acts) = if copies_inspect || copies_hunt {
-                                let navs = slot_navs.lock().unwrap();
-                                let bot = navs.get(name);
-                                (
-                                    bot.filter(|_| copies_inspect)
-                                        .map(|bot| bot.inspect.published_core_facts()),
-                                    copies_hunt.then(|| {
-                                        bot.map(|bot| bot.acts.published()).unwrap_or_default()
-                                    }),
-                                )
-                            } else {
-                                (None, None)
-                            };
-                            let catalog_paint = if copies_hunt {
-                                script_paint_of(&slot_scripts, name)
-                            } else {
-                                None
-                            };
-                            observe_slot_catalog_and_paired(
-                                &obs_catalog_core,
-                                &obs_paired_core,
-                                name,
-                                &nav_snapshot,
-                                slot_obj_names.as_ref(),
-                                session_boundary,
-                                || {
-                                    script_slot(&slot_scripts, name).and_then(|slot| {
-                                        slot.lock()
-                                            .ok()
-                                            .and_then(|slot| slot.lifecycle_receipt())
-                                    })
-                                },
-                                || bounded_guardian_fact(status),
-                                inspect,
-                                catalog_paint.as_deref(),
-                                acts,
-                            );
-                            let ready = c.ingame && c.scene_state == 2
-                                && nav_snapshot.local_player().is_some();
-                            let welcome_obs = login_readiness::WelcomeObservation {
-                                session_epoch,
-                                tick: *script_tick,
-                                now: Instant::now(),
-                                ingame: c.ingame,
-                                scene_state: c.scene_state,
-                                welcome_interface_id: c.welcome_interface_id,
-                                main_modal_id: c.main_modal_id,
-                                allow_close: c.ingame && c.scene_state == 2 && !session_boundary,
-                            };
-                            let welcome_step = welcome.step(&welcome_obs, || {
-                                login_readiness::try_close_welcome(&nav_snapshot, c)
-                            });
-                            if let Some(line) = welcome_step.notice.as_deref() {
-                                host_log!(stderr; Category::Echo, Level::Info, "{line}");
-                            }
-                            #[cfg(test)]
-                            let injected_maze_hold = if ready
-                                && !status.hold
-                                && !session_boundary
-                                && crate::combat_proof::maze_injection_pending(name)
-                            {
-                                if crate::combat_proof::protect_from_melee_active(&nav_snapshot) {
-                                    match script_slot(&slot_scripts, name) {
-                                        Some(slot) => match slot.lock() {
-                                            Ok(mut slot) => {
-                                                let event = DetectedRandom {
-                                                    kind: host::RandomKind::Maze,
-                                                    name: "combat-live-proof synthetic Maze hold"
-                                                        .to_owned(),
-                                                    ours: true,
-                                                    npc_index: None,
-                                                };
-                                                let owner_live_before =
-                                                    crate::combat_proof::maze_attack_owner_live(
-                                                        name,
-                                                    );
-                                                let claim = slot.on_random(&event);
-                                                let owner_live_after =
-                                                    crate::combat_proof::maze_attack_owner_live(
-                                                        name,
-                                                    );
-                                                crate::combat_proof::record_maze_injection(
-                                                    name,
-                                                    Some(*script_tick),
-                                                    &nav_snapshot,
-                                                    claim,
-                                                    owner_live_before,
-                                                    owner_live_after,
-                                                );
-                                                true
-                                            }
-                                            Err(_) => {
-                                                crate::combat_proof::record_maze_injection_failure(
-                                                    name,
-                                                    "script slot mutex poisoned at Maze injection",
-                                                );
-                                                false
-                                            }
-                                        },
-                                        None => {
-                                            crate::combat_proof::record_maze_injection_failure(
-                                                name,
-                                                "script slot absent at Maze injection",
-                                            );
-                                            false
-                                        }
-                                    }
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            };
-                            #[cfg(test)]
-                            let guardian_hold = status.hold || injected_maze_hold;
-                            #[cfg(not(test))]
-                            let guardian_hold = status.hold;
-                            let session_ready = arm_latch_obs.update_session_readiness(
-                                ready,
-                                welcome_step.hold,
-                                guardian_hold,
-                                session_boundary,
-                            );
-                            let hold = !session_ready || !ready || session_boundary;
-                            // Collect intent before either follow pump or script
-                            // dispatch; this is the shared takeover ordering seam.
-                            // Keep these commands for their normal late send/hold gate.
-                            let (mut frame_input, wires) =
-                                take_slot_frame_input(&slot_input, name, &slot_wires, hold, status);
-                            take_manual_walk_ownership(
-                                &slot_scripts,
-                                &slot_navs,
-                                name,
-                                frame_input,
-                                c.ingame && !session_boundary,
-                                *script_tick,
-                                slot_manual_abort_pause.load(Ordering::Relaxed),
-                            );
-                            // The Guardian's Fight child (design V11D 4.2, 4.4). A
-                            // manual step is a takeover: it revokes the child before
-                            // anything dispatches, and the Guardian's own escape
-                            // answers the event after the manual lease. Otherwise the
-                            // child may act under the Guardian's hold and under no
-                            // other reason's.
-                            let manual = frame_input.manual_move_count() > 0;
-                            if let (true, Some(token)) = (manual, status.fight) {
-                                if let Some(slot) = script_slot(&slot_scripts, name) {
-                                    if let Ok(mut slot) = slot.lock() {
-                                        slot.guardian_revoke_token(
-                                            token,
-                                            api::random::FightCancel::ManualTakeover,
-                                        );
-                                    }
-                                }
-                            }
-                            arm_latch_obs.fight.publish(
-                                status.fight.filter(|_| !manual && !session_boundary),
-                                c.ingame
-                                    && !session_boundary
-                                    && !manual
-                                    && arm_latch_obs.guardian_child_ready(ready),
-                            );
-                            let frame = script_frame(&slot_scripts, name);
-                            let script_state = frame.state;
-                            let running = script_state == Some(script::RunState::Running);
-                            host::set_service_class(capacity_service_class(
-                                c.ingame,
-                                arm_latch_obs.login_latched(),
-                                frame,
-                            ));
-                            let nav_facts = script_state_builds_nav_facts(script_state);
-                            let (nav_owned, nav_armed) = slot_navs.lock().unwrap().get(name).map_or((false, false), |bot| (
-                                bot.ordinary_movement_owned(nav_snapshot.tick() as u16),
-                                bot.has_route() || bot.bank_fetch.is_some(),
-                            ));
-                            frame_input.host_move_owned =
-                                project_slot_frame_host_move_owned(script_state, nav_owned);
-                            #[cfg(feature = "memory-profile")]
-                            memory::client_frame(c, name, hold, script_state);
-                            slot_frame(c, name, frame_input);
-                            // Operator pause parks ScriptRunner work, not
-                            // BotHost client frames (`BotHost.ts:48-55`).
-                            let mut frame_delivered = false;
-                            if matches!(
-                                script_state,
-                                Some(
-                                    script::RunState::Starting
-                                        | script::RunState::Running
-                                        | script::RunState::Paused,
-                                )
-                            ) {
-                                if let Some(slot) = script_slot(&slot_scripts, name) {
-                                    frame_delivered = dispatch_client_frame(&slot, name);
-                                }
-                            }
-                            if !mainland_sent && mainland && ready {
-                                api::interact::mainland_hop(c);
-                                mainland_sent = true;
-                                host_log!(Category::Lifecycle, Level::Info, "mainland hop queued");
-                            }
-                            let tick_edge = should_emit_tick(drain.packet_delta);
-                            *script_tick = script_tick.wrapping_add(drain.packet_delta);
-                            #[cfg(feature = "test-support")]
-                            if let Some(test_hook) = TickEngineTestHook::current() {
-                                let tick_engine_suppressed_openchat =
-                                    test_hook.before_snapshot_observe(name, &mut nav_snapshot, *script_tick as u32);
-                                test_hook.before_frame(
-                                    c,
-                                    name,
-                                    &nav_snapshot,
-                                    *script_tick as u32,
-                                    tick_edge,
-                                    tick_engine_suppressed_openchat,
-                                );
-                            }
-                            // The slot's paint frame is read before the
-                            // status lock (scripts -> statuses is the only
-                            // order the two mutexes may nest).
-                            let paint = script_paint_of(&slot_scripts, name);
-                            let survival = script_survival_of(&slot_scripts, &slot_navs, name);
-                            let login_latch_reason = arm_latch_obs.login_latch_reason();
-                            let (up, here, active_world) = {
-                                let mut all = lock_statuses(&slot_statuses);
-                                let mut up = false;
-                                let mut here = None;
-                                let mut active_world = None;
-                                for s in all.iter_mut() {
-                                    if s.username == *name {
-                                        // Keep the producer gate closed until a current
-                                        // player observation can authorize game actions.
-                                        s.ingame = ready;
-                                        s.scene_state = nav_snapshot.scene_state();
-                                        s.login_latched = login_latch_reason.is_some();
-                                        s.login_latch_reason = login_latch_reason;
-                                        apply_startup_phase(s, name, ready, c.ingame);
-                                        s.runenergy = if ready { c.runenergy } else { 0 };
-                                        s.run_sends = run_sends;
-                                        s.main_modal_id = nav_snapshot.modals().main;
-                                        s.welcome_hold = welcome_step.hold;
-                                        s.welcome_failure = welcome_step.failure.clone();
-                                        if welcome_step.notice.is_some() {
-                                            s.welcome_notice = welcome_step.notice.clone();
-                                        }
-                                        copy_stream_bytes(c, s);
-                                        s.chat_head = if ready { c.chat_text[0].clone() } else { String::new() };
-                                        // The snapshot fact, not the chat head: the box
-                                        // survives chat-ring turnover and clears on a
-                                        // click that bumps no family. Bool copy.
-                                        s.tutorial_pending = nav_snapshot.tutorial_pending();
-                                        s.random = if session_boundary { RandomStatus::default() } else { status.clone() };
-                                        s.condition = condition;
-                                        publish_script_survival(s, survival, session_boundary);
-                                        publish_script_paint(s, paint.clone());
-                                        here = nav_snapshot.tile();
-                                        let (tx, tz, level) = here.unwrap_or((-1, -1, -1));
-                                        s.tile_x = tx;
-                                        s.tile_z = tz;
-                                        s.tile_level = level;
-                                        s.player = nav_snapshot.local_player()
-                                            .and_then(|p| p.player.actor.name.clone())
-                                            .unwrap_or_default();
-                                        up = s.is_up();
-                                        active_world = s.world;
-                                    }
-                                }
-                                (up, here, active_world)
-                            };
-                            #[cfg(not(feature = "js"))]
-                            let _ = active_world;
-                            #[cfg(feature = "js")]
-                            let broker_world = if public_world_profile {
-                                active_world.map_or(
-                                    super::script_channels::BrokerWorld::Unavailable,
-                                    super::script_channels::BrokerWorld::Public,
-                                )
-                            } else {
-                                super::script_channels::BrokerWorld::Local
-                            };
-                            let inv = observe_script_inv(running, tick_edge, &nav_snapshot);
-                            #[cfg(feature = "test-support")]
-                            let test_inv = inv.map(<[_]>::to_vec);
-                            #[cfg(feature = "test-support")]
-                            let inv = test_inv.as_deref();
-                            let nav_state = nav_world_state_for_observe(
-                                &mut nav_world_state_cache,
-                                here,
-                                &nav_snapshot,
-                                nav_facts,
-                                nav_armed,
-                                map_members,
-                                session_epoch,
-                            );
-                            #[cfg(feature = "js")]
-                            let npc_boxes = project_npc_boxes_for_isolate_snapshot(
-                                &slot_scripts,
-                                name,
-                                tick_edge,
-                                || projected_npc_boxes(c),
-                            );
-                            // The observer borrows the account's bank memory
-                            // for the compiled tick alone; the slot's own
-                            // write for the frame already happened above.
-                            let mut observe = |
-                                c: &mut Client,
-                                tick_edge,
-                                evidence_dirty,
-                                state,
-                                #[cfg(feature = "test-support")] snapshot: &mut GameSnapshot,
-                                #[cfg(not(feature = "test-support"))] snapshot: &GameSnapshot,
-                            | {
-                                script_observe_cached_with_channels(
-                                c,
-                                name,
-                                up,
-                                tick_edge,
-                                evidence_dirty,
-                                *script_tick,
-                                here,
-                                inv,
-                                state,
-                                #[cfg(feature = "test-support")]
-                                snapshot,
-                                #[cfg(not(feature = "test-support"))]
-                                Some(snapshot),
-                                Some(slot_bank.memory()),
-                                #[cfg(feature = "js")]
-                                npc_boxes.as_deref(),
-                                Some(slot_obj_names.as_ref()),
-                                &slot_scripts,
-                                &slot_cheats,
-                                &slot_navs,
-                                &slot_world,
-                                hold,
-                                guardian_hold,
-                                status.ours,
-                                active_guardian_event_name(status),
-                                slot_canlight.as_deref(),
-                                Some(slot_input.as_ref()),
-                                Some(Arc::clone(&slot_cache)),
-                                Some(Arc::clone(&slot_obj_names)),
-                                #[cfg(feature = "js")]
-                                Some(&observe_channels),
-                                #[cfg(feature = "js")]
-                                broker_world,
-                                Some(&mut *run_policy),
-                                Some(&mut debug_replies),
-                                Some(seat_arm),
-                                Some(&slot_statuses),
-                                )
-                            };
-                            let crate::script_runtime::ScriptObservation {
-                                wrote: _wrote,
-                                journal_paint_hidden,
-                                exclusive,
-                            } = observe(
-                                c,
-                                tick_edge,
-                                script_evidence_dirty(drain.dirty),
-                                nav_state,
-                                #[cfg(feature = "test-support")]
-                                &mut nav_snapshot,
-                                #[cfg(not(feature = "test-support"))]
-                                &nav_snapshot,
-                            );
-                            #[cfg(feature = "test-support")]
-                            if let Some(test_hook) = TickEngineTestHook::current() {
-                                let status = script_slot(&slot_scripts, name)
-                                    .and_then(|slot| slot.lock().ok()?.native_status());
-                                test_hook.after_frame(name, tick_edge, status);
-                            }
-                            #[cfg(feature = "test-support")]
-                            if let Some(observer) = &post_host_frame {
-                                observer(c, name);
-                            }
-                            #[cfg(test)]
-                            if crate::combat_proof::capture_enabled(name) {
-                                crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);
-                                crate::combat_proof::record_observation(
-                                    name,
-                                    *script_tick,
-                                    &nav_snapshot,
-                                    exclusive,
-                                    tick_edge,
-                                );
-                                if let Some(status) = script_slot(&slot_scripts, name)
-                                    .and_then(|slot| slot.lock().ok()?.native_status())
-                                {
-                                    crate::combat_proof::record_status(name, &status, Some(*script_tick));
-                                }
-                            }
-                            c.set_journal_paint_hidden(c.ingame && journal_paint_hidden);
-                            // TUI chat / WASD sends: run the queued wire
-                            // commands through `Interactions` on this
-                            // slot's own Client, so Continue/Answer/Walk
-                            // respect the same preconditions as the
-                            // guardian and the scenario runner. The slot
-                            // must not be frozen by the guardian's hold
-                            // when it presses a dialog the guardian is
-                            // talking through, but a walk while held is
-                            // dropped (the hold freezes the follow too).
-                            #[cfg(test)]
-                            if crate::combat_proof::capture_enabled(name) {
-                                for wire in &wires {
-                                    if !hold || !matches!(wire, WireCmd::Walk { .. }) {
-                                        crate::combat_proof::record_other_request(
-                                            name,
-                                            Some(*script_tick),
-                                            &nav_snapshot,
-                                            "play-slot-wire",
-                                            &format!("{wire:?}"),
-                                        );
-                                    }
-                                }
-                            }
-                            if !wires.is_empty() {
-                                dispatch_wires(c, &nav_snapshot, wires.into(), hold);
-                            }
-                            // Poll work independently of the per-player follow latch.
-                            crate::script_runtime::pump_route_work(&slot_navs, name);
-                            // Per-uid nav step on the pump, gated on the
-                            // player-gen/tile latch like the panel's WalkTo
-                            // hook so a hop is sent once per server tick,
-                            // not re-sent every 20 ms frame. The snapshot
-                            // was already rebuilt above. Guardian hold and
-                            // a dispatched batch freeze follow for this key;
-                            // the armed route resumes at the next key.
-                            let nav_key = (c.gens.player, here);
-                            if nav_step_due(&mut last_nav_step, nav_key, hold, exclusive, || {
-                                slot_navs.lock().unwrap().get(name).is_some_and(|b| {
-                                    b.has_route() || b.route_work_pending() || b.bank_fetch.is_some() || b.walk_guard_off.is_some() || b.combat_prayer_off.is_some()
-                                })
-                            }) {
-                                let before_outcome = slot_navs
-                                    .lock()
-                                    .unwrap()
-                                    .get(name)
-                                    .map(|bot| bot.walk_outcome_seq);
-                                step_nav_bot(
-                                    c,
-                                    name,
-                                    here,
-                                    &nav_snapshot,
-                                    &slot_navs,
-                                    &slot_statuses,
-                                    slot_world.as_ref(),
-                                    hold,
-                                    map_members,
-                                    Some(slot_bank.memory()),
-                                    || {
-                                        slot_arrival_reach(
-                                            &slot_scripts,
-                                            name,
-                                            &nav_snapshot,
-                                            here,
-                                            slot_world.as_deref(),
-                                            slot_canlight.as_deref(),
-                                        )
-                                    },
-                                );
-                                let after_outcome = slot_navs
-                                    .lock()
-                                    .unwrap()
-                                    .get(name)
-                                    .map(|bot| bot.walk_outcome_seq);
-                                if before_outcome != after_outcome {
-                                    // Follow can finish on this PLAYER_INFO edge
-                                    // after the first observation. Deliver its
-                                    // receipt now, without another game tick.
-                                    // This is still a partial PI-frame scene:
-                                    // later zone packets may change a loc. Same-call
-                                    // consumers must not treat arrival as a tick-end
-                                    // fence for their next scene interaction.
-                                    let completion = observe(
-                                        c,
-                                        false,
-                                        false,
-                                        nav_world_state_for_observe(
-                                            &mut nav_world_state_cache,
-                                            here,
-                                            &nav_snapshot,
-                                            nav_facts,
-                                            true,
-                                            map_members,
-                                            session_epoch,
-                                        ),
-                                        #[cfg(feature = "test-support")]
-                                        &mut nav_snapshot,
-                                        #[cfg(not(feature = "test-support"))]
-                                        &nav_snapshot,
-                                    );
-                                    c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);
-                                }
-                            }
-                            #[cfg(any(test, feature = "test-support"))]
-                            if tick_edge {
-                                if let Some(observer) = &post_native_player_info {
-                                    observer(c, name);
-                                }
-                            }
-                            // Inspect actual queued packets before mainloop's
-                            // next flush. This spans scripts, wires and Traveller.
-                            // Guardian dispatch is already covered by status.hold.
-                            if let Some(checkpoint) = condition_dispatch {
-                                if let Some(bot) = slot_navs.lock().unwrap().get_mut(name) {
-                                    bot.condition.observe_dispatch(c, checkpoint);
-                                }
-                            }
-                            // Busy flag for the idle scheduler: a slot with
-                            // a running script, a frame listener (also while
-                            // paused: one callback per 20 ms client loop),
-                            // queued cheats, or an armed nav bot must keep
-                            // ticking (never parked), so the observe hook
-                            // reports it every frame.
-                            slot_busy_requires_tick(running, frame_delivered)
-                                || slot_cheats
-                                    .lock()
-                                    .unwrap()
-                                    .get(name)
-                                    .is_some_and(|q| !q.is_empty())
-                                || slot_wires
-                                    .lock()
-                                    .unwrap()
-                                    .get(name)
-                                    .is_some_and(|q| !q.is_empty())
-                                || slot_navs.lock().unwrap().get(name).is_some_and(|b| {
-                                    b.has_route() || b.bank_fetch.is_some() || b.walk_guard_off.is_some() || b.combat_prayer_off.is_some()
-                                })
-                        }
-                    },
-                    {
-                        let ifaces_template = ifaces_template.clone();
-                        move |c| slot_client_pump_should_exit(c, &ifaces_template, &arm_obs)
-                    },
-                    knock,
+                // No pending intent (title hold, latched logout, or a withdrawn
+                // wait): the live title pump holds no FIFO place and publishes
+                // no `k of n`.
+                drop_queue_place(
+                    &args.slot_queue,
+                    &args.slot_statuses,
+                    username,
+                    args.arm.queue_owner,
                 );
-                if pump_had_session && arm.session_boundary_pending() {
-                    publish_slot_disconnected(&slot_statuses, &username);
-                    end_slot_session(
-                        &username,
-                        &arm,
-                        &slot_scripts,
-                        &slot_cheats,
-                        &slot_wires,
-                        &slot_navs,
-                        #[cfg(feature = "js")]
-                        &slot_channels,
-                    );
-                    slot_bank.session_ended();
-                }
-                if arm.stop.load(Ordering::Relaxed) {
-                    return;
-                }
+                publish_login_latched_from_arm(&args.slot_statuses, username, &args.arm);
             }
-            }));
-            host::unbind_capacity();
-            // No later session observes this slot, however the worker
-            // ended (a Stop while parked at the title never reaches the
-            // boundary above): its channel member leaves the party now.
-            #[cfg(feature = "js")]
-            if slot_channels.tracks() {
-                deliver_channel_events(&slot_scripts, slot_channels.leave());
-            }
-            if !arm.stop.load(Ordering::Relaxed) {
-                match worker_outcome {
-                    Ok(()) => publish_worker_terminal(
-                        &slot_statuses,
-                        &username,
-                        WorkerTerminal::Failed,
-                        None,
-                    ),
-                    Err(payload) => {
-                        let detail = payload
-                            .downcast_ref::<&str>()
-                            .map(|message| (*message).to_string())
-                            .or_else(|| payload.downcast_ref::<String>().cloned())
-                            .unwrap_or_else(|| "unknown panic payload".to_string());
-                        publish_worker_terminal(
-                            &slot_statuses,
-                            &username,
-                            WorkerTerminal::Panicked,
-                            Some(format!("slot worker panicked: {detail}")),
-                        );
+        }
+        if !client.ingame && should_handshake(&args.arm, client.ingame) {
+            return self.run_handshake(args, username, client);
+        }
+        // The pump's own frames take over the title from any wait.
+        HandshakeOutcome::Proceed {
+            left_pump_to_log_in: self.title_wait.take().is_some(),
+        }
+    }
+
+    fn ensure_title_wait<'w>(
+        slot: &'w mut Option<TitleWait>,
+        args: &SlotThreadArgs,
+    ) -> &'w mut TitleWait {
+        slot.get_or_insert_with(|| {
+            TitleWait::new(Some(Arc::clone(&args.slot_input)), args.slot_render.clone())
+        })
+    }
+
+    fn run_handshake(
+        &mut self,
+        args: &SlotThreadArgs,
+        username: &str,
+        client: &mut Client,
+    ) -> HandshakeOutcome {
+        // A request raised after the observe armed this handshake must not
+        // survive the ownership handoff and undo a later operator Logout.
+        let _ = client.take_title_login_request();
+        self.last_relog_park = None;
+        Self::ensure_title_wait(&mut self.title_wait, args);
+        // Leaving title park for handshake: refresh latch from the arm so an
+        // explicit Log in cannot keep a stale TRUE from the last park publish
+        // through queue/connect.
+        publish_login_latched_from_arm(&args.slot_statuses, username, &args.arm);
+        if let Some(round) = self.world_round.as_mut() {
+            let worlds = args
+                .connection
+                .profile()
+                .and_then(|p| p.public_worlds())
+                .expect("public world round requires bound public worlds");
+            match refresh_slot_world_preference(round, worlds, &args.arm) {
+                Ok(true) => {
+                    self.world_dirty = true;
+                    self.refresh_key = false;
+                    self.key_refreshed = false;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    if let Some(row) = lock_statuses(&args.slot_statuses)
+                        .iter_mut()
+                        .find(|s| s.username == username)
+                    {
+                        row.startup_phase = StartupPhase::Error;
+                        row.startup_phase_started = Instant::now();
+                        row.error = Some(format!("public world preference failed: {error}"));
                     }
+                    args.arm.hold_login_on_error();
+                    return HandshakeOutcome::Continue;
                 }
             }
-            })
-            .expect("failed to spawn slot thread"),
-    );
+        }
+        let Some((login_command, login_world_generation)) =
+            capture_login_authorization(&args.arm, client.ingame)
+        else {
+            return HandshakeOutcome::Continue;
+        };
+        // The slot can outlive a profile uid edit. Prepare the next handshake
+        // and its queue accounting from the live identity; K4's publication
+        // fence rejects an edit that races this snapshot.
+        let uid = args.arm.uid.load(Ordering::Acquire);
+        client.login_uid = uid;
+        if self.world_dirty && !self.configure_public_world(args, username, client) {
+            return HandshakeOutcome::Stop;
+        }
+        // Publish only the command that selected this world.
+        args.arm.prepared();
+        enqueue_queue_place(
+            &args.slot_queue,
+            &args.slot_statuses,
+            username,
+            uid,
+            &args.arm,
+        );
+        #[cfg(test)]
+        args.arm.panic_after_queue_for_test();
+        if let Some(until) = args.arm.clean_release_admission_at(
+            &client.config.host,
+            client.config.port,
+            Instant::now(),
+        ) {
+            args.slot_queue
+                .lock()
+                .defer_owner_until(args.arm.queue_owner, until);
+        }
+        host_log!(Category::Login, Level::Info, "relog decision wait queue");
+        show_title_message(client, "", "Waiting to log in...");
+        let wait = wait_for_permit(
+            &args.slot_queue,
+            &args.slot_statuses,
+            username,
+            uid,
+            &args.arm,
+            &mut title_frames(
+                Self::ensure_title_wait(&mut self.title_wait, args),
+                client,
+                username,
+                &args.slot_frame,
+                None,
+            ),
+        );
+        // The reservation is owned from the granting poll on: every
+        // `continue`/`return` (or unwind) below that drops it unused gives the
+        // grant back.
+        let PermitWait::Granted(mut permit) = wait else {
+            return if args.arm.stop.load(Ordering::Relaxed) {
+                HandshakeOutcome::Stop
+            } else {
+                HandshakeOutcome::Continue
+            };
+        };
+        if !granted_permit_world_is_current(self.world_round.as_ref(), &args.arm) {
+            drop(permit);
+            // A returned grant must not immediately re-enter the queue while
+            // the world preference stays mismatched.
+            args.arm.wait_for_retry(
+                Duration::from_millis(50),
+                None,
+                &mut title_frames(
+                    Self::ensure_title_wait(&mut self.title_wait, args),
+                    client,
+                    username,
+                    &args.slot_frame,
+                    None,
+                ),
+            );
+            return HandshakeOutcome::Continue;
+        }
+        // Script demand may change during the FIFO wait. Reduce it without
+        // replacing the captured authorization.
+        sync_script_login(&args.arm, &args.slot_scripts, username);
+        let reconnect = args.arm.reconnects();
+        host_log!(
+            Category::Login,
+            Level::Info,
+            "relog decision attempt reconnect={reconnect}"
+        );
+        // Read at each handshake, not captured at spawn: a password saved
+        // since then applies to this login.
+        let password = args.arm.login_password();
+        // An in-world reconnect is only a server-side socket swap: it retains
+        // the old mode and tabs. Only a clean logout permits the queued mode
+        // to apply at this handshake.
+        if args.arm.login_applies_memory() {
+            if let Some(lowmem) = args.arm.lowmem_handshake() {
+                if !client.configure_login_memory(lowmem) {
+                    host_log!(
+                        Category::Login,
+                        Level::Warn,
+                        "login memory configuration refused"
+                    );
+                }
+            }
+        }
+        let handshake_lowmem = client.config.lowmem;
+        // Publication is still an unused permit. A Logout or Stop before it
+        // must not charge start spacing or UID/IP TTLs.
+        let hold = Cell::new(None);
+        let Some(login) = permit.attempt(
+            |cancel| {
+                args.arm
+                    .begin_attempt(login_command, login_world_generation, cancel)
+            },
+            |deadline, cancel| {
+                mark_login_started(&args.slot_statuses, username);
+                let (result, server_hold) = SlotLogin {
+                    client,
+                    arm: &args.arm,
+                    command: login_command,
+                    world_generation: login_world_generation,
+                    username,
+                    password: &password,
+                    reconnect,
+                    backoff: &self.backoff,
+                }
+                .run(deadline, cancel, |_| {});
+                hold.set(server_hold);
+                result
+            },
+            |_| hold.get(),
+        ) else {
+            args.arm.clear_unused_attempt();
+            drop(permit);
+            // Refusal returns the unused grant before a bounded park; a stable
+            // stale capture cannot spin the queue.
+            args.arm.wait_for_retry(
+                Duration::from_millis(50),
+                None,
+                &mut title_frames(
+                    Self::ensure_title_wait(&mut self.title_wait, args),
+                    client,
+                    username,
+                    &args.slot_frame,
+                    None,
+                ),
+            );
+            return HandshakeOutcome::Continue;
+        };
+        match login {
+            Ok(false) => HandshakeOutcome::Continue,
+            Ok(true) => {
+                show_title_message(client, "", "");
+                self.backoff.reset();
+                if let Some(round) = self.world_round.as_mut() {
+                    round.reset();
+                }
+                self.key_refreshed = false;
+                publish_login_lowmem(&args.slot_statuses, username, handshake_lowmem);
+                set_startup_phase(&args.slot_statuses, username, StartupPhase::LoadingScene);
+                host_log!(Category::Login, Level::Info, "handshake ok");
+                HandshakeOutcome::Proceed {
+                    left_pump_to_log_in: self.title_wait.take().is_some(),
+                }
+            }
+            Err(e) => {
+                self.handle_login_failure(
+                    args,
+                    username,
+                    client,
+                    &e,
+                    (login_command, login_world_generation),
+                );
+                HandshakeOutcome::Continue
+            }
+        }
+    }
+
+    fn configure_public_world(
+        &mut self,
+        args: &SlotThreadArgs,
+        username: &str,
+        client: &mut Client,
+    ) -> bool {
+        let round = self.world_round.as_ref().expect("public world round");
+        let worlds = args
+            .connection
+            .profile()
+            .and_then(|p| p.public_worlds())
+            .expect("bound public worlds");
+        let world = &worlds.worlds[round.index];
+        if let Err(error) = configure_slot_world(client, world, self.refresh_key, &args.arm.stop) {
+            if args.arm.stop.load(Ordering::Relaxed) {
+                return false;
+            }
+            if let Some(row) = lock_statuses(&args.slot_statuses)
+                .iter_mut()
+                .find(|s| s.username == username)
+            {
+                row.startup_phase = StartupPhase::Error;
+                row.startup_phase_started = Instant::now();
+                row.error = Some(format!("public world login configuration failed: {error}"));
+            }
+            clear_startup_progress(&args.slot_statuses, username);
+            return false;
+        }
+        if let Some(slot) = script_slot(&args.slot_scripts, username) {
+            slot.lock()
+                .unwrap()
+                .pair_world_changed(&client.config.host, client.config.port);
+        }
+        if args.arm.stop.load(Ordering::Relaxed) {
+            return false;
+        }
+        if let Some(row) = lock_statuses(&args.slot_statuses)
+            .iter_mut()
+            .find(|s| s.username == username)
+        {
+            row.world = Some(world.number);
+        }
+        // The next session to log in is bound to this world.
+        args.arm.note_configured_world(world.number);
+        host_log!(
+            Category::Login,
+            Level::Info,
+            "world w{} {}:{} node {}",
+            world.number,
+            world.host,
+            world.port,
+            world.node_id
+        );
+        self.world_dirty = false;
+        self.refresh_key = false;
+        true
+    }
+
+    fn handle_login_failure(
+        &mut self,
+        args: &SlotThreadArgs,
+        username: &str,
+        client: &mut Client,
+        error: &LoginError,
+        (login_command, login_world_generation): (IntentCommand, u64),
+    ) {
+        let wait_frames = Self::ensure_title_wait(&mut self.title_wait, args);
+        show_title_message(client, &error.mes1, &error.mes2);
+        let transfer_countdown = Cell::new(None);
+        if wait_for_transfer_response(
+            error,
+            &args.arm,
+            &args.slot_statuses,
+            username,
+            &transfer_countdown,
+            &mut title_frames(
+                wait_frames,
+                client,
+                username,
+                &args.slot_frame,
+                Some((&transfer_countdown, &error.mes1)),
+            ),
+        )
+        .is_some()
+        {
+            return;
+        }
+        if !args
+            .arm
+            .login_attempt_is_current(login_command, login_world_generation)
+        {
+            return;
+        }
+        record_login_error(&args.slot_statuses, username, error);
+        if let Some(delay) = args.arm.defer_clean_release_at(
+            error,
+            login_command,
+            &client.config.host,
+            client.config.port,
+            Instant::now(),
+        ) {
+            host_log!(
+                Category::Login,
+                Level::Info,
+                "relog decision release_wait_ms={} code=5; rejoining login queue",
+                delay.as_millis()
+            );
+            return;
+        }
+        let worlds = args.connection.profile().and_then(|p| p.public_worlds());
+        let plan = plan_login_retry(
+            error,
+            self.world_round
+                .as_mut()
+                .map(|round| (round, &**worlds.expect("bound public worlds"))),
+            (&client.config.host, client.config.port),
+            &mut self.backoff,
+            rand_core::RngCore::next_u32(&mut rand_core::OsRng),
+        );
+        if let Some(receipt) = plan.world_full {
+            host_log!(Category::Login, Level::Warn, "{receipt}");
+        }
+        if plan.switch_world {
+            self.world_dirty = true;
+            self.key_refreshed = false;
+        }
+        // Auto world rotation: straight back into the paced queue for the next
+        // world.
+        let Some(retry) = plan.wait else {
+            return;
+        };
+        if self.world_round.is_some()
+            && public_worlds::refresh_after_login_error(error.code, &mut self.key_refreshed)
+        {
+            self.refresh_key = true;
+            self.world_dirty = true;
+        }
+        host_log!(
+            Category::Login,
+            Level::Info,
+            "relog decision wait backoff_ms={} code={}",
+            retry.as_millis(),
+            error.code
+        );
+        args.arm.wait_for_retry(
+            retry,
+            Some((login_command, login_world_generation)),
+            &mut title_frames(wait_frames, client, username, &args.slot_frame, None),
+        );
+    }
+}
+
+impl<'a> SlotFrameRunner<'a> {
+    fn new(
+        args: &'a SlotThreadArgs,
+        username: &'a str,
+        script_tick: &'a mut u64,
+        title_park_reason: &'a mut Option<RelogParkReason>,
+    ) -> Self {
+        let mainland = match &args.connection {
+            PlayConnection::Direct(options) => options.mainland,
+            PlayConnection::Bound { mainland, .. } => *mainland,
+        };
+        #[cfg(feature = "js")]
+        let public_world_profile = args
+            .connection
+            .profile()
+            .and_then(|profile| profile.public_worlds())
+            .is_some();
+        let slot_canlight = args.connection.profile().and_then(|p| p.canlight());
+        let map_members = args
+            .connection
+            .profile()
+            .map(|p| p.map_members())
+            .unwrap_or(false);
+        Self {
+            ctx: SlotObserveCtx {
+                args,
+                username,
+                slot_canlight,
+                map_members,
+                script_tick,
+                // Last `(player gen, here)` the nav bot stepped: skip until
+                // either changes so the hop budget counts server ticks, not 20 ms
+                // frames (panel `tick_latch`).
+                last_nav_step: None,
+                nav_world_state_cache: super::script_runtime::NavWorldStateCache::default(),
+                session_epoch: 0,
+                debug_replies: super::debug_replies::DebugReplies::default(),
+            },
+            mainland,
+            #[cfg(feature = "js")]
+            public_world_profile,
+            mainland_sent: false,
+            pump: Pump::new(),
+            // The slot's per-tick nav snapshot: rebuilt each observe when a
+            // family's gen moved (the walk arm gates on its facts; the follow
+            // surface reads the canonical base + route-head tile from it).
+            nav_snapshot: GameSnapshot::new(),
+            welcome: login_readiness::LoginReadiness::default(),
+            title_park_reason,
+        }
+    }
+
+    fn observe_frame(
+        &mut self,
+        c: &mut Client,
+        run_sends: u32,
+        status: &RandomStatus,
+        run_policy: &mut ScriptRunPolicy,
+    ) -> bool {
+        let name = self.ctx.username;
+        #[cfg(feature = "test-support")]
+        if let Some(test_hook) = TickEngineTestHook::bind_current_for_account(name) {
+            test_hook.bind_client(c, name, Arc::clone(&self.ctx.args.slot_input));
+        }
+        if !c.ingame {
+            self.step_logged_out_title_frame(c);
+        }
+        let drain = self.pump.drain_client(c);
+        let session_boundary = publish_session_boundary_status(
+            &self.ctx.args.slot_statuses,
+            name,
+            drain.session_changed,
+            c.ingame,
+            self.nav_snapshot.ingame(),
+        );
+        if session_boundary {
+            self.ctx.handle_session_boundary(c);
+        }
+        self.nav_snapshot
+            .set_loc_projection_wanted(run_policy.loc_projection_wanted());
+        host::publish_snapshot(&mut self.nav_snapshot, c, drain);
+        if session_boundary && c.ingame {
+            self.ctx
+                .args
+                .slot_navs
+                .lock()
+                .unwrap()
+                .entry(name.to_owned())
+                .or_default()
+                .condition
+                .session_started(
+                    self.nav_snapshot.tick(),
+                    c.chat_seq as i32,
+                    self.ctx
+                        .args
+                        .slot_world
+                        .as_deref()
+                        .and_then(crate::admission::condition_tables),
+                );
+        }
+        // The open bank's rows reach the account memory here
+        // (design-bank-snapshot §1.3); a close saves.
+        self.ctx.args.slot_bank.observe_frame(&self.nav_snapshot);
+        let condition = {
+            let mut navs = self.ctx.args.slot_navs.lock().unwrap();
+            if let Some(bot) = navs.get_mut(name) {
+                bot.condition
+                    .observe_frame(&self.nav_snapshot, &drain, status.hold);
+                bot.condition.published()
+            } else {
+                api::condition::BotCondition::default()
+            }
+        };
+        let condition_dispatch = self
+            .ctx
+            .args
+            .slot_navs
+            .lock()
+            .unwrap()
+            .get(name)
+            .and_then(|bot| bot.condition.dispatch_checkpoint(c));
+        api::hostlog::set_tick(self.nav_snapshot.tick());
+        self.ctx.debug_replies.observe(name, &self.nav_snapshot);
+        self.publish_catalog_and_paired(status, session_boundary);
+        let ready = c.ingame && c.scene_state == 2 && self.nav_snapshot.local_player().is_some();
+        let welcome_obs = login_readiness::WelcomeObservation {
+            session_epoch: self.ctx.session_epoch,
+            tick: *self.ctx.script_tick,
+            now: Instant::now(),
+            ingame: c.ingame,
+            scene_state: c.scene_state,
+            welcome_interface_id: c.welcome_interface_id,
+            main_modal_id: c.main_modal_id,
+            allow_close: c.ingame && c.scene_state == 2 && !session_boundary,
+        };
+        let welcome_step = self.welcome.step(&welcome_obs, || {
+            login_readiness::try_close_welcome(&self.nav_snapshot, c)
+        });
+        if let Some(line) = welcome_step.notice.as_deref() {
+            host_log!(stderr; Category::Echo, Level::Info, "{line}");
+        }
+        #[cfg(test)]
+        let injected_maze_hold = self.try_inject_maze_hold(ready, status, session_boundary);
+        #[cfg(test)]
+        let guardian_hold = status.hold || injected_maze_hold;
+        #[cfg(not(test))]
+        let guardian_hold = status.hold;
+        let session_ready = self.ctx.args.arm.update_session_readiness(
+            ready,
+            welcome_step.hold,
+            guardian_hold,
+            session_boundary,
+        );
+        // This frame's random status is published before observe; its hold
+        // freezes script tick and nav follow.
+        let hold = !session_ready || !ready || session_boundary;
+        // Collect intent before either follow pump or script dispatch; this is
+        // the shared takeover ordering seam. Keep these commands for their
+        // normal late send/hold gate.
+        let (mut frame_input, wires) = take_slot_frame_input(
+            &self.ctx.args.slot_input,
+            name,
+            &self.ctx.args.slot_wires,
+            hold,
+            status,
+        );
+        take_manual_walk_ownership(
+            &self.ctx.args.slot_scripts,
+            &self.ctx.args.slot_navs,
+            name,
+            frame_input,
+            c.ingame && !session_boundary,
+            *self.ctx.script_tick,
+            self.ctx
+                .args
+                .slot_manual_abort_pause
+                .load(Ordering::Relaxed),
+        );
+        // The Guardian's Fight child (design V11D 4.2, 4.4). A manual step is
+        // a takeover: it revokes the child before anything dispatches, and the
+        // Guardian's own escape answers the event after the manual lease.
+        // Otherwise the child may act under the Guardian's hold and under no
+        // other reason's.
+        let manual = frame_input.manual_move_count() > 0;
+        if let (true, Some(token)) = (manual, status.fight) {
+            if let Some(slot) = script_slot(&self.ctx.args.slot_scripts, name) {
+                if let Ok(mut slot) = slot.lock() {
+                    slot.guardian_revoke_token(token, api::random::FightCancel::ManualTakeover);
+                }
+            }
+        }
+        self.ctx.args.arm.fight.publish(
+            status.fight.filter(|_| !manual && !session_boundary),
+            c.ingame
+                && !session_boundary
+                && !manual
+                && self.ctx.args.arm.guardian_child_ready(ready),
+        );
+        let frame = script_frame(&self.ctx.args.slot_scripts, name);
+        let script_state = frame.state;
+        let running = script_state == Some(script::RunState::Running);
+        host::set_service_class(capacity_service_class(
+            c.ingame,
+            self.ctx.args.arm.login_latched(),
+            frame,
+        ));
+        let nav_facts = script_state_builds_nav_facts(script_state);
+        let (nav_owned, nav_armed) =
+            self.ctx
+                .args
+                .slot_navs
+                .lock()
+                .unwrap()
+                .get(name)
+                .map_or((false, false), |bot| {
+                    (
+                        bot.ordinary_movement_owned(self.nav_snapshot.tick() as u16),
+                        bot.has_route() || bot.bank_fetch.is_some(),
+                    )
+                });
+        frame_input.host_move_owned = project_slot_frame_host_move_owned(script_state, nav_owned);
+        #[cfg(feature = "memory-profile")]
+        memory::client_frame(c, name, hold, script_state);
+        (self.ctx.args.slot_frame)(c, name, frame_input);
+        // Operator pause parks ScriptRunner work, not BotHost client frames
+        // (`BotHost.ts:48-55`).
+        let mut frame_delivered = false;
+        if matches!(
+            script_state,
+            Some(script::RunState::Starting | script::RunState::Running | script::RunState::Paused,)
+        ) {
+            if let Some(slot) = script_slot(&self.ctx.args.slot_scripts, name) {
+                frame_delivered = dispatch_client_frame(&slot, name);
+            }
+        }
+        if !self.mainland_sent && self.mainland && ready {
+            api::interact::mainland_hop(c);
+            self.mainland_sent = true;
+            host_log!(Category::Lifecycle, Level::Info, "mainland hop queued");
+        }
+        let tick_edge = should_emit_tick(drain.packet_delta);
+        *self.ctx.script_tick = self.ctx.script_tick.wrapping_add(drain.packet_delta);
+        #[cfg(feature = "test-support")]
+        if let Some(test_hook) = TickEngineTestHook::current() {
+            let tick_engine_suppressed_openchat = test_hook.before_snapshot_observe(
+                name,
+                &mut self.nav_snapshot,
+                *self.ctx.script_tick as u32,
+            );
+            test_hook.before_frame(
+                c,
+                name,
+                &self.nav_snapshot,
+                *self.ctx.script_tick as u32,
+                tick_edge,
+                tick_engine_suppressed_openchat,
+            );
+        }
+        let published = self.publish_frame_status(
+            c,
+            &FrameStatusInput {
+                ready,
+                run_sends,
+                status,
+                session_boundary,
+                condition,
+                welcome_step: &welcome_step,
+            },
+        );
+        let here = published.here;
+        #[cfg(feature = "js")]
+        let broker_world = if self.public_world_profile {
+            published.active_world.map_or(
+                super::script_channels::BrokerWorld::Unavailable,
+                super::script_channels::BrokerWorld::Public,
+            )
+        } else {
+            super::script_channels::BrokerWorld::Local
+        };
+        let inv = observe_script_inv(running, tick_edge, &self.nav_snapshot);
+        #[cfg(feature = "test-support")]
+        let test_inv = inv.map(<[_]>::to_vec);
+        #[cfg(feature = "test-support")]
+        let inv = test_inv.as_deref();
+        let nav_state = nav_world_state_for_observe(
+            &mut self.ctx.nav_world_state_cache,
+            here,
+            &self.nav_snapshot,
+            nav_facts,
+            nav_armed,
+            self.ctx.map_members,
+            self.ctx.session_epoch,
+        );
+        #[cfg(feature = "js")]
+        let npc_boxes = project_npc_boxes_for_isolate_snapshot(
+            &self.ctx.args.slot_scripts,
+            name,
+            tick_edge,
+            || projected_npc_boxes(c),
+        );
+        let pass_input = ObservePassInput {
+            up: published.up,
+            here,
+            hold,
+            guardian_hold,
+            ours: status.ours,
+            guardian_active_event: active_guardian_event_name(status),
+            inv,
+            #[cfg(feature = "js")]
+            npc_boxes: npc_boxes.as_deref(),
+            #[cfg(feature = "js")]
+            broker_world,
+        };
+        #[cfg(feature = "test-support")]
+        let nav_snapshot_ref = &mut self.nav_snapshot;
+        #[cfg(not(feature = "test-support"))]
+        let nav_snapshot_ref = &self.nav_snapshot;
+        let crate::script_runtime::ScriptObservation {
+            wrote: _wrote,
+            journal_paint_hidden,
+            exclusive,
+        } = self.ctx.run_observe(
+            c,
+            nav_snapshot_ref,
+            &pass_input,
+            (tick_edge, script_evidence_dirty(drain.dirty)),
+            nav_state,
+            run_policy,
+        );
+        #[cfg(feature = "test-support")]
+        if let Some(test_hook) = TickEngineTestHook::current() {
+            let status = script_slot(&self.ctx.args.slot_scripts, name)
+                .and_then(|slot| slot.lock().ok()?.native_status());
+            test_hook.after_frame(name, tick_edge, status);
+        }
+        #[cfg(feature = "test-support")]
+        if let Some(observer) = &self.ctx.args.post_host_frame {
+            observer(c, name);
+        }
+        #[cfg(test)]
+        if crate::combat_proof::capture_enabled(name) {
+            crate::combat_proof::record_frame(name, *self.ctx.script_tick, &self.nav_snapshot);
+            crate::combat_proof::record_observation(
+                name,
+                *self.ctx.script_tick,
+                &self.nav_snapshot,
+                exclusive,
+                tick_edge,
+            );
+            if let Some(status) = script_slot(&self.ctx.args.slot_scripts, name)
+                .and_then(|slot| slot.lock().ok()?.native_status())
+            {
+                crate::combat_proof::record_status(name, &status, Some(*self.ctx.script_tick));
+            }
+        }
+        c.set_journal_paint_hidden(c.ingame && journal_paint_hidden);
+        #[cfg(feature = "test-support")]
+        let nav_snapshot_ref = &mut self.nav_snapshot;
+        #[cfg(not(feature = "test-support"))]
+        let nav_snapshot_ref = &self.nav_snapshot;
+        self.ctx.dispatch_wires_and_nav(
+            c,
+            nav_snapshot_ref,
+            &pass_input,
+            run_policy,
+            DispatchWiresInput {
+                wires,
+                exclusive,
+                nav_facts,
+                tick_edge,
+                condition_dispatch,
+            },
+        );
+        self.ctx.slot_requires_tick(running, frame_delivered)
+    }
+
+    fn step_logged_out_title_frame(&mut self, c: &mut Client) {
+        // The live title pump owns offline script/latch synchronization. A
+        // hosted title click is only operator intent: arm the ordinary
+        // vault/FIFO path and never use the client's title fields.
+        if c.take_title_login_request() {
+            self.ctx.args.arm.arm_explicit_login();
+            self.ctx.args.slot_wake.wake();
+        }
+        sync_offline_title_state(self.ctx.args, self.ctx.username);
+        if should_handshake(&self.ctx.args.arm, c.ingame) {
+            *self.title_park_reason = None;
+        } else {
+            let reason = self.ctx.args.arm.relog_park_reason();
+            if *self.title_park_reason != Some(reason) {
+                host_log!(
+                    Category::Login,
+                    Level::Info,
+                    "relog decision park reason={reason}"
+                );
+                *self.title_park_reason = Some(reason);
+            }
+        }
+    }
+
+    fn publish_catalog_and_paired(&self, status: &RandomStatus, session_boundary: bool) {
+        let name = self.ctx.username;
+        // `script_observe_with_npc_boxes` below reaps the isolate and can
+        // publish a Stop receipt. The next frame attaches that bounded value
+        // here before status publication; pending panel logs are never consumed
+        // by this read. `status` is this frame's client_frame publication,
+        // copied onto the slot row below. The hunt cards also read the slot's
+        // own record of the requests host-play dispatched for it.
+        let copies_inspect = self.ctx.args.slot_catalog_core.copies_route_inspect();
+        let copies_hunt = self.ctx.args.slot_catalog_core.copies_hunt();
+        let (inspect, acts) = if copies_inspect || copies_hunt {
+            let navs = self.ctx.args.slot_navs.lock().unwrap();
+            let bot = navs.get(name);
+            (
+                bot.filter(|_| copies_inspect)
+                    .map(|bot| bot.inspect.published_core_facts()),
+                copies_hunt.then(|| bot.map(|bot| bot.acts.published()).unwrap_or_default()),
+            )
+        } else {
+            (None, None)
+        };
+        let catalog_paint = if copies_hunt {
+            script_paint_of(&self.ctx.args.slot_scripts, name)
+        } else {
+            None
+        };
+        observe_slot_catalog_and_paired(
+            &self.ctx.args.slot_catalog_core,
+            &self.ctx.args.slot_paired_core,
+            name,
+            &self.nav_snapshot,
+            self.ctx.args.slot_obj_names.as_ref(),
+            session_boundary,
+            || {
+                script_slot(&self.ctx.args.slot_scripts, name)
+                    .and_then(|slot| slot.lock().ok().and_then(|slot| slot.lifecycle_receipt()))
+            },
+            || bounded_guardian_fact(status),
+            inspect,
+            catalog_paint.as_deref(),
+            acts,
+        );
+    }
+
+    #[cfg(test)]
+    fn try_inject_maze_hold(
+        &self,
+        ready: bool,
+        status: &RandomStatus,
+        session_boundary: bool,
+    ) -> bool {
+        let name = self.ctx.username;
+        if !(ready
+            && !status.hold
+            && !session_boundary
+            && crate::combat_proof::maze_injection_pending(name))
+        {
+            return false;
+        }
+        if !crate::combat_proof::protect_from_melee_active(&self.nav_snapshot) {
+            return false;
+        }
+        match script_slot(&self.ctx.args.slot_scripts, name) {
+            Some(slot) => match slot.lock() {
+                Ok(mut slot) => {
+                    let event = DetectedRandom {
+                        kind: host::RandomKind::Maze,
+                        name: "combat-live-proof synthetic Maze hold".to_owned(),
+                        ours: true,
+                        npc_index: None,
+                    };
+                    let owner_live_before = crate::combat_proof::maze_attack_owner_live(name);
+                    let claim = slot.on_random(&event);
+                    let owner_live_after = crate::combat_proof::maze_attack_owner_live(name);
+                    crate::combat_proof::record_maze_injection(
+                        name,
+                        Some(*self.ctx.script_tick),
+                        &self.nav_snapshot,
+                        claim,
+                        owner_live_before,
+                        owner_live_after,
+                    );
+                    true
+                }
+                Err(_) => {
+                    crate::combat_proof::record_maze_injection_failure(
+                        name,
+                        "script slot mutex poisoned at Maze injection",
+                    );
+                    false
+                }
+            },
+            None => {
+                crate::combat_proof::record_maze_injection_failure(
+                    name,
+                    "script slot absent at Maze injection",
+                );
+                false
+            }
+        }
+    }
+
+    fn publish_frame_status(
+        &self,
+        c: &Client,
+        input: &FrameStatusInput<'_>,
+    ) -> PublishedFrameStatus {
+        let name = self.ctx.username;
+        // The slot's paint frame is read before the status lock
+        // (`scripts -> statuses` is the only order the two mutexes may nest).
+        let paint = script_paint_of(&self.ctx.args.slot_scripts, name);
+        let survival =
+            script_survival_of(&self.ctx.args.slot_scripts, &self.ctx.args.slot_navs, name);
+        let login_latch_reason = self.ctx.args.arm.login_latch_reason();
+        let mut all = lock_statuses(&self.ctx.args.slot_statuses);
+        let mut up = false;
+        let mut here = None;
+        #[cfg(feature = "js")]
+        let mut active_world = None;
+        for s in all.iter_mut() {
+            if s.username == name {
+                // Keep the producer gate closed until a current player
+                // observation can authorize game actions.
+                s.ingame = input.ready;
+                s.scene_state = self.nav_snapshot.scene_state();
+                s.login_latched = login_latch_reason.is_some();
+                s.login_latch_reason = login_latch_reason;
+                apply_startup_phase(s, name, input.ready, c.ingame);
+                s.runenergy = if input.ready { c.runenergy } else { 0 };
+                s.run_sends = input.run_sends;
+                s.main_modal_id = self.nav_snapshot.modals().main;
+                s.welcome_hold = input.welcome_step.hold;
+                s.welcome_failure = input.welcome_step.failure.clone();
+                if input.welcome_step.notice.is_some() {
+                    s.welcome_notice = input.welcome_step.notice.clone();
+                }
+                copy_stream_bytes(c, s);
+                s.chat_head = if input.ready {
+                    c.chat_text[0].clone()
+                } else {
+                    String::new()
+                };
+                // The snapshot fact, not the chat head: the box survives
+                // chat-ring turnover and clears on a click that bumps no
+                // family. Bool copy.
+                s.tutorial_pending = self.nav_snapshot.tutorial_pending();
+                s.random = if input.session_boundary {
+                    RandomStatus::default()
+                } else {
+                    input.status.clone()
+                };
+                s.condition = input.condition;
+                publish_script_survival(s, survival, input.session_boundary);
+                publish_script_paint(s, paint.clone());
+                here = self.nav_snapshot.tile();
+                let (tx, tz, level) = here.unwrap_or((-1, -1, -1));
+                s.tile_x = tx;
+                s.tile_z = tz;
+                s.tile_level = level;
+                s.player = self
+                    .nav_snapshot
+                    .local_player()
+                    .and_then(|p| p.player.actor.name.clone())
+                    .unwrap_or_default();
+                up = s.is_up();
+                #[cfg(feature = "js")]
+                {
+                    active_world = s.world;
+                }
+            }
+        }
+        PublishedFrameStatus {
+            up,
+            here,
+            #[cfg(feature = "js")]
+            active_world,
+        }
+    }
+}
+
+impl<'a> SlotObserveCtx<'a> {
+    fn handle_session_boundary(&mut self, c: &mut Client) {
+        self.debug_replies = super::debug_replies::DebugReplies::default();
+        self.session_epoch = self.session_epoch.wrapping_add(1);
+        self.nav_world_state_cache.clear();
+        if c.ingame {
+            self.args
+                .arm
+                .set_script_active(script_active(&self.args.slot_scripts, self.username));
+            reset_slot_session_boundary(
+                self.username,
+                &self.args.arm,
+                BoundaryWork {
+                    scripts: &self.args.slot_scripts,
+                    cheats: &self.args.slot_cheats,
+                    wires: &self.args.slot_wires,
+                    navs: &self.args.slot_navs,
+                    #[cfg(feature = "js")]
+                    channels: &self.args.slot_channels,
+                },
+                self.args.arm.keeps_script_work_after_exit(),
+            );
+            // Before the first script tick of the session
+            // (design-bank-snapshot §1.4).
+            self.args.slot_bank.session_started();
+        } else {
+            observe_client_session_exit(c, &self.args.arm);
+            end_slot_session(
+                self.username,
+                &self.args.arm,
+                &self.args.slot_scripts,
+                &self.args.slot_cheats,
+                &self.args.slot_wires,
+                &self.args.slot_navs,
+                #[cfg(feature = "js")]
+                &self.args.slot_channels,
+            );
+            self.args.slot_bank.session_ended();
+            if let Some(bot) = self.args.slot_navs.lock().unwrap().get_mut(self.username) {
+                bot.condition.session_ended();
+            }
+        }
+        self.last_nav_step = None;
+    }
+
+    fn run_observe(
+        &mut self,
+        c: &mut Client,
+        nav_snapshot: ObserveSnapshotRef<'_>,
+        pass: &ObservePassInput<'_>,
+        (tick_edge, evidence_dirty): (bool, bool),
+        state: Option<Arc<nav_planner::WorldState>>,
+        run_policy: &mut ScriptRunPolicy,
+    ) -> crate::script_runtime::ScriptObservation {
+        // The observer borrows the account's bank memory for the compiled tick
+        // alone; the slot's own write for the frame already happened above.
+        script_observe_cached_with_channels(
+            c,
+            self.username,
+            pass.up,
+            tick_edge,
+            evidence_dirty,
+            *self.script_tick,
+            pass.here,
+            pass.inv,
+            state,
+            #[cfg(feature = "test-support")]
+            nav_snapshot,
+            #[cfg(not(feature = "test-support"))]
+            Some(nav_snapshot),
+            Some(self.args.slot_bank.memory()),
+            #[cfg(feature = "js")]
+            pass.npc_boxes,
+            Some(self.args.slot_obj_names.as_ref()),
+            &self.args.slot_scripts,
+            &self.args.slot_cheats,
+            &self.args.slot_navs,
+            &self.args.slot_world,
+            pass.hold,
+            pass.guardian_hold,
+            pass.ours,
+            pass.guardian_active_event,
+            self.slot_canlight.as_deref(),
+            Some(self.args.slot_input.as_ref()),
+            Some(Arc::clone(&self.args.slot_cache)),
+            Some(Arc::clone(&self.args.slot_obj_names)),
+            #[cfg(feature = "js")]
+            Some(&self.args.slot_channels),
+            #[cfg(feature = "js")]
+            pass.broker_world,
+            Some(run_policy),
+            Some(&mut self.debug_replies),
+            Some(self.args.arm.as_ref()),
+            Some(&self.args.slot_statuses),
+        )
+    }
+
+    fn dispatch_wires_and_nav(
+        &mut self,
+        c: &mut Client,
+        nav_snapshot: ObserveSnapshotRef<'_>,
+        pass: &ObservePassInput<'_>,
+        run_policy: &mut ScriptRunPolicy,
+        input: DispatchWiresInput,
+    ) {
+        let DispatchWiresInput {
+            wires,
+            exclusive,
+            nav_facts,
+            tick_edge,
+            condition_dispatch,
+        } = input;
+        let hold = pass.hold;
+        let name = self.username;
+        // TUI chat / WASD sends: run the queued wire commands through
+        // `Interactions` on this slot's own Client, so Continue/Answer/Walk
+        // respect the same preconditions as the guardian and the scenario
+        // runner. The slot must not be frozen by the guardian's hold when it
+        // presses a dialog the guardian is talking through, but a walk while
+        // held is dropped (the hold freezes the follow too).
+        #[cfg(test)]
+        if crate::combat_proof::capture_enabled(name) {
+            for wire in &wires {
+                if !hold || !matches!(wire, WireCmd::Walk { .. }) {
+                    crate::combat_proof::record_other_request(
+                        name,
+                        Some(*self.script_tick),
+                        nav_snapshot,
+                        "play-slot-wire",
+                        &format!("{wire:?}"),
+                    );
+                }
+            }
+        }
+        if !wires.is_empty() {
+            dispatch_wires(c, nav_snapshot, wires.into(), hold);
+        }
+        // Poll work independently of the per-player follow latch.
+        crate::script_runtime::pump_route_work(&self.args.slot_navs, name);
+        // Per-uid nav step on the pump, gated on the player-gen/tile latch
+        // like the panel's WalkTo hook so a hop is sent once per server tick,
+        // not re-sent every 20 ms frame. The snapshot was already rebuilt
+        // above. Guardian hold and a dispatched batch freeze follow for this
+        // key; the armed route resumes at the next key.
+        let nav_key = (c.gens.player, pass.here);
+        if nav_step_due(&mut self.last_nav_step, nav_key, hold, exclusive, || {
+            self.args
+                .slot_navs
+                .lock()
+                .unwrap()
+                .get(name)
+                .is_some_and(|b| {
+                    b.has_route()
+                        || b.route_work_pending()
+                        || b.bank_fetch.is_some()
+                        || b.walk_guard_off.is_some()
+                        || b.combat_prayer_off.is_some()
+                })
+        }) {
+            let before_outcome = self
+                .args
+                .slot_navs
+                .lock()
+                .unwrap()
+                .get(name)
+                .map(|bot| bot.walk_outcome_seq);
+            step_nav_bot(
+                c,
+                name,
+                pass.here,
+                nav_snapshot,
+                &self.args.slot_navs,
+                &self.args.slot_statuses,
+                self.args.slot_world.as_ref(),
+                hold,
+                self.map_members,
+                Some(self.args.slot_bank.memory()),
+                || {
+                    slot_arrival_reach(
+                        &self.args.slot_scripts,
+                        name,
+                        nav_snapshot,
+                        pass.here,
+                        self.args.slot_world.as_deref(),
+                        self.slot_canlight.as_deref(),
+                    )
+                },
+            );
+            let after_outcome = self
+                .args
+                .slot_navs
+                .lock()
+                .unwrap()
+                .get(name)
+                .map(|bot| bot.walk_outcome_seq);
+            if before_outcome != after_outcome {
+                // Follow can finish on this PLAYER_INFO edge after the first
+                // observation. Deliver its receipt now, without another game
+                // tick. This is still a partial PI-frame scene: later zone
+                // packets may change a loc. Same-call consumers must not treat
+                // arrival as a tick-end fence for their next scene
+                // interaction.
+                let completion_state = nav_world_state_for_observe(
+                    &mut self.nav_world_state_cache,
+                    pass.here,
+                    nav_snapshot,
+                    nav_facts,
+                    true,
+                    self.map_members,
+                    self.session_epoch,
+                );
+                let completion = self.run_observe(
+                    c,
+                    nav_snapshot,
+                    pass,
+                    (false, false),
+                    completion_state,
+                    run_policy,
+                );
+                c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);
+            }
+        }
+        #[cfg(any(test, feature = "test-support"))]
+        if tick_edge {
+            if let Some(observer) = &self.args.post_native_player_info {
+                observer(c, name);
+            }
+        }
+        #[cfg(not(any(test, feature = "test-support")))]
+        let _ = tick_edge;
+        // Inspect actual queued packets before mainloop's next flush. This
+        // spans scripts, wires and Traveller. Guardian dispatch is already
+        // covered by status.hold.
+        if let Some(checkpoint) = condition_dispatch {
+            if let Some(bot) = self.args.slot_navs.lock().unwrap().get_mut(name) {
+                bot.condition.observe_dispatch(c, checkpoint);
+            }
+        }
+    }
+
+    fn slot_requires_tick(&self, running: bool, frame_delivered: bool) -> bool {
+        let name = self.username;
+        // Busy flag for the idle scheduler: a slot with a running script, a
+        // frame listener (also while paused: one callback per 20 ms client
+        // loop), queued cheats, or an armed nav bot must keep ticking (never
+        // parked), so the observe hook reports it every frame.
+        slot_busy_requires_tick(running, frame_delivered)
+            || self
+                .args
+                .slot_cheats
+                .lock()
+                .unwrap()
+                .get(name)
+                .is_some_and(|q| !q.is_empty())
+            || self
+                .args
+                .slot_wires
+                .lock()
+                .unwrap()
+                .get(name)
+                .is_some_and(|q| !q.is_empty())
+            || self
+                .args
+                .slot_navs
+                .lock()
+                .unwrap()
+                .get(name)
+                .is_some_and(|b| {
+                    b.has_route()
+                        || b.bank_fetch.is_some()
+                        || b.walk_guard_off.is_some()
+                        || b.combat_prayer_off.is_some()
+                })
+    }
 }
 
 /// Return the live client pump to its slot owner for Stop or for a newly

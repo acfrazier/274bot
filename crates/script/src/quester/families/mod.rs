@@ -3544,6 +3544,680 @@ impl UseOnRun {
     }
 }
 
+/// Control-flow decision for one pass of [`UseOnRun::begin_use_on_interaction`].
+enum UseOnLoopStep {
+    Continue,
+    Return(Poll<Result<StepOutcome, ActionError>>),
+}
+
+/// Target location, scene/inventory handle, and resolved display name for `UseOn`.
+struct ResolvedUseOnTarget {
+    tile: WorldTile,
+    index: Option<i32>,
+    target_item_slot: Option<i32>,
+    target_name: Option<String>,
+    dispatched: Option<reach::AvoidKey>,
+}
+
+impl UseOnRun {
+    fn poll_dialogue_phase(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Option<Poll<Result<StepOutcome, ActionError>>> {
+        if self.dialogue.is_some() {
+            let deadline = self.deadline;
+            let now = cx.tick.cx.active_now();
+            let reached = until_reached(self.until, &cx.tick.cx);
+            let reached_at_deadline = deadline == Some(now) && reached;
+            if deadline.is_some_and(|deadline| now >= deadline) && !reached_at_deadline {
+                return Some(Poll::Ready(Err(ActionError::Failed(Arc::from(
+                    "use_on timeout",
+                )))));
+            }
+            if self.default_dialogue && reached && (self.interaction.is_none() || self.accepted) {
+                return Some(Poll::Ready(Ok(StepOutcome {
+                    progress: None,
+                    evidence: cx.tick.cx.evidence(),
+                    receipt: None,
+                })));
+            }
+        }
+        if let Some(handle) = &self.dialogue {
+            match poll_dialogue_step(handle, cx) {
+                Poll::Pending => return Some(Poll::Pending),
+                Poll::Ready(Err(error)) => return Some(Poll::Ready(Err(error))),
+                Poll::Ready(Ok(_)) => {
+                    let elapsed = cx
+                        .tick
+                        .cx
+                        .active_now()
+                        .saturating_sub(self.dialogue_started.take().unwrap());
+                    self.round_deadline = self
+                        .round_deadline
+                        .map(|deadline| deadline.saturating_add(elapsed));
+                    self.dialogue = None;
+                    self.dialogue_completed = true;
+                }
+            }
+        }
+        None
+    }
+
+    fn poll_walk_phase(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        timed_out: bool,
+        reached_at_deadline: bool,
+    ) -> Option<Poll<Result<StepOutcome, ActionError>>> {
+        if self.walk.is_some()
+            && (self.chase_needs_repick(&cx.tick.cx) || self.retarget_anchor_walk(&cx.tick.cx))
+        {
+            // Dropping the handle revokes the stale walk; pick again below.
+            self.walk = None;
+            self.wall_fallback_tile = None;
+            self.wall_fallback_pending = None;
+            self.chase = None;
+            self.anchor_walk = false;
+        }
+        if let Some(handle) = &mut self.walk {
+            match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
+                Poll::Ready(Ok(receipt)) if receipt.end == crate::native::WalkEnd::UserInput => {
+                    return Some(Poll::Ready(Err(ActionError::UserInput)));
+                }
+                _ if timed_out && !reached_at_deadline => {
+                    return Some(Poll::Ready(Err(ActionError::Failed(Arc::from(
+                        "use_on timeout",
+                    )))));
+                }
+                Poll::Pending => return Some(Poll::Pending),
+                Poll::Ready(Err(error)) => return Some(Poll::Ready(Err(error))),
+                Poll::Ready(Ok(receipt)) => {
+                    if self.walk_retry.observe_wall_approach_failure(
+                        &receipt,
+                        cx.tick.cx.evidence().tick,
+                        self.wall_fallback_tile.is_some(),
+                    ) {
+                        if reach::loc_wall_route_failed(&receipt) {
+                            self.wall_fallback_pending = self.wall_fallback_tile;
+                        }
+                        self.walk = None;
+                        self.chase = None;
+                        self.anchor_walk = false;
+                        return Some(Poll::Pending);
+                    }
+                    self.wall_fallback_tile = None;
+                    if let Err(error) = walk_step_evidence(receipt) {
+                        return Some(Poll::Ready(Err(error)));
+                    }
+                    self.walk_retry.reset();
+                    self.walk = None;
+                    self.chase = None;
+                    self.anchor_walk = false;
+                }
+            }
+        }
+        if timed_out && !reached_at_deadline {
+            return Some(Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "use_on timeout",
+            )))));
+        }
+        if self
+            .walk_retry
+            .waiting_for_next_tick(cx.tick.cx.evidence().tick)
+        {
+            return Some(Poll::Pending);
+        }
+        if let Some(tile) = self.wall_fallback_pending {
+            match begin_approach_walk(
+                &mut self.walk_retry,
+                reach::walk_request(tile, 1, None, cx.required_after),
+                cx,
+            ) {
+                Poll::Pending => return Some(Poll::Pending),
+                Poll::Ready(Err(error)) => return Some(Poll::Ready(Err(error))),
+                Poll::Ready(Ok(handle)) => {
+                    self.walk = Some(handle);
+                    self.wall_fallback_pending = None;
+                    return Some(Poll::Pending);
+                }
+            }
+        }
+        None
+    }
+
+    fn walk_to_anchor_if_needed(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Option<Poll<Result<StepOutcome, ActionError>>> {
+        let tile = self.tile?;
+        let here = cx
+            .tick
+            .cx
+            .snapshot()
+            .local_player()
+            .map(|player| player.value.player.network);
+        let avoid = self.avoid.at(cx.tick.cx.evidence().tick);
+        // Walk to the anchor area only when nothing in it can be
+        // reached from here; a visible anchored loc is approached
+        // through its own stand instead.
+        let target_here = match self.kind.as_ref() {
+            "loc" => reach::choose_loc(
+                &cx.tick.cx,
+                Some(self.target_id),
+                None,
+                None,
+                self.area(),
+                self.target_tile,
+                &avoid,
+            )
+            .any()
+            .is_some(),
+            "npc" => self.choose_npc(&cx.tick.cx, &avoid).usable().is_some(),
+            "obj" => reach::choose_ground(
+                &cx.tick.cx,
+                self.target_id,
+                self.target_tile,
+                self.area(),
+                &avoid,
+            )
+            .usable()
+            .is_some(),
+            _ => false,
+        };
+        if !here.is_some_and(|here| reach::within(here, tile, self.radius)) && !target_here {
+            let mut request =
+                reach::walk_request(tile, self.radius.max(1) as u16, None, cx.required_after);
+            // The gate above is the anchor radius; any standable
+            // tile inside it satisfies the anchor area.
+            request.arrival = nav_planner::contract::ArrivalKind::Area;
+            match begin_approach_walk(&mut self.walk_retry, request, cx) {
+                Poll::Pending => return Some(Poll::Pending),
+                Poll::Ready(Err(error)) => return Some(Poll::Ready(Err(error))),
+                Poll::Ready(Ok(handle)) => {
+                    self.walk = Some(handle);
+                    self.anchor_walk = true;
+                    return Some(Poll::Pending);
+                }
+            }
+        }
+        // Scene targets keep the anchor as the chooser's area; an
+        // inventory target only needed the walk.
+        if self.kind.as_ref() == "item" {
+            self.tile = None;
+        }
+        None
+    }
+
+    fn resolve_use_on_target(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        avoid: &reach::Avoid,
+    ) -> Result<ResolvedUseOnTarget, Poll<Result<StepOutcome, ActionError>>> {
+        let mut target_name = self.target_name.as_deref();
+        let mut dispatched = None;
+        match self.kind.as_ref() {
+            "loc" => {
+                let Some(loc) = reach::choose_loc(
+                    &cx.tick.cx,
+                    Some(self.target_id),
+                    None,
+                    None,
+                    self.area(),
+                    self.target_tile,
+                    avoid,
+                )
+                .any() else {
+                    return Err(Poll::Pending);
+                };
+                if self.tile.is_some() || reach::loc_walk_id(loc).is_some() {
+                    self.target_tile = Some(loc.tile);
+                    if !reach::loc_arrived(&cx.tick.cx, loc) {
+                        // Defer the anchored loc deadline until its first legal stand.
+                        if self.tile.is_some() && !self.anchored_stand_arrived {
+                            self.deadline = None;
+                        }
+                        let request = reach::loc_walk_request(
+                            loc,
+                            cx.tick
+                                .cx
+                                .snapshot()
+                                .local_player()
+                                .map(|player| player.value.player.network),
+                            cx.required_after,
+                        );
+                        self.wall_fallback_tile = reach::loc_wall_fallback_tile(loc, &request);
+                        return match begin_approach_walk(&mut self.walk_retry, request, cx) {
+                            Poll::Pending => Err(Poll::Pending),
+                            Poll::Ready(Err(error)) => Err(Poll::Ready(Err(error))),
+                            Poll::Ready(Ok(handle)) => {
+                                self.walk = Some(handle);
+                                Err(Poll::Pending)
+                            }
+                        };
+                    }
+                    self.wall_fallback_tile = None;
+                    if self.tile.is_some() {
+                        self.anchored_stand_arrived = true;
+                    }
+                }
+                Ok(ResolvedUseOnTarget {
+                    tile: loc.tile,
+                    index: None,
+                    target_item_slot: None,
+                    target_name: target_name.map(str::to_owned),
+                    dispatched,
+                })
+            }
+            "npc" => {
+                let (npc, reachable) = match self.choose_npc(&cx.tick.cx, avoid) {
+                    reach::Pick::Reachable(npc) | reach::Pick::Unverified(npc) => (npc, true),
+                    reach::Pick::Unreachable(npc) => (npc, false),
+                    reach::Pick::None => return Err(Poll::Pending),
+                };
+                let (npc_tile, npc_index, adjacent) = (
+                    npc.network,
+                    npc.index,
+                    reachable && reach::npc_adjacent(&cx.tick.cx, npc),
+                );
+                if !adjacent {
+                    // Chase the live NPC; the walk is re-checked every
+                    // tick and ends as soon as the NPC is beside us.
+                    return match begin_approach_walk(
+                        &mut self.walk_retry,
+                        reach::walk_request(npc_tile, 1, None, cx.required_after),
+                        cx,
+                    ) {
+                        Poll::Pending => Err(Poll::Pending),
+                        Poll::Ready(Err(error)) => Err(Poll::Ready(Err(error))),
+                        Poll::Ready(Ok(handle)) => {
+                            self.walk = Some(handle);
+                            self.chase = Some((npc_index, npc_tile));
+                            Err(Poll::Pending)
+                        }
+                    };
+                }
+                if self.npc_ids.is_some() {
+                    target_name = npc.name.as_deref();
+                }
+                dispatched = Some(reach::AvoidKey::Npc(npc_index));
+                Ok(ResolvedUseOnTarget {
+                    tile: npc_tile,
+                    index: Some(npc_index as i32),
+                    target_item_slot: None,
+                    target_name: target_name.map(str::to_owned),
+                    dispatched,
+                })
+            }
+            "obj" => {
+                let (target, reachable) = match reach::choose_ground(
+                    &cx.tick.cx,
+                    self.target_id,
+                    self.target_tile,
+                    self.area(),
+                    avoid,
+                ) {
+                    reach::Pick::Reachable(item) | reach::Pick::Unverified(item) => {
+                        (item.tile, true)
+                    }
+                    reach::Pick::Unreachable(item) => (item.tile, false),
+                    reach::Pick::None => return Err(Poll::Pending),
+                };
+                if !reachable {
+                    return match begin_approach_walk(
+                        &mut self.walk_retry,
+                        reach::walk_request(target, 1, None, cx.required_after),
+                        cx,
+                    ) {
+                        Poll::Pending => Err(Poll::Pending),
+                        Poll::Ready(Err(error)) => Err(Poll::Ready(Err(error))),
+                        Poll::Ready(Ok(handle)) => {
+                            self.walk = Some(handle);
+                            Err(Poll::Pending)
+                        }
+                    };
+                }
+                if self.target_tile.is_none() {
+                    dispatched = Some(reach::AvoidKey::Tile(target));
+                }
+                Ok(ResolvedUseOnTarget {
+                    tile: target,
+                    index: None,
+                    target_item_slot: None,
+                    target_name: target_name.map(str::to_owned),
+                    dispatched,
+                })
+            }
+            _ => {
+                let Some(inventory) = cx.tick.cx.snapshot().inventory() else {
+                    return Err(Poll::Pending);
+                };
+                let Some(target) = inventory
+                    .value
+                    .iter()
+                    .find(|row| row.def.id == self.target_id)
+                else {
+                    return Err(Poll::Pending);
+                };
+                Ok(ResolvedUseOnTarget {
+                    tile: WorldTile {
+                        x: 0,
+                        z: 0,
+                        level: 0,
+                    },
+                    index: None,
+                    target_item_slot: Some(target.slot),
+                    target_name: target_name.map(str::to_owned),
+                    dispatched,
+                })
+            }
+        }
+    }
+
+    fn begin_use_on_interaction(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        adopt: &mut bool,
+    ) -> UseOnLoopStep {
+        if until_reached(self.until, &cx.tick.cx) {
+            return UseOnLoopStep::Return(Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            })));
+        }
+        if let Some(poll) = self.walk_to_anchor_if_needed(cx) {
+            return UseOnLoopStep::Return(poll);
+        }
+        self.deadline
+            .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
+        if self.until.is_some() && self.default_dialogue && dialogue::page_open(&cx.tick.cx) {
+            match crate::native::defer_budget(cx.tick.actions.begin::<dialogue::Dialogue>(
+                dialogue::DialogueArgs {
+                    target: dialogue::DialogueTarget::Continuation,
+                    options: dialogue::DialogueOptions::continue_only(),
+                },
+                &mut cx.tick.cx,
+            )) {
+                Poll::Pending => return UseOnLoopStep::Return(Poll::Pending),
+                Poll::Ready(Err(error)) => return UseOnLoopStep::Return(Poll::Ready(Err(error))),
+                Poll::Ready(Ok(handle)) => {
+                    self.dialogue = Some(handle);
+                    self.dialogue_started = Some(cx.tick.cx.active_now());
+                    if !std::mem::take(adopt) || !cx.tick.cx.may_continue_this_tick() {
+                        return UseOnLoopStep::Return(Poll::Pending);
+                    }
+                    return UseOnLoopStep::Continue;
+                }
+            }
+        }
+        let snapshot = cx.tick.cx.snapshot();
+        let Some(inventory) = snapshot.inventory() else {
+            return UseOnLoopStep::Return(Poll::Pending);
+        };
+        let observed_id = self.until.map(|(id, _)| id).or(self.product);
+        self.round_before = observed_id.and_then(|id| inventory_count(&cx.tick.cx, id));
+        let Some(source) = inventory
+            .value
+            .iter()
+            .find(|row| row.def.id == self.item_id && row.count > 0)
+        else {
+            return UseOnLoopStep::Return(Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "use_on source missing",
+            )))));
+        };
+        let (source_item_id, source_item_slot) = (source.def.id, source.slot);
+        let avoid = self.avoid.at(cx.tick.cx.evidence().tick);
+        let target = match self.resolve_use_on_target(cx, &avoid) {
+            Ok(target) => target,
+            Err(poll) => return UseOnLoopStep::Return(poll),
+        };
+        let request = InteractReq::UseOn {
+            name: self.item.to_string(),
+            // Compiled Path targets call inventory rows `item`; InteractReq uses `inv`.
+            kind: match self.kind.as_ref() {
+                "item" => "inv",
+                kind => kind,
+            }
+            .to_string(),
+            target_name: target.target_name,
+            x: target.tile.x,
+            z: target.tile.z,
+            level: target.tile.level,
+            index: target.index,
+            source_item_id: Some(source_item_id),
+            source_item_slot: Some(source_item_slot),
+            target_item_id: matches!(self.kind.as_ref(), "item" | "obj" | "loc")
+                .then_some(self.target_id),
+            target_item_slot: target.target_item_slot,
+        };
+        match crate::native::defer_budget(
+            cx.tick
+                .actions
+                .begin::<UseOnAction>(request, &mut cx.tick.cx),
+        ) {
+            Poll::Pending => return UseOnLoopStep::Return(Poll::Pending),
+            Poll::Ready(Err(error)) => return UseOnLoopStep::Return(Poll::Ready(Err(error))),
+            Poll::Ready(Ok(handle)) => {
+                self.interaction = Some(handle);
+            }
+        }
+        // A pre-dispatch adoption completes only that old page, not
+        // the new action's post-accept continuation.
+        self.dialogue_completed = false;
+        self.dialogue_started = None;
+        self.accepted_tick = None;
+        self.scene_activity_observed = false;
+        self.scene_in_range_at_acceptance = false;
+        self.dispatched = target.dispatched;
+        UseOnLoopStep::Return(Poll::Pending)
+    }
+
+    fn poll_use_on_dispatch(&mut self, cx: &mut StepContext<'_, '_>) -> Option<UseOnLoopStep> {
+        let poll = {
+            let handle = self.interaction.as_ref().filter(|_| !self.accepted)?;
+            cx.tick.actions.poll(handle, &mut cx.tick.cx)
+        };
+        match poll {
+            Poll::Pending => Some(UseOnLoopStep::Return(Poll::Pending)),
+            Poll::Ready(Err(error)) => Some(UseOnLoopStep::Return(Poll::Ready(Err(error)))),
+            // The host dropped the request unsent: the step's goal
+            // decides, not the dropped request. A met goal ends the
+            // step; otherwise the dispatch path above chooses the
+            // target from this tick's snapshot and sends one request.
+            Poll::Ready(Ok(UseOnDispatch::Unsent)) => {
+                self.interaction = None;
+                let met = self.goal_met_without_a_use(&cx.tick.cx);
+                api::host_log!(
+                    api::hostlog::Category::ScriptLifecycle,
+                    api::hostlog::Level::Info,
+                    "use-on step: the host dropped the use-on request unsent; {}",
+                    if met {
+                        "the step's goal is already met, so nothing is sent again"
+                    } else {
+                        "the step's goal is not met, so it sends one new request"
+                    }
+                );
+                if met {
+                    return Some(UseOnLoopStep::Return(Poll::Ready(Ok(StepOutcome {
+                        progress: None,
+                        evidence: cx.tick.cx.evidence(),
+                        receipt: None,
+                    }))));
+                }
+                Some(UseOnLoopStep::Continue)
+            }
+            Poll::Ready(Ok(UseOnDispatch::Accepted { chat_since })) => {
+                self.accepted = true;
+                self.accepted_tick = Some(cx.tick.cx.evidence().tick);
+                self.scene_in_range_at_acceptance = if self.kind.as_ref() == "npc" {
+                    self.npc_ids.as_ref().map_or_else(
+                        || {
+                            npc_within_interaction_range(
+                                &cx.tick.cx,
+                                self.target_id,
+                                None,
+                                self.radius,
+                            )
+                        },
+                        |ids| {
+                            ids.iter().any(|id| {
+                                npc_within_interaction_range(&cx.tick.cx, *id, None, self.radius)
+                            })
+                        },
+                    )
+                } else {
+                    use_on_target_within_interaction_range(
+                        &cx.tick.cx,
+                        &self.kind,
+                        self.target_id,
+                        self.radius,
+                        self.target_tile,
+                    )
+                };
+                self.chat_since = chat_since;
+                if self.until.is_some() && self.round_before.is_some() {
+                    self.round_deadline =
+                        Some(cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS));
+                }
+                if self.default_dialogue && until_reached(self.until, &cx.tick.cx) {
+                    return Some(UseOnLoopStep::Return(Poll::Ready(Ok(StepOutcome {
+                        progress: None,
+                        evidence: cx.tick.cx.evidence(),
+                        receipt: None,
+                    }))));
+                }
+                None
+            }
+        }
+    }
+
+    fn poll_use_on_settle(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+        adopt: &mut bool,
+    ) -> UseOnLoopStep {
+        if self.accepted && reach::saw_game_message(&cx.tick.cx, self.chat_since, reach::CANT_REACH)
+        {
+            // "I can't reach that!" fails this attempt now instead of
+            // waiting out the settle window: avoid a fungible target
+            // briefly and choose again.
+            if let Some(key) = self.dispatched {
+                self.avoid.add(key, cx.tick.cx.evidence().tick);
+            }
+            self.clear_round();
+            return UseOnLoopStep::Continue;
+        }
+        if self.accepted && !self.dialogue_completed {
+            let options = self.dialogue_options.clone().or_else(|| {
+                if !self.default_dialogue {
+                    return None;
+                }
+                dialogue::page_open(&cx.tick.cx).then(dialogue::DialogueOptions::continue_only)
+            });
+            if let Some(options) = options {
+                match crate::native::defer_budget(cx.tick.actions.begin::<dialogue::Dialogue>(
+                    dialogue::DialogueArgs {
+                        target: dialogue::DialogueTarget::Continuation,
+                        options,
+                    },
+                    &mut cx.tick.cx,
+                )) {
+                    Poll::Pending => return UseOnLoopStep::Return(Poll::Pending),
+                    Poll::Ready(Err(error)) => {
+                        return UseOnLoopStep::Return(Poll::Ready(Err(error)))
+                    }
+                    Poll::Ready(Ok(handle)) => {
+                        self.dialogue = Some(handle);
+                        self.dialogue_started = Some(cx.tick.cx.active_now());
+                        if !std::mem::take(adopt) || !cx.tick.cx.may_continue_this_tick() {
+                            return UseOnLoopStep::Return(Poll::Pending);
+                        }
+                        return UseOnLoopStep::Continue;
+                    }
+                }
+            }
+        }
+        if self.accepted && until_reached(self.until, &cx.tick.cx) {
+            return UseOnLoopStep::Return(Poll::Ready(Ok(StepOutcome {
+                progress: None,
+                evidence: cx.tick.cx.evidence(),
+                receipt: None,
+            })));
+        }
+        let pred = PredicateContext {
+            cx: &cx.tick.cx,
+            pairs: cx.tick.pairs,
+            quests: cx.quests,
+            progress: cx.progress,
+            required_after: cx.required_after,
+            chat_since: self.chat_since,
+            outcome: None,
+        };
+        if self
+            .no_product
+            .as_ref()
+            .is_some_and(|predicate| predicate.evaluate(&pred) == Truth::True)
+        {
+            // Authored negative feedback completes a no-product round within
+            // the same bounded until loop, rather than failing the whole step.
+            if self.until.is_some() {
+                self.clear_round();
+                return UseOnLoopStep::Continue;
+            }
+            return UseOnLoopStep::Return(Poll::Ready(Err(ActionError::Failed(Arc::from(
+                "use_on attempt failed",
+            )))));
+        }
+        let scene_target = matches!(self.kind.as_ref(), "loc" | "npc");
+        self.scene_activity_observed |=
+            scene_target && player_activity_after(&cx.tick.cx, self.accepted_tick);
+        if self.default_dialogue
+            && !self.dialogue_completed
+            && (!fresh_idle_after(&cx.tick.cx, self.accepted_tick)
+                || (scene_target
+                    && !self.scene_activity_observed
+                    && !self.scene_in_range_at_acceptance))
+        {
+            return UseOnLoopStep::Return(Poll::Pending);
+        }
+        let held = |id| inventory_count(&cx.tick.cx, id);
+        if let Some(before) = self.round_before {
+            let observed_id = self.until.map(|(id, _)| id).or(self.product);
+            if observed_id
+                .and_then(held)
+                .is_none_or(|count| count <= before)
+            {
+                if self.until.is_some()
+                    && self
+                        .round_deadline
+                        .is_some_and(|d| cx.tick.cx.active_now() >= d)
+                    && !primary_animation_active(&cx.tick.cx)
+                {
+                    self.clear_round();
+                    return UseOnLoopStep::Continue;
+                }
+                return UseOnLoopStep::Return(Poll::Pending);
+            }
+        }
+        if let Some((id, qty)) = self.until {
+            if !held(id).is_some_and(|count| count >= qty) {
+                self.clear_round();
+                return UseOnLoopStep::Continue;
+            }
+        } else if self
+            .product
+            .is_some_and(|id| !held(id).is_some_and(|count| count > 0))
+        {
+            return UseOnLoopStep::Return(Poll::Pending);
+        }
+        UseOnLoopStep::Return(Poll::Ready(Ok(StepOutcome {
+            progress: None,
+            evidence: cx.tick.cx.evidence(),
+            receipt: None,
+        })))
+    }
+}
+
 impl StepRun for UseOnRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         if self.resume_after_hold(&mut cx.tick.cx).is_pending() {
@@ -3553,108 +4227,16 @@ impl StepRun for UseOnRun {
         // (TICK-FIX #14, C-DIALOGUE-ADOPT); the loop top polls it.
         let mut adopt = true;
         loop {
-            if self.dialogue.is_some() {
-                let deadline = self.deadline;
-                let now = cx.tick.cx.active_now();
-                let reached = until_reached(self.until, &cx.tick.cx);
-                let reached_at_deadline = deadline == Some(now) && reached;
-                if deadline.is_some_and(|deadline| now >= deadline) && !reached_at_deadline {
-                    return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
-                }
-                if self.default_dialogue && reached && (self.interaction.is_none() || self.accepted)
-                {
-                    return Poll::Ready(Ok(StepOutcome {
-                        progress: None,
-                        evidence: cx.tick.cx.evidence(),
-                        receipt: None,
-                    }));
-                }
-            }
-            if let Some(handle) = &self.dialogue {
-                match poll_dialogue_step(handle, cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(_)) => {
-                        let elapsed = cx
-                            .tick
-                            .cx
-                            .active_now()
-                            .saturating_sub(self.dialogue_started.take().unwrap());
-                        self.round_deadline = self
-                            .round_deadline
-                            .map(|deadline| deadline.saturating_add(elapsed));
-                        self.dialogue = None;
-                        self.dialogue_completed = true;
-                    }
-                }
+            if let Some(poll) = self.poll_dialogue_phase(cx) {
+                return poll;
             }
             let deadline = self.deadline;
             let now = cx.tick.cx.active_now();
             let timed_out = deadline.is_some_and(|deadline| now >= deadline);
             let reached_at_deadline =
                 deadline == Some(now) && until_reached(self.until, &cx.tick.cx);
-            if self.walk.is_some()
-                && (self.chase_needs_repick(&cx.tick.cx) || self.retarget_anchor_walk(&cx.tick.cx))
-            {
-                // Dropping the handle revokes the stale walk; pick again below.
-                self.walk = None;
-                self.wall_fallback_tile = None;
-                self.wall_fallback_pending = None;
-                self.chase = None;
-                self.anchor_walk = false;
-            }
-            if let Some(handle) = &mut self.walk {
-                match handle.poll(cx.tick.actions, &mut cx.tick.cx, cx.tick.state) {
-                    Poll::Ready(Ok(receipt))
-                        if receipt.end == crate::native::WalkEnd::UserInput =>
-                    {
-                        return Poll::Ready(Err(ActionError::UserInput))
-                    }
-                    _ if timed_out && !reached_at_deadline => {
-                        return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))))
-                    }
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(receipt)) => {
-                        if self.walk_retry.observe_wall_approach_failure(
-                            &receipt,
-                            cx.tick.cx.evidence().tick,
-                            self.wall_fallback_tile.is_some(),
-                        ) {
-                            if reach::loc_wall_route_failed(&receipt) {
-                                self.wall_fallback_pending = self.wall_fallback_tile;
-                            }
-                            self.walk = None;
-                            self.chase = None;
-                            self.anchor_walk = false;
-                            return Poll::Pending;
-                        }
-                        self.wall_fallback_tile = None;
-                        walk_step_evidence(receipt)?;
-                        self.walk_retry.reset();
-                        self.walk = None;
-                        self.chase = None;
-                        self.anchor_walk = false;
-                    }
-                }
-            }
-            if timed_out && !reached_at_deadline {
-                return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on timeout"))));
-            }
-            if self
-                .walk_retry
-                .waiting_for_next_tick(cx.tick.cx.evidence().tick)
-            {
-                return Poll::Pending;
-            }
-            if let Some(tile) = self.wall_fallback_pending {
-                self.walk = Some(std::task::ready!(begin_approach_walk(
-                    &mut self.walk_retry,
-                    reach::walk_request(tile, 1, None, cx.required_after),
-                    cx,
-                ))?);
-                self.wall_fallback_pending = None;
-                return Poll::Pending;
+            if let Some(poll) = self.poll_walk_phase(cx, timed_out, reached_at_deadline) {
+                return poll;
             }
             if self.default_dialogue && self.accepted && until_reached(self.until, &cx.tick.cx) {
                 return Poll::Ready(Ok(StepOutcome {
@@ -3664,458 +4246,21 @@ impl StepRun for UseOnRun {
                 }));
             }
             if self.interaction.is_none() {
-                if until_reached(self.until, &cx.tick.cx) {
-                    return Poll::Ready(Ok(StepOutcome {
-                        progress: None,
-                        evidence: cx.tick.cx.evidence(),
-                        receipt: None,
-                    }));
-                }
-                if let Some(tile) = self.tile {
-                    let here = cx
-                        .tick
-                        .cx
-                        .snapshot()
-                        .local_player()
-                        .map(|player| player.value.player.network);
-                    let avoid = self.avoid.at(cx.tick.cx.evidence().tick);
-                    // Walk to the anchor area only when nothing in it can be
-                    // reached from here; a visible anchored loc is approached
-                    // through its own stand instead.
-                    let target_here = match self.kind.as_ref() {
-                        "loc" => reach::choose_loc(
-                            &cx.tick.cx,
-                            Some(self.target_id),
-                            None,
-                            None,
-                            self.area(),
-                            self.target_tile,
-                            &avoid,
-                        )
-                        .any()
-                        .is_some(),
-                        "npc" => self.choose_npc(&cx.tick.cx, &avoid).usable().is_some(),
-                        "obj" => reach::choose_ground(
-                            &cx.tick.cx,
-                            self.target_id,
-                            self.target_tile,
-                            self.area(),
-                            &avoid,
-                        )
-                        .usable()
-                        .is_some(),
-                        _ => false,
-                    };
-                    if !here.is_some_and(|here| reach::within(here, tile, self.radius))
-                        && !target_here
-                    {
-                        let mut request = reach::walk_request(
-                            tile,
-                            self.radius.max(1) as u16,
-                            None,
-                            cx.required_after,
-                        );
-                        // The gate above is the anchor radius; any standable
-                        // tile inside it satisfies the anchor area.
-                        request.arrival = nav_planner::contract::ArrivalKind::Area;
-                        self.walk = Some(std::task::ready!(begin_approach_walk(
-                            &mut self.walk_retry,
-                            request,
-                            cx,
-                        ))?);
-                        self.anchor_walk = true;
-                        return Poll::Pending;
-                    }
-                    // Scene targets keep the anchor as the chooser's area; an
-                    // inventory target only needed the walk.
-                    if self.kind.as_ref() == "item" {
-                        self.tile = None;
-                    }
-                }
-                self.deadline
-                    .get_or_insert(cx.tick.cx.active_now() + self.settle_duration);
-                if self.until.is_some() && self.default_dialogue && dialogue::page_open(&cx.tick.cx)
-                {
-                    self.dialogue = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<dialogue::Dialogue>(
-                            dialogue::DialogueArgs {
-                                target: dialogue::DialogueTarget::Continuation,
-                                options: dialogue::DialogueOptions::continue_only(),
-                            },
-                            &mut cx.tick.cx,
-                        ),
-                    ))?);
-                    self.dialogue_started = Some(cx.tick.cx.active_now());
-                    if !std::mem::take(&mut adopt) || !cx.tick.cx.may_continue_this_tick() {
-                        return Poll::Pending;
-                    }
-                    continue;
-                }
-                let snapshot = cx.tick.cx.snapshot();
-                let Some(inventory) = snapshot.inventory() else {
-                    return Poll::Pending;
-                };
-                let observed_id = self.until.map(|(id, _)| id).or(self.product);
-                self.round_before = observed_id.and_then(|id| inventory_count(&cx.tick.cx, id));
-                let Some(source) = inventory
-                    .value
-                    .iter()
-                    .find(|row| row.def.id == self.item_id && row.count > 0)
-                else {
-                    return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                        "use_on source missing",
-                    ))));
-                };
-                let avoid = self.avoid.at(cx.tick.cx.evidence().tick);
-                let mut dispatched = None;
-                let mut target_name = self.target_name.as_deref();
-                let (tile, index, target_item_slot) = match self.kind.as_ref() {
-                    "loc" => {
-                        let Some(loc) = reach::choose_loc(
-                            &cx.tick.cx,
-                            Some(self.target_id),
-                            None,
-                            None,
-                            self.area(),
-                            self.target_tile,
-                            &avoid,
-                        )
-                        .any() else {
-                            return Poll::Pending;
-                        };
-                        if self.tile.is_some() || reach::loc_walk_id(loc).is_some() {
-                            self.target_tile = Some(loc.tile);
-                            if !reach::loc_arrived(&cx.tick.cx, loc) {
-                                // Defer the anchored loc deadline until its first legal stand.
-                                if self.tile.is_some() && !self.anchored_stand_arrived {
-                                    self.deadline = None;
-                                }
-                                let request = reach::loc_walk_request(
-                                    loc,
-                                    cx.tick
-                                        .cx
-                                        .snapshot()
-                                        .local_player()
-                                        .map(|player| player.value.player.network),
-                                    cx.required_after,
-                                );
-                                self.wall_fallback_tile =
-                                    reach::loc_wall_fallback_tile(loc, &request);
-                                self.walk = Some(std::task::ready!(begin_approach_walk(
-                                    &mut self.walk_retry,
-                                    request,
-                                    cx,
-                                ))?);
-                                return Poll::Pending;
-                            }
-                            self.wall_fallback_tile = None;
-                            if self.tile.is_some() {
-                                self.anchored_stand_arrived = true;
-                            }
-                        }
-                        (loc.tile, None, None)
-                    }
-                    "npc" => {
-                        let (npc, reachable) = match self.choose_npc(&cx.tick.cx, &avoid) {
-                            reach::Pick::Reachable(npc) | reach::Pick::Unverified(npc) => {
-                                (npc, true)
-                            }
-                            reach::Pick::Unreachable(npc) => (npc, false),
-                            reach::Pick::None => return Poll::Pending,
-                        };
-                        let (npc_tile, npc_index, adjacent) = (
-                            npc.network,
-                            npc.index,
-                            reachable && reach::npc_adjacent(&cx.tick.cx, npc),
-                        );
-                        if !adjacent {
-                            // Chase the live NPC; the walk is re-checked every
-                            // tick and ends as soon as the NPC is beside us.
-                            self.walk = Some(std::task::ready!(begin_approach_walk(
-                                &mut self.walk_retry,
-                                reach::walk_request(npc_tile, 1, None, cx.required_after),
-                                cx,
-                            ))?);
-                            self.chase = Some((npc_index, npc_tile));
-                            return Poll::Pending;
-                        }
-                        if self.npc_ids.is_some() {
-                            target_name = npc.name.as_deref();
-                        }
-                        dispatched = Some(reach::AvoidKey::Npc(npc_index));
-                        (npc_tile, Some(npc_index as i32), None)
-                    }
-                    "obj" => {
-                        let (target, reachable) = match reach::choose_ground(
-                            &cx.tick.cx,
-                            self.target_id,
-                            self.target_tile,
-                            self.area(),
-                            &avoid,
-                        ) {
-                            reach::Pick::Reachable(item) | reach::Pick::Unverified(item) => {
-                                (item.tile, true)
-                            }
-                            reach::Pick::Unreachable(item) => (item.tile, false),
-                            reach::Pick::None => return Poll::Pending,
-                        };
-                        if !reachable {
-                            self.walk = Some(std::task::ready!(begin_approach_walk(
-                                &mut self.walk_retry,
-                                reach::walk_request(target, 1, None, cx.required_after),
-                                cx,
-                            ))?);
-                            return Poll::Pending;
-                        }
-                        if self.target_tile.is_none() {
-                            dispatched = Some(reach::AvoidKey::Tile(target));
-                        }
-                        (target, None, None)
-                    }
-                    _ => {
-                        let Some(target) = inventory
-                            .value
-                            .iter()
-                            .find(|row| row.def.id == self.target_id)
-                        else {
-                            return Poll::Pending;
-                        };
-                        (
-                            WorldTile {
-                                x: 0,
-                                z: 0,
-                                level: 0,
-                            },
-                            None,
-                            Some(target.slot),
-                        )
-                    }
-                };
-                let request = InteractReq::UseOn {
-                    name: self.item.to_string(),
-                    // Compiled Path targets call inventory rows `item`; InteractReq uses `inv`.
-                    kind: match self.kind.as_ref() {
-                        "item" => "inv",
-                        kind => kind,
-                    }
-                    .to_string(),
-                    target_name: target_name.map(str::to_owned),
-                    x: tile.x,
-                    z: tile.z,
-                    level: tile.level,
-                    index,
-                    source_item_id: Some(source.def.id),
-                    source_item_slot: Some(source.slot),
-                    target_item_id: matches!(self.kind.as_ref(), "item" | "obj" | "loc")
-                        .then_some(self.target_id),
-                    target_item_slot,
-                };
-                self.interaction = Some(std::task::ready!(crate::native::defer_budget(
-                    cx.tick
-                        .actions
-                        .begin::<UseOnAction>(request, &mut cx.tick.cx),
-                ))?);
-                // A pre-dispatch adoption completes only that old page, not
-                // the new action's post-accept continuation.
-                self.dialogue_completed = false;
-                self.dialogue_started = None;
-                self.accepted_tick = None;
-                self.scene_activity_observed = false;
-                self.scene_in_range_at_acceptance = false;
-                self.dispatched = dispatched;
-                return Poll::Pending;
-            }
-            if let Some(handle) = self.interaction.as_ref().filter(|_| !self.accepted) {
-                match cx.tick.actions.poll(handle, &mut cx.tick.cx) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    // The host dropped the request unsent: the step's goal
-                    // decides, not the dropped request. A met goal ends the
-                    // step; otherwise the dispatch path above chooses the
-                    // target from this tick's snapshot and sends one request.
-                    Poll::Ready(Ok(UseOnDispatch::Unsent)) => {
-                        self.interaction = None;
-                        let met = self.goal_met_without_a_use(&cx.tick.cx);
-                        api::host_log!(
-                            api::hostlog::Category::ScriptLifecycle,
-                            api::hostlog::Level::Info,
-                            "use-on step: the host dropped the use-on request unsent; {}",
-                            if met {
-                                "the step's goal is already met, so nothing is sent again"
-                            } else {
-                                "the step's goal is not met, so it sends one new request"
-                            }
-                        );
-                        if met {
-                            return Poll::Ready(Ok(StepOutcome {
-                                progress: None,
-                                evidence: cx.tick.cx.evidence(),
-                                receipt: None,
-                            }));
-                        }
-                        continue;
-                    }
-                    Poll::Ready(Ok(UseOnDispatch::Accepted { chat_since })) => {
-                        self.accepted = true;
-                        self.accepted_tick = Some(cx.tick.cx.evidence().tick);
-                        self.scene_in_range_at_acceptance = if self.kind.as_ref() == "npc" {
-                            self.npc_ids.as_ref().map_or_else(
-                                || {
-                                    npc_within_interaction_range(
-                                        &cx.tick.cx,
-                                        self.target_id,
-                                        None,
-                                        self.radius,
-                                    )
-                                },
-                                |ids| {
-                                    ids.iter().any(|id| {
-                                        npc_within_interaction_range(
-                                            &cx.tick.cx,
-                                            *id,
-                                            None,
-                                            self.radius,
-                                        )
-                                    })
-                                },
-                            )
-                        } else {
-                            use_on_target_within_interaction_range(
-                                &cx.tick.cx,
-                                &self.kind,
-                                self.target_id,
-                                self.radius,
-                                self.target_tile,
-                            )
-                        };
-                        self.chat_since = chat_since;
-                        if self.until.is_some() && self.round_before.is_some() {
-                            self.round_deadline = Some(
-                                cx.tick.cx.active_now() + Duration::from_millis(ACTION_ROUND_MS),
-                            );
-                        }
-                        if self.default_dialogue && until_reached(self.until, &cx.tick.cx) {
-                            return Poll::Ready(Ok(StepOutcome {
-                                progress: None,
-                                evidence: cx.tick.cx.evidence(),
-                                receipt: None,
-                            }));
-                        }
-                    }
+                match self.begin_use_on_interaction(cx, &mut adopt) {
+                    UseOnLoopStep::Continue => continue,
+                    UseOnLoopStep::Return(poll) => return poll,
                 }
             }
-            if self.accepted
-                && reach::saw_game_message(&cx.tick.cx, self.chat_since, reach::CANT_REACH)
-            {
-                // "I can't reach that!" fails this attempt now instead of
-                // waiting out the settle window: avoid a fungible target
-                // briefly and choose again.
-                if let Some(key) = self.dispatched {
-                    self.avoid.add(key, cx.tick.cx.evidence().tick);
-                }
-                self.clear_round();
-                continue;
-            }
-            if self.accepted && !self.dialogue_completed {
-                let options = self.dialogue_options.clone().or_else(|| {
-                    if !self.default_dialogue {
-                        return None;
-                    }
-                    dialogue::page_open(&cx.tick.cx).then(dialogue::DialogueOptions::continue_only)
-                });
-                if let Some(options) = options {
-                    self.dialogue = Some(std::task::ready!(crate::native::defer_budget(
-                        cx.tick.actions.begin::<dialogue::Dialogue>(
-                            dialogue::DialogueArgs {
-                                target: dialogue::DialogueTarget::Continuation,
-                                options,
-                            },
-                            &mut cx.tick.cx,
-                        ),
-                    ))?);
-                    self.dialogue_started = Some(cx.tick.cx.active_now());
-                    if !std::mem::take(&mut adopt) || !cx.tick.cx.may_continue_this_tick() {
-                        return Poll::Pending;
-                    }
-                    continue;
+            if let Some(step) = self.poll_use_on_dispatch(cx) {
+                match step {
+                    UseOnLoopStep::Continue => continue,
+                    UseOnLoopStep::Return(poll) => return poll,
                 }
             }
-            if self.accepted && until_reached(self.until, &cx.tick.cx) {
-                return Poll::Ready(Ok(StepOutcome {
-                    progress: None,
-                    evidence: cx.tick.cx.evidence(),
-                    receipt: None,
-                }));
+            match self.poll_use_on_settle(cx, &mut adopt) {
+                UseOnLoopStep::Continue => continue,
+                UseOnLoopStep::Return(poll) => return poll,
             }
-            let pred = PredicateContext {
-                cx: &cx.tick.cx,
-                pairs: cx.tick.pairs,
-                quests: cx.quests,
-                progress: cx.progress,
-                required_after: cx.required_after,
-                chat_since: self.chat_since,
-                outcome: None,
-            };
-            if self
-                .no_product
-                .as_ref()
-                .is_some_and(|predicate| predicate.evaluate(&pred) == Truth::True)
-            {
-                // Authored negative feedback completes a no-product round within
-                // the same bounded until loop, rather than failing the whole step.
-                if self.until.is_some() {
-                    self.clear_round();
-                    continue;
-                }
-                return Poll::Ready(Err(ActionError::Failed(Arc::from("use_on attempt failed"))));
-            }
-            let scene_target = matches!(self.kind.as_ref(), "loc" | "npc");
-            self.scene_activity_observed |=
-                scene_target && player_activity_after(&cx.tick.cx, self.accepted_tick);
-            if self.default_dialogue
-                && !self.dialogue_completed
-                && (!fresh_idle_after(&cx.tick.cx, self.accepted_tick)
-                    || (scene_target
-                        && !self.scene_activity_observed
-                        && !self.scene_in_range_at_acceptance))
-            {
-                return Poll::Pending;
-            }
-            let held = |id| inventory_count(&cx.tick.cx, id);
-            if let Some(before) = self.round_before {
-                let observed_id = self.until.map(|(id, _)| id).or(self.product);
-                if observed_id
-                    .and_then(held)
-                    .is_none_or(|count| count <= before)
-                {
-                    if self.until.is_some()
-                        && self
-                            .round_deadline
-                            .is_some_and(|d| cx.tick.cx.active_now() >= d)
-                        && !primary_animation_active(&cx.tick.cx)
-                    {
-                        self.clear_round();
-                        continue;
-                    }
-                    return Poll::Pending;
-                }
-            }
-            if let Some((id, qty)) = self.until {
-                if !held(id).is_some_and(|count| count >= qty) {
-                    self.clear_round();
-                    continue;
-                }
-            } else if self
-                .product
-                .is_some_and(|id| !held(id).is_some_and(|count| count > 0))
-            {
-                return Poll::Pending;
-            }
-            return Poll::Ready(Ok(StepOutcome {
-                progress: None,
-                evidence: cx.tick.cx.evidence(),
-                receipt: None,
-            }));
         }
     }
     fn cancel(&mut self, _actions: &mut NativeActions) {
