@@ -873,23 +873,34 @@ impl Dialogue {
                 }
                 // NPC content can send a game message before its first chat page.
                 // Keep waiting for the page; only the engine's explicit reach
-                // refusal takes the recovery branch below.
-                if self
-                    .talk_chat_mark
-                    .is_some_and(|since| reach::saw_game_message(cx, since, reach::CANT_REACH))
+                // refusal, or the host's typed approach end (an unreachable
+                // target it would not click, or an approach that stopped
+                // moving), takes the recovery branch below.
+                let approach_end = self
+                    .talk_request_id
+                    .and_then(|id| cx.approach_end(id))
+                    .map(|receipt| receipt.end);
+                if approach_end.is_some()
+                    || self
+                        .talk_chat_mark
+                        .is_some_and(|since| reach::saw_game_message(cx, since, reach::CANT_REACH))
                 {
+                    let refusal = move || match approach_end {
+                        Some(end) => approach_end_error(end),
+                        None => dialogue_refusal_error(),
+                    };
                     let Some(npc_id) = self.npc_id() else {
                         self.cancel_talk_request(cx);
-                        return Poll::Ready(Err(dialogue_refusal_error()));
+                        return Poll::Ready(Err(refusal()));
                     };
                     if self.refusal_recovery_active {
                         self.cancel_talk_request(cx);
-                        return Poll::Ready(Err(dialogue_refusal_error()));
+                        return Poll::Ready(Err(refusal()));
                     }
                     let goal = nearest_talk(cx, npc_id).map(|target| approach_goal(cx, &target));
                     let Some(goal) = goal else {
                         self.cancel_talk_request(cx);
-                        return Poll::Ready(Err(dialogue_refusal_error()));
+                        return Poll::Ready(Err(refusal()));
                     };
                     // The recovery walk gets the same route length as any
                     // approach: the flood's, or the router's when the flood
@@ -2323,6 +2334,22 @@ fn dialogue_refusal_error() -> ActionError {
     static REASON: std::sync::LazyLock<Arc<str>> =
         std::sync::LazyLock::new(|| Arc::from(DIALOGUE_REFUSAL));
     ActionError::Failed(Arc::clone(&REASON))
+}
+
+/// The named failure of a Talk-to whose approach ended without the engine
+/// operating the NPC ([`crate::native::ApproachEnd`]).
+fn approach_end_error(end: crate::native::ApproachEnd) -> ActionError {
+    use crate::native::ApproachEnd;
+    let text = match end {
+        ApproachEnd::Unreachable => {
+            "Talk-to approach ended: no route reaches the NPC and no approach script can serve it"
+                .to_owned()
+        }
+        ApproachEnd::Stalled { ticks } => format!(
+            "Talk-to approach ended: the player did not move for {ticks} observed server ticks"
+        ),
+    };
+    ActionError::Failed(Arc::from(text))
 }
 
 fn nearest_talk<'a>(cx: &'a ActionContext<'_>, wanted: i32) -> Option<TalkTarget<'a>> {

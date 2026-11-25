@@ -15,6 +15,8 @@ use crate::snapshot::{
 
 mod driver;
 pub use driver::*;
+mod approach;
+pub use approach::*;
 mod native_menu;
 pub use native_menu::NativeMenuTarget;
 
@@ -433,11 +435,61 @@ pub enum ActionSpec {
 pub struct Interactions<'a> {
     snapshot: &'a GameSnapshot,
     driver: &'a mut dyn Driver,
+    last_reach: Option<OpReach>,
+    approach: Option<ApproachWatch>,
 }
 
 impl<'a> Interactions<'a> {
     pub fn new(snapshot: &'a GameSnapshot, driver: &'a mut dyn Driver) -> Self {
-        Interactions { snapshot, driver }
+        Interactions {
+            snapshot,
+            driver,
+            last_reach: None,
+            approach: None,
+        }
+    }
+
+    /// The reach class of the last world operation this value dispatched or
+    /// refused. `None` before one.
+    pub fn last_reach(&self) -> Option<OpReach> {
+        self.last_reach
+    }
+
+    /// The watch armed by the last accepted world operation that needed an
+    /// approach ([`OpReach::Routable`], [`OpReach::ApproachScript`] or
+    /// [`OpReach::Unknown`]). Taking it
+    /// leaves none. The owner feeds it later snapshots.
+    pub fn take_approach_watch(&mut self) -> Option<ApproachWatch> {
+        self.approach.take()
+    }
+
+    /// Forget the last world operation's reach class and any armed watch, so
+    /// the next request's facts are not confused with it.
+    pub fn clear_reach(&mut self) {
+        self.last_reach = None;
+        self.approach = None;
+    }
+
+    /// Refuse an owned world operation whose target no route can reach and no
+    /// approach script can serve: the client would send the operation alone
+    /// and the engine would stall silently (see `interact/approach.rs`).
+    fn reach_gate(&mut self, target: &OpTarget<'_>) -> Option<SendReason> {
+        self.approach = None;
+        let reach = op_reach(self.snapshot, target);
+        self.last_reach = Some(reach);
+        (reach == OpReach::Unreachable).then_some(SendReason::Unreachable)
+    }
+
+    /// Arm the stall watch for an accepted operation that must approach.
+    fn note_dispatched(&mut self, result: &SendResult<'_>, target: &OpTarget<'_>) {
+        if matches!(result, SendResult::Sent { .. })
+            && matches!(
+                self.last_reach,
+                Some(OpReach::Routable | OpReach::ApproachScript | OpReach::Unknown)
+            )
+        {
+            self.approach = ApproachWatch::arm(self.snapshot, target);
+        }
     }
 
     /// Canvas amount-prompt digit/Enter through the existing single-character
@@ -484,10 +536,16 @@ impl<'a> Interactions<'a> {
         let Some(operation) = operation else {
             return refuse(snapshot, SendReason::InvalidAction);
         };
-        self.dispatch(
+        if let Some(reason) = self.reach_gate(&target) {
+            return refuse(snapshot, reason);
+        }
+        let watched = target.clone();
+        let result = self.dispatch(
             WireCommand::Op { target, operation },
             snapshot.tick() as u64,
-        )
+        );
+        self.note_dispatched(&result, &watched);
+        result
     }
 
     /// Wear or wield an inventory item by obj id (the BankBudget
@@ -561,13 +619,19 @@ impl<'a> Interactions<'a> {
         if let Some(reason) = self.check_target(&target, snapshot) {
             return refuse(snapshot, reason);
         }
-        self.dispatch(
+        if let Some(reason) = self.reach_gate(&target) {
+            return refuse(snapshot, reason);
+        }
+        let watched = target.clone();
+        let result = self.dispatch(
             WireCommand::UseItem {
                 select: item,
                 target,
             },
             snapshot.tick() as u64,
-        )
+        );
+        self.note_dispatched(&result, &watched);
+        result
     }
 
     pub fn use_widget_on<'t>(
@@ -595,13 +659,19 @@ impl<'a> Interactions<'a> {
         if let Some(reason) = self.check_target(&target, snapshot) {
             return refuse(snapshot, reason);
         }
-        self.dispatch(
+        if let Some(reason) = self.reach_gate(&target) {
+            return refuse(snapshot, reason);
+        }
+        let watched = target.clone();
+        let result = self.dispatch(
             WireCommand::UseWidget {
                 component_id: live.component_id,
                 target,
             },
             snapshot.tick() as u64,
-        )
+        );
+        self.note_dispatched(&result, &watched);
+        result
     }
 
     pub fn press<'t>(&mut self, widget: &WidgetView) -> SendResult<'t> {

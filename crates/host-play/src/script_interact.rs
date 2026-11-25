@@ -487,15 +487,61 @@ pub(crate) struct InteractContext<'a> {
     pub(crate) obj_names_arc: &'a Option<Arc<api::obj_names::ObjNames>>,
 }
 
+/// What one interaction dispatch learned beyond whether it wrote. The native
+/// single-request path reads it; a multi-request dispatch keeps the last
+/// gated world operation's.
+#[derive(Default)]
+pub(crate) struct InteractOutcome {
+    pub(crate) wrote: bool,
+    /// The reach class of the last gated world operation. `Unreachable` means
+    /// the owned path refused it and wrote nothing.
+    pub(crate) reach: Option<api::interact::OpReach>,
+    /// The stall watch an accepted world operation armed.
+    pub(crate) watch: Option<api::interact::ApproachWatch>,
+}
+
+impl InteractOutcome {
+    /// Take the previous request's reach facts out of `ix`.
+    fn absorb(&mut self, ix: &mut api::interact::Interactions<'_>, slot: &str) {
+        let Some(reach) = ix.last_reach() else {
+            return;
+        };
+        self.reach = Some(reach);
+        self.watch = ix.take_approach_watch();
+        ix.clear_reach();
+        if reach == api::interact::OpReach::Unreachable {
+            host_log!(
+                Category::InteractTrace,
+                Level::Debug,
+                slot = slot,
+                "world op refused: no route reaches the target and no approach script can serve it"
+            );
+        }
+    }
+}
+
 pub(crate) fn dispatch_script_interact_cached_scoped<R>(
     driver: &mut dyn Driver,
     context: &InteractContext<'_>,
-    mut owner_slot: Option<&mut script::SlotScript>,
+    owner_slot: Option<&mut script::SlotScript>,
     reqs: R,
 ) -> bool
 where
     R: AsRef<[script::interact::InteractReq]> + IntoIterator<Item = script::interact::InteractReq>,
 {
+    dispatch_script_interact_outcome(driver, context, owner_slot, reqs).wrote
+}
+
+pub(crate) fn dispatch_script_interact_outcome<R>(
+    driver: &mut dyn Driver,
+    context: &InteractContext<'_>,
+    mut owner_slot: Option<&mut script::SlotScript>,
+    reqs: R,
+) -> InteractOutcome
+where
+    R: AsRef<[script::interact::InteractReq]> + IntoIterator<Item = script::interact::InteractReq>,
+{
+    let mut outcome = InteractOutcome::default();
     use script::interact::InteractReq;
     let InteractContext {
         snapshot,
@@ -535,6 +581,7 @@ where
         }
     }
     for req in reqs {
+        outcome.absorb(&mut ix, name);
         wrote |= dispatch_single_interact_req(
             &mut ix,
             context,
@@ -543,12 +590,14 @@ where
             req,
         );
     }
+    outcome.absorb(&mut ix, name);
     for yaw in camera_yaws {
         wrote |= driver.set_orbit_camera_yaw(yaw);
     }
     #[cfg(feature = "memory-profile")]
     memory_diagnostics::sent(name, wrote);
-    wrote
+    outcome.wrote = wrote;
+    outcome
 }
 
 fn dispatch_single_interact_req(

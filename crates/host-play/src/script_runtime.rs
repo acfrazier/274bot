@@ -100,8 +100,8 @@ pub(super) use script_snapshot::{script_snapshot_fb, with_script_snapshot_input}
 mod script_interact;
 pub(super) use script_interact::{
     dispatch_native_bank_deposit, dispatch_native_server_ordered,
-    dispatch_script_interact_cached_scoped, BankDepositDispatch, InteractContext,
-    OrderedDispatchContext,
+    dispatch_script_interact_cached_scoped, dispatch_script_interact_outcome, BankDepositDispatch,
+    InteractContext, OrderedDispatchContext,
 };
 #[cfg(test)]
 pub(super) use script_interact::{

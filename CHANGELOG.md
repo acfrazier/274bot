@@ -19,6 +19,25 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   instead of offering the already-used button. This fixes revision-377 Cook
   dialogue failures while retaining native menu refusal checks.
 - The JavaScript compatibility reader preserves ground-item stack counts.
+- Owned actions no longer hang when a target is behind a wall. The client sends
+  an operation with no route when its own route search fails, and the engine
+  then paths greedily and can stall with no message. A script's NPC, object,
+  player or use-on request is now refused as unreachable only when no tile the
+  player can walk to operates the target or sees it within approach range
+  (ten tiles); when unsure it is sent. An operation that did go out and then
+  stopped moving the player for 49 observed server ticks (one-packet
+  observations only; a coalesced batch restarts the count), with no message,
+  dialogue or animation, ends as a typed stall. 49 bounds waits caused by NPC
+  wandering at 99% (a wander can pick the NPC's own tile; collision is not
+  bounded); waits behind a player or a delayed player are not bounded and can
+  end as a false stall. Quester Dialogue takes its existing re-route recovery
+  on either result. Quester Reach for an NPC, location or name now waits for
+  arrival or the stall; it then either reports success or takes its door or
+  alternate-target recovery, one or the other. Gatherer drops that target and
+  selects another. Reach for ground objects keeps its own settlement and does
+  not wait. Manual play is unchanged. Bank-seat and compatibility Reach
+  receive the refusal on the same path but do not read the typed result; their
+  own deadlines still end a wait.
 
 ### Scripts
 

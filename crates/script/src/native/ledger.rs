@@ -428,6 +428,13 @@ impl PickReceipt {
     }
 }
 
+/// One interaction's approach: the watch of an accepted operation that must
+/// walk to its target, and the typed end the owner reads.
+pub(crate) struct ApproachState {
+    pub(crate) watch: Option<(NonZeroU64, api::interact::ApproachWatch)>,
+    pub(crate) end: Option<super::ApproachReceipt>,
+}
+
 /// Progress of the route follower for one walk request: it started a new
 /// enforced clock, the longest one in force lasts `clock` observed ticks, and
 /// the owner's eligible-tick count was `baseline` at the host's post. The
@@ -477,6 +484,9 @@ pub struct Ledger {
     /// It outlives one machine, so a later verb in the same session skips the
     /// Item press and a later reader can tell whose open it was.
     pub(crate) bank_session: Option<BankSessionMark>,
+    /// The approach watch and typed approach end of the single interaction.
+    /// Boxed: most runs never arm one.
+    pub(crate) approach: Option<Box<ApproachState>>,
 }
 
 /// What a native machine knows about one open bank session: the login run and
@@ -520,6 +530,7 @@ impl Default for Ledger {
             modal_wait_seq: 0,
             modal_wait_deadline: None,
             bank_session: None,
+            approach: None,
         }
     }
 }
@@ -738,6 +749,7 @@ impl Ledger {
         self.server_ordered_request = None;
         self.batch_receipts.fill(None);
         self.next_batch_receipt = 0;
+        self.approach = None;
         self.quiet_lease = None;
     }
 
@@ -789,6 +801,100 @@ impl Ledger {
         {
             self.interaction = Some(receipt);
         }
+    }
+
+    /// Arm the stall watch of this interaction's accepted, approaching
+    /// operation. Only the request that is still the ledger's single
+    /// interaction of a live owner may arm one.
+    pub fn arm_approach(&mut self, authority: &HostAuthority, watch: api::interact::ApproachWatch) {
+        if self.interaction_request != Some(authority.request_id())
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+            })
+        {
+            return;
+        }
+        self.approach = Some(Box::new(ApproachState {
+            watch: Some((authority.request_id(), watch)),
+            end: None,
+        }));
+    }
+
+    /// Record the typed end of this interaction's approach.
+    pub fn complete_approach(
+        &mut self,
+        authority: &HostAuthority,
+        end: super::ApproachEnd,
+        evidence: api::quest_progress::EvidenceStamp,
+    ) {
+        if self.interaction_request != Some(authority.request_id())
+            || authority.run() != evidence.run
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id() && owner.live()
+            })
+        {
+            return;
+        }
+        self.approach = Some(Box::new(ApproachState {
+            watch: None,
+            end: Some(super::ApproachReceipt {
+                request_id: authority.request_id().get(),
+                evidence,
+                end,
+            }),
+        }));
+    }
+
+    /// Feed the armed watch one snapshot. `tick` stamps a stall's receipt.
+    pub fn observe_approach(&mut self, snapshot: &api::snapshot::GameSnapshot, tick: u64) {
+        let Some(state) = self.approach.as_mut() else {
+            return;
+        };
+        let Some((request, watch)) = state.watch.as_mut() else {
+            return;
+        };
+        let Some(run) = self
+            .owner
+            .as_ref()
+            .filter(|owner| owner.live())
+            .map(|owner| owner.run)
+        else {
+            state.watch = None;
+            return;
+        };
+        match watch.observe(snapshot) {
+            api::interact::ApproachVerdict::Pending => {}
+            api::interact::ApproachVerdict::Resolved(_) => state.watch = None,
+            api::interact::ApproachVerdict::Stalled { ticks } => {
+                state.end = Some(super::ApproachReceipt {
+                    request_id: request.get(),
+                    evidence: api::quest_progress::EvidenceStamp {
+                        run,
+                        tick,
+                        sequence: tick,
+                    },
+                    end: super::ApproachEnd::Stalled { ticks },
+                });
+                state.watch = None;
+            }
+        }
+    }
+
+    /// Whether any approach watch is armed, so the host observes it each pass
+    /// even when no new row is queued.
+    pub fn has_approach_watch(&self) -> bool {
+        self.approach
+            .as_ref()
+            .is_some_and(|state| state.watch.is_some())
+    }
+
+    /// Whether the watch of this request is still armed: the approach has not
+    /// yet arrived, produced an outcome or stalled.
+    pub fn approach_watching(&self, request: u64) -> bool {
+        self.approach
+            .as_ref()
+            .and_then(|state| state.watch.as_ref())
+            .is_some_and(|(armed, _)| armed.get() == request)
     }
 
     pub fn complete_server_ordered(
@@ -1969,5 +2075,233 @@ mod observed_walk_outcome_tests {
             (outcome.seq(), outcome.cancel_reason()),
             (WALK_OUTCOME_SEQ_MAX, WalkCancelReason::None)
         );
+    }
+}
+
+#[cfg(test)]
+mod approach_tests {
+    use super::*;
+    use api::interact::{ApproachWatch, OpTarget, APPROACH_STALL_TICKS};
+    use api::snapshot::{
+        ActorView, GameSnapshot, LocalPlayerView, NpcView, PlayerView, SceneView, WorldTile,
+    };
+
+    const RUN: RunKey = RunKey {
+        slot: 1,
+        run: 2,
+        session: 3,
+    };
+
+    fn tile(x: i32, z: i32) -> WorldTile {
+        WorldTile {
+            x: 3200 + x,
+            z: 3200 + z,
+            level: 0,
+        }
+    }
+
+    fn actor(at: WorldTile) -> ActorView {
+        ActorView {
+            name: None,
+            actions: Vec::new(),
+            tile: at,
+            distance: 0,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: 0,
+            health: 10,
+            total_health: 10,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+        }
+    }
+
+    fn npc(at: WorldTile) -> NpcView {
+        NpcView {
+            index: 7,
+            r#type: Some(9),
+            name: Some("Hans".into()),
+            actions: vec![Some("Talk-to".into())],
+            tile: at,
+            distance: 0,
+            animation: -1,
+            animation_frame: 0,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: 0,
+            health: 7,
+            total_health: 7,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 0,
+            size: 1,
+            network: at,
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }
+    }
+
+    /// An open 30x30 scene with the player and one NPC at the given tiles.
+    fn snapshot(player: WorldTile, tick: u32) -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_scene(SceneView {
+            available: true,
+            base_x: 3200,
+            base_z: 3200,
+            level: 0,
+            width: 30,
+            height: 30,
+            collision_flags: vec![0; 900],
+        });
+        snapshot.seed_local_player(LocalPlayerView {
+            player: PlayerView {
+                index: 0,
+                network: player,
+                actor: actor(player),
+                combat_level: 3,
+                skill_level: 3,
+                headicons: 0,
+                weapon: None,
+            },
+            energy: 100,
+            weight: 0,
+            animation_update: None,
+        });
+        snapshot.seed_npcs(vec![npc(tile(20, 10))]);
+        snapshot.seed_tick(tick);
+        snapshot
+    }
+
+    /// A ledger whose live owner has one accepted interaction request.
+    fn ledger_with_request() -> (Ledger, HostAuthority) {
+        let mut ledger = Ledger::default();
+        let owner = Owner::new(RUN, ledger.next_id().unwrap());
+        ledger.owner = Some(Arc::clone(&owner));
+        let request = ledger.next_id().unwrap();
+        ledger.interaction_request = Some(request);
+        owner.set_interaction(request);
+        let authority = HostAuthority {
+            owner,
+            request,
+            walk: false,
+            protected_items: None,
+        };
+        (ledger, authority)
+    }
+
+    fn armed(player: WorldTile, tick: u32) -> (Ledger, HostAuthority) {
+        let (mut ledger, authority) = ledger_with_request();
+        let snapshot = snapshot(player, tick);
+        let watch = ApproachWatch::arm(&snapshot, &OpTarget::Npc(&snapshot.npcs()[0])).unwrap();
+        ledger.arm_approach(&authority, watch);
+        assert!(ledger.approach.as_ref().unwrap().watch.is_some());
+        (ledger, authority)
+    }
+
+    #[test]
+    fn a_stationary_approach_becomes_a_typed_end_at_the_observed_tick_bound() {
+        let at = tile(2, 10);
+        let (mut ledger, authority) = armed(at, 100);
+        for n in 1..APPROACH_STALL_TICKS {
+            ledger.observe_approach(&snapshot(at, 100 + n), u64::from(100 + n));
+            assert!(ledger.approach.as_ref().unwrap().end.is_none(), "tick {n}");
+        }
+        let last = 100 + APPROACH_STALL_TICKS;
+        ledger.observe_approach(&snapshot(at, last), u64::from(last));
+        let state = ledger.approach.as_ref().unwrap();
+        assert!(state.watch.is_none(), "the watch ends with its verdict");
+        let end = state.end.expect("typed end");
+        assert_eq!(end.request_id, authority.request.get());
+        assert_eq!(end.evidence.run, RUN);
+        assert_eq!(end.evidence.tick, u64::from(last));
+        assert_eq!(
+            end.end,
+            super::super::ApproachEnd::Stalled {
+                ticks: APPROACH_STALL_TICKS
+            }
+        );
+    }
+
+    #[test]
+    fn polls_without_a_new_tick_and_a_walking_player_end_nothing() {
+        let (mut ledger, _authority) = armed(tile(2, 10), 100);
+        for _ in 0..50 {
+            ledger.observe_approach(&snapshot(tile(2, 10), 100), 100);
+        }
+        for n in 1..=30u32 {
+            ledger.observe_approach(&snapshot(tile(2 + n as i32 % 12, 10), 100 + n), 0);
+        }
+        let state = ledger.approach.as_ref().unwrap();
+        assert!(state.end.is_none());
+        assert!(state.watch.is_some());
+    }
+
+    #[test]
+    fn the_host_records_an_unreachable_refusal_for_the_live_request_only() {
+        let (mut ledger, authority) = ledger_with_request();
+        let evidence = api::quest_progress::EvidenceStamp {
+            run: RUN,
+            tick: 100,
+            sequence: 100,
+        };
+        ledger.complete_approach(&authority, super::super::ApproachEnd::Unreachable, evidence);
+        assert_eq!(
+            ledger.approach.as_ref().unwrap().end.unwrap().end,
+            super::super::ApproachEnd::Unreachable
+        );
+        // A request that is no longer the ledger's interaction records nothing.
+        let (mut ledger, authority) = ledger_with_request();
+        ledger.interaction_request = None;
+        ledger.complete_approach(&authority, super::super::ApproachEnd::Unreachable, evidence);
+        assert!(ledger.approach.is_none());
+    }
+
+    #[test]
+    fn a_revoked_owner_drops_the_watch_and_never_stalls() {
+        let at = tile(2, 10);
+        let (mut ledger, _authority) = armed(at, 100);
+        ledger.revoke_foreground();
+        assert!(ledger.approach.is_none());
+        let (mut ledger, authority) = armed(at, 100);
+        authority.owner.revoke();
+        for n in 1..=2 * APPROACH_STALL_TICKS {
+            ledger.observe_approach(&snapshot(at, 100 + n), u64::from(100 + n));
+        }
+        let state = ledger.approach.as_ref().unwrap();
+        assert!(state.end.is_none() && state.watch.is_none());
+    }
+
+    #[test]
+    fn an_armed_watch_is_reported_until_it_ends_so_the_host_observes_it() {
+        let at = tile(2, 10);
+        let (mut ledger, authority) = armed(at, 100);
+        let request = authority.request.get();
+        assert!(ledger.has_approach_watch());
+        assert!(ledger.approach_watching(request));
+        assert!(!ledger.approach_watching(request + 1));
+        // Silent ticks with no queued row: the host still feeds the watch.
+        for n in 1..=APPROACH_STALL_TICKS {
+            assert!(ledger.approach_watching(request), "tick {n}");
+            ledger.observe_approach(&snapshot(at, 100 + n), u64::from(100 + n));
+        }
+        assert!(!ledger.has_approach_watch());
+        assert!(!ledger.approach_watching(request));
+        assert!(ledger.approach.as_ref().unwrap().end.is_some());
     }
 }

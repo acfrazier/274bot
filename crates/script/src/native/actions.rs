@@ -269,6 +269,7 @@ impl ActionContext<'_> {
         let request_id = ledger.next_id()?;
         owner.set_interaction(request_id);
         ledger.interaction = None;
+        ledger.approach = None;
         ledger.interaction_request = Some(request_id);
         ledger.outbox.push(HostAction {
             custody: HostCustody::interaction(owner, request_id),
@@ -614,6 +615,37 @@ impl ActionContext<'_> {
         } else {
             InteractionDispatch::Unsent
         }
+    }
+
+    /// How this interaction request's approach ended without the engine
+    /// operating its target, when it did ([`ApproachEnd`]): the host refused
+    /// an unreachable target, or the sent operation stopped moving the
+    /// player for [`api::interact::APPROACH_STALL_TICKS`] observed server
+    /// ticks with no outcome. `None` until then. The owner re-routes or
+    /// fails on it.
+    pub fn approach_end(&self, request_id: u64) -> Option<&ApproachReceipt> {
+        let ledger = self.ledger.as_ref()?;
+        let owner = ledger.owner.as_ref()?;
+        if owner.run != self.run() || owner.id.get() != self.action_id || !owner.live() {
+            return None;
+        }
+        ledger.approach.as_ref()?.end.as_ref().filter(|receipt| {
+            receipt.request_id == request_id && receipt.evidence.run == self.run()
+        })
+    }
+
+    /// Whether this interaction request's approach is still being watched:
+    /// the op was sent, the player has not yet arrived, produced an outcome
+    /// or stalled. An owner that must not report success before the target
+    /// is reached waits while this holds, and reads [`Self::approach_end`]
+    /// when it ends.
+    pub fn approach_watching(&self, request_id: u64) -> bool {
+        let Some(ledger) = self.ledger.as_ref() else {
+            return false;
+        };
+        ledger.owner.as_ref().is_some_and(|owner| {
+            owner.run == self.run() && owner.id.get() == self.action_id && owner.live()
+        }) && ledger.approach_watching(request_id)
     }
 
     /// Whether the host discarded this action's walk `request_id` before it
