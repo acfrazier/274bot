@@ -8186,7 +8186,9 @@ fn show_state_root_lock_refusal(
         clear_color: BG,
         ini_filename: None,
         restore_previous_geometry: false,
-        redraw: RedrawMode::Wait,
+        // `Wait` paints only on resize or scale change, so a click on Exit
+        // would never reach a frame. A low frame cap keeps the window live.
+        redraw: RedrawMode::WaitUntil { fps: 30.0 },
         theme: Some(Theme::Dark),
         ..Default::default()
     };
@@ -8202,6 +8204,9 @@ fn show_state_root_lock_refusal(
             let mut exit_requested = false;
             ui.window(presentation.title)
                 .opened(&mut open)
+                // ImGui's default (60, 60) places the dialog partly outside
+                // this small OS window at scales below 1.5.
+                .position([0.0, 0.0], Condition::Always)
                 .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
                 .size_constraints(
                     scale_size(ui, [DIALOG_W, 80.0]),
