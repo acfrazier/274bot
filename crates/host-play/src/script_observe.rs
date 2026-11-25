@@ -24,8 +24,8 @@ use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
     dispatch_observed_bank_op, dispatch_script_interact_cached_scoped,
     dispatch_script_interact_outcome, pack_cached_reach, recovery_walk_idle, reset_script_nav,
-    resumed_walk, route_inspect, script_slot, take_carried_walk, BankDepositDispatch, InteractContext,
-    NavBot, ScriptWall,
+    resumed_walk, route_inspect, script_slot, take_carried_walk, BankDepositDispatch,
+    InteractContext, NavBot, ScriptWall,
 };
 #[cfg(any(feature = "js", feature = "luau"))]
 use super::{with_script_snapshot_input_shorts, PostedWalkOutcome};
