@@ -103,9 +103,12 @@ fn head(root: &StateRoot) -> u64 {
 
 fn ledger_kind(root: &StateRoot) -> Option<String> {
     inspect(root)
-        .query_row("SELECT kind FROM legacy_source WHERE id = 1", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT kind FROM import_ledger
+             WHERE domain = 'preferences' AND source = 'panel-ui.json'",
+            [],
+            |row| row.get(0),
+        )
         .optional()
         .unwrap()
 }
@@ -113,7 +116,8 @@ fn ledger_kind(root: &StateRoot) -> Option<String> {
 fn ledger_evidence(root: &StateRoot) -> Option<String> {
     inspect(root)
         .query_row(
-            "SELECT evidence FROM legacy_source WHERE id = 1",
+            "SELECT evidence FROM import_ledger
+             WHERE domain = 'preferences' AND source = 'panel-ui.json'",
             [],
             |row| row.get(0),
         )
@@ -172,7 +176,8 @@ fn export_state(root: &StateRoot) -> Option<String> {
 fn evidence_state(root: &StateRoot) -> Option<String> {
     inspect(root)
         .query_row(
-            "SELECT evidence FROM legacy_source WHERE id = 1",
+            "SELECT evidence FROM import_ledger
+             WHERE domain = 'preferences' AND source = 'panel-ui.json'",
             [],
             |row| row.get(0),
         )
@@ -1107,15 +1112,17 @@ fn two_services_on_a_zero_byte_database_initialize_once_and_neither_sees_a_forei
     assert_eq!(ledger_kind(&root).as_deref(), Some("absent"));
 }
 
+/// A refused database refuses the bank hints it holds too, and a legacy hint
+/// file does not take its place: the database is the only authority.
 #[test]
-fn foreign_and_future_databases_are_refused_and_bank_hints_still_save() {
+fn foreign_and_future_databases_are_refused_and_so_are_bank_hints() {
     let _state_lease = crate::test_process::state();
     for (case, application, user_version, expected) in [
         ("foreign", 0x1234, 1, "not a 274bot state database"),
         (
             "future",
             sql::APPLICATION_ID,
-            2,
+            sql::USER_VERSION + 1,
             "newer than this build reads",
         ),
     ] {
@@ -1130,6 +1137,11 @@ fn foreign_and_future_databases_are_refused_and_bank_hints_still_save() {
         ))
         .unwrap();
         drop(conn);
+        let hint_file = root.bank_hint_file("local-289", "alice");
+        write_private(
+            &hint_file,
+            br#"{"schema_version":1,"profile":"local-289","account":"alice","revision":289,"content":"test-content","observed_at_unix":3,"rows":[[995,3]]}"#,
+        );
         let service = open(&scratch);
         let text = refusal(&service.preferences()).to_string();
         assert!(text.contains(expected), "{case}: {text}");
@@ -1138,13 +1150,30 @@ fn foreign_and_future_databases_are_refused_and_bank_hints_still_save() {
             "{text}"
         );
         assert!(!root.preferences_file().exists(), "no JSON fallback");
-        let hint = submit_hint(&service, "alice", 1_760_000_000);
+        let deadline = Instant::now() + WAIT;
+        let refused = loop {
+            match service.submit(bank_hint("alice", 1_760_000_000)) {
+                SubmitReceipt::Refused(ErrorCode::NotReady { .. }) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "{case}: the bank store never settled"
+                    );
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                other => break other,
+            }
+        };
+        assert_eq!(
+            refused,
+            SubmitReceipt::Refused(ErrorCode::Failed {
+                domain: LocalStateDomain::BankHints,
+                reason: FailureReason::Schema,
+            }),
+            "{case}: bank hints are refused with the database"
+        );
         assert!(
-            matches!(
-                settled(&service, hint, WAIT),
-                Some(Settlement::Completed(_))
-            ),
-            "{case}: bank hints keep working"
+            hint_file.exists(),
+            "{case}: the legacy hint file is not used"
         );
     }
 }
@@ -2595,8 +2624,13 @@ fn the_front_end_seam_of_an_unknown_outcome_settles_like_an_unresolved_commit() 
     assert_eq!(stored_document(&root)["n"], json!(2));
 }
 
+/// While another connection holds the SQLite write lock, a preference save
+/// fails `Busy` at its deadline. A bank hint is one more job of the same
+/// database: its cold store cannot decide its first import without a write,
+/// so it waits at its own retry delays, never as a preference wait, and the
+/// hint saves once the lock is free.
 #[test]
-fn a_held_sqlite_write_lock_fails_the_save_busy_at_its_deadline_while_bank_hints_save() {
+fn a_held_sqlite_write_lock_fails_the_save_busy_at_its_deadline_and_bank_hints_wait_too() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("t53s4-held-lock");
     let root = root_of(&scratch);
@@ -2610,29 +2644,16 @@ fn a_held_sqlite_write_lock_fails_the_save_busy_at_its_deadline_while_bank_hints
     let Update::Queued(mut pending) = preferences.begin_set("n", json!(1)).unwrap() else {
         panic!("a change is queued");
     };
-    let hint = submit_hint(&service, "bob", 1_760_000_001);
-    // Not behind the waiting save: the hint settles while that save is still
-    // pending. An order oracle, not a time limit (a loaded host can take
-    // seconds for the hint's own file I/O); the bound is a hang guard.
     let mut saw_wait = false;
-    let hint_settlement = loop {
-        if let Some(settlement) = settled(&service, hint, Duration::ZERO) {
-            break settlement;
-        }
-        assert!(
-            pending.poll().is_none(),
-            "a bank hint is behind the waiting preference save"
-        );
-        saw_wait |= preferences.wait_cause().is_some();
-        assert!(started.elapsed() < WAIT, "the bank hint never settled");
-        std::thread::sleep(Duration::from_millis(1));
-    };
-    assert!(
-        matches!(hint_settlement, Settlement::Completed(_)),
-        "{hint_settlement:?}"
-    );
     while pending.poll().is_none() {
         saw_wait |= preferences.wait_cause().is_some();
+        assert!(
+            matches!(
+                service.submit(bank_hint("bob", 1_760_000_001)),
+                SubmitReceipt::Refused(ErrorCode::NotReady { .. })
+            ),
+            "a bank hint cannot hydrate while the lock is held"
+        );
         assert!(started.elapsed() < Duration::from_secs(30), "never settled");
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -2640,6 +2661,15 @@ fn a_held_sqlite_write_lock_fails_the_save_busy_at_its_deadline_while_bank_hints
     let waited = started.elapsed();
     assert!(waited >= Duration::from_secs(5), "{waited:?}");
     holder.execute_batch("ROLLBACK").unwrap();
+    // The bank hint hydrates and saves after the release.
+    let hint = submit_hint(&service, "bob", 1_760_000_001);
+    assert!(
+        matches!(
+            settled(&service, hint, WAIT),
+            Some(Settlement::Completed(_))
+        ),
+        "the bank hint saves once the lock is free"
+    );
     // A new save after the release completes.
     save(&preferences, "n", json!(2)).unwrap();
     assert_eq!(ready(&preferences).document()["n"], json!(2));
@@ -2702,15 +2732,23 @@ fn a_pinned_reader_fills_the_wal_to_its_bound_then_the_idle_reset_lets_the_next_
         max_frames as u64 >= sql::WAL_MAX_FRAMES - sql::MAX_PAGES,
         "the WAL crossed W - P = 8192 frames ({max_frames})"
     );
-    // The reader stays pinned until the hint settles: this checks domain
-    // independence, not write latency. The timeout only detects a hang.
-    let hint = submit_hint(&service, "carol", 1_760_000_002);
-    let hint_settlement = settled(&service, hint, Duration::from_secs(30))
-        .expect("the bank hint settles while the reader stays pinned");
-    assert!(
-        matches!(hint_settlement, Settlement::Completed(_)),
-        "{hint_settlement:?}"
-    );
+    // A bank hint is a job of the same database: while the reader stays
+    // pinned the cold store cannot take its write, so it waits as the
+    // preferences do, and goes through after the idle reset below.
+    assert!(matches!(
+        service.submit(bank_hint("carol", 1_760_000_002)),
+        SubmitReceipt::Refused(ErrorCode::NotReady { .. })
+    ));
+    let wal_lengths: Arc<std::sync::Mutex<Vec<u64>>> = Arc::default();
+    let (lengths, wal_path) = (Arc::clone(&wal_lengths), wal.clone());
+    service.set_job_hook_for_test(Arc::new(move |class, _| {
+        if class == "wal-truncate" {
+            lengths
+                .lock()
+                .unwrap()
+                .push(std::fs::metadata(&wal_path).map_or(0, |meta| meta.len()));
+        }
+    }));
     reader.execute_batch("COMMIT").unwrap();
     drop(reader);
     let deadline = Instant::now() + WAIT;
@@ -2718,13 +2756,27 @@ fn a_pinned_reader_fills_the_wal_to_its_bound_then_the_idle_reset_lets_the_next_
         assert!(Instant::now() < deadline, "the idle reset never ran");
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(wal_frames(&probe), 0, "TRUNCATE resets the log count");
-    assert_eq!(
-        std::fs::metadata(&wal).unwrap().len(),
-        0,
-        "a zero-length WAL"
-    );
+    // Read on the writer thread right after each TRUNCATE job, before any
+    // later job (a waiting bank hint) can write again; the hook runs just
+    // after the job that counted the reset.
+    let lengths_deadline = Instant::now() + WAIT;
+    while !wal_lengths.lock().unwrap().contains(&0) {
+        assert!(
+            Instant::now() < lengths_deadline,
+            "the TRUNCATE left no zero-length WAL: {:?}",
+            wal_lengths.lock().unwrap()
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
     save(&preferences, "after", json!(true)).unwrap();
+    let hint = submit_hint(&service, "carol", 1_760_000_002);
+    assert!(
+        matches!(
+            settled(&service, hint, WAIT),
+            Some(Settlement::Completed(_))
+        ),
+        "the bank hint goes through once the log is reset"
+    );
     // Repeated cycles without a reader stay inside the bound.
     for round in 100..130 {
         let Update::Queued(mut update) = preferences.begin_patch(big_patch(round)).unwrap() else {
@@ -3766,9 +3818,9 @@ fn a_start_readback_waits_for_the_first_import_and_never_queues_behind_it() {
 
 /// A first read of the preferences that only waits, because another
 /// connection holds the SQL write lock, is no import in flight: a Start's
-/// read and a bank load are not held back by it (plan §4.4, §5.4: bank,
-/// Start and exit jobs keep running while the lock is held, and file reads
-/// go before preference jobs). The first read keeps waiting for the lock
+/// read (the loadouts file) is not held back by it (plan §4.4, §5.4: Start
+/// and exit jobs keep running while the lock is held, and file reads go
+/// before preference jobs). The first read keeps waiting for the lock
 /// meanwhile, and opens when the lock is released.
 #[test]
 fn a_start_readback_is_not_held_back_by_a_first_read_that_waits_for_the_sql_write_lock() {
@@ -3801,17 +3853,18 @@ fn a_start_readback_is_not_held_back_by_a_first_read_that_waits_for_the_sql_writ
         Ok(None),
         "a Start's read waited for the first read that waits for the lock"
     );
-    assert_eq!(
-        service.readback_lease(&bank_identity("alice"), Duration::from_secs(2)),
-        Ok(None),
-        "a bank load waited for the first read that waits for the lock"
-    );
     assert!(
         matches!(preferences.snapshot(), Err(error) if error.is_not_ready()),
         "the first read still waits for the lock"
     );
     holder.execute_batch("ROLLBACK").unwrap();
     ready(&preferences);
+    // A bank load is a job of the same database (its first read decides its
+    // import in a write), so it too goes through once the lock is free.
+    assert_eq!(
+        service.readback_lease(&bank_identity("alice"), WAIT),
+        Ok(None)
+    );
 }
 
 /// A first read of the preferences that panics (a contained writer-job
@@ -4407,7 +4460,7 @@ fn occupancy_class_verdict_uses_p99_and_hard_ceiling() {
 /// A11's CI microbenchmark entrypoint runs the local-state SQL occupancy gate
 /// in a locked release build and preserves its JSON report. The gate measures
 /// every SQL job class through typed-view publication under the §4.4 load:
-/// two OS processes on one root, each with eight queued and one active D-sized
+/// one OS process on the root, with eight queued and one active D-sized
 /// preference save in every round, with the bank exit save, the Start loadout
 /// readback and a bank load queued beside them. The classes that run once
 /// (first import, quarantine, hard-maximum WAL recovery on open, uncertain
@@ -4422,8 +4475,11 @@ fn occupancy_class_verdict_uses_p99_and_hard_ceiling() {
 #[ignore = "the S4 occupancy gate; run alone with T53_OCCUPANCY_OUT (and T53_JSON_BASELINE)"]
 fn occupancy_gate_every_sql_job_class() {
     // First-import jobs run once per state root off the UI thread, so they are diagnostic only.
-    const FIRST_IMPORT_DIAGNOSTIC_CLASSES: &[&str] =
-        &["first-import/file-readback", "first-import/pref-readback"];
+    const FIRST_IMPORT_DIAGNOSTIC_CLASSES: &[&str] = &[
+        "first-import/file-readback",
+        "first-import/pref-readback",
+        "first-import/bank-readback",
+    ];
     let out = env_path("T53_OCCUPANCY_OUT");
     let scratch = IsolatedEnv::enter("t53s4-occupancy-gate");
     let load =
@@ -4440,6 +4496,27 @@ fn occupancy_gate_every_sql_job_class() {
         write_private(&root.preferences_file(), &d_document(round));
         let (service, timeline) = Timeline::open_timed(&root);
         ready(&service.preferences());
+        // The first import of a bank hint source at the 64 KiB ceiling
+        // (1,024 rows, a recorded scope): strict read, claim, store, evidence.
+        let account = format!("import{round}");
+        let rows: Vec<(i32, i32)> = (1..=1_024).map(|id| (id, 1_000_000)).collect();
+        let source = json!({
+            "schema_version": files::HINT_SCHEMA_VERSION,
+            "profile": "local-289",
+            "account": account,
+            "observed_at_unix": 1_759_700_000_u64,
+            "revision": 289,
+            "content": "test-content",
+            "rows": rows,
+        });
+        write_private(
+            &root.bank_hint_file("local-289", &account),
+            &serde_json::to_vec(&source).unwrap(),
+        );
+        service
+            .readback_lease(&bank_identity(&account), WAIT)
+            .expect("the bank hint source is read")
+            .expect("the bank hint source is imported");
         for (class, took) in timeline.take() {
             file_under(&mut classes, &format!("first-import/{class}"), vec![took]);
         }
@@ -4471,19 +4548,15 @@ fn occupancy_gate_every_sql_job_class() {
     }
 
     // Steady commits (the first after the open, then the first after an
-    // idle reset), the idle TRUNCATE, and D-sized refreshes after the
-    // other service's commits.
+    // idle reset) and the idle TRUNCATE.
     {
         let root = phase_root(&scratch, "steady");
         write_private(&root.preferences_file(), &d_document(0));
         let writer = LocalStateService::open_process(root.clone());
-        let reader = LocalStateService::open_process(root.clone());
-        let (writes, reads) = (Timeline::attach(&writer), Timeline::attach(&reader));
-        let (wp, rp) = (writer.preferences(), reader.preferences());
+        let writes = Timeline::attach(&writer);
+        let wp = writer.preferences();
         ready(&wp);
-        ready(&rp);
         writes.take();
-        reads.take();
         let mut after_reset = false;
         let mut first = true;
         for step in 0..24 {
@@ -4499,22 +4572,6 @@ fn occupancy_gate_every_sql_job_class() {
                 after_reset = class == "wal-truncate";
                 first = false;
                 file_under(&mut classes, label, vec![took]);
-            }
-            if step % 4 == 3 {
-                // The other process follows: its one-second freshness
-                // demand starts a refresh (read, parse, typed view).
-                std::thread::sleep(Duration::from_millis(1_100));
-                let seen = rp.snapshot().map(|snapshot| snapshot.version());
-                let watch = Instant::now();
-                while rp.snapshot().map(|snapshot| snapshot.version()) == seen
-                    && watch.elapsed() < Duration::from_secs(3)
-                {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                for (class, took) in reads.take() {
-                    assert_eq!(class, "pref-readback");
-                    file_under(&mut classes, "refresh-d-sized", vec![took]);
-                }
             }
         }
         // A pinned reader keeps every TRUNCATE busy: its partial copy work.
@@ -4683,10 +4740,9 @@ fn occupancy_gate_every_sql_job_class() {
 
     let mut missing: Vec<&str> = [
         "load/pref-save",
-        "load/pref-readback",
         "load/wal-truncate",
-        "load/file-write",
-        "load/file-readback",
+        "load/bank-write",
+        "load/bank-readback",
         "load/bank-exit-save-residence",
         "load/start-loadout-readback-residence",
         "load/bank-load-residence",
@@ -4696,7 +4752,6 @@ fn occupancy_gate_every_sql_job_class() {
         "steady/commit-steady",
         "steady/commit-after-reset",
         "steady/idle-truncate",
-        "refresh-d-sized",
         "truncate-busy",
         "rollback-declined",
         "rollback-full",
@@ -4764,17 +4819,21 @@ fn occupancy_gate_every_sql_job_class() {
     if let Some(path) = std::env::var_os("T53_JSON_BASELINE") {
         let baseline: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        for class in [
-            "pref-save",
-            "pref-readback",
-            "file-write",
-            "file-readback",
-            "bank-exit-save-residence",
-            "start-loadout-readback-residence",
-            "bank-load-residence",
-            "service-close-shutdown",
+        // The JSON build's `file-*` classes were the bank hint file jobs;
+        // they are the `bank-*` classes of the SQL build.
+        for (json_class, class) in [
+            ("pref-save", "pref-save"),
+            ("file-write", "bank-write"),
+            ("file-readback", "bank-readback"),
+            ("bank-exit-save-residence", "bank-exit-save-residence"),
+            (
+                "start-loadout-readback-residence",
+                "start-loadout-readback-residence",
+            ),
+            ("bank-load-residence", "bank-load-residence"),
+            ("service-close-shutdown", "service-close-shutdown"),
         ] {
-            let json_build = &baseline["classes"][class];
+            let json_build = &baseline["classes"][json_class];
             if json_build.is_null() {
                 continue;
             }
@@ -5148,4 +5207,117 @@ fn sync_count_steady_commits_load() {
     }
     let (resets, busy, _) = service.truncate_counts_for_test();
     println!("T53_SYNC_LOAD commits={commits} truncates={resets} busy={busy}");
+}
+
+/// The bound of the file-store lane: 24 queued bank readbacks run ahead of a
+/// queued preference save, but only `FILE_JOB_BURST` in a row. Without the
+/// bound the save waits for all 24.
+#[test]
+fn a_stream_of_bank_jobs_cannot_starve_a_queued_preference_save() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("bank-burst");
+    let root = root_of(&scratch);
+    let service = LocalStateService::open_process(root.clone());
+    let preferences = service.preferences();
+    ready(&preferences);
+    let timeline = Timeline::attach(&service);
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let released = std::sync::Mutex::new(released);
+    let hold = Arc::new(AtomicBool::new(true));
+    let armed = Arc::clone(&hold);
+    service.set_write_stall_for_test(Arc::new(move || {
+        if armed.swap(false, Ordering::SeqCst) {
+            let _ = entered_tx.send(());
+            let _ = released.lock().unwrap().recv_timeout(WAIT);
+        }
+    }));
+    let mut updates = Vec::new();
+    for n in 0..2 {
+        let mut patch = PreferencePatch::new();
+        patch
+            .set_member(
+                &["bulk", &format!("m{n}")],
+                Some(json!(format!("value-{n}"))),
+            )
+            .unwrap();
+        match preferences.begin_patch(patch) {
+            Ok(Update::Queued(update)) => updates.push(update),
+            other => panic!("the save is queued: {other:?}"),
+        }
+        if n == 0 {
+            entered.recv_timeout(WAIT).expect("the first save is held");
+        }
+    }
+    let readers: Vec<_> = (0..24)
+        .map(|n| {
+            let service = Arc::clone(&service);
+            std::thread::spawn(move || {
+                service.readback_lease(&bank_identity(&format!("b{n:02}")), WAIT)
+            })
+        })
+        .collect();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let queued = service
+            .shared
+            .state
+            .lock()
+            .stores
+            .iter()
+            .filter(|(key, store)| {
+                matches!(key, StoreKey::BankHint { .. }) && store.readback == Readback::Queued
+            })
+            .count();
+        if queued == 24 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "only {queued} bank readbacks queued"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    release.send(()).unwrap();
+    for reader in readers {
+        assert_eq!(reader.join().unwrap().unwrap(), None);
+    }
+    for update in &mut updates {
+        update
+            .wait(WAIT)
+            .expect("the save settles")
+            .expect("the save is durable");
+    }
+    let classes: Vec<&str> = timeline
+        .take()
+        .into_iter()
+        .map(|(class, _)| class)
+        .collect();
+    let second_save = classes
+        .iter()
+        .enumerate()
+        .filter(|(_, class)| **class == "pref-save")
+        .nth(1)
+        .map(|(position, _)| position)
+        .expect("the second preference save ran");
+    // The held save, then at most eight file-lane jobs, then the second save.
+    assert!(
+        second_save <= 9,
+        "the queued preference save ran after {second_save} jobs: {classes:?}"
+    );
+    assert_eq!(FILE_JOB_BURST, 8, "the bound this test states");
+    assert_eq!(
+        classes
+            .iter()
+            .filter(|class| **class == "bank-readback")
+            .count(),
+        24,
+        "every bank readback still ran: {classes:?}"
+    );
+    drop(preferences);
+    drop(service);
+    let reopened = LocalStateService::open_process(root);
+    let snapshot = ready(&reopened.preferences());
+    assert_eq!(snapshot.document()["bulk"]["m0"], json!("value-0"));
+    assert_eq!(snapshot.document()["bulk"]["m1"], json!("value-1"));
 }

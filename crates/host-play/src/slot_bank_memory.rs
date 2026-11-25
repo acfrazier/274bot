@@ -121,12 +121,9 @@ impl SlotHintPort {
         Self { service, identity }
     }
 
-    /// The file the identity spells, for log lines.
+    /// The database file the hint lives in, for log lines.
     fn path(&self) -> PathBuf {
-        self.service.root().bank_hint_file(
-            self.identity.account().profile(),
-            self.identity.account().account(),
-        )
+        self.service.root().database_file()
     }
 }
 
@@ -569,18 +566,59 @@ mod tests {
     const CONTENT: &str = "test-content";
     const WAIT: Duration = Duration::from_secs(60);
 
-    /// Plain unsynced writes with no directory flushes, for the tests that
-    /// count hundreds of settlements; the file is still created 0600 so the
-    /// product's private-file reader accepts it under any umask.
-    fn cheap_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-        std::fs::create_dir_all(path.parent().expect("a hint has a directory"))?;
-        std::fs::write(path, bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    /// One account's stored hint as the state database holds it, read
+    /// through a connection of the test's own.
+    struct HintView {
+        root: super::super::local_state::StateRoot,
+        account: String,
+    }
+
+    impl HintView {
+        fn of(service: &LocalStateService, account: &str) -> Self {
+            Self {
+                root: service.root().clone(),
+                account: account.to_string(),
+            }
         }
-        Ok(())
+
+        /// Whether the hint is stored.
+        fn exists(&self) -> bool {
+            self.json().is_some()
+        }
+
+        fn starts_with(&self, base: &std::path::Path) -> bool {
+            self.root.path().starts_with(base)
+        }
+
+        /// `{"observed_at_unix":N,"rows":[[id,count],...]}`, or `None` while
+        /// no save has reached the database.
+        fn json(&self) -> Option<String> {
+            let conn = rusqlite::Connection::open_with_flags(
+                self.root.database_file(),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .ok()?;
+            let (observed_at, raw): (i64, Vec<u8>) = conn
+                .query_row(
+                    "SELECT observed_at, rows FROM bank_hint
+                     WHERE profile = ?1 AND account = ?2 AND revision = 289 AND content = ?3",
+                    rusqlite::params![PROFILE, self.account, CONTENT],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .ok()?;
+            let rows: Vec<(i32, i32)> = raw
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|row| {
+                    (
+                        i32::from_be_bytes([row[0], row[1], row[2], row[3]]),
+                        i32::from_be_bytes([row[4], row[5], row[6], row[7]]),
+                    )
+                })
+                .collect();
+            Some(serde_json::json!({ "observed_at_unix": observed_at, "rows": rows }).to_string())
+        }
     }
 
     impl SlotBankMemory {
@@ -597,9 +635,25 @@ mod tests {
 
     impl TestState {
         fn new(label: &str) -> Self {
+            Self::open(label, None)
+        }
+
+        /// A state whose account has a legacy hint file `legacy` before its
+        /// first read: the read is the import, and is not asserted here.
+        fn with_legacy(label: &str, legacy: &[u8]) -> Self {
+            Self::open(label, Some(legacy))
+        }
+
+        fn open(label: &str, legacy: Option<&[u8]>) -> Self {
             let scratch = IsolatedEnv::enter(label);
+            let root = super::super::local_state::StateRoot::new(scratch.home.join(".274bot"));
+            if let Some(legacy) = legacy {
+                let path = root.bank_hint_file(PROFILE, "alice");
+                vault::create_private_dir(path.parent().unwrap()).unwrap();
+                vault::write_private_file(&path, legacy).unwrap();
+            }
             let service = LocalStateService::open(
-                super::super::local_state::StateRoot::new(scratch.home.join(".274bot")),
+                root,
                 &[
                     LocalStateDomain::BankHints,
                     LocalStateDomain::LoadoutsReferences,
@@ -611,7 +665,9 @@ mod tests {
             // test below queues behind a held write on purpose.
             service.set_shutdown_timeout(Duration::from_secs(60));
             let identity = identity("alice");
-            assert_eq!(service.readback_lease(&identity, WAIT).unwrap(), None);
+            if legacy.is_none() {
+                assert_eq!(service.readback_lease(&identity, WAIT).unwrap(), None);
+            }
             Self {
                 scratch,
                 service,
@@ -629,8 +685,8 @@ mod tests {
             )
         }
 
-        fn hint_path(&self) -> std::path::PathBuf {
-            self.service.root().bank_hint_file(PROFILE, "alice")
+        fn hint_path(&self) -> HintView {
+            HintView::of(&self.service, "alice")
         }
     }
 
@@ -651,16 +707,9 @@ mod tests {
         let (entered_tx, entered) = mpsc::channel();
         let (release, release_rx) = mpsc::channel::<()>();
         let release_rx = std::sync::Mutex::new(release_rx);
-        service.set_write_hook(Arc::new(move |path, bytes| {
-            let document: serde_json::Value = serde_json::from_slice(bytes)
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-            let rows: Vec<(i32, i32)> = serde_json::from_value(document["rows"].clone())
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-            entered_tx
-                .send(rows)
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
+        service.set_bank_write_hook_for_test(Arc::new(move |rows| {
+            let _ = entered_tx.send(rows.to_vec());
             let _ = release_rx.lock().unwrap().recv();
-            vault::write_private_file(path, bytes)
         }));
         Gate { entered, release }
     }
@@ -708,8 +757,8 @@ mod tests {
         snapshot.seed_bank_observation(-1, generation, None, Vec::new());
     }
 
-    fn rows_on_disk(path: &std::path::Path) -> String {
-        std::fs::read_to_string(path).unwrap()
+    fn rows_on_disk(view: &HintView) -> String {
+        view.json().expect("a hint is stored")
     }
 
     fn bank_row(id: i32, count: i32, slot: i32) -> ItemView {
@@ -733,19 +782,26 @@ mod tests {
         }
     }
 
+    /// Store `rows` observed at `at` for `account` through the service.
     fn write_hint(state: &TestState, account: &str, rows: &[(i32, i32)], at: u64) {
-        let path = state.service.root().bank_hint_file(PROFILE, account);
-        let bytes = serde_json::to_vec(&serde_json::json!({
-            "schema_version": super::super::local_state::HINT_SCHEMA_VERSION,
-            "profile": PROFILE,
-            "account": account,
-            "revision": 289,
-            "content": CONTENT,
-            "observed_at_unix": at,
-            "rows": rows,
-        }))
+        let identity = identity(account);
+        assert!(state.service.readback_lease(&identity, WAIT).is_ok());
+        let hint = BankHint::try_new(
+            identity,
+            None,
+            rows.to_vec(),
+            DurableTimestamp::from_unix_seconds(at),
+        )
         .unwrap();
-        vault::write_private_file(&path, &bytes).unwrap();
+        let request = state
+            .service
+            .submit(DomainEdit::Bank(hint))
+            .request()
+            .expect("accepted");
+        assert!(matches!(
+            settled(&state.service, request),
+            Settlement::Completed(_)
+        ));
     }
 
     fn offline_play() -> crate::Play {
@@ -958,12 +1014,9 @@ mod tests {
         let path = state.hint_path();
         let failed = Arc::new(AtomicBool::new(false));
         let failed_once = Arc::clone(&failed);
-        state.service.set_write_hook(Arc::new(move |path, bytes| {
-            if !failed_once.swap(true, Ordering::SeqCst) {
-                return Err(std::io::Error::other("disk full"));
-            }
-            vault::write_private_file(path, bytes)
-        }));
+        state
+            .service
+            .set_write_fault_for_test(Arc::new(move || !failed_once.swap(true, Ordering::SeqCst)));
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 50);
         slot.observe_frame(&snapshot);
@@ -1008,20 +1061,15 @@ mod tests {
         let release_rx = std::sync::Mutex::new(release_rx);
         let failed = Arc::new(AtomicBool::new(false));
         let failed_once = Arc::clone(&failed);
-        state.service.set_write_hook(Arc::new(move |path, bytes| {
-            if !failed_once.swap(true, Ordering::SeqCst) {
-                return Err(std::io::Error::other("disk full"));
-            }
-            let document: serde_json::Value = serde_json::from_slice(bytes)
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-            let rows: Vec<(i32, i32)> = serde_json::from_value(document["rows"].clone())
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-            entered_tx
-                .send(rows)
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-            let _ = release_rx.lock().unwrap().recv();
-            vault::write_private_file(path, bytes)
-        }));
+        state
+            .service
+            .set_write_fault_for_test(Arc::new(move || !failed_once.swap(true, Ordering::SeqCst)));
+        state
+            .service
+            .set_bank_write_hook_for_test(Arc::new(move |rows| {
+                let _ = entered_tx.send(rows.to_vec());
+                let _ = release_rx.lock().unwrap().recv();
+            }));
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 17);
         slot.observe_frame(&snapshot);
@@ -1069,6 +1117,11 @@ mod tests {
     fn fixture_open_withdraw_close_saves_once_into_the_pinned_home() {
         let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-fixture");
+        let commits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&commits);
+        state.service.set_audit_hook(Arc::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }));
         let slot = state.slot(Arc::default());
         let path = state.hint_path();
         assert!(path.starts_with(&state.scratch.home));
@@ -1095,7 +1148,7 @@ mod tests {
         assert!(!slot.read().dirty(), "the close saved");
         let raw = rows_on_disk(&path);
         assert!(raw.contains(&format!("\"rows\":[[{COINS},43]]")), "{raw}");
-        cheap_write(&path, b"sentinel").unwrap();
+        assert_eq!(commits.load(Ordering::SeqCst), 1, "the close saved once");
 
         for _ in 0..3 {
             slot.observe_frame(&snapshot);
@@ -1103,10 +1156,11 @@ mod tests {
         slot.session_ended();
         drop(ExitSave(&slot));
         assert_eq!(
-            rows_on_disk(&path),
-            "sentinel",
+            commits.load(Ordering::SeqCst),
+            1,
             "exactly one save per close"
         );
+        assert_eq!(rows_on_disk(&path), raw);
     }
 
     #[test]
@@ -1174,10 +1228,8 @@ mod tests {
     #[test]
     fn a_rejected_file_leaves_the_memory_unknown_and_login_unaffected() {
         let _state_lease = crate::test_process::state();
-        let state = TestState::new("bank-hints-rejected");
+        let state = TestState::with_legacy("bank-hints-rejected", b"{\"schema_version\":7}");
         let slot = state.slot(Arc::default());
-        let path = state.hint_path();
-        cheap_write(&path, b"{\"schema_version\":7}").unwrap();
         slot.session_started();
         assert!(!slot.read().known());
     }
@@ -1269,18 +1321,11 @@ mod tests {
         assert!(Arc::ptr_eq(&first.memory, &second.memory));
         let first_identity = &first.hint.as_ref().unwrap().port.identity;
         let second_identity = &second.hint.as_ref().unwrap().port.identity;
-        let path = state.service.root().bank_hint_file(
-            first_identity.account().profile(),
-            first_identity.account().account(),
-        );
         assert_eq!(
-            state.service.root().bank_hint_file(
-                second_identity.account().profile(),
-                second_identity.account().account(),
-            ),
-            path,
-            "both spellings resolve to one service file"
+            first_identity, second_identity,
+            "both spellings resolve to one stored hint"
         );
+        let path = HintView::of(&state.service, first_identity.account().account());
 
         let mut snapshot = GameSnapshot::new();
         first.session_started();
@@ -1541,22 +1586,16 @@ mod tests {
         let (entered_tx, entered) = mpsc::channel();
         let (release, release_rx) = mpsc::channel::<()>();
         let release_rx = std::sync::Mutex::new(release_rx);
-        let calls = std::sync::atomic::AtomicUsize::new(0);
-        service.set_write_hook(Arc::new(move |path, bytes| {
-            match calls.fetch_add(1, Ordering::SeqCst) {
-                0 => {
-                    let document: serde_json::Value = serde_json::from_slice(bytes)
-                        .map_err(|error| std::io::Error::other(error.to_string()))?;
-                    let rows: Vec<(i32, i32)> = serde_json::from_value(document["rows"].clone())
-                        .map_err(|error| std::io::Error::other(error.to_string()))?;
-                    let _ = entered_tx.send(rows);
-                    let _ = release_rx.lock().unwrap().recv();
-                    vault::write_private_file(path, bytes)
-                }
-                1 => Err(std::io::Error::other("disk full")),
-                _ => vault::write_private_file(path, bytes),
+        let held = AtomicBool::new(false);
+        service.set_bank_write_hook_for_test(Arc::new(move |rows| {
+            if !held.swap(true, Ordering::SeqCst) {
+                let _ = entered_tx.send(rows.to_vec());
+                let _ = release_rx.lock().unwrap().recv();
             }
         }));
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        service
+            .set_write_fault_for_test(Arc::new(move || calls.fetch_add(1, Ordering::SeqCst) == 1));
         Gate { entered, release }
     }
 
@@ -1661,17 +1700,18 @@ mod tests {
         let path = state.hint_path();
         let bob = identity("bob");
         assert_eq!(state.service.readback_lease(&bob, WAIT).unwrap(), None);
-        let bob_path = state.service.root().bank_hint_file(PROFILE, "bob");
         let (entered_tx, entered) = mpsc::channel();
         let (release, release_rx) = mpsc::channel::<()>();
         let release_rx = std::sync::Mutex::new(release_rx);
-        state.service.set_write_hook(Arc::new(move |path, bytes| {
-            if path == bob_path {
-                let _ = entered_tx.send(());
-                let _ = release_rx.lock().unwrap().recv();
-            }
-            vault::write_private_file(path, bytes)
-        }));
+        // Bob's save is held inside its transaction.
+        state
+            .service
+            .set_bank_write_hook_for_test(Arc::new(move |rows| {
+                if rows == [(COINS, 1)] {
+                    let _ = entered_tx.send(());
+                    let _ = release_rx.lock().unwrap().recv();
+                }
+            }));
         let hint = BankHint::try_new(
             bob,
             None,
@@ -1710,8 +1750,7 @@ mod tests {
         });
         drop(service);
         releaser.join().unwrap();
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("the queued save was dropped: {error}"));
+        let raw = rows_on_disk(&path);
         assert!(raw.contains(&format!("\"rows\":[[{COINS},64]]")), "{raw}");
     }
 
@@ -1723,10 +1762,7 @@ mod tests {
         let _state_lease = crate::test_process::state();
         let state = TestState::new("bank-hints-forgotten");
         let slot = state.slot(Arc::default());
-        // Hundreds of writes follow; what this checks is not durability, so
-        // they are plain unsynced writes with no directory flushes.
-        state.service.set_write_hook(Arc::new(cheap_write));
-        state.service.set_sync_hook(Arc::new(|_| Ok(())));
+        // Hundreds of writes follow; what this checks is not durability.
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 50);
         slot.observe_frame(&snapshot);

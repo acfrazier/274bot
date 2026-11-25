@@ -55,7 +55,7 @@
 //! `ISOHOME_DIR=<dir> LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<p> GATHERER_NAV_PACK=<pack> GATHERER_ENGINE_DIR=<engine> GATHERER_CATALOG_ROOT=<catalog> GATHERER_GAME_PORT=<port> GATHERER_HTTP_PORT=<port> BOT_CACHE_DIR=<unpack-root>/<version> CLIENT_UNPACK_DIR=<unpack-root> LIVE_EVIDENCE_DIR=<evidence-root> isohome cargo test -p host-play --features live-harness,test-support --lib live_fetch_closed_session -- --ignored --nocapture --test-threads=1`; repeat with `S5_LIVE_ACCOUNT=<account>` for `live_fetch_closed_stale_negative` and `live_fetch_closed_stale_solid_radius`, then run `live_fetch_closed_hero_guild_post_bank` under the same base environment with JS enabled and no `S5_LIVE_ACCOUNT`.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -495,32 +495,40 @@ fn unix_now() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
-fn hint_path(account: &str) -> PathBuf {
+/// The state database the account's hint lives in.
+fn hint_path(_account: &str) -> PathBuf {
+    hint_root().database_file()
+}
+
+fn hint_root() -> crate::local_state::StateRoot {
     let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is the test's throwaway home"));
-    let identity = api::local_state::AccountKey::try_new(PROFILE, account)
-        .expect("the selected live account is a login identity");
     crate::local_state::StateRoot::new(home.join(".274bot"))
-        .bank_hint_file(PROFILE, identity.account())
 }
 
-fn hint_rows(path: &Path) -> Result<(String, Vec<(i32, i32)>), String> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|error| format!("read {}: {error}", path.display()))?;
-    let document: serde_json::Value = serde_json::from_str(&contents)
-        .map_err(|error| format!("parse {}: {error}", path.display()))?;
-    let rows = serde_json::from_value(document["rows"].clone())
-        .map_err(|error| format!("rows: {error}: {contents}"))?;
-    Ok((contents, rows))
+fn hint_account(account: &str) -> String {
+    api::local_state::AccountKey::try_new(PROFILE, account)
+        .expect("the selected live account is a login identity")
+        .account()
+        .to_string()
 }
 
-/// M-R2-3: delete the coins row from the hint file this process will load.
-fn drop_coins_from_hint(path: &Path) -> Result<(String, String), String> {
-    let before = std::fs::read_to_string(path)
-        .map_err(|error| format!("read {}: {error}", path.display()))?;
-    let mut document: serde_json::Value = serde_json::from_str(&before)
-        .map_err(|error| format!("parse {}: {error}", path.display()))?;
-    let rows: Vec<(i32, i32)> = serde_json::from_value(document["rows"].clone())
-        .map_err(|error| format!("rows: {error}: {before}"))?;
+/// The stored hint as one JSON line, and its rows.
+fn hint_rows(account: &str) -> Result<(String, Vec<(i32, i32)>), String> {
+    let stored = hint_root()
+        .stored_bank_hint(PROFILE, &hint_account(account))?
+        .ok_or_else(|| "no hint is stored yet".to_string())?;
+    let contents = serde_json::json!({
+        "observed_at_unix": stored.observed_at_unix,
+        "rows": stored.rows,
+    })
+    .to_string();
+    Ok((contents, stored.rows))
+}
+
+/// M-R2-3: delete the coins row from the stored hint this process will load
+/// (no service runs on the root between two cells).
+fn drop_coins_from_hint(account: &str) -> Result<(String, String), String> {
+    let (before, rows) = hint_rows(account)?;
     if !rows.iter().any(|&(id, count)| id == COINS && count >= FARE) {
         return Err(format!(
             "the hint must hold the banked fare before the edit: {before}"
@@ -530,10 +538,8 @@ fn drop_coins_from_hint(path: &Path) -> Result<(String, String), String> {
     if kept.is_empty() {
         return Err(format!("the edited hint must keep another row: {before}"));
     }
-    document["rows"] = serde_json::json!(kept);
-    let after = serde_json::to_string(&document).expect("encode the edited hint");
-    vault::write_private_file(path, after.as_bytes())
-        .map_err(|error| format!("write {}: {error}", path.display()))?;
+    hint_root().replace_stored_bank_hint_rows(PROFILE, &hint_account(account), &kept)?;
+    let (after, _) = hint_rows(account)?;
     Ok((before, after))
 }
 
@@ -827,7 +833,7 @@ fn run_cell(variant: Variant) {
         ..FetchTrace::default()
     }));
     if variant.stale() {
-        let (before, after) = drop_coins_from_hint(&hint).unwrap_or_else(|error| {
+        let (before, after) = drop_coins_from_hint(&account).unwrap_or_else(|error| {
             panic!("HARNESS PREREQUISITE FAILURE: the earlier cell's hint: {error}")
         });
         let mut guard = trace.lock();
@@ -1562,7 +1568,7 @@ fn run_cell(variant: Variant) {
                 }
                 Stage::AwaitHint { since } => {
                     let want = BANKED_AFTER[variant as usize];
-                    match hint_rows(&hint) {
+                    match hint_rows(&account) {
                         Ok((contents, rows))
                             if rows.contains(&(COINS, want))
                                 && (if hero_guild {

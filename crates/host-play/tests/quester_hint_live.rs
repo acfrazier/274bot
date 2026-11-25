@@ -233,9 +233,9 @@ fn perform_command(name: &'static str, command: String, proof: Proof) -> Step {
     }
 }
 
-// ---- the hint file -------------------------------------------------------
+// ---- the stored hint -----------------------------------------------------
 
-/// The hint as the host writes it (design-bank-snapshot §1.4, schema 1).
+/// The hint as the host stores it (design-bank-snapshot §1.4).
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 struct HintDocument {
     schema_version: u32,
@@ -245,25 +245,60 @@ struct HintDocument {
     rows: Vec<(i32, i32)>,
 }
 
-fn hint_path(account: &str) -> Result<PathBuf, String> {
+/// Where the account's hint lives: the state database of this `HOME`.
+struct HintAt {
+    root: host_play::local_state::StateRoot,
+    account: String,
+}
+
+impl HintAt {
+    fn display(&self) -> String {
+        self.root.database_file().display().to_string()
+    }
+
+    /// Whether a hint of the account is stored.
+    fn is_file(&self) -> bool {
+        self.root
+            .stored_bank_hint(PROFILE, &self.account)
+            .ok()
+            .flatten()
+            .is_some()
+    }
+}
+
+fn hint_path(account: &str) -> Result<HintAt, String> {
     let identity = api::local_state::AccountKey::try_new(PROFILE, account)
         .map_err(|error| format!("account {account:?} has no hint identity: {error}"))?;
     let home = std::env::var_os("HOME").ok_or_else(|| "HOME is not set".to_owned())?;
-    Ok(
-        host_play::local_state::StateRoot::new(PathBuf::from(home).join(".274bot"))
-            .bank_hint_file(PROFILE, identity.account()),
-    )
+    Ok(HintAt {
+        root: host_play::local_state::StateRoot::new(PathBuf::from(home).join(".274bot")),
+        account: identity.account().to_string(),
+    })
 }
 
-fn read_hint(path: &Path) -> Result<HintDocument, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("read hint {}: {error}", path.display()))?;
-    serde_json::from_str(&text).map_err(|error| format!("parse hint {}: {error}", path.display()))
+fn read_hint(path: &HintAt) -> Result<HintDocument, String> {
+    let stored = path
+        .root
+        .stored_bank_hint(PROFILE, &path.account)?
+        .ok_or_else(|| format!("no hint stored in {}", path.display()))?;
+    Ok(HintDocument {
+        schema_version: host_play::local_state::HINT_SCHEMA_VERSION,
+        profile: PROFILE.to_owned(),
+        account: path.account.clone(),
+        observed_at_unix: stored.observed_at_unix,
+        rows: stored.rows,
+    })
 }
 
-fn write_hint(path: &Path, document: &HintDocument) -> Result<(), String> {
-    let text = serde_json::to_string(document).map_err(|error| error.to_string())?;
-    std::fs::write(path, text).map_err(|error| format!("write hint {}: {error}", path.display()))
+/// Replace the stored rows, between two processes (no service runs on the
+/// root).
+fn write_hint(path: &HintAt, document: &HintDocument) -> Result<(), String> {
+    path.root
+        .replace_stored_bank_hint_rows(PROFILE, &path.account, &document.rows)
+}
+
+fn remove_hint(path: &HintAt) -> Result<(), String> {
+    path.root.remove_stored_bank_hint(PROFILE, &path.account)
 }
 
 fn hint_count(document: &HintDocument, id: i32) -> i32 {
@@ -288,14 +323,14 @@ fn set_hint_count(document: &mut HintDocument, id: i32, count: i32) {
 /// document as found (`None` when absent) and as left.
 fn prepare_hint(
     variant: Variant,
-    path: &Path,
+    path: &HintAt,
     egg: i32,
 ) -> Result<(Option<HintDocument>, Option<HintDocument>), String> {
     let before = path.is_file().then(|| read_hint(path)).transpose()?;
     match variant {
         Variant::Cold => {
             if before.is_some() {
-                std::fs::remove_file(path)
+                remove_hint(path)
                     .map_err(|error| format!("remove stale hint {}: {error}", path.display()))?;
             }
             Ok((before, None))

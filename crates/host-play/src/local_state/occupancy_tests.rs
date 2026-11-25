@@ -1,5 +1,5 @@
-//! The occupancy gate's load model (plan §4.4): two OS processes on one
-//! state root, each keeping eight queued preference saves and one active
+//! The occupancy gate's load model (plan §4.4): one process on the state
+//! root, keeping eight queued preference saves and one active
 //! save of D-sized documents, while the same process runs the bank and
 //! Start jobs the gate protects (an exit save, a Start loadout readback and
 //! a bank load). Every writer job is measured whole, from its selection to
@@ -25,10 +25,14 @@ const WAIT: Duration = Duration::from_secs(120);
 /// Saves one process keeps in the writer's reach each round: one active
 /// and eight queued.
 const SAVES: usize = 9;
+/// Processes of the load: the state database has one holder (operator
+/// ruling), so the gate runs one process on its root.
+const PROCESSES: usize = 1;
 /// Shared 250 ms threshold for per-class over_limit counts and the load report.
 pub(super) const THRESHOLD_MS: f64 = 250.0;
-/// Rounds per process: 18 saves a round of about 25 frames each, so the log
-/// passes the idle TRUNCATE trigger (W / 2 = 4,608 frames) more than once.
+/// Rounds per process: nine saves a round of about 25 frames each, about
+/// 5,400 frames in all, so the log passes the idle TRUNCATE trigger
+/// (W / 2 = 4,608 frames).
 pub(super) const ROUNDS: usize = 24;
 
 /// Per-class wall times, in milliseconds.
@@ -177,7 +181,7 @@ fn hint_residence(
 /// preference saves in the writer's reach and the bank and Start jobs
 /// beside them. It writes its report to `T53_OUT` (JSON).
 #[test]
-#[ignore = "child process of the occupancy load (two run at once)"]
+#[ignore = "child process of the occupancy load"]
 fn occupancy_load_child() {
     let root = StateRoot::new(env_path("T53_ROOT"));
     let out = env_path("T53_OUT");
@@ -300,16 +304,6 @@ fn occupancy_load_child() {
                 None => failures.push("a save never settled".into()),
             }
         }
-        // Follow the other process's commits: the one-second freshness
-        // demand starts a refresh job (read, parse, typed view).
-        std::thread::sleep(Duration::from_millis(1_100));
-        let seen = preferences.snapshot().map(|snapshot| snapshot.version());
-        let watch = Instant::now();
-        while preferences.snapshot().map(|snapshot| snapshot.version()) == seen
-            && watch.elapsed() < Duration::from_secs(3)
-        {
-            std::thread::sleep(Duration::from_millis(20));
-        }
     }
     drop(preferences);
     let closing = Instant::now();
@@ -339,7 +333,7 @@ pub(super) struct Load {
     rounds: usize,
 }
 
-/// What the two processes did.
+/// What the load process did.
 pub(super) struct LoadReport {
     pub(super) samples: Samples,
     pub(super) rounds: usize,
@@ -355,7 +349,7 @@ impl LoadReport {
     /// Every submitted save accepted and completed, nine in the writer's
     /// reach every round, every bank and Start job done, no failure.
     pub(super) fn assert_whole(&self) {
-        let saves = (2 * self.rounds * SAVES) as u64;
+        let saves = (PROCESSES * self.rounds * SAVES) as u64;
         assert_eq!(self.rejected, 0, "{:?}", self.failures);
         assert_eq!(self.accepted, saves, "every save is accepted");
         assert_eq!(
@@ -365,12 +359,12 @@ impl LoadReport {
         );
         assert_eq!(
             self.occupancy_rounds,
-            (2 * self.rounds) as u64,
-            "eight queued and one active in every round of both processes"
+            (PROCESSES * self.rounds) as u64,
+            "eight queued and one active in every round"
         );
         assert_eq!(
             self.ops_ok,
-            (2 * self.rounds * 3) as u64,
+            (PROCESSES * self.rounds * 3) as u64,
             "{:?}",
             self.failures
         );
@@ -395,13 +389,13 @@ fn seed_document(root: &StateRoot) {
     vault::write_private_file(&root.preferences_file(), &bytes).unwrap();
 }
 
-/// Start the two processes on `root`; they wait for [`Load::go`].
+/// Start the load process on `root`; it waits for [`Load::go`].
 pub(super) fn start_load(root: &StateRoot, dir: &Path, rounds: usize) -> Load {
     seed_document(root);
     let go = dir.join("occupancy-go");
     let mut children = Vec::new();
     let mut outs = Vec::new();
-    for index in 0..2 {
+    for index in 0..PROCESSES {
         let out = dir.join(format!("occupancy-out-{index}.json"));
         children.push(
             crate::test_process::spawn(

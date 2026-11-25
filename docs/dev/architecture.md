@@ -644,7 +644,7 @@ the curated JS entry points, not aliases for Core types.
 | `content.rs` | curated sites and hostile predicate | bank aliases posted via the shim payload |
 | `ent.rs` | Ent lookup over caller rows | no scene scan |
 | `bank/request.rs`, `bank/compat.rs`, `bank_select.rs`, `bank_withdraw.rs` | typed bank arguments, local calculations, catalog materialization and thieving bank sequencing | bank actions use the native seat; no isolate-owned bank transfer, access or selection loop |
-| `bank_hints.rs` | persisted last-seen bank hint | one schema-1 file per account; planning before any bank opens in a new process |
+| `bank_hints.rs` | persisted last-seen bank hint | one row per account and content scope in the state database; planning before any bank opens in a new process |
  | `clue.rs`, `compat/clue/isolate.rs` | native recovery declaration; JS-run clue session machine (JS runtime) | lives in `script-js`; isolate token, clock, identify, verbs stay private to that crate. Sherlock is available only in builds with the JS runtime. Sherlock was meant to be native. In practice it became a port of the compatibility clue machine, so it needs the JS runtime build until the native clue rewrite replaces that machine. Sherlock itself never creates a V8 isolate |
  | `compat/clue/scene.rs`, `compat/clue/puzzle.rs`, `compat/clue/entrana.rs`, `compat/clue/acquire.rs`, `compat/clue/shop.rs`, `compat/clue/talk.rs`, `compat/clue/combat.rs`, `compat/clue/verbs.rs`, `compat/clue/family.rs` | clue phase helpers (JS runtime) | live in `script-js`; one phase slice each |
  | `compat/sherlock.rs` | Sherlock card wiring (JS runtime) | lives in `script-js`; marshals the frame, maps verbs, no second solver. Sherlock is available only in builds with the JS runtime (see above) |
@@ -756,7 +756,7 @@ libtest exception.
 | `audio.rs` | focused-slot speaker gate | at most one speaker |
 | `rss.rs` | process RSS and CPU sample | harness and the core's resource meter |
 | `resource_view.rs` | live-slot facts and the background-bots preference | live worker count/traffic the core meter samples, background count, `background_bots_ack` |
-| `local_state.rs`, `local_state/{files,frontend,sql,root_use,maintenance}.rs` | process local-state service | one writer thread per process; bank hints and loadouts in files, preferences in `state/state.sqlite3` (SQLite WAL, zero lock waits, bounded WAL, idle TRUNCATE); root-use lease on `instance.lock`; `state preferences export/recover` maintenance commands |
+| `local_state.rs`, `local_state/{files,frontend,sql,bank,root_use,maintenance}.rs` | process local-state service | one writer thread and one SQLite connection per process (injected into `Play` so it opens none of its own); loadouts in files; preferences and bank hints in `state/state.sqlite3` (SQLite WAL, schema version 2, zero lock waits, bounded WAL, idle TRUNCATE; one commit path with one version allocator; import ledger keyed by domain and source); root-use lease on `instance.lock`; `state preferences export/recover` and `state bank-hints accept-projection` maintenance commands |
 | `scatter.rs` | seed tiles for the wall | nav world, else Lumbridge |
 | `progress.rs` | preparation progress values | small, copy-free |
 | `quest_pair.rs` | Play-owned pair leases | bounded; never takes a slot lock or retains a world |

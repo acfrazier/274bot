@@ -521,13 +521,21 @@ Automatic coin funding is not provided.
 
 Needs are planned from the account's bank memory. The host keeps one per
 account: the rows of the bank as last seen open, saved through the process
-local-state service to `<state root>/bank-hints/<profile>/<account>.json`
+local-state service into the state database `<state root>/state/state.sqlite3`
 (the state root is `~/.274bot`, resolved once at launch) when the bank closes
-and loaded at login as an advisory hint. The file records the revision and
-content it was observed under. A hint from other content, or one the host
-can't read, is neither loaded nor overwritten: one log line names the file
-and the reason, and the memory starts unknown. A hint carrying a field this
-build doesn't know is loaded but never rewritten. After a new login the rows stay but
+and loaded at login as an advisory hint. Each hint is stored under the account
+and the revision and content it was observed under, so a hint from other
+content is a separate hint: it is neither loaded nor overwritten. A hint file
+of the previous format, `<state root>/bank-hints/<profile>/<account>.json`,
+is imported once, at the account's first read: the rows and their observation
+time become the hint of the launch's content, a file that records another
+content waits for that content, and the original is kept as
+`<account>.json.migrated`. A file the host can't read (a field named twice,
+another account, an old format, broken rows) is refused with one log line that
+names the file, the cause and the remedy, and the memory starts unknown. A file
+carrying a field this build doesn't know imports read-only: its hint loads but
+is never rewritten until `state bank-hints accept-projection` is run for it.
+After the import the files are not read again. After a new login the rows stay but
 count only as that hint until the bank is opened again. A bank never seen costs one scan trip,
 and a shortage that only the saved hint predicts costs one verifying trip. A
 shortage in a bank seen open this login is final: a required provisioning item

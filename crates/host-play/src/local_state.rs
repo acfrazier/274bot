@@ -125,12 +125,15 @@ use api::local_state::{
 use parking_lot::{Condvar, Mutex};
 use script::local_state::{SlotState, StatePort};
 
+mod bank;
 mod files;
 mod frontend;
 mod maintenance;
 mod root_use;
 mod sql;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use bank::StoredBankHint;
 pub(crate) use files::hint_has_pre_0_2_8_shape;
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
 pub use files::{
@@ -143,8 +146,8 @@ pub use frontend::{
     ServiceLoadouts, Update,
 };
 pub use maintenance::{
-    maintenance_command, maintenance_help, parse_maintenance, run_preferences_maintenance,
-    MaintenanceAction, MaintenanceError,
+    maintenance_command, maintenance_help, parse_maintenance, run_maintenance,
+    run_preferences_maintenance, MaintenanceAction, MaintenanceError,
 };
 pub use root_use::RootUse;
 pub use sql::Frontend;
@@ -157,6 +160,15 @@ const PREFERENCE_DEADLINE: Duration = Duration::from_secs(5);
 /// preference job: the old file lock's retry intervals, without sleeping.
 const RETRY_FIRST: Duration = Duration::from_millis(1);
 const RETRY_MAX: Duration = Duration::from_millis(50);
+/// The most file-store and bank jobs the writer runs in a row while a
+/// preference job is due. Without it a preference save waits behind every
+/// queued file job: the 256 first imports of the resident cap take 6.98 s in
+/// one process on the reference machine (`first_import_of_all_accounts_ms` of
+/// `bank_budget_report`), over [`PREFERENCE_DEADLINE`]. The bound is the depth
+/// of a preference queue ([`OPERATOR_QUEUE_CAP`], the design load of the
+/// preference queue), so a save waits behind at most 8 file jobs: 8 x the
+/// largest bank job measured there (107.8 ms, `bank-import-residence`), 0.9 s.
+const FILE_JOB_BURST: u32 = OPERATOR_QUEUE_CAP as u32;
 
 /// How many edits of one operator store (loadouts, preferences) may wait
 /// behind the one in flight.
@@ -169,6 +181,12 @@ const PREFERENCE_WATCH_CAP: usize = OPERATOR_QUEUE_CAP + 1;
 pub const MAX_BANK_STORES: usize = 256;
 /// How many script runtime settings identities the service holds at once.
 pub const MAX_SCRIPT_RUNTIME_SETTINGS_STORES: usize = 256;
+/// A test's witness of how many provisional services
+/// [`StateComposition::for_play`] opened: an injected process service opens
+/// none.
+#[cfg(test)]
+pub(crate) static PROVISIONAL_OPENED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// How many settlements each store keeps for its observers: a slot reads
 /// its own within frames, and one account has at most one hint in flight
@@ -248,6 +266,11 @@ fn emit_local_notice(
 #[cfg(test)]
 pub(crate) type JobHook = Arc<dyn Fn(&'static str, Duration) + Send + Sync>;
 
+/// A test's witness of each bank save, called inside the save's open
+/// transaction with the rows it commits.
+#[cfg(test)]
+pub(crate) type BankWriteHook = Arc<dyn Fn(&[(i32, i32)]) + Send + Sync>;
+
 /// What one `Play` composes for its slots (§21 §4.2): the process service,
 /// the launch profile's namespace every account keys under, and the
 /// content scope observations are made under. Absent for the legacy
@@ -283,6 +306,35 @@ impl StateComposition {
             namespace: self.namespace.clone(),
             scope: self.scope.clone(),
         }
+    }
+
+    /// The composition one `Play` builds for the profile `namespace` under
+    /// `scope`, at `state_root`. With a process service `injected` (a
+    /// frontend's or a headless launch's one writer and one connection) the
+    /// composition runs over it and nothing else is opened. Only a caller
+    /// with none (a test fixture, a direct run of the library) gets a
+    /// provisional service of its own, which opens its own connection when
+    /// its first bank hint job runs.
+    pub(crate) fn for_play(
+        state_root: &Path,
+        namespace: &str,
+        scope: ContentScope,
+        injected: Option<Arc<LocalStateService>>,
+    ) -> Arc<Self> {
+        let service = injected.unwrap_or_else(|| {
+            #[cfg(test)]
+            PROVISIONAL_OPENED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            LocalStateService::open(
+                StateRoot::new(state_root.to_path_buf()),
+                &[
+                    LocalStateDomain::LoadoutsReferences,
+                    LocalStateDomain::BankHints,
+                    LocalStateDomain::ScriptRuntimeSettings,
+                ],
+                Arc::new(RequestIdMinter::new()),
+            )
+        });
+        Arc::new(Self::new(service, namespace, scope))
     }
 
     pub fn scope(&self) -> &ContentScope {
@@ -505,6 +557,13 @@ struct State {
     /// Only the single preferences readback can ask for a SQL retry.
     /// Account hint stores never carry this process-owned state.
     preference_readback_retry: Retry,
+    /// The one retry state of the bank hints' readbacks: every hint shares
+    /// the process's one connection, so one delay serves them all. A hint
+    /// store carries no retry state of its own.
+    bank_readback_retry: Retry,
+    /// How many file-store and bank jobs ran in a row while a preference job
+    /// was due: at [`FILE_JOB_BURST`] the next job is the preference one.
+    file_job_streak: u32,
     /// The idle WAL reset the writer owes.
     truncate: Truncate,
     /// Taken by the writer thread when it starts.
@@ -564,6 +623,8 @@ struct Hooks {
     read_refusal: Option<NoticeHook>,
     #[cfg(test)]
     job: Option<JobHook>,
+    #[cfg(test)]
+    bank_write: Option<BankWriteHook>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1742,6 +1803,13 @@ impl LocalStateService {
     #[cfg(test)]
     pub(crate) fn set_job_hook_for_test(&self, hook: JobHook) {
         self.shared.state.lock().hooks.job = Some(hook);
+    }
+
+    /// Witness each bank save inside its transaction (a test may hold it
+    /// there), with the rows it commits.
+    #[cfg(test)]
+    pub(crate) fn set_bank_write_hook_for_test(&self, hook: BankWriteHook) {
+        self.shared.state.lock().hooks.bank_write = Some(hook);
     }
 
     /// How many preference saves are queued and whether one is in flight.
@@ -3361,12 +3429,16 @@ impl Shared {
             let (job_started, class) = (Instant::now(), job_class(&job));
             let outcome = panic::catch_unwind(AssertUnwindSafe(|| match &job {
                 Job::Readback(StoreKey::Preferences) => self.readback_preferences(&mut db),
+                Job::Readback(key @ StoreKey::BankHint { .. }) => self.readback_bank(&mut db, key),
                 Job::Readback(key) => {
                     self.readback(key);
                     None
                 }
                 Job::Write(StoreKey::Preferences, queued) => {
                     self.write_preferences(&mut db, queued)
+                }
+                Job::Write(key @ StoreKey::BankHint { .. }, queued) => {
+                    self.write_bank(&mut db, key, queued)
                 }
                 Job::Write(key, queued) => {
                     self.write(key, queued);
@@ -3403,8 +3475,8 @@ impl Shared {
             return false;
         }
         match job {
-            Job::Readback(StoreKey::Preferences) => {
-                state.readback_done(&StoreKey::Preferences);
+            Job::Readback(key @ (StoreKey::Preferences | StoreKey::BankHint { .. })) => {
+                state.readback_done(key);
             }
             Job::Checkpoint => state.truncate.due = false,
             Job::Readback(_) | Job::Write(..) => return false,
@@ -3421,6 +3493,12 @@ impl Shared {
             state.truncate.due = true;
         }
         match job {
+            Job::Readback(key) if matches!(key, StoreKey::BankHint { .. }) => {
+                if let Some(store) = state.stores.get_mut(&key) {
+                    store.readback = Readback::Queued;
+                }
+                state.bank_readback_retry.delay(now);
+            }
             Job::Readback(key) => {
                 let expired_writes = {
                     let State {
@@ -3467,12 +3545,16 @@ impl Shared {
                     return;
                 }
                 if queued.retry.expired(now) {
-                    state.preference_wait = None;
+                    if matches!(key, StoreKey::Preferences) {
+                        state.preference_wait = None;
+                    }
                     self.settle_waited(&mut state, &key, vec![terminal], cause);
                     return;
                 }
                 queued.retry.delay(now);
-                state.preference_wait = Some(cause);
+                if matches!(key, StoreKey::Preferences) {
+                    state.preference_wait = Some(cause);
+                }
                 if let Some(store) = state.stores.get_mut(&key) {
                     store.queue.push_front(queued);
                 }
@@ -3501,7 +3583,11 @@ impl Shared {
         let settlement = Settlement::Failed(ErrorCode::Busy {
             domain: key.domain(),
         });
-        let detail: Arc<str> = Arc::from(cause.text());
+        let detail: Arc<str> = if matches!(key, StoreKey::Preferences) {
+            Arc::from(cause.text())
+        } else {
+            Arc::from(format!("{} not saved: {}.", key.domain(), cause.reason()))
+        };
         let mut settled = Vec::new();
         for terminal in terminals {
             if let Some(watch) = state.preference_watches.get_mut(&terminal.request) {
@@ -3515,8 +3601,8 @@ impl Shared {
             host_log!(
                 Category::Lifecycle,
                 Level::Warn,
-                "local state: preferences save reached its {PREFERENCE_DEADLINE:?} deadline: {}",
-                cause.text()
+                "local state: {} save reached its {PREFERENCE_DEADLINE:?} deadline: {detail}",
+                key.domain()
             );
             for terminal in &settled {
                 self.terminal(terminal, &settlement, None);
@@ -3808,7 +3894,8 @@ impl Shared {
             clock,
             Some(&known),
             || self.begin_sql_write(&key),
-            |durable| {
+            |conn| sql::load_preferences(conn, Some(&known)),
+            |durable: &sql::Durable| {
                 let external_now = if durable.version == known_version {
                     external
                 } else {
@@ -4694,20 +4781,34 @@ fn dirty(domain: LocalStateDomain) -> WriteSettlement {
 }
 
 impl sql::Staging for Staged {
+    type Durable = sql::Durable;
+    const DOMAIN: LocalStateDomain = LocalStateDomain::Preferences;
+    const HEAD: &'static str = sql::PREFERENCES_HEAD;
+    const ACTION: &'static str = "preferences-write";
+
     fn unchanged(&self) -> bool {
         self.unchanged
     }
 
-    fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    fn projection(&self) -> files::PreferenceProjection {
-        self.preferences.clone().unwrap_or_default()
+    fn digest(&self) -> ContentDigest {
+        files::digest(&self.bytes)
     }
 
     fn set_version(&mut self, version: StoreVersion) {
         self.version = version;
+    }
+
+    fn write(&self, tx: &rusqlite::Connection, version: StoreVersion) -> rusqlite::Result<()> {
+        sql::write_preference_rows(tx, &self.bytes, version)
+    }
+
+    fn durable(&self, version: StoreVersion, digest: ContentDigest) -> sql::Durable {
+        sql::Durable {
+            version,
+            projection: self.preferences.clone().unwrap_or_default(),
+            digest,
+            len: self.bytes.len(),
+        }
     }
 }
 
@@ -4799,8 +4900,7 @@ fn decide(
     }
     let (bytes, snapshot, at, action, preferences, audit) = match &queued.intent {
         WriteIntent::Port(DomainEdit::Bank(hint)) => {
-            let bytes = files::hint_bytes(key, hint.rows(), hint.observed_at())
-                .map_err(|_| schema_failure(domain))?;
+            let bytes = bank::stored_bytes(hint.rows(), hint.observed_at().unix_seconds());
             let snapshot = LeaseSnapshot::bank_hints(hint.rows().to_vec())
                 .expect("an admitted hint already met the row rules");
             (
@@ -5044,12 +5144,31 @@ fn schema_failure(domain: LocalStateDomain) -> WriteSettlement {
     })
 }
 
+/// Whether a preference job (its readback, or the save at the front of its
+/// queue) could be taken now.
+fn preference_job_due(state: &State, now: Instant) -> bool {
+    state
+        .stores
+        .get(&StoreKey::Preferences)
+        .is_some_and(|store| {
+            (store.readback == Readback::Queued && state.preference_readback_retry.due(now))
+                || (store.in_flight.is_none()
+                    && !matches!(store.file, FileState::Cold)
+                    && store
+                        .queue
+                        .front()
+                        .is_some_and(|queued| queued.retry.due(now)))
+        })
+}
+
 /// The next job, or (as `Err`) when the earliest delayed retry falls due.
 ///
 /// File stores first: the oldest queued readback, else the oldest queued
 /// write of any file store with nothing in flight. Bank, loadout/Start and
 /// exit-save jobs are never behind a preference retry or a checkpoint
-/// (plan §4.4), and keep their FIFO order. Then the preferences: a due
+/// (plan §4.4), and keep their FIFO order; at most [`FILE_JOB_BURST`] of
+/// them run in a row while a preference job is due, so a stream of them
+/// cannot starve the preferences. Then the preferences: a due
 /// readback, else a due save, else the idle TRUNCATE checkpoint, which
 /// runs only while no file-store job is queued. During shutdown only a
 /// cold store with accepted writes retains its hydration demand.
@@ -5058,6 +5177,7 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
         let State {
             stores,
             preference_readback_retry,
+            bank_readback_retry,
             ..
         } = &mut *state;
         for (key, store) in stores {
@@ -5065,56 +5185,101 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
             if store.readback != Readback::Idle && !needed_by_write {
                 store.readback = Readback::Idle;
                 store.readbacks += 1;
-                if matches!(key, StoreKey::Preferences) {
-                    preference_readback_retry.at = None;
+                match key {
+                    StoreKey::Preferences => preference_readback_retry.at = None,
+                    StoreKey::BankHint { .. } => bank_readback_retry.at = None,
+                    StoreKey::Loadouts | StoreKey::ScriptRuntimeSettings { .. } => {}
                 }
             }
         }
     }
+    fn earlier(next: &mut Option<Instant>, at: Option<Instant>) {
+        if let Some(at) = at {
+            *next = Some(next.map_or(at, |next| next.min(at)));
+        }
+    }
+    let mut next: Option<Instant> = None;
     let files_only = |key: &StoreKey| !matches!(key, StoreKey::Preferences);
+    let is_bank = |key: &StoreKey| matches!(key, StoreKey::BankHint { .. });
+    let bank_due = state.bank_readback_retry.due(now);
+    // The file stores' and bank jobs run ahead of the preference jobs, but
+    // only [`FILE_JOB_BURST`] in a row while a preference job is due.
+    let pref_due = preference_job_due(state, now);
+    let file_turn = !(pref_due && state.file_job_streak >= FILE_JOB_BURST);
     if let Some(key) = state
         .stores
         .iter()
-        .filter(|(key, store)| files_only(key) && store.readback == Readback::Queued)
+        .filter(|(key, store)| {
+            file_turn
+                && files_only(key)
+                && store.readback == Readback::Queued
+                && (bank_due || !is_bank(key))
+        })
         .min_by_key(|(_, store)| store.readback_seq)
         .map(|(key, _)| key.clone())
     {
         let store = state.stores.get_mut(&key).expect("found above");
         store.readback = Readback::InFlight;
+        if pref_due {
+            state.file_job_streak += 1;
+        }
         return Ok(Job::Readback(key));
+    }
+    if !bank_due
+        && state
+            .stores
+            .iter()
+            .any(|(key, store)| is_bank(key) && store.readback == Readback::Queued)
+    {
+        earlier(&mut next, state.bank_readback_retry.at);
     }
     if let Some(key) = state
         .stores
         .iter()
         .filter(|(key, store)| {
-            files_only(key) && store.in_flight.is_none() && !matches!(store.file, FileState::Cold)
+            file_turn
+                && files_only(key)
+                && store.in_flight.is_none()
+                && !matches!(store.file, FileState::Cold)
         })
-        .filter_map(|(key, store)| store.queue.front().map(|queued| (key, queued.seq)))
+        .filter_map(|(key, store)| {
+            store
+                .queue
+                .front()
+                .filter(|queued| queued.retry.due(now))
+                .map(|queued| (key, queued.seq))
+        })
         .min_by_key(|(_, seq)| *seq)
         .map(|(key, _)| key.clone())
     {
+        if pref_due {
+            state.file_job_streak += 1;
+        }
         return Ok(take_write(state, key, now));
     }
-    let mut next: Option<Instant> = None;
-    let mut later = |at: Option<Instant>| {
-        if let Some(at) = at {
-            next = Some(next.map_or(at, |next| next.min(at)));
+    for (key, store) in &state.stores {
+        if is_bank(key) && store.in_flight.is_none() && !matches!(store.file, FileState::Cold) {
+            if let Some(front) = store.queue.front().filter(|queued| !queued.retry.due(now)) {
+                earlier(&mut next, front.retry.at);
+            }
         }
-    };
+    }
     if let Some(store) = state.stores.get_mut(&StoreKey::Preferences) {
         if store.readback == Readback::Queued {
             if state.preference_readback_retry.due(now) {
                 store.readback = Readback::InFlight;
+                state.file_job_streak = 0;
                 return Ok(Job::Readback(StoreKey::Preferences));
             }
-            later(state.preference_readback_retry.at);
+            earlier(&mut next, state.preference_readback_retry.at);
         }
         if store.in_flight.is_none() && !matches!(store.file, FileState::Cold) {
             if let Some(front) = store.queue.front() {
                 if front.retry.due(now) {
+                    state.file_job_streak = 0;
                     return Ok(take_write(state, StoreKey::Preferences, now));
                 }
-                later(front.retry.at);
+                earlier(&mut next, front.retry.at);
             }
         }
     }
@@ -5122,7 +5287,7 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
         if state.truncate.retry_at.is_none_or(|at| at <= now) {
             return Ok(Job::Checkpoint);
         }
-        later(state.truncate.retry_at);
+        earlier(&mut next, state.truncate.retry_at);
     }
     Err(next)
 }
@@ -5137,6 +5302,8 @@ fn job_class(job: &Job) -> &'static str {
         Job::Readback(StoreKey::Preferences) => "pref-readback",
         Job::Write(StoreKey::Preferences, _) => "pref-save",
         Job::Checkpoint => "wal-truncate",
+        Job::Readback(StoreKey::BankHint { .. }) => "bank-readback",
+        Job::Write(StoreKey::BankHint { .. }, _) => "bank-write",
         Job::Readback(_) => "file-readback",
         Job::Write(..) => "file-write",
     }

@@ -57,7 +57,7 @@ use super::root_use::RootUse;
 /// A database with another non-zero ID is foreign and refused.
 pub(super) const APPLICATION_ID: i32 = 0x3237_3453;
 /// The schema version this build writes and reads (`PRAGMA user_version`).
-pub(super) const USER_VERSION: i32 = 1;
+pub(super) const USER_VERSION: i32 = 2;
 /// The database page size: the neutral bound of one preference row value.
 pub(super) const PAGE_SIZE: u64 = 4096;
 /// D: the largest preference document, the old file's bound.
@@ -65,6 +65,20 @@ pub(super) const DOCUMENT_MAX: u64 = files::MAX_PREFERENCES_BYTES;
 /// P: the database page cap, `4D / page`: one live document, one
 /// replacement, one for heads, ledgers and schema, one for free pages.
 pub(super) const MAX_PAGES: u64 = 4 * DOCUMENT_MAX / PAGE_SIZE;
+/// The most bank-hint identities (account × content scope) the database
+/// holds. A new identity past it is refused `Busy`; no stored hint is ever
+/// evicted to make room. The page budget below derives from the accepted
+/// bank budget (1,024 rows per hint, 256 resident stores).
+pub(super) const MAX_BANK_HINTS: u64 = 1024;
+/// The largest stored rows value of one hint: [`api::bank_memory::MAX_HINT_ROWS`]
+/// rows of one 4-byte id and one 4-byte count.
+pub(super) const BANK_ROWS_MAX: usize = api::bank_memory::MAX_HINT_ROWS * 8;
+/// B: the pages the bank hints may add to the database. One hint takes at
+/// most three pages (its row, with the rows value spilling into two overflow
+/// pages); 64 more cover the key index and the new bank tables.
+pub(super) const BANK_PAGES: u64 = 3 * MAX_BANK_HINTS + 64;
+/// The database page cap: the preference pages `P` and the bank pages `B`.
+pub(super) const DB_MAX_PAGES: u64 = MAX_PAGES + BANK_PAGES;
 /// How many preference transactions the queue admits: eight queued and one
 /// active.
 const TRANSACTION_SLOTS: u64 = 9;
@@ -89,7 +103,7 @@ const VARIABLE_LIMIT: i32 = 16;
 /// How many recent commits the database keeps for uncertain-COMMIT matching.
 const RECENT_COMMITS: i64 = 8;
 /// The preferences row of `domain_head`.
-const PREFERENCES_HEAD: &str = "preferences";
+pub(super) const PREFERENCES_HEAD: &str = "preferences";
 
 const SCHEMA: &str = "
 CREATE TABLE store_meta (
@@ -116,13 +130,6 @@ CREATE TABLE recent_commit (
     digest BLOB NOT NULL CHECK (length(digest) = 32),
     UNIQUE (epoch, request)
 ) STRICT;
-CREATE TABLE legacy_source (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    digest BLOB CHECK (digest IS NULL OR length(digest) = 32),
-    kind TEXT NOT NULL,
-    evidence TEXT NOT NULL,
-    path TEXT NOT NULL CHECK (length(path) <= 4096)
-) STRICT;
 CREATE TABLE export_head (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     export_id BLOB NOT NULL CHECK (length(export_id) = 8),
@@ -133,6 +140,45 @@ CREATE TABLE export_head (
 INSERT INTO store_meta (id, epoch, sequence)
     VALUES (1, x'0000000000000000', x'0000000000000000');
 ";
+
+/// The keyed import ledger: one row per domain and legacy source.
+const LEDGER_TABLE: &str = "
+CREATE TABLE import_ledger (
+    domain TEXT NOT NULL CHECK (length(domain) <= 32),
+    source TEXT NOT NULL CHECK (length(source) <= 512),
+    digest BLOB CHECK (digest IS NULL OR length(digest) = 32),
+    kind TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    path TEXT NOT NULL CHECK (length(path) <= 4096),
+    PRIMARY KEY (domain, source)
+) STRICT, WITHOUT ROWID;
+";
+/// The bank hints: one row per account and content scope.
+const BANK_TABLE: &str = "
+CREATE TABLE bank_hint (
+    id INTEGER PRIMARY KEY,
+    profile TEXT NOT NULL CHECK (length(profile) <= 64),
+    account TEXT NOT NULL CHECK (length(account) <= 12),
+    revision INTEGER NOT NULL,
+    content TEXT NOT NULL CHECK (length(content) <= 128),
+    version BLOB NOT NULL CHECK (length(version) = 8),
+    observed_at INTEGER NOT NULL,
+    rows BLOB NOT NULL CHECK (length(rows) <= 8192 AND length(rows) % 8 = 0),
+    omitted INTEGER NOT NULL DEFAULT 0 CHECK (omitted >= 0),
+    UNIQUE (profile, account, revision, content)
+) STRICT;
+";
+/// The 0.3.0 schema step from version 1 (preferences only): the keyed import
+/// ledger takes the preferences ledger row, and the bank hints get their
+/// table. Every completed entry is kept.
+const SCHEMA_1_TO_2_COPY: &str = "
+INSERT INTO import_ledger (domain, source, digest, kind, evidence, path)
+    SELECT 'preferences', 'panel-ui.json', digest, kind, evidence, path
+    FROM legacy_source WHERE id = 1;
+DROP TABLE legacy_source;
+";
+/// The import ledger's domain and source of the preferences file.
+const PREFERENCES_LEDGER: (&str, &str) = (PREFERENCES_HEAD, "panel-ui.json");
 
 /// Which shipped frontend runs the service: the refusal texts name its
 /// maintenance commands, and a headless composition names both.
@@ -218,7 +264,7 @@ pub(super) enum SqlFailure {
 }
 
 impl SqlFailure {
-    fn refused(reason: FailureReason, detail: impl Into<String>) -> Self {
+    pub(super) fn refused(reason: FailureReason, detail: impl Into<String>) -> Self {
         Self::Refused {
             reason,
             detail: Arc::from(detail.into()),
@@ -260,14 +306,14 @@ pub(super) struct Hydrated {
 }
 
 /// How a save's transaction ended.
-pub(super) enum Commit<S> {
-    /// Committed at `durable.version`.
+pub(super) enum Commit<S: Staging> {
+    /// Committed at `durable`'s version.
     Committed {
         staged: S,
-        durable: Durable,
+        durable: S::Durable,
         /// What the transaction found when another writer had changed it
         /// since the caller's cached version.
-        observed: Option<Durable>,
+        observed: Option<S::Durable>,
         /// The commit left `F >= W / 2`: schedule one idle TRUNCATE.
         truncate_due: bool,
         /// `Some` when the COMMIT's own result was uncertain and the
@@ -278,14 +324,14 @@ pub(super) enum Commit<S> {
     /// current version without a write.
     Unchanged {
         staged: S,
-        observed: Option<Durable>,
+        observed: Option<S::Durable>,
     },
     /// The edit was refused (conflict, validation, a COMMIT that failed
     /// cleanly): rolled back.
     Declined {
         code: ErrorCode,
         detail: Option<Arc<str>>,
-        observed: Option<Durable>,
+        observed: Option<S::Durable>,
     },
     /// The COMMIT ended in a disk error and the database could not settle
     /// it (it reopened and held no row of the save, or it could not be
@@ -294,7 +340,7 @@ pub(super) enum Commit<S> {
     /// flagged unknown (plan §4.2).
     Unresolved {
         detail: Arc<str>,
-        observed: Option<Durable>,
+        observed: Option<S::Durable>,
     },
     /// The shutdown bound passed before this save's transaction began (the
     /// begun boundary of [`Db::commit`]): nothing was written, and the
@@ -361,12 +407,12 @@ pub(crate) struct Seams {
 /// The writer thread's database: its connection (opened on first use), the
 /// process epoch drawn once, and the root-use lease.
 pub(super) struct Db {
-    root: StateRoot,
-    frontend: Frontend,
+    pub(super) root: StateRoot,
+    pub(super) frontend: Frontend,
     root_use: Option<RootUse>,
-    conn: Option<Connection>,
-    epoch: Option<u64>,
-    data_version: Option<i64>,
+    pub(super) conn: Option<Connection>,
+    pub(super) epoch: Option<u64>,
+    pub(super) data_version: Option<i64>,
     #[cfg(test)]
     pub(crate) seams: Seams,
 }
@@ -406,16 +452,7 @@ impl Db {
         self.ensure_root_use()?;
         let guard = self.guard()?;
         let mut result = (|| {
-            if self.conn.is_none() {
-                self.conn = Some(open_connection(&self.root)?);
-                self.data_version = None;
-            }
-            #[cfg(test)]
-            self.stall_in_sql()?;
-            self.init_schema(&guard)?;
-            if self.epoch.is_none() {
-                self.allocate_epoch(&guard)?;
-            }
+            self.open_shared(&guard)?;
             let mut notices = Vec::new();
             let evidence = self.reconcile_legacy(&guard, clock, &mut notices)?;
             drop(guard);
@@ -425,6 +462,38 @@ impl Db {
             let durable = self.read_durable()?;
             Ok(Hydrated { durable, notices })
         })();
+        self.after_failure(&mut result);
+        result
+    }
+
+    /// What every domain's first job needs, under the guard the caller
+    /// holds: the connection, the schema at this build's version, and this
+    /// process's epoch. One writer thread owns one connection, so a service
+    /// that opens it for the bank hints and later for the preferences (or
+    /// the other way round) opens it once.
+    fn open_shared(&mut self, guard: &files::WriteLock) -> Result<(), SqlFailure> {
+        if self.conn.is_none() {
+            self.conn = Some(open_connection(&self.root)?);
+            self.data_version = None;
+        }
+        #[cfg(test)]
+        self.stall_in_sql()?;
+        self.init_schema(guard)?;
+        if self.epoch.is_none() {
+            self.allocate_epoch(guard)?;
+        }
+        Ok(())
+    }
+
+    /// Open the connection for a domain whose jobs need no preference work
+    /// (the bank hints): a no-op while it is open and the epoch is drawn.
+    pub(super) fn open_for_domain(&mut self) -> Result<(), SqlFailure> {
+        if self.conn.is_some() && self.epoch.is_some() {
+            return Ok(());
+        }
+        self.ensure_root_use()?;
+        let guard = self.guard()?;
+        let mut result = self.open_shared(&guard);
         self.after_failure(&mut result);
         result
     }
@@ -447,9 +516,12 @@ impl Db {
     }
 
     /// One save: under the product guard, admit the transaction against the
-    /// WAL bound, then in `BEGIN IMMEDIATE` read the head (and the document
-    /// when it changed since `known`), let `decide` stage the edit, and
-    /// commit it at a version allocated from the stored sequence.
+    /// WAL bound, then in `BEGIN IMMEDIATE` let `load` read the domain's head
+    /// (and its value when it changed since the caller's cached one), let
+    /// `decide` stage the edit, and commit it at a version allocated from the
+    /// stored sequence. Preferences and every later domain take this one
+    /// path, so the allocator, the recent-commit proof of an uncertain COMMIT
+    /// and the WAL admission have one owner.
     ///
     /// `begun` is the atomic abandonment boundary: it runs once the
     /// transaction has begun and before anything is written, and answers
@@ -457,17 +529,19 @@ impl Db {
     /// [`Commit::Abandoned`]; `true` commits to the transaction's own
     /// outcome (commit, rollback or uncertain resolution) whatever the
     /// service does next.
-    pub(super) fn commit<S, D, B>(
+    pub(super) fn commit<S, L, X, B>(
         &mut self,
         request: RequestId,
         clock: Option<StoreVersion>,
-        known: Option<&Durable>,
+        known: Option<&S::Durable>,
         begun: B,
-        decide: D,
+        load: L,
+        decide: X,
     ) -> Result<Commit<S>, SqlFailure>
     where
         S: Staging,
-        D: FnOnce(&Durable) -> Result<S, ErrorCode>,
+        L: FnOnce(&Connection) -> Result<Loaded<S::Durable>, SqlFailure>,
+        X: FnOnce(&S::Durable) -> Result<S, ErrorCode>,
         B: FnOnce() -> bool,
     {
         let epoch = self.epoch.ok_or_else(closed)?;
@@ -484,7 +558,7 @@ impl Db {
                 request,
                 clock,
             };
-            self.commit_locked(&guard, key, known, begun, decide)
+            self.commit_locked(&guard, key, known, begun, load, decide)
         })();
         drop(guard);
         self.after_failure(&mut result);
@@ -569,17 +643,19 @@ impl Db {
         format!("Run {text} again.")
     }
 
-    fn commit_locked<S, D, B>(
+    fn commit_locked<S, L, X, B>(
         &mut self,
         guard: &files::WriteLock,
         key: SaveKey,
-        known: Option<&Durable>,
+        known: Option<&S::Durable>,
         begun: B,
-        decide: D,
+        load: L,
+        decide: X,
     ) -> Result<Commit<S>, SqlFailure>
     where
         S: Staging,
-        D: FnOnce(&Durable) -> Result<S, ErrorCode>,
+        L: FnOnce(&Connection) -> Result<Loaded<S::Durable>, SqlFailure>,
+        X: FnOnce(&S::Durable) -> Result<S, ErrorCode>,
         B: FnOnce() -> bool,
     {
         let SaveKey {
@@ -601,11 +677,7 @@ impl Db {
             drop(tx);
             return Ok(Commit::Abandoned);
         }
-        let head = read_head(&tx)?;
-        let observed = match known {
-            Some(known) if known.version == head => None,
-            _ => Some(read_document(&tx, head)?),
-        };
+        let Loaded { head, observed } = load(&tx)?;
         let current = observed.as_ref().or(known).ok_or_else(closed)?;
         let mut staged = match decide(current) {
             Ok(staged) => staged,
@@ -622,6 +694,14 @@ impl Db {
             drop(tx);
             return Ok(Commit::Unchanged { staged, observed });
         }
+        if let Err((code, detail)) = staged.admit(&tx) {
+            drop(tx);
+            return Ok(Commit::Declined {
+                code,
+                detail: Some(Arc::from(detail)),
+                observed,
+            });
+        }
         let sequence = read_sequence(&tx)?;
         let base = [Some(sequence), clock, Some(head)]
             .into_iter()
@@ -631,25 +711,18 @@ impl Db {
         let Some(version) = base.checked_next() else {
             drop(tx);
             return Ok(Commit::Declined {
-                code: ErrorCode::Busy {
-                    domain: LocalStateDomain::Preferences,
-                },
-                detail: Some(Arc::from(
-                    "the preferences version space is spent; nothing was saved",
-                )),
+                code: ErrorCode::Busy { domain: S::DOMAIN },
+                detail: Some(Arc::from(format!(
+                    "the {} version space is spent; nothing was saved",
+                    S::DOMAIN
+                ))),
                 observed,
             });
         };
         staged.set_version(version);
-        let body = staged.bytes();
-        let digest = files::digest(body);
+        let digest = staged.digest();
         let written = (|| -> rusqlite::Result<()> {
-            tx.execute(
-                "INSERT INTO preference_document (id, body) VALUES (1, ?1)
-                 ON CONFLICT (id) DO UPDATE SET body = excluded.body",
-                params![body],
-            )?;
-            write_head(&tx, version)?;
+            staged.write(&tx, version)?;
             tx.execute(
                 "UPDATE store_meta SET sequence = ?1 WHERE id = 1",
                 params![be(version.get())],
@@ -661,10 +734,10 @@ impl Db {
                 params![
                     be(epoch),
                     be(request.get()),
-                    PREFERENCES_HEAD,
+                    S::HEAD,
                     be(head.get()),
                     be(version.get()),
-                    "preferences-write",
+                    S::ACTION,
                     digest.as_slice()
                 ],
             )?;
@@ -681,7 +754,7 @@ impl Db {
             return match wait_of(&error) {
                 Some(cause) => Err(SqlFailure::Wait(cause)),
                 None => Ok(Commit::Declined {
-                    code: statement_failure(&error),
+                    code: statement_failure(&error, S::DOMAIN),
                     detail: Some(Arc::from(format!("the save was not written: {error}"))),
                     observed,
                 }),
@@ -716,12 +789,7 @@ impl Db {
         };
         #[cfg(not(test))]
         let committed = tx.commit();
-        let durable = Durable {
-            version,
-            projection: staged.projection(),
-            digest,
-            len: body.len(),
-        };
+        let durable = staged.durable(version, digest);
         // A test's hand right after the COMMIT returned: the save is durable
         // and nothing of it is settled yet (it may die here).
         #[cfg(test)]
@@ -792,11 +860,12 @@ impl Db {
                     }
                     return Ok(Commit::Declined {
                         code: ErrorCode::Failed {
-                            domain: LocalStateDomain::Preferences,
+                            domain: S::DOMAIN,
                             reason: FailureReason::Io,
                         },
                         detail: Some(Arc::from(format!(
-                            "preferences not saved: the database refused the commit ({error})"
+                            "{} not saved: the database refused the commit ({error})",
+                            S::DOMAIN
                         ))),
                         observed,
                     });
@@ -820,7 +889,7 @@ impl Db {
     /// After a failed COMMIT that should have rolled back: confirm the
     /// connection is back in autocommit, rolling back explicitly when not.
     /// A connection that cannot get there is closed and the store refused.
-    fn confirm_rolled_back(&mut self) -> Result<(), SqlFailure> {
+    pub(super) fn confirm_rolled_back(&mut self) -> Result<(), SqlFailure> {
         let Some(conn) = self.conn.as_ref() else {
             return Ok(());
         };
@@ -840,7 +909,7 @@ impl Db {
     /// Resolve an uncertain COMMIT: close this connection, reconnect on the
     /// same worker (same epoch), and look for this operation's row with the
     /// committed digest. `true` when it committed.
-    fn resolve_uncertain(
+    pub(super) fn resolve_uncertain(
         &mut self,
         epoch: u64,
         request: RequestId,
@@ -872,7 +941,7 @@ impl Db {
         Ok(found.and_then(|raw| decode_u64(&raw)) == Some(version.get()))
     }
 
-    fn after_failure<T>(&mut self, result: &mut Result<T, SqlFailure>) {
+    pub(super) fn after_failure<T>(&mut self, result: &mut Result<T, SqlFailure>) {
         if let Err(SqlFailure::Refused { reason, detail }) = result {
             // A damaged database names the explicit recovery commands.
             if *reason == FailureReason::Checksum && !detail.starts_with("Preferences refused") {
@@ -889,7 +958,7 @@ impl Db {
         }
     }
 
-    fn ensure_root_use(&mut self) -> Result<(), SqlFailure> {
+    pub(super) fn ensure_root_use(&mut self) -> Result<(), SqlFailure> {
         if self.root_use.is_some() {
             return Ok(());
         }
@@ -909,7 +978,7 @@ impl Db {
         }
     }
 
-    fn guard(&self) -> Result<files::WriteLock, SqlFailure> {
+    pub(super) fn guard(&self) -> Result<files::WriteLock, SqlFailure> {
         match files::try_lock_for_write(&self.root.preferences_file()) {
             Ok(Some(lock)) => Ok(lock),
             Ok(None) => Err(SqlFailure::Wait(WaitCause::Guard)),
@@ -980,7 +1049,7 @@ impl Db {
         .map_err(|error| refused_by(error, "reading the schema"))?;
         let display = path.display().to_string();
         if application == 0 && user_version == 0 && tables == 0 {
-            tx.execute_batch(SCHEMA)
+            tx.execute_batch(&format!("{SCHEMA}{LEDGER_TABLE}{BANK_TABLE}"))
                 .and_then(|()| {
                     tx.execute_batch(&format!(
                         "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = \
@@ -988,6 +1057,15 @@ impl Db {
                     ))
                 })
                 .map_err(|error| refused_by(error, "creating the schema"))?;
+        } else if application == APPLICATION_ID && user_version == 1 {
+            // The one additive step of 0.3.0: version 1 held only the
+            // preferences. The step and its version change commit together,
+            // under the guard, so no process reads a half-moved schema.
+            tx.execute_batch(&format!(
+                "{LEDGER_TABLE}{SCHEMA_1_TO_2_COPY}{BANK_TABLE}PRAGMA user_version = \
+                 {USER_VERSION};"
+            ))
+            .map_err(|error| refused_by(error, "moving the schema to version 2"))?;
         } else if application == APPLICATION_ID && user_version > USER_VERSION {
             return Err(SqlFailure::refused(
                 FailureReason::Schema,
@@ -1071,10 +1149,7 @@ impl Db {
             None => self.first_import(guard, &source, clock, notices),
             Some(ledger) => {
                 if ledger.evidence == "pending" {
-                    return Ok(Some(Evidence {
-                        source,
-                        digest: ledger.digest,
-                    }));
+                    return Ok(Some(Evidence::preferences(source, ledger.digest)));
                 }
                 self.reimport_if_changed(guard, &source, &ledger, export, clock, notices)?;
                 Ok(None)
@@ -1145,10 +1220,10 @@ impl Db {
                         ),
                     ),
                 ));
-                Ok(Some(Evidence {
-                    source: source.to_path_buf(),
-                    digest: Some(digest),
-                }))
+                Ok(Some(Evidence::preferences(
+                    source.to_path_buf(),
+                    Some(digest),
+                )))
             }
             Legacy::Malformed(bytes) => {
                 let digest = files::digest(&bytes);
@@ -1646,9 +1721,16 @@ impl Db {
                 params![be(version.get())],
             )?;
             tx.execute(
-                "INSERT INTO legacy_source (id, digest, kind, evidence, path)
-                 VALUES (1, ?1, ?2, ?3, ?4)",
-                params![digest.as_ref().map(|d| d.as_slice()), kind, evidence, path],
+                "INSERT INTO import_ledger (domain, source, digest, kind, evidence, path)
+                 VALUES (?5, ?6, ?1, ?2, ?3, ?4)",
+                params![
+                    digest.as_ref().map(|d| d.as_slice()),
+                    kind,
+                    evidence,
+                    path,
+                    PREFERENCES_LEDGER.0,
+                    PREFERENCES_LEDGER.1
+                ],
             )?;
             Ok(())
         })()
@@ -1698,9 +1780,15 @@ impl Db {
             )?;
             tx.execute("UPDATE export_head SET state = 'consumed' WHERE id = 1", [])?;
             tx.execute(
-                "UPDATE legacy_source SET digest = ?1, kind = ?2, evidence = 'completed', \
-                 path = ?3 WHERE id = 1",
-                params![digest.as_slice(), kind, path],
+                "UPDATE import_ledger SET digest = ?1, kind = ?2, evidence = 'completed', \
+                 path = ?3 WHERE domain = ?4 AND source = ?5",
+                params![
+                    digest.as_slice(),
+                    kind,
+                    path,
+                    PREFERENCES_LEDGER.0,
+                    PREFERENCES_LEDGER.1
+                ],
             )?;
             Ok(())
         })()
@@ -1719,8 +1807,13 @@ impl Db {
     /// evidence is a mutating transaction: it takes the guard again and is
     /// admitted against the WAL bound, and when it cannot run now the
     /// ledger stays `pending` for the next start.
-    fn finish_import_evidence(&mut self, evidence: &Evidence, notices: &mut Vec<(Level, String)>) {
+    pub(super) fn finish_import_evidence(
+        &mut self,
+        evidence: &Evidence,
+        notices: &mut Vec<(Level, String)>,
+    ) {
         let display = evidence.source.display().to_string();
+        let what = evidence.what;
         self.point("before-evidence");
         let moved = (|| -> io::Result<Option<PathBuf>> {
             let bytes = match fs::read(&evidence.source) {
@@ -1740,7 +1833,7 @@ impl Db {
         })();
         match moved {
             Ok(target) => {
-                if let Err(failure) = self.mark_evidence_complete() {
+                if let Err(failure) = self.mark_evidence_complete(evidence) {
                     let why = match failure {
                         SqlFailure::Wait(cause) => cause.text().to_string(),
                         SqlFailure::Refused { detail, .. } => detail.to_string(),
@@ -1748,7 +1841,7 @@ impl Db {
                     notices.push((
                         Level::Warn,
                         format!(
-                            "local state: the imported preferences evidence could not be \
+                            "local state: the imported {what} evidence could not be \
                              recorded now ({why}); the next start records it"
                         ),
                     ));
@@ -1757,7 +1850,7 @@ impl Db {
                     notices.push((
                         Level::Info,
                         format!(
-                            "local state: imported preferences source {display} is kept as \
+                            "local state: imported {what} source {display} is kept as \
                              {}",
                             target.display()
                         ),
@@ -1767,7 +1860,7 @@ impl Db {
             Err(error) => notices.push((
                 Level::Warn,
                 format!(
-                    "local state: preferences were imported into SQLite, but {display} could \
+                    "local state: {what} were imported into SQLite, but {display} could \
                      not be kept as .migrated evidence ({error}); the import stands and the \
                      next start tries again"
                 ),
@@ -1777,13 +1870,13 @@ impl Db {
 
     /// Mark the import evidence completed, under the guard and WAL
     /// admission.
-    fn mark_evidence_complete(&mut self) -> Result<(), SqlFailure> {
+    fn mark_evidence_complete(&mut self, evidence: &Evidence) -> Result<(), SqlFailure> {
         let guard = self.guard()?;
         let conn = self.conn.as_mut().ok_or_else(closed)?;
         let tx = begin_write(conn, &self.root, &guard, "recording the import evidence")?;
         tx.execute(
-            "UPDATE legacy_source SET evidence = 'completed' WHERE id = 1",
-            [],
+            "UPDATE import_ledger SET evidence = 'completed' WHERE domain = ?1 AND source = ?2",
+            params![evidence.domain, evidence.ledger_source],
         )
         .map_err(|error| refused_by(error, "recording the import evidence"))?;
         tx.commit().map_err(|error| match wait_of(&error) {
@@ -1953,9 +2046,26 @@ impl Db {
 }
 
 /// The evidence work left after an import commit.
-struct Evidence {
-    source: PathBuf,
-    digest: Option<ContentDigest>,
+pub(super) struct Evidence {
+    pub(super) source: PathBuf,
+    pub(super) digest: Option<ContentDigest>,
+    /// The ledger row this evidence completes.
+    pub(super) domain: &'static str,
+    pub(super) ledger_source: String,
+    /// What the operator's notices call the imported store.
+    pub(super) what: &'static str,
+}
+
+impl Evidence {
+    fn preferences(source: PathBuf, digest: Option<ContentDigest>) -> Self {
+        Self {
+            source,
+            digest,
+            domain: PREFERENCES_LEDGER.0,
+            ledger_source: PREFERENCES_LEDGER.1.to_string(),
+            what: "preferences",
+        }
+    }
 }
 
 /// What one same-root export wrote.
@@ -1967,21 +2077,44 @@ pub(super) struct Exported {
     pub(super) kept: Option<PathBuf>,
 }
 
-/// One preference save's staged result, as [`Db::commit`] writes it.
+/// One domain's staged save, as [`Db::commit`] writes it.
 pub(super) trait Staging {
+    /// What the domain holds durably after the save.
+    type Durable;
+    /// The domain whose refusals and failures the commit reports.
+    const DOMAIN: LocalStateDomain;
+    /// The head name and action the recent-commit row records.
+    const HEAD: &'static str;
+    const ACTION: &'static str;
     /// The edit changes nothing durable.
     fn unchanged(&self) -> bool;
-    /// The canonical document bytes to store.
-    fn bytes(&self) -> &[u8];
-    /// The worker's projection of the new document.
-    fn projection(&self) -> files::PreferenceProjection;
+    /// A capacity check inside the open transaction, before a version is
+    /// allocated: the refusal with its cause, or nothing.
+    fn admit(&self, _tx: &Connection) -> Result<(), (ErrorCode, &'static str)> {
+        Ok(())
+    }
+    /// The digest of the staged content: the key of an uncertain COMMIT's
+    /// recent-commit row.
+    fn digest(&self) -> ContentDigest;
     /// Record the allocated version.
     fn set_version(&mut self, version: StoreVersion);
+    /// Write the domain's own rows and head at `version` (the sequence and
+    /// the recent-commit row are the caller's).
+    fn write(&self, tx: &Connection, version: StoreVersion) -> rusqlite::Result<()>;
+    /// The durable value the save leaves, at the digest `digest` returned.
+    fn durable(&self, version: StoreVersion, digest: ContentDigest) -> Self::Durable;
 }
 
-struct Ledger {
-    digest: Option<ContentDigest>,
-    evidence: String,
+/// What a save's `load` step found inside its transaction: the domain's
+/// head, and its durable value when that differs from what the caller held.
+pub(super) struct Loaded<D> {
+    pub(super) head: StoreVersion,
+    pub(super) observed: Option<D>,
+}
+
+pub(super) struct Ledger {
+    pub(super) digest: Option<ContentDigest>,
+    pub(super) evidence: String,
 }
 
 struct ExportHead {
@@ -2124,7 +2257,7 @@ fn classify_io(error: &io::Error) -> SourceFailure {
 }
 
 /// `<file>.migrated`, or `<file>.migrated-<n>` while that name is taken.
-fn migrated_name(source: &Path) -> io::Result<PathBuf> {
+pub(super) fn migrated_name(source: &Path) -> io::Result<PathBuf> {
     let name = source
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a file path"))?
@@ -2196,7 +2329,34 @@ pub(super) fn open_connection(root: &StateRoot) -> Result<Connection, SqlFailure
     })?;
     configure(&conn, &display)?;
     publish_names(&conn, root, new_wal)?;
+    #[cfg(test)]
+    note_connection(root);
     Ok(conn)
+}
+
+/// How many connections each state root has had opened in this process, for
+/// a test that counts them (one writer thread opens one).
+#[cfg(test)]
+static CONNECTIONS: std::sync::Mutex<Vec<(PathBuf, u64)>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn note_connection(root: &StateRoot) {
+    let mut counts = CONNECTIONS.lock().unwrap();
+    match counts.iter_mut().find(|(path, _)| path == root.path()) {
+        Some((_, count)) => *count += 1,
+        None => counts.push((root.path().to_path_buf(), 1)),
+    }
+}
+
+/// How many connections `root` has had opened in this process.
+#[cfg(test)]
+pub(super) fn connections_opened_for_test(root: &StateRoot) -> u64 {
+    CONNECTIONS
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(path, _)| path == root.path())
+        .map_or(0, |(_, count)| *count)
 }
 
 /// The database, `-wal` and `-shm` paths.
@@ -2367,7 +2527,7 @@ fn admit_wal(conn: &Connection, root: &StateRoot) -> Result<(), SqlFailure> {
 /// the borrowed lock, the WAL reservation is admitted, and only then does
 /// `BEGIN IMMEDIATE` run. Every SQL write of this module starts here, so no
 /// schema, epoch, ledger, evidence or export write bypasses the bound.
-fn begin_write<'c>(
+pub(super) fn begin_write<'c>(
     conn: &'c mut Connection,
     root: &StateRoot,
     _guard: &files::WriteLock,
@@ -2505,7 +2665,7 @@ fn configure(conn: &Connection, display: &str) -> Result<(), SqlFailure> {
     }
     let settings = format!(
         "PRAGMA wal_autocheckpoint = 0; PRAGMA cache_spill = OFF; PRAGMA mmap_size = 0; \
-         PRAGMA max_page_count = {MAX_PAGES}; PRAGMA cache_size = {CACHE_SIZE}; \
+         PRAGMA max_page_count = {DB_MAX_PAGES}; PRAGMA cache_size = {CACHE_SIZE}; \
          PRAGMA soft_heap_limit = {SOFT_HEAP_LIMIT};"
     );
     for statement in settings.split_inclusive(';') {
@@ -2543,7 +2703,7 @@ pub(super) fn verify_settings(conn: &Connection) -> Result<(), String> {
         ("PRAGMA busy_timeout", 0),
         ("PRAGMA wal_autocheckpoint", 0),
         ("PRAGMA cache_spill", 0),
-        ("PRAGMA max_page_count", MAX_PAGES as i64),
+        ("PRAGMA max_page_count", DB_MAX_PAGES as i64),
         ("PRAGMA page_size", PAGE_SIZE as i64),
         ("PRAGMA cache_size", CACHE_SIZE),
         ("PRAGMA soft_heap_limit", SOFT_HEAP_LIMIT),
@@ -2620,7 +2780,7 @@ fn read_head(conn: &Connection) -> Result<StoreVersion, SqlFailure> {
     }
 }
 
-fn read_sequence(conn: &Connection) -> Result<StoreVersion, SqlFailure> {
+pub(super) fn read_sequence(conn: &Connection) -> Result<StoreVersion, SqlFailure> {
     let raw: Vec<u8> = conn
         .query_row("SELECT sequence FROM store_meta WHERE id = 1", [], |row| {
             row.get(0)
@@ -2639,7 +2799,7 @@ fn read_sequence(conn: &Connection) -> Result<StoreVersion, SqlFailure> {
 /// The next durable version inside the caller's write transaction: a
 /// checked increment of the largest of the stored sequence, the service
 /// clock and the head. `Busy` (refuse, never wrap) when spent.
-fn next_version(
+pub(super) fn next_version(
     conn: &Connection,
     clock: Option<StoreVersion>,
 ) -> Result<StoreVersion, SqlFailure> {
@@ -2665,6 +2825,34 @@ fn write_head(conn: &Connection, version: StoreVersion) -> rusqlite::Result<()> 
     Ok(())
 }
 
+/// A preference save's own rows: the document and the head.
+pub(super) fn write_preference_rows(
+    conn: &Connection,
+    body: &[u8],
+    version: StoreVersion,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO preference_document (id, body) VALUES (1, ?1)
+         ON CONFLICT (id) DO UPDATE SET body = excluded.body",
+        params![body],
+    )?;
+    write_head(conn, version)
+}
+
+/// What a preference save's transaction starts from: the head, and the
+/// document when it is not the version the caller holds.
+pub(super) fn load_preferences(
+    conn: &Connection,
+    known: Option<&Durable>,
+) -> Result<Loaded<Durable>, SqlFailure> {
+    let head = read_head(conn)?;
+    let observed = match known {
+        Some(known) if known.version == head => None,
+        _ => Some(read_document(conn, head)?),
+    };
+    Ok(Loaded { head, observed })
+}
+
 fn read_document(conn: &Connection, version: StoreVersion) -> Result<Durable, SqlFailure> {
     let body: Option<Vec<u8>> = conn
         .query_row(
@@ -2684,9 +2872,20 @@ fn read_document(conn: &Connection, version: StoreVersion) -> Result<Durable, Sq
 }
 
 fn read_ledger(conn: &Connection) -> Result<Option<Ledger>, SqlFailure> {
+    read_ledger_of(conn, PREFERENCES_LEDGER.0, PREFERENCES_LEDGER.1)
+}
+
+/// The ledger row of one domain's source, `None` while its first import has
+/// not been decided.
+pub(super) fn read_ledger_of(
+    conn: &Connection,
+    domain: &str,
+    source: &str,
+) -> Result<Option<Ledger>, SqlFailure> {
     conn.query_row(
-        "SELECT digest, evidence FROM legacy_source WHERE id = 1",
-        [],
+        "SELECT digest, evidence FROM import_ledger
+         WHERE domain = ?1 AND source = ?2",
+        params![domain, source],
         |row| {
             let digest: Option<Vec<u8>> = row.get(0)?;
             Ok(Ledger {
@@ -2734,7 +2933,7 @@ pub(super) fn decode_u64(raw: &[u8]) -> Option<u64> {
     <[u8; 8]>::try_from(raw).ok().map(u64::from_be_bytes)
 }
 
-fn hex(digest: &ContentDigest) -> String {
+pub(super) fn hex(digest: &ContentDigest) -> String {
     digest
         .iter()
         .fold(String::with_capacity(64), |mut out, byte| {
@@ -2744,7 +2943,7 @@ fn hex(digest: &ContentDigest) -> String {
         })
 }
 
-fn bounded_path(path: &str) -> &str {
+pub(super) fn bounded_path(path: &str) -> &str {
     let mut end = path.len().min(4096);
     while !path.is_char_boundary(end) {
         end -= 1;
@@ -2806,7 +3005,7 @@ pub(super) fn first_read_panicked(root: &StateRoot, message: &str) -> Arc<str> {
     ))
 }
 
-fn closed() -> SqlFailure {
+pub(super) fn closed() -> SqlFailure {
     SqlFailure::refused(
         FailureReason::Dirty,
         "the preferences database is not open; it reopens on the next read",
@@ -2825,7 +3024,7 @@ pub(super) fn wait_of(error: &rusqlite::Error) -> Option<WaitCause> {
 
 /// A store refusal for an SQLite error during `what`: corruption names the
 /// recovery path, anything else its cause.
-fn refused_by(error: rusqlite::Error, what: &str) -> SqlFailure {
+pub(super) fn refused_by(error: rusqlite::Error, what: &str) -> SqlFailure {
     let reason = match error.sqlite_error_code() {
         Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase) => {
             FailureReason::Checksum
@@ -2836,16 +3035,16 @@ fn refused_by(error: rusqlite::Error, what: &str) -> SqlFailure {
 }
 
 /// A statement failure inside a save, after rollback.
-fn statement_failure(error: &rusqlite::Error) -> ErrorCode {
+fn statement_failure(error: &rusqlite::Error, domain: LocalStateDomain) -> ErrorCode {
     match error.sqlite_error_code() {
         Some(rusqlite::ErrorCode::DiskFull | rusqlite::ErrorCode::TooBig) => {
             ErrorCode::Validation {
-                domain: LocalStateDomain::Preferences,
+                domain,
                 reason: api::local_state::ValidationReason::TooLong,
             }
         }
         _ => ErrorCode::Failed {
-            domain: LocalStateDomain::Preferences,
+            domain,
             reason: FailureReason::Io,
         },
     }

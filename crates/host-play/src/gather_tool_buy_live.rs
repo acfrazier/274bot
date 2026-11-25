@@ -1927,18 +1927,19 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         let home = PathBuf::from(std::env::var_os("HOME").expect("isohome HOME"));
         let identity = api::local_state::AccountKey::try_new(PROFILE, &account)
             .expect("a minted live name is a login identity");
-        let path = crate::local_state::StateRoot::new(home.join(".274bot"))
-            .bank_hint_file(PROFILE, identity.account());
+        let root = crate::local_state::StateRoot::new(home.join(".274bot"));
         assert!(
-            path.starts_with(&home),
+            root.database_file().starts_with(&home),
             "bank hint must remain under isohome HOME"
         );
         assert!(
-            !path.exists(),
+            root.stored_bank_hint(PROFILE, identity.account())
+                .expect("the state database is readable")
+                .is_none(),
             "minted account must not have a prior bank hint before the relog cell: {}",
-            path.display()
+            root.database_file().display()
         );
-        Some(path)
+        Some((root, identity.account().to_string()))
     } else {
         None
     };
@@ -2493,7 +2494,15 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             RunStage::ParkRelogLogout { since } => {
                 if !play.slot_connected(&account) {
                     trace.lock().park_lifecycle.logout_observed = true;
-                    let hint_written = relog_hint_path.as_ref().is_some_and(|path| path.is_file());
+                    let hint_written =
+                        relog_hint_path
+                            .as_ref()
+                            .is_some_and(|(root, hint_account)| {
+                                root.stored_bank_hint(PROFILE, hint_account)
+                                    .ok()
+                                    .flatten()
+                                    .is_some()
+                            });
                     if hint_written {
                         let Some(arm) = relog_arm.as_ref() else {
                             cell_failure = Some("relog cell has no account slot arm".into());
@@ -2510,7 +2519,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                             "logout did not persist bank hint {}",
                             relog_hint_path.as_ref().map_or_else(
                                 || "<missing path>".to_owned(),
-                                |path| path.display().to_string()
+                                |(root, _)| root.database_file().display().to_string()
                             )
                         ));
                         break;

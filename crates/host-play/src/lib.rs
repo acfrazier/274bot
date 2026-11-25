@@ -152,8 +152,9 @@ use play_bootstrap::PlayConnection;
 pub use play_bootstrap::{
     default_pack_path, is_loopback_host, live_vault_passphrase, mint_game_password,
     mint_live_entries, mint_live_names, mint_vault_passphrase, open_vault, profile_password, run,
-    run_channels, run_prepared_template, run_with_io, run_with_profile, run_with_template,
-    validate_play_host, PlayOptions, ProfilePlayOptions, SharedClientTemplate, ValidatedTemplate,
+    run_channels, run_prepared_template, run_prepared_template_and_state, run_with_io,
+    run_with_profile, run_with_template, run_with_template_and_state, validate_play_host,
+    PlayOptions, ProfilePlayOptions, SharedClientTemplate, ValidatedTemplate,
 };
 #[cfg(test)]
 use play_login::{
