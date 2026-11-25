@@ -1603,9 +1603,13 @@ fn luau_interactions_cell() {
     // An overlapping Trade target triggers randomWalk:
     // engine/src/engine/entity/Player.ts:1069-1075 and
     // engine/src/engine/entity/PathingEntity.ts:438-447.
-    // The adjacent public tile avoids that random step.
+    // Use the west tile: content/maps/m49_53.jm2:3118,7596-7597 has
+    // walkable floor and no loc at local (48,44). The south edge is blocked
+    // by the north-facing wood2 wall at (49,43) (same map:7663).
+    // Player contact needs an open cardinal edge:
+    // engine/src/engine/routefinder/RectangleBoundary.ts:15-27.
     let partner_tile = WorldTile {
-        z: LUAU_INTERACT_START.z - 1,
+        x: LUAU_INTERACT_START.x - 1,
         ..LUAU_INTERACT_START
     };
     let partner = LuauPartner {
