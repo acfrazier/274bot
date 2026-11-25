@@ -216,8 +216,10 @@ fn terminal_login_refusals_stop_automatic_attempts_while_retryable_sibling_conti
 
     let mut vault = Vault::create(&vault_path, "fl055-test-passphrase").unwrap();
     for (i, name) in ["alice", "bob", "carol"].into_iter().enumerate() {
-        let mut settings = ProfileSettings::default();
-        settings.auto_login = true;
+        let settings = ProfileSettings {
+            auto_login: true,
+            ..ProfileSettings::default()
+        };
         vault
             .upsert(Profile {
                 username: name.into(),

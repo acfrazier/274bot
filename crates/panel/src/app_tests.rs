@@ -9927,6 +9927,7 @@ fn terminal_login_refusal_renders_persistently_in_focused_status_and_unselected_
         );
         {
             let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
             ui.window("card")
                 .size([460.0, 180.0], dear_imgui_rs::Condition::Always)
                 .build(|| {
@@ -9948,9 +9949,10 @@ fn terminal_login_refusal_renders_persistently_in_focused_status_and_unselected_
                     );
                     super::rail_refusal_line(ui, row, ui.cursor_pos()[0], 420.0);
                 });
+            ui.log_finish();
         }
-        let _ = ctx.render();
-        drawn.text()
+        ctx.render();
+        drawn.0.take()
     };
 
     let bob_card = draw_card(&bob_row);

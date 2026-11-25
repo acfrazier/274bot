@@ -1741,8 +1741,9 @@ fn terminal_login_refusal_persists_past_notice_timeout_without_queue_and_clears_
     use api::lifecycle::LoginRefusal;
 
     let t0 = Instant::now();
-    let mut s = session("terminal-refusal");
-    s.login("vn-bob");
+    let mut s = fleet("terminal-refusal", &["vn-alice", "vn-bob"], false);
+    s.select("vn-bob");
+    s.login("vn-bob", &mut HeadlessSurface::new());
     let refusal = LoginRefusal::RevisionCacheOrRsaMismatch;
     let diagnostic = format!(
         "Login stopped (code {}): {} Select Log in to retry.",
@@ -1788,7 +1789,7 @@ fn terminal_login_refusal_persists_past_notice_timeout_without_queue_and_clears_
     assert_eq!(detail(&s).state(), diagnostic);
 
     // An approved explicit Login clears the hold immediately before mark_login_started.
-    s.login("vn-bob");
+    s.login("vn-bob", &mut HeadlessSurface::new());
     s.poll_at(t0 + TIMEOUT * 4 + Duration::from_secs(1));
     let bob = row(&s, "vn-bob");
     assert_eq!(bob.login_refusal(), None);
